@@ -75,6 +75,19 @@ async def test_manager_forwards_input_resize_and_signal_only_when_attached():
 
 
 @pytest.mark.asyncio
+async def test_manager_subscribes_before_starting_output_pump():
+    bridge = FakeBridge()
+    manager = PtyManager(bridge)
+    session, queue = await manager.start_with_subscription(spec())
+    await manager.attach("term-test")
+
+    await bridge.handles[0][1].output_queue.put(b"gugu-sandbox:/workspace$ ")
+
+    assert await asyncio.wait_for(queue.get(), timeout=1) == b"gugu-sandbox:/workspace$ "
+    assert session.output_queues == {queue}
+
+
+@pytest.mark.asyncio
 async def test_manager_reaps_detached_pty_and_forces_close():
     bridge = FakeBridge()
     manager = PtyManager(bridge, detached_ttl_seconds=5)

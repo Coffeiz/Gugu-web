@@ -20,7 +20,7 @@
             <div class="terminal-title">
               <input v-if="renaming" v-model="renameValue" class="terminal-rename" maxlength="200" @keydown.enter="saveRename" @keydown.esc="cancelRename" />
               <h2 v-else>{{ selected.name }}</h2>
-              <span>{{ selected.shellMode }} · {{ selected.networkProfile }} · {{ selected.outputChars }} 字符</span>
+              <span>{{ selected.mode === 'agent-events' ? '咕咕执行记录' : `${selected.shellMode} · ${selected.networkProfile}` }} · {{ selected.outputChars }} 字符</span>
               <small v-if="selected.sessionId || selected.runId" class="terminal-associations">会话 {{ selected.sessionId ?? '—' }} · Run {{ selected.runId ?? '—' }}</small>
             </div>
             <div class="terminal-actions">
@@ -30,22 +30,36 @@
               <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.refresh" :size="14" />开启</ActionButton><ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />重置环境</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
             </div>
           </div>
-          <InteractivePtyTerminal v-if="selected?.mode === 'interactive-pty'" :key="`${selected.id}:${ptyRevision}`" :terminal-id="selected.id" @error="error = $event" />
-          <div v-else-if="selected" ref="outputRef" class="terminal-output">
+          <KeepAlive>
+            <InteractivePtyTerminal
+              v-if="selected?.mode === 'interactive-pty'"
+              :key="selected.id"
+              :terminal-id="selected.id"
+              :restart-token="ptyRevisions[selected.id] ?? 0"
+              @status="handlePtyStatus"
+              @exit="handlePtyExit"
+              @error="error = $event"
+            />
+          </KeepAlive>
+          <div v-if="selected && selected.mode !== 'interactive-pty'" ref="outputRef" class="terminal-output">
             <div v-if="error" class="terminal-output-error" role="alert">[错误] {{ error }}</div>
-            <div v-for="event in events" :key="event.sequence" class="terminal-event">
+            <div v-for="event in events" :key="event.localId ?? event.sequence" class="terminal-event" :class="{ 'is-pending': event.state === 'running', 'is-failed': event.state === 'failed' }">
               <div v-if="event.type === 'command'" class="terminal-command"><span>$</span> {{ event.command }}</div>
               <div v-else class="terminal-command terminal-status-event">终端状态已更新</div>
               <pre v-if="event.stdout">{{ event.stdout }}</pre>
               <pre v-if="event.stderr" class="stderr">{{ event.stderr }}</pre>
-              <small>退出码 {{ event.exitCode ?? '—' }} · {{ formatTime(event.occurredAt) }}</small>
+              <small v-if="event.state === 'running'" class="terminal-event-state">执行中… <button v-if="event.runId" class="terminal-cancel" type="button" @click="cancelEvent(event)">停止</button></small>
+              <small v-else-if="event.state === 'cancelled'" class="terminal-event-state">已取消 · {{ formatTime(event.occurredAt) }}</small>
+              <small v-else-if="event.state === 'failed'" class="terminal-event-state">执行失败 · {{ formatTime(event.occurredAt) }}</small>
+              <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? '已完成' : '执行失败' }} · {{ formatTime(event.occurredAt) }}</span><details v-if="event.exitCode !== null || event.stderr"><summary>执行详情</summary><span>退出码 {{ event.exitCode ?? '—' }}</span></details></small>
+              <small v-else>状态更新 · {{ formatTime(event.occurredAt) }}</small>
             </div>
             <div v-if="!events.length && !error" class="terminal-output-empty">等待终端输出</div>
           </div>
-          <div v-else class="terminal-empty">选择一个终端开始查看</div>
-          <form v-if="selected && selected.mode !== 'interactive-pty' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
-            <input ref="commandInput" v-model="command" :disabled="selected.status === 'terminated' || selected.status === 'exited'" placeholder="输入受控 Shell 命令" autocomplete="off" />
-            <ActionButton fit type="submit" :disabled="!command.trim() || submitting || selected.status === 'terminated' || selected.status === 'exited'"><Icon name="action.send" :size="14" />执行</ActionButton>
+          <div v-else-if="!selected" class="terminal-empty">选择一个终端开始查看</div>
+          <form v-if="selected && selected.mode === 'agent-events' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
+            <input ref="commandInput" v-model="command" placeholder="输入受控 Shell 命令" autocomplete="off" />
+            <ActionButton fit type="submit" :disabled="!command.trim()"><Icon name="action.send" :size="14" />执行</ActionButton>
           </form>
         </main>
       </div>
@@ -59,20 +73,20 @@ import { useRoute } from 'vue-router'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
 import InteractivePtyTerminal from './components/InteractivePtyTerminal.vue'
+import { replaceOrAppendTerminalEvent, type TerminalEventView } from './terminalEvents'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 
 const terminals = ref<TerminalItem[]>([])
 const selectedId = ref<string | null>(null)
-const events = ref<TerminalEventItem[]>([])
+const events = ref<TerminalEventView[]>([])
 const enabled = ref(false)
 const error = ref('')
 const outputRef = ref<HTMLElement | null>(null)
 const commandInput = ref<HTMLInputElement | null>(null)
 const command = ref('')
-const submitting = ref(false)
-const ptyRevision = ref(0)
+const ptyRevisions = ref<Record<string, number>>({})
 const renaming = ref(false)
 const renameValue = ref('')
 let streamGeneration = 0
@@ -96,6 +110,7 @@ async function load(options: { autoOpen?: boolean } = {}) {
         const reopened = await terminalsApi.reopen(current.id)
         const index = terminals.value.findIndex(item => item.id === reopened.id)
         if (index >= 0) terminals.value[index] = reopened
+        bumpPtyRevision(current.id)
       } catch (cause) {
         error.value = cause instanceof Error ? cause.message : '终端自动开启失败'
       }
@@ -119,7 +134,7 @@ async function loadEvents(id: string, reset = false, controller?: AbortControlle
     await terminalsApi.events(id, cursor, activeController.signal, event => {
       if (generation !== streamGeneration || id !== selectedId.value) return
       if (events.value.some(item => item.sequence === event.sequence)) return
-      events.value.push(event)
+      replaceOrAppendEvent(event)
       void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
     })
     if (generation !== streamGeneration || id !== selectedId.value) return
@@ -132,6 +147,29 @@ async function loadEvents(id: string, reset = false, controller?: AbortControlle
 }
 
 function select(id: string) { selectedId.value = id; void loadEvents(id, true) }
+
+function replaceOrAppendEvent(event: TerminalEventItem) {
+  replaceOrAppendTerminalEvent(events.value, event)
+}
+
+function bumpPtyRevision(id: string) {
+  ptyRevisions.value = { ...ptyRevisions.value, [id]: (ptyRevisions.value[id] ?? 0) + 1 }
+}
+
+function updateTerminalStatus(id: string, status: TerminalItem['status']) {
+  const index = terminals.value.findIndex(item => item.id === id)
+  if (index >= 0 && terminals.value[index].status !== status) {
+    terminals.value[index] = { ...terminals.value[index], status }
+  }
+}
+
+function handlePtyStatus(payload: { terminalId: string }) {
+  updateTerminalStatus(payload.terminalId, 'running')
+}
+
+function handlePtyExit(terminalId: string) {
+  updateTerminalStatus(terminalId, 'exited')
+}
 
 // 终端输出优先消费统一业务事件；切换终端和断线时仍用 sequence API 补拉，避免 Redis pub/sub 丢消息。
 watch(() => live.resourceEvent, (event) => {
@@ -156,12 +194,12 @@ watch(() => live.resourceEvent, (event) => {
     const index = terminals.value.findIndex(item => item.id === terminal.id)
     if (event.operation === 'create' && index < 0) terminals.value.unshift(terminal)
     else if (index >= 0) terminals.value[index] = terminal
-    if (payload?.reset === true && terminal.id === selectedId.value) ptyRevision.value++
+    if (payload?.reset === true) bumpPtyRevision(terminal.id)
   }
   const terminalEvent = payload?.event as TerminalEventItem | undefined
   if (event.operation === 'append' && terminalEvent && terminalId === selectedId.value
       && !events.value.some(item => item.sequence === terminalEvent.sequence)) {
-    events.value.push(terminalEvent)
+    replaceOrAppendEvent(terminalEvent)
     void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
   }
 })
@@ -177,26 +215,46 @@ async function saveRename() {
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端重命名失败' }
 }
 async function submitCommand() {
-  if (!selected.value || !command.value.trim() || submitting.value || selected.value.status === 'terminated' || selected.value.status === 'exited') return
+  if (!selected.value || !command.value.trim() || selected.value.status === 'terminated' || selected.value.status === 'exited') return
   const submittedCommand = command.value.trim()
   command.value = ''
-  submitting.value = true
   error.value = ''
+  const pending: TerminalEventView = {
+    localId: `pending-${Date.now()}`,
+    sequence: -Date.now(), type: 'command', source: 'user', runId: selected.value.runId,
+    command: submittedCommand, stdout: '', stderr: '', exitCode: null,
+    occurredAt: new Date().toISOString(), state: 'running',
+  }
+  events.value.push(pending)
+  void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
+  const targetId = selected.value.id
   try {
-    const data = await terminalsApi.input(selected.value.id, { command: submittedCommand })
+    const data = await terminalsApi.input(targetId, { command: submittedCommand })
     const index = terminals.value.findIndex(value => value.id === data.terminal.id)
     if (index >= 0) terminals.value[index] = data.terminal
+    const pendingIndex = events.value.findIndex(item => item.localId === pending.localId)
+    if (pendingIndex >= 0) events.value[pendingIndex] = { ...events.value[pendingIndex], runId: data.requestId }
+    replaceOrAppendEvent(data.event)
     // 输入接口会发布 append 事件，现有 SSE 会增量更新输出；不要重置或重建事件流，
     // 否则会清空输出列表并让终端内容短暂闪空。
   } catch (cause) {
+    const pendingIndex = events.value.findIndex(item => item.localId === pending.localId)
+    if (pendingIndex >= 0) events.value[pendingIndex] = { ...events.value[pendingIndex], state: 'failed', stderr: '命令提交失败' }
     error.value = cause instanceof Error ? cause.message : '命令执行失败'
     if (!command.value) command.value = submittedCommand
   }
   finally {
-    submitting.value = false
     await nextTick(() => {
       if (selected.value?.status !== 'terminated' && selected.value?.status !== 'exited') commandInput.value?.focus()
     })
+  }
+}
+async function cancelEvent(event: TerminalEventView) {
+  if (!selected.value || !event.runId || event.state !== 'running') return
+  try {
+    await terminalsApi.cancel(selected.value.id, event.runId)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '命令取消失败'
   }
 }
 async function createTerminal() {
@@ -209,7 +267,9 @@ async function reopenTerminal() {
     const item = await terminalsApi.reopen(selected.value.id)
     const index = terminals.value.findIndex(value => value.id === item.id)
     if (index >= 0) terminals.value[index] = item
-    await loadEvents(item.id, true)
+    // 同一 xterm 实例复用时显式重启连接；后端会重新创建 PTY 并发送 ready。
+    bumpPtyRevision(item.id)
+    updateTerminalStatus(item.id, 'running')
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端开启失败' }
 }
 async function resetSelected() {
@@ -226,7 +286,7 @@ async function resetSelected() {
     const item = await terminalsApi.reset(target.id)
     const index = terminals.value.findIndex(value => value.id === item.id)
     if (index >= 0) terminals.value[index] = item
-    ptyRevision.value++
+    bumpPtyRevision(item.id)
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端环境重置失败' }
 }
 async function deleteSelected() {
@@ -301,6 +361,11 @@ onUnmounted(() => {
 .terminal-event pre { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
 .terminal-event pre.stderr { color:var(--danger-fg); }
 .terminal-event small { display:block; margin-top:7px; color:#aab4c5; font:11px/1.4 var(--font-sans); }
+.terminal-event-state { color:var(--content-tertiary); }
+.terminal-cancel { margin-left:8px; padding:1px 6px; border:1px solid var(--border-default); border-radius:var(--radius-xs); background:transparent; color:var(--content-secondary); cursor:pointer; font:inherit; }
+.terminal-cancel:hover { border-color:var(--danger-fg); color:var(--danger-fg); }
+.terminal-event details { display:inline-block; margin-left:8px; color:var(--content-tertiary); }
+.terminal-event details summary { cursor:pointer; }
 .terminal-title { min-width:0; }
 .terminal-rename { box-sizing:border-box; width:min(320px, 45vw); height:var(--control-height-sm); padding:5px 8px; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); font:inherit; line-height:calc(var(--control-height-sm) - 2px); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .terminal-input { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--divider-line); background:var(--surface-card-solid); }

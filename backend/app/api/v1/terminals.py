@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,7 @@ from app.services.terminals import (
     create_terminal, delete_terminal, get_terminal, list_terminals,
     terminate_terminal as terminate_terminal_record,
     prune_terminals, reopen_terminal, reset_terminal, rename_terminal, serialize_event, serialize_terminal, terminal_events, terminal_metrics,
+    append_shell_result, append_terminal_status,
 )
 from agent.terminal.access import TerminalOperation, authorize_operation, page_access
 from agent.terminal.contracts import TerminalMode
@@ -30,9 +32,14 @@ from agent.terminal.pty_manager import PtyLaunchSpec
 from agent.terminal.runtime import get_pty_manager
 from app.services.workspaces import resolve_shell_root
 from agent.tools.shell import _shell
+from agent.sandbox.client import SandboxdClient
+from app.core.config import get_settings
+import app.db.session as db_session
 
 router = APIRouter(prefix="/terminals", tags=["terminals"])
 logger = logging.getLogger(__name__)
+_terminal_tasks: dict[str, asyncio.Task] = {}
+_terminal_event_locks: dict[str, asyncio.Lock] = {}
 
 
 class TerminalCreate(BaseModel):
@@ -160,10 +167,14 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         )
         session = manager.get(row.id)
         if session is None:
-            session = await manager.start(spec)
-        await manager.attach(row.id)
-        attached = True
-        queue = await manager.subscribe(row.id)
+            session, queue = await manager.start_with_subscription(spec)
+        else:
+            await manager.attach(row.id)
+            attached = True
+            queue = await manager.subscribe(row.id)
+        if not attached:
+            await manager.attach(row.id)
+            attached = True
         row.status = TerminalStatus.RUNNING.value
         row.pty_pid = session.handle.pid
         row.pty_sandbox_id = session.handle.sandbox_id
@@ -212,12 +223,15 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
             if output_task in done:
                 chunk = output_task.result()
                 if chunk is None:
-                    row.status = TerminalStatus.EXITED.value
-                    row.closed_at = now_utc()
-                    row.updated_at = row.closed_at
-                    await db.commit()
-                    await events.publish(user_id, "terminals", operation="update", entity_id=row.id,
-                                         event_payload=serialize_terminal(row))
+                    # 用户主动停止时，记录的 terminated 优先于 PTY 的退出回调，
+                    # 避免停止后又被异步队列结束事件改写成 exited。
+                    if row.status != TerminalStatus.TERMINATED.value:
+                        row.status = TerminalStatus.EXITED.value
+                        row.closed_at = now_utc()
+                        row.updated_at = row.closed_at
+                        await db.commit()
+                        await events.publish(user_id, "terminals", operation="update", entity_id=row.id,
+                                             event_payload=serialize_terminal(row))
                     try:
                         await websocket.send_json({"type": "exit"})
                     except (RuntimeError, WebSocketDisconnect):
@@ -319,20 +333,108 @@ async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Dep
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, workspace_id=row.workspace_id, operation=TerminalOperation.INPUT)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
-    before_sequence = row.last_sequence
-    result = await _shell(db, user.id, {
-        "_session_id": row.session_id, "_workspace_id": row.workspace_id, "_terminal_id": row.id, "_terminal_source": "user",
-        "command": body.command, "cwd": body.cwd, "timeout": body.timeout,
-        "max_output_chars": body.maxOutputChars, "network": body.network,
-        "confirm": body.confirm, "confirm_token": body.confirmToken,
-    })
+    request_id = uuid4().hex
+    status_event = await append_terminal_status(db, row, command=body.command, status="running", run_id=request_id)
     await db.commit()
-    new_events = await terminal_events(db, row, before_sequence)
-    if new_events:
-        await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
+    await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
+                         event_payload={"terminal_id": row.id, "event": serialize_event(status_event),
+                                        "terminal": serialize_terminal(row)})
+    task = asyncio.create_task(_run_terminal_command(user.id, row.id, request_id, body))
+    _terminal_tasks[request_id] = task
+    task.add_done_callback(lambda finished: _terminal_tasks.pop(request_id, None))
+    return {"terminal": serialize_terminal(row), "requestId": request_id, "event": serialize_event(status_event)}
+
+
+async def _run_terminal_command(user_id, terminal_id: str, request_id: str, body: TerminalInput) -> None:
+    """在独立数据库会话中执行用户命令，避免占用 HTTP 请求生命周期。"""
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        row = await get_terminal(db, user_id, terminal_id)
+        if row is None or row.closed_at is not None:
+            return
+        before_sequence = row.last_sequence
+
+        async def publish_output(stream: str, data: str) -> None:
+            await events.publish(user_id, "terminals", operation="append", entity_id=terminal_id,
+                                 event_payload={
+                                     "terminal_id": terminal_id,
+                                     "event": {
+                                         "sequence": 0, "type": "output", "source": "user",
+                                         "runId": request_id, "command": body.command,
+                                         "stdout": data if stream == "stdout" else "",
+                                         "stderr": data if stream == "stderr" else "",
+                                         "exitCode": None, "occurredAt": now_utc().isoformat(),
+                                     },
+                                 })
+
+        try:
+            result = await _shell(db, user_id, {
+                "_session_id": row.session_id, "_workspace_id": row.workspace_id,
+                "_terminal_id": row.id, "_terminal_source": "user", "_run_id": request_id,
+                "_terminal_parallel": True, "_defer_terminal_event": True,
+                "command": body.command, "cwd": body.cwd, "timeout": body.timeout,
+                "max_output_chars": body.maxOutputChars, "network": body.network,
+                "confirm": body.confirm, "confirm_token": body.confirmToken,
+                "_on_output": publish_output,
+            })
+        except asyncio.CancelledError:
+            await db.rollback()
+            lock = _terminal_event_locks.setdefault(terminal_id, asyncio.Lock())
+            async with lock:
+                row = await get_terminal(db, user_id, terminal_id)
+                if row is not None and row.closed_at is None:
+                    before_sequence = row.last_sequence
+                    await append_shell_result(db, row, command=body.command, stdout="", stderr="命令已取消",
+                                              exit_code=None, ok=False, source="user", run_id=request_id)
+                    cancelled_event = (await terminal_events(db, row, before_sequence))[-1]
+                    await db.commit()
+                    await events.publish(user_id, "terminals", operation="append", entity_id=row.id,
+                                         event_payload={"terminal_id": row.id, "event": serialize_event(cancelled_event),
+                                                        "terminal": serialize_terminal(row)})
+            raise
+        except Exception:
+            await db.rollback()
+            row = await get_terminal(db, user_id, terminal_id)
+            result = {"ok": False, "error": "命令执行失败"}
+        await db.commit()
+        lock = _terminal_event_locks.setdefault(terminal_id, asyncio.Lock())
+        async with lock:
+            row = await get_terminal(db, user_id, terminal_id)
+            if row is None or row.closed_at is not None:
+                return
+            before_sequence = row.last_sequence
+            if isinstance(result, dict) and result.get("ok") is not None:
+                stdout = str(result.get("stdout") or "")
+                stderr = str(result.get("stderr") or "")
+                exit_code = result.get("exit_code")
+                ok = bool(result.get("ok"))
+            else:
+                stdout, stderr, exit_code, ok = "", str(result.get("error") or "命令执行失败"), 1, False
+            await append_shell_result(db, row, command=body.command, stdout=stdout, stderr=stderr,
+                                      exit_code=exit_code, ok=ok, source="user", run_id=request_id)
+            new_events = await terminal_events(db, row, before_sequence)
+            await db.commit()
+        await events.publish(user_id, "terminals", operation="append", entity_id=row.id,
                              event_payload={"terminal_id": row.id, "event": serialize_event(new_events[-1]),
-                                            "terminal": serialize_terminal(row)})
-    return {"terminal": serialize_terminal(row), "result": result}
+                             "terminal": serialize_terminal(row)})
+
+
+@router.post("/{terminal_id}/cancel/{request_id}")
+async def cancel_terminal_command(terminal_id: str, request_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = _require(await get_terminal(db, user.id, terminal_id))
+    access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id,
+                                       workspace_id=row.workspace_id, operation=TerminalOperation.INPUT)
+    if not access.allowed:
+        raise HTTPException(status_code=403, detail=access.reason)
+    task = _terminal_tasks.get(request_id)
+    if task is None or task.done():
+        return {"cancelled": False}
+    if row.shell_mode == "sandbox":
+        socket_path = get_settings().sandbox.sandboxd_socket
+        if socket_path:
+            await SandboxdClient(socket_path).cancel(request_id)
+    task.cancel()
+    return {"cancelled": True, "requestId": request_id}
 
 
 @router.post("/{terminal_id}/terminate")
@@ -343,6 +445,15 @@ async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_cur
         raise HTTPException(status_code=403, detail=access.reason)
     await terminate_terminal_record(db, row)
     await db.commit()
+    # 先提交 terminated 再关 PTY，WebSocket 的异步退出回调才能保留用户的
+    # 主动停止状态，不会把它覆盖成 exited。
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value:
+        manager = get_pty_manager()
+        if manager.get(row.id) is not None:
+            try:
+                await manager.terminate(row.id, force=True)
+            except LookupError:
+                pass
     await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
                          event_payload={"terminal_id": row.id, "terminal": serialize_terminal(row)})
     return serialize_terminal(row)

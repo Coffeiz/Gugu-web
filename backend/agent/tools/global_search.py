@@ -49,14 +49,11 @@ class GlobalSearchSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "单个关键词或连续短语；所有搜索工具统一使用此字段"},
-                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
-                    "queries": {"type": "array", "items": {"type": "string"},
-                                "description": "可选的多个候选关键词；默认 OR，最多 8 个"},
-                    "mode": {"type": "string", "enum": ["OR", "AND"],
-                             "description": "关键词匹配模式，默认 OR"},
-                    "types": {"type": "array", "items": {"type": "string", "enum": ALL_TYPES},
-                              "description": "限定类型；省略则全搜"},
+                    "query": {"type": "string"},
+                    "q": {"type": "string"},
+                    "queries": {"type": "array", "items": {"type": "string"}},
+                    "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "types": {"type": "array", "items": {"type": "string", "enum": ALL_TYPES}},
                 },
                 # query / queries 至少传一个；具体校验由 handler 统一完成，避免只传 queries 时被 schema 拦截。
                 "required": [],

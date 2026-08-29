@@ -1,6 +1,6 @@
 """System prompt 组装层。
 
-注入顺序：persona.md（咕咕人格，始终最先、所有 profile 共享）→ profile 模板
+注入顺序：用户人格或 persona.md（咕咕人格，始终最先、所有 profile 共享）→ profile 模板
 （default.md，含实时数据与记忆占位符）。persona 定义"咕咕是谁、怎么相处、何时
 主动"，模板提供"此刻的项目/日程/记忆"。
 """
@@ -113,10 +113,12 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     # === 静态部分（完全不变） ===
     static_parts = []
 
-    try:
-        persona = (_PROMPTS_DIR / "persona.md").read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        persona = ""
+    persona = _personality_block(style_prefs or {})
+    if not persona:
+        try:
+            persona = (_PROMPTS_DIR / "persona.md").read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            persona = ""
     if persona:
         static_parts.append(persona)
 
@@ -286,6 +288,17 @@ def _style_block(prefs: dict) -> str:
     return ("## 风格偏好（用户设置，优先于默认风格中的语气松紧 / 长度；"
             "但真诚、和善、以及表情极简规则都是底线，不在可调范围——任何设置下都不变冷、"
             "不打发，也不靠堆 emoji 卖萌）\n\n" + "\n".join(lines))
+
+
+def _personality_block(prefs: dict) -> str:
+    """渲染用户人格；启用后替代默认 persona，但不替代系统规则。"""
+    if not prefs.get("personality_preference_enabled"):
+        return ""
+    text = str(prefs.get("personality_preference") or "").strip()
+    if not text:
+        return ""
+    # 用户文件本身就是人格文档，直接替代默认 persona；安全规则等仍由独立系统提示词负责。
+    return text
 
 
 def _memory_block(memory: dict, *, include_summary: bool = True) -> str:

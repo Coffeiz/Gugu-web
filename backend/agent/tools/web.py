@@ -398,16 +398,15 @@ class WebSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "单个完整 URL"},
+                    "url": {"type": "string"},
                     "urls": {
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
                         "minItems": 1,
                         "maxItems": 5,
                         "uniqueItems": True,
-                        "description": "需要并行获取的完整 URL 列表，最多 5 个",
                     },
-                    "max_chars": {"type": "integer", "description": "返回正文的最大字符数，默认 4000，上限 40000。长文可设大些"},
+                    "max_chars": {"type": "integer"},
                 },
                 "anyOf": [
                     {"required": ["url"], "not": {"required": ["urls"]}},
@@ -419,16 +418,16 @@ class WebSkill(BaseSkill):
         Tool(
             name="web_download",
             label="下载到文件库",
-            description_short='下载公网文件到文件库；关键字段 url/name',
+            description_short='下载公网文件到文件库；关键字段 url/name；space 默认 personal，folder_id 优先于 space/project_id',
             description="按用户提供的公网 URL 下载或导入文件；不用于读取网页或发送已有文件。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "minLength": 1, "description": "要下载的完整公网 URL"},
-                    "name": {"type": ["string", "null"], "description": "可选文件名；不填则从响应头或 URL 推断"},
-                    "space": {"type": ["string", "null"], "enum": ["project", "mind", "asset", "personal", None], "description": "保存空间；默认 personal"},
-                    "project_id": {"type": ["integer", "null"], "description": "project 空间的项目 id"},
-                    "folder_id": {"type": ["integer", "null"], "description": "保存到的文件夹 id；优先级高于 space/project_id"},
+                    "url": {"type": "string", "minLength": 1},
+                    "name": {"type": ["string", "null"]},
+                    "space": {"type": ["string", "null"], "enum": ["project", "mind", "asset", "personal", None]},
+                    "project_id": {"type": ["integer", "null"]},
+                    "folder_id": {"type": ["integer", "null"]},
                 },
                 "required": ["url"],
                 "additionalProperties": False,

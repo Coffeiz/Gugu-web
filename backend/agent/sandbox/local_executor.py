@@ -19,6 +19,13 @@ _SHELL_META = set(";&|<>$`()\n\r")
 _MAX_TIMEOUT = 300
 _MAX_OUTPUT = 120_000
 _PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
+_SCRIPT_INTERPRETERS = frozenset({
+    "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
+    "ruby", "sed", "sh", "zsh",
+})
+_INTERPRETER_EVAL_FLAGS = frozenset({
+    "-c", "--command", "-e", "--eval", "--execute", "--expression",
+})
 
 
 @dataclass(frozen=True)
@@ -40,11 +47,18 @@ class LocalWorkspaceExecutor:
     这是可信本机执行后端，不是面向不受信用户的安全隔离边界。
     """
 
-    def __init__(self, workspace_root: str | Path, *, env: dict[str, str] | None = None):
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        *,
+        env: dict[str, str] | None = None,
+        restrict_interpreter_inputs: bool = True,
+    ):
         root = Path(workspace_root).expanduser().resolve(strict=True)
         if not root.is_dir():
             raise ValueError("workspace 必须是目录")
         self.root = root
+        self.restrict_interpreter_inputs = restrict_interpreter_inputs
         base_env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ}
         if env:
             base_env.update(env)
@@ -111,6 +125,48 @@ class LocalWorkspaceExecutor:
             if stat is not None and candidate.is_file() and stat.st_nlink > 1:
                 raise ValueError("workspace 命令不能使用硬链接文件")
 
+        if self.restrict_interpreter_inputs:
+            self._validate_interpreter_inputs(argv, workdir)
+
+    def _validate_interpreter_inputs(self, argv: list[str], workdir: Path) -> None:
+        """禁止把 workspace 文件直接交给解释器执行。
+
+        ``create_subprocess_exec`` 不会解析命令替换，但 ``bash script.sh``、
+        ``env bash script.sh`` 和 ``xargs -a input bash`` 仍会执行不受信文件。
+        这不是 workspace 路径越界问题，而是文件内容注入问题，因此不能只依赖
+        容器的只读、断网和低权限配置来兜底。
+        """
+        interpreter_indexes = [
+            index for index, value in enumerate(argv)
+            if Path(value).name.lower() in _SCRIPT_INTERPRETERS
+        ]
+        if not interpreter_indexes:
+            return
+
+        # 解释器的 inline/eval 模式可以绕过“脚本文件参数”检查，例如
+        # ``bash -c 'source payload.sh'``；Agent shell 不需要嵌套解释器，直接拒绝。
+        for index in interpreter_indexes:
+            if any(value in _INTERPRETER_EVAL_FLAGS for value in argv[index + 1:]):
+                raise ValueError("禁止通过解释器执行 inline/eval 代码")
+
+        # 检查整条 argv，而不是只检查解释器后的参数，以覆盖 env/xargs 包装器：
+        # ``xargs -a payload.txt bash`` 中 payload.txt 位于 bash 之前。
+        for raw_value in argv[1:]:
+            value = raw_value.split("=", 1)[1] if "=" in raw_value else raw_value
+            if not value or value.startswith("-"):
+                continue
+            candidate = (workdir / value).resolve(strict=False)
+            try:
+                candidate.relative_to(self.root)
+            except ValueError:
+                continue
+            try:
+                is_file = candidate.is_file()
+            except OSError:
+                is_file = False
+            if is_file:
+                raise ValueError("禁止将 workspace 文件直接交给解释器执行")
+
     @staticmethod
     def _parse_command(command: str) -> list[str]:
         text = (command or "").strip()
@@ -134,6 +190,7 @@ class LocalWorkspaceExecutor:
         timeout: float = 30,
         max_output_chars: int = 12_000,
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
+        on_output: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> ShellResult:
         argv = self._parse_command(command)
         workdir = self._resolve_cwd(cwd)
@@ -155,10 +212,11 @@ class LocalWorkspaceExecutor:
             return ShellResult(False, 127, "", f"找不到命令：{argv[0]}", False, str(workdir.relative_to(self.root) or ".") )
         except PermissionError:
             return ShellResult(False, 126, "", f"没有执行权限：{argv[0]}", False, str(workdir.relative_to(self.root) or ".") )
-        stdout_task = asyncio.create_task(self._read_limited(process.stdout, output_limit))
-        stderr_task = asyncio.create_task(self._read_limited(process.stderr, output_limit))
+        stdout_task = asyncio.create_task(self._read_limited(process.stdout, output_limit, on_output, "stdout"))
+        stderr_task = asyncio.create_task(self._read_limited(process.stderr, output_limit, on_output, "stderr"))
         timed_out = False
         permission_revoked = False
+        cancelled = False
         try:
             wait_task = asyncio.create_task(process.wait())
             auth_task = (
@@ -179,10 +237,13 @@ class LocalWorkspaceExecutor:
             if not wait_task.done():
                 wait_task.cancel()
                 await asyncio.gather(wait_task, return_exceptions=True)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except asyncio.TimeoutError:
             timed_out = True
         finally:
-            if timed_out or permission_revoked:
+            if timed_out or permission_revoked or cancelled:
                 self._terminate_process_group(process.pid)
                 await process.wait()
         stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
@@ -209,7 +270,7 @@ class LocalWorkspaceExecutor:
             await asyncio.sleep(0.25)
 
     @staticmethod
-    async def _read_limited(stream, limit: int) -> tuple[str, bool]:
+    async def _read_limited(stream, limit: int, on_output=None, stream_name: str = "stdout") -> tuple[str, bool]:
         chunks: list[bytes] = []
         size = 0
         truncated = False
@@ -219,8 +280,11 @@ class LocalWorkspaceExecutor:
                 break
             remaining = limit - size
             if remaining > 0:
-                chunks.append(chunk[:remaining])
-                size += min(len(chunk), remaining)
+                accepted = chunk[:remaining]
+                chunks.append(accepted)
+                size += len(accepted)
+                if on_output is not None and accepted:
+                    await on_output(stream_name, accepted.decode("utf-8", errors="replace"))
             if len(chunk) > remaining:
                 truncated = True
         return b"".join(chunks).decode("utf-8", errors="replace"), truncated

@@ -55,7 +55,6 @@ class IMSkill(BaseSkill):
                         "type": "string",
                         "enum": ["agree", "good", "love", "thanks", "laugh",
                                  "wow", "sad", "thinking", "celebrate", "ok", "done"],
-                        "description": "表情情绪",
                     },
                 },
                 "required": ["mood"],

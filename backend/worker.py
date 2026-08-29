@@ -385,6 +385,8 @@ async def serve():
         hb, sched_task, reflection_task, cleanup_task,
         return_exceptions=True,
     )
+    from agent.rag.injection import shutdown_background_recall_tasks
+    await shutdown_background_recall_tasks()
     sched.shutdown()
     await R.reset()
     from agent.rag.ts_sidecar import close_rank_clients
@@ -469,6 +471,12 @@ async def _emergency_shutdown(*, tasks=None) -> None:
             task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
+
+    try:
+        from agent.rag.injection import shutdown_background_recall_tasks
+        await shutdown_background_recall_tasks()
+    except Exception as exc:
+        print(f"[worker] 异常退出释放 RAG 召回任务失败: {type(exc).__name__}: {exc}", flush=True)
 
     try:
         from app.db.session import dispose_engine

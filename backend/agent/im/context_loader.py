@@ -200,16 +200,18 @@ async def load_im_memory(request: AgentRequest) -> dict:
     owner 个人记忆仍由既有 ``load_memory`` 读取；这里永远不读取 owner
     namespace，也不读取 member 不应看到的群长期 memory。
     """
-    if request.source not in ("feishu", "qq", "wechat") or not request.chat_id:
+    if request.source not in ("feishu", "qq", "wechat"):
+        return {}
+    if not request.chat_id and not request.platform_user_id:
         return {}
     bot_id = str(request.platform_bot_id or "")
     if not bot_id:
         return {}
-    group_scope = MemoryScope(
-        request.user_id, request.source, bot_id, "group", str(request.chat_id)
-    )
     result = {}
-    if request.im_group_memory_enabled:
+    if request.chat_id and request.im_group_memory_enabled:
+        group_scope = MemoryScope(
+            request.user_id, request.source, bot_id, "group", str(request.chat_id)
+        )
         group_memory = await preview_scope(group_scope)
         if group_memory is not None:
             result["group"] = group_memory
@@ -221,7 +223,9 @@ async def load_im_memory(request: AgentRequest) -> dict:
 
 async def load_platform_user_memory(request: AgentRequest) -> dict:
     """只读取当前 member 的个人作用域，不触碰共享群 scope。"""
-    if request.source not in ("feishu", "qq", "wechat") or not request.chat_id:
+    if request.source not in ("feishu", "qq", "wechat"):
+        return {}
+    if not request.chat_id and not request.platform_user_id:
         return {}
     role = request.actor_context.role if request.actor_context else request.im_role
     if not request.im_member_memory_enabled or role != "member" or not request.platform_user_id:
@@ -231,7 +235,8 @@ async def load_platform_user_memory(request: AgentRequest) -> dict:
         return {}
     user_scope = MemoryScope(
         request.user_id, request.source, bot_id, "platform-user",
-        member_scope_id(request.chat_id, request.platform_user_id),
+        (member_scope_id(request.chat_id, request.platform_user_id)
+         if request.chat_id else str(request.platform_user_id)),
     )
     memory = await preview_scope(user_scope)
     return memory if isinstance(memory, dict) else {}

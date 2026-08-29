@@ -121,8 +121,8 @@ class ClientsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "客户名称"},
-                    "contact": {"type": "string", "description": "联系人"},
+                    "name": {"type": "string"},
+                    "contact": {"type": "string"},
                     "email": {"type": "string"},
                     "phone": {"type": "string"},
                     "notes": {"type": "string"},
@@ -139,9 +139,9 @@ class ClientsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "client_id": {"type": "integer", "description": "客户 id（可选）"},
-                    "client": {"type": "string", "description": "客户名称（推荐：直接用名字）"},
-                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除客户 id"},
+                    "client_id": {"type": "integer"},
+                    "client": {"type": "string"},
+                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "name": {"type": "string"},
                     "contact": {"type": "string"},
                     "email": {"type": "string"},
@@ -160,11 +160,11 @@ class ClientsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "client_id": {"type": "integer", "description": "客户 id（可选）"},
-                    "client": {"type": "string", "description": "客户名称（推荐：直接用名字）"},
-                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除客户 id"},
-                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
-                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
+                    "client_id": {"type": "integer"},
+                    "client": {"type": "string"},
+                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },

@@ -35,10 +35,11 @@ import logging
 _reflection_log = logging.getLogger("agent.memory.reflection")
 
 
-GROUP_DAILY_COMPACT_AT = 500
-GROUP_DAILY_KEEP_RECENT = 300
-GROUP_DAILY_HARD_CAP = 600
+GROUP_DAILY_COMPACT_AT = 200
+GROUP_DAILY_KEEP_RECENT = 100
+GROUP_DAILY_HARD_CAP = 300
 GROUP_MEMORY_MAX_TOKENS = 15000
+PRIVATE_DAILY_KEEP_RECENT = 50
 _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference", "note"}
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
@@ -76,13 +77,19 @@ def _preserves_group_dates(entries: List[tuple[str, str]], memory: str) -> bool:
 
 
 def _message_text(message) -> str:
+    if message.role == "assistant":
+        return f"[咕咕] {message.content or '（无文字）'}"
     name = message.platform_user_name or "未提供昵称"
     sender = message.platform_user_id or "未知ID"
     return f"[{name}，platform_user_id={sender}] {message.content or '（无文字）'}"
 
 
-def _scope_prompt(scope: MemoryScope) -> str:
-    filename = "group_reflection.md" if scope.scope_type == "group" else "member_reflection.md"
+def _scope_prompt(scope: MemoryScope, *, task_type: str = "group") -> str:
+    filename = "member_reflection.md" if task_type == "member-batch" else (
+        "private_reflection.md" if task_type == "private-owner" else (
+        "group_reflection.md" if scope.scope_type == "group" else "member_reflection.md"
+        )
+    )
     path = Path(__file__).resolve().parents[1] / "prompts" / "im" / filename
     return path.read_text(encoding="utf-8")
 
@@ -105,23 +112,37 @@ async def _messages_for_job(db, job):
             ConversationSession.user_id == job.owner_user_id,
             ConversationSession.source == job.platform,
             ConversationSession.bot_id == job.bot_id,
-            ConversationMessage.role == "user",
-            ConversationMessage.platform_user_id.is_not(None),
             ConversationMessage.id >= (job.from_message_id or 0),
             ConversationMessage.id <= job.to_message_id,
         )
     )
+    if job.task_type == "private-owner":
+        query = query.where(ConversationMessage.role.in_(("user", "assistant")))
+    else:
+        query = query.where(
+            ConversationMessage.role == "user",
+            ConversationMessage.platform_user_id.is_not(None),
+        )
     if job.scope_type == "group":
         query = query.where(ConversationSession.chat_type == "group", ConversationSession.chat_id == job.scope_id)
     else:
         from agent.memory.scopes import split_member_scope_id
         group_id, member_id = split_member_scope_id(job.scope_id)
-        query = query.where(ConversationMessage.platform_user_id == member_id)
+        member_id = member_id or job.scope_id
+        if job.task_type == "private-owner":
+            query = query.where(
+                (ConversationMessage.role == "assistant")
+                | (ConversationMessage.platform_user_id == member_id)
+            )
+        else:
+            query = query.where(ConversationMessage.platform_user_id == member_id)
         if group_id:
             query = query.where(
                 ConversationSession.chat_type == "group",
                 ConversationSession.chat_id == group_id,
             )
+        else:
+            query = query.where(ConversationSession.chat_type != "group")
     return (await db.execute(query.order_by(ConversationMessage.id))).scalars().all()
 
 
@@ -208,7 +229,10 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     ])
                 )).scalars().first()
                 if cursor:
-                    cursor.last_reflected_message_id = job.to_message_id
+                    if job.task_type == "member-batch":
+                        cursor.last_member_reflected_message_id = job.to_message_id
+                    else:
+                        cursor.last_reflected_message_id = job.to_message_id
                 job.status = "completed"
                 job.locked_at = None
                 job.updated_at = now
@@ -223,11 +247,14 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     MemoryReflectionCursor.scope_id == scope.scope_id,
                 )
             )).scalars().first()
-            if cursor and cursor.last_reflected_message_id:
-                job.from_message_id = max(
-                    job.from_message_id or 0,
-                    cursor.last_reflected_message_id + 1,
+            if cursor:
+                reflected_id = (
+                    cursor.last_member_reflected_message_id
+                    if job.task_type == "member-batch"
+                    else cursor.last_reflected_message_id
                 )
+                if reflected_id:
+                    job.from_message_id = max(job.from_message_id or 0, reflected_id + 1)
             messages = await _messages_for_job(db, job)
             if scope.scope_type == "group":
                 # members.json 的 DB 字段独立于下面的 LLM 调用是否成功，见 _merge_members 注释。
@@ -262,12 +289,17 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
                 f"本批新增消息：\n{payload or '（无消息）'}"
             )
+            task_type = job.task_type or "group"
             branch = await ContextBranch().run(
-                BranchInput(stable_system=_scope_prompt(scope), delta=user, scope=scope.scope_type),
+                BranchInput(
+                    stable_system=_scope_prompt(scope, task_type=task_type),
+                    delta=user,
+                    scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
+                ),
                 BranchPolicy(
                     name="reflection",
                     output_mode="json",
-                    max_tokens=2500,
+                    max_tokens=5000 if task_type == "member-batch" else 2500,
                 ),
                 settings,
             )
@@ -276,7 +308,17 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 raise RuntimeError("memory_reflection_provider_error")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")
-            await _apply_output(scope, current, out, messages, settings)
+            if task_type == "member-batch":
+                await _apply_member_batch_output(scope, out, messages)
+            elif task_type == "private-owner":
+                # 私聊复用 owner 的反思 JSON；只有写入目标 scope 的适配不同。
+                await _apply_output(scope, current, {
+                    "profile": out.get("profile_add"),
+                    "pattern": out.get("pattern_add"),
+                    "summary": out.get("summary"),
+                }, messages, settings)
+            else:
+                await _apply_output(scope, current, out, messages, settings)
 
             cursor = (await db.execute(
                 select(MemoryReflectionCursor).where(
@@ -288,7 +330,10 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 )
             )).scalars().first()
             if cursor:
-                cursor.last_reflected_message_id = job.to_message_id
+                if task_type == "member-batch":
+                    cursor.last_member_reflected_message_id = job.to_message_id
+                else:
+                    cursor.last_reflected_message_id = job.to_message_id
                 cursor.updated_at = now
             entry = MemoryEntry(
                 owner_user_id=scope.owner_user_id,
@@ -474,6 +519,77 @@ def _apply_nicknames(members: dict[str, dict], nicknames_add: Any) -> dict[str, 
     return members
 
 
+async def _sync_member_memory(scope: MemoryScope, member_id: str) -> None:
+    """增量同步单个群友长期记忆的向量索引。"""
+    from agent.rag.adapters.memory import MemoryAdapter
+    from agent.rag.scope import member_scope as rag_member_scope
+    from agent.rag.vector_cache import sync_memory_index_vectors
+
+    documents = await MemoryAdapter(scope.owner_user_id).build_documents(
+        scope=rag_member_scope(
+            scope.owner_user_id, scope.platform, scope.bot_id,
+            scope.scope_id, member_id,
+        )
+    )
+    await sync_memory_index_vectors(scope.owner_user_id, documents, prune=False)
+
+
+async def _apply_member_batch_output(
+    group_scope: MemoryScope,
+    output: Dict[str, Any],
+    messages: List[Any],
+) -> None:
+    """把一次完整群聊反思的成员增量分别写入各 platform-user scope。"""
+    updates = output.get("members") if isinstance(output, dict) else None
+    if not isinstance(updates, list):
+        return
+    message_member_ids = {
+        str(message.platform_user_id).strip()
+        for message in messages
+        if message.platform_user_id
+    }
+    members_doc = await read_scope_json(group_scope, "members.json")
+    known_members = members_doc.get("members") if isinstance(members_doc, dict) else {}
+    if isinstance(known_members, dict) and known_members:
+        message_member_ids &= {str(value).strip() for value in known_members}
+    seen_member_ids: set[str] = set()
+    for item in updates:
+        if not isinstance(item, dict):
+            continue
+        member_id = str(item.get("platform_user_id") or "").strip()
+        if not member_id or member_id not in message_member_ids or member_id in seen_member_ids:
+            continue
+        seen_member_ids.add(member_id)
+        member_scope = MemoryScope(
+            group_scope.owner_user_id, group_scope.platform, group_scope.bot_id,
+            "platform-user", f"{group_scope.scope_id}:{member_id}",
+        )
+        try:
+            current = await read_scope(member_scope)
+            profile = _merge_profile(current.get("profile"), item.get("profile"))
+            pattern = _merge_pattern(current.get("pattern"), item.get("pattern"))
+            summary = str(item.get("summary") or "").strip()
+            memory = str(item.get("memory") or "").strip()
+            if profile:
+                await write_scope_json(member_scope, "profile.json", profile)
+            if pattern:
+                await write_scope_json(member_scope, "pattern.json", pattern)
+            if summary:
+                await write_scope_json(member_scope, "summary.json", {
+                    "text": summary[:120], "ts": now_utc().timestamp(),
+                })
+            if memory:
+                await merge_scope_event_memory(
+                    member_scope, memory, fallback_title=f"{group_scope.scope_id} 成员事件",
+                )
+            if profile or pattern or summary or memory:
+                await _sync_member_memory(member_scope, member_id)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.memory.member_batch_write", exc)
+
+
 async def _apply_output(
     scope: MemoryScope,
     current: Dict[str, Any],
@@ -514,8 +630,6 @@ async def _apply_output(
                     entries,
                     current.get("memory") or "",
                     settings,
-                    member_ids={str(message.platform_user_id).strip() for message in messages
-                                if message.platform_user_id},
                 )
             except Exception as exc:
                 # 压缩失败不能让本轮反思重跑，避免 daily 重复追加。
@@ -533,6 +647,14 @@ async def _apply_output(
         await write_scope_json(scope, "pattern.json", pattern)
     if summary:
         await write_scope_json(scope, "summary.json", {"text": summary, "ts": now_utc().timestamp()})
+    daily = str(output.get("daily") or "").strip()
+    if daily:
+        date = (messages[-1].created_at.date().isoformat()
+                if messages and messages[-1].created_at
+                else now_utc().date().isoformat())
+        entries = _daily_entries(current.get("daily") or "")
+        entries.insert(0, (date, daily))
+        await write_scope_file(scope, "daily.md", _render_daily(entries[:PRIVATE_DAILY_KEEP_RECENT]))
 
 
 def _merge_group_profile(current: Any, additions: Any, removals: Any) -> list[dict]:
@@ -617,10 +739,8 @@ async def _compact_group_daily(
     entries: List[Any],
     current_memory: str,
     settings,
-    *,
-    member_ids: set[str] | None = None,
 ) -> None:
-    """一次调用压缩群 daily，并派生成员事件记忆；成员失败不影响群主档。"""
+    """一次调用压缩群 daily，只维护群主档。"""
     recent, batch, remaining = split_batch(
         entries, keep_recent=GROUP_DAILY_KEEP_RECENT,
     )
@@ -650,49 +770,3 @@ async def _compact_group_daily(
         return
     await write_scope_file(scope, "memory.md", memory + "\n")
     await write_scope_file(scope, "daily.md", _render_daily(merge_remaining(recent, remaining)))
-
-    # 成员事件是群压缩的派生结果：只接受本批消息里出现过的 ID，避免模型凭空
-    # 生成成员或把群外信息写入 platform-user scope。每个成员独立失败隔离。
-    additions = result.get("member_memory_add") if isinstance(result, dict) else []
-    allowed_ids = member_ids or set()
-    members_doc = await read_scope_json(scope, "members.json")
-    known_member_ids = members_doc.get("members") if isinstance(members_doc, dict) else {}
-    if isinstance(known_member_ids, dict) and known_member_ids:
-        allowed_ids &= {str(value).strip() for value in known_member_ids}
-    seen_member_ids: set[str] = set()
-    for item in additions if isinstance(additions, list) else []:
-        if not isinstance(item, dict):
-            continue
-        member_id = str(item.get("platform_user_id") or "").strip()
-        text = str(item.get("text") or "").strip()
-        if (not member_id or not text or member_id not in allowed_ids
-                or member_id in seen_member_ids):
-            continue
-        seen_member_ids.add(member_id)
-        member_scope = MemoryScope(
-            scope.owner_user_id, scope.platform, scope.bot_id,
-            "platform-user", f"{scope.scope_id}:{member_id}",
-        )
-        try:
-            await merge_scope_event_memory(
-                member_scope,
-                text,
-                fallback_title=f"{scope.scope_id} 成员事件",
-            )
-            # platform-user 当前走 transient RAG；这里仅增量补向量，不做全局 GC，
-            # 防止一次成员写入删掉其他群/owner 的 RAG 向量缓存。
-            from agent.rag.adapters.memory import MemoryAdapter
-            from agent.rag.scope import member_scope as rag_member_scope
-            from agent.rag.vector_cache import sync_memory_index_vectors
-
-            documents = await MemoryAdapter(scope.owner_user_id).build_documents(
-                scope=rag_member_scope(
-                    scope.owner_user_id, scope.platform, scope.bot_id,
-                    scope.scope_id, member_id,
-                )
-            )
-            await sync_memory_index_vectors(scope.owner_user_id, documents, prune=False)
-        except Exception as exc:
-            from app.core.redaction import diag_log
-
-            diag_log("agent.memory.member_event_write", exc)

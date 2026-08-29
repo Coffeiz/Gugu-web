@@ -143,6 +143,7 @@ export const byokApi = {
   update: (id: number, data: any) => patch(`/byok/${id}`, data),
   remove: (id: number) => del(`/byok/${id}`),
   test: (id: number) => post<{ ok: boolean; status: string; message: string }>(`/byok/${id}/test`, {}),
+  testPreview: (data: any) => post<{ ok: boolean; status: string; message: string }>('/byok/test-preview', data),
   modelsPreview: (data: any) => post<{ models: string[] }>('/byok/models-preview', data),
   visionProbe: (data: any) => post<{ dim: string; supported: boolean | null; status: number; detail: string }>('/byok/vision-probe', data),
 }
@@ -467,6 +468,7 @@ export const clientsApi = {
 export const preferencesApi = {
   get:    ()                                  => get<Schemas['PreferencesResponse']>('/preferences'),
   update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
+  uploadPersonality: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/personality/upload', form) },
 }
 
 export const workspacesApi = {
@@ -553,7 +555,8 @@ export const terminalsApi = {
     network?: 'none' | 'egress'
     confirm?: boolean
     confirmToken?: string
-  }) => post<{ terminal: TerminalItem; result: Record<string, unknown> }>(`/terminals/${encodeURIComponent(id)}/input`, data),
+  }) => post<{ terminal: TerminalItem; requestId: string; event: TerminalEventItem }>(`/terminals/${encodeURIComponent(id)}/input`, data),
+  cancel: (id: string, requestId: string) => post<{ cancelled: boolean; requestId?: string }>(`/terminals/${encodeURIComponent(id)}/cancel/${encodeURIComponent(requestId)}`, {}),
   terminate: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/terminate`, {}),
   reopen: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reopen`, {}),
   reset: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reset`, {}),

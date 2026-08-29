@@ -168,7 +168,7 @@ class MetaSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "arguments": {"type": "object", "description": "目标工具参数；保留数组、布尔值和数字的 JSON 原生类型"},
+                    "arguments": {"type": "object"},
                 },
                 "required": ["name", "arguments"],
                 "additionalProperties": False,
@@ -199,13 +199,13 @@ class MetaSkill(BaseSkill):
         Tool(
             name="use_skill",
             label="调用技能",
-            description_short='读取技能正文；拿到后按步骤执行',
+            description_short='读取技能正文；name 传技能标识或名字，拿到后按步骤执行',
             description="按名称拉取一个「技能」的详细做法说明（剧本），拿到后照它执行。"
                         "可用技能清单见系统提示里的「可用技能」。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "技能标识或名字，如 weather / 天气查询"},
+                    "name": {"type": "string"},
                 },
                 "required": ["name"],
             },

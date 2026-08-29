@@ -196,4 +196,11 @@ async def load_style_prefs(db, user_id) -> dict:
     if prefs is None:
         return {}
     data = prefs.data
-    return {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}
+    from app.services.personality_preferences import read_personality_file, preference_revision
+    result = {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}
+    personality = read_personality_file(user_id) if data.get("personality_preference_enabled", False) else None
+    if personality:
+        result["personality_preference"] = personality
+    result["personality_preference_enabled"] = bool(personality and data.get("personality_preference_enabled", False))
+    result["personality_preference_revision"] = preference_revision(data)
+    return result

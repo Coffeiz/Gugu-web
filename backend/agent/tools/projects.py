@@ -491,11 +491,9 @@ class ProjectsSkill(BaseSkill):
                     "status": {
                         "type": "string",
                         "enum": ["pending", "active", "done"],
-                        "description": "按状态筛选（不传则返回全部）",
                     },
                     "archived": {
                         "type": "boolean",
-                        "description": "true=只看已归档项目；默认 false=只看未归档（跟网页看板一致）",
                     },
                 },
             },
@@ -504,19 +502,19 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_project",
             label="更新项目",
-            description_short="修改项目；关键字段 project_id/project",
+            description_short="修改项目；关键字段 project_id/project；priority=high/medium/low/none，none 清除优先级",
             description="修改项目的状态、截止日期、开始日期、客户名称、优先级。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
-                    "deadline":   {"type": "string", "description": "截止日期 YYYY-MM-DD"},
-                    "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
-                    "client":     {"type": "string", "description": "客户名称"},
-                    "name":       {"type": "string", "description": "项目名称"},
-                    "priority":   {"type": "string", "enum": ["high", "medium", "low", "none"], "description": "优先级；传空或 none 清除"},
+                    "deadline":   {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+                    "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+                    "client":     {"type": "string"},
+                    "name":       {"type": "string"},
+                    "priority":   {"type": "string", "enum": ["high", "medium", "low", "none"]},
                 },
                 "required": [],
             },
@@ -531,16 +529,15 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name":       {"type": "string", "description": "项目名称"},
+                    "name":       {"type": "string"},
                     "client":     {"type": "string"},
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
-                    "deadline":   {"type": "string", "description": "截止日期 YYYY-MM-DD"},
-                    "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
-                    "color":      {"type": "string", "enum": list(PROJECT_COLOR_PRESETS), "description": "预设色板中的渐变色字符串；不传则随机从预设中选"},
-                    "priority":   {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级；不传则不设"},
+                    "deadline":   {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+                    "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+                    "color":      {"type": "string", "enum": list(PROJECT_COLOR_PRESETS)},
+                    "priority":   {"type": "string", "enum": ["high", "medium", "low"]},
                     "stages": {
                         "type": "array",
-                        "description": "自定义阶段列表；可传名称，或传带 todos 的阶段对象。",
                         "items": {
                             "type": ["string", "object"],
                             "properties": {
@@ -558,21 +555,20 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_stage",
             label="更新阶段",
-            description_short='切换阶段或待办；关键字段 project/stage/todo',
+            description_short='切换阶段或待办；关键字段 project/stage/todo，done 省略时默认完成',
             description="切换项目当前阶段，或勾选/取消某个阶段下的待办事项。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
-                    "stage": {"type": "string", "description": "目标阶段的名称或 key（切换当前阶段用）"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "stage": {"type": "string"},
                     "todo": {
                         "type": "object",
-                        "description": "勾选/取消某条待办",
                         "properties": {
-                            "stage": {"type": "string", "description": "待办所在阶段名称或 key"},
-                            "text": {"type": "string", "description": "待办文本（支持部分匹配）"},
-                            "done": {"type": "boolean", "description": "true=完成，false=取消，默认 true"},
+                            "stage": {"type": "string"},
+                            "text": {"type": "string"},
+                            "done": {"type": "boolean"},
                         },
                         "required": ["text"],
                     },
@@ -589,9 +585,9 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "color": {"type": "string", "enum": list(PROJECT_COLOR_PRESETS), "description": "预设色板中的渐变色字符串"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "color": {"type": "string", "enum": list(PROJECT_COLOR_PRESETS)},
                 },
                 "required": ["color"],
             },
@@ -601,14 +597,14 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="archive_project",
             label="归档项目",
-            description_short='归档项目；关键字段 project_id/project',
+            description_short='归档项目；关键字段 project_id/project，archived=true 归档、false 取消归档，省略默认 true',
             description="归档或取消归档项目（可逆，不会删除数据）。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
-                    "archived": {"type": "boolean", "description": "true=归档，false=取消归档，默认 true"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "archived": {"type": "boolean"},
                 },
                 "required": [],
             },
@@ -623,11 +619,11 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
-                    "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20, "description": "批量删除项目 id"},
-                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
-                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },
@@ -642,8 +638,8 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
                 },
                 "required": [],
             },
@@ -656,10 +652,10 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "label": {"type": "string", "description": "阶段名称"},
-                    "position": {"type": "integer", "description": "插入位置(0起)，不传则追加末尾"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "label": {"type": "string"},
+                    "position": {"type": "integer", "minimum": 0},
                 },
                 "required": ["label"],
             },
@@ -673,9 +669,9 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "stage": {"type": "string", "description": "阶段名称或 key"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "stage": {"type": "string"},
                 },
                 "required": ["stage"],
             },
@@ -689,9 +685,9 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "stage": {"type": "string", "description": "原阶段名称或 key"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "stage": {"type": "string"},
                     "new_label": {"type": "string"},
                 },
                 "required": ["stage", "new_label"],
@@ -706,10 +702,10 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "stage": {"type": "string", "description": "阶段名称或 key"},
-                    "texts": {"type": "array", "items": {"type": "string"}, "description": "待办内容列表"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "stage": {"type": "string"},
+                    "texts": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["stage", "texts"],
             },
@@ -723,10 +719,10 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "stage": {"type": "string", "description": "阶段名称或 key"},
-                    "todo": {"type": "string", "description": "待办文本（支持部分匹配）或 id"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "stage": {"type": "string"},
+                    "todo": {"type": "string"},
                 },
                 "required": ["stage", "todo"],
             },
@@ -740,11 +736,10 @@ class ProjectsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
                     "stages": {
                         "type": "array",
-                        "description": "完整阶段列表，按顺序传名称或带 todos 的阶段对象。",
                         "items": {
                             "type": ["string", "object"],
                             "properties": {
@@ -761,19 +756,19 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="update_todo", label="修改待办",
-            description_short='修改待办；action=complete(done)/rename(text)/move(to_stage)；定位 project/todo',
+            description_short='修改待办；action 必填：complete 配 done，rename 配 text，move 配 to_stage；定位 project/todo',
             description="改一条待办的文本或完成状态，并可选移动到另一个阶段（to_stage）。按文本（部分匹配）或 id 定位，可用 stage 限定查找范围。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "integer", "description": "项目 ID（可选）"},
-                    "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
-                    "todo": {"type": "string", "description": "要改的待办：文本（部分匹配）或 id"},
-                    "stage": {"type": "string", "description": "待办所在阶段（可选，缩小查找范围）"},
-                    "text": {"type": "string", "description": "新文本（可选）"},
-                    "done": {"type": "boolean", "description": "完成态（可选）"},
-                    "to_stage": {"type": "string", "description": "移动到的目标阶段名称或 key（可选）"},
-                    "action": {"type": "string", "enum": ["complete", "rename", "move"], "description": "complete=完成/取消完成；rename=修改文本；move=移动阶段"},
+                    "project_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                    "todo": {"type": "string"},
+                    "stage": {"type": "string"},
+                    "text": {"type": "string"},
+                    "done": {"type": "boolean"},
+                    "to_stage": {"type": "string"},
+                    "action": {"type": "string", "enum": ["complete", "rename", "move"]},
                 },
                 "required": ["todo"],
                 "anyOf": [

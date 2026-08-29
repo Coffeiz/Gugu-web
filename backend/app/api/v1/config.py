@@ -69,6 +69,10 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
             user_ids = (await db.execute(select(User.id))).scalars().all()
             for user_id in user_ids:
                 await events.publish(user_id, "terminals", operation="refresh")
+        if isinstance(agent_patch, dict) and "personality_preference_enabled" in agent_patch:
+            from app.services.personality_preferences import invalidate_personality_snapshots
+            await invalidate_personality_snapshots(db)
+            await db.commit()
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
     except Exception as e:
         print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
@@ -738,7 +742,7 @@ async def test_search(body: SearchTestRequest):
             return {"ok": False, "message": "未配置百度千帆 API Key"}
         # 只发一个固定的 1x1 PNG 作为连通性测试，不读取用户输入，也不把图片内容写入日志。
         probe_png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAlklEQVR4nO3QMQ0AMAzAsPLHWC4rDB/L4T/K7O772egArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0A6OSM1jeqEVYAAAAAElFTkSuQmCC"
         )
         try:
             from agent.tools.search import _call_baidu_similar_image

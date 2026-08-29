@@ -53,7 +53,7 @@ class OverviewSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "days": {"type": "integer", "description": "未来天数，默认 7"},
+                    "days": {"type": "integer", "minimum": 1, "maximum": 366},
                 },
             },
             handler=_get_upcoming,

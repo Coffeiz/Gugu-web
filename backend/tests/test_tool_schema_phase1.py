@@ -3,6 +3,7 @@
 import pytest
 
 from agent.tools import registry
+from agent.tools.base import _compact_schema
 from agent.tools.tool_contract import build_validator, normalize_legacy_input, validate_input
 
 
@@ -73,6 +74,87 @@ def test_phase3_project_requires_explicit_date_range():
         "deadline": "2026-09-05",
     }) == []
     assert _issues("create_project", {"name": "项目"})
+
+
+def test_phase8_migrated_tools_are_source_canonical_schema():
+    for name in (
+        "create_project", "create_event", "update_event", "save_uploaded_file", "note_create",
+        "list_events", "list_projects", "list_event_reminders", "remove_event_reminder",
+        "list_folders", "add_todo", "remove_todo", "set_stages", "read_file",
+        "note_get", "note_update", "note_delete", "note_restore",
+        "get_project", "read_conversation", "bind_web_session",
+        "add_stage", "get_workspace", "get_upcoming", "create_client",
+        "global_search", "canvas_search", "canvas_search_placeable",
+        "copy_file", "delete_file", "send_file",
+        "update_workspace",
+        "update_client", "create_workspace", "react",
+        "canvas_create_note", "canvas_update_note", "canvas_batch",
+        "create_document",
+        "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "remember",
+        "image_search", "inspect_images", "move_items", "archive_project", "use_skill", "call_tool",
+    ):
+        tool = registry.get(name)
+        assert tool.input_schema == _compact_schema(tool.input_schema), name
+
+
+def test_phase8_compactor_keeps_reserved_parameter_names():
+    schema = {"type": "object", "properties": {
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+    }}
+    assert _compact_schema(schema) == schema
+
+
+def test_phase8_date_and_time_constraints_are_structural():
+    assert _issues("create_project", {
+        "name": "项目", "start_date": "2026-08-29", "deadline": "2026-09-05",
+    }) == []
+    assert _issues("create_project", {
+        "name": "项目", "start_date": "2026/08/29", "deadline": "2026-09-05",
+    })
+    assert _issues("create_event", {
+        "title": "评审", "date": "2026-09-03", "all_day": False, "time": "14:30",
+    }) == []
+    assert _issues("create_event", {
+        "title": "评审", "date": "2026-09-03", "all_day": False, "time": "2:30 PM",
+    })
+
+
+def test_phase8_workspace_binding_is_structural():
+    assert _issues("create_workspace", {
+        "name": "项目工作区", "kind": "project", "project_id": 1,
+    }) == []
+    assert _issues("create_workspace", {
+        "name": "文件夹工作区", "kind": "folder", "folder_id": 2,
+    }) == []
+    assert _issues("create_workspace", {
+        "name": "错误工作区", "kind": "project", "folder_id": 2,
+    })
+    assert _issues("create_workspace", {
+        "name": "错误工作区", "kind": "folder", "project_id": 1,
+    })
+
+
+def test_phase8_document_project_location_is_structural():
+    base = {"name": "说明", "format": "md", "content": "正文"}
+    assert _issues("create_document", base) == []
+    assert _issues("create_document", {**base, "space": "project"})
+    assert _issues("create_document", {**base, "space": "project", "project_id": 1}) == []
+
+
+def test_phase8_edit_modes_are_structural():
+    assert _issues("edit_file", {
+        "file_id": 1, "mode": "replace_all", "content": "新内容",
+    }) == []
+    assert _issues("edit_file", {
+        "file_id": 1, "mode": "append", "content": "追加内容",
+    }) == []
+    assert _issues("edit_file", {
+        "file_id": 1, "mode": "find_replace", "find": "旧", "replace": "新",
+    }) == []
+    assert _issues("edit_file", {"file_id": 1, "mode": "replace_all"})
+    assert _issues("edit_file", {"file_id": 1, "mode": "append", "find": "旧", "replace": "新"})
+    assert _issues("edit_file", {"file_id": 1, "mode": "find_replace", "content": "新内容"})
 
 
 def test_phase3_legacy_event_adapter_is_explicit_and_value_preserving():

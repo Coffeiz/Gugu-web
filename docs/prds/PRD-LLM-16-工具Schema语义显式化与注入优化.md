@@ -1,10 +1,10 @@
 # PRD-LLM-16：工具 Schema 语义显式化与注入优化
 
-> 状态：Phase 0-5 已完成，Phase 6 A/B 已完成，真实业务灰度待完成
+> 状态：已完成（Phase 0-8）
 > 创建：2026-08-29
-> 最近更新：2026-08-29
+> 最近更新：2026-08-29（Phase 0-8 完成）
 > 关联模块：`backend/agent/tools/`、`backend/agent/capabilities/injector.py`、`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/tests/`
-> 背景参考：工具 Schema 轻量注入与完整 Schema A/B 测试；当前默认使用轻量能力目录，完整工具定义作为用户可切换模式。
+> 背景参考：工具 Schema 轻量注入与完整 Schema A/B 测试；生产环境只保留简介模式与全量模式。
 
 ## 0. 实施状态
 
@@ -16,7 +16,9 @@
 | Phase 3：注入器与错误恢复 | ✅ 已完成 | 保持轻量注入，按需获取当前完整 Schema |
 | Phase 4：测试与灰度 | ✅ 已完成 | 已完成契约回归和错误 trace 验证；A/B 灰度进入 Phase 5 |
 | Phase 5：description 优化 | ✅ 已完成 | 完成全量审计和第一批高成本工具压缩，保留不可结构化语义 |
-| Phase 6：A/B 与真实业务灰度 | 🔄 进行中 | 已完成当前全量与精简全量的 20-case A/B；真实业务灰度和默认模式决策待完成 |
+| Phase 6：A/B 与真实业务灰度 | ✅ 已完成 | 已完成连续会话 A/B；生产模式收敛为简介模式与全量模式 |
+| Phase 7：工具编写规范与文档收尾 | ✅ 已完成 | 已完成工具 README、职责边界、可选字段和格式约束规范 |
+| Phase 8：全量工具 Schema 源码规范化 | ✅ 已完成 | 101 个注册工具已完成源码规范化、运行时直出和 devserver 注册/注入/按需获取/dispatch 回归；README 与报告已同步 |
 
 ## 1. 背景与目标
 
@@ -52,8 +54,8 @@
 ### 1.2 目标
 
 1. 让影响业务结果的状态使用显式字段或互斥结构表达，不依赖隐含的省略语义。
-2. 保持默认轻量注入，避免恢复近 30,000 token 的全量 Schema 成本。
-3. 保留完整 Schema 模式作为准确性优先的可切换方案。
+2. 保持简介模式的低 token 成本，并提供全量模式满足准确性优先场景。
+3. 不在生产环境保留独立的旧版全量 Schema 定义；当前源码规范 Schema 可通过全量模式注入，也用于按需获取、校验和测试基准。
 4. 让 Schema、handler、服务层和历史兼容策略拥有同一份契约。
 5. 通过结构化错误 trace 记录“模型调用了什么工具、违反了哪条 Schema”，而不记录用户正文、附件名或凭据。
 
@@ -62,7 +64,7 @@
 - 不把所有默认值都改成必填字段。
 - 不把工具业务权限、scope 或确认要求写进动态提示词。
 - 不为了追求 Schema 严格而破坏已有合法调用；兼容策略必须有明确的迁移边界。
-- 不恢复全量工具 Schema 作为默认注入方式。
+- 不恢复未规范化的原始 Schema；当前源码规范化后的 Schema 由简介模式和全量模式共同使用。
 
 ## 2. 设计原则
 
@@ -77,12 +79,33 @@
 
 仅影响便利性的稳定默认值，例如 `limit=5`、`mode=OR`、`space=personal`，继续保留可选，不为每个默认值增加一个开关。
 
+可选字段必须满足以下至少一项：
+
+- 不传本身代表一个真实且有意义的业务状态，例如 `end_time` 不传表示没有结束时间；
+- 用户是否提供该值会改变工具行为，且无法由固定默认值安全替代；
+- 属于低风险的便利参数，例如分页数量或排序方式。
+
+不要为了兼容历史调用、承载空操作、重复表达默认值，或因为 handler 暂时支持省略，就保留没有独立语义的可选字段。需要区分“未修改”和“清空”时，使用 `null`、显式布尔值或 action 枚举，不用省略和空字符串猜测。
+
 ### 2.2 Schema 是机器契约，description 是解释
+
+生产默认使用简介模式（`description`）；全量模式（`full`）保留为用户可选的准确性优先模式。
 
 - 类型、枚举、`required`、`oneOf`、`if/then`、`null` 和边界约束表达可校验事实。
 - description 只补充短语义和操作边界，不承担唯一的业务分支定义。
 - 轻量目录只注入字段名、类型、必填状态和一层结构，不注入完整 JSON 或长字段说明。
-- 完整模式才向 provider 发送当前工具的完整 `input_schema`，用于准确性优先场景。
+- 全量模式向 provider 发送当前工具源码中的规范 `input_schema`，用于准确性优先场景；不再维护独立的 compact/full 两套 Schema 定义。
+
+### 2.2A 工具源码即线上 Schema
+
+完成迁移后，工具作者维护的 `input_schema` 就是 provider、`get_tool_schema` 和执行校验共同使用的规范 Schema，不再依赖运行时复制一份“精简版”。
+
+- 工具 Schema 默认只保留可执行结构和机器约束：字段名、类型、必填、枚举、条件分支、互斥关系和边界值。
+- 字段级 `description`、`title`、`default`、`example/examples` 默认不写；确实无法结构化表达的格式或语义，才允许保留一句短说明。
+- 工具用途写在 `description_short`；复杂动作和字段关系必须同时由 Schema 结构表达，不能只写在自然语言里。
+- 注册期 lint 负责拒绝冗余元数据和不合法结构；它是规范校验，不负责替换或改写 Schema。
+- `_compact_schema` 仅作为迁移期审计辅助，不是注入模式，也不参与 provider 输出；禁止新代码依赖运行时 Schema 转换。
+- 字段格式优先用 `pattern` 和结构约束表达，必要时补充一条极短格式说明；`format` 不作为唯一约束。例如 `HH:MM` 使用 `pattern` 严格限制为 `00:00`-`23:59`，可配 `description: "24小时制 HH:MM"` 帮助模型填写。全天状态用必填 `all_day`，不再用“省略 `time` 表示全天”作为新契约。
 
 ### 2.3 更新工具区分“未修改”和“清空”
 
@@ -122,7 +145,7 @@
 }
 ```
 
-完整模式使用 `enum` 加 `oneOf`/`if/then` 表达完整约束；轻量模式至少注入 `action` 的可选值和对应字段签名。若 provider 对条件 Schema 支持不足，由服务端按 `action` 做同一份条件校验，不能退回到多个可选字段互相猜优先级。
+全量模式使用 `enum` 加 `oneOf`/`if/then` 表达完整约束；简介模式至少注入 `action` 的可选值和对应字段签名。若 provider 对条件 Schema 支持不足，由服务端按 `action` 做同一份条件校验，不能退回到多个可选字段互相猜优先级。
 
 `action` 只适用于同一资源的紧密动作集合。不得把项目、阶段、待办、删除和权限确认全部合并为一个超级工具；权限、确认门和 handler 仍按资源边界独立负责。
 
@@ -191,10 +214,10 @@
 
 保留现有用户级开关，并明确产品语义：
 
-- **能力目录（轻量）**：注入工具用途、字段名、类型、必填状态和有限结构信息；节省 token，但复杂参数需要先获取 Schema。
-- **完整工具定义（高准确）**：向 provider 注入完整工具 Schema 和字段描述；参数识别更准确，但消耗更多 token。
-- 默认使用轻量模式。
-- 轻量模式下调用未声明或参数不通过的工具，返回结构化 `tool_schema_required`/校验错误，并回注当前 Schema，不能让模型凭记忆反复重试。
+- **简介模式（默认、低成本）**：注入工具用途、字段名、类型、必填状态和有限路由信息；节省 token，但复杂参数需要先获取 Schema。
+- **全量模式（可选、高准确）**：向 provider 注入工具源码中的规范 Schema；参数识别更准确，但消耗更多 token。
+- 两种模式共享当前源码规范 Schema；简介模式按需获取，全量模式直接注入，用于准确性优先场景。
+- 简介模式下调用未声明或参数不通过的工具，返回结构化 `tool_schema_required`/校验错误，并回注当前 Schema，不能让模型凭记忆反复重试。
 - 模式切换只影响工具描述注入，不改变工具权限、确认门和 handler 行为。
 
 ### FR-SCHEMA-6：记录 Schema 错误 trace
@@ -256,12 +279,12 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 - Schema 结构测试：必填、条件必填、互斥、`null` 清空和额外字段。
 - handler 契约测试：显式状态到 service 参数的转换。
 - 兼容测试：旧历史读取、旧结果展示和新调用拒绝行为。
-- 注入测试：轻量模式 token 长度、字段签名稳定性、完整模式 Schema 完整性。
+- 注入测试：简介模式 token 长度、字段签名稳定性、全量模式 Schema 完整性。
 - LoopScope trace 测试：记录结构摘要，不泄露正文和参数值。
 
 ### 5.2 A/B 指标
 
-对同一批脱敏场景分别测试轻量模式和完整工具定义，至少记录：
+对同一批脱敏场景分别测试简介模式和全量模式，至少记录：
 
 - 每轮输入 token、缓存 token、新鲜 token；
 - 单 run 总 token 和平均 token；
@@ -270,7 +293,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 - 目标工具最终成功率、重复调用率和总耗时；
 - 不同 provider 的差异。
 
-轻量模式只有在错误率没有明显恶化、且 token 优势稳定时继续作为默认。完整模式作为准确性优先的手动开关保留。
+简介模式用于低成本路由；全量模式作为准确性优先的全量注入模式。旧版配置值只做读取兼容，不再出现在 API 或前端选项中。
 
 ### 5.3 灰度与回滚
 
@@ -294,7 +317,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 
 - [x] `create_event.all_day` 第一批直接设为必填；旧调用通过版本适配兼容。
 - [x] `create_project` 必须填写开始日期和结束日期，不新增无日期模式。
-- [ ] provider 对 `if/then`、`oneOf` 和 `additionalProperties` 的实际支持矩阵，需用各真实预设做 wire-level 回归。
+- [x] provider 对 `if/then`、`oneOf` 和 `additionalProperties` 的实际支持矩阵已使用真实预设完成 wire-level 回归；复杂约束同时保留服务端校验。
 - [x] `update_todo` 采用 action 表达互斥修改动作；保留旧字段的版本适配由 Phase 3 处理。
 
 ## 7. 实施 TODO
@@ -333,7 +356,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 ### Phase 4：错误 trace 与恢复
 
 - [x] 在 LoopScope run 中记录脱敏 Schema 错误 trace，保留 Schema/provider Schema、digest、字段形状和错误类别。
-- [x] 轻量模式错误时只回注当前工具 Schema，并通过回归测试确认不会重复扩大注入。
+- [x] 简介模式错误时只回注当前工具 Schema，并通过回归测试确认不会重复扩大注入。
 - [x] 在 LoopScope run 诊断数据中提供按工具、字段路径、错误类别和 provider 的聚合统计，供 Admin/报告读取。
 
 ### Phase 5：description 优化
@@ -350,24 +373,41 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 - [x] 使用固定脱敏 case 对当前完整 Schema 和精简后的完整 Schema 进行 20 轮 shadow A/B。
 - [x] 对比每轮 token、总 token、错误率、恢复轮数、成功率和耗时，并保留原始 JSON 结果。
 - [x] 完成初步根因分类；单独区分工具路由/调用轨迹与 Schema 校验错误，避免把合理辅助调用计入 Schema 错误率。
-- [ ] 使用 devserver 测试账号完成只读、创建、更新和副作用工具的真实业务回归。
-- [ ] 根据结果决定默认模式，保留可回滚开关并更新报告。
+- [x] 使用 devserver 测试账号完成只读、创建、更新和副作用工具的业务回归；副作用操作遵循确认门并在测试中拦截真实写入。
+- [x] 根据结果收敛为简介模式与全量模式；旧版 compact/full 命名仅保留为历史报告或存量配置兼容，不进入新 API。
 
 ### Phase 7：工具编写规范与文档收尾
 
-- [ ] 更新 `backend/agent/tools/README.md`，明确工具命名、资源边界、`action` 设计、条件必填、互斥输入、默认值、错误回执和脱敏要求。
-- [ ] 将 Schema、handler、service、权限/确认门和测试的职责边界写成新增工具的检查清单。
-- [ ] 补充一个完整工具和一个 action 工具的正例、缺字段反例、互斥字段反例及 provider 兼容注意事项。
-- [ ] 更新 PRD 的实施状态、变更记录和相关开发 README，确保 README 的工具规范成为后续新增工具的入口。
+- [x] 更新 `backend/agent/tools/README.md`，明确工具命名、资源边界、`action` 设计、条件必填、互斥输入、默认值、错误回执和脱敏要求。
+- [x] 将 Schema、handler、service、权限/确认门和测试的职责边界写成新增工具的检查清单。
+- [x] 补充一个完整工具和一个 action 工具的正例、缺字段反例、互斥字段反例及 provider 兼容注意事项。
+- [x] 更新 PRD 的实施状态、变更记录和相关开发 README，确保 README 的工具规范成为后续新增工具的入口。
+
+### Phase 8：全量工具 Schema 源码规范化
+
+目标：将全部注册工具迁移为“源码即线上 Schema”。迁移完成后，工具定义中的 `input_schema` 必须与当前精简算法的输出一致；provider、`get_tool_schema`、执行校验和测试基准使用同一份结构，不再依赖运行时二次精简。
+
+- [x] 盘点全部注册工具，记录字段级 `description`、`title`、`default`、`example/examples` 等冗余元数据及其实际语义；新增 `backend/scripts/audit_tool_schemas.py` 作为盘点入口，迁移前发现 394 个字段级 `description`，当前无冗余字段说明，必要安全语义已移到工具级短描述。
+- [x] 按精简算法迁移所有工具定义：保留字段名、类型、必填、枚举、条件分支、互斥关系、嵌套结构和边界约束；删除可由结构表达或不影响调用的元数据。
+- [x] 将无法由 Schema 可靠表达的关键语义改成显式字段、枚举或 action；仅保留必要的短字段说明，并同步更新 `description_short`。已覆盖全天、来源/目标互斥、文件编辑 mode、项目待办 action、删除确认和 shell scope/network。
+- [x] 逐项审查可选字段：保留项仅属于独立业务状态、会改变工具行为、不能安全默认或低风险分页/筛选便利参数；兼容别名和重复默认说明已移出 Schema，确认门与跨项目定位保留为必要语义。
+- [x] 将日期、时间和其他格式约束写入 `pattern` 或结构条件，必要时配极短说明；日期使用 `YYYY-MM-DD` pattern，时间使用严格 24 小时制 pattern，全天使用显式 `all_day`，文件/空间/动作使用条件 Schema。
+- [x] 增加一致性测试，验证每个注册工具的源码 `input_schema` 与规范化结果完全一致，且 `to_openai()`/`to_anthropic()` 不再改变 Schema 内容；当前 101 个工具 `noncanonical=0`。
+- [x] 为迁移后的工具补齐合法正例、缺字段反例、互斥字段反例、嵌套数组/对象反例和历史兼容测试；覆盖 `test_tool_schema_phase1.py`、`test_tool_schema_validation.py` 及 legacy input 兼容断言。
+- [x] 使用 devserver 对全部工具执行 Schema 注册、能力注入、按需获取和 dispatch 回归；确认工具数量、Schema digest 和错误 trace 无异常变化。
+- [x] 将 `_compact_schema` 降级为迁移期 lint；provider 输出直接复制源码 Schema，不再依赖运行时 Schema 转换，禁止新增工具依赖运行时 Schema 转换。
+- [x] 更新工具编写 README、报告和变更记录，记录迁移前后 Schema 字符数、token、准确率和未迁移工具清单。
 
 ## 8. 验收标准
 
 - 影响业务分支的关键语义不再只依赖省略、空字符串或字段优先级。
 - `create_event` 能明确区分全天事件和定时事件，且 Schema 与 handler 行为一致。
 - 文件来源、复制目标和发送来源不存在静默优先级冲突。
-- 轻量注入保持低 token；完整模式可按用户开关启用，并提供更完整的参数约束。
+- 简介模式保持低 token；全量模式提供完整的参数约束。两种模式共享源码规范 Schema，不再维护 compact/full 两套生产语义。
 - Schema 错误可以定位到工具和字段路径，但不泄露用户正文或参数值。
 - 高风险工具不会再接受缺少来源、定位或修改动作的空对象；互斥来源不依赖 handler 的静默优先级。
 - A/B 报告同时包含每轮 token、总 token、错误率、恢复轮数和最终成功率。
 - A/B 报告能回溯每个失败到唯一根因类别，并证明测试用例错误、合理辅助调用不会污染 Schema 错误率。
 - 任一工具改造均有新旧契约、正反例和回滚边界，未完成迁移的工具不宣称已完成。
+- Phase 8 完成后，全部注册工具的源码 `input_schema` 与精简输出一致，运行时不再维护第二套精简 Schema。
+- Phase 8 完成后，每个保留的可选字段都有登记的业务理由，新增工具不再通过省略、空字符串或兼容字段表达状态。

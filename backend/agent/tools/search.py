@@ -23,6 +23,7 @@ import io
 import json
 import logging
 import random
+from urllib.parse import urlencode
 
 from app.core.tz import local_day_start_utc
 
@@ -66,6 +67,12 @@ def _parse_requested_engines(raw: str | None) -> list[str]:
             seen.add(key)
             out.append(name)
     return out
+
+
+def _build_searxng_search_url(base: str, params: dict) -> str:
+    """用 UTF-8 显式编码查询参数，避免生产环境 ASCII locale 处理中文时抛错。"""
+    query = urlencode(params, encoding="utf-8", errors="strict")
+    return f"{base}/search?{query}"
 
 
 def _normalize_failure_reason(raw_reason) -> str:
@@ -245,11 +252,12 @@ async def _searxng_search(db, user_id, args: dict):
     # 传了只会挂一堆死引擎、拖慢甚至超时；通用引擎 sogou/quark/360 本就覆盖新闻等查询。
     engines = settings.search.searxng_engines
     params = {"q": query, "format": "json", "engines": engines}
+    request_url = _build_searxng_search_url(base, params)
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
         ) as client:
-            resp = await client.get(f"{base}/search", params=params)
+            resp = await client.get(request_url)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
         # SearXNG 已明确不可用时直接切换深度研究，避免模型在同一轮里重复调用
         # 已超时的 web_search。deep_research 自己负责配额和错误回执。
@@ -290,13 +298,14 @@ async def _searxng_image_search(db, user_id, args: dict):
     # 文本引擎列表兜底，管理员实测后可在后台单独配 searxng_image_engines。
     engines = settings.search.searxng_image_engines or settings.search.searxng_engines
     params = {"q": query, "format": "json", "categories": "images", "engines": engines}
+    request_url = _build_searxng_search_url(base, params)
     resp = None
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
             ) as client:
-                resp = await client.get(f"{base}/search", params=params)
+                resp = await client.get(request_url)
             break
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             if attempt == 1:
@@ -604,7 +613,7 @@ class SearchSkill(BaseSkill):
     tools = [
         Tool(
             name="web_search", label="联网搜索",
-            description_short='搜索公网网页；关键字段 query/max_results',
+            description_short='搜索公网网页；关键字段 query/max_results，max_results 范围 1~20',
             description="搜索公网网页，返回标题、链接和摘要；需要读正文或深入研究时用 deep_research。",
             input_schema={
                 "type": "object",
@@ -622,14 +631,13 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="image_search", label="图片搜索",
-            description_short='搜索图片候选；需分析时再用 inspect_images',
+            description_short='搜索图片候选；mode=text/image，text 用 query，image 用 attach_id；需分析时再用 inspect_images，max_results 范围 1~20',
             description="搜索图片或以图搜图，只返回候选；需要分析用 inspect_images，需要发送用 send_file。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "mode": {
-                        "type": "string",
-                        "enum": ["text", "image"],
+                        "type": "string", "enum": ["text", "image"],
                         "description": "搜索模式：text 按关键词搜图；image 以图搜图。省略时按输入自动判断。",
                     },
                     "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
@@ -680,7 +688,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="deep_research", label="深度研究",
-            description_short='深度研究；关键字段 query',
+            description_short='深度研究；关键字段 query，depth=basic/advanced，max_results 范围 1~20',
             description="阅读和研究外部资料，返回总结或引用；普通网页查找用 web_search。",
             input_schema={
                 "type": "object",

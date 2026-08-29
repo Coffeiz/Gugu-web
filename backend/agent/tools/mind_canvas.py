@@ -791,8 +791,8 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "query": {"type": "string", "description": "单个关键词或短语；所有搜索工具统一使用此字段"},
-                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
+                    "query": {"type": "string"},
+                    "q": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "types": {"type": "array", "items": {"type": "string", "enum": list(_CANVAS_TYPES)}},
                     "mode": {"type": "string", "enum": ["OR", "AND"]},
@@ -810,8 +810,8 @@ class MindCanvasSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "单个关键词或短语；所有搜索工具统一使用此字段"},
-                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
+                    "query": {"type": "string"},
+                    "q": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "types": {"type": "array", "items": {"type": "string", "enum": list(_PLACEABLE_TYPES)}},
                     "canvas_id": {"type": "integer"},
@@ -864,7 +864,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300, "description": "可选索引标题；用户可见标题写在 content 第一行。"},
+                    "title": {"type": "string", "maxLength": 300},
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
@@ -931,7 +931,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"}, "version": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300, "description": "可选索引标题；用户可见标题写在 content 第一行。"}, "content": {"type": "string"},
+                    "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
@@ -1015,7 +1015,7 @@ class MindCanvasSkill(BaseSkill):
                             "node_id": {"type": "integer"}, "version": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
-                            "title": {"type": "string", "maxLength": 300, "description": "可选索引标题；用户可见标题写在 content 第一行。"}, "content": {"type": "string"},
+                            "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                             "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                             "x": {"type": "number"}, "y": {"type": "number"},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},

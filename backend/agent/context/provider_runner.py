@@ -12,10 +12,11 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) ->
     from agent.llm.llm_select import use_anthropic_for
 
     use_anthropic = use_anthropic_for(settings.ai)
+    thinking = getattr(settings.ai, "thinking", None)
     return (
-        await _anthropic(sys, user, settings, max_tokens)
+        await _anthropic(sys, user, settings, max_tokens, thinking=thinking)
         if use_anthropic
-        else await _openai(sys, user, settings, max_tokens)
+        else await _openai(sys, user, settings, max_tokens, thinking=thinking)
     )
 
 
@@ -30,12 +31,18 @@ async def complete_json(
     from agent.llm.llm_select import use_anthropic_for
 
     use_anthropic = use_anthropic_for(settings.ai)
+    # 分支不覆盖模型配置；只有显式传入时才允许调用方临时指定。
+    effective_thinking = (
+        thinking if thinking is not None else getattr(settings.ai, "thinking", None)
+    )
     text = (
-        await _anthropic(sys, user, settings, max_tokens, temperature, thinking=thinking)
+        await _anthropic(
+            sys, user, settings, max_tokens, temperature, thinking=effective_thinking
+        )
         if use_anthropic
         else await _openai(
             sys, user, settings, max_tokens, temperature,
-            json_mode=True, thinking=thinking,
+            json_mode=True, thinking=effective_thinking,
         )
     )
     return _parse_json(text)
@@ -90,9 +97,9 @@ async def _openai(
     adapter = providers.adapter_for(settings.ai)
     if json_mode:
         kwargs.update(adapter.build_structured_output(settings.ai))
-    if json_mode or thinking is not None:
+    if thinking is not None:
         thinking_params = adapter.build_openai_thinking_kwargs(
-            settings.ai, thinking=thinking or ("disabled" if json_mode else None))
+            settings.ai, thinking=thinking)
         if thinking_params:
             kwargs.update(thinking_params)
     resp = await client.chat.completions.create(**kwargs)

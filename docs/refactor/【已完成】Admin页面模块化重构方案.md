@@ -328,3 +328,6 @@ npm run build
 - [x] Agent 入口收口；
 - [ ] 其他 Admin 大入口审查与拆分（Quota 已完成首批）；
 - [ ] 完整自动化测试和文档验收。
+# 退役说明（2026-08-29）
+
+本历史方案中的 Agent“决策轨迹”后台页面及其专用 API 已退役，旧版 `TracePanel.vue`、`/api/v1/admin/agent/sessions*` 路由和对应 contracts 类型已清理。现行 AgentLoop 观测统一使用 LoopScope；本文件其余模块拆分记录仍保留作为历史实施记录。

@@ -11,6 +11,46 @@ def test_local_sandbox_rejects_shell_operators(tmp_path):
         asyncio.run(sandbox.execute("pwd && echo escaped"))
 
 
+@pytest.mark.parametrize(
+    "command, filename",
+    [
+        ("bash payload.sh", "payload.sh"),
+        ("sh payload.sh", "payload.sh"),
+        ("perl payload.pl", "payload.pl"),
+        ("awk -f payload.awk", "payload.awk"),
+        ("sed -f payload.sed", "payload.sed"),
+        ("env bash payload.sh", "payload.sh"),
+        ("xargs -a payload.txt bash", "payload.txt"),
+    ],
+)
+def test_local_sandbox_rejects_workspace_files_as_interpreter_input(tmp_path, command, filename):
+    (tmp_path / filename).write_text("$(id)\n", encoding="utf-8")
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    with pytest.raises(ValueError, match="解释器"):
+        asyncio.run(sandbox.execute(command))
+
+
+def test_local_sandbox_rejects_interpreter_eval_mode(tmp_path):
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    with pytest.raises(ValueError, match="inline/eval"):
+        asyncio.run(sandbox.execute("bash -c 'source payload.sh'"))
+
+
+def test_local_sandbox_still_allows_reading_workspace_files_without_interpreter(tmp_path):
+    (tmp_path / "payload.txt").write_text("$(id)\n", encoding="utf-8")
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    result = asyncio.run(sandbox.execute("cat payload.txt"))
+    assert result.ok
+    assert result.stdout == "$(id)\n"
+
+
+def test_system_executor_can_run_workspace_script_inputs_without_sandbox_restriction(tmp_path):
+    (tmp_path / "build.py").write_text("print('ok')\n", encoding="utf-8")
+    executor = LocalWorkspaceExecutor(tmp_path, restrict_interpreter_inputs=False)
+    # 只验证 system scope 的边界开关，不执行脚本，避免测试产生副作用。
+    executor._validate_workspace_argv(["python", "build.py"], tmp_path)
+
+
 def test_local_sandbox_runs_inside_workspace(tmp_path):
     sandbox = LocalWorkspaceExecutor(tmp_path)
     result = asyncio.run(sandbox.execute("pwd"))

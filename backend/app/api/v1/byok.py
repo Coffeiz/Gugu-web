@@ -6,10 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User, UserProviderCredential
 from app.byok.policy import require_byok_enabled
-from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialVisionProbe
+from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, CredentialVisionProbe
 from app.byok.service import byok_master_key_status, credential_view, decrypt_value, encrypt_value, list_credentials
 
 router = APIRouter(prefix="/byok", tags=["byok"])
@@ -139,11 +140,45 @@ async def delete_credential(credential_id: int, user: User = Depends(get_current
     await db.commit()
 
 
+async def _test_special_capability(provider: str, capability: str, api_key: str) -> dict:
+    if capability == "deep_research":
+        try:
+            from agent.tools.deep_research import run
+            result = await run(provider, "测试深度研究连接", api_key, max_results=1, depth="basic")
+            if not result.get("answer") and not result.get("results"):
+                return {"ok": False, "status": 0, "message": f"{provider} 已连通但没有返回研究结果"}
+        except Exception:
+            return {"ok": False, "status": 0, "message": f"{provider} 测试失败，请检查 API Key、服务可用性或调用额度"}
+        return {"ok": True, "status": 200, "message": f"{provider} 深度研究连接正常（本次测试可能消耗 1 次调用）"}
+    if capability == "similar_image_search":
+        try:
+            import base64
+            from agent.tools.search import _call_baidu_similar_image
+            # 使用有效的 64×64 PNG，避免 Provider 将 1×1 探针判定为无效图片。
+            probe_png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAlklEQVR4nO3QMQ0AMAzAsPLHWC4rDB/L4T/K7O772egArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0A6OSM1jeqEVYAAAAAElFTkSuQmCC")
+            result = await _call_baidu_similar_image(probe_png, api_key, 1, get_settings().search.similar_image_timeout_seconds)
+        except Exception:
+            return {"ok": False, "status": 0, "message": "百度相似图搜索测试失败，请检查 API Key、服务可用性或调用额度"}
+        if result.get("error"):
+            return {"ok": False, "status": 0, "message": str(result["error"]).replace("请管理员检查", "请检查")}
+        return {"ok": True, "status": 200, "message": "百度千帆相似图搜索连接正常（本次测试可能消耗 1 次调用）"}
+    return {"ok": False, "status": 0, "message": "未知测试目标"}
+
+
+@router.post("/test-preview")
+async def test_credential_preview(body: CredentialTestPreview, user: User = Depends(get_current_user)):
+    _gate()
+    if body.provider == "__server_default__":
+        return {"ok": False, "status": 0, "message": "服务器默认配置不支持用户侧测试"}
+    if not body.value:
+        return {"ok": False, "status": 0, "message": "请输入 API Key 后再测试"}
+    return await _test_special_capability(body.provider, body.capability, body.value)
+
+
 @router.post("/{credential_id}/test")
 async def test_credential(credential_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """校验凭据，并对模型类配置执行一次无副作用的连通性请求。"""
     _gate()
-    from app.byok.service import decrypt_value
     row = await db.get(UserProviderCredential, credential_id)
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="凭据不存在")
@@ -151,6 +186,8 @@ async def test_credential(credential_id: int, user: User = Depends(get_current_u
         api_key = decrypt_value(row)
     except Exception as exc:
         raise HTTPException(status_code=422, detail="凭据无法解密，请重新保存") from exc
+    if row.capability in ("deep_research", "similar_image_search"):
+        return await _test_special_capability(row.provider, row.capability, api_key)
     if row.capability in ("llm", "speech_to_text"):
         from app.services.provider_diagnostics import test_provider_credential
         result = await test_provider_credential(provider=row.provider, api_key=api_key,

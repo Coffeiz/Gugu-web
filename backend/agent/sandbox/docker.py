@@ -253,6 +253,7 @@ class DockerSandboxExecutor:
         timeout: float | None = None,
         max_output_chars: int | None = None,
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
+        on_output: Callable[[str, str], Awaitable[None]] | None = None,
         quota_root: str | Path | None = None,
         quota_bytes: int | None = None,
         network_profile: str | None = None,
@@ -274,10 +275,11 @@ class DockerSandboxExecutor:
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
-        stdout_task = asyncio.create_task(LocalWorkspaceExecutor._read_limited(process.stdout, output_limit))
-        stderr_task = asyncio.create_task(LocalWorkspaceExecutor._read_limited(process.stderr, output_limit))
+        stdout_task = asyncio.create_task(LocalWorkspaceExecutor._read_limited(process.stdout, output_limit, on_output, "stdout"))
+        stderr_task = asyncio.create_task(LocalWorkspaceExecutor._read_limited(process.stderr, output_limit, on_output, "stderr"))
         timed_out = False
         permission_revoked = False
+        cancelled = False
         wait_task = asyncio.create_task(process.wait())
         auth_task = asyncio.create_task(LocalWorkspaceExecutor._watch_authorization(authorization_check)) if authorization_check else None
         quota_path = Path(quota_root).expanduser().resolve(strict=True) if quota_root else None
@@ -296,6 +298,9 @@ class DockerSandboxExecutor:
                 permission_revoked = True
             elif not wait_task.done():
                 await wait_task
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
             if auth_task and not auth_task.done():
                 auth_task.cancel()
@@ -306,7 +311,7 @@ class DockerSandboxExecutor:
             if not wait_task.done() and (timed_out or permission_revoked):
                 wait_task.cancel()
                 await asyncio.gather(wait_task, return_exceptions=True)
-            if timed_out or permission_revoked or quota_exceeded:
+            if timed_out or permission_revoked or quota_exceeded or cancelled:
                 # 杀掉 docker CLI 不等于杀掉它创建的容器；用受标签/唯一名称
                 # 定位当前执行，确保超时、撤权和配额超限不会留下后台容器。
                 await self._force_remove_container(container_name)

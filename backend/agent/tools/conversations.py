@@ -127,18 +127,16 @@ class ConversationsSkill(BaseSkill):
     tools = [
         Tool(
             name="search_conversations", label="搜历史对话",
-            description_short='搜索历史对话；关键字段 query/limit',
+            description_short='搜索历史对话；关键字段 query/limit，支持 keyword/queries 兼容别名；省略关键词列最近对话',
             description="搜索用户过去的其他对话；可按关键词查找，不传关键词则列最近对话。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词；所有搜索工具统一使用此字段"},
-                    "keyword": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
-                    "queries": {"type": "array", "items": {"type": "string"},
-                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
-                    "mode": {"type": "string", "enum": ["OR", "AND"],
-                             "description": "关键词匹配模式，默认 OR"},
-                    "limit": {"type": "integer", "description": "返回条数，默认 6，最多 20"},
+                    "query": {"type": "string"},
+                    "keyword": {"type": "string"},
+                    "queries": {"type": "array", "items": {"type": "string"}},
+                    "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "limit": {"type": "integer"},
                 },
                 "oneOf": [
                     {"required": ["query"], "not": {"anyOf": [{"required": ["keyword"]}, {"required": ["queries"]}]}},
@@ -156,8 +154,8 @@ class ConversationsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "integer", "description": "对话 id"},
-                    "limit": {"type": "integer", "description": "最多读几条消息，默认 40，最多 100"},
+                    "session_id": {"type": "integer"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                 },
                 "required": ["session_id"],
             },
@@ -170,7 +168,7 @@ class ConversationsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "integer", "description": "要继续的 Web 对话 id"},
+                    "session_id": {"type": "integer"},
                 },
                 "required": ["session_id"],
             },

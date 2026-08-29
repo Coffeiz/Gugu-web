@@ -606,7 +606,12 @@ class PreferencesResponse(CamelModel):
     shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
     shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
-    toolInjectionMode: str = "catalog"       # catalog = 轻量能力目录；full_schema = 全量工具定义
+    toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式
+    personalityPreference: Optional[str] = None
+    personalityPreferenceEnabled: bool = False
+    personalityPreferenceRevision: int = 0
+    personalityPreferenceUpdatedAt: Optional[str] = None
+    personalityPreferenceAvailable: bool = True
 
 class PreferencesUpdate(CamelModel):
     lastStages:        Optional[list[str]]  = None
@@ -622,6 +627,17 @@ class PreferencesUpdate(CamelModel):
     shellAutopilotEnabled: Optional[bool] = None
     showToolInteractions: Optional[bool] = None
     toolInjectionMode: Optional[str] = None
+    personalityPreference: Optional[str] = Field(default=None, max_length=10000)
+    personalityPreferenceEnabled: Optional[bool] = None
+
+    @field_validator("personalityPreference")
+    @classmethod
+    def validate_personality_preference(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in {"\n", "\r", "\t"}) for char in value):
+            raise ValueError("人格偏好包含不支持的控制字符")
+        return value.strip() or None
 
 
 class WorkspaceCreate(CamelModel):

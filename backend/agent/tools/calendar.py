@@ -4,6 +4,9 @@
 """
 import json
 
+_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
+_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+
 from app.services.calendar import (
     create_event,
     find_events_by_title,
@@ -244,16 +247,15 @@ class CalendarSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "title":      {"type": "string"},
-                    "date":       {"type": "string", "description": "YYYY-MM-DD"},
-                    "time":       {"type": "string", "description": "开始时间 HH:MM（可选；不填=全天）"},
-                    "end_time":   {"type": "string", "description": "结束时间 HH:MM（可选）"},
-                    "type":       {"type": "string", "enum": ["event", "deadline"], "description": "默认 event"},
-                    "project_id": {"type": "integer", "description": "关联项目 ID（可选）"},
+                    "date":       {"type": "string", "pattern": _DATE_PATTERN},
+                    "time":       {"type": "string", "pattern": _TIME_PATTERN},
+                    "end_time":   {"type": "string", "pattern": _TIME_PATTERN},
+                    "type":       {"type": "string", "enum": ["event", "deadline"]},
+                    "project_id": {"type": "integer"},
                     "reminders":  {"type": "array", "items": {"type": "integer"},
-                                   "description": "提前分钟数数组；全天活动按 09:00 计算"},
-                    "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
-                                          "description": "提醒投递渠道，默认 [web]；仅在设了 reminders 时有用"},
-                    "all_day":   {"type": "boolean", "description": "是否全天；true=全天，false=定时"},
+                                   },
+                    "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]}},
+                    "all_day":   {"type": "boolean"},
                 },
                 "required": ["title", "date", "all_day"],
                 "allOf": [
@@ -274,8 +276,8 @@ class CalendarSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "from": {"type": "string", "description": "起始日期 YYYY-MM-DD（含）"},
-                    "to":   {"type": "string", "description": "结束日期 YYYY-MM-DD（含）"},
+                    "from": {"type": "string", "pattern": _DATE_PATTERN},
+                    "to":   {"type": "string", "pattern": _DATE_PATTERN},
                     "type": {"type": "string", "enum": ["event", "deadline"]},
                 },
             },
@@ -289,17 +291,17 @@ class CalendarSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id":   {"type": "integer", "description": "事件 ID（可选）"},
-                    "event":      {"type": "string", "description": "事件标题（推荐：直接用标题定位）"},
-                    "on_date":    {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
+                    "event_id":   {"type": "integer"},
+                    "event":      {"type": "string"},
+                    "on_date":    {"type": "string", "pattern": _DATE_PATTERN},
                     "title":      {"type": "string"},
-                    "date":       {"type": "string", "description": "YYYY-MM-DD"},
-                    "time":       {"type": "string", "description": "开始时间 HH:MM（可选；传空串清空）"},
-                    "end_time":   {"type": "string", "description": "结束时间 HH:MM（可选）"},
+                    "date":       {"type": "string", "pattern": _DATE_PATTERN},
+                    "time":       {"type": "string", "pattern": _TIME_PATTERN},
+                    "end_time":   {"type": "string", "pattern": _TIME_PATTERN},
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
-                    "project_id": {"type": "integer", "description": "关联项目 ID"},
+                    "project_id": {"type": "integer"},
                     "description": {"type": "string"},
-                    "all_day":   {"type": "boolean", "description": "更新全天状态；true 时清除时间，false 时必须同时传 time"},
+                    "all_day":   {"type": "boolean"},
                 },
                 "anyOf": [
                     {"required": ["event_id"]},
@@ -323,12 +325,12 @@ class CalendarSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id": {"type": "integer", "description": "事件 ID（可选）"},
-                    "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除事件 id"},
-                    "event": {"type": "string", "description": "事件标题（推荐：直接用标题定位）"},
-                    "on_date": {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
-                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
-                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
+                    "event_id": {"type": "integer"},
+                    "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "event": {"type": "string"},
+                    "on_date": {"type": "string", "pattern": _DATE_PATTERN},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },
@@ -339,19 +341,17 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="add_event_reminder",
             label="给活动加提醒",
-            description_short='给活动加提醒；关键字段 event_id/lead_minutes/channels',
+            description_short='给活动加提醒；reminders/lead_minutes 二选一，lead_minutes 默认 30，channels 默认 [web]',
             description="给已有日历活动添加提醒；提醒绑定活动，不同于独立定时任务。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id":     {"type": "integer", "description": "活动 ID（可选）"},
-                    "event":        {"type": "string", "description": "活动标题（推荐：直接用标题定位）"},
-                    "on_date":      {"type": "string", "description": "同名活动时用日期 YYYY-MM-DD 区分"},
-                    "reminders":    {"type": "array", "items": {"type": "integer"},
-                                     "description": "批量提前量（分钟），如 [30, 1440]"},
-                    "lead_minutes": {"type": "integer", "description": "单个提前量（分钟），0=活动开始时；不传 reminders 时用，默认 30"},
-                    "channels":     {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
-                                     "description": "投递渠道，默认 [web]"},
+                    "event_id":     {"type": "integer"},
+                    "event":        {"type": "string"},
+                    "on_date":      {"type": "string", "pattern": _DATE_PATTERN},
+                    "reminders":    {"type": "array", "items": {"type": "integer"}},
+                    "lead_minutes": {"type": "integer"},
+                    "channels":     {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]}},
                 },
                 "oneOf": [
                     {"required": ["event_id"], "not": {"required": ["event"]}},
@@ -372,9 +372,9 @@ class CalendarSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id": {"type": "integer", "description": "活动 ID（可选）"},
-                    "event":    {"type": "string", "description": "活动标题（推荐）"},
-                    "on_date":  {"type": "string", "description": "同名活动时用日期 YYYY-MM-DD 区分"},
+                    "event_id": {"type": "integer"},
+                    "event":    {"type": "string"},
+                    "on_date":  {"type": "string", "pattern": _DATE_PATTERN},
                 },
                 "required": [],
             },
@@ -388,7 +388,7 @@ class CalendarSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "reminder_id": {"type": "integer", "description": "提醒 ID（来自 list_event_reminders）"},
+                    "reminder_id": {"type": "integer"},
                 },
                 "required": ["reminder_id"],
             },

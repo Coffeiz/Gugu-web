@@ -16,6 +16,8 @@
       <div v-for="setting in styleSettings" :key="setting.key" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ setting.label }}</span><span class="pm-field-hint">{{ setting.hint }}</span></div><div class="pm-style-group"><button v-for="opt in setting.options" :key="opt.value" class="pm-style-chip" :class="{ active: setting.current === opt.value }" @click="setting.select(opt.value)">{{ opt.label }}</button></div></div>
     </div>
     <div class="pm-sep"></div>
+    <ProfilePersonalityPane />
+    <div class="pm-sep"></div>
     <div class="pm-section"><div class="pm-section-label">对话</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">重开浏览器时</span><span class="pm-field-hint">下次重新打开浏览器，是接着上次的对话、还是开一段新对话</span></div><div class="pm-style-group"><button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">接着上次</button><button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">开新对话</button></div></div></div>
     <div class="pm-sep"></div>
     <div class="pm-section">
@@ -33,6 +35,7 @@ import { computed, onMounted, ref } from 'vue'
 import { agentApi, authApi } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import ProfilePersonalityPane from './ProfilePersonalityPane.vue'
 
 const prefsStore = usePreferencesStore()
 const TONE_OPTS = [{ value: 'natural', label: '自然' }, { value: 'formal', label: '正式' }, { value: 'lively', label: '活泼' }]

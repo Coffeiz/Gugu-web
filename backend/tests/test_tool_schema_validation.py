@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.models import Project
 
+import agent.tools.base as tool_base
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
 
 
@@ -295,8 +296,24 @@ def test_provider_schema_parity_uses_one_tool_contract():
     openai = reg.openai_schemas([tool.name])[0]
 
     assert anthropic["name"] == openai["function"]["name"] == tool.name
-    assert anthropic["description"] == openai["function"]["description"] == tool.description
+    assert anthropic["description"] == openai["function"]["description"] == tool.description_short
     assert anthropic["input_schema"] == openai["function"]["parameters"] == schema
+
+
+def test_provider_schema_serialization_does_not_run_compactor(monkeypatch):
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+    _, tool = _make_registry(schema)
+
+    def fail_compactor(_value):
+        raise AssertionError("provider serialization must use source schema directly")
+
+    monkeypatch.setattr(tool_base, "_compact_schema", fail_compactor)
+    assert tool.to_anthropic()["input_schema"] == schema
+    assert tool.to_openai()["function"]["parameters"] == schema
 
 
 def test_all_registered_tools_have_cached_validators():

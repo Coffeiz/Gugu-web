@@ -11,8 +11,8 @@ CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
 
 
-def _compact_schema_type(schema: dict) -> str:
-    """把工具字段压缩成可读签名，只保留一层结构，不复制完整 JSON Schema。"""
+def _field_signature_type(schema: dict) -> str:
+    """把工具字段转换成可读签名，只保留一层结构，不复制 JSON Schema。"""
     if not isinstance(schema, dict):
         return "unknown"
     schema_type = schema.get("type")
@@ -21,7 +21,7 @@ def _compact_schema_type(schema: dict) -> str:
         if isinstance(item, dict) and item.get("type") == "object":
             names = tuple((item.get("properties") or {}).keys())
             return f"array<object:{','.join(map(str, names))}>" if names else "array<object>"
-        return f"array<{_compact_schema_type(item)}>" if isinstance(item, dict) else "array"
+        return f"array<{_field_signature_type(item)}>" if isinstance(item, dict) else "array"
     if schema_type == "object":
         names = tuple((schema.get("properties") or {}).keys())
         return f"object:{','.join(map(str, names))}" if names else "object"
@@ -29,12 +29,12 @@ def _compact_schema_type(schema: dict) -> str:
         return str(schema_type)
     choices = schema.get("anyOf") or schema.get("oneOf")
     if isinstance(choices, list):
-        types = tuple(_compact_schema_type(item) for item in choices if isinstance(item, dict))
+        types = tuple(_field_signature_type(item) for item in choices if isinstance(item, dict))
         return "|".join(dict.fromkeys(types)) or "unknown"
     return "unknown"
 
 
-def _compact_tool_fields(name: str) -> str:
+def _tool_field_signature(name: str) -> str:
     """从唯一工具注册表生成字段签名，避免 description_short 再维护一份字段文案。"""
     try:
         from agent.tools import registry
@@ -51,7 +51,7 @@ def _compact_tool_fields(name: str) -> str:
     required = set(schema.get("required") or ())
     fields = []
     for field_name, field_schema in properties.items():
-        field = f"{field_name}({_compact_schema_type(field_schema)})"
+        field = f"{field_name}({_field_signature_type(field_schema)})"
         if field_name in required:
             field += ",必填"
         fields.append(field)
@@ -176,7 +176,7 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
             raise ValueError(
                 f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
             )
-        fields = _compact_tool_fields(item.name) if item.kind == "tool" else ""
+        fields = _tool_field_signature(item.name) if item.kind == "tool" else ""
         suffix = f"；字段：{fields}" if fields else ""
         lines.append(f"- {item.name}：{description}{suffix}")
     return "\n".join(lines)

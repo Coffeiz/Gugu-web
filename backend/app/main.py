@@ -230,6 +230,8 @@ async def lifespan(app: FastAPI):
         task, *( [retry_task] if retry_task is not None else [] ), log_task,
         return_exceptions=True,
     )
+    from agent.rag.injection import shutdown_background_recall_tasks
+    await _shutdown_step("RAG 自动召回任务", shutdown_background_recall_tasks)
     await _shutdown_step("PTY", close_pty_manager)
     from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
     await _shutdown_step("RAG lexical worker", close_lexical_clients)

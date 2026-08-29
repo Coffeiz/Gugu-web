@@ -19,28 +19,25 @@ _PREVIEW_LENGTH = 240
 # JSON.stringify 塞进 {"$text": "..."}），跟 description 写没写例子无关，是 schema 层缺失
 # 导致的系统性问题（devlog 2026-07-14，日志证据见 gugu.log 的 [DEBUG_BLOCKS] 记录）。
 # 下面用真正的 JSON Schema（INLINE_ITEM_SCHEMA + _BLOCK_ITEM_SCHEMA）把两层结构都声明出来；
-# _BLOCKS_SCHEMA_HELP 的文字说明保留，两者互补（schema 管形状、description 管语义/示例）。
 _INLINE_ITEM_SCHEMA = {
     "type": "object",
-    "description": "行内内容：文本或引用",
     "properties": {
         "type": {"type": "string", "enum": ["text", "reference"]},
-        "text": {"type": "string", "description": "type=text 时必填"},
+        "text": {"type": "string"},
         "marks": {
             "type": "array",
-            "description": "type=text 时可选的文字样式",
             "items": {
                 "type": "object",
                 "properties": {
                     "type": {"type": "string", "enum": ["bold", "italic", "strike", "code", "link"]},
-                    "href": {"type": "string", "description": "type=link 时必填，http/https/mailto"},
+                    "href": {"type": "string"},
                 },
                 "required": ["type"],
             },
         },
-        "ref_type": {"type": "string", "enum": ["project", "file", "event"], "description": "type=reference 时必填"},
-        "ref_id": {"type": "integer", "description": "type=reference 时必填"},
-        "label": {"type": "string", "description": "type=reference 时必填，引用的显示名"},
+        "ref_type": {"type": "string", "enum": ["project", "file", "event"]},
+        "ref_id": {"type": "integer"},
+        "label": {"type": "string"},
     },
     "required": ["type"],
 }
@@ -52,31 +49,29 @@ _INLINE_ITEM_SCHEMA = {
 _CONTENT_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
-        "checked": {"type": "boolean", "description": "仅 task_list 使用"},
+        "checked": {"type": "boolean"},
         "content": {"type": "array", "items": _INLINE_ITEM_SCHEMA},
     },
     "required": ["content"],
 }
 _BLOCK_ITEM_SCHEMA = {
     "type": "object",
-    "description": "内容块；字段随 type 变化。",
     "properties": {
         "type": {"type": "string", "enum": [
             "paragraph", "heading", "bullet_list", "ordered_list",
             "task_list", "blockquote", "code_block", "horizontal_rule",
         ]},
-        "content": {"type": "array", "description": "paragraph/heading 用", "items": _INLINE_ITEM_SCHEMA},
+        "content": {"type": "array", "items": _INLINE_ITEM_SCHEMA},
         "items": {
             "type": "array",
-            "description": "列表条目用 content；task_list 另需 checked。",
             "items": _CONTENT_ITEM_SCHEMA,
         },
         "paragraphs": {
-            "type": "array", "description": "blockquote 用，每段是 {content} 对象",
+            "type": "array",
             "items": _CONTENT_ITEM_SCHEMA,
         },
-        "code": {"type": "string", "description": "code_block 用"},
-        "language": {"type": "string", "description": "code_block 可选"},
+        "code": {"type": "string"},
+        "language": {"type": "string"},
     },
     "required": ["type"],
 }
@@ -85,9 +80,6 @@ _BLOCK_ITEM_SCHEMA = {
 # 数组本身——两层裸嵌套数组（`items:[[...],[...]]`）实测模型生成不稳定，几乎每次都退化成
 # `{"item":值}` 兜底包装；包一层对象把嵌套深度压回一层（跟 task_list 已有的
 # `{"checked":...,"content":[...]}` 同构），模型才能稳定生成（devlog 2026-07-14）。
-_BLOCKS_SCHEMA_HELP = "块数组；按 type 使用；task_list 需 checked；禁用 Markdown。"
-
-
 def _node_summary(node: Any) -> dict:
     """返回适合列表召回的节点摘要，不把整篇笔记塞进搜索结果。"""
     plain = node.content_plain.strip()
@@ -319,20 +311,18 @@ class MindSkill(BaseSkill):
     tools = [
         Tool(
             name="note_search", label="搜索思维笔记",
-            description_short='固定工具名 note_search：全局搜索时间流笔记/画布便签；传 query',
+            description_short='固定工具名 note_search：全局搜索时间流笔记/画布便签；传 query，支持 q/queries 兼容别名，mode=OR/AND',
             description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
                         "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 note_get。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "单个关键词或短语；所有搜索工具统一使用此字段"},
-                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
-                    "queries": {"type": "array", "items": {"type": "string"},
-                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
-                    "mode": {"type": "string", "enum": ["OR", "AND"],
-                             "description": "关键词匹配模式，默认 OR"},
-                    "limit": {"type": "integer", "description": "最多返回命中数，默认 5，最大 10"},
-                    "include_content": {"type": "boolean", "description": "true 时返回命中笔记完整正文；默认只返回预览"},
+                    "query": {"type": "string"},
+                    "q": {"type": "string"},
+                    "queries": {"type": "array", "items": {"type": "string"}},
+                    "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "limit": {"type": "integer"},
+                    "include_content": {"type": "boolean"},
                 },
                 # q / queries 至少传一个；具体校验由 handler 统一完成，兼容 queries-only 调用。
                 "required": [],
@@ -347,7 +337,7 @@ class MindSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "integer", "description": "思维节点 ID"},
+                    "node_id": {"type": "integer"},
                 },
                 "required": ["node_id"],
             },
@@ -355,15 +345,15 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="note_create", label="记录思维笔记",
-            description_short='创建时间流笔记；blocks=[{type,content/items}]，标题写入 heading block',
+            description_short='创建时间流笔记；blocks 必须是 [{type:"paragraph",content:[{type:"text",text:"内容"}]}]，标题用 heading block',
             description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "可选索引标题；用户可见标题写在 blocks 首个 heading。"},
-                    "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "可选；null 为默认纸色，其余值必须选现有色板"},
-                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": _BLOCKS_SCHEMA_HELP},
-                    "captured_at": {"type": "string", "description": "可选，带时区的 ISO 8601 时间；只能是现在或过去"},
+                    "title": {"type": "string"},
+                    "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
+                    "captured_at": {"type": "string"},
                 },
                 "required": ["blocks"],
             },
@@ -377,13 +367,13 @@ class MindSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "integer", "description": "来自读取结果的便签 ID"},
-                    "version": {"type": "integer", "description": "来自读取结果的当前版本"},
-                    "title": {"type": ["string", "null"], "description": "索引标题；null 清空。用户可见标题写在 blocks 首个 heading。"},
-                    "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "五种卡片颜色之一；null 恢复默认纸色"},
-                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": "整篇替换；不能与 append_blocks 同传。"},
-                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": "追加到末尾；不能与 blocks 同传。"},
-                    "captured_at": {"type": "string", "description": "带时区的 ISO 8601 时间；只能是现在或过去"},
+                    "node_id": {"type": "integer"},
+                    "version": {"type": "integer"},
+                    "title": {"type": ["string", "null"]},
+                    "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
+                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
+                    "captured_at": {"type": "string"},
                 },
                 "required": ["node_id", "version"],
             },
@@ -398,8 +388,8 @@ class MindSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "integer", "description": "已确认的便签 ID"},
-                    "version": {"type": "integer", "description": "已确认的当前版本"},
+                    "node_id": {"type": "integer"},
+                    "version": {"type": "integer"},
                 },
                 "required": ["node_id", "version"],
             },
@@ -412,7 +402,7 @@ class MindSkill(BaseSkill):
             description="恢复一条被软删的便签，只接受精确 node_id。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer", "description": "要恢复的便签 ID"}},
+                "properties": {"node_id": {"type": "integer"}},
                 "required": ["node_id"],
             },
             handler=_restore_note,

@@ -2,6 +2,17 @@ from app.models import UserBot
 from app.services.im_identity import resolve_qq_group_access
 
 
+async def test_resolve_owner_account_returns_canonical_uuid(db, user_a):
+    """IM 网关传字符串 owner id 时，命令归属比较仍应匹配 ORM UUID。"""
+    from agent.im.identity import resolve_owner_account
+
+    identity = await resolve_owner_account({"owner_user_id": str(user_a.id)})
+
+    assert identity is not None
+    assert identity.user_id == user_a.id
+    assert not isinstance(identity.user_id, str)
+
+
 async def test_qq_group_owner_gets_full_tool_set(db, user_a):
     bot = UserBot(
         user_id=user_a.id,

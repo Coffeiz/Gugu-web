@@ -1406,24 +1406,21 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description_short='查询文件；关键字段 space/project_id/folder_id/query',
+            description_short='查询文件；关键字段 space/project_id/folder_id/query，支持 q/queries 兼容别名，mode=OR/AND',
             description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
-                    "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
-                    "folder": {"type": "string", "description": "按文件夹名称筛选；已知 folder_id 时优先使用 id"},
-                    "ext": {"type": "string", "description": "扩展名，如 png/md"},
-                    "query": {"type": "string", "description": "单个名称关键词；所有搜索工具统一使用此字段"},
-                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
-                    "queries": {"type": "array", "items": {"type": "string"},
-                                "description": "可选多个名称关键词，默认 OR，最多 8 个"},
-                    "mode": {"type": "string", "enum": ["OR", "AND"],
-                             "description": "关键词匹配模式，默认 OR"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200,
-                              "description": "最多返回多少条，默认 100；查询大文件夹时可提高到 200"},
+                    "folder_id": {"type": "integer"},
+                    "folder": {"type": "string"},
+                    "ext": {"type": "string"},
+                    "query": {"type": "string"},
+                    "q": {"type": "string"},
+                    "queries": {"type": "array", "items": {"type": "string"}},
+                    "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
             },
             handler=_list_files,
@@ -1435,8 +1432,8 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
-                    "file": {"type": "string", "description": "文件名（推荐：直接用名字，无需 id）"},
+                    "file_id": {"type": "integer"},
+                    "file": {"type": "string"},
                 },
                 "required": [],
             },
@@ -1444,14 +1441,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description_short='修改文本文件；关键字段 file_id/file/edits',
+            description_short='修改文本文件；关键字段 file_id/file/edits，mode=replace_all/append 用 content，find_replace 用 find/replace',
             description="修改文本文件；支持整体替换、追加和查找替换，多个文件用 edits 批量处理。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "edits": {
                         "type": "array",
-                        "description": "批量编辑；每项传 file/file_id、mode 及对应内容字段。",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -1463,15 +1459,61 @@ class FilesSkill(BaseSkill):
                                 "replace": {"type": "string"},
                             },
                             "required": ["mode"],
+                            "allOf": [
+                                {
+                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "replace_all"}}},
+                                    "then": {
+                                        "required": ["content"],
+                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
+                                    },
+                                },
+                                {
+                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
+                                    "then": {
+                                        "required": ["content"],
+                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
+                                    },
+                                },
+                                {
+                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
+                                    "then": {
+                                        "required": ["find", "replace"],
+                                        "not": {"required": ["content"]},
+                                    },
+                                },
+                            ],
                         },
                     },
-                    "file_id": {"type": "integer", "description": "单个：文件 id"},
-                    "file": {"type": "string", "description": "单个：文件名"},
+                    "file_id": {"type": "integer"},
+                    "file": {"type": "string"},
                     "mode": {"type": "string", "enum": ["replace_all", "append", "find_replace"]},
-                    "content": {"type": "string", "description": "replace_all/append 用"},
-                    "find": {"type": "string", "description": "find_replace 用"},
-                    "replace": {"type": "string", "description": "find_replace 用"},
+                    "content": {"type": "string"},
+                    "find": {"type": "string"},
+                    "replace": {"type": "string"},
                 },
+                "allOf": [
+                    {
+                        "if": {"required": ["mode"], "properties": {"mode": {"const": "replace_all"}}},
+                        "then": {
+                            "required": ["content"],
+                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
+                        },
+                    },
+                    {
+                        "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
+                        "then": {
+                            "required": ["content"],
+                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
+                        },
+                    },
+                    {
+                        "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
+                        "then": {
+                            "required": ["find", "replace"],
+                            "not": {"required": ["content"]},
+                        },
+                    },
+                ],
             },
             handler=_edit_file,
             mutates=True,
@@ -1483,43 +1525,46 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "文件名（可不带扩展名）"},
-                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可编辑文本、docx、pdf 或 xlsx"},
-                    "space": {"type": "string", "enum": ["project", "personal"], "description": "默认 personal"},
-                    "project_id": {"type": "integer", "description": "space=project 时必填"},
+                    "name": {"type": "string"},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME)},
+                    "space": {"type": "string", "enum": ["project", "personal"]},
+                    "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer"},
-                    "content": {"type": "string", "description": "正文（按 format 见上）"},
+                    "content": {"type": "string"},
                 },
                 "required": ["name", "format", "content"],
+                "allOf": [
+                    {"if": {"required": ["space"], "properties": {"space": {"const": "project"}}},
+                     "then": {"required": ["project_id"]}},
+                ],
             },
             handler=_create_document,
             mutates=True,
         ),
         Tool(
             name="rename_file", label="重命名文件",
-            description_short='重命名文件；关键字段 file_id/file',
+            description_short='重命名文件；关键字段 file_id/file，format 可选改后缀',
             description="重命名文件，可单个或批量修改名称及后缀，不改变位置。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "renames": {
                         "type": "array",
-                        "description": "批量改名；每项传 file/file_id、new_name，可选 format。",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "file": {"type": "string", "description": "文件名"},
-                                "file_id": {"type": "integer", "description": "文件 id"},
-                                "new_name": {"type": "string", "description": "新名（可不带扩展名）"},
-                                "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可选：改后缀。文本类同族互转允许；二进制需等于当前 ext。"},
+                                "file": {"type": "string"},
+                                "file_id": {"type": "integer"},
+                                "new_name": {"type": "string"},
+                                "format": {"type": "string", "enum": sorted(_DOC_MIME)},
                             },
                             "required": ["new_name"],
                         },
                     },
-                    "file_id": {"type": "integer", "description": "单个：文件 id"},
-                    "file": {"type": "string", "description": "单个：文件名"},
-                    "new_name": {"type": "string", "description": "单个：新文件名（可不带扩展名）"},
-                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "单个：可选，改后缀（同 renames 规则）"},
+                    "file_id": {"type": "integer"},
+                    "file": {"type": "string"},
+                    "new_name": {"type": "string"},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME)},
                 },
             },
             handler=_rename_file,
@@ -1527,26 +1572,23 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
-            description_short='移动文件或文件夹；批量传 files/folders，目标传 target',
+            description_short='移动文件或文件夹；批量传 files/folders，目标传 target；folder_id 优先，project 空间传 project_id',
             description="批量移动文件或文件夹；源项传 files/folders，目标传 target。项目目标用 project_id，workspace_id 不能代替它。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "files":   {"type": "array", "items": {"type": "string"},
-                                "description": "要移动的文件名或文件 id 数组，可空"},
-                    "folders": {"type": "array", "items": {"type": "string"},
-                                "description": "要移动的文件夹名或文件夹 id 数组，可空；整夹连内容递归搬"},
+                    "files":   {"type": "array", "items": {"type": "string"}},
+                    "folders": {"type": "array", "items": {"type": "string"}},
                     "target": {
                         "type": "object",
-                        "description": "统一目标位置；所有源文件和文件夹都移动到这里",
                         "properties": {
-                            "folder": {"type": "string", "description": "目标文件夹名称；移到空间根传“根目录”或空串"},
-                            "folder_id": {"type": "integer", "description": "目标文件夹 id，优先使用，不能填 workspace_id"},
+                            "folder": {"type": "string"},
+                            "folder_id": {"type": "integer"},
                             "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
-                            "project_id": {"type": "integer", "description": "真实项目 id；space=project 时必填，不能填 workspace_id"},
+                            "project_id": {"type": "integer"},
                         },
                     },
-                    "destination": {"type": "string", "enum": ["same", "folder"], "description": "复制目标；same=原位，folder=目标文件夹"},
+                    "destination": {"type": "string", "enum": ["same", "folder"]},
                 },
                 "required": ["target"],
             },
@@ -1560,12 +1602,12 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer", "description": "源文件 id（可选）"},
-                    "file": {"type": "string", "description": "源文件名（推荐：直接用名字）"},
+                    "file_id": {"type": "integer"},
+                    "file": {"type": "string"},
                     "target": {
                         "type": "object",
                         "properties": {
-                            "folder": {"type": "string", "description": "目标文件夹名称"},
+                            "folder": {"type": "string"},
                             "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                             "project_id": {"type": "integer"},
                             "folder_id": {"type": "integer"},
@@ -1607,9 +1649,9 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
-                    "file": {"type": "string", "description": "文件名（推荐：直接用名字，无需 id）"},
-                    "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除文件 id"},
+                    "file_id": {"type": "integer"},
+                    "file": {"type": "string"},
+                    "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                 },
                 "required": [],
             },
@@ -1632,15 +1674,15 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_folder", label="重命名文件夹",
-            description_short='重命名文件夹；关键字段 project_id/folder_id/name',
+            description_short='重命名文件夹；关键字段 project_id/folder_id/name；按名字查找跨项目同名文件夹时必须传 project_id，避免误操作',
             description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。同名文件夹存在于多个项目时必须传 project_id 避免误操作。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "要重命名的文件夹当前名称"},
-                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
-                    "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
-                    "new_name": {"type": "string", "description": "新名称"},
+                    "name": {"type": "string"},
+                    "folder_id": {"type": "integer"},
+                    "project_id": {"type": "integer"},
+                    "new_name": {"type": "string"},
                 },
                 "required": ["new_name"],
             },
@@ -1649,15 +1691,15 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description_short='删除文件夹；关键字段 project_id/folder_id/name',
+            description_short='删除文件夹；关键字段 project_id/folder_id/name；按名字查找跨项目同名文件夹时必须传 project_id，避免误操作',
             description="删除一个或多个文件夹。单项用 name/folder_id，批量传 folder_ids。文件夹及其内容会整体移入回收站，30 天内可恢复。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "要删除的文件夹名称"},
-                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
-                    "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除文件夹 id"},
-                    "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
+                    "name": {"type": "string"},
+                    "folder_id": {"type": "integer"},
+                    "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "project_id": {"type": "integer"},
                 },
             },
             handler=_delete_folder,
@@ -1670,12 +1712,12 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "文件名（如 合同.pdf），发文件库文件时用"},
-                    "file_id": {"type": "integer", "description": "文件 id（已知时可用），发文件库文件时用"},
-                    "url": {"type": "string", "description": "网络图片直链；与 file/file_id 互斥"},
-                    "title": {"type": "string", "description": "配合 url 用：给这张图起个名字（可选，不传默认「图片」）"},
-                    "attach_id": {"type": "string", "description": "暂存附件 ID；与其它来源互斥"},
-                    "source_type": {"type": "string", "enum": ["file", "file_id", "url", "attach_id"], "description": "来源类型；必须与对应来源字段一致"},
+                    "file": {"type": "string"},
+                    "file_id": {"type": "integer"},
+                    "url": {"type": "string"},
+                    "title": {"type": "string"},
+                    "attach_id": {"type": "string"},
+                    "source_type": {"type": "string", "enum": ["file", "file_id", "url", "attach_id"]},
                 },
                 "oneOf": [
                     {"required": ["file"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["url"]}, {"required": ["attach_id"]}]}},
@@ -1703,17 +1745,16 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
-            description_short='保存聊天附件到文件库；关键字段 attach_ids/project_id',
+            description_short='保存聊天附件；source 必填：latest/attach_id/attach_ids，后两者配同名字段；可带 project_id/folder_id',
             description="保存对话附件到文件库；多个附件用 attach_ids，可指定项目或文件夹。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "attach_id": {"type": "string", "description": "单个暂存附件 ID；省略时仅在来源无歧义时取最近附件"},
-                    "attach_ids": {"type": "array", "items": {"type": "string"},
-                                   "description": "批量保存的暂存附件 ID 数组"},
-                    "project_id": {"type": "integer", "description": "存进哪个项目（不填=personal 个人空间）"},
-                    "folder_id": {"type": "integer", "description": "存进哪个文件夹（可选）"},
-                    "source": {"type": "string", "enum": ["latest", "attach_id", "attach_ids"], "description": "附件来源；latest=唯一最近附件"},
+                    "attach_id": {"type": "string"},
+                    "attach_ids": {"type": "array", "items": {"type": "string"}},
+                    "project_id": {"type": "integer"},
+                    "folder_id": {"type": "integer"},
+                    "source": {"type": "string", "enum": ["latest", "attach_id", "attach_ids"]},
                 },
                 "required": [],
                 "allOf": [

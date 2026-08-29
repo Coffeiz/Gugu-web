@@ -38,7 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" ref="imageViewerRef" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
+      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>加载中…</span>
@@ -177,6 +177,7 @@ const h = ref(props.win.h)
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext))
+const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 
 // ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
 const navImages = computed(() => (props.win.siblings || []).filter(f => isImageExt(f.ext)))
@@ -335,6 +336,12 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   placeholderReady.value = false
   imageReady.value       = false
   placeholderSrc.value   = null
+
+  if (isVirtual.value) {
+    fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.78))
+    loading.value = false
+    return
+  }
 
   // 占位图：优先从 blob Map 同步命中，未缓存则后台 fetch（与全图下载并行）
   if (isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {

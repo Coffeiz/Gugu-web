@@ -25,6 +25,25 @@ def _drain_background_task(task: asyncio.Task) -> None:
         _background_recall_tasks.discard(task)
 
 
+async def shutdown_background_recall_tasks(timeout: float = 5.0) -> None:
+    """在关闭数据库连接池前等待自动召回任务归还自己的连接。"""
+    tasks = [task for task in _background_recall_tasks if not task.done()]
+    if not tasks:
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        _background_recall_tasks.difference_update(tasks)
+
+
 async def _search_with_timeout(search_awaitable, timeout: float):
     """限制自动召回等待时间，但不取消内部 DB/存储协程。
 
@@ -272,6 +291,7 @@ __all__ = [
     "build_history_message",
     "build_passive_history_message",
     "build_automatic_rag_context",
+    "shutdown_background_recall_tasks",
     "render_history_context",
     "render_scoped_history_context",
     "should_passively_recall",

@@ -151,7 +151,7 @@ class MemorySkill(BaseSkill):
     tools = [
         Tool(
             name="save_knowledge", label="保存知识",
-            description_short='保存知识；关键字段 title',
+            description_short='保存知识；关键字段 title/content；可设 source_type 和 confidence',
             description=(
                 "保存用户明确要求长期保留的事实、规则或资料摘要。"
                 "默认写入 owner 知识库，不把普通聊天自动保存为知识。"
@@ -159,13 +159,13 @@ class MemorySkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "知识条目标题"},
-                    "content": {"type": "string", "description": "经过整理的知识正文"},
-                    "topic": {"type": "string", "description": "主题，可选"},
-                    "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"], "description": "来源类型，默认 user"},
-                    "source_ref": {"type": "string", "description": "来源引用，可选"},
-                    "source_label": {"type": "string", "description": "来源名称，可选"},
-                    "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"], "description": "可信度，默认 confirmed"},
+                    "title": {"type": "string"},
+                    "content": {"type": "string"},
+                    "topic": {"type": "string"},
+                    "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"]},
+                    "source_ref": {"type": "string"},
+                    "source_label": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
                 },
                 "required": ["title", "content"],
             },
@@ -174,18 +174,15 @@ class MemorySkill(BaseSkill):
         ),
         Tool(
             name="remember", label="记住",
-            description_short='记住；关键字段 text',
+            description_short='记住；关键字段 text；target=profile/pattern，profile 可设 type，pattern 可设 importance 1~5；省略 target 用 profile',
             description="记录用户的稳定信息或做事方式；默认写入 profile，行为模式写入 pattern，并自动去重。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "text": {"type": "string", "description": "要记住的一句话稳定画像或偏好"},
-                    "target": {"type": "string", "enum": ["profile", "pattern"],
-                               "description": "写入目标；默认 profile，行事/决策模式用 pattern"},
-                    "type": {"type": "string", "enum": sorted(store.PROFILE_TYPES),
-                             "description": "target=profile 时的画像类型，默认 note"},
-                    "importance": {"type": "integer", "minimum": 1, "maximum": 5,
-                                   "description": "target=pattern 时的重要度 1-5，默认 3"},
+                    "text": {"type": "string"},
+                    "target": {"type": "string", "enum": ["profile", "pattern"]},
+                    "type": {"type": "string", "enum": sorted(store.PROFILE_TYPES)},
+                    "importance": {"type": "integer", "minimum": 1, "maximum": 5},
                 },
                 "required": ["text"],
             },
@@ -202,9 +199,9 @@ class MemorySkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "knowledge_id": {"type": "string", "description": "知识条目 ID"},
-                    "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
-                    "confirm_token": {"type": "string", "description": "确认请求返回的短时凭证"},
+                    "knowledge_id": {"type": "string"},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
                 },
                 "required": ["knowledge_id"],
             },
@@ -214,16 +211,16 @@ class MemorySkill(BaseSkill):
         ),
         Tool(
             name="search_memory", label="搜索记忆",
-            description_short='搜索历史记忆；关键字段 query/scope/source/strategy',
+            description_short='搜索历史记忆；可按 scope/source/strategy 筛选，省略筛选项用默认值',
             description="搜索用户的历史记忆、事件和对话背景；source=knowledge 用于已保存的事实与规则。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "要检索的关键词或短语"},
-                    "scope": {"type": "string", "enum": ["auto", "current_group", "all_my_groups", "private_memory"], "description": "记忆范围，默认 auto；群聊可指定当前群或本人可见的其他群"},
-                    "source": {"type": "string", "enum": ["all", "knowledge", "profile", "pattern", "daily", "memory"], "description": "记忆或知识来源，默认 all"},
-                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时使用 TypeScript lexical worker"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回数量，默认 5，最多 10"},
+                    "query": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["auto", "current_group", "all_my_groups", "private_memory"]},
+                    "source": {"type": "string", "enum": ["all", "knowledge", "profile", "pattern", "daily", "memory"]},
+                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 10},
                 },
                 "required": ["query"],
             },

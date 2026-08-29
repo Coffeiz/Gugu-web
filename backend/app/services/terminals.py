@@ -125,6 +125,23 @@ async def append_shell_result(db: AsyncSession, row: TerminalSessionRecord, *, c
     await db.flush()
 
 
+async def append_terminal_status(db: AsyncSession, row: TerminalSessionRecord, *, command: str,
+                                 status: str, run_id: str | None = None) -> TerminalEventRecord:
+    """记录命令生命周期状态，供执行记录和 SSE 重放使用。"""
+    sequence = row.last_sequence + 1
+    event = TerminalEventRecord(
+        terminal_id=row.id, run_id=run_id or row.run_id, sequence=sequence,
+        event_type="status", source=TerminalSource.USER.value, command=command,
+        stdout=status, stderr="", exit_code=None,
+    )
+    db.add(event)
+    row.last_sequence = sequence
+    row.status = "running" if status == "running" else row.status
+    row.updated_at = now_utc()
+    await db.flush()
+    return event
+
+
 async def terminate_terminal(db: AsyncSession, row: TerminalSessionRecord) -> None:
     sequence = row.last_sequence + 1
     db.add(TerminalEventRecord(

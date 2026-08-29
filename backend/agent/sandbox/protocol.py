@@ -19,6 +19,7 @@ class ExecuteRequest:
     quota_bytes: int | None = None
     network_profile: Literal["none", "egress"] = "none"
     egress_expires_at: float | None = None
+    request_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExecuteRequest":
@@ -54,6 +55,7 @@ class ExecuteRequest:
         if not 1 <= max_output_chars <= 120_000:
             raise ValueError("sandboxd 输出上限超出允许范围")
         return cls(
+            request_id=str(value.get("request_id") or "").strip() or None,
             root=root,
             command=command,
             cwd=str(value.get("cwd") or "."),
@@ -68,6 +70,7 @@ class ExecuteRequest:
     def to_json(self) -> bytes:
         return (json.dumps({
             "operation": "execute",
+            **({"request_id": self.request_id} if self.request_id else {}),
             "root": self.root,
             "command": self.command,
             "cwd": self.cwd,

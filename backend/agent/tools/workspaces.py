@@ -129,7 +129,7 @@ class WorkspacesSkill(BaseSkill):
             description="查看一个工作区及其项目/文件夹绑定；workspace_id 不能当作 project_id 使用。",
             input_schema={
                 "type": "object", "properties": {
-                    "workspace_id": {"type": "integer", "description": "工作区 ID，不是项目或文件夹 ID"},
+                    "workspace_id": {"type": "integer"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
             }, handler=_get_workspace,
         ),
@@ -139,12 +139,18 @@ class WorkspacesSkill(BaseSkill):
             description="创建 Shell 工作区声明；kind=project 用 project_id，kind=folder 用 folder_id，二者不可混用。",
             input_schema={
                 "type": "object", "properties": {
-                    "name": {"type": "string", "minLength": 1, "maxLength": 200, "description": "工作区名称"},
-                    "kind": {"type": "string", "enum": ["project", "folder"], "description": "绑定类型"},
-                    "project_id": {"type": "integer", "description": "项目 ID，仅 kind=project"},
-                    "folder_id": {"type": "integer", "description": "文件夹 ID，仅 kind=folder"},
-                    "enabled": {"type": "boolean", "description": "是否启用，默认 true"},
+                    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "kind": {"type": "string", "enum": ["project", "folder"]},
+                    "project_id": {"type": "integer"},
+                    "folder_id": {"type": "integer"},
+                    "enabled": {"type": "boolean"},
                 }, "required": ["name", "kind"], "additionalProperties": False,
+                "allOf": [
+                    {"if": {"properties": {"kind": {"const": "project"}}},
+                     "then": {"required": ["project_id"], "not": {"required": ["folder_id"]}}},
+                    {"if": {"properties": {"kind": {"const": "folder"}}},
+                     "then": {"required": ["folder_id"], "not": {"required": ["project_id"]}}},
+                ],
             }, handler=_create_workspace, mutates=True,
         ),
         Tool(
@@ -153,9 +159,9 @@ class WorkspacesSkill(BaseSkill):
             description="修改工作区名称或启用状态，不改变项目/文件夹绑定。",
             input_schema={
                 "type": "object", "properties": {
-                    "workspace_id": {"type": "integer", "description": "工作区 ID"},
-                    "name": {"type": "string", "maxLength": 200, "description": "新名称"},
-                    "enabled": {"type": "boolean", "description": "是否启用"},
+                    "workspace_id": {"type": "integer"},
+                    "name": {"type": "string", "maxLength": 200},
+                    "enabled": {"type": "boolean"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
             }, handler=_update_workspace, mutates=True,
         ),
@@ -165,9 +171,9 @@ class WorkspacesSkill(BaseSkill):
             description="删除工作区声明并解除会话绑定，不删除项目、文件夹或文件；执行前需确认。",
             input_schema={
                 "type": "object", "properties": {
-                    "workspace_id": {"type": "integer", "description": "工作区 ID"},
-                    "confirm": {"type": "boolean", "description": "用户明确同意后置 true"},
-                    "confirm_token": {"type": "string", "description": "确认凭证"},
+                    "workspace_id": {"type": "integer"},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
             }, handler=_delete_workspace, mutates=True, destructive=True,
         ),

@@ -2,7 +2,8 @@
   /* Surfaces */
   --surface-page: var(--theme-page);
   --surface-canvas: var(--theme-page);
-  --surface-sidebar: var(--theme-sidebar);
+  /* 所有侧栏统一在主题底色上增加轻微高光，保持不同页面的侧栏亮度一致。 */
+  --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 90%, #fff 10%);
   --surface-base: var(--theme-base);
   --surface-panel: var(--theme-base);
   --surface-glass: var(--theme-glass);

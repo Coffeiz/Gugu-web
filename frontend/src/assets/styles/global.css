@@ -14,8 +14,6 @@ svg { shape-rendering: geometricPrecision; }
    与内部几处独立滚动的子面板一并列上，同一条规则、别各自散着写。 */
 .admin-main,
 .sidebar-nav,
-.trace-list,
-.trace-detail,
 .log-table-wrap {
   scrollbar-gutter: auto;
 }

@@ -300,6 +300,8 @@ async function doDeleteAccount() {
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .pm-style-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
+.pm-style-chip:disabled { opacity: .45; cursor: not-allowed; }
+.pm-style-chip:disabled:hover { background: var(--choice-chip-bg); border-color: var(--choice-chip-border); color: var(--choice-chip-fg); }
 .pm-style-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
 .pm-family-chip.active { background: var(--surface-raised); border-color: var(--border-default); color: var(--content-primary); }
 .pm-palette-group { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

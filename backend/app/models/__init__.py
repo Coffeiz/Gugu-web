@@ -738,6 +738,7 @@ class MemoryReflectionJob(Base):
     to_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(300), unique=True, index=True)
     extractor_version: Mapped[str] = mapped_column(String(64), default="im-memory-v1")
+    task_type: Mapped[str] = mapped_column(String(32), default="group", index=True)
     reason: Mapped[str] = mapped_column(String(32), default="idle")
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -751,7 +752,7 @@ class MemoryReflectionJob(Base):
     __table_args__ = (
         UniqueConstraint(
             "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
-            "from_message_id", "to_message_id", "extractor_version",
+            "from_message_id", "to_message_id", "extractor_version", "task_type",
             name="uq_memory_reflection_range",
         ),
     )
@@ -769,6 +770,7 @@ class MemoryReflectionCursor(Base):
     scope_id: Mapped[str] = mapped_column(String(255), index=True)
     last_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_reflected_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_member_reflected_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
     active_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     settled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)

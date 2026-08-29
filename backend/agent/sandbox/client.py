@@ -90,6 +90,24 @@ class SandboxdClient:
         self.connect_timeout = connect_timeout
 
     async def execute(self, request: ExecuteRequest) -> dict[str, Any]:
+        return await self.execute_stream(request)
+
+    async def cancel(self, request_id: str) -> bool:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path), timeout=self.connect_timeout,
+            )
+            writer.write((json.dumps({"operation": "cancel", "request_id": request_id}) + "\n").encode())
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=self.connect_timeout)
+            writer.close()
+            await writer.wait_closed()
+            value = json.loads(line.decode("utf-8"))
+            return bool(value.get("cancelled"))
+        except (OSError, asyncio.TimeoutError, ValueError, json.JSONDecodeError):
+            return False
+
+    async def execute_stream(self, request: ExecuteRequest, on_output=None) -> dict[str, Any]:
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(self.socket_path),
@@ -100,16 +118,22 @@ class SandboxdClient:
         try:
             writer.write(request.to_json())
             await writer.drain()
-            line = await asyncio.wait_for(reader.readline(), timeout=max(request.timeout, 2.0) + 2.0)
-            if not line:
-                raise SandboxdUnavailable("sandboxd 未返回执行结果")
-            try:
-                value = json.loads(line.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise SandboxdUnavailable("sandboxd 返回格式无效") from exc
-            if not isinstance(value, dict):
-                raise SandboxdUnavailable("sandboxd 返回结果无效")
-            return value
+            deadline = asyncio.get_running_loop().time() + max(request.timeout, 2.0) + 2.0
+            while True:
+                line = await asyncio.wait_for(reader.readline(), timeout=max(0.1, deadline - asyncio.get_running_loop().time()))
+                if not line:
+                    raise SandboxdUnavailable("sandboxd 未返回执行结果")
+                try:
+                    value = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise SandboxdUnavailable("sandboxd 返回格式无效") from exc
+                if not isinstance(value, dict):
+                    raise SandboxdUnavailable("sandboxd 返回结果无效")
+                if value.get("type") == "output":
+                    if on_output is not None:
+                        await on_output(str(value.get("stream") or "stdout"), str(value.get("data") or ""))
+                    continue
+                return value
         except (OSError, asyncio.TimeoutError) as exc:
             raise SandboxdUnavailable("sandboxd 连接中断，未执行命令") from exc
         finally:

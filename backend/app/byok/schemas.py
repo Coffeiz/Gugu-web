@@ -7,7 +7,7 @@ class CredentialCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
     api_format: str = Field("", max_length=32)
     capability: Literal["llm", "deep_research", "similar_image_search", "speech_to_text"]
-    value: str = Field(min_length=1, max_length=20000)
+    value: str = Field("", max_length=20000)
     base_url: str = Field("", max_length=500)
     model: str = Field("", max_length=200)
     vision: bool = False
@@ -40,3 +40,9 @@ class CredentialModelsPreview(BaseModel):
 
 class CredentialVisionProbe(CredentialModelsPreview):
     dim: Literal["image", "video", "audio"]
+
+
+class CredentialTestPreview(BaseModel):
+    provider: str = Field(min_length=1, max_length=64)
+    capability: Literal["deep_research", "similar_image_search"]
+    value: str = Field(min_length=1, max_length=20000)

@@ -496,8 +496,8 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         recorded_message_id = message_row.id
     if request.chat_id and recorded_message_id:
         try:
-            from agent.memory.reflection_jobs import observe_group_message, observe_member_message
-            from agent.memory.scopes import MemoryScope, member_scope_id
+            from agent.memory.reflection_jobs import observe_group_message
+            from agent.memory.scopes import MemoryScope
 
             group_scope = MemoryScope(
                     request.user_id,
@@ -512,19 +512,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     recorded_message_id,
                     message_row.created_at,
                 )
-            if request.im_member_memory_enabled and request.im_role == "member" and request.platform_user_id:
-                await observe_member_message(
-                    MemoryScope(
-                        request.user_id,
-                        request.source or "qq",
-                        str(request.platform_bot_id or ""),
-                        "platform-user",
-                        member_scope_id(request.chat_id, request.platform_user_id),
-                    ),
-                    recorded_message_id,
-                    message_row.created_at,
-                )
-            elif request.im_role == "owner":
+            if request.im_role == "owner":
                 from app.core.config import get_settings
                 from agent.memory import reflection
 
@@ -933,30 +921,30 @@ async def dispatch_im_message(payload: dict):
                         str(req.chat_id),
                     ),
                     resp.session_id,
+                    member_batch=False,
                 )
         except Exception:
             # 记忆调度失败不影响当前回复已经完成。
             pass
-        if req.im_member_memory_enabled and prepared.actor.role == "member" and req.platform_user_id:
-            try:
-                from agent.memory.reflection_jobs import observe_member_activity
-                from agent.memory.scopes import MemoryScope, member_scope_id
+    if not req.chat_id and resp.session_id and req.im_member_memory_enabled and req.platform_user_id:
+        try:
+            from agent.memory.reflection_jobs import observe_private_member_activity
+            from agent.memory.scopes import MemoryScope
 
-                await observe_member_activity(
-                    MemoryScope(
-                        req.user_id,
-                        req.source or "qq",
-                        str(req.platform_bot_id or ""),
-                        "platform-user",
-                        member_scope_id(req.chat_id, req.platform_user_id),
-                    ),
-                    resp.session_id,
+            await observe_private_member_activity(
+                MemoryScope(
+                    req.user_id,
+                    req.source or "qq",
+                    str(req.platform_bot_id or ""),
+                    "platform-user",
                     str(req.platform_user_id),
-                    used_tools=bool(getattr(resp, "used_tools", False)),
-                )
-            except Exception:
-                # 成员记忆是后台增强能力，不影响群聊回复。
-                pass
+                ),
+                resp.session_id,
+                str(req.platform_user_id),
+            )
+        except Exception:
+            # 私聊成员记忆是后台增强能力，不影响当前回复。
+            pass
     if resp.cancelled:
         trace.finish_run("cancelled")
         await finalize_im_response(platform, puid, True, "")

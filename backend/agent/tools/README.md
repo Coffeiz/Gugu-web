@@ -19,10 +19,35 @@ Tool(
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
 
-完整 Schema 的 description 优化规则：类型、枚举、必填、互斥和条件分支交给 JSON Schema；description
-只保留模型无法从结构推断的日期格式、清空语义、资源边界、确认要求和 provider 兼容说明。修改后运行
-`PYTHONPATH=. .venv/bin/python scripts/audit_tool_descriptions.py`，按字段描述总字符数从高到低处理，
-并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
+生产环境只保留两种注入模式：简介模式（`description`）是默认模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema；全量模式（`full`）是可选的准确性优先模式，向 provider 发送工具源码中的规范 Schema。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
+
+Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`anyOf`、`allOf`、`if/then` 和边界约束表达机器可校验事实；字段级 `description`、`title`、`default`、`example/examples` 默认不写。只有日期格式、清空语义、资源边界等无法可靠结构化表达的信息，才保留一句短说明。注册期 lint 负责拒绝不合规范的新增定义，不在运行时悄悄删除字段说明。
+
+### 可选字段规则
+
+可选字段不是越多越灵活，只有在“不传”本身有独立业务意义时才保留。新增可选字段必须满足至少一项：
+
+- 不传代表真实业务状态，例如 `end_time` 不传表示没有结束时间；
+- 是否提供会改变工具行为，且不能由固定默认值安全替代；
+- 是低风险便利参数，例如分页数量或排序方式。
+
+不要因为 handler 暂时支持省略、兼容旧调用、表达空操作或重复表达默认值而保留可选字段。需要区分“未修改”和“清空”时使用 `null`、显式布尔值或 action 枚举。格式优先写进 Schema：严格格式使用 `pattern`，必要时配一条极短说明，例如 `pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$"` 加 `description: "24小时制 HH:MM"`；不要只依赖 `format: "time"`。全天使用必填 `all_day`，不要用“省略 `time` 表示全天”作为新契约。
+
+`_compact_schema` 仅作为 Phase 8 迁移审计辅助，不参与 provider 输出；所有新工具必须直接声明源码规范结构。简介模式的字段签名由该结构自动生成，不得另写一份字段目录。修改后运行
+`PYTHONPATH=. .venv/bin/python scripts/audit_tool_schemas.py`，并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
+
+## 新增工具检查清单
+
+- [ ] 工具名使用稳定的 `资源_动作` 语义，未与已有 canonical name 重复；handler 只处理一个清晰的资源边界。
+- [ ] `description_short` 说明用途、路由场景和最容易遗漏的字段，不写权限事实、用户状态或完整 JSON 示例。
+- [ ] `input_schema` 直接按源码规范结构编写；字段名、类型、必填和必要的可选分支都能从 Schema 看懂。
+- [ ] 省略、清空、默认、互斥和动作分支已使用显式字段、`null`、枚举、`oneOf` 或条件 Schema 表达。
+- [ ] 每个可选字段都有独立业务语义或低风险便利性，不是为了兼容、空操作或重复默认值保留。
+- [ ] 同一资源的多个互斥修改动作使用 `action`，并为每个 action 条件必填对应字段。
+- [ ] handler 不猜测缺失字段、不承担字段优先级；最终业务不变量由 service 校验。
+- [ ] 所有权、权限和 destructive confirm 由 registry/dispatch/确认门负责，不写入动态提示词。
+- [ ] 已添加合法正例、缺字段反例、互斥字段反例和历史兼容测试。
+- [ ] 已运行工具 description 审计、Schema validator 和能力注入回归。
 
 短简介的推荐形状：
 
@@ -32,9 +57,9 @@ Tool(
 搜索公网网页；关键字段 query/max_results
 ```
 
-关键字段只列路由和首次调用最容易遗漏的字段，不代替参数 Schema。模型在当前历史中没有
+关键字段只列路由和首次调用最容易遗漏的字段，不代替参数 Schema。简介模式下，模型在当前历史中没有
 该工具的完整 Schema 时，必须先调用 `get_tool_schema`；工具错误回执也会提示重新获取
-当前工具 Schema。所有 96 个内置工具都必须显式填写 `description_short`，注册表会拒绝
+当前工具 Schema。所有内置工具都必须显式填写 `description_short`，注册表会拒绝
 缺失或超过 100 个 Unicode 字符的简介，不再静默截断。
 
 ## Action 工具规范

@@ -125,6 +125,21 @@ class PtyManager:
             self._sessions[spec.terminal_id] = session
             return session
 
+    async def start_with_subscription(
+        self, spec: PtyLaunchSpec,
+    ) -> tuple[ManagedPty, asyncio.Queue[bytes | None]]:
+        """启动 PTY 并在启动输出泵前建立首个订阅，避免首屏提示符丢失。"""
+        async with self._lock:
+            if spec.terminal_id in self._sessions:
+                raise ValueError("PTY 终端已经运行")
+            handle = await self.bridge.open(spec)
+            session = ManagedPty(spec.terminal_id, handle, spec.cols, spec.rows)
+            queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=256)
+            session.output_queues.add(queue)
+            session.output_task = asyncio.create_task(self._pump_output(session))
+            self._sessions[spec.terminal_id] = session
+            return session, queue
+
     async def attach(self, terminal_id: str) -> ManagedPty:
         async with self._lock:
             session = self._require(terminal_id)

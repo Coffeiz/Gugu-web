@@ -30,6 +30,7 @@ class SandboxdServer:
         self.allowed_root = Path(allowed_root).expanduser().resolve(strict=True)
         self._slots = asyncio.Semaphore(4)
         self._active: dict[str, str] = {}
+        self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_lock = asyncio.Lock()
 
     def _validate_root(self, root: str) -> Path:
@@ -67,15 +68,25 @@ class SandboxdServer:
             if value.get("operation") == "pty_open":
                 await self._handle_pty(value, reader, writer)
                 return
+            if value.get("operation") == "cancel":
+                request_id = str(value.get("request_id") or "").strip()
+                task = self._active_tasks.get(request_id)
+                writer.write(encode_response({"ok": bool(task), "cancelled": bool(task)}))
+                await writer.drain()
+                if task is not None:
+                    task.cancel()
+                return
             if value.get("operation") != "execute":
                 raise ValueError("sandboxd operation 无效")
             request = ExecuteRequest.from_dict(value)
             root = self._validate_root(request.root)
             quota_root = self._validate_root(request.quota_root) if request.quota_root else None
             request_id = uuid.uuid4().hex
+            request_key = request.request_id or request_id
+            self._active_tasks[request_key] = asyncio.current_task()
             async with self._slots:
                 async with self._active_lock:
-                    self._active[request_id] = str(root)
+                    self._active[request_key] = str(root)
                 try:
                     executor = DockerSandboxExecutor(root, get_settings().sandbox)
                     if request.network_profile == "egress":
@@ -90,6 +101,13 @@ class SandboxdServer:
                             raise ValueError("egress 网络名无效")
                         if not docker_network_available(egress_network_name):
                             raise ValueError("受控 egress Docker 网络不存在")
+                    output_lock = asyncio.Lock()
+
+                    async def emit_output(stream: str, data: str) -> None:
+                        async with output_lock:
+                            writer.write(encode_response({"type": "output", "stream": stream, "data": data}))
+                            await writer.drain()
+
                     result = await executor.execute(
                         request.command,
                         cwd=request.cwd,
@@ -98,12 +116,15 @@ class SandboxdServer:
                         quota_root=quota_root,
                         quota_bytes=request.quota_bytes,
                         network_profile=request.network_profile,
+                        on_output=emit_output,
                     )
                 finally:
                     async with self._active_lock:
-                        self._active.pop(request_id, None)
+                        self._active.pop(request_key, None)
+                        self._active_tasks.pop(request_key, None)
             logger.info("sandbox_execute request=%s root=%s active=%d ok=%s quota=%s", request_id, root.name, len(self._active), result.ok, result.quota_exceeded)
             response = {
+                "type": "complete",
                 "ok": result.ok,
                 "exit_code": result.exit_code,
                 "stdout": result.stdout,

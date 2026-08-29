@@ -14,7 +14,7 @@
     <template v-else-if="isCodeExt">
       <div class="tv-edit-cm-wrap">
         <Codemirror
-          v-model="editText" :extensions="cmExtensions" :disabled="!isRealFile" :indent-with-tab="true"
+          v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument" :indent-with-tab="true"
           @ready="onCmReady" @change="scheduleAutoSave"
         />
       </div>
@@ -24,7 +24,7 @@
       <div class="tv-edit-cm-wrap tv-edit-md-wrap">
         <Codemirror
           v-if="mdEditorReady"
-          v-model="editText" :extensions="cmExtensions" :disabled="!isRealFile"
+          v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument"
           @ready="onCmReady"
         />
         <div v-else class="tv-editor-loading">准备 Markdown 语法高亮…</div>
@@ -95,6 +95,9 @@ const props = defineProps({
   fileKey:  { type: [String, Number], default: null },
   // 文件库预览时用于解析 Markdown 相对链接；聊天附件等非文件库内容不传此值。
   fileContext: { type: Object as PropType<Partial<FileMeta> | null>, default: null },
+  // 虚拟文档（例如用户人格文件）不属于文件库，但复用同一套 Markdown 预览/编辑器。
+  sourceText: { type: String, default: null },
+  saveSource: { type: Function as PropType<(content: string) => Promise<void> | void>, default: null },
 })
 
 const router = useRouter()
@@ -202,13 +205,16 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
 const lines       = ref<string[]>([])
 const mdHtml      = ref<string | null>(null)
 const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md/txt 编辑模式的保存基于这个）
-// 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了
+// 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了。
+// 虚拟文档通过 saveSource 保存，不需要文件库 id。
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
+const isVirtualDocument = computed(() => props.sourceText !== null && !!props.saveSource)
+const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.value)
 // 可交互勾选 = md 文件 + 真实文件
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
 // 可编辑 = 后端认得的文本类扩展名 + 真实文件（md/txt 走「编辑」按钮切换态用得到；代码类扩展名
 // 不看这个——代码文件不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
-const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isRealFile.value)
+const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isEditableDocument.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
 // 代码类扩展名：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror——它本身既能当
 // 预览用（只读态），也能编辑（真实文件时），不需要 .tv-table + 单独编辑框这套双视图。
@@ -284,7 +290,7 @@ function onCmReady({ view }: { view: any }) {
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleAutoSave() {
-  if (!isRealFile.value) return
+  if (!isEditableDocument.value || !isRealFile.value) return
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   const targetKey = props.fileKey
   const content   = editText.value
@@ -364,7 +370,11 @@ async function saveEdit() {
   saveError.value = ''
   try {
     captureScroll(editArea.value)
-    await filesApi.saveContent(Number(props.fileKey), editText.value)
+    if (isVirtualDocument.value) {
+      await props.saveSource?.(editText.value)
+    } else {
+      await filesApi.saveContent(Number(props.fileKey), editText.value)
+    }
     await processText(editText.value, props.ext)
     cmLoadSeq++
     mdEditorReady.value = false
@@ -594,8 +604,8 @@ async function processText(text: string, ext: string) {
   }
 }
 
-watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
-  if (!url) return
+watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sourceText]) => {
+  if (!url && sourceText === null) return
   loading.value   = true
   error.value     = null
   truncated.value = false
@@ -606,11 +616,17 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   saveError.value = ''
 
   try {
-    const res  = await fetch(url)
-    const buf  = await res.arrayBuffer()
-    truncated.value = buf.byteLength > MAX_BYTES
-    const slice = truncated.value ? buf.slice(0, MAX_BYTES) : buf
-    const text  = new TextDecoder('utf-8', { fatal: false }).decode(slice)
+    let text: string
+    if (sourceText !== null) {
+      text = sourceText
+      truncated.value = new TextEncoder().encode(text).byteLength > MAX_BYTES
+    } else {
+      const res  = await fetch(url as string)
+      const buf  = await res.arrayBuffer()
+      truncated.value = buf.byteLength > MAX_BYTES
+      const slice = truncated.value ? buf.slice(0, MAX_BYTES) : buf
+      text = new TextDecoder('utf-8', { fatal: false }).decode(slice)
+    }
     await processText(text, ext)
     if (isCodeExt.value) {
       // 代码类扩展名没有单独的只读渲染，CodeMirror 直接从 editText 显示——加载完就把内容和

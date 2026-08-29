@@ -53,7 +53,10 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
         from app.models import UserPreferences
         from sqlalchemy import select
         row = await session.scalar(select(UserPreferences).where(UserPreferences.user_id == owner_id))
-        return bool(row and (row.data or {}).get("tool_injection_mode") == "full_schema")
+        stored_mode = (row.data or {}).get("tool_injection_mode") if row else None
+        if stored_mode is None:
+            return False
+        return stored_mode in {"full", "compact_schema", "full_schema"}
 
     if db is None and owner_id is not None:
         import app.db.session as _sess

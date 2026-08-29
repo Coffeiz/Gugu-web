@@ -57,8 +57,11 @@ async def _shell(db, user_id, args: dict):
     result = None
     event = "completed"
     try:
-        async with session_shell_lock(session_id):
+        if args.get("_terminal_parallel"):
             result = await _run_shell(db, user_id, args)
+        else:
+            async with session_shell_lock(session_id):
+                result = await _run_shell(db, user_id, args)
     except Exception:
         event = "failed"
         raise
@@ -90,6 +93,7 @@ async def _shell(db, user_id, args: dict):
 
 async def _run_shell(db, user_id, args: dict):
     command = str(args.get("command") or "").strip()
+    on_output = args.get("_on_output")
     session_id = args.get("_session_id")
     requested_workspace_id = args.get("_workspace_id")
     network_profile = str(args.get("network") or "none").strip().lower()
@@ -205,7 +209,7 @@ async def _run_shell(db, user_id, args: dict):
             terminal_row = await ensure_agent_terminal(
                 db, user_id, session_id=int(session_id), workspace_id=decision.workspace_id,
                 shell_mode=decision.scope.value, network_profile=network_profile,
-                run_id=current_dispatch_run_id(),
+                run_id=str(args.get("_run_id") or current_dispatch_run_id() or "") or None,
             )
     async def authorization_check() -> bool:
         """在独立事务中复核权限。
@@ -242,7 +246,7 @@ async def _run_shell(db, user_id, args: dict):
             # 或本机执行器，否则 Docker/ACL/审计边界会被静默绕过。
             if not sandbox_settings.sandboxd_socket:
                 return {"error": "sandboxd 未配置，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
-            result_data = await SandboxdClient(sandbox_settings.sandboxd_socket).execute(
+            result_data = await SandboxdClient(sandbox_settings.sandboxd_socket).execute_stream(
                 ExecuteRequest(
                     root=str(root), command=command, cwd=str(args.get("cwd", ".")),
                     timeout=float(args.get("timeout", 30)),
@@ -251,19 +255,26 @@ async def _run_shell(db, user_id, args: dict):
                     quota_bytes=quota_bytes,
                     network_profile=network_profile,
                     egress_expires_at=egress_expires_at,
-                )
+                    request_id=str(args.get("_run_id") or "") or None,
+                ), on_output=on_output,
             )
             if result_data.get("error"):
                 return {"error": result_data["error"], "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_rejected"}
             result = type("SandboxdResult", (), result_data)()
         else:
             executor = (
-                LocalWorkspaceExecutor(root)
+                LocalWorkspaceExecutor(
+                    root,
+                    # system 是用户显式开启的宿主机范围，允许执行本机已有脚本；
+                    # sandbox 才需要阻止不受信 workspace 文件进入解释器。
+                    restrict_interpreter_inputs=decision.scope.value != "system",
+                )
             )
             result = await executor.execute(
                 command, cwd=args.get("cwd", "."), timeout=args.get("timeout", 30),
                 max_output_chars=args.get("max_output_chars", 12_000),
                 authorization_check=authorization_check,
+                on_output=on_output,
             )
     except SandboxdUnavailable as exc:
         return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
@@ -282,13 +293,13 @@ async def _run_shell(db, user_id, args: dict):
             idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
             metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
         )
-    if terminal_row is not None:
+    if terminal_row is not None and not args.get("_defer_terminal_event"):
         from app.services.terminals import append_shell_result
         await append_shell_result(
             db, terminal_row, command=command, stdout=result.stdout, stderr=result.stderr,
             exit_code=result.exit_code, ok=result.ok,
             source=str(args.get("_terminal_source") or "agent"),
-            run_id=current_dispatch_run_id(),
+            run_id=str(args.get("_run_id") or current_dispatch_run_id() or "") or None,
         )
     return {
         "ok": result.ok,
@@ -317,19 +328,19 @@ class ShellSkill(BaseSkill):
         Tool(
             name="shell",
             label="执行 Shell 命令",
-            description_short='执行受控 Shell 命令；关键字段 command/cwd',
+            description_short='受控执行 Shell；默认 sandbox/network=none；system 或 egress 需显式选择并确认，禁止管道和重定向',
             description="在授权 Shell 范围执行一条受控命令；默认 sandbox，危险命令需确认，不支持管道和重定向。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "要执行的单条命令，不要拼接管道或重定向"},
-                    "cwd": {"type": "string", "description": "workspace 内相对目录，默认 ."},
-                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 300, "description": "超时时间，秒，默认 30"},
-                    "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "输出字符上限，默认 12000"},
-                    "network": {"type": "string", "enum": ["none", "egress"], "description": "默认 none；需要联网时请求 egress，首次使用必须经用户确认"},
-                    "scope": {"type": "string", "enum": ["sandbox", "system"], "description": "执行范围，默认 sandbox；system 必须显式选择并具备对应权限"},
-                    "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
-                    "confirm_token": {"type": "string", "description": "危险命令确认凭证"},
+                    "command": {"type": "string"},
+                    "cwd": {"type": "string"},
+                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 300},
+                    "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
+                    "network": {"type": "string", "enum": ["none", "egress"]},
+                    "scope": {"type": "string", "enum": ["sandbox", "system"]},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
                 },
                 "required": ["command"],
             },

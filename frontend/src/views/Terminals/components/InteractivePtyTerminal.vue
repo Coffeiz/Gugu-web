@@ -6,14 +6,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { onActivated, onMounted, onUnmounted, onDeactivated, ref, watch } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from 'xterm'
 import 'xterm/css/xterm.css'
 import { getToken } from '@/services/api'
 
-const props = defineProps<{ terminalId: string }>()
-const emit = defineEmits<{ status: [value: { cols?: number; rows?: number }]; exit: []; error: [message: string] }>()
+const props = defineProps<{ terminalId: string; restartToken?: number }>()
+const emit = defineEmits<{ status: [value: { terminalId: string; cols?: number; rows?: number }]; exit: [terminalId: string]; error: [message: string] }>()
 const terminalRef = ref<HTMLElement | null>(null)
 const connected = ref(false)
 const statusText = ref('正在连接…')
@@ -26,6 +26,8 @@ let reconnectTimer: number | null = null
 let reconnectAttempt = 0
 let outputDecoder: TextDecoder | null = null
 let suppressPasteSubmitUntil = 0
+let promptRecoveryTimer: number | null = null
+let receivedOutput = false
 
 function socketUrl(id: string): string {
   const configured = import.meta.env.VITE_API_URL ?? '/api/v1'
@@ -48,6 +50,8 @@ function scheduleReconnect() {
 }
 function connect() {
   if (intentionalClose) return
+  if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
+  receivedOutput = false
   const generation = ++socketGeneration
   const previous = socket
   if (previous && previous.readyState !== WebSocket.CLOSED) previous.close()
@@ -58,19 +62,27 @@ function connect() {
   current.onopen = () => {
     if (!isCurrent()) return
     connected.value = true; reconnectAttempt = 0; statusText.value = ''; resize()
+    // PTY 启动输出可能在首次订阅建立前丢失。仅当连接后完全没有收到输出时，
+    // 用 Ctrl-L 重绘当前 shell 提示符；不发送换行，避免凭空多出一行。
+    promptRecoveryTimer = window.setTimeout(() => {
+      promptRecoveryTimer = null
+      if (isCurrent() && !receivedOutput) send({ type: 'input', data: '\u000c' })
+    }, 700)
   }
   current.onmessage = (event) => {
     if (!isCurrent()) return
     try {
       const message = JSON.parse(event.data) as { type?: string; data?: string; cols?: number; rows?: number; message?: string }
       if (message.type === 'output' && message.data) {
+        receivedOutput = true
+        if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
         const bytes = Uint8Array.from(atob(message.data), char => char.charCodeAt(0))
         terminal?.write((outputDecoder ??= new TextDecoder()).decode(bytes, { stream: true }))
-      } else if (message.type === 'ready' || message.type === 'status') emit('status', { cols: message.cols, rows: message.rows })
+      } else if (message.type === 'ready' || message.type === 'status') emit('status', { terminalId: props.terminalId, cols: message.cols, rows: message.rows })
       else if (message.type === 'exit') {
         if (outputDecoder) terminal?.write(outputDecoder.decode())
         outputDecoder = null
-        statusText.value = '终端已退出'; connected.value = false; emit('exit')
+        statusText.value = '终端已退出'; connected.value = false; intentionalClose = true; emit('exit', props.terminalId)
       }
       else if (message.type === 'error') emit('error', message.message ?? '终端连接失败')
     } catch { emit('error', '终端输出格式无效') }
@@ -78,6 +90,7 @@ function connect() {
   current.onerror = () => { if (isCurrent()) connected.value = false }
   current.onclose = () => {
     if (!isCurrent()) return
+    if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
     socket = null
     connected.value = false
     if (!intentionalClose) scheduleReconnect()
@@ -104,6 +117,11 @@ function terminalTheme() {
   return { background: '#101319', foreground: '#e7edf7', cursor: accent, selectionBackground: selection }
 }
 function applyTheme() { terminal?.options && (terminal.options.theme = terminalTheme()) }
+function activateTerminal() {
+  // KeepAlive 切换终端后容器尺寸可能已经变化，重新 fit 只调整 PTY 窗口，
+  // 不重建 xterm，因此当前路径、输入行和屏幕缓冲都能保留。
+  void requestAnimationFrame(() => { resize(); terminal?.focus() })
+}
 let themeObserver: MutationObserver | null = null
 
 onMounted(() => {
@@ -131,11 +149,26 @@ onMounted(() => {
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette', 'data-family'] })
   connect()
 })
-watch(() => props.terminalId, () => { intentionalClose = true; socket?.close(); intentionalClose = false; reconnectAttempt = 0; connect() })
+onActivated(activateTerminal)
+onDeactivated(() => { /* 保留 WebSocket 与 xterm 状态，切回时继续使用同一 PTY */ })
+watch(() => [props.terminalId, props.restartToken], ([terminalId, restartToken], previous) => {
+  if (terminalId === previous?.[0] && restartToken === previous?.[1]) return
+  intentionalClose = true
+  if (reconnectTimer !== null) { window.clearTimeout(reconnectTimer); reconnectTimer = null }
+  if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
+  socketGeneration++
+  socket?.close()
+  socket = null
+  terminal?.clear()
+  intentionalClose = false
+  reconnectAttempt = 0
+  connect()
+})
 onUnmounted(() => {
   intentionalClose = true
   socketGeneration++
   if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+  if (promptRecoveryTimer !== null) window.clearTimeout(promptRecoveryTimer)
   const current = socket
   socket = null
   if (current?.readyState === WebSocket.OPEN) current.send(JSON.stringify({ type: 'detach' }))
@@ -150,11 +183,11 @@ onUnmounted(() => {
 
 <style scoped>
 .pty-terminal-shell { position:relative; min-height:0; flex:1; overflow:hidden; background:var(--terminal-bg,#101319); }
-.pty-terminal { height:100%; padding:0; box-sizing:border-box; }
+.pty-terminal { height:100%; padding:14px 16px; box-sizing:border-box; }
 .pty-terminal :deep(.xterm) { height:100%; }
 .pty-terminal :deep(.xterm-viewport) { background:var(--terminal-bg,#101319) !important; }
-.pty-terminal :deep(.xterm-screen) { padding:14px 16px; box-sizing:border-box; }
+.pty-terminal :deep(.xterm-screen) { padding:0; }
 .pty-terminal-shell { --terminal-bg:#101319; }
-.pty-terminal-status { position:absolute; inset:0; display:grid; place-items:center; color:#778196; font:12px/1.5 var(--font-sans); pointer-events:none; }
+.pty-terminal-status { position:absolute; z-index:2; inset:0; display:grid; place-items:center; color:#778196; font:12px/1.5 var(--font-sans); pointer-events:none; }
 .pty-terminal-shell:not(.is-disconnected) .pty-terminal-status { display:none; }
 </style>

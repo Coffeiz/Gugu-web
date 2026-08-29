@@ -13,6 +13,16 @@ def test_parse_requested_engines_is_config_driven_and_deduplicated():
     assert search_tools._parse_requested_engines("") == []
 
 
+def test_searxng_search_url_encodes_unicode_query_as_utf8():
+    url = search_tools._build_searxng_search_url(
+        "http://127.0.0.1:8888",
+        {"q": "低饱和配色", "format": "json", "engines": "sogou,quark"},
+    )
+
+    assert "q=%E4%BD%8E%E9%A5%B1%E5%92%8C%E9%85%8D%E8%89%B2" in url
+    assert "低饱和配色" not in url
+
+
 def test_normalize_engine_failures_maps_common_reasons_and_tolerates_shapes():
     failures = search_tools._normalize_engine_failures({
         "unresponsive_engines": [

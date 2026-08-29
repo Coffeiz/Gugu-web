@@ -6,6 +6,7 @@ Anthropic 与 OpenAI 两种 schema，消除手写两份的重复。core 通过 r
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -214,6 +215,25 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
 
 
+def _compact_schema(value: Any) -> Any:
+    """移除 Schema 节点元数据，保留 properties 中同名的真实字段。"""
+    if isinstance(value, list):
+        return [_compact_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    omitted = {"description", "example", "examples", "title", "default"}
+    result = {}
+    for key, item in value.items():
+        if key in omitted:
+            continue
+        if key == "properties" and isinstance(item, dict):
+            # properties 的 key 是用户参数名，不是 Schema 元数据；参数名可以合法地叫 title。
+            result[key] = {name: _compact_schema(schema) for name, schema in item.items()}
+        else:
+            result[key] = _compact_schema(item)
+    return result
+
+
 class Tool:
     """单个工具的声明 + 执行入口。"""
 
@@ -263,8 +283,8 @@ class Tool:
     def to_anthropic(self) -> dict:
         return {
             "name": self.name,
-            "description": self.description,
-            "input_schema": self.input_schema,
+            "description": self.description_short,
+            "input_schema": copy.deepcopy(self.input_schema),
         }
 
     def to_openai(self) -> dict:
@@ -272,8 +292,8 @@ class Tool:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self.description,
-                "parameters": self.input_schema,
+                "description": self.description_short,
+                "parameters": copy.deepcopy(self.input_schema),
             },
         }
 
