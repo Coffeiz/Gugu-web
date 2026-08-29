@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import chat_attach
@@ -365,14 +365,34 @@ async def list_sessions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    res = await db.execute(
+    # 网页会话增长很快，不能用一个总量窗口把低频 IM 会话全部挤掉。
+    # 两类会话分别保留窗口，再合并排序，保证 QQ/微信/飞书始终可见。
+    web_res = await db.execute(
         select(ConversationSession, Workspace.name)
         .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
-        .where(ConversationSession.user_id == current_user.id)
+        .where(
+            ConversationSession.user_id == current_user.id,
+            or_(ConversationSession.source.is_(None), ConversationSession.source == "web"),
+        )
         .order_by(desc(ConversationSession.updated_at))
         .limit(50)
     )
-    sessions = res.all()
+    im_res = await db.execute(
+        select(ConversationSession, Workspace.name)
+        .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
+        .where(
+            ConversationSession.user_id == current_user.id,
+            ConversationSession.source.is_not(None),
+            ConversationSession.source != "web",
+        )
+        .order_by(desc(ConversationSession.updated_at))
+        .limit(50)
+    )
+    sessions = sorted(
+        [*web_res.all(), *im_res.all()],
+        key=lambda item: item[0].updated_at,
+        reverse=True,
+    )
     def goal_active(session: ConversationSession) -> bool:
         context = session.session_context if isinstance(session.session_context, dict) else {}
         return bool(context.get("goal_mode") and context.get("goal_text"))
