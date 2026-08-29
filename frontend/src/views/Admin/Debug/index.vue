@@ -12,14 +12,10 @@
       <AdminSelect v-model="filterLevel"  :options="levelOptions"  style="width:130px" />
       <input v-model="filterText" class="debug-search" placeholder="搜索关键词（如 trace=xxxx 串起全链路）" />
       <button class="icon-btn" :class="{ active: autoScroll }" @click="autoScroll = !autoScroll" title="自动滚动">
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M7.5 2v11M4 10l3.5 3.5L11 10"/>
-        </svg>
+        <Icon name="action.scroll-down" size="sm" />
       </button>
       <button class="icon-btn" @click="clearLines" title="清空显示">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 3h10M5 3Monoh4v1M3.5 3l.5 9h6l.5-9"/>
-        </svg>
+        <Icon name="action.clear" size="sm" />
       </button>
       <span class="live-dot" :class="{ connected }"></span>
       <span class="toolbar-count">{{ connected ? '实时' : '断开' }}</span>
@@ -60,6 +56,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
+import Icon from '@/components/common/Icon.vue'
 
 const adminStore = useAdminStore()
 
