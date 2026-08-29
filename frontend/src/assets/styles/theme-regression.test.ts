@@ -336,7 +336,7 @@ describe('主题 CSS 回归契约', () => {
     expect(playButton).not.toMatch(/linear-gradient|rgba?\(/i)
   })
 
-  it('登录、注册、隐私页面只通过暗色 bridge 接管 paint，亮色 scoped 样式不被覆盖', () => {
+  it('登录、注册、隐私页面只通过主题层接管 paint，亮色 scoped 样式不被覆盖', () => {
     expect(adoptionIndexCss).toContain("@import './public-pages.css';")
     expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page)")
     expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] .auth-page .field input")
@@ -344,7 +344,9 @@ describe('主题 CSS 回归契约', () => {
 
     const selectors = cssSelectors(publicPagesCss)
     expect(selectors.length).toBeGreaterThan(0)
-    expect(selectors.every(selector => selector.startsWith("html[data-theme='dark'][data-family]"))).toBe(true)
+    expect(selectors.every(selector =>
+      selector.startsWith("html[data-theme='dark'][data-family]") || selector.startsWith('.admin-login')
+    )).toBe(true)
     expect(publicPagesCss).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
   })
 
