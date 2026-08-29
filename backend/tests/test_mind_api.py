@@ -14,14 +14,15 @@ from app.api.v1.mind import (
     add_canvas_item, create_canvas, create_note, create_ref_node, create_relation,
     create_canvas_note, delete_canvas, delete_note, list_canvas_items, list_canvas_relations,
     list_canvases, list_notes,
-    ref_suggest, remove_canvas_item, update_canvas_item, update_canvas_note, update_note,
+    ref_suggest, remove_canvas_item, update_canvas, update_canvas_item, update_canvas_note, update_note,
 )
+from app.api.v1 import mind as mind_api
 from app.api.v1.search import run_global_search
 from app.core.mind import content_hash, to_plain_text
 from app.core.tz import now_utc
 from app.models import CalendarEvent, Client, File, MindCanvasItem, MindMap, MindNode, Project
 from app.schemas import (
-    MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemUpdate, MindCanvasNoteCreate,
+    MindCanvasCreate, MindCanvasItemCreate, MindCanvasItemUpdate, MindCanvasNoteCreate, MindCanvasUpdate,
     MindCanvasNoteUpdate, MindNoteCreate, MindNoteUpdate, MindRefNodeCreate, MindRelationCreate,
 )
 
@@ -177,6 +178,44 @@ async def test_delete_note_of_other_user_is_404(db, user_a, user_b):
         await delete_note(note.id, current_user=user_a, db=db)
     assert e.value.status_code == 404
     assert (await _row(db, note.id)).deleted_at is None  # 没被删掉
+
+
+@pytest.mark.asyncio
+async def test_note_mutations_publish_canonical_mind_events(db, user_a, monkeypatch):
+    """笔记事件必须在提交后以完整实体发布，不能依赖旧的 mind.canvas 参数格式。"""
+    published = []
+
+    async def publish(user_id, *resources, **kwargs):
+        published.append((user_id, resources, kwargs))
+
+    monkeypatch.setattr(mind_api.events, "publish", publish)
+    note = await _new_note(db, user_a, content="初始")
+    await update_note(note.id, MindNoteUpdate(content_md="更新", version=1), current_user=user_a, db=db)
+    await delete_note(note.id, current_user=user_a, db=db)
+
+    assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
+    assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
+    assert published[0][2]["event_payload"]["kind"] == "note"
+    assert published[0][2]["event_payload"]["entity"]["id"] == note.id
+
+
+@pytest.mark.asyncio
+async def test_canvas_mutations_publish_canonical_mind_events(db, user_a, monkeypatch):
+    """画布及其删除必须走同一条 canonical 事件链，且事件发生在提交之后。"""
+    published = []
+
+    async def publish(user_id, *resources, **kwargs):
+        published.append((user_id, resources, kwargs))
+
+    monkeypatch.setattr(mind_api.events, "publish", publish)
+    canvas = await create_canvas(MindCanvasCreate(title="事件画布"), current_user=user_a, db=db)
+    await update_canvas(canvas.id, MindCanvasUpdate(title="更新画布"), current_user=user_a, db=db)
+    await delete_canvas(canvas.id, current_user=user_a, db=db)
+
+    assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
+    assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
+    assert [entry[2]["event_payload"]["kind"] for entry in published[:2]] == ["canvas", "canvas"]
+    assert published[-1][2]["event_payload"] == {"kind": "canvas", "entity": {"id": canvas.id}}
 
 
 # ── `[[` 对象引用补全 ─────────────────────────────────────────────────────────

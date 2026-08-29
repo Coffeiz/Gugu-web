@@ -6,18 +6,18 @@
         <p class="page-desc">咕咕「读懂用户需求」健康度 · 仅活跃用户、按用户宏平均（重度用户不主导）</p>
       </div>
       <div class="header-right">
-        <label class="xd-toggle" :class="{ on: excludeDev }">
-          <input type="checkbox" v-model="excludeDev" @change="load">
-          排除开发者
-        </label>
-        <div class="range-tabs">
-          <button v-for="r in ranges" :key="r.h"
-            :class="['range-tab', { active: hours === r.h }]"
-            @click="setRange(r.h)">{{ r.label }}</button>
-        </div>
-        <button class="dl-btn" @click="exportData" :disabled="exporting">{{ exporting ? '导出中…' : '导出数据' }}</button>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
+        <AdminSegmentTabs
+          :model-value="String(hours)"
+          :tabs="ranges"
+          size="compact"
+          class="data-header-control"
+          aria-label="感知诊断时间范围"
+          @update:model-value="setRange"
+        />
+        <button class="dl-btn data-header-control" @click="exportData" :disabled="exporting">{{ exporting ? '导出中…' : '导出数据' }}</button>
+        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+          <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -59,22 +59,22 @@
       <div class="section-label">总览</div>
       <div class="cards-grid">
         <div class="card">
-          <div class="card-icon ic-blue"><PhUsers :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
           <div class="card-val">{{ data.active_users }}</div>
           <div class="card-lbl">活跃用户（≥{{ data.min_events }} 轮）</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ data.perc_total }}</div>
           <div class="card-lbl">观察数 · 纠正 {{ data.misperc_total }}</div>
         </div>
         <div class="card" :class="rateCard(data.perception_misperc_rate)">
-          <div class="card-icon ic-amber"><PhPulse :size="16" weight="bold"/></div>
+          <div class="card-icon ic-amber"><Icon name="admin.pulse" size="md" /></div>
           <div class="card-val">{{ pct(data.perception_misperc_rate) }}</div>
           <div class="card-lbl">感知误判率（仅误读·宏平均）</div>
         </div>
         <div class="card" :class="{ 'card-active': (data.avg_ambiguity ?? 0) > ambigHi }">
-          <div class="card-icon ic-amber"><PhBrain :size="16" weight="bold"/></div>
+          <div class="card-icon ic-amber"><Icon name="admin.brain" size="md" /></div>
           <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
           <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
         </div>
@@ -157,7 +157,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
-import { PhUsers, PhChats, PhPulse, PhBrain, PhArrowClockwise } from '@phosphor-icons/vue'
+import Checkbox from '@/components/common/Checkbox.vue'
+import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 
 interface PerceptionData {
   active_users?: number
@@ -185,7 +186,12 @@ const loading = ref(false)
 const refreshing = ref(false)
 const loaded = ref(false)
 const err = ref('')
-const ranges = [{ h: 24, label: '24h' }, { h: 168, label: '7天' }, { h: 720, label: '30天' }, { h: 0, label: '全部' }]
+const ranges = [
+  { key: '24', label: '24h' },
+  { key: '168', label: '7天' },
+  { key: '720', label: '30天' },
+  { key: '0', label: '全部' },
+]
 
 // 可调阈值（默认即后端原常量）：活跃门槛 / 标红误判率(%) / 歧义偏高线 / 最小样本
 const DEFAULTS = { minEvents: 1, rateHiPct: 25, ambigHi: 60, minN: 10 }
@@ -227,7 +233,7 @@ async function load() {
     err.value = ''
   } catch (e) { err.value = e instanceof Error ? e.message : '加载失败' } finally { loading.value = false }
 }
-function setRange(h: number) { hours.value = h; load() }
+function setRange(h: string) { hours.value = Number(h); load() }
 
 function pct(v: number | null | undefined) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
 // 标红线 = 当前 rateHiPct；标黄 = 其 0.6 倍（随面板阈值联动）
@@ -285,7 +291,8 @@ async function downloadMisread() {
 function fmtTs(ts: number) {
   if (!ts) return '—'
   const d = new Date(ts * 1000)
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 onMounted(load)
@@ -299,22 +306,10 @@ onMounted(load)
 .page-title-block { display: flex; flex-direction: column; }
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
-.header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.header-right { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 4px; }
+.header-right > .data-header-control { height: 32px; box-sizing: border-box; }
 
 /* 排除开发者开关（同 Admin/Analytics/index.vue） */
-.xd-toggle {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
-  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
-}
-.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
-.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
-
-.range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
-.range-tab { font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s; }
-.range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
-.range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
 /* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── 阈值条 ── */
@@ -379,6 +374,7 @@ onMounted(load)
 
 /* ── 错读案例预览 ── */
 .dl-btn { margin-left: auto; background: rgba(123,127,178,0.16); border: 1px solid rgba(123,127,178,0.3); color: rgba(170,175,225,0.95); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; transition: all .15s; }
+.dl-btn.data-header-control { height: 32px; box-sizing: border-box; padding: 0 12px; }
 .dl-btn:hover:not(:disabled) { background: rgba(123,127,178,0.26); }
 .dl-btn:disabled { opacity: .5; cursor: not-allowed; }
 .mr-list { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }

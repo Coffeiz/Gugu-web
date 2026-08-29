@@ -3,6 +3,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import type { Project, ProjectStage } from '@/types/project'
 import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 interface ProjectModalActionsOptions {
   project: () => Project | null
@@ -79,7 +80,7 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
       const parts = []
       if (fileCount) parts.push(`${fileCount} 个文件`)
       if (folderCount) parts.push(`${folderCount} 个文件夹`)
-      if (!window.confirm(`项目「${current.name}」中的 ${parts.join('、')} 将随项目一并删除。确定删除该项目吗？`)) return
+      if (!await confirmDialog({ title: '删除项目', message: `项目「${current.name}」中的 ${parts.join('、')} 将随项目一并删除。`, tone: 'danger', confirmText: '删除' })) return
     }
 
     await projectStore.deleteProject(current.id)

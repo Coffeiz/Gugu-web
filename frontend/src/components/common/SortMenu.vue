@@ -1,15 +1,15 @@
 <script setup lang="ts" generic="T">
 import { ref } from 'vue'
 import ContextMenu from '@/components/ContextMenu.vue'
-import { PhSortAscending } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import type { SortOption } from '@/composables/useSortedList'
 
 defineProps({
   options: { type: Array as () => SortOption<T>[], required: true },
   sortKey: { type: String, required: true },
   sortDir: { type: String as () => 'asc' | 'desc', required: true },
-  /** 可选：按钮里显示的图标组件，默认 PhSortAscending。传 null 不显示。 */
-  icon: { type: Object, default: () => PhSortAscending },
+  /** 可选：按钮里的语义图标。传空字符串不显示。 */
+  icon: { type: String, default: 'action.sort' },
 })
 
 const emit = defineEmits<{
@@ -45,7 +45,7 @@ defineExpose({ closeMenu })
       type="button"
       @click.stop="openMenu"
     >
-      <component :is="icon" v-if="icon" :size="13" weight="bold" />
+      <Icon :name="icon" v-if="icon" size="sm" tone="inherit" />
       {{ options.find(o => o.key === sortKey)?.label ?? '' }}
       <svg
         class="sort-dir-icon"
@@ -57,7 +57,7 @@ defineExpose({ closeMenu })
       </svg>
     </button>
     <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
-    <ContextMenu :show="sortMenuOpen" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
+    <ContextMenu :show="sortMenuOpen" :anchor="sortBtnRef" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
       <button
         v-for="opt in options"
         :key="opt.key"

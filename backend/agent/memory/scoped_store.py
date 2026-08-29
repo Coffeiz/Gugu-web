@@ -89,3 +89,18 @@ async def write_scope_json(scope: MemoryScope, filename: str, value: Any) -> Non
         filename,
         json.dumps(value, ensure_ascii=False, indent=2) + "\n",
     )
+
+
+async def merge_scope_event_memory(
+    scope: MemoryScope, incoming: str, *, fallback_title: str = "事件记录",
+) -> str:
+    """复用 MEM-2 事件契约合并 scope 的 memory.md，并返回完整主档。"""
+    if "memory.md" not in scope.files:
+        raise ValueError("当前记忆作用域不支持 memory.md")
+    from agent.memory.event_memory import merge_event_memory
+
+    current = await _read(scope, "memory.md")
+    merged = merge_event_memory(current, incoming, fallback_title=fallback_title)
+    if merged and merged != current.strip():
+        await write_scope_file(scope, "memory.md", merged + "\n")
+    return merged

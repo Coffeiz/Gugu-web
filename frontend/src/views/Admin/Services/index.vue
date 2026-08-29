@@ -11,7 +11,7 @@
           <span class="dep" :class="deps.db ? 'ok' : 'bad'">DB {{ deps.db ? '通' : '断' }}</span>
         </span>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -42,10 +42,10 @@
         <div class="svc-meta">
           <div v-if="s.name === 'web'"><span>运行</span>{{ fmtDur(s.uptime_secs) }}</div>
           <div v-else-if="s.last_seen_secs != null"><span>心跳</span>{{ s.last_seen_secs }}s 前</div>
-          <div v-if="s.name === 'supervisor'"><span>网关</span>{{ s.extra?.count ?? 0 }} 个</div>
+          <div v-if="s.name === 'gateway'"><span>网关</span>{{ s.extra?.count ?? 0 }} 个</div>
         </div>
 
-        <div v-if="s.name === 'supervisor' && s.extra?.gateways?.length" class="svc-gateways">
+        <div v-if="s.name === 'gateway' && s.extra?.gateways?.length" class="svc-gateways">
           <div v-for="g in s.extra.gateways" :key="g.key" class="svc-gw">
             <span class="svc-gw-plat">{{ g.platform }}</span>
           </div>
@@ -70,8 +70,8 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 const adminStore = useAdminStore()
 const services = ref<any[]>([])
@@ -103,7 +103,7 @@ async function load(manual = false) {
 }
 
 async function restart(s: any) {
-  if (!confirm(`重启「${s.label}」？将向进程发送 SIGTERM，由 systemd 自动拉起（开发环境无 systemd 不会自愈）。`)) return
+  if (!await confirmDialog({ title: '重启服务', message: `重启「${s.label}」？将向进程发送 SIGTERM，由 systemd 自动拉起（开发环境无 systemd 不会自愈）。`, tone: 'warning', confirmText: '重启' })) return
   restarting.value = s.name
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/services/${s.name}/restart`, { method: 'POST' })

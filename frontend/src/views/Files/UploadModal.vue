@@ -3,11 +3,7 @@
       <div class="modal">
         <div class="modal-header">
           <h2>上传文件</h2>
-          <button class="close-btn" @click="handleClose">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <path d="M3 3l10 10M13 3L3 13"/>
-            </svg>
-          </button>
+          <CloseButton @click="handleClose" />
         </div>
 
         <div class="modal-body">
@@ -212,6 +208,7 @@
 </template>
 
 <script setup lang="ts">
+import CloseButton from '@/components/common/CloseButton.vue'
 import { ref, computed, watch, type PropType } from 'vue'
 import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
 import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/useFileUpload'
@@ -446,13 +443,6 @@ async function handleUpload() {
   padding: 20px 24px 16px; border-bottom: 1px solid var(--file-dialog-divider); flex-shrink: 0;
 }
 .modal-header h2 { font-size: 16px; font-weight: 700; color: var(--content-primary); }
-.close-btn {
-  width: 28px; height: 28px; border-radius: var(--radius-sm); border: none;
-  background: transparent; color: var(--content-secondary);
-  display: flex; align-items: center; justify-content: center; cursor: pointer;
-  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
-}
-.close-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
 
 .drop-zone {
@@ -583,10 +573,10 @@ label {
 .btn-cancel:hover { background: var(--file-dialog-control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
 .btn-upload {
   padding: 8px 22px; border-radius: var(--radius-sm); border: none;
-  background: var(--action-primary-bg); color: var(--content-on-accent); box-shadow: var(--elevation-card);
+  background: var(--action-primary-bg); color: var(--content-on-accent); box-shadow: none;
   font: 600 13px var(--font-sans); cursor: pointer;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.btn-upload:hover:not(:disabled) { opacity: .9; box-shadow: var(--elevation-card-hover); }
+.btn-upload:hover:not(:disabled) { opacity: .9; box-shadow: none; }
 .btn-upload:disabled { opacity: .45; cursor: not-allowed; }
 </style>

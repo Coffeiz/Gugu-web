@@ -2,8 +2,8 @@
   <div class="cal-sidebar glass-card">
     <div class="sidebar-top">
       <div class="sidebar-date-label">{{ selectedDateLabel }}</div>
-      <button v-if="hasActiveRange" class="add-event-btn add-proj-btn" @click="$emit('add-project')"><PhPlus :size="13" weight="bold" />添加项目</button>
-      <button v-else ref="addButton" class="add-event-btn" @click="$emit('add-event', addButton)"><PhPlus :size="13" weight="bold" />添加活动</button>
+      <button v-if="hasActiveRange" class="add-event-btn add-proj-btn" @click="$emit('add-project')"><Icon name="action.add" :size="13" />添加项目</button>
+      <button v-else ref="addButton" class="add-event-btn" @click="$emit('add-event', addButton)"><Icon name="action.add" :size="13" />添加活动</button>
     </div>
 
     <div v-if="selectedEvents.length" class="sidebar-events">
@@ -18,19 +18,19 @@
             <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
             <span v-if="ev.time" class="sidebar-ev-time" :class="{ 'has-end-time': ev.endTime }">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
             {{ ev.name }}
-            <span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
+            <span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><Icon name="status.success" :size="9" /></span>
           </div>
           <template v-if="ev.calendarType === 'event'">
-            <div class="sidebar-ev-desc"><PhAlignLeft :size="11" weight="bold" style="flex-shrink:0;opacity:0.38;margin-top:1px" /><span v-if="ev.description">{{ ev.description }}</span></div>
+            <div class="sidebar-ev-desc"><Icon name="navigation.apps" :size="11" style="flex-shrink:0;opacity:0.38;margin-top:1px" /><span v-if="ev.description">{{ ev.description }}</span></div>
           </template>
           <template v-else>
             <div class="sidebar-ev-desc">{{ ev.startDate?.slice(5).replace('-','/') }} → {{ ev.endDate?.slice(5).replace('-','/') }}<template v-if="ev.currentStage"> · {{ ev.currentStage }}</template></div>
           </template>
         </div>
-        <button v-if="ev.calendarType === 'event'" class="ev-del-btn" @click.stop="$emit('delete-event', ev)" title="删除活动"><PhTrash :size="12" weight="bold" /></button>
+        <button v-if="ev.calendarType === 'event'" class="ev-del-btn" @click.stop="$emit('delete-event', ev)" title="删除活动"><Icon name="action.delete" :size="12" /></button>
       </div>
     </div>
-    <div v-else class="sidebar-empty"><PhCalendarBlank :size="26" weight="bold" style="opacity:0.3" /><span>当天无日程</span></div>
+    <div v-else class="sidebar-empty"><Icon name="navigation.calendar" :size="26" style="opacity:0.3" /><span>当天无日程</span></div>
 
     <div class="sidebar-divider"></div>
     <div class="sidebar-section-title">近期节点</div>
@@ -41,7 +41,7 @@
       <div class="cap-capsule" :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
         <span class="cap-tag" :class="ev.calendarType === 'project' ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">{{ ev.calendarType === 'project' ? '项目' : '活动' }}</span>
         <span v-if="ev.calendarType === 'project'" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
-        <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
+        <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><Icon name="status.success" :size="9" /></span></span>
         <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: (ev.daysLeft ?? 0) <= 3 }">{{ ev.daysLabel }}</span>
       </div>
     </div>
@@ -50,7 +50,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhCheck } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { isNextDay } from '@/composables/useEventEditForm'
 import { capBg, hexAlpha, darkenHex } from '../utils/calendarColors'
 import { typeLabel } from '../domain/calendarRules'
@@ -83,8 +83,8 @@ const addButton = ref<HTMLElement | null>(null)
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
 .add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
-.add-proj-btn { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(123,127,178,0.3); }
-.add-proj-btn:hover { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; opacity: 0.92; box-shadow: 0 6px 18px rgba(123,127,178,0.4); }
+.add-proj-btn { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
+.add-proj-btn:hover { background: var(--action-primary-bg-hover); border-color: transparent; opacity: 1; box-shadow: none; }
 .sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
 .sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; transition: box-shadow 0.25s ease; }
 .sidebar-ev:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,0.2), 0 3px 10px rgba(0,0,0,0.10); }

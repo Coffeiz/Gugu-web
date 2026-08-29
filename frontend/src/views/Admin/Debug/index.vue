@@ -12,14 +12,10 @@
       <AdminSelect v-model="filterLevel"  :options="levelOptions"  style="width:130px" />
       <input v-model="filterText" class="debug-search" placeholder="搜索关键词（如 trace=xxxx 串起全链路）" />
       <button class="icon-btn" :class="{ active: autoScroll }" @click="autoScroll = !autoScroll" title="自动滚动">
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M7.5 2v11M4 10l3.5 3.5L11 10"/>
-        </svg>
+        <Icon name="action.scroll-down" size="sm" />
       </button>
       <button class="icon-btn" @click="clearLines" title="清空显示">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 3h10M5 3V2h4v1M3.5 3l.5 9h6l.5-9"/>
-        </svg>
+        <Icon name="action.clear" size="sm" />
       </button>
       <span class="live-dot" :class="{ connected }"></span>
       <span class="toolbar-count">{{ connected ? '实时' : '断开' }}</span>
@@ -60,6 +56,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
+import Icon from '@/components/common/Icon.vue'
 
 const adminStore = useAdminStore()
 
@@ -70,14 +67,16 @@ const filterText   = ref('')
 const autoScroll   = ref(true)
 const connected    = ref(false)
 const tableWrap    = ref<HTMLElement | null>(null)
-let   sse: EventSource | null = null
+let   streamAbort: AbortController | null = null
+let   streamRetry: ReturnType<typeof setTimeout> | null = null
+let   streamRunning = true
 let   uid          = 0
 
 const sourceOptions = [
   { label: '全部来源',   value: '' },
   { label: 'web',        value: 'web' },
   { label: 'worker',     value: 'worker' },
-  { label: 'supervisor', value: 'supervisor' },
+  { label: 'gateway', value: 'gateway' },
 ]
 const levelOptions = [
   { label: '全部级别', value: '' },
@@ -136,21 +135,56 @@ async function loadTail() {
   } catch {}
 }
 
-function startSSE() {
-  if (sse) { sse.close(); sse = null }
+async function startSSE() {
+  if (!streamRunning) return
+  if (streamRetry) { clearTimeout(streamRetry); streamRetry = null }
+  streamAbort?.abort()
+  const controller = new AbortController()
+  streamAbort = controller
   const token = localStorage.getItem('admin_token')
-  sse = new EventSource(`/api/v1/admin/debug/logs/stream?token=${token}`)
-  sse.onopen = () => { connected.value = true }
-  sse.onmessage = (e) => {
-    try {
-      const { source, line, time } = JSON.parse(e.data)
-      addLine(source, line, time)
-    } catch {}
-  }
-  sse.onerror = () => {
+
+  try {
+    const res = await fetch('/api/v1/admin/debug/logs/stream', {
+      headers: {
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    })
+    if (!res.ok || !res.body) throw new Error(`日志流连接失败（${res.status}）`)
+    connected.value = true
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (streamRunning) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const rows = buffer.split('\n')
+      buffer = rows.pop() ?? ''
+      for (const row of rows) {
+        if (!row.startsWith('data:')) continue
+        const raw = row.slice(5).trim()
+        if (!raw) continue
+        try {
+          const { source, line, time } = JSON.parse(raw)
+          addLine(source, line, time)
+        } catch {}
+      }
+    }
+  } catch (error) {
+    if ((error as { name?: string }).name !== 'AbortError') {
+      connected.value = false
+    }
+  } finally {
     connected.value = false
-    sse?.close()
-    setTimeout(startSSE, 3000)
+    if (streamRunning && !controller.signal.aborted) {
+      streamRetry = setTimeout(() => {
+        streamRetry = null
+        void startSSE()
+      }, 3000)
+    }
   }
 }
 
@@ -163,7 +197,11 @@ onMounted(async () => {
   startSSE()
 })
 
-onUnmounted(() => { sse?.close() })
+onUnmounted(() => {
+  streamRunning = false
+  if (streamRetry) clearTimeout(streamRetry)
+  streamAbort?.abort()
+})
 </script>
 
 <style scoped>
@@ -224,7 +262,7 @@ onUnmounted(() => { sse?.close() })
 .lt-main {
   display: grid; grid-template-columns: 96px 72px 1fr;
   padding: 6px 16px; align-items: baseline; gap: 0;
-  font-size: 12px; font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-size: 12px; font-family: var(--font-family-mono);
 }
 
 .lt-row.lvl-error   .col-msg { color: rgba(240,120,120,0.9); }
@@ -239,5 +277,5 @@ onUnmounted(() => { sse?.close() })
 }
 .src-web        { background: rgba(80,140,255,0.12); color: rgba(120,170,255,0.9); }
 .src-worker     { background: rgba(80,200,160,0.12); color: rgba(100,210,170,0.9); }
-.src-supervisor { background: rgba(200,140,80,0.12); color: rgba(220,170,100,0.9); }
+.src-gateway { background: rgba(200,140,80,0.12); color: rgba(220,170,100,0.9); }
 </style>

@@ -69,8 +69,10 @@ async def create_event(
     db.add(e)
     await db.commit()
     await db.refresh(e)
-    await events.publish(current_user.id, "calendar")
-    return _to_resp(e)
+    response = _to_resp(e)
+    await events.publish(current_user.id, "calendar", operation="create", entity_id=e.id,
+                         event_payload=response.model_dump(mode="json", by_alias=True))
+    return response
 
 
 @router.patch("/{eid}", response_model=EventResponse)
@@ -92,8 +94,10 @@ async def update_event(
     e.version = (e.version or 1) + 1
     await db.commit()
     await db.refresh(e)
-    await events.publish(current_user.id, "calendar")
-    return _to_resp(e)
+    response = _to_resp(e)
+    await events.publish(current_user.id, "calendar", operation="update", entity_id=e.id,
+                         event_payload=response.model_dump(mode="json", by_alias=True))
+    return response
 
 
 @router.delete("/{eid}", status_code=204)
@@ -111,4 +115,4 @@ async def delete_event(
         await db.delete(t)
     await db.delete(e)
     await db.commit()
-    await events.publish(current_user.id, "calendar")
+    await events.publish(current_user.id, "calendar", operation="delete", entity_id=eid)

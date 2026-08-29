@@ -1,0 +1,10 @@
+:root {
+  --icon-size-xs: 12px;
+  --icon-size-sm: 14px;
+  --icon-size-md: 16px;
+  --icon-size-lg: 20px;
+  --icon-color-default: var(--content-secondary);
+  --icon-color-muted: var(--content-tertiary);
+  --icon-color-active: var(--action-primary);
+  --icon-color-danger: var(--status-danger);
+}

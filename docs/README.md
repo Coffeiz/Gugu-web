@@ -2,7 +2,7 @@
 
 `docs/` 按主题分成五类文件夹。每篇文档内部现在统一按**「易读概述」+「专业细节」**两段式组织——前半段给不熟代码、想快速了解"这是什么/为什么这样做"的人看；后半段给要对照代码实现、动手改东西的人看，保留具体文件路径、函数名、行号。想快速上手就只看每篇的「易读概述」，想动代码再往下翻。
 
-想找变更历史看 [`../CHANGELOG.md`](../CHANGELOG.md)（逐条记录），想按时间线看开发过程 / 踩坑排查看 [`devlog.md`](devlog.md)（本目录唯一不分类、留在根目录的文档，性质是日志不是规范）。
+想找变更历史看 [`../CHANGELOG.md`](../CHANGELOG.md)（逐条记录），想按时间线看开发过程 / 踩坑排查看 [`DEVLOG.md`](DEVLOG.md)（本目录唯一不分类、留在根目录的文档，性质是日志不是规范）。
 
 ---
 
@@ -36,12 +36,12 @@
 - [`IM慢工具进度声明-设计.md`](agent/proposals/IM慢工具进度声明-设计.md) —— ✅ 已实现，IM 慢工具先发进度声明
 - [`反馈信号系统-设计.md`](agent/proposals/反馈信号系统-设计.md) —— ✅ 已部分落地，反馈信号 / 关系温度 / 感知诊断设计
 - [`咕咕作为MCP开放-方向.md`](agent/proposals/咕咕作为MCP开放-方向.md) —— 💡 方向讨论
-- [`提案-bug反馈-咕咕辅助生成.md`](agent/proposals/提案-bug反馈-咕咕辅助生成.md) —— 💡 提案阶段，未实现
+- [`提案-BUG反馈-咕咕辅助生成.md`](agent/proposals/提案-BUG反馈-咕咕辅助生成.md) —— 💡 提案阶段，未实现
 
 **参考/ —— 外部系统调研与想法笔记**
 
-- [`MaiBot决策链路调研.md`](agent/参考/MaiBot决策链路调研.md) —— MaiBot 决策 / 记忆 / 学习链路源码调研
-- [`咕咕改进方案-MaiBot借鉴.md`](agent/参考/咕咕改进方案-MaiBot借鉴.md) —— 基于 MaiBot 的咕咕改进方案
+- [`MAIBOT决策链路调研.md`](agent/参考/MAIBOT决策链路调研.md) —— MaiBot 决策 / 记忆 / 学习链路源码调研
+- [`咕咕改进方案-MAIBOT借鉴.md`](agent/参考/咕咕改进方案-MAIBOT借鉴.md) —— 基于 MaiBot 的咕咕改进方案
 - [`语气镜像-想法笔记.md`](agent/参考/语气镜像-想法笔记.md) —— 相处语气与镜像机制的想法笔记
 
 **_archive/ —— 历史设计稿（已过期，仅供考古）**
@@ -53,29 +53,29 @@
 ## backend/ —— 后端通用架构（不特指 agent 子系统）
 
 - [`backend.md`](backend/backend.md) —— 技术栈、数据模型、API 路由全貌
-- [`storage.md`](backend/storage.md) —— 文件存储结构规范（空间划分、存储 key 规则、暂存 vs 持久化）
+- [`STORAGE.md`](backend/STORAGE.md) —— 文件存储结构规范（空间划分、存储 key 规则、暂存 vs 持久化）
 
 ## product/ —— 产品 / 前端
 
-- [`overview.md`](product/overview.md) —— 项目总览、技术栈、目录结构、进度（**新人从这篇开始看**）
-- [`mvp.md`](product/mvp.md) —— MVP 功能清单与状态
-- [`wishlist.md`](product/wishlist.md) —— 功能规划
-- [`design.md`](development/design.md) —— 前台 UI/UX 设计规范（色彩、组件、交互）
+- [`OVERVIEW.md`](product/OVERVIEW.md) —— 项目总览、技术栈、目录结构、进度（**新人从这篇开始看**）
+- [`MVP.md`](product/MVP.md) —— MVP 功能清单与状态
+- [`WISHLIST.md`](product/WISHLIST.md) —— 功能规划
+- [`design.md`](development/design.md) —— 前台 ui/UX 设计规范（色彩、组件、交互）
 - [`design-admin.md`](development/design-admin.md) —— Admin 后台设计规范
-- [`file-preview.md`](product/file-preview.md) —— 文件预览功能（抽屉 + 浮动窗口两套系统）
+- [`FILE-PREVIEW.md`](product/FILE-PREVIEW.md) —— 文件预览功能（抽屉 + 浮动窗口两套系统）
 - [`思维面板/`](product/思维面板/) —— 日常记录与项目画布、语义关联及咕咕协作。[设计草案](product/思维面板/设计草案.md)（产品）、[数据模型草案](product/思维面板/数据模型草案.md)（schema，权威）、[实现方案](product/思维面板/实现方案.md)（工程清单）
 - [`前端-JS转TS迁移指南.md`](product/前端-JS转TS迁移指南.md) —— JS→TS 渐进迁移的约定与进度
 
 ## ops/ —— 部署 / 性能 / 并发
 
-- [`deploy.md`](ops/deploy.md) —— 部署文档（devserver、systemd + 手动脚本混合运维）
-- [`performance.md`](ops/performance.md) —— 性能优化记录
+- [`DEPLOY.md`](ops/DEPLOY.md) —— 部署文档（devserver、systemd + 手动脚本混合运维）
+- [`PERFORMANCE.md`](ops/PERFORMANCE.md) —— 性能优化记录
 - [`并发优化ROADMAP.md`](ops/并发优化ROADMAP.md) —— P0–P4 扩量分期规划
 - [`并发压测结果.md`](ops/并发压测结果.md) —— 压测数据快照（历史记录，不做内容更新）
 
 ## security/ —— 安全 / 合规
 
-- [`privacy.md`](security/privacy.md) —— 隐私政策
+- [`PRIVACY.md`](security/PRIVACY.md) —— 隐私政策
 - [`安全-工具错误信息脱敏.md`](security/安全-工具错误信息脱敏.md) —— 工具错误信息脱敏机制
 - [`安全审计报告-2026-07-03.md`](security/安全审计报告-2026-07-03.md) —— 全项目安全审计报告与修复记录
 - [`项目功能-代码质量审查与整改方案-2026-07-14.md`](security/项目功能-代码质量审查与整改方案-2026-07-14.md) —— 项目看板、阶段待办、归档与项目文件的代码质量审查及整改方案
@@ -86,6 +86,7 @@
 ## 维护约定
 
 - **新增文档放对文件夹**：agent 子系统相关（含单功能方案）进 `agent/`（方案类进 `agent/proposals/`）；纯后端通用架构进 `backend/`；前端/产品进 `product/`；部署/性能/并发进 `ops/`；安全/合规进 `security/`。
+- **英文文件名统一大小写**：文件名中的英文部分使用大写，文件扩展名保持小写；中文部分、数字和连字符保持原样。修改文件名时必须同步更新仓库内引用，归档文档同样遵守此规则。
 - **新文档也按"易读概述 + 专业细节"两段式写**，方便不同读者各取所需。
 - **审计/压测类的"快照文档"**（如 `并发压测结果.md`、`商用就绪评审-核实版.md`）不要拿"提升可读性"当理由重写内容——它们的价值就在于忠实记录某个时间点的状态，只需保证里面引用的路径/行号还有效。
 - 文档间互相引用一律用**相对路径**（不要写 `docs/xxx.md` 这种从仓库根算起的路径，除非是仓库根目录的 `README.md`/`CHANGELOG.md`/`ROADMAP.md` 引用 `docs/` 内文档）。

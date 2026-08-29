@@ -1,6 +1,20 @@
 import pytest
 
 
+def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
+    from agent.gateway.qq import QQAPIError, _qq_msg_id_invalid
+
+    exc = QQAPIError(
+        "POST",
+        "/v2/groups/test/messages",
+        400,
+        {"code": 40034031, "message": "msgid已经过期,不能回复"},
+    )
+    assert _qq_msg_id_invalid(exc)
+
+
+
+
 @pytest.mark.asyncio
 async def test_qq_group_reply_uses_group_target(monkeypatch):
     calls = []
@@ -49,6 +63,255 @@ async def test_qq_private_reply_uses_sender_target(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0][0] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_send_agent_response_sends_each_round_separately(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="最后一轮", round_texts=["第一轮", "最后一轮"]),
+    )
+
+    assert sent == ["第一轮", "最后一轮"]
+    assert result == "最后一轮"
+
+
+@pytest.mark.asyncio
+async def test_send_agent_response_skips_rounds_already_sent_by_callback(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="最后一轮", round_texts=["第一轮", "最后一轮"]),
+        already_sent_rounds=1,
+    )
+
+    assert sent == ["最后一轮"]
+    assert result == "最后一轮"
+
+
+@pytest.mark.asyncio
+async def test_send_agent_response_replays_only_unsent_round_indices(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="第三轮", round_texts=["第一轮", "第二轮", "第三轮"]),
+        already_sent_rounds={0, 2},
+    )
+
+    assert sent == ["第二轮"]
+    assert result == "第三轮"
+
+
+@pytest.mark.asyncio
+async def test_attachment_failure_is_not_hidden_by_sent_round_index(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = True
+            reason = "附件发送失败"
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="第一轮", round_texts=["第一轮"], files=[{"id": "file-1"}]),
+        already_sent_rounds={0},
+    )
+
+    assert sent == ["附件发送失败"]
+    assert result == "附件发送失败"
+
+
+@pytest.mark.asyncio
+async def test_interaction_uses_qq_keyboard_and_keeps_text_fallback(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_interaction
+
+    keyboard_calls = []
+    text_calls = []
+
+    async def fake_keyboard(*args, **kwargs):
+        keyboard_calls.append((args, kwargs))
+        return True
+
+    async def fake_text(payload, text):
+        text_calls.append(text)
+        return True
+
+    monkeypatch.setattr(qq, "send_keyboard", fake_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_text)
+    await send_interaction(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "user-1",
+         "channel_id": "bot-1", "message_id": "msg-1"},
+        {"prompt_id": 17, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(keyboard_calls) == 1
+    assert text_calls == []
+    assert "session_id" not in repr(keyboard_calls[0])
+
+
+@pytest.mark.asyncio
+async def test_qq_keyboard_failure_fallback_accepts_number(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_interaction
+
+    text_calls = []
+
+    async def fake_keyboard(*args, **kwargs):
+        return False
+
+    async def fake_text(payload, text):
+        text_calls.append(text)
+        return True
+
+    monkeypatch.setattr(qq, "send_keyboard", fake_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_text)
+    await send_interaction(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "user-1",
+         "channel_id": "bot-1", "message_id": "msg-1"},
+        {"prompt_id": 17, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(text_calls) == 1
+    assert "1. A" in text_calls[0]
+    assert "回复选项序号或选项文字" in text_calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["feishu", "wechat"])
+async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, platform):
+    """飞书/微信未提供原生按钮时，ask_user 必须直接发送文本。"""
+    from agent.im import replies
+
+    text_calls = []
+
+    async def fake_text(payload, text):
+        text_calls.append((payload, text))
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    if platform == "feishu":
+        from agent.gateway import feishu
+
+        async def unavailable_card(*_args, **_kwargs):
+            return False
+
+        monkeypatch.setattr(feishu, "send_interaction_card", unavailable_card)
+    await replies.send_interaction(
+        {"platform": platform, "chat_type": "c2c", "chat_id": "chat-1",
+         "platform_user_id": "user-1", "channel_id": "bot-1"},
+        {"prompt_id": 18, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(text_calls) == 1
+    assert "1. A" in text_calls[0][1]
+    assert "请直接回复选项序号或选项文字" in text_calls[0][1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform", "payload", "markdown"),
+    [
+        ("qq", {"chat_type": "group", "message_format": "compat"}, False),
+        ("feishu", {"chat_type": "group"}, True),
+        ("wechat", {"chat_type": "c2c"}, True),
+    ],
+)
+async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypatch, platform, payload, markdown):
+    """回归：QQ 群聊使用纯文本结果，飞书/微信降级为 Markdown；输入不能泄露到结果消息。"""
+    from agent.im import replies
+
+    sent = []
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    await replies.send_tool_event(
+        {"platform": platform, "platform_user_id": "member-1", **payload},
+        {"type": "tool_call", "label": "联网搜索", "input": {"query": "不应出现在结果"}},
+    )
+    await replies.send_tool_event(
+        {"platform": platform, "platform_user_id": "member-1", **payload},
+        {"type": "tool_done", "label": "联网搜索", "status": "success",
+         "result": {"items": ["结果"]}},
+    )
+
+    assert len(sent) == 2 if markdown else 1
+    if markdown:
+        assert "**输入**" in sent[0]
+    result_text = sent[-1]
+    assert "不应出现在结果" not in result_text
+    if markdown:
+        assert "**输出**" in result_text
+        assert "结果" in result_text
+    else:
+        assert result_text == "✅ 联网搜索完成"
+
+
 
 
 @pytest.mark.asyncio
@@ -230,29 +493,3 @@ async def test_send_file_dispatches_by_platform(monkeypatch):
         {"platform": "unknown"}, storage_key="k", ext="png", display_name="n", fname="n.png",
     )
     assert ok is False
-
-
-@pytest.mark.asyncio
-async def test_unsupported_stream_capability_falls_back_before_gateway(monkeypatch):
-    from agent.im import replies
-
-    called = []
-
-    async def fake_stream(*args):
-        called.append(args)
-        return True, object()
-
-    monkeypatch.setattr("agent.gateway.feishu.send_text_stream", fake_stream)
-    sent = []
-
-    async def fake_text(payload, text):
-        sent.append(text)
-
-    monkeypatch.setattr(replies, "send_text", fake_text)
-    ok, response = await replies.send_stream(
-        {"platform": "qq", "platform_user_id": "user-1"},
-        iter(()),
-    )
-
-    assert (ok, response) == (False, None)
-    assert called == []

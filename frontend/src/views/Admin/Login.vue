@@ -117,7 +117,7 @@ async function handleLogin() {
 }
 .brand-icon {
   width: 44px; height: 44px; border-radius: 13px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   box-shadow: 0 6px 18px rgba(123,127,178,0.45);
@@ -159,10 +159,10 @@ async function handleLogin() {
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 18px rgba(123,127,178,0.4);
+  cursor: pointer; transition: background-color 0.15s;
+  box-shadow: none;
 }
-.login-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.login-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
 .login-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .login-footer { margin-top: 24px; text-align: center; }

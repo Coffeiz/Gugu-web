@@ -6,7 +6,7 @@
         <p class="ops-sub">分类别存储占用趋势——数据由定时任务每天落一条快照，不是实时统计（PRD-STORAGE-2）</p>
       </div>
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
-        <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
       </button>
     </div>
 
@@ -33,7 +33,7 @@
         <div class="sec-title">占用趋势（近 30 天，按类别分开画线）</div>
         <div v-if="!hasTrend" class="ops-empty">还没有历史快照——上面的概览卡片是实时数字，这条趋势线要等定时任务跑过至少一次之后才有（草稿/已发送附件、用户文件库次日 1:15 落一次，视频转码缓存 1:00）。</div>
         <div v-else class="chart-wrap">
-          <Line :data="chartData" :options="chartOpts" />
+          <AdminLineChart :labels="labels" :datasets="storageDatasets" unit="MB" />
         </div>
       </div>
     </template>
@@ -42,15 +42,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Line } from 'vue-chartjs'
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler,
-} from 'chart.js'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
+import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import { buildStorageTrend, formatSnapshotDate, type StorageSnapshot } from './storageChart'
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
 
 interface Totals { object_count: number; total_bytes: number }
 
@@ -105,33 +99,11 @@ function cardCount(key: string): number | string {
 const trend = computed(() => buildStorageTrend(byCategory.value, CATEGORIES))
 const labels = computed(() => trend.value.dates.map(formatSnapshotDate))
 
-const chartData = computed(() => ({
-  labels: labels.value,
-  datasets: CATEGORIES.map(cat => ({
-    label: cat.label,
-    data: trend.value.datasets[CATEGORIES.findIndex(item => item.key === cat.key)].values,
-    borderColor: cat.color,
-    backgroundColor: cat.color.replace(',1)', ',0.1)'),
-    fill: false,
-    tension: 0.35,
-    pointRadius: 2,
-  })),
-}))
-
-const chartOpts = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false as const,
-  interaction: { mode: 'index' as const, intersect: false },
-  plugins: {
-    legend: { display: true, position: 'bottom' as const, labels: { color: 'rgba(255,255,255,0.6)', boxWidth: 10, font: { size: 11 } } },
-    tooltip: { mode: 'index' as const, intersect: false },
-  },
-  scales: {
-    x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.4)' } },
-    y: { beginAtZero: true, ticks: { color: 'rgba(255,255,255,0.4)', callback: (v: any) => `${v}MB` } },
-  },
-}
+const storageDatasets = computed(() => CATEGORIES.map((cat, index) => ({
+  label: cat.label,
+  values: trend.value.datasets[index].values,
+  color: cat.color,
+})))
 
 async function load(manual = false) {
   if (manual) { refreshing.value = true; setTimeout(() => { refreshing.value = false }, 550) }
@@ -181,7 +153,7 @@ onMounted(() => load())
 
 .ops-section { margin-bottom: 24px; }
 .sec-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.7); margin-bottom: 12px; }
-.chart-wrap { height: 320px; }
+.chart-wrap { height: 180px; }
 
 .icon-btn {
   width: 30px; height: 30px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1);

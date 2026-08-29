@@ -97,7 +97,7 @@ watch(() => route.path, (path) => {
 :deep(.mind-cal-picker .dp-input span) { display: none; }
 
 /* 椭圆胶囊：尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆；基础视觉
-   保留原方案，Mono/V2 的浮动 chrome 材质由 adoption/mind.css 统一重映射。 */
+   保留原方案，Mono/Mono 的浮动 chrome 材质由 adoption/mind.css 统一重映射。 */
 .mind-tabs {
   gap: 2px; padding: 2px;
   border-radius: 999px;

@@ -1,0 +1,27 @@
+html[data-theme][data-family] .app-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 1em;
+  height: 1em;
+  color: var(--icon-color-default);
+  vertical-align: middle;
+}
+
+html[data-theme][data-family] .app-icon--xs { font-size: var(--icon-size-xs); }
+html[data-theme][data-family] .app-icon--sm { font-size: var(--icon-size-sm); }
+html[data-theme][data-family] .app-icon--md { font-size: var(--icon-size-md); }
+html[data-theme][data-family] .app-icon--lg { font-size: var(--icon-size-lg); }
+html[data-theme][data-family] .app-icon--default { color: var(--icon-color-default); }
+html[data-theme][data-family] .app-icon--muted { color: var(--icon-color-muted); }
+html[data-theme][data-family] .app-icon--active { color: var(--icon-color-active); }
+html[data-theme][data-family] .app-icon--danger { color: var(--icon-color-danger); }
+html[data-theme][data-family] .app-icon--inherit { color: inherit; }
+
+/* GlobalSearch 的结果图标不能继承页面默认前景色，统一使用搜索结果弱化色。 */
+html[data-theme][data-family] .gs-item-icon {
+  color: var(--topbar-search-result-icon);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme][data-family] .app-icon { transition: none; }
+}

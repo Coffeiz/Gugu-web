@@ -25,8 +25,8 @@ async def test_project_update_publishes_projects_event_for_other_tabs(db, user_a
     await db.refresh(project)
     published = []
 
-    async def publish(user_id, *resources, origin=None):
-        published.append((user_id, resources, origin))
+    async def publish(user_id, *resources, origin=None, **kwargs):
+        published.append((user_id, resources, origin, kwargs))
 
     monkeypatch.setattr(projects.events, "publish", publish)
 
@@ -38,4 +38,9 @@ async def test_project_update_publishes_projects_event_for_other_tabs(db, user_a
         db,
     )
 
-    assert published == [(user_a.id, ("projects",), "tab-a")]
+    assert len(published) == 1
+    user_id, resources, origin, kwargs = published[0]
+    assert (user_id, resources, origin) == (user_a.id, ("projects",), "tab-a")
+    assert kwargs["operation"] == "update"
+    assert kwargs["entity_id"] == project.id
+    assert kwargs["event_payload"]["id"] == project.id

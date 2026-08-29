@@ -8,16 +8,12 @@
   --theme-content-primary: rgba(255,255,255,.92); --theme-content-secondary: rgba(255,255,255,.62); --theme-content-tertiary: rgba(255,255,255,.40); --theme-content-disabled: rgba(255,255,255,.24); --theme-content-inverse: #17151b;
   --theme-border-hairline: rgba(255,255,255,.045); --theme-border-subtle: rgba(255,255,255,.07); --theme-border-default: rgba(255,255,255,.10); --theme-border-strong: rgba(255,255,255,.12); --theme-border-hover: rgba(255,255,255,.18);
   --theme-highlight-rest: rgba(255,255,255,.12); --theme-highlight-side: rgba(255,255,255,.06); --theme-highlight-hover: rgba(255,255,255,.16); --theme-highlight-hover-side: rgba(255,255,255,.08);
-  --theme-action-primary: #9590c4; --theme-action-hover: #aaa6d8; --theme-action-pressed: #847fb4; --theme-selection: rgba(149,144,196,.16); --theme-focus: rgba(149,144,196,.42);
-  --theme-sidebar-active-bg: rgba(255,255,255,.09); --theme-sidebar-active-fg: #c2bee3; --theme-sidebar-active-border: rgba(255,255,255,.14); --theme-sidebar-active-highlight: rgba(255,255,255,.14);
-  --theme-success: #80b4a2; --theme-warning: #cea07f; --theme-danger: #df8585; --theme-info: #8bc7d6;
+  --theme-sidebar-active-border: rgba(255,255,255,.14); --theme-sidebar-active-highlight: rgba(255,255,255,.14);
   --theme-shadow-1: 0 2px 8px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.05); --theme-shadow-2: 0 7px 20px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.075);
   --theme-shadow-3: 0 14px 38px rgba(0,0,0,.29),inset 0 1px 0 rgba(255,255,255,.10); --theme-shadow-4: 0 24px 64px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.12);
-  --theme-brand-gradient: linear-gradient(135deg,#9590c4,#c4afc8); --theme-fab-gradient: linear-gradient(135deg,#9590c4,#c4afc8);
+  
   /* GuguChat 发送按钮暗色专用背景：比 brand-gradient 收敛一档，去掉亮色
      渐变在暗色面板里"漂浮"感。色相保持和 brand 一致以维持品牌感。 */
-  --theme-gugu-chat-send-bg: linear-gradient(135deg,#6e6a9c,#847fb4);
-  --theme-scrollbar-thumb: rgba(190,185,235,.24); --theme-scrollbar-thumb-hover: rgba(190,185,235,.42); --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
   --theme-topbar-bg: rgba(255,255,255,.018); --theme-topbar-bg-hover: rgba(255,255,255,.03); --theme-topbar-border: rgba(255,255,255,.05); --theme-topbar-shadow: 0 3px 14px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.05); --theme-topbar-shadow-hover: 0 5px 18px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);
   --theme-project-overlay-start: rgba(25,27,40,.92); --theme-project-overlay-end: rgba(29,31,46,.98); --theme-project-border: rgba(255,255,255,.09); --theme-project-hover-border: rgba(255,255,255,.14);
   --theme-project-shadow: 0 2px 8px rgba(0,0,0,.16); --theme-project-hover-shadow: 0 7px 20px rgba(0,0,0,.24); --theme-project-sheen-rest: rgba(255,255,255,.02); --theme-project-highlight-rest: rgba(255,255,255,.04); --theme-project-sheen-hover: rgba(255,255,255,.08); --theme-project-sheen-hover-mid: rgba(255,255,255,.02); --theme-project-highlight-hover: rgba(255,255,255,.12);

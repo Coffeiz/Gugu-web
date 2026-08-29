@@ -15,8 +15,12 @@ import shutil
 import subprocess
 import tempfile
 
-# mimo 已原生支持的音频格式：无需转码
-_MIMO_AUDIO_EXTS = {"mp3", "wav", "flac", "m4a", "ogg"}
+def _native_audio_exts(adapter=None) -> frozenset[str]:
+    """读取目标适配器的原生音频格式；未传适配器时保留旧 MiMo 默认。"""
+    if adapter is not None:
+        return adapter.audio_native_exts()
+    from agent.providers.mimo import MimoAdapter
+    return MimoAdapter().audio_native_exts()
 
 
 def _ffmpeg_bin() -> str | None:
@@ -69,12 +73,12 @@ def _is_silk(data: bytes) -> bool:
     return b"#!SILK" in head
 
 
-def to_mimo_mp3(data: bytes, ext: str, content_type: str | None) -> bytes | None:
-    """把音频字节转成 mp3 bytes 喂 mimo。已是支持格式 → 原样返回；需转码且工具齐 → 转；
+def to_provider_audio(data: bytes, ext: str, content_type: str | None, adapter=None) -> bytes | None:
+    """按目标适配器的原生格式准备音频；已支持格式原样返回，否则转成 mp3。
     否则（非音频 / 缺工具 / 失败）→ None。"""
     ext = (ext or "").lower()
     ct = (content_type or "").lower()
-    if ext in _MIMO_AUDIO_EXTS:
+    if ext in _native_audio_exts(adapter):
         return data                      # 已支持，免转
     looks_audio = ext in ("silk", "sil", "slk", "amr", "opus", "aac", "wma") \
         or ct.startswith("audio") or "voice" in ct or _is_silk(data)

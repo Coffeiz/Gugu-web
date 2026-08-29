@@ -2,20 +2,22 @@
   <!-- 单一消息列表：真虚拟列表（@tanstack/vue-virtual），任何时刻只挂载视口 ± overscan
        内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
        整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
-  <div class="chat-messages" ref="messagesEl">
+  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling }" ref="messagesEl">
     <div class="msg-virtual-spacer" :style="{ height: virtualTotalSize + 'px' }">
       <!-- v-memo：同一帧内其它消息在变（比如正在流式输出的那条）时，跳过这一行没变的
            子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
            但仍能省掉一趟不必要的 vnode diff。 -->
-      <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
-           class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
+      <div v-for="{ row, msg } in rowsWithMsg" :key="String(row.key)" :data-index="row.index" :ref="measureRow"
+           :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
+           :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
         <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-             v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+             v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
           <GuguChatMessageRow
             :msg="msg" :is-group-session="isGroupSession"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
             @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
+            @interaction-select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
           />
         </div>
       </div>
@@ -45,7 +47,7 @@
  * virtualizer 的 scrollToIndex（流式跟随滚动、切会话定位、搜索跳转高亮），
  * 通过 defineExpose 暴露 el 和 scrollToIndex，不把这些操作重新实现一遍。
  */
-import { ref, computed, watch, type ComponentPublicInstance } from 'vue'
+import { ref, computed, watch, nextTick, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import GuguChatMessageRow from './GuguChatMessageRow.vue'
 import type { ChatMessage, ChatFile } from './chatTypes'
@@ -53,12 +55,14 @@ import { renderMd } from './markdown'
 
 const props = defineProps<{
   messages: ChatMessage[]
+  sessionId: number | null
   isGroupSession: boolean
   copiedId: number | null
   voicePlayingId: string | null
   expanded: boolean
   statusKind: string
   statusTyped: string
+  sessionSettling: boolean
 }>()
 
 defineEmits<{
@@ -67,6 +71,7 @@ defineEmits<{
   openFile: [file: ChatFile]
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
+  interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
 }>()
 
 const messagesEl = ref<HTMLElement | null>(null)
@@ -78,6 +83,12 @@ const virtualizer = useVirtualizer({
   getScrollElement: () => messagesEl.value,
   estimateSize: () => 96,
   overscan: 6,
+  // 高度缓存必须跟随真实消息身份，而不是跟随数组索引；不同会话的第 N 条消息
+  // 内容高度通常完全不同，按 index 复用会先套用旧会话高度，再在下一帧跳动。
+  getItemKey: (index) => {
+    const message = props.messages[index]
+    return message?.dbId ?? message?.id ?? `${props.sessionId ?? 'new'}:${index}`
+  },
 })
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
 // 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），
@@ -89,6 +100,11 @@ const virtualTotalSize = computed(() => virtualizer.value.getTotalSize() + msgsP
 // v-for 需要同时拿到虚拟行的定位信息（row）和它对应的消息（msg），zip 成一个数组，
 // 这样消息行内部的模板完全不用改，照样按 msg.xxx 取值。
 const rowsWithMsg = computed(() => virtualRows.value.map(row => ({ row, msg: props.messages[row.index] })))
+watch(() => props.sessionId, async () => {
+  // 切换会话时清掉旧行的测量结果，等新会话行重新挂载后再测量。
+  await nextTick()
+  virtualizer.value.measure()
+}, { flush: 'post' })
 function measureRow(el: Element | ComponentPublicInstance | null) { if (el) virtualizer.value.measureElement(el as Element) }
 
 // 只有真正挂进视口 ± overscan 的消息才需要解析 markdown——不在 loadSession 时就把

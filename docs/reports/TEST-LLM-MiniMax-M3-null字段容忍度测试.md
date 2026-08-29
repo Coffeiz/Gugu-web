@@ -113,7 +113,7 @@
 
 - **Python 版本**: 3.12
 - **Anthropic SDK 版本**: 0.111.0
-- **MiniMax API**: https://api.minimaxi.com/anthropic
+- **MiniMax API**: https://API.minimaxi.com/anthropic
 - **测试模型**: minimax-m3-7b-beta
 
 ### 错误假设验证

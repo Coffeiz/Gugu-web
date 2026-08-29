@@ -185,12 +185,12 @@ class ILinkClient:
 
     # ── 通道通知（网关启停时告知上游，避免长连接悬挂）─────────────────────────
     async def notify_start(self) -> dict:
-        """通道（网关）启动通知。supervisor 拉起 wechat 子进程后调一次。"""
+        """通道（网关）启动通知。gateway 拉起 wechat 子进程后调一次。"""
         return await self._post("ilink/bot/msg/notifystart",
                                 {"base_info": {"channel_version": CHANNEL_VERSION}})
 
     async def notify_stop(self) -> dict:
-        """通道停止通知。supervisor 收 SIGTERM 后优雅退出前调一次（独立 timeout，
+        """通道停止通知。gateway 收 SIGTERM 后优雅退出前调一次（独立 timeout，
         不受主进程 abort 影响——参考 OpenClaw api/api.ts notifyStop 注释）。"""
         return await self._post("ilink/bot/msg/notifystop",
                                 {"base_info": {"channel_version": CHANNEL_VERSION}})

@@ -2,11 +2,16 @@
   <div class="sched-page">
     <div class="panel glass-card">
       <div class="section-header">
-        <button class="btn-primary press-fx" @click="openCreate">
-          <PhAlarm :size="14" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建任务
-        </button>
+        <ActionButton fit @click="openCreate">
+          <Icon name="admin.alarm" :size="14" />新建任务
+        </ActionButton>
       </div>
-      <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
+      <div v-if="!loading && !tasks.length" class="empty-state">
+        <Icon name="admin.alarm" :size="32" />
+        <strong>还没有定时任务</strong>
+        <span>把需要定期执行的事情交给咕咕，按时提醒你。</span>
+        <ActionButton fit @click="openCreate">创建第一个定时任务</ActionButton>
+      </div>
       <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
         <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
           @toggle="toggle" @run="runNow" @edit="openEdit" @remove="remove" />
@@ -20,7 +25,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { PhAlarm } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
+import ActionButton from '@/components/common/ActionButton.vue'
 import { errorMessage } from '@/composables/useAppToast'
 import { fireHint } from '@/composables/useOnboarding'
 import { useAuthStore } from '@/stores/auth'
@@ -80,7 +86,9 @@ async function submit(data: Record<string, any>) {
   padding: 22px 24px;
 }
 .section-header { display: flex; align-items: center; justify-content: flex-start; margin-bottom: 16px; flex-shrink: 0; }
-.empty { font-size: 13px; color: var(--text-secondary); padding: 8px 2px; }
+.empty-state { min-height: 300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--content-secondary); }
+.empty-state strong { color:var(--content-primary); }
+.empty-state span { font-size:12px; }
 .task-grid {
   flex: 1; min-height: 0; overflow-y: auto; align-content: start;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px;

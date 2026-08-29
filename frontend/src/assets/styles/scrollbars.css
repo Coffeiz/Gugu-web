@@ -4,8 +4,32 @@
  * from rounded top/bottom edges. Application scroll surfaces hide the native scrollbar entirely,
  * so overflow never changes content width. The design preview opts back into the visual sample.
  */
-html[data-theme][data-family] * {
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+/* Firefox 没有 WebKit 伪元素，只在非 WebKit 内核启用 scrollbar-color；
+ * Chromium 若同时设置两套属性会忽略 thumb:hover 的颜色。 */
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme][data-family] * {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+}
+
+/* 原生滚动条与浮层滑块共享同一套颜色和过渡节奏，避免 hover 时突然变深。 */
+html[data-theme][data-family] *::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background-color: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  transition: background-color var(--scrollbar-overlay-transition);
+}
+html[data-theme][data-family] *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+html[data-theme][data-family] *::-webkit-scrollbar,
+html[data-theme][data-family] *::-webkit-scrollbar-track {
+  background: transparent;
+}
+html[data-theme][data-family] *::-webkit-scrollbar {
+  width: calc(var(--scrollbar-size-default) + 2px);
+  height: calc(var(--scrollbar-size-default) + 2px);
 }
 
 html[data-theme][data-family] .scroll-surface,
@@ -44,9 +68,27 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb] {
   width: var(--scrollbar-size-default);
   min-height: var(--scrollbar-min-thumb);
   border-radius: var(--radius-pill);
-  background: var(--scrollbar-thumb);
-  pointer-events: none;
+  background-color: var(--scrollbar-thumb);
+  /* 浮层滑块需要接收指针，才能在悬停时进入同一套 hover 颜色过渡。 */
+  pointer-events: auto;
+  cursor: default;
   transition: background-color var(--scrollbar-overlay-transition);
+}
+
+/* 滑块本体很窄，扩大透明命中区但不改变实际绘制宽度。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb]::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  background: transparent;
+}
+
+html[data-theme][data-family] [data-overlay-scrollbar-thumb]:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 /* 聊天窗口的滑块挂在窗口内部，随窗口的 transform/缩放动画同步移动。 */
@@ -104,12 +146,12 @@ html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-thumb {
   min-height: var(--scrollbar-min-thumb);
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
-  background: var(--scrollbar-thumb);
+  background-color: var(--scrollbar-thumb);
   background-clip: padding-box;
 }
 
 html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+  background-color: var(--scrollbar-thumb-hover);
   background-clip: padding-box;
 }
 

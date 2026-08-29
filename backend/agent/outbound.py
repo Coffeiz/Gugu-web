@@ -4,13 +4,24 @@ prompt 是概率性的（模型大概率守规矩但偶尔破）；这里做**�
 - 小泄露（tool_call id / 内部 id 噪声）→ 抹掉
 - 大泄露（系统提示词被复述出来，多为 prompt injection 得手）→ 整条换成安全话术
 
-只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。IM 路（run_collect）
-和网页流式路（run_stream）都会调用，但网页流式是在整段 token 收完之后、写历史前才清洗——
-用户已经实时看过的原始 token 不受影响，这里防的是「脏内容混进历史，污染下一轮」。
+只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。IM 路（run_collect）会调用，防止「脏内容混进历史，污染下一轮」。
 """
 from __future__ import annotations
 
 import re
+
+# 这是 Web 内部动作协议，不是 IM 平台可发送的外链。IM 出站保留可读文案，
+# 由 Web 聊天继续保留原始 gugu:// href 并处理点击。
+_GUGU_MARKDOWN_LINK_RE = re.compile(
+    r"\[([^\]\n]+)\]\(gugu://[^)\s]+\)", re.IGNORECASE
+)
+_GUGU_URI_RE = re.compile(r"(?<![\w])gugu://[^\s)]+", re.IGNORECASE)
+
+
+def sanitize_im_links(text: str) -> str:
+    """把 Web 专用 gugu:// 动作链接转换为适合 IM 发送的可读文本。"""
+    text = _GUGU_MARKDOWN_LINK_RE.sub(r"\1", text)
+    return _GUGU_URI_RE.sub("", text)
 
 # tool_call id / 内部 id：纯噪声，对用户无意义，直接抹掉
 _NOISE = re.compile(

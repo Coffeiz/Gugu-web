@@ -599,3 +599,47 @@ async def test_http_get_stops_reading_oversized_response(monkeypatch):
     out = await web_mod._http_get(None, None, {"url": "https://example.com/large"})
     assert "过大" in out["error"]
     assert response.chunks_read == 1
+
+
+async def test_http_get_batch_preserves_order_and_allows_partial_failure(monkeypatch):
+    from agent.tools import web as web_mod
+
+    async def fake_one(_db, _user_id, url, _max_chars):
+        await asyncio.sleep(0.01 if url.endswith("/a") else 0)
+        if url.endswith("/bad"):
+            return {"url": url, "error": "请求失败"}
+        return {"url": url, "status": 200, "body": url}
+
+    monkeypatch.setattr(web_mod, "_http_get_one", fake_one)
+    out = await web_mod._http_get(None, None, {
+        "urls": ["https://example.com/a", "https://example.com/b", "https://example.com/bad"],
+    })
+
+    assert [item["url"] for item in out["results"]] == [
+        "https://example.com/a", "https://example.com/b", "https://example.com/bad",
+    ]
+    assert out["results"][0]["status"] == 200
+    assert out["results"][2]["error"] == "请求失败"
+
+
+async def test_http_get_batch_rejects_more_than_five_urls():
+    from agent.tools import web as web_mod
+
+    out = await web_mod._http_get(None, None, {
+        "urls": [f"https://example.com/{index}" for index in range(6)],
+    })
+
+    assert out == {"error": "单次最多并行请求 5 个 URL"}
+
+
+def test_http_get_schema_accepts_only_single_or_batch_url():
+    from agent.tools import web as web_mod
+    from agent.tools.tool_contract import build_validator, validate_input
+
+    tool = web_mod.WebSkill().tools[0]
+    validator = build_validator(tool.input_schema)
+    assert validate_input(validator, {"url": "https://example.com"}) == []
+    assert validate_input(validator, {"urls": ["https://example.com"]}) == []
+    assert validate_input(validator, {
+        "url": "https://example.com", "urls": ["https://example.com"],
+    })

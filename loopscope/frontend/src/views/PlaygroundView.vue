@@ -24,8 +24,9 @@
           <h1>{{ activeSession?.title || 'New conversation' }}</h1>
         </div>
         <div class="head-actions">
+          <button v-if="activeId" class="refresh" title="刷新当前会话消息和 Runs" aria-label="刷新当前会话消息和 Runs" @click="refreshAll">↻</button>
           <div v-if="activeId" class="view-switch">
-            <button :class="{ active: sessionView === 'conversation' }" @click="sessionView = 'conversation'">对话</button>
+            <button :class="{ active: sessionView === 'conversation' }" @click="showConversation">对话</button>
             <button :class="{ active: sessionView === 'monitor' }" @click="openMonitor">Monitor</button>
           </div>
           <div v-if="sessionView === 'conversation'" class="mode-switch">
@@ -36,7 +37,8 @@
       </header>
 
       <template v-if="sessionView === 'conversation'">
-        <div ref="scrollEl" class="messages">
+        <div ref="scrollEl" class="messages" @scroll="onMessagesScroll">
+          <div v-if="loadingOlder" class="older-loading">正在加载更早消息…</div>
           <div v-if="!messages.length" class="empty">
             <div class="empty-orb">◎</div>
             <strong>从一条真实消息开始</strong>
@@ -44,8 +46,13 @@
           </div>
 
           <article v-for="(m, idx) in messages" :key="m.id" class="message" :class="m.role">
-            <div class="role">{{ m.role === 'user' ? 'YOU' : 'GUGU' }}</div>
-            <div class="bubble">{{ m.content }}<span v-if="m.pending" class="typing">▋</span></div>
+            <div class="role">{{ m.role === 'user' ? 'YOU' : m.role === 'tool' ? 'TOOL' : 'GUGU' }}</div>
+            <div v-if="m.role === 'tool'" class="bubble tool-bubble">
+              <strong>{{ m.toolLabel || m.toolName || '工具调用' }}</strong>
+              <span class="tool-status">{{ m.toolStatus === 'error' ? '失败' : m.toolStatus === 'running' ? '执行中' : '完成' }}</span>
+              <pre v-if="mode === 'detail' && (m.toolInput !== undefined || m.toolResult !== undefined)">{{ preview({ input: m.toolInput, result: m.toolResult }) }}</pre>
+            </div>
+            <div v-else class="bubble">{{ m.content }}<span v-if="m.pending" class="typing">▋</span></div>
 
             <div v-if="mode==='detail' && m.role==='assistant' && (m.debugEvents?.length || runForAssistant(idx))" class="inline-trace">
               <div v-if="m.debugEvents?.length" class="live-debug">
@@ -73,7 +80,7 @@
         </div>
 
         <form class="composer ls-card" @submit.prevent="send">
-          <textarea v-model="draft" :disabled="sending || !connected" rows="1" placeholder="给咕咕发消息…" @keydown.enter.exact.prevent="send" />
+          <textarea v-model="draft" :disabled="sending || !connected" rows="1" placeholder="给咕咕发消息…" @keydown="handleComposerKeydown" />
           <div class="composer-foot">
             <span>{{ mode === 'detail' ? 'Detailed · round / tool / token summary' : 'Normal conversation' }}</span>
             <button class="ls-button primary" :disabled="sending || !draft.trim() || !connected">{{ sending ? 'Running…' : 'Send' }}</button>
@@ -82,7 +89,19 @@
         <p v-if="error" class="error">{{ error }}</p>
       </template>
 
-      <SessionMonitor v-else :runs="runs" :focus-run-id="monitorFocusRunId" @refresh="refreshRuns" />
+      <SessionMonitor
+        v-else
+        ref="monitorRef"
+        :runs="runs"
+        :details="runDetails"
+        :has-more-spans="hasMoreSpans"
+        :focus-run-id="monitorFocusRunId"
+        @select="loadRunDetail"
+        @load-more="loadOlderRuns"
+        @load-more-spans="loadMoreSpans"
+        @export-runs="exportRuns"
+      />
+      <p v-if="sessionView === 'monitor' && error" class="error">{{ error }}</p>
     </section>
   </div>
 </template>
@@ -90,14 +109,26 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { ChatMessage, GuguSession, TraceRun } from '../types'
-import { listGuguSessions, loadBootstrap, loadMessages, sendMessage } from '../services/gugu'
-import { getRun, listRuns } from '../services/api'
+import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
+import { getRun, getRunSpans, listRuns } from '../services/api'
 import SessionMonitor from '../components/SessionMonitor.vue'
+import { buildTraceRounds } from '../utils/runExport'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
 const messages = ref<ChatMessage[]>([])
 const runs = ref<TraceRun[]>([])
+const runDetails = ref<Record<string, TraceRun>>({})
+const loadingRunId = ref('')
+const loadingSpanRunId = ref('')
+const spanOffsets = ref<Record<string, number>>({})
+const spanHasMore = ref<Record<string, boolean>>({})
+const hasMoreSpans = computed(() => Boolean(spanHasMore.value[monitorFocusRunId.value]))
+const hasOlderMessages = ref(false)
+const loadingOlder = ref(false)
+const oldestMessageId = ref<number | null>(null)
+const hasOlderRuns = ref(false)
+const loadingOlderRuns = ref(false)
 const mode = ref<'normal'|'detail'>('normal')
 const sessionView = ref<'conversation'|'monitor'>('conversation')
 const monitorFocusRunId = ref('')
@@ -105,6 +136,9 @@ const draft = ref('')
 const sending = ref(false)
 const error = ref('')
 const scrollEl = ref<HTMLElement | null>(null)
+const monitorRef = ref<{ getScrollTop: () => number; setScrollTop: (value: number) => void } | null>(null)
+const conversationScrollTop = ref(0)
+const monitorScrollTop = ref(0)
 const connected = ref(!!loadBootstrap())
 const activeSession = computed(() => sessions.value.find(s => s.id === activeId.value))
 
@@ -115,12 +149,138 @@ async function refreshSessions() {
 async function refreshRuns() {
   if (!activeId.value) { runs.value = []; return }
   const source = activeSession.value?.source || 'web'
-  const list = await listRuns(activeId.value, source).catch(() => [])
-  runs.value = await Promise.all(list.map(r => getRun(r.id).catch(() => r)))
+  runs.value = await listRuns(activeId.value, source, { limit: 20 }).catch(() => [])
+  hasOlderRuns.value = runs.value.length >= 20
+}
+async function loadOlderRuns() {
+  if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
+  const oldest = runs.value[0]
+  loadingOlderRuns.value = true
+  try {
+    const source = activeSession.value?.source || 'web'
+    const older = await listRuns(activeId.value, source, { limit: 20, before: oldest.started_at })
+    const existing = new Set(runs.value.map(run => run.id))
+    const unique = older.filter(run => !existing.has(run.id))
+    runs.value = [...unique, ...runs.value]
+    hasOlderRuns.value = older.length >= 20 && unique.length > 0
+  } finally {
+    loadingOlderRuns.value = false
+  }
+}
+function previousRunFor(runId: string) {
+  const current = runs.value.find(run => run.id === runId)
+  if (!current) return undefined
+  return runs.value
+    .filter(run => run.id !== runId && run.started_at < current.started_at)
+    .sort((a, b) => b.started_at - a.started_at)[0]
+}
+async function loadRunDetail(runId: string, loadPrevious = true) {
+  if (!runId || runDetails.value[runId] || loadingRunId.value === runId) return
+  loadingRunId.value = runId
+  try {
+    const detail = await getRun(runId, { includeSpans: false })
+    runDetails.value = { ...runDetails.value, [runId]: detail }
+    await loadSpans(runId, 0)
+    if (loadPrevious) {
+      const previous = previousRunFor(runId)
+      if (previous && !runDetails.value[previous.id]) await loadRunDetail(previous.id, false)
+    }
+  } finally {
+    loadingRunId.value = ''
+  }
+}
+async function loadSpans(runId: string, offset: number) {
+  if (loadingSpanRunId.value === runId) return
+  loadingSpanRunId.value = runId
+  try {
+    const page = await getRunSpans(runId, { limit: 100, offset })
+    const previous = runDetails.value[runId]
+    if (!previous) return
+    const current = previous.spans ?? []
+    runDetails.value = {
+      ...runDetails.value,
+      [runId]: { ...previous, spans: offset ? [...current, ...(page.items ?? [])] : (page.items ?? []) },
+    }
+    spanOffsets.value = { ...spanOffsets.value, [runId]: offset + (page.items?.length ?? 0) }
+    spanHasMore.value = { ...spanHasMore.value, [runId]: page.hasMore }
+  } finally {
+    loadingSpanRunId.value = ''
+  }
+}
+async function loadMoreSpans() {
+  const runId = monitorFocusRunId.value
+  if (!runId || !hasMoreSpans.value) return
+  await loadSpans(runId, spanOffsets.value[runId] ?? 0)
+}
+async function loadCompleteRun(runId: string): Promise<TraceRun> {
+  const detail = await getRun(runId, { includeSpans: false })
+  const spans: NonNullable<TraceRun['spans']> = []
+  let offset = 0
+  while (true) {
+    const page = await getRunSpans(runId, { limit: 100, offset })
+    spans.push(...(page.items ?? []))
+    offset += page.items?.length ?? 0
+    if (!page.hasMore || !page.items?.length) break
+  }
+  return { ...detail, spans }
+}
+async function exportRuns(runIds: string[]) {
+  const ids = [...new Set(runIds)].filter(Boolean)
+  if (!ids.length) return
+  error.value = ''
+  try {
+    const exported = await Promise.all(ids.map(loadCompleteRun))
+    const runsWithRounds = exported.map(run => ({
+      ...run,
+      rounds: buildTraceRounds(run),
+    }))
+    const payload = {
+      format: 'loopscope-run-export',
+      version: 2,
+      exported_at: new Date().toISOString(),
+      runs: runsWithRounds,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `loopscope-runs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (cause) {
+    error.value = cause instanceof Error ? `导出失败：${cause.message}` : '导出失败，请稍后重试。'
+  }
+}
+async function loadLatestMessages(sessionId: number) {
+  const page = await loadMessagePage(sessionId, { limit: 50 })
+  messages.value = page.messages
+  hasOlderMessages.value = page.hasMore
+  oldestMessageId.value = page.oldestId
+}
+async function refreshAll() {
+  if (!activeId.value) return
+  const newestCanonicalId = messages.value.reduce((max, message) => Math.max(max, message.canonicalId ?? 0), 0)
+  if (messages.value.length && newestCanonicalId) {
+    const newestId = newestCanonicalId
+    const page = await loadMessagePage(activeId.value, { limit: 50, afterId: newestId })
+    const known = new Set(messages.value.map(message => String(message.id)))
+    messages.value = [...messages.value, ...page.messages.filter(message => !known.has(String(message.id)))]
+  } else {
+    await loadLatestMessages(activeId.value)
+  }
+  await Promise.all([refreshSessions(), refreshRuns()])
+  await nextTick()
+  scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight })
 }
 async function selectSession(id: number) {
   activeId.value = id
-  messages.value = await loadMessages(id)
+  conversationScrollTop.value = 0
+  monitorScrollTop.value = 0
+  runDetails.value = {}
+  spanOffsets.value = {}
+  spanHasMore.value = {}
+  monitorFocusRunId.value = ''
+  await loadLatestMessages(id)
   await refreshRuns()
   if (sessionView.value === 'conversation') {
     await nextTick()
@@ -131,20 +291,63 @@ function newSession() {
   activeId.value = null
   messages.value = []
   runs.value = []
+  runDetails.value = {}
+  hasOlderRuns.value = false
+  hasOlderMessages.value = false
+  oldestMessageId.value = null
   draft.value = ''
   sessionView.value = 'conversation'
   monitorFocusRunId.value = ''
+  conversationScrollTop.value = 0
+  monitorScrollTop.value = 0
+}
+async function showConversation() {
+  if (sessionView.value === 'monitor') monitorScrollTop.value = monitorRef.value?.getScrollTop() ?? 0
+  sessionView.value = 'conversation'
+  await nextTick()
+  if (scrollEl.value) scrollEl.value.scrollTop = conversationScrollTop.value
 }
 async function openMonitor() {
   if (!activeId.value) return
+  conversationScrollTop.value = scrollEl.value?.scrollTop ?? conversationScrollTop.value
   await refreshRuns()
-  monitorFocusRunId.value = runs.value[runs.value.length - 1]?.id ?? ''
+  if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
+    monitorFocusRunId.value = runs.value[runs.value.length - 1]?.id ?? ''
+  }
+  if (monitorFocusRunId.value) await loadRunDetail(monitorFocusRunId.value)
   sessionView.value = 'monitor'
+  await nextTick()
+  monitorRef.value?.setScrollTop(monitorScrollTop.value)
+}
+function handleComposerKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey) return
+  // 输入法确认候选词也会发 Enter；组合输入期间交给 IME，不能提交表单。
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  void send()
 }
 function inspectRun(runId?: string) {
   if (!runId) return
   monitorFocusRunId.value = runId
-  sessionView.value = 'monitor'
+  void loadRunDetail(runId)
+  void openMonitor()
+}
+async function onMessagesScroll() {
+  const el = scrollEl.value
+  if (!el || el.scrollTop > 80 || !hasOlderMessages.value || loadingOlder.value || !activeId.value || oldestMessageId.value == null) return
+  const previousHeight = el.scrollHeight
+  const previousTop = el.scrollTop
+  loadingOlder.value = true
+  try {
+    const page = await loadMessagePage(activeId.value, { limit: 50, beforeId: oldestMessageId.value })
+    messages.value = [...page.messages, ...messages.value]
+    hasOlderMessages.value = page.hasMore
+    oldestMessageId.value = page.oldestId ?? oldestMessageId.value
+    await nextTick()
+    el.scrollTop = el.scrollHeight - previousHeight + previousTop
+  } finally {
+    loadingOlder.value = false
+  }
 }
 async function send() {
   const text = draft.value.trim()
@@ -153,7 +356,7 @@ async function send() {
   sending.value = true
   draft.value = ''
   const user: ChatMessage = { id: `u-${Date.now()}`, role:'user', content:text }
-  const ai: ChatMessage = {
+  let ai: ChatMessage = {
     id: `a-${Date.now()}`, role:'assistant', content:'', pending:true,
     debugEvents: [{ kind:'status', label:'Agent loop started' }],
   }
@@ -161,6 +364,7 @@ async function send() {
   await nextTick()
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior:'smooth' })
   try {
+    let lastTool: ChatMessage | null = null
     const sid = await sendMessage(text, activeId.value, evt => {
       if (evt.type === 'session_id') activeId.value = Number(evt.session_id)
       else if (evt.type === 'token') {
@@ -170,11 +374,22 @@ async function send() {
         }
       } else if (evt.type === 'tool_call') {
         ai.debugEvents?.push({ kind:'tool', label: evt.label || evt.name || 'tool call', detail: evt.input })
+        lastTool = { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: '', toolName: evt.name, toolLabel: evt.label || evt.name, toolStatus: 'running', toolInput: evt.input }
+        messages.value.push(lastTool)
       } else if (evt.type === 'tool_done') {
         const active = [...(ai.debugEvents ?? [])].reverse().find(x => x.kind === 'tool' && !x.done)
         if (active) active.done = true
+        if (lastTool) {
+          lastTool.toolStatus = evt.status || 'success'
+          lastTool.toolResult = evt.result
+        }
       } else if (evt.type === '_new_round') {
         ai.debugEvents?.push({ kind:'round', label:'Agent continues to next model round' })
+        if (ai.content.trim()) {
+          ai.pending = false
+          ai = { id: `a-${Date.now()}-${Math.random()}`, role:'assistant', content:'', pending:true, debugEvents: [{ kind:'status', label:'Agent loop continues' }] }
+          messages.value.push(ai)
+        }
       } else if (evt.type === 'error') {
         ai.content += evt.message || evt.detail || 'Agent error'
       }
@@ -190,6 +405,7 @@ async function send() {
       if (runs.value.length > before) break
     }
     ai.runId = runs.value[runs.value.length - 1]?.id
+    if (ai.runId) void loadRunDetail(ai.runId)
   } catch (e: any) {
     ai.pending = false
     error.value = e?.message ?? String(e)
@@ -202,7 +418,7 @@ function assistantOrdinal(messageIndex: number) {
 }
 function runForAssistant(messageIndex: number) {
   const message = messages.value[messageIndex]
-  if (message?.runId) return runs.value.find(r => r.id === message.runId)
+  if (message?.runId) return runDetails.value[message.runId] ?? runs.value.find(r => r.id === message.runId)
   const assistantCount = messages.value.filter(m => m.role === 'assistant').length
   const offset = Math.max(0, assistantCount - runs.value.length)
   const ordinal = assistantOrdinal(messageIndex) - offset
@@ -243,13 +459,22 @@ h1,h2 { margin:3px 0 0; font-size:18px; }
 .session-stage { min-width:0; min-height:0; height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto auto; overflow:hidden; }
 .session-head { padding:20px 28px 14px; border-bottom:1px solid var(--border-subtle); }
 .head-actions { display:flex; align-items:center; gap:8px; }
+.refresh { width:30px; height:30px; border:1px solid var(--border-subtle); border-radius:9px; background:var(--surface-raised); color:var(--content-secondary); font-size:17px; line-height:1; }
+.refresh:hover { border-color:var(--border-default); color:var(--content-primary); box-shadow:var(--elevation-card); }
+.refresh:focus-visible { outline:3px solid var(--focus-ring); outline-offset:1px; }
 .view-switch,.mode-switch { display:flex; background:var(--surface-soft); border-radius:10px; padding:3px; }
 .view-switch button,.mode-switch button { border:0; background:transparent; padding:6px 9px; border-radius:8px; color:var(--content-secondary); font-size:11px; }
 .view-switch button.active,.mode-switch button.active { background:var(--surface-raised); color:var(--content-primary); box-shadow:var(--elevation-card); }
 .messages { min-height:0; overflow:auto; padding:28px max(28px, calc((100% - 780px)/2)); }
+.older-loading { margin:-14px auto 16px; width:max-content; color:var(--content-tertiary); font-size:10px; }
 .message { max-width:720px; margin:0 auto 24px; }
 .role { font-size:9px; letter-spacing:.12em; color:var(--content-tertiary); margin-bottom:6px; }
 .message.user .bubble { margin-left:auto; background:var(--action-soft); }
+.message.tool { max-width:680px; }
+.tool-bubble { display:flex; align-items:center; gap:8px; color:var(--content-secondary); font-size:11px; }
+.tool-bubble strong { color:var(--content-primary); font-weight:600; }
+.tool-status { color:var(--content-tertiary); }
+.tool-bubble pre { flex-basis:100%; max-height:140px; margin:4px 0 0; overflow:auto; white-space:pre-wrap; font:10px/1.5 var(--font-mono); color:var(--content-tertiary); }
 .bubble { width:fit-content; max-width:85%; white-space:pre-wrap; line-height:1.7; padding:11px 14px; border-radius:15px; background:var(--surface-raised); border:1px solid var(--border-subtle); box-shadow:var(--elevation-card); }
 .typing { opacity:.45; animation:blink 1s infinite; }
 @keyframes blink { 50% { opacity:0; } }

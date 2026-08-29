@@ -2,7 +2,8 @@
   /* Surfaces */
   --surface-page: var(--theme-page);
   --surface-canvas: var(--theme-page);
-  --surface-sidebar: var(--theme-sidebar);
+  /* 所有侧栏统一在主题底色上增加轻微高光，保持不同页面的侧栏亮度一致。 */
+  --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 90%, #fff 10%);
   --surface-base: var(--theme-base);
   --surface-panel: var(--theme-base);
   --surface-glass: var(--theme-glass);
@@ -38,23 +39,36 @@
   --border-hover: var(--theme-border-hover);
   --border-highlight: var(--theme-highlight-rest);
   --border-focus: var(--theme-focus);
+  /* 文档内容需要在亮色玻璃表面保持可读的表格分隔线；通用玻璃边框可能是白色。 */
+  --border-document-table: color-mix(in srgb, var(--theme-content-primary) 18%, transparent);
 
   /* Actions / selection */
   --action-primary: var(--theme-action-primary);
   --action-primary-hover: var(--theme-action-hover);
   --action-primary-pressed: var(--theme-action-pressed);
-  /* Background fill is separate from the accent foreground. Light keeps the brand gradient;
-     resolved dark mode derives a quieter fill in theme-refinements.css. */
-  --action-primary-bg: var(--theme-brand-gradient);
-  --action-primary-bg-hover: var(--theme-brand-gradient);
+  /* Action fills use a restrained vertical gradient: slightly lighter at the top and deeper at the bottom. */
+  --action-primary-fill: var(--action-primary);
+  --action-primary-fill-hover: var(--action-primary-hover);
+  --action-primary-bg: linear-gradient(to bottom,
+    color-mix(in srgb, var(--action-primary-fill) 94%, white),
+    color-mix(in srgb, var(--action-primary-fill) 94%, black));
+  --action-primary-bg-hover: linear-gradient(to bottom,
+    color-mix(in srgb, var(--action-primary-fill-hover) 94%, white),
+    color-mix(in srgb, var(--action-primary-fill-hover) 94%, black));
   --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
   --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
   --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
   /* Secondary action: a quieter sibling of the primary fill. Used by topbar "上传文件" and
      other secondary toolbar actions. Light keeps a translucent glass fill; resolved dark mode
      derives a surface-based fill in theme-refinements.css. */
-  --action-secondary-bg: rgba(255,255,255,.52);
-  --action-secondary-bg-hover: rgba(255,255,255,.72);
+  --action-secondary-fill: rgba(255,255,255,.66);
+  --action-secondary-fill-hover: rgba(255,255,255,.82);
+  --action-secondary-bg: linear-gradient(to bottom,
+    color-mix(in srgb, var(--action-secondary-fill) 94%, white),
+    color-mix(in srgb, var(--action-secondary-fill) 98%, black));
+  --action-secondary-bg-hover: linear-gradient(to bottom,
+    color-mix(in srgb, var(--action-secondary-fill-hover) 94%, white),
+    color-mix(in srgb, var(--action-secondary-fill-hover) 98%, black));
   --action-secondary-border: rgba(255,255,255,.78);
   --action-secondary-border-hover: rgba(255,255,255,.88);
   --action-secondary-fg: var(--content-secondary);
@@ -103,9 +117,11 @@
 
   /* Brand + shared environment */
   --brand-gradient: var(--theme-brand-gradient);
-  /* GuguChat 发送按钮专属：themes/*.css 提供 --theme-gugu-chat-send-bg 暗色变体，
-     亮色/glass 主题下走 fallback。业务 CSS 引 --gugu-chat-send-bg。 */
-  --gugu-chat-send-bg: var(--theme-gugu-chat-send-bg, var(--brand-gradient));
+  --brand-logo-color: var(--theme-brand-logo-color);
+  --brand-logo-filter: var(--theme-brand-logo-filter);
+  /* GuguChat 发送按钮专属：palette 层提供可选的暗色变体，
+     没有专属变体时走主操作色 fallback。业务 CSS 引 --gugu-chat-send-bg。 */
+  --gugu-chat-send-bg: var(--action-primary-bg);
   --app-background: var(--surface-page);
   --column-bg: var(--surface-column);
   --divider-line: var(--theme-divider);

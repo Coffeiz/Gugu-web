@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { filesApi, foldersApi, CLIENT_ID } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { components } from '@/types/api'
+import type { LiveEventPayload } from '@/types/live-events'
 
 // 文件/文件夹领域类型：核心字段绑定 OpenAPI 生成的响应体（filesApi.all / foldersApi.all 的返回）。
 // 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
@@ -160,7 +161,39 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return allFolders.value.find(f => f.id === id) ?? null
   }
 
-  // ── 细粒度实时同步：消费 live.fileEvent（Tier 3-B）──────────────────────────
+  function applyCanonicalEvent(event: LiveEventPayload): boolean {
+    const id = Number(event.entity_id)
+    if (!Number.isFinite(id)) return false
+    const wrapped = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
+    const kind = wrapped?.kind === 'folder' || wrapped?.kind === 'file' ? wrapped.kind : null
+    const value = wrapped?.entity ?? wrapped
+    if (event.operation === 'delete') {
+      const hadFile = allFiles.value.some(file => file.id === id)
+      const hadFolder = allFolders.value.some(folder => folder.id === id)
+      removeFiles([id])
+      if (hadFolder) removeFolder(id)
+      return hadFile || hadFolder
+    }
+    if (!value || typeof value !== 'object') return false
+    if (kind === 'folder' || (!kind && 'fileCount' in value && !('storageKey' in value))) {
+      const folder = value as FolderMeta
+      if (Number(folder.id) !== id) return false
+      const index = allFolders.value.findIndex(item => item.id === id)
+      if (event.operation === 'create' && index < 0) allFolders.value = [folder, ...allFolders.value]
+      else if (index >= 0) allFolders.value.splice(index, 1, folder)
+      else return false
+      return true
+    }
+    const file = value as FileMeta
+    if (Number(file.id) !== id) return false
+    const index = allFiles.value.findIndex(item => item.id === id)
+    if (event.operation === 'create' && index < 0) allFiles.value = [file, ...allFiles.value]
+    else if (index >= 0) allFiles.value.splice(index, 1, file)
+    else return false
+    return true
+  }
+
+  // ── canonical 实时同步：能增量应用实体就直接应用，否则合并重拉。 ──
   // 三种处理：
   //  ① 回声抑制：origin === 本页 client-id → 本页发起的改动，早已乐观更新过，跳过（不再全量重拉自己）。
   //  ② remove 快路径：别的标签页/端删了文件/文件夹 → 本地直接剔除（零网络），文件夹级联剔子树。
@@ -172,16 +205,9 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     if (_refreshTimer) return
     _refreshTimer = setTimeout(() => { _refreshTimer = null; if (loaded.value) refresh() }, 80)
   }
-  watch(() => useLiveStore().fileEvent, (ev) => {
-    if (!ev || !loaded.value) return
-    if (ev.origin && ev.origin === CLIENT_ID) return          // ① 回声抑制
-    if (ev.op === 'remove') {                                  // ② remove 快路径
-      const ids = ev.ids ?? (ev.id != null ? [ev.id] : [])
-      if (ev.kind === 'folder') ids.forEach(id => removeFolder(id))
-      else removeFiles(ids)
-    } else {
-      _scheduleRefresh()                                       // ③ 合并全量刷新
-    }
+  watch(() => useLiveStore().resourceEvent, (event) => {
+    if (!event || event.resource !== 'files' || event.origin === CLIENT_ID || !loaded.value) return
+    if (!applyCanonicalEvent(event)) _scheduleRefresh()
   })
 
   return {

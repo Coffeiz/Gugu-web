@@ -4,22 +4,7 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
-      <div class="card-brand">
-        <div class="brand-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 7h.01"/>
-            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-            <path d="M20 7l2 .5-2 .5"/>
-            <path d="M10 18v3"/>
-            <path d="M14 17.75V21"/>
-            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">咕咕</div>
-          <div class="brand-sub">登录你的账号</div>
-        </div>
-      </div>
+      <AuthBrand />
 
       <form @submit.prevent="handleLogin">
         <div class="field">
@@ -40,7 +25,7 @@
         <div v-if="error" class="error-msg">{{ error }}</div>
 
         <button type="submit" class="btn-primary" :disabled="loading">
-          {{ loading ? '登录中…' : '登录' }}
+          <span>{{ loading ? '登录中…' : '登录' }}</span>
         </button>
       </form>
 
@@ -51,7 +36,7 @@
     </div>
 
     <div class="page-footer">
-      <span>Created by Claude with love</span>
+      <span>Create with agents and love</span>
       <span class="footer-sep">·</span>
       <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">苏ICP备2026042185号</a>
     </div>
@@ -62,6 +47,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import AuthBrand from '@/components/common/AuthBrand.vue'
 
 const router   = useRouter()
 const auth     = useAuthStore()
@@ -108,26 +94,16 @@ async function handleLogin() {
   background: rgba(255,255,255,0.56);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.76);
-  border-radius: 20px; padding: 36px 32px;
+  border-radius: 20px; padding: 28px 32px 32px;
   box-shadow:
     0 20px 60px rgba(80,90,110,0.12),
     inset 0 1px 0 rgba(255,255,255,0.95),
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
 
-.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-.brand-icon {
-  width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
-}
-.brand-name { font-size: 18px; font-weight: 700; color: #1e2028; }
-.brand-sub  { font-size: 12px; color: #8a8fa8; margin-top: 2px; }
-
 .field { margin-bottom: 14px; }
 .field label {
-  display: block; font-size: 11px; font-weight: 600; color: #8a8fa8;
+  display: block; font-size: 11px; font-weight: 600; color: var(--content-secondary);
   text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px;
 }
 .field input {
@@ -153,9 +129,9 @@ async function handleLogin() {
   text-align: right; margin: -4px 0 14px;
 }
 .forgot-row a {
-  font-size: 12px; color: #8a8fa8; text-decoration: none;
+  font-size: 12px; color: var(--content-secondary); text-decoration: none;
 }
-.forgot-row a:hover { color: #7b7fb2; }
+.forgot-row a:hover { color: var(--action-primary); }
 
 .error-msg {
   font-size: 12px; color: #c05050; margin-bottom: 12px;
@@ -165,20 +141,31 @@ async function handleLogin() {
 
 .btn-primary {
   width: 100%; padding: 11px; margin-top: 4px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 16px rgba(123,127,178,0.32);
+  cursor: pointer;
+  position: relative; isolation: isolate; overflow: hidden;
+  transition: box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) var(--motion-ease-standard);
+  box-shadow: none;
 }
-.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary::before {
+  content: ''; position: absolute; inset: 0; z-index: 0;
+  border-radius: inherit; background: var(--action-primary-bg-hover);
+  opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.btn-primary > span { position: relative; z-index: 1; }
+.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg); opacity: 1; }
+.btn-primary:hover:not(:disabled)::before { opacity: 1; }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .card-footer {
   margin-top: 22px; text-align: center;
-  font-size: 13px; color: #8a8fa8;
+  font-size: 13px; color: var(--content-secondary);
 }
-.card-footer a { color: #7b7fb2; font-weight: 600; text-decoration: none; }
+.card-footer a { color: var(--sidebar-item-active-fg); font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
 
 .page-footer {

@@ -34,7 +34,7 @@
           <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
         </div>
         <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除">
-          <PhTrash :size="12" weight="bold" />
+          <Icon name="action.delete" :size="12" />
         </button>
       </div>
       <div v-if="!webSessions.length" class="exp-session-empty">还没有网页对话</div>
@@ -43,7 +43,7 @@
     <div class="exp-sidebar-divider"></div>
     <div class="exp-new-session-wrap">
       <button class="exp-new-session-btn" @click="onNewSession">
-        <PhPencilSimple weight="bold" :size="13" />
+        <Icon name="action.edit" :size="13" />
         新对话
       </button>
     </div>
@@ -52,7 +52,7 @@
 
 <script setup lang="ts">
 import { ref, computed, type ComponentPublicInstance } from 'vue'
-import { PhTrash, PhPencilSimple } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import GuguChatImConnect from './GuguChatImConnect.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'

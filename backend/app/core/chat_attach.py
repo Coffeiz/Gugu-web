@@ -23,6 +23,7 @@ import uuid
 from app.core.redis import get_redis, get_redis_sync
 from app.core.tz import now_utc
 from app.services.storage import get_storage
+from agent.providers.mimo import MimoAdapter
 
 DRAFT_TTL = 48 * 3600   # 草稿（未发送）暂存 TTL，见 PRD-STORAGE-1 §4；草稿孤儿清理按这个值扫
 
@@ -54,7 +55,8 @@ TEXT_EXTS = {
 }
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "tiff", "tif"}
 # 音 / 视频理解：MiMo 使用 OpenAI 扩展块，MiniMax M3 使用 Anthropic 原生 video 块。
-AUDIO_EXTS = {"mp3", "wav", "flac", "m4a", "ogg"}              # mimo 原生收，免转
+# MiMo 原生音频格式由 provider 适配器统一维护，避免和 media_transcode 重复定义。
+AUDIO_EXTS = set(MimoAdapter().audio_native_exts())
 VIDEO_EXTS = {"mp4", "mov", "avi", "wmv", "mkv"}
 # 非 mimo 原生的音频（IM 语音 / 浏览器录音常见）：算「音频」但要先转 mp3 才能喂 mimo（需服务器装 ffmpeg）
 TRANSCODE_AUDIO_EXTS = {"amr", "silk", "sil", "slk", "opus", "aac", "wma", "webm", "3gp", "3gpp"}
@@ -194,7 +196,8 @@ def _current_platform(explicit: str | None) -> str | None:
 
 
 _ROW_META_FIELDS = {"attach_id", "name", "ext", "mime", "size", "storage_key",
-                    "kind", "duration", "img_width", "img_height"}
+                    "kind", "duration", "img_width", "img_height", "platform",
+                    "platform_message_id", "attachment_index"}
 
 
 def _extra_from_meta(meta: dict) -> dict | None:
@@ -215,6 +218,9 @@ async def _record_draft(user_id, attach_id: str, storage_key: str, meta: dict) -
     async with db_session._SessionLocal() as db:
         db.add(ChatAttachment(
             attach_id=attach_id, user_id=user_id, storage_key=storage_key,
+            platform=meta.get("platform"),
+            platform_message_id=meta.get("platform_message_id"),
+            attachment_index=meta.get("attachment_index"),
             name=meta.get("name") or "", ext=meta.get("ext") or "",
             mime=meta.get("mime") or None, kind=meta.get("kind") or "binary",
             size=meta.get("size") or 0, duration=meta.get("duration"),
@@ -241,6 +247,9 @@ async def _record_draft_isolated(user_id, attach_id: str, storage_key: str, meta
         async with Session() as db:
             db.add(ChatAttachment(
                 attach_id=attach_id, user_id=user_id, storage_key=storage_key,
+                platform=meta.get("platform"),
+                platform_message_id=meta.get("platform_message_id"),
+                attachment_index=meta.get("attachment_index"),
                 name=meta.get("name") or "", ext=meta.get("ext") or "",
                 mime=meta.get("mime") or None, kind=meta.get("kind") or "binary",
                 size=meta.get("size") or 0, duration=meta.get("duration"),
@@ -267,19 +276,97 @@ async def try_delete_storage_if_unreferenced(user_id, storage_key: str) -> str:
     import app.db.session as db_session
     db_session.ensure_engine()
     async with db_session._SessionLocal() as db:
+        await _lock_storage_key(db, user_id, storage_key)
         still_referenced = (await db.execute(
             select(ChatAttachment.id).where(
                 ChatAttachment.user_id == user_id,
                 ChatAttachment.storage_key == storage_key,
             ).limit(1)
         )).scalar_one_or_none() is not None
-    if still_referenced:
-        return "skipped"
-    try:
-        await get_storage().delete(storage_key)
-    except Exception:
-        pass
-    return "deleted"
+        if still_referenced:
+            await db.commit()
+            return "skipped"
+        try:
+            await get_storage().delete(storage_key)
+        except Exception:
+            pass
+        await db.commit()
+        return "deleted"
+
+
+async def _lock_storage_key(db, user_id, storage_key: str) -> None:
+    """复用与物理清理共享一把事务锁；SQLite 测试环境不支持 advisory lock。"""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": f"chat-attachment:{user_id}:{storage_key}"},
+    )
+
+
+async def reuse_attachment(
+    user_id,
+    *,
+    platform: str,
+    platform_message_id: str,
+    attachment_index: int | None = None,
+    extra: dict | None = None,
+) -> dict | None:
+    """为引用消息创建独立附件行，共享源附件的物理 storage_key，不重新下载。"""
+    if not user_id or not platform or not platform_message_id:
+        return None
+    from app.models import ChatAttachment
+    from sqlalchemy import select
+    import uuid
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        query = select(ChatAttachment).where(
+            ChatAttachment.user_id == user_id,
+            ChatAttachment.platform == platform,
+            ChatAttachment.platform_message_id == platform_message_id,
+            ChatAttachment.state.in_(("draft", "attached")),
+        ).order_by(ChatAttachment.attachment_index, ChatAttachment.id).with_for_update()
+        rows = (await db.execute(query)).scalars().all()
+        if attachment_index is not None:
+            rows = [row for row in rows if row.attachment_index == attachment_index]
+        source = rows[0] if rows else None
+        if source is None:
+            await db.rollback()
+            return None
+        await _lock_storage_key(db, user_id, source.storage_key)
+        # DB 行可能还在，但物理对象已经被外部清理或存储后端丢失；这种情况
+        # 必须按未命中处理，让 IM 入口回退到带 URL 的正常下载流程，不能制造坏引用。
+        if not await get_storage().exists(source.storage_key):
+            await db.rollback()
+            return None
+        meta = _row_to_meta(source)
+        attach_id = uuid.uuid4().hex[:16]
+        merged_extra = dict(source.extra or {})
+        merged_extra.update(extra or {})
+        row = ChatAttachment(
+            attach_id=attach_id,
+            user_id=user_id,
+            storage_key=source.storage_key,
+            platform=platform,
+            platform_message_id=platform_message_id,
+            attachment_index=attachment_index,
+            name=meta.get("name") or "",
+            ext=meta.get("ext") or "",
+            mime=meta.get("mime") or None,
+            kind=meta.get("kind") or "binary",
+            size=meta.get("size") or 0,
+            duration=meta.get("duration"),
+            img_width=meta.get("img_width"),
+            img_height=meta.get("img_height"),
+            state="draft",
+            extra=merged_extra or None,
+        )
+        db.add(row)
+        await db.commit()
+        return _row_to_meta(row)
 
 
 async def claim_attachments(db, user_id, message_id: int, attach_ids: list[str]) -> None:
@@ -315,7 +402,9 @@ async def claim_attachments(db, user_id, message_id: int, attach_ids: list[str])
 async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
                 *, kind: str | None = None, ttl: int = TTL,
                 subdir: str = ".chat_staging", extra: dict | None = None,
-                platform: str | None = None) -> dict:
+                platform: str | None = None,
+                platform_message_id: str | None = None,
+                attachment_index: int | None = None) -> dict:
     """暂存一个上传文件，返回元数据（含 attach_id）。
     语音条走 kind='voice' / subdir='.voice'（见 stage_voice）。
     图片顺带探真实像素尺寸（img_width/img_height）：前端预览窗口据此直接定尺，不用再靠缩略图猜。
@@ -332,6 +421,8 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
         "platform": _current_platform(platform),
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
@@ -350,11 +441,14 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
 
 
 async def stage_voice(user_id, name: str, ext: str, mime: str | None, data: bytes,
-                      duration: float | None = None, platform: str | None = None) -> dict:
+                      duration: float | None = None, platform: str | None = None,
+                      platform_message_id: str | None = None,
+                      attachment_index: int | None = None) -> dict:
     """语音消息（IM 语音 / 网页录音）：独立 .voice/ 存储 + 30 天留存 + kind='voice' + 时长。"""
     return await stage(user_id, name, ext, mime, data, kind="voice", ttl=TTL_VOICE,
                        subdir=".voice", extra={"duration": duration} if duration is not None else None,
-                       platform=platform)
+                       platform=platform, platform_message_id=platform_message_id,
+                       attachment_index=attachment_index)
 
 
 def stage_voice_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
@@ -367,7 +461,9 @@ def stage_voice_sync(user_id, name: str, ext: str, mime: str | None, data: bytes
 def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
                *, kind: str | None = None, ttl: int = TTL,
                subdir: str = ".chat_staging", extra: dict | None = None,
-               platform: str | None = None) -> dict:
+               platform: str | None = None,
+               platform_message_id: str | None = None,
+               attachment_index: int | None = None) -> dict:
     """同步暂存（给 IM 网关用）。
 
     网关 handler 跑在一个**已运行的 asyncio loop** 里（lark SDK），所以不能在当前线程
@@ -391,6 +487,8 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
         "platform": _current_platform(platform),
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
@@ -426,6 +524,9 @@ def _row_to_meta(row) -> dict:
         "mime": row.mime or "", "size": row.size, "storage_key": row.storage_key,
         "kind": row.kind, "duration": row.duration,
         "img_width": row.img_width, "img_height": row.img_height,
+        "platform": row.platform,
+        "platform_message_id": row.platform_message_id,
+        "attachment_index": row.attachment_index,
     }
     if row.extra:
         meta.update(row.extra)
@@ -630,11 +731,18 @@ async def read_text(meta: dict) -> str:
         return ""
 
 
-def _vision_enabled() -> bool:
-    """当前激活模型是否支持多模态（后台探测/手动设的 ai.vision）。"""
+def _vision_enabled(model_cfg=None) -> bool:
+    """当前模型是否支持多模态。
+
+    保留后台探测/手动开关，同时信任适配器对 DeepSeek Vision 这类明确登记的
+    模型能力，避免新建预设还没点检测时把图片误当普通附件。
+    """
     try:
         from app.core.config import get_settings
-        return bool(get_settings().ai.vision)
+        from agent import providers
+        ai = model_cfg or get_settings().ai
+        capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
+        return bool(getattr(ai, "vision", False)) or capabilities.vision
     except Exception:
         return False
 
@@ -647,12 +755,12 @@ def _video_enabled(model_cfg=None) -> bool:
         if model_cfg is not None:
             if not getattr(model_cfg, "vision_video", False):
                 return False
-            return (not use_anthropic_for(model_cfg)) or _minimax_video_enabled(model_cfg)
+            return video_transport_for(model_cfg) != "none"
         from app.core.config import get_settings
         ai = get_settings().ai
         if not getattr(ai, "vision_video", False):
             return False
-        return (not use_anthropic_for(ai)) or _minimax_video_enabled(ai)
+        return video_transport_for(ai) != "none"
     except Exception:
         return False
 
@@ -661,27 +769,50 @@ def _audio_enabled(model_cfg=None) -> bool:
     """音频理解是否开启：主模型 vision_audio 开，且走 OpenAI 兼容 input_audio 块。
     独立语音识别模型（ASR 转写）由 _voice_recognition_enabled 单独判定，两者解耦。"""
     try:
+        from agent import providers
         if model_cfg is not None:
             from agent.llm.llm_select import use_anthropic_for
             if not getattr(model_cfg, "vision_audio", False):
                 return False
-            return not use_anthropic_for(model_cfg)
+            if use_anthropic_for(model_cfg):
+                return False
+            # vision_audio 是产品开关，不能越过 provider 的协议能力；否则 GLM
+            # 等文本端点会收到 input_audio，并以 content.type 400 拒绝请求。
+            return bool(providers.capability_snapshot(model_cfg).get("audio", False))
         from app.core.config import get_settings
         from agent.llm.llm_select import use_anthropic_for
         ai = get_settings().ai
         if not getattr(ai, "vision_audio", False):
             return False
-        return not use_anthropic_for(ai)
+        if use_anthropic_for(ai):
+            return False
+        return bool(providers.capability_snapshot(ai).get("audio", False))
     except Exception:
         return False
 
 
+def should_transcribe_audio(model_cfg=None) -> bool:
+    """判断音频是否需要回退到独立语音识别模型。
+
+    主模型具备原生音频能力时，音频应直接随本轮请求发送给主模型；只有
+    主模型不支持音频时，才由独立语音识别模型转写成文字。
+    """
+    return not _audio_enabled(model_cfg)
+
+
 def _minimax_video_enabled(model_cfg) -> bool:
-    """MiniMax 仅 M3 消息通道支持视频 content block。"""
-    provider = (getattr(model_cfg, "provider", "") or "").lower()
-    model = (getattr(model_cfg, "model", "") or "").lower()
-    base_url = (getattr(model_cfg, "base_url", "") or "").lower()
-    return (provider == "minimax" or "minimaxi.com" in base_url) and "m3" in model
+    """兼容旧调用：查询适配器声明的 Anthropic 视频传输能力。"""
+    from agent import providers
+    adapter = providers.adapter_for(model_cfg)
+    model = getattr(model_cfg, "model", "") or ""
+    return adapter.media_transport(model) == "anthropic"
+
+
+def video_transport_for(model_cfg) -> str:
+    """返回当前模型的视频块协议；供聊天附件和 read_file 共用。"""
+    from agent import providers
+    adapter = providers.adapter_for(model_cfg)
+    return adapter.media_transport(getattr(model_cfg, "model", "") or "")
 
 
 # ── 视频探测 / 压缩 / mm_file 上传 ───────────────────────────────────────────
@@ -1031,8 +1162,8 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg,
     if duration >= VIDEO_DURATION_MAX_SECONDS:
         raise ValueError("这条视频太长（超过 120 秒上限），没法直接看")
 
-    minimax = _minimax_video_enabled(model_cfg) if model_cfg is not None else False
-    if minimax:
+    transport = video_transport_for(model_cfg) if model_cfg is not None else "none"
+    if transport == "anthropic":
         payload, payload_mime = raw, mime
         if _should_compress_video(probe, size):
             compressed = await _compress_video_cached(raw, probe, storage_key, user_id, model_cfg)
@@ -1125,13 +1256,17 @@ def _fit_image_for_vision(raw: bytes, ext: str):
 
 
 def vision_ready() -> bool:
-    """vision 开 **且** 当前 provider 走 Anthropic 块格式——只有这样才能在 tool_result 里塞图片块
-    （OpenAI 路工具结果只能是纯文本）。read_file 看图据此决定能否把库里的图喂给模型。"""
+    """当前模型已开启视觉能力。
+
+    工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
+    转成 ``image_url``，因此 DeepSeek Vision 也可以读取工具返回的图片。
+    """
     try:
         from app.core.config import get_settings
+        from agent import providers
         s = get_settings()
-        anthropic = (s.ai.provider == "minimax") or ("anthropic" in (s.ai.base_url or "").lower())
-        return bool(s.ai.vision) and anthropic
+        capabilities = providers.adapter_for(s.ai).capabilities(getattr(s.ai, "model", "") or "")
+        return _vision_enabled() and (capabilities.vision or capabilities.api_format == "anthropic")
     except Exception:
         return False
 
@@ -1157,16 +1292,24 @@ def strip_vision_for_history(content):
 
     图片 base64 很大，若原样存进对话历史，会撑大 DB 且每轮都重新喂给模型（token 爆炸）。
     历史里留个占位即可——模型要再看会重新调 read_file。"""
-    if not isinstance(content, list):
-        return content
-    out = []
-    for blk in content:
-        if isinstance(blk, dict) and blk.get("type") in ("image", "video"):
-            label = "图片" if blk.get("type") == "image" else "视频"
-            out.append({"type": "text", "text": f"[{label}已查看]"})
-        else:
-            out.append(blk)
-    return out
+    def _strip(value):
+        if isinstance(value, list):
+            return [_strip(item) for item in value]
+        if isinstance(value, dict):
+            value_type = value.get("type")
+            if value_type in ("image", "video", "audio"):
+                label = {"image": "图片", "video": "视频", "audio": "音频"}[value_type]
+                return {"type": "text", "text": f"[{label}已查看]"}
+            # OpenAI image_url 的 data URL 也不能落入历史；远程 URL 可以保留为引用。
+            if value_type == "image_url":
+                image_url = value.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if isinstance(url, str) and url.startswith("data:"):
+                    return {"type": "text", "text": "[图片已查看]"}
+            return {key: _strip(item) for key, item in value.items()}
+        return value
+
+    return _strip(content)
 
 
 async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None) -> tuple[str, list, list, list]:
@@ -1180,7 +1323,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     if not attach_ids:
         return base_message, [], [], []
     if model_cfg is not None:
-        vision = bool(getattr(model_cfg, "vision", False))
+        vision = _vision_enabled(model_cfg)
         video_ok = _video_enabled(model_cfg)
         audio_ok = _audio_enabled(model_cfg)
     else:
@@ -1307,11 +1450,14 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     return "".join(parts), cards, images, media
 
 
-def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None):
+def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None,
+                       image_detail: str = "auto"):
     """把增广文本 + 图片块（+ mimo 音视频块）拼成发给模型的 user content。
     无图无媒体 → 纯字符串（与旧行为一致）；否则 → 内容块列表（按 provider 格式）。
     `media`（音/视频）在 OpenAI 路使用 MiMo 扩展块，在 Anthropic 路使用 MiniMax 原生块。"""
     media = media or []
+    if image_detail not in {"auto", "low", "high", "original"}:
+        image_detail = "auto"
     if not images and not media:
         return text
     if use_anthropic:
@@ -1329,7 +1475,8 @@ def build_user_content(text: str, images: list, use_anthropic: bool, media: list
     parts = [{"type": "text", "text": text}] if text else []
     for im in images:
         parts.append({"type": "image_url", "image_url": {
-            "url": f"data:{im['media_type']};base64,{im['b64']}"}})
+            "url": f"data:{im['media_type']};base64,{im['b64']}",
+            "detail": image_detail}})
     for m in media:
         data_url = f"data:{m['mime']};base64,{m['b64']}"
         if m["type"] == "audio":

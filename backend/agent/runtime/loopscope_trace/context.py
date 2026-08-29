@@ -187,10 +187,23 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
             except Exception:
                 block = ""
             if block:
+                attributes = {}
+                if label == "Skill index":
+                    skill_rows = skills if isinstance(skills, (list, tuple)) else []
+                    attributes = {
+                        "context_source": "skill_index",
+                        "source": "skills_index",
+                        "skill_count": len(skill_rows),
+                        "skill_slugs": [
+                            str(row.get("slug")) for row in skill_rows
+                            if isinstance(row, dict) and row.get("slug")
+                        ],
+                    }
                 record_context_source(
                     "context",
                     label,
                     output={"content": block},
+                    attributes=attributes,
                     code_target=original_build,
                     included_value=block,
                 )
@@ -200,7 +213,7 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
             static_text, dynamic_text, now_text = result
             for label, content, role in (
                 ("Prompt stable prefix", static_text, "stable_prefix"),
-                ("Prompt dynamic context", dynamic_text, "dynamic_context"),
+                ("Prompt snapshot context", dynamic_text, "snapshot_context"),
                 ("Prompt current time", now_text, "volatile_tail"),
             ):
                 if content:

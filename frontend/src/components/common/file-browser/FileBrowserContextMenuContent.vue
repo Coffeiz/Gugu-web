@@ -1,95 +1,85 @@
 <template>
   <template v-if="type === 'file' || type === 'multi-file'">
     <button v-if="type === 'file'" class="ctx-item popup-menu-item" @click="emit('action', 'info')">
-      <PhInfo :size="13" weight="bold" />
+      <Icon name="status.info" :size="13" />
       详细信息
     </button>
     <button class="ctx-item popup-menu-item" @click="emit('action', 'download')">
-      <PhDownloadSimple :size="13" weight="bold" />
+      <Icon name="action.download" :size="13" />
       下载
     </button>
     <button v-if="type === 'file'" class="ctx-item popup-menu-item" @click="emit('action', 'rename')">
-      <PhPencilSimple :size="13" weight="bold" />
+      <Icon name="action.edit" :size="13" />
       重命名
     </button>
     <div class="popup-menu-sep"></div>
     <button class="ctx-item popup-menu-item" @click="emit('action', 'cut')">
-      <PhScissors :size="13" weight="bold" />
+      <Icon name="action.cut" :size="13" />
       剪切
       <span class="popup-menu-shortcut">{{ modKey }}+X</span>
     </button>
     <button class="ctx-item popup-menu-item" @click="emit('action', 'copy')">
-      <PhCopy :size="13" weight="bold" />
+      <Icon name="action.copy" :size="13" />
       复制
       <span class="popup-menu-shortcut">{{ modKey }}+C</span>
     </button>
     <div class="popup-menu-sep"></div>
     <button class="ctx-item popup-menu-item danger" @click="emit('action', 'delete')">
-      <PhTrash :size="13" weight="bold" />
+      <Icon name="action.delete" :size="13" />
       移到回收站
     </button>
   </template>
 
   <template v-else-if="type === 'folder'">
     <button v-if="folderTargetValid" class="ctx-item popup-menu-item" @click="emit('action', 'download-folder')">
-      <PhDownloadSimple :size="13" weight="bold" />
+      <Icon name="action.download" :size="13" />
       下载为 ZIP
     </button>
     <button v-if="folderTargetValid" class="ctx-item popup-menu-item" @click="emit('action', 'rename-folder')">
-      <PhPencilSimple :size="13" weight="bold" />
+      <Icon name="action.edit" :size="13" />
       重命名
     </button>
     <button v-if="folderTargetValid" class="ctx-item popup-menu-item" @click="emit('action', 'cut-folder')">
-      <PhScissors :size="13" weight="bold" />
+      <Icon name="action.cut" :size="13" />
       剪切
       <span class="popup-menu-shortcut">{{ modKey }}+X</span>
     </button>
     <button v-if="folderTargetValid && canCopyFolder" class="ctx-item popup-menu-item" @click="emit('action', 'copy-folder')">
-      <PhCopy :size="13" weight="bold" />
+      <Icon name="action.copy" :size="13" />
       复制
       <span class="popup-menu-shortcut">{{ modKey }}+C</span>
     </button>
     <div v-if="folderTargetValid && ((canCopyFolder && copySeparator) || deleteSeparator)" class="popup-menu-sep"></div>
     <button v-if="folderTargetValid" class="ctx-item popup-menu-item danger" @click="emit('action', 'delete-folder')">
-      <PhTrash :size="13" weight="bold" />
+      <Icon name="action.delete" :size="13" />
       删除
     </button>
     <button v-if="!folderTargetValid" class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
-      <PhDotsThree :size="13" weight="bold" />
+      <Icon name="action.more" :size="13" />
       此位置不可操作
     </button>
   </template>
 
   <template v-else-if="type === 'empty'">
     <button v-if="canCreateFolder" class="ctx-item popup-menu-item" @click="emit('action', 'create-folder')">
-      <PhFolderPlus :size="13" weight="bold" />
+      <Icon name="file.folder-add" :size="13" />
       新建文件夹
     </button>
     <div v-if="canCreateFolder" class="popup-menu-sep"></div>
     <button v-if="canPaste" class="ctx-item popup-menu-item" @click="emit('action', 'paste')">
-      <PhClipboardText :size="13" weight="bold" />
+      <Icon name="action.copy" :size="13" />
       粘贴
       <span class="popup-menu-shortcut">{{ modKey }}+V</span>
     </button>
     <button v-else class="ctx-item popup-menu-item" disabled style="opacity:.4;cursor:default">
-      <PhClipboardText :size="13" weight="bold" />
+      <Icon name="action.copy" :size="13" />
       剪贴板为空
     </button>
   </template>
 </template>
 
 <script setup lang="ts">
-import {
-  PhClipboardText,
-  PhCopy,
-  PhDotsThree,
-  PhDownloadSimple,
-  PhFolderPlus,
-  PhInfo,
-  PhPencilSimple,
-  PhScissors,
-  PhTrash,
-} from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
 
 defineProps({

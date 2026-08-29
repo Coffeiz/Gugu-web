@@ -8,7 +8,7 @@
     @click="go"
     @keydown.enter="go"
   >
-    <component :is="icon" class="nav-icon" :size="14" weight="bold" />
+    <Icon :name="icon" class="nav-icon" size="sm" tone="inherit" />
     <span class="nav-label-text"><slot /></span>
     <span v-if="$slots.badge" class="badge"><slot name="badge" /></span>
   </div>
@@ -17,8 +17,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import Icon from '@/components/common/Icon.vue'
 
-const props = defineProps({ to: String, icon: Object })
+const props = defineProps({ to: String, icon: { type: String, required: true } })
 const route = useRoute()
 const router = useRouter()
 

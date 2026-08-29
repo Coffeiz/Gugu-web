@@ -37,22 +37,21 @@
       @mousedown.prevent
       @click.stop="editing ? commit() : startEdit()"
     >
-      <PhCheck v-if="editing" :size="11" weight="bold" />
-      <PhPencilSimple v-else :size="11" weight="bold" />
+      <Icon name="status.success" v-if="editing" :size="11" />
+      <Icon name="action.edit" v-else :size="11" />
     </button>
   </span>
 </template>
 
 <script setup lang="ts">
+import { ref, nextTick } from 'vue'
+import Icon from '@/components/common/Icon.vue'
 /**
  * 会话标题内联编辑，两种模式：
  * - 侧边栏（header=false，默认）：标题 + 铅笔按钮，点按钮进入编辑（与文件重命名同款交互）。
  * - 顶部标题栏（header=true）：只有标题，单击进入编辑，无按钮；编辑态用 contenteditable 保持
  *   同一个 span 元素，hover/聚焦的选框样式不中断。
  */
-import { ref, nextTick } from 'vue'
-import { PhCheck, PhPencilSimple } from '@phosphor-icons/vue'
-
 const props = defineProps<{
   title: string
   onRename: (title: string) => void
