@@ -170,9 +170,12 @@ async def prepare_run(
         clean = sanitize.sanitize_messages(assembled.conversation)
         merged_cross_segment = merged_cross_segment and len(clean) < before
         assembled.replace_conversation(clean)
+        # 当前日期是 provider-only 动态尾缀：保留“现在”的语义，但不进入
+        # canonical history，也不污染跨 Run 的稳定前缀。
+        assembled.set_dynamic_tail([session_snapshot.time_message(user_tz)])
         audit.context_layout_audit(
             phase="assembled", session=session, snapshot=snapshot,
-            history=history, messages=assembled,
+            history=effective_history, messages=assembled,
             fixed_prefix_count=assembled.fixed_prefix_size,
             turn_batch_count=len(turn_batch.messages),
             history_stats=history_stats,
@@ -182,7 +185,7 @@ async def prepare_run(
         )
         return PreparedRun(
             use_anthropic=True, anthr_messages=assembled,
-            anthr_initial_len=len(assembled),
+            anthr_initial_len=len(assembled.conversation),
             oa_messages=[], oa_initial_len=0, rag_context=rag_context,
             stance_to_persist=stance_text if stance_changed else None,
         )
@@ -201,9 +204,11 @@ async def prepare_run(
         extra_reminder=extra_reminder,
     )
     assembled.append_batch(turn_batch)
+    # Web/IM 每次调用都需要当前日期；它必须只存在于本次 provider 请求。
+    assembled.set_dynamic_tail([session_snapshot.time_message(user_tz)])
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,
-        history=history, messages=assembled,
+        history=effective_history, messages=assembled,
         fixed_prefix_count=getattr(assembled, "fixed_prefix_size", None),
         turn_batch_count=len(turn_batch.messages),
         history_stats=history_stats,
@@ -211,7 +216,7 @@ async def prepare_run(
     return PreparedRun(
         use_anthropic=False, anthr_messages=[], anthr_initial_len=0,
         oa_messages=assembled,
-        oa_initial_len=len(assembled),
+        oa_initial_len=len(assembled.conversation),
         rag_context=rag_context,
         stance_to_persist=stance_text if stance_changed else None,
     )

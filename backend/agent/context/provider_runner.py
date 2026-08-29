@@ -12,14 +12,11 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) ->
     from agent.llm.llm_select import use_anthropic_for
 
     use_anthropic = use_anthropic_for(settings.ai)
-    try:
-        return (
-            await _anthropic(sys, user, settings, max_tokens)
-            if use_anthropic
-            else await _openai(sys, user, settings, max_tokens)
-        )
-    except Exception:
-        return ""
+    return (
+        await _anthropic(sys, user, settings, max_tokens)
+        if use_anthropic
+        else await _openai(sys, user, settings, max_tokens)
+    )
 
 
 async def complete_json(

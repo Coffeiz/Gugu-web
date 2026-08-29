@@ -32,6 +32,7 @@ class ContextBranch:
         attempts = 0
         output: Any = None
         reason = "provider_error"
+        validated_ok = False
         for attempts in range(1, max(0, policy.max_retries) + 2):
             call_failed = False
             try:
@@ -54,6 +55,7 @@ class ContextBranch:
                 ok = False
                 call_failed = True
                 reason = "provider_error"
+            validated_ok = ok
             if ok:
                 reason = "completed"
                 break
@@ -66,8 +68,8 @@ class ContextBranch:
 
         output_fp = _fingerprint(output) if output else None
         result = BranchResult(
-            ok=bool(output),
-            output=output if output else None,
+            ok=validated_ok,
+            output=output if validated_ok else None,
             return_reason=reason,
             attempts=attempts,
             input_fingerprint=input_fp,

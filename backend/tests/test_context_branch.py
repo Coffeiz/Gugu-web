@@ -96,6 +96,37 @@ async def test_context_branch_classifies_invalid_json_shape(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_context_branch_classifies_blank_text_as_invalid(monkeypatch):
+    async def fake_complete_text(*args, **kwargs):
+        return "   "
+
+    monkeypatch.setattr(provider_runner, "complete_text", fake_complete_text)
+    result = await ContextBranch().run(
+        BranchInput(stable_system="stable"),
+        BranchPolicy(name="compaction", output_mode="text"),
+        SimpleNamespace(),
+    )
+
+    assert result.ok is False
+    assert result.output is None
+    assert result.return_reason == "schema_invalid"
+
+
+@pytest.mark.asyncio
+async def test_provider_runner_text_errors_reach_context_branch(monkeypatch):
+    async def raise_provider_error(*args, **kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("agent.llm.llm_select.use_anthropic_for", lambda _ai: False)
+    monkeypatch.setattr(provider_runner, "_openai", raise_provider_error)
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        await provider_runner.complete_text(
+            "stable", "turn", SimpleNamespace(ai=SimpleNamespace()), 800,
+        )
+
+
+@pytest.mark.asyncio
 async def test_scope_revision_is_audit_only_and_preserves_prefix(monkeypatch):
     captured = []
 

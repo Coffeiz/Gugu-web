@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Set
 from typing import AsyncIterator, Tuple
 
 from agent.im.models import PlatformReply
@@ -391,7 +392,7 @@ async def send_agent_response(
     payload: dict,
     response: AgentResponse,
     *,
-    already_sent_rounds: int = 0,
+    already_sent_rounds: int | Set[int] = 0,
 ) -> str | None:
     """统一收尾一轮 AgentResponse：先发送附件，再按 round 发送文本说明。
 
@@ -415,7 +416,13 @@ async def send_agent_response(
 
     # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
     last_text = texts[-1]
-    for text in texts[max(0, already_sent_rounds):]:
+    if isinstance(already_sent_rounds, int):
+        sent_indices = set(range(max(0, already_sent_rounds)))
+    else:
+        sent_indices = {index for index in already_sent_rounds if index >= 0}
+    for index, text in enumerate(texts):
+        if index in sent_indices:
+            continue
         if not await send_text(payload, text):
             return None
     return last_text

@@ -875,7 +875,9 @@ async def dispatch_im_message(payload: dict):
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
     shown_interaction_ids: set[int] = set()
-    sent_round_count = 0
+    sent_round_indices: set[int] = set()
+    immediate_round_index = 0
+    immediate_round_blocked = False
     async def _show_tool_event(event: dict) -> None:
         """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
         if not show_tool_interactions:
@@ -885,14 +887,22 @@ async def dispatch_im_message(payload: dict):
 
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
-        nonlocal sent_round_count
+        nonlocal immediate_round_index, immediate_round_blocked
         from agent.im.replies import send_text
 
         if not str(text or "").strip():
             return True
+        index = immediate_round_index
+        immediate_round_index += 1
+        # 发送失败后不能再把后续 round 当成连续前缀；最终收尾会按已成功
+        # 发送的 index 精确补发，避免丢失失败 round 或重复发送成功 round。
+        if immediate_round_blocked:
+            return False
         sent = await send_text(payload, str(text))
         if sent:
-            sent_round_count += 1
+            sent_round_indices.add(index)
+        else:
+            immediate_round_blocked = True
         return sent
 
     async def _show_im_interaction(interaction: dict) -> None:
@@ -991,7 +1001,7 @@ async def dispatch_im_message(payload: dict):
     # 非流式 IM（当前统一 round 出口）所有平台都走同一发送器；飞书不再
     # 因为旧的流式卡片分支而跳过正文。
     reply_text = await send_agent_response(
-        payload, resp, already_sent_rounds=sent_round_count
+        payload, resp, already_sent_rounds=sent_round_indices
     )
 
     if reply_text is None:
