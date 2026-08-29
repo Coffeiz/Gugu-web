@@ -111,10 +111,6 @@ def send_reset_email(*, to_addr: str, username: str, link: str) -> bool:
 
 
 def notify_feedback(username: str, category: str, content: str) -> None:
-    cfg = get_settings().smtp
-    enabled = cfg.get("feedback_email_enabled", True) if isinstance(cfg, dict) else cfg.feedback_email_enabled
-    if not enabled:
-        return
     category_labels = {"bug": "Bug 反馈", "suggestion": "功能建议", "other": "其他"}
     label = category_labels.get(category, category)
     subject = f"[咕咕反馈] {label} · {username}"

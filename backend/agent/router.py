@@ -23,8 +23,6 @@
 不真的取消；发起者本人取消则正常中断。
 """
 from agent.runtime import runtime_state as st
-from agent.commands.text import normalize_command_text
-from agent.commands.help import all_help_text, command_help, is_help_arg
 
 # intent
 PROGRESS = "progress"
@@ -67,24 +65,24 @@ def _is_emotion(t: str) -> bool:
 # body（去掉前导 /）小写后查表 → 命令名；非命令（如粘贴的路径 /Users/..）返回 None 走正常对话
 _CMD = {
     "stop": "stop", "s": "stop", "cancel": "stop", "x": "stop",
-    "status": "status",
-    "compact": "compact",
-    "help": "help", "h": "help",
+    "停": "stop", "停止": "stop", "取消": "stop", "停下": "stop",
+    "status": "status", "状态": "status", "进度": "status",
+    "help": "help", "h": "help", "帮助": "help", "菜单": "help", "命令": "help",
 }
-def parse_command_parts(text: str, *, allow_leading_mention: bool = False) -> tuple[str | None, str]:
-    """识别斜杠命令及其参数；半/全角斜杠都认。非命令返回 ``(None, "")``。"""
-    t = normalize_command_text(text) if allow_leading_mention else (text or "").strip()
+_HELP_TEXT = (
+    "🤖 可用命令（确定性、立即生效）：\n"
+    "/stop　停止当前任务\n"
+    "/status　看当前进度\n"
+    "/help　这份帮助"
+)
+
+
+def parse_command(text: str) -> str | None:
+    """识别 `/stop` 这类斜杠命令；半角/全角斜杠都认。非命令返回 None。"""
+    t = (text or "").strip()
     if t[:1] not in ("/", "／"):
-        return None, ""
-    parts = t[1:].strip().replace("　", " ").split(maxsplit=1)
-    if not parts:
-        return None, ""
-    return _CMD.get(parts[0].lower()), parts[1].strip() if len(parts) == 2 else ""
-
-
-def parse_command(text: str, *, allow_leading_mention: bool = False) -> str | None:
-    """识别斜杠命令名；保留旧接口供调用方使用。"""
-    return parse_command_parts(text, allow_leading_mention=allow_leading_mention)[0]
+        return None
+    return _CMD.get(t[1:].strip().lower())
 
 
 def classify(text: str) -> str:
@@ -142,8 +140,7 @@ def reply_awaits_answer(text: str) -> bool:
 
 
 def decide(text: str, state: str, awaiting: bool = False,
-           *, current_puid: str | None = None, active_puid: set | None = None,
-           allow_leading_mention: bool = False) -> dict:
+           *, current_puid: str | None = None, active_puid: set | None = None) -> dict:
     """返回 {action, reply?}。action：'reply'(短路直接回) / 'cancel'(置取消标志+回) /
     'no_permission'(无权取消，回一句提示) / 'agent'(入队给主 Agent)。
 
@@ -166,20 +163,14 @@ def decide(text: str, state: str, awaiting: bool = False,
         current_puid and active_puid and current_puid in active_puid
     )
 
-    cmd, cmd_arg = parse_command_parts(text, allow_leading_mention=allow_leading_mention)
+    cmd = parse_command(text)
     if cmd == "stop":
-        if is_help_arg(cmd_arg):
-            return {"action": "reply", "reply": command_help("stop")}
         return ({"action": "cancel", "reply": "🛑 已停止当前任务"} if busy
                 else {"action": "reply", "reply": "现在没有在跑的任务哦～"})
     if cmd == "status":
-        if is_help_arg(cmd_arg):
-            return {"action": "reply", "reply": command_help("status")}
         return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
     if cmd == "help":
-        return {"action": "reply", "reply": command_help(cmd_arg) if cmd_arg and not is_help_arg(cmd_arg) else all_help_text()}
-    if cmd == "compact":
-        return {"action": "compact"}
+        return {"action": "reply", "reply": _HELP_TEXT}
 
     intent = classify(text)
 

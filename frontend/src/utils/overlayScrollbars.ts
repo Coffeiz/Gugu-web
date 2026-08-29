@@ -12,12 +12,7 @@ type ScrollBinding = {
   thumb: HTMLDivElement
   resizeObserver: ResizeObserver
   onScroll: () => void
-  onPointerDown: (event: PointerEvent) => void
-  onPointerMove: (event: PointerEvent) => void
-  onPointerUp: (event: PointerEvent) => void
   owner: HTMLElement | null
-  dragStartY: number | null
-  dragStartScrollTop: number
 }
 
 const bindings = new WeakMap<HTMLElement, ScrollBinding>()
@@ -98,42 +93,8 @@ function bind(element: HTMLElement) {
     thumb,
     resizeObserver: new ResizeObserver(onScroll),
     onScroll,
-    onPointerDown: () => {},
-    onPointerMove: () => {},
-    onPointerUp: () => {},
     owner,
-    dragStartY: null,
-    dragStartScrollTop: 0,
   }
-  binding.onPointerDown = (event) => {
-    if (event.button !== 0 || thumb.hidden) return
-    event.preventDefault()
-    event.stopPropagation()
-    binding.dragStartY = event.clientY
-    binding.dragStartScrollTop = element.scrollTop
-    thumb.setPointerCapture(event.pointerId)
-    thumb.classList.add('overlay-scrollbar--dragging')
-  }
-  binding.onPointerMove = (event) => {
-    if (binding.dragStartY === null) return
-    const styles = getComputedStyle(thumb)
-    const trackInset = Math.max(0, parseFloat(styles.getPropertyValue('--scrollbar-overlay-track-inset')) || 0)
-    const track = Math.max(0, element.getBoundingClientRect().height - trackInset * 2)
-    const thumbHeight = thumb.getBoundingClientRect().height
-    const maxOffset = Math.max(1, track - thumbHeight)
-    const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight)
-    element.scrollTop = binding.dragStartScrollTop + ((event.clientY - binding.dragStartY) / maxOffset) * maxScroll
-  }
-  binding.onPointerUp = (event) => {
-    if (binding.dragStartY === null) return
-    binding.dragStartY = null
-    thumb.classList.remove('overlay-scrollbar--dragging')
-    if (thumb.hasPointerCapture(event.pointerId)) thumb.releasePointerCapture(event.pointerId)
-  }
-  thumb.addEventListener('pointerdown', binding.onPointerDown)
-  thumb.addEventListener('pointermove', binding.onPointerMove)
-  thumb.addEventListener('pointerup', binding.onPointerUp)
-  thumb.addEventListener('pointercancel', binding.onPointerUp)
   bindings.set(element, binding)
   binding.resizeObserver.observe(element)
   binding.resizeObserver.observe(element.firstElementChild ?? element)
@@ -151,10 +112,6 @@ function unbind(element: HTMLElement) {
   element.removeEventListener('scroll', binding.onScroll)
   window.removeEventListener('scroll', binding.onScroll)
   window.removeEventListener('resize', binding.onScroll)
-  binding.thumb.removeEventListener('pointerdown', binding.onPointerDown)
-  binding.thumb.removeEventListener('pointermove', binding.onPointerMove)
-  binding.thumb.removeEventListener('pointerup', binding.onPointerUp)
-  binding.thumb.removeEventListener('pointercancel', binding.onPointerUp)
   binding.thumb.remove()
   element.classList.remove(HOST_CLASS)
   bindings.delete(element)

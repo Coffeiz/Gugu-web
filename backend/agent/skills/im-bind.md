@@ -1,9 +1,6 @@
 ---
 name: 接入IM
-description_long: "用户问「怎么加/绑定 IM、把你接到飞书/QQ/微信、怎么连机器人」时，直接给可点的扫码按钮、别讲后台手动步骤。"
-description_short: 用户要绑定或配置 QQ、飞书、微信等即时通讯时使用。
-category: im
-related_tools: react
+description: "用户问「怎么加/绑定 IM、把你接到飞书/QQ/微信、怎么连机器人」时，直接给可点的扫码按钮、别讲后台手动步骤。"
 emoji: 🔗
 ---
 

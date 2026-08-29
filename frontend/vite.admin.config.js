@@ -45,8 +45,6 @@ export default defineConfig({
   server: {
     port: 5174,
     host: true,
-    // Vite 8 会把该配置内联到 @vite/client；显式关闭可避免留下未替换占位符。
-    forwardConsole: false,
     open: true,
     proxy: {
       '/api': {

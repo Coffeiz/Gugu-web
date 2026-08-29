@@ -24,7 +24,7 @@ Alpha（内部）→ MVP 内测 → Public Beta → V1.0 正式版 → ToB
 - AI Agent：23 工具 / SSE 流式 / 记忆系统 / 提示词分层 / 删除二次确认
 - IM 接入：飞书 + QQ BYO 扫码自连 / 文件双向收发 / PDF·Office 读取
 - 实时同步（Redis pub/sub → SSE）
-- Admin 后台：配置热更新 / 用户管理 / 用量统计 / 审计日志
+- Admin 后台：配置热更新 / 邀请码 / 用量统计 / 审计日志
 - 用户系统：JWT / 配额 / 头像 / 用户反馈入口
 
 ---
@@ -36,15 +36,15 @@ Alpha（内部）→ MVP 内测 → Public Beta → V1.0 正式版 → ToB
 ### ✅ 已具备
 
 - 反馈入口（侧边栏用户菜单 → FeedbackModal）+ Admin 反馈管理页
-- 公开注册（注册限流与账号管理）
+- 邀请码注册（可控放量）
 - SMTP 邮件通知（反馈提交 → 邮件推送）
 - OSS 预签名直传（后端已完成，OSS 切换即生效）
-- systemd 三服务托管（web / worker / gateway）
+- systemd 三服务托管（web / worker / supervisor）
 
 ### 📋 上线前检查项
 
 - [ ] **SMTP 配置验证** — Admin → 邮件系统 → 测试发送，确认反馈通知能到
-- [ ] **生产机 systemd 状态** — `systemctl status gugu-web gugu-worker gugu-gateway`
+- [ ] **生产机 systemd 状态** — `systemctl status gugu-web gugu-worker gugu-supervisor`
 - [ ] **数据备份** — PostgreSQL 定期 dump + uploads 目录备份策略
 - [ ] **空状态体验** — 新用户首次进入时各页面空态是否友好
 - [ ] **错误监控** — 目前只有 Admin 系统日志；考虑是否接入 Sentry 或定期巡检日志
@@ -61,7 +61,7 @@ Alpha（内部）→ MVP 内测 → Public Beta → V1.0 正式版 → ToB
 
 ## 🔜 Public Beta — 开放注册
 
-> 目标：开放注册，扩大用户规模，功能趋于稳定。
+> 目标：取消邀请码门槛（或改为自助申请），扩大用户规模，功能趋于稳定。
 
 - 思维画布（节点图创意空间，可挂文件）
 - 报表与导出

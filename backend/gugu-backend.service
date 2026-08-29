@@ -1,30 +1,21 @@
 [Unit]
 Description=Gugu Backend (FastAPI)
 After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 [Service]
 Type=simple
 # 运行用户，由 start.sh install 按 RUN_USER 填入（默认 www-data，不要用 root）
 User=__RUN_USER__
 Group=__RUN_USER__
-TimeoutStopSec=25s
 # 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
 WorkingDirectory=__APP_DIR__
 # venv bin 优先、后面接完整系统路径——只给 venv bin 会让 subprocess 调用系统命令
 # （libreoffice/pdftotext 等，见 app/core/doctext.py）时报 FileNotFoundError
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-# Shell 沙盒固定使用服务用户自己的 Rootless Docker，不得回落到 rootful socket
-Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
-Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
 Environment="DB_STARTUP_TIMEOUT=10"
-# DDL 由 deploy/migrate 步骤单独执行，禁止 2 个 uvicorn worker 在业务流量启动时建表。
-Environment="GUGU_STARTUP_MIGRATIONS=0"
-# 与 worker/gateway 保持一致，网页请求也可继续上报 LoopScope
+# 与 worker/supervisor 保持一致，网页请求也可继续上报 LoopScope
 Environment="LOOPSCOPE_ENABLED=1"
 Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
-ExecStartPre=__APP_DIR__/start.sh cleanup-port
 ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=on-failure
 RestartSec=3
@@ -38,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 # 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）
-ReadWritePaths=__DATA_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
+ReadWritePaths=__APP_DIR__/uploads __APP_DIR__/logs __APP_DIR__/config.override.json
 
 [Install]
 WantedBy=multi-user.target

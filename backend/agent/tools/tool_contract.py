@@ -6,23 +6,12 @@
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
 MAX_VALIDATION_ISSUES = 5
-
-
-def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
-    normalized = dict(instance)
-    adaptations: list[str] = []
-    if tool_name == "create_event" and "all_day" not in normalized:
-        normalized["all_day"] = not bool(normalized.get("time") or normalized.get("end_time"))
-        adaptations.append("create_event.all_day_inferred")
-    return normalized, adaptations
 
 
 def build_validator(schema: dict) -> Draft202012Validator:
@@ -117,105 +106,17 @@ def validate_input(validator: Draft202012Validator, instance: dict) -> list[dict
     return issues
 
 
-def _invalid_input_next_action(issues: list[dict[str, str]]) -> str:
-    """给模型一个短的纠错动作，不重复注入完整 schema。"""
-    missing = [item["path"] for item in issues if item.get("rule") == "required"]
-    if missing:
-        fields = "、".join(missing[:MAX_VALIDATION_ISSUES])
-        return f"请补齐必填字段：{fields}。如果当前对话没有提供且无法可靠推断，请先向用户询问，不要提交空参数重试。"
-    return "请根据 issues 修正参数后再调用；不要重复提交相同参数，也不要猜测用户未提供的值。"
-
-
-def _schema_repair_hints(schema: dict[str, Any] | None, issues: list[dict[str, str]]) -> list[str]:
-    """从 schema 生成短修正示例，不回显模型传入的实际参数。"""
-    if not isinstance(schema, dict):
-        return []
-
-    hints: list[str] = []
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return hints
-    for issue in issues:
-        path = issue.get("path", "")
-        if issue.get("rule") != "type" or "." in path:
-            continue
-        definition = properties.get(path)
-        if not isinstance(definition, dict):
-            continue
-        expected = definition.get("type")
-        if expected == "array":
-            item_schema = definition.get("items")
-            example = "[]"
-            if isinstance(item_schema, dict):
-                enum = item_schema.get("enum")
-                if isinstance(enum, list) and enum:
-                    example = json.dumps([enum[0]], ensure_ascii=False)
-            hints.append(f"{path} 必须是数组，例如 {example}；不要传对象。")
-        elif expected == "object":
-            hints.append(f"{path} 必须是对象（{{...}}），不要传数组或字符串。")
-        elif expected == "boolean":
-            hints.append(f"{path} 必须是 boolean：使用 true 或 false，不要加引号。")
-        elif expected:
-            hints.append(f"{path} 必须是 {expected} 类型。")
-    return hints
-
-
-def invalid_input_payload(
-    tool_name: str,
-    issues: list[dict[str, str]],
-    *,
-    schema: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """返回统一、短小且可执行的参数纠错提示；完整 schema 仍由工具声明负责。"""
-    bounded = issues[:MAX_VALIDATION_ISSUES]
-    payload = {
+def invalid_input_payload(tool_name: str, issues: list[dict[str, str]]) -> dict[str, Any]:
+    return {
         "error": "tool_input_invalid",
         "tool": tool_name,
-        "issues": bounded,
-        "_schema_recovery": {"needed": True, "reason": "validation_error"},
-        "usage_hint": "参数不符合工具 schema。先按 issues 修正；缺少无法从上下文确定的必填信息时，先向用户询问。",
-        "next_action": _invalid_input_next_action(bounded),
+        "issues": issues[:MAX_VALIDATION_ISSUES],
     }
-    hints = _schema_repair_hints(schema, bounded)
-    if hints:
-        payload["schema_hints"] = hints
-    return payload
-
-
-def enrich_tool_error(tool_name: str, result: Any) -> Any:
-    """给 handler 的业务错误补统一使用规范，保持原返回类型和业务字段。"""
-    def _enrich(payload: dict[str, Any]) -> dict[str, Any]:
-        if not payload.get("error"):
-            return payload
-        out = dict(payload)
-        out.setdefault("tool", tool_name)
-        out.setdefault(
-            "usage_hint",
-            "工具执行失败。先根据错误信息判断下一步；需要用户补充信息时先询问，不要重复提交相同参数。",
-        )
-        out.setdefault(
-            "next_action",
-            "根据错误信息修正或向用户询问缺失信息；确认没有新信息前不要盲目重试。",
-        )
-        return out
-
-    if isinstance(result, dict):
-        return _enrich(result)
-    if isinstance(result, str) and result.lstrip().startswith('{"error"'):
-        try:
-            payload = json.loads(result)
-        except Exception:
-            return result
-        if isinstance(payload, dict):
-            return json.dumps(_enrich(payload), ensure_ascii=False)
-    return result
 
 
 __all__ = [
     "SchemaError",
     "build_validator",
     "invalid_input_payload",
-    "enrich_tool_error",
-    "normalize_legacy_input",
     "validate_input",
 ]

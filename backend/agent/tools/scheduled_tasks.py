@@ -228,24 +228,6 @@ async def _update_scheduled_task(db, user_id, args: dict):
 
 
 async def _delete_scheduled_task(db, user_id, args: dict):
-    task_ids = args.get("task_ids")
-    if task_ids is not None:
-        if not isinstance(task_ids, list) or not task_ids or len(task_ids) > 50:
-            return json.dumps({"error": "task_ids 必须是 1-50 个任务 id"})
-        tasks = []
-        for tid in task_ids:
-            task = await get_task(db, user_id, tid)
-            if task is None:
-                return json.dumps({"error": f"定时任务 {tid} 不存在"})
-            tasks.append(task)
-        names = "、".join(t.name for t in tasks[:10]) + (f"等 {len(tasks)} 个" if len(tasks) > 10 else "")
-        blocked = confirm.needs_confirmation(args, f"将删除定时任务：{names}，共 {len(tasks)} 个", user_id,
-                                             identity=f"delete_scheduled_task:task_ids={sorted(task_ids)}")
-        if blocked is not None:
-            return blocked
-        results = [dict(zip(("deleted_task_id", "name"), await delete_task(db, task))) for task in tasks]
-        await db.commit()
-        return {"success": True, "deleted_count": len(results), "results": results}
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
@@ -265,7 +247,6 @@ class ScheduledTasksSkill(BaseSkill):
     tools = [
         Tool(
             name="list_scheduled_tasks", label="查看定时任务",
-            description_short='查看独立定时任务；不包含日历活动提醒',
             description=("列出我的全部独立定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。"
                          "注意：日历活动的提醒不在此列——那是活动自带、在日历里单独管理，与定时任务两套互不影响。"),
             input_schema={"type": "object", "properties": {}},
@@ -273,18 +254,23 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description_short='创建定时任务；cron 支持五段式或 @once:<ISO>；channels 默认 [web]，QQ 用 delivery_mode',
-            description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
+            description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。"
+                         "（这是独立定时任务；若是给某个日历活动定提醒，改用日历的 create_event(reminders) 或 add_event_reminder，"
+                         "那种会绑定到活动、在活动卡里管理。跟活动无关的普通提醒/任务才用这个。两套互不影响。）\n"
+                         + _CRON_HINT
+                         + "\n渠道 channels：web(站内通知,默认) / feishu / qq；某渠道是否已连**看系统提示「当前对话来源 / 通知渠道」**——已连(✅)的直接设，只有未连(❌)才提示用户去绑（用户正用某 IM 跟你聊＝那个渠道必然已连，别让 TA 扫码）。"
+                         "QQ 选择 qq 时：网页/私聊默认 owner_private（私聊提醒用户）；群聊中必须先确认是 owner_private 还是 current_group，不能对模糊的‘提醒我’自行猜测。"),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name":        {"type": "string"},
-                    "instruction": {"type": "string"},
-                    "cron":        {"type": "string"},
+                    "name":        {"type": "string", "description": "任务名（简短）"},
+                    "instruction": {"type": "string", "description": "到点要做的事，自然语言指令（如「汇总今天到期的待办发我」）"},
+                    "cron":        {"type": "string", "description": "cron「分 时 日 月 周」或 @once:<ISO>，时区 Asia/Shanghai"},
                     "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
-                                    "minItems": 1, "uniqueItems": True},
-                    "enabled":     {"type": "boolean"},
-                    "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
+                                    "description": "投递渠道，默认 [web]"},
+                    "enabled":     {"type": "boolean", "description": "是否启用，默认 true"},
+                    "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
+                                      "description": "QQ 投递模式：owner_private=私聊提醒我；current_group=发送到当前 QQ 群，仅群聊中可用。QQ 群聊创建任务前必须先确认"},
                 },
                 "required": ["name", "instruction", "cron"],
             },
@@ -293,20 +279,21 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="update_scheduled_task", label="更新定时任务",
-            description_short='修改定时任务；cron 用 cron 或 @once:<ISO>；channels 不改时省略，delivery_mode=owner_private/current_group 用于 QQ 投递',
-            description="修改定时任务内容、投递渠道或启停；按 task_id 或 task 定位。只改 delivery_mode 时省略 channels，改时间用 cron/@once。",
+            description=("改定时任务的内容或启停。按 task_id 或任务名 task 定位（推荐直接用名字，免得先查）。"
+                         "改时间同样用 cron/@once。停用传 enabled=false、启用传 true。"),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "task_id":     {"type": "integer"},
-                    "task":        {"type": "string"},
-                    "name":        {"type": "string"},
-                    "instruction": {"type": "string"},
-                    "cron":        {"type": "string"},
+                    "task_id":     {"type": "integer", "description": "任务 ID（可选，已知时用）"},
+                    "task":        {"type": "string", "description": "任务名（推荐：直接用名字定位）"},
+                    "name":        {"type": "string", "description": "改名（可选）"},
+                    "instruction": {"type": "string", "description": "改指令（可选）"},
+                    "cron":        {"type": "string", "description": "改触发时间，cron 或 @once:<ISO>（可选）"},
                     "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
-                                    "minItems": 1, "uniqueItems": True},
-                    "enabled":     {"type": "boolean"},
-                    "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
+                                    "description": "改投递渠道（可选）"},
+                    "enabled":     {"type": "boolean", "description": "启用/停用（可选）"},
+                    "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
+                                      "description": "QQ 投递模式：owner_private=私聊；current_group=当前群（可选）"},
                 },
                 "required": [],
             },
@@ -315,16 +302,15 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
-            description_short='删除定时任务；关键字段 task_id',
-            description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。确认后传 confirm=true 和上一步的 confirm_token。",
+            description=("删除定时任务（不可恢复）。按 task_id 或任务名 task 定位。"
+                         "流程：先不带 confirm 调用 → 返回要删的任务 → 转达用户征得明确同意 → 带 confirm=true 再调一次执行。"),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "task_id": {"type": "integer"},
-                    "task":    {"type": "string"},
-                    "task_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
-                    "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
+                    "task_id": {"type": "integer", "description": "任务 ID（可选）"},
+                    "task":    {"type": "string", "description": "任务名（推荐：直接用名字）"},
+                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },

@@ -20,7 +20,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 from agent.security.logsafe import fingerprint
 from app.core.redaction import diag_log, redact
-from app.core.credentials import normalize_ascii_api_key
 
 logger = logging.getLogger("agent.voice")
 
@@ -118,13 +117,10 @@ def is_configured(settings) -> bool:
     return bool(vm and (getattr(vm, "model", "") or "").strip())
 
 
-async def transcribe(media: list, settings, *, db=None, user_id=None, raise_errors: bool = False) -> str | None:
+async def transcribe(media: list, settings, *, raise_errors: bool = False) -> str | None:
     """把 media（[{type:'audio'|'video', mime, b64}]）转成文字。
     返回 None = 未配置语音模型（调用方切断回「不支持」）；返回 str = 转写结果（可能为空串）。"""
     vm = _vm(settings)
-    if db is not None and user_id is not None:
-        from app.byok.service import resolve_capability_settings
-        vm = await resolve_capability_settings(db, user_id, "speech_to_text", vm)
     if not vm or not (getattr(vm, "model", "") or "").strip():
         return None
     # 只送音频块（纯 ASR，不加 text 指令）；base64 内联走 data URL（与现有 mimo input_audio 同格式）
@@ -181,7 +177,7 @@ async def transcribe(media: list, settings, *, db=None, user_id=None, raise_erro
                     "parameters": parameters,
                 }
                 headers = {
-                    "Authorization": f"Bearer {normalize_ascii_api_key(vm.api_key, label='语音模型 API Key')}",
+                    "Authorization": f"Bearer {vm.api_key}",
                     "Content-Type": "application/json",
                     "X-DashScope-SSE": "disable",
                 }

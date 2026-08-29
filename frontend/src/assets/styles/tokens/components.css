@@ -15,14 +15,9 @@
   --glass-card-border: var(--border-strong);
   --glass-card-border-hover: var(--border-hover);
   --glass-card-shadow: var(--elevation-card);
-  /* 面板 hover 只反馈颜色，不叠加黑色外部阴影；Aero/Mono 的静态材质阴影保持不变。 */
-  --glass-card-shadow-hover: var(--glass-card-shadow);
+  --glass-card-shadow-hover: var(--elevation-card-hover);
   --glass-card-blur: var(--glass-blur);
   --glass-card-transition: var(--motion-default) var(--motion-ease-standard);
-  /* Calendar/Chat 在切换调色板时仍沿用 Aero 的玻璃白边。 */
-  --aero-glass-border: rgba(255,255,255,.76);
-  --aero-glass-highlight: rgba(255,255,255,.95);
-  --aero-glass-highlight-side: rgba(255,255,255,.55);
   --popup-background: var(--surface-popup);
   --popup-border: var(--border-strong);
   --popup-radius: var(--radius-md);
@@ -39,12 +34,6 @@
   --control-border: var(--border-default);
   --control-border-hover: var(--border-hover);
   --control-radius: var(--radius-sm);
-  --control-checkbox-size: 16px;
-  --control-checkbox-radius: 5px;
-  --control-checkbox-border-width: 1.5px;
-  --control-checkbox-mark-width: 7px;
-  --control-checkbox-mark-height: 4px;
-  --control-checkbox-mark-stroke: 1.6px;
   --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
   --segmented-track-bg: var(--action-soft);
   --segmented-pill-bg: var(--control-bg);
@@ -64,16 +53,10 @@
   --sidebar-label-fg: var(--content-secondary);
   --sidebar-item-fg: var(--color-muted);
   --sidebar-item-hover: var(--action-soft);
-  /* 暗色调色板未单独声明 active-bg 时，回退到 raised surface，避免选中项只剩边框。 */
-  --sidebar-item-active: color-mix(in srgb,var(--action-primary) 8%,var(--theme-sidebar-active-bg, var(--surface-raised)));
+  --sidebar-item-active: var(--theme-sidebar-active-bg);
   --sidebar-item-active-fg: var(--theme-sidebar-active-fg);
   --sidebar-item-active-border: var(--theme-sidebar-active-border);
   --sidebar-item-active-shadow: inset 0 1px 0 var(--theme-sidebar-active-highlight);
-  /* 亮色导航选中态是稳定的产品 chrome，不随内容 palette 改变。 */
-  --sidebar-item-active-light-bg: rgba(255,255,255,.94);
-  --sidebar-item-active-light-fg: #6b6fa0;
-  --sidebar-item-active-light-border: rgba(123,127,178,.24);
-  --sidebar-item-active-light-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 4px rgba(123,127,178,.08);
   --sidebar-user-bg: color-mix(in srgb,var(--surface-glass) 78%,transparent);
   --sidebar-user-bg-hover: var(--surface-glass);
   --sidebar-user-border: var(--border-strong);
@@ -88,9 +71,6 @@
   --topbar-title-size: var(--font-size-xl);
   --topbar-meta-size: var(--font-size-sm);
   --topbar-height: 52px;
-  --topbar-search-result-icon: var(--content-secondary);
-  --topbar-search-result-fg: var(--content-secondary);
-  --topbar-search-result-muted: var(--content-tertiary);
 
   /* Scrollbar: one visual contract for page and component scroll surfaces. */
   --scrollbar-track: transparent;
@@ -143,7 +123,6 @@
 
   /* Gugu FAB */
   --gugu-fab-size: 50px;
-  --gugu-fab-logo-size: 32px;
   --gugu-fab-bg: var(--theme-fab-gradient);
   --gugu-fab-border: transparent;
   --gugu-fab-shadow: 0 4px 18px color-mix(in srgb,var(--action-primary) 32%,transparent), inset 0 1px 0 rgba(255,255,255,.45);
@@ -165,15 +144,8 @@
   --gugu-chat-session-active: var(--sidebar-item-active);
   --gugu-chat-session-active-fg: var(--sidebar-item-active-fg);
   --gugu-chat-caption: var(--content-tertiary);
+  --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
   --gugu-chat-user-bg: var(--action-primary);
-  --gugu-chat-file-bg: rgba(255,255,255,.50);
-  --gugu-chat-file-border: rgba(255,255,255,.65);
-  --gugu-chat-file-highlight: rgba(255,255,255,.80);
-  --gugu-chat-file-shadow: 0 1px 3px rgba(80,80,120,.06);
-  --gugu-chat-file-bg-hover: rgba(255,255,255,.70);
-  --gugu-chat-file-border-hover: rgba(255,255,255,.78);
-  --gugu-chat-file-highlight-hover: rgba(255,255,255,.90);
-  --gugu-chat-file-shadow-hover: 0 3px 10px rgba(100,110,200,.14);
   --gugu-chat-composer-bg: color-mix(in srgb,var(--surface-raised) 90%,transparent);
   --gugu-chat-drop-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --gugu-chat-drop-border: color-mix(in srgb,var(--action-primary) 60%,transparent);

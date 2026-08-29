@@ -165,7 +165,7 @@ async def _group_context_search(db, user_id, args: dict):
         or not im.get("channel_id")
     ):
         return {"error": "当前不在群聊上下文中，不能使用群聊搜索"}
-    keyword = (args.get("query") or args.get("keyword") or "").strip()
+    keyword = (args.get("keyword") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
     search_queries = normalize_queries(keyword, queries)
     mode = normalize_mode(args.get("mode"))
@@ -221,17 +221,18 @@ class GroupContextSkill(BaseSkill):
         Tool(
             name="group_context_search",
             label="搜当前群上下文",
-            description_short='搜索当前群消息；关键字段 query/speaker/limit，speaker 可用名字/别名/platform_user_id',
-            description="只搜索当前 QQ 群消息，可按关键词或发言人筛选；不会读取其他群、私聊或网页历史。",
+            description="只搜索当前 QQ 群最近保存的消息，支持一次传入多个关键词（默认 OR）；也可以按发言人查询（speaker 传群成员的名字/别名/群友称呼或 platform_user_id）。若返回 ambiguous=true，说明有多个成员匹配该称呼，需要向用户澄清后再查；不会读取其他群、私聊或网页历史对话。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "keyword": {"type": "string"},
-                    "queries": {"type": "array", "items": {"type": "string"}},
-                    "mode": {"type": "string", "enum": ["OR", "AND"]},
-                    "speaker": {"type": "string"},
-                    "limit": {"type": "integer"},
+                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
+                    "speaker": {"type": "string",
+                                "description": "按发言人过滤：传群成员的名字/别名/群友称呼或 platform_user_id；返回 ambiguous=true 时需向用户澄清"},
+                    "limit": {"type": "integer", "description": "返回条数，默认 10，最多 30"},
                 },
             },
             handler=_group_context_search,

@@ -25,14 +25,14 @@
       >
         <div class="vv-btn-ring" />
         <button class="vv-center-btn" @click="togglePlay">
-          <Icon name="media.play"  v-if="!playing" :size="28" />
-          <Icon name="media.pause" v-else :size="28" />
+          <PhPlay  v-if="!playing" weight="fill" :size="28" />
+          <PhPause v-else          weight="fill" :size="28" />
         </button>
       </div>
     </Transition>
 
     <div v-if="error" class="vv-status vv-error">
-      <Icon name="status.warning" :size="32" style="opacity:.5" />
+      <PhWarningCircle :size="32" style="opacity:.5" />
       <span>视频无法播放（格式不支持）</span>
     </div>
   </div>
@@ -40,7 +40,8 @@
 
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhPlay, PhPause, PhWarningCircle } from '@phosphor-icons/vue'
+
 const props = defineProps({
   src: { type: String, default: null },
 })

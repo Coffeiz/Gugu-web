@@ -66,7 +66,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderCard).not.toContain(":global(html[data-theme='dark'")
     expect(folderCard).not.toContain('!important')
 
-    const monoLight = cssBlock(componentSurfaces, "html[data-theme='light'][data-family='mono']")
+    const monoLight = cssBlock(componentSurfaces, "html[data-theme='light'][data-family='v2']")
     expect(monoLight).toContain('--file-card-border: var(--border-strong);')
     expect(monoLight).toContain('--folder-card-bg-base: var(--surface-card-solid);')
     expect(monoLight).toContain('--folder-card-border-base: var(--border-strong);')

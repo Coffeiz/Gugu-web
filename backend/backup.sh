@@ -5,7 +5,7 @@
 #
 #  备份内容:
 #    - config.override.json   （含 DB / Redis / OSS / AI 配置）
-#    - Gugu-data/users （用户文件、Shell 沙盒和 Agent 数据）
+#    - uploads/               （用户上传的所有文件）
 #    - alembic 版本信息        （便于恢复时核对迁移）
 #  默认存到 .deploy-backups/，也可指定其他目录。
 # ============================================================
@@ -31,11 +31,10 @@ if [ -f "${APP_DIR}/config.override.json" ]; then
     cp "${APP_DIR}/config.override.json" "${TMP_DIR}/config/"
 fi
 
-# 用户数据根目录位于仓库同级。
-DATA_STORAGE="${APP_DIR}/../Gugu-data/users"
-if [ -d "$DATA_STORAGE" ]; then
+# 备份 uploads
+if [ -d "${APP_DIR}/uploads" ]; then
     mkdir -p "${TMP_DIR}/data"
-    cp -a "$DATA_STORAGE" "${TMP_DIR}/data/users"
+    cp -a "${APP_DIR}/uploads" "${TMP_DIR}/data/"
 fi
 
 # 备份 alembic 版本
@@ -51,7 +50,7 @@ cat > "${TMP_DIR}/MANIFEST.txt" <<EOF
 Git commit: $(git -C "${APP_DIR}/.." log -1 --oneline 2>/dev/null || echo 'unknown')
 包含内容:
   config/config.override.json  - $([ -f "${APP_DIR}/config.override.json" ] && echo "✓" || echo "✗")
-  data/users                   - $([ -d "$DATA_STORAGE" ] && echo "✓" || echo "✗")
+  data/uploads                 - $([ -d "${APP_DIR}/uploads" ] && echo "✓" || echo "✗")
   alembic/versions             - $(ls "${APP_DIR}/alembic/versions" 2>/dev/null | wc -l) 个迁移文件
 EOF
 
@@ -68,6 +67,6 @@ echo ""
 echo "恢复方法："
 echo "  tar -xzf $BACKUP_PATH -C /tmp/restore && \\"
 echo "    cp /tmp/restore/config/config.override.json ${APP_DIR}/ && \\"
-echo "    cp -a /tmp/restore/data/users ${APP_DIR}/../Gugu-data/"
+echo "    cp -a /tmp/restore/data/uploads ${APP_DIR}/"
 echo ""
 echo "当前 ${TARGET_DIR} 共 $(ls "$TARGET_DIR"/gugu-backup-*.tar.gz 2>/dev/null | wc -l) 个备份"

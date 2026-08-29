@@ -25,7 +25,9 @@
           />
         </Teleport>
         <button :key="`add-${column.key}`" class="add-card" data-flip-target @click="$emit('add-project', column.key)">
-          <Icon name="action.add" :size="20" style="opacity:0.5" />
+          <svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:0.5;flex-shrink:0">
+            <line x1="11" y1="4" x2="11" y2="18"/><line x1="4" y1="11" x2="18" y2="11"/>
+          </svg>
           <span class="add-card-text">新建项目</span>
         </button>
       </div>
@@ -36,7 +38,6 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { runtime } from '@/interaction/runtime'
-import Icon from '@/components/common/Icon.vue'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 
@@ -110,7 +111,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 .kanban-card-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
 }
 .kanban-card-list-move {

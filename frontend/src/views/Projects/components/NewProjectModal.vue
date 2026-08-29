@@ -14,7 +14,9 @@
           @input="errors.name = ''"
         />
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
-        <CloseButton @click="$emit('close')" />
+        <button class="close-btn" @click="$emit('close')">
+          <PhX :size="14" weight="bold" />
+        </button>
       </div>
 
       <!-- 主体：单列 -->
@@ -49,7 +51,7 @@
               :style="{ background: c.value }"
               @click="form.color = c.value"
             >
-              <Icon name="status.success" v-if="form.color === c.value" :size="11" style="color:white" />
+              <PhCheck v-if="form.color === c.value" :size="11" weight="bold" style="color:white" />
             </button>
           </div>
         </div>
@@ -65,7 +67,7 @@
               <!-- 模板按钮 -->
               <div class="tpl-selector" ref="tplSelectorRef">
                 <button class="tpl-trigger" @click.stop="tplOpen = !tplOpen">
-                  <Icon name="navigation.apps" :size="11" />
+                  <PhSquaresFour :size="11" weight="bold" />
                   模板
                 </button>
                 <Teleport to="body">
@@ -98,12 +100,12 @@
                             :title="renamingId === t.id ? '确认' : '重命名'"
                             @click.stop="renamingId === t.id ? commitRename(t.id) : startRename(t)"
                           >
-                            <Icon name="action.edit" v-if="renamingId !== t.id" :size="10" />
-                            <Icon name="status.success" v-else :size="10" />
+                            <PhPencilSimple v-if="renamingId !== t.id" :size="10" weight="bold" />
+                            <PhCheck v-else :size="10" weight="bold" />
                           </button>
                           <!-- 删除按钮（始终显示） -->
                           <button class="tpl-del-btn" title="删除" @click.stop="removeTemplate(t.id)">
-                            <Icon name="action.close" :size="10" />
+                            <PhX :size="10" weight="bold" />
                           </button>
                         </div>
                       </div>
@@ -113,7 +115,7 @@
                       <!-- 保存当前为模板 -->
                       <div v-if="!savingTpl" class="tpl-save-row">
                         <button class="tpl-save-btn" @click.stop="savingTpl = true">
-                          <Icon name="action.add" :size="10" />
+                          <PhPlus :size="10" weight="bold" />
                           保存当前为模板
                         </button>
                       </div>
@@ -127,10 +129,10 @@
                           ref="tplNameInputRef"
                         />
                         <button class="tpl-rename-btn" title="保存" @click.stop="commitSave">
-                          <Icon name="status.success" :size="10" />
+                          <PhCheck :size="10" weight="bold" />
                         </button>
                         <button class="tpl-del-btn" title="取消" @click.stop="savingTpl = false; newTplName = ''">
-                          <Icon name="action.close" :size="10" />
+                          <PhX :size="10" weight="bold" />
                         </button>
                       </div>
                     </div>
@@ -158,14 +160,14 @@
                     :ref="el => { if (el) stageInputRefs[stage.origIdx] = el as HTMLElement }"
                   />
                   <button class="del-btn" @click.stop="removeStage(stage.origIdx)" :disabled="form.stages.length <= 1">
-                    <Icon name="action.close" :size="10" />
+                    <PhX :size="10" weight="bold" />
                   </button>
                 </div>
                 <!-- 待办列表 -->
                 <div class="np-todo-list">
                   <div v-for="todo in (form.stages[stage.origIdx].todos ?? [])" :key="todo.id" class="np-todo-item">
                     <button class="np-todo-check" :class="{ checked: todo.done }" @click.stop="todo.done = !todo.done">
-                      <Icon name="status.success" v-if="todo.done" :size="8" />
+                      <PhCheck v-if="todo.done" :size="8" weight="bold" />
                     </button>
                     <input
                       :class="['np-todo-input', `np-todo-input-${stage.origIdx}`]"
@@ -176,13 +178,13 @@
                       v-enter.prevent="() => addNpTodo(stage.origIdx)"
                       @keydown.backspace="!todo.text && removeNpTodo(stage.origIdx, todo.id)"
                     />
-                    <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><Icon name="action.close" :size="10" /></button>
+                    <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><PhX :size="10" weight="bold" /></button>
                   </div>
                   <button class="np-todo-add-btn" @click.stop="addNpTodo(stage.origIdx)">＋ 添加待办</button>
                 </div>
               </div>
               <button class="add-stage-btn" @click="addStage">
-                <Icon name="action.add" :size="10" />
+                <PhPlus :size="10" weight="bold" />
                 添加阶段
               </button>
             </div>
@@ -191,8 +193,8 @@
 
       <!-- 底部 -->
       <div class="modal-footer">
-        <ActionButton variant="secondary" @click="$emit('close')">取消</ActionButton>
-        <ActionButton @click="handleCreate">创建</ActionButton>
+        <button class="btn-cancel" @click="$emit('close')">取消</button>
+        <button class="btn-create" @click="handleCreate">创建项目</button>
       </div>
 
       <Teleport to="body">
@@ -213,13 +215,11 @@ import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import ActionButton from '@/components/common/ActionButton.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates'
 import { nextZ, registerPopover } from '@/composables/windowz'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
-import Icon from '@/components/common/Icon.vue'
-import CloseButton from '@/components/common/CloseButton.vue'
+import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
 import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
@@ -559,6 +559,14 @@ function handleCreate() {
 .name-error {
   font-size: 11px; color: var(--color-warning); flex-shrink: 0;
 }
+.close-btn {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  background: rgba(0,0,0,0.05); border: none;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-secondary); transition: background 0.15s;
+}
+.close-btn:hover { background: rgba(0,0,0,0.1); }
+
 /* ── 主体单列 ── */
 .modal-body {
   display: flex; flex-direction: column; gap: 12px;
@@ -838,6 +846,24 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   border-top: 1px solid rgba(0,0,0,0.07);
   flex-shrink: 0;
 }
+.btn-cancel {
+  padding: 7px 18px; border-radius: var(--radius-sm);
+  border: 1px solid rgba(0,0,0,0.1);
+  background: rgba(255,255,255,0.72);
+  font-size: 13px; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
+}
+.btn-cancel:hover { background: rgba(255,255,255,0.9); color: var(--text-primary); }
+.btn-create {
+  padding: 7px 22px; border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border: none; color: white;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-sans);
+  box-shadow: 0 3px 12px rgba(123,127,178,0.3);
+  transition: opacity 0.15s;
+}
+.btn-create:hover { opacity: 0.85; }
 </style>
 
 <style>

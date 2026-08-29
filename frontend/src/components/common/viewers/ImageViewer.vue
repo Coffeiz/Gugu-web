@@ -18,18 +18,18 @@
       @error="onError"
     />
     <div v-if="error" class="iv-status">
-      <Icon name="file.image" :size="32" style="opacity:.5" />
+      <PhImageBroken :size="32" style="opacity:.5" />
       <span>图片加载失败</span>
     </div>
 
     <!-- 缩放工具栏 -->
     <div v-if="!error" class="iv-toolbar" @mousedown.stop @dblclick.stop>
       <button class="iv-tb-btn" title="缩小" @click="zoomOut">
-        <Icon name="action.subtract" :size="12" />
+        <PhMinus weight="bold" :size="12" />
       </button>
       <span class="iv-tb-pct" @click="reset" title="重置缩放">{{ pct }}%</span>
       <button class="iv-tb-btn" title="放大" @click="zoomIn">
-        <Icon name="action.add" :size="12" />
+        <PhPlus weight="bold" :size="12" />
       </button>
     </div>
   </div>
@@ -37,7 +37,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhImageBroken, PhMinus, PhPlus } from '@phosphor-icons/vue'
+
 const PADDING = 32
 
 const props = defineProps({

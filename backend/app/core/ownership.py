@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import logging
 
-from app.security.events import record_ownership_denied, security_fingerprint
-
 _log = logging.getLogger("ownership")
 
 
@@ -37,57 +35,9 @@ async def get_owned(db, model, obj_id, user_id):
     owner = getattr(obj, "user_id", None)
     if str(owner) != str(user_id):
         _log.warning(
-            "ownership.denied model=%s resource=%s owner=%s requester=%s",
-            model.__name__, security_fingerprint(obj_id)[:16],
-            security_fingerprint(owner)[:16] if owner is not None else None,
-            security_fingerprint(user_id)[:16],
+            "ownership.denied model=%s id=%s owner=%s requester=%s",
+            model.__name__, obj_id, str(owner)[:8], str(user_id)[:8],
         )
-        try:
-            from app.security.events import get_request_context
-            context = get_request_context()
-            from app.security.risk_policy import apply_risk_decision, register_ownership_denial
-            decision = await register_ownership_denial(
-                user_id=user_id,
-                client_id=context.get("client_id"),
-                ip_address=context.get("ip_address"),
-            )
-            applied = await apply_risk_decision(user_id, decision)
-            event_metadata = dict(context.get("metadata") or {})
-            if decision is not None:
-                event_metadata["applied"] = applied
-            await record_ownership_denied(
-                requester_id=user_id,
-                model=model,
-                resource_id=obj_id,
-                owner_id=owner,
-                client_id=context.get("client_id"),
-                ip_address=context.get("ip_address"),
-                user_agent=context.get("user_agent"),
-                action=decision.action if decision else "logged",
-                reason_code=(
-                    "ownership_auto_suspend" if applied else
-                    "ownership_throttled" if decision and decision.action == "throttled" else
-                    "ownership_mismatch"
-                ),
-                metadata=event_metadata,
-            )
-            if decision:
-                from app.security.alerts import notify_risk_action
-                await notify_risk_action(
-                    action=decision.action,
-                    user_count=decision.user_count,
-                    reason_code="ownership_mismatch",
-                )
-        except Exception:
-            # 安全事件写入故障不能改变授权失败的统一响应，也不记录原始字段。
-            try:
-                from app.core import opsmetrics
-                opsmetrics.record_security("security_event.write_failed")
-            except Exception:
-                pass
-        except Exception:
-            # Redis 仅用于短窗口策略，故障时继续保持原有授权拒绝语义。
-            pass
         try:
             from app.core import opsmetrics
             opsmetrics.record_security("ownership.denied")

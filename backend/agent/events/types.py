@@ -17,13 +17,3 @@ class MemoryUpdated(Event):
     added: int = 0
     removed: int = 0
     source: str = ""
-
-
-@dataclass
-class RagIndexUpdated(Event):
-    """RAG 索引更新信号；SSE 通知与索引生命周期分开。"""
-    user_id: object = None
-    source_type: str = "memory"
-    source_id: str = ""
-    version: str = ""
-    operation: str = "upsert"

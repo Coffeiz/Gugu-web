@@ -18,8 +18,7 @@ def set_im(platform: str, message_id: str | None,
            channel_id: str | None, chat_id: str | None,
            puid: str | None = None, chat_type: str | None = None,
            context_token: str = "", allowed_tool_names: list[str] | None = None,
-           im_role: str | None = None,
-           show_tool_interactions: bool = False) -> None:
+           im_role: str | None = None) -> None:
     _im.set({
         "platform": platform, "message_id": message_id,
         "channel_id": channel_id, "chat_id": chat_id,
@@ -28,7 +27,6 @@ def set_im(platform: str, message_id: str | None,
         "context_token": context_token,  # 微信 iLink 回复必需，其余平台空串
         "allowed_tool_names": allowed_tool_names,
         "im_role": im_role,
-        "show_tool_interactions": show_tool_interactions,
         "reacted": False,   # 本轮咕咕有没有用 react 工具点过表情（worker 收尾据此决定要不要兜底补一个）
         "announced": False,  # 本轮（一个 Busy Session）有没有发过慢工具进度声明，见 tools/base.py dispatch
     })

@@ -1,54 +1,5 @@
 # 咕咕 · 早期开发记录
 
-## 2026-08-26 · Skill 关联 Schema 按需注入与未声明工具执行门
-
-### 修复
-
-- `use_skill` 成功后，将 Skill 关联工具的当前 Schema 和实现指纹作为 canonical event
-  追加到历史尾部；不重排稳定前缀，也不把全量 Schema 放回首轮。
-- 固定 Adapter 模式下，业务工具没有当前版本 Schema 时，dispatch 前直接返回
-  `tool_schema_required`，要求先调用 `get_tool_schema`，避免模型凭记忆猜参数并触发副作用；参数校验失败时 Runtime 会自动回注当前工具 Schema。
-- Schema 判断同时比较 Schema digest 和 implementation digest；工具实现更新后会要求重新声明。
-
-### 验证
-
-- canonical history、Schema digest、工具契约和缓存边界专项测试通过。
-
-## 2026-08-26 · 统一上下文 canonical 序列化并修复工具续轮缓存断点
-
-### 根因
-
-- 自动 RAG 当前轮使用 `knowledge-context` block，历史中仍可能存在旧版
-  `[owner-rag]...[/owner-rag]` 纯文本；恢复后消息结构变化，provider cache 在首个
-  RAG 位置断开。
-- 工具续轮把旧动态 tail 插回新消息之前，会重排上一轮前缀；即使 schema 没有重复，
-  cache anchor 也会落在不稳定的消息边界。
-
-### 修复
-
-- 新增统一上下文序列化约定，RAG 当前注入、历史恢复和 provider wire 均使用同一
-  `knowledge-context -> text block` 结构。
-- 工具续轮首次追加时提升旧动态 tail，再按原顺序追加 assistant/tool 消息；动态 tail
-  不写回历史，旧 cache anchor 保持在原消息索引上。
-- 增加 RAG wire 形状一致性、旧记录恢复和工具续轮前缀稳定性回归测试。
-
-### 验证
-
-上下文、RAG、canonical tool history、provider 和 session snapshot 专项测试通过。
-
-## 2026-08-25 · ContextBudget Phase 6/10 收口
-
-### 完成内容
-
-- 统一 90% 观察线由 provider usage 驱动，core 不再复制预算比例常量。
-- 删除 `select_history_window`、历史读取 `token_budget` 兼容参数及其旧裁剪测试，避免 ContextBudget 之外残留第二套历史窗口语义。
-- 完成 ContextBudget、压缩 cap、provider overflow retry、baseline 提交、session gate/pending 的专项回归。
-- 上下文专项测试通过 64 项；devserver 上下文专项测试通过 67 项。本地全量 1419 项通过、1 项 knowledge 内容换行断言失败，属于本次范围外的工作区改动。
-
-### 验收边界
-
-自动化验收已完成；真实长群 trace 的 cache/输入 token 对比和多 worker 故障恢复仍需在产品环境持续观察。日志只记录脱敏预算分项和生命周期状态，不记录对话正文。
-
 ## 2026-08-19 · 修复创建画布后 "咕咕开小差了" ValueError 错误
 
 ### 现象
@@ -158,7 +109,7 @@ LoopScope 顶部用量格全为 0（Input / Output / Cache read / Fresh input / 
 
 PR #7 视频链路审查确认 3 个 P1 已修复（事件循环阻塞、竖屏长边、超限回退），全量 701 测试通过。另有两个非阻塞项：
 
-- **P3（已修）**：统一文档与源码注释里过时的「>90MB 兜底走 base64」描述为「>90MB 明确拒绝，不回退 base64」。涉及 `chat_attach.py` 设计注释、`TEST-LLM-MINIMAX-M3-视频MM_FILE传输.md` 策略、`PRD-LLM-3` 数据注意事项三处。
+- **P3（已修）**：统一文档与源码注释里过时的「>90MB 兜底走 base64」描述为「>90MB 明确拒绝，不回退 base64」。涉及 `chat_attach.py` 设计注释、`TEST-LLM-MiniMax-M3-视频mm_file传输.md` 策略、`PRD-LLM-3` 数据注意事项三处。
 - **P2（后续独立优化，不阻塞 PR7）**：大视频仍是全量内存处理——同时持有原始 `raw`、压缩后完整 `bytes`、base64/multipart 数据、ffmpeg 子进程内存；`Semaphore(2)` 仅单进程内限流。对 2C2G 部署，多个 ~90MB 视频并发仍有内存压力。后续改为文件路径式流水线：`Storage → 临时文件 → ffmpeg 输出文件 → 流式上传`，不在 Python 中同时保留原始与压缩后完整字节；机器级并发建议降到 1，或用 Redis 做跨进程限流。
 
 ## 2026-08-05 · PR #7 合并前安全审查修复
@@ -176,17 +127,17 @@ PR #7 视频链路审查确认 3 个 P1 已修复（事件循环阻塞、竖屏�
 回归验证：后端 `638 passed`，ownership/confirmation guard 通过；前端 typecheck、strict typecheck、246 个单测和 build 通过。Alembic `current` 与 `heads` 均为 `20260804000007`；生产数据库副本升级/回滚和真实 OSS 对象测试仍需在部署环境完成。
 
 > 更新：2026-07-16
-> 状态：早期阶段记录，当前进度见 `product/OVERVIEW.md`
+> 状态：早期阶段记录，当前进度见 `product/overview.md`
 
 ## 2026-08-04 · 开发环境后端热重载收口
 
-之前开发机修改后端代码经常需要手动重启 systemd，主要是 Web、Worker、gateway 三个进程的职责和启动方式没有对应到开发入口：Uvicorn 只覆盖 Web，Worker 仍然是常驻进程，`onboarding/` 也不在原有 reload 目录中。
+之前开发机修改后端代码经常需要手动重启 systemd，主要是 Web、Worker、supervisor 三个进程的职责和启动方式没有对应到开发入口：Uvicorn 只覆盖 Web，Worker 仍然是常驻进程，`onboarding/` 也不在原有 reload 目录中。
 
 现在统一为：
 
 - `cd backend && make dev-web`：前台启动 Uvicorn reload，监听 `app/`、`agent/`、`onboarding/`，并用 1 秒 graceful shutdown 避免 SSE 长连接卡住 reload。
 - `cd backend && make deps-dev && make dev-worker`：用 `watchfiles` 监听 `app/`、`agent/`、`onboarding/`、`worker.py`，Python 文件变化时自动重启 Worker。
-- gateway 暂不自动 watcher；平台网关代码继续按 IM 网关规则单独重启。
+- supervisor 暂不自动 watcher；平台网关代码继续按 IM 网关规则单独重启。
 
 这套 watcher 只用于开发，不能与同机 systemd Worker 并行运行，也不改变生产 systemd 服务配置。生产环境仍按改动所属进程执行 `systemctl restart`，数据库结构变更仍需单独执行迁移。
 
@@ -686,30 +637,1161 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 **捅破这层之后，才是真正卡住的地方：探针补到 `web.py` 后，还是隔了两次「重启时间差」才对上一次真实复现。** 每次让用户复现，探针代码虽然在磁盘上改好了，但后端进程还没重启、或者复现发生在重启完成前几秒——`ps -o lstart` 查进程启动时间、`stat` 查文件改动时间，两两对比才确认"这次复现在重启之前，探针没生效"。这提醒了一件容易漏想的事：**改探针代码 ≠ 探针生效，中间隔着一次进程重启，验证时一定要先比对时间戳，不能假设"我改了就该响"。**
 
-**真正的根因，最后是靠读原始流式日志、而不是靠探针拿到的。** 直接查生产 `gugu.log` 里 `[agent.traj]` 记录，在带 `[e~[` 的一次生成里找到了确切的十六进制片段：`0a 60 60 60 5b 65 7e 5b 0a`，解码正是「换行 + 代码围栏 `  CASEPROTECT4 bash
+**真正的根因，最后是靠读原始流式日志、而不是靠探针拿到的。** 直接查生产 `gugu.log` 里 `[agent.traj]` 记录，在带 `[e~[` 的一次生成里找到了确切的十六进制片段：`0a 60 60 60 5b 65 7e 5b 0a`，解码正是「换行 + 代码围栏 ` ``` ` + 字面的 `[e~[` + 换行」。跟已知的 `]<]minimax` 泄漏是同一类问题：MiniMax-M3 经 Anthropic 兼容端点流式输出时，偶发把内部尾标记当正文吐出，且常紧跟在代码块闭合符号之后——是模型侧的字面泄漏，从头到尾都不是前端问题、也不是"尾随空格"。
+
+**修复很小：`[e~[` 追加进 `TRUNCATE_MARKERS`，但同时把清洗器的启用范围收紧到只对 MiniMax 生效。** `StreamSanitizer` 新增 `minimax: bool` 开关，`is_minimax(ai)` 统一判定口径（`agent/llm_select.py`）；6 处实例化（`run_collect`/`run_stream`/`web.py::_generate`，含轮内重置）都按各自的模型配置传参。这一步是必要的收紧，不是过度设计——`[e~[` 只有 4 个字符且含方括号，如果对所有模型无差别启用，别的模型在正常回复里写到类似片段（哪怕概率很低）就会被误截断，代价不对等。新增 `tests/test_stream_sanitize.py` 覆盖跨 token 边界截断 + 非 MiniMax 不受影响两个用例。
+
+**排查过程顺带暴露了另一个独立缺口，一并修了：定时任务失败时没有任何日志。** 用户的定时任务「科技新闻」某次触发后只收到「（咕咕这次没有产出内容）」，往回查发现 `agent/runner.py::run_ephemeral` 在判定生成失败（`errored=True`）时会直接丢弃真实错误详情、返回空字符串——`scheduled_tasks.py` 只能兜成这句通用文案，`gugu.log` 里既没有 LLM 报错、也没有工具调用记录、也没有异常堆栈，三处交叉排除法才勉强推断出"模型这一轮大概率撞了某个内部兜底分支，但具体是哪个已经不可考"。修法是在丢弃前补一条 `logger.warning` 记原始详情——不改变面向用户的行为，只是让下一次同样的情况能在几秒内查到，而不必再走一遍这种排除法。
+
+**教训：验证探针/日志代码本身有没有被执行到，要先于怀疑判断逻辑写错了。** 这次前两层误判都不是"条件写得不对"，而是"代码根本没跑在真正的执行路径上"——探针挂错函数、进程没重启，两次都表现成"不响"，很容易被误读成"匹配条件还不够宽"，于是不断加宽匹配面，反而离真正的 bug越来越远。下次遇到"改了代码但现象没变"，第一反应应该是确认这段代码是否真的在这次请求里执行到了（对流式/多路径系统尤其要紧——同一个功能可能有不止一条实现路径），而不是急着怀疑逻辑本身。
+
+---
+
+## 2026-07-11 · 拖拽卡片落地后的 hover「回弹」：根因是隐形卡片一直在 :hover，一层层揭开才看清
+
+咕咕的卡片拖拽用的是自建 physics 拖拽（`usePhysicsDrag.ts`）：原生卡片先隐藏、克隆体当"本体"弹簧跟手飞，松手后克隆飞回落点、揭示真卡。这套体感一直不错，直到这次盯上一个很轻微但一看到就别扭的毛病——**松手落地、鼠标恰好还压在卡片上时，卡片会先"下沉"一下再"上浮"，操作按钮和高光还会闪好几次**，跟正常把鼠标移上去（一次干净的 hover-in）完全不是一个手感。
+
+**第一层错判：以为是"落地动画和 hover 抬起前后脚打架"。** 最初的想法很直觉：落地那刻 `:hover` 立即生效带着 `translateY(-2px)` 抬起，跟落地动画撞在一起看着像抖了一下。于是加了个 `.phys-just-revealed` 类压 200ms、只压 `transform`。结果"下沉"还在——因为根本没找到"下沉"是从哪来的。
+
+**真正的根因：飞行途中那张"隐形"的源卡，其实一直处于 `:hover`。** 源卡在飞行期间是 `opacity:0`——**看不见，但命中测试还在**（opacity 不影响 hit-test）。鼠标压着它的落点，`:hover` 就是 `true`，CSS 的 `.fc-card:hover` 早把它推到了 hover 终态：本体 `-2px`、操作按钮 `opacity:1`、高光 `::after opacity:1`——只是全都藏在 `opacity:0` 底下看不见。等揭示那刻只恢复 `opacity`、各自的过渡又都活着，卡片就从这些**陈旧的 hover 值**动画回落到"压制态"的静止值（这就是**下沉**、**按钮/高光淡出**），200ms 后压制解除再动回去（**上浮**、**淡入**）。所以是一次完整的"陈旧态→静止→hover"的三段式回弹，而不是我以为的两个动画打架。
+
+**解法：揭示当帧"快照"——把卡片连同所有子元素、伪元素的过渡一并关掉一帧。** 关键动作三步：① 加压制类，把 hover 的位移/阴影/底色/按钮·高光全用 `!important` 钉在静止态；② 加一个快照类 `.phys-reveal-snap`，`transition: none !important` 作用到卡片本体 + `*` 全部子元素 + `::before/::after`；③ 恢复可见、`void offsetWidth` 强制提交这一帧——整张卡瞬间坐到静止态、零动画，不下沉、按钮不淡出。随即摘掉快照类恢复过渡（此刻各属性值没变、不触发任何过渡），下一帧摘压制类，上浮+淡入作为一次干净的 hover-in 平滑发生。
+
+这一步又踩了两个"覆盖不全"的坑，**每个都是同一个教训的变体：压制/快照的作用面必须跟 hover 效果的作用面完全对齐，漏一处就闪一处**：
+
+- **只压 `transform` 不够**：文件库/项目编辑卡的 hover `box-shadow`/`background`/操作按钮 `opacity` 定义在各自 scoped 样式里，没被压住 → 位移之外的效果瞬间到位、位移慢半拍，看着像"先出现一半 hover 再跳成全 hover"。补齐到每一项。
+- **快照的 `*` 通配符匹配不到伪元素**：hover 高光遮罩是 `.fc-card::after`，`.phys-reveal-snap *` 选不到它 → 高光仍从陈旧值淡出、再淡入（"高光闪一下"）。补上 `.phys-reveal-snap::after / *::after / ::before` 才真正盖全。
+
+**顺带把"保持 200ms 再 hover"改成"落地即 hover-in"（≈0ms）。** 下沉/闪烁是靠揭示当帧的快照消掉的、跟"解除压制的延迟"无关，所以延迟设 0 也照样不闪，只是没有停顿、落地即平滑上浮。实现上用 `requestAnimationFrame` 而非字面 `setTimeout(0)`——要保证"压制态那一帧先真的画出来"再解除，否则同一 task 内一加一撤，浏览器可能合帧、跳过压制态直接蹦到 hover。
+
+**最后一个"看似要大改、其实一行"的收尾：项目页看板的项目卡。** 前面全在 `.fc-card`/`.folder-card` 上验证，用户说项目页的**项目卡**没这效果。查下来 physics 拖拽与揭示逻辑（加 `.phys-just-revealed`/`.phys-reveal-snap` 两个类、以及通用的快照关过渡）本来就跟卡片类型无关、早作用到 `.proj-card` 上了——**唯一缺的是 `.proj-card` 自己的压制值**（它静止态阴影跟文件卡不同）。补一小段 `.proj-card.phys-just-revealed:hover { ... }` 就收工。这正是"揭示/快照走共享 JS + 通用类、每种卡只补自己的静止值"这套结构的红利：新卡片接进来几乎零成本。
+
+**教训串起来就一句：`opacity:0` 不等于"不在交互"。** 只要命中测试还在，隐形元素照样吃 `:hover`、照样按 CSS 累积状态，等它重新可见时这些陈旧状态会一次性"回弹"给你看。这类"隐形期间悄悄变脏、可见瞬间回弹"的问题，治法不是去猜某个瞬时状态该是什么，而是**在可见的那一帧把整棵子树连过渡一起冻住、强制它坐到你要的静止态，再统一放开**——比逐个属性追着压稳得多。
+
+---
+
+## 2026-07-11 · 思维面板单日玻璃卡偏左：同一个“中线”被 CSS 和 JS 各算了一遍
+
+记录面板的时间流在有多日记录时正常，只有一天记录时玻璃卡会偏左。前两次修复都把注意力放在“单列内容宽度不足，`scrollLeft` 被钳到 0”上：先补对称 padding，再在右侧加了 300px 缓冲。它们确实扩大了可滚动范围，却没有消掉根因，所以在某些窗口尺寸下仍能复现。
+
+真正的问题是**两套坐标系不一致**。`NoteTimeline.vue` 用 `50vw + sidebar-width` 的 CSS 公式推算首列应停的位置；`NotesView.vue` 的 `contentCenter()` 则用 `.rec-layout` 和 `.rec-hscroll` 的 `getBoundingClientRect()` 实测内容区中线。fullBleed 内边距、滚动条等细节会让两者相差十几到几十像素。多列时横向可滚动余量很大，这点差会被滚动范围吞掉；单列时首卡正好处在边界，误差就直接成为肉眼可见的左偏。
+
+修复不再继续调 CSS 常数：由 `NotesView.vue::syncTimelineGutters()` 在首屏数据提交后和窗口 resize 时，用同一个 `contentCenter()` 结果写入 `--timeline-left-gutter` / `--timeline-right-gutter`。`NoteTimeline.vue` 只消费这两个变量，原有 CSS 公式仅作为 JS 尚未挂载前的一帧 fallback。于是“卡片如何留白”和“卡片滚到哪里算居中”终于共用同一份几何事实，单日与多日也走同一条路径。
+
+**教训：布局里只要同时出现 CSS 推导坐标和 JS 实测坐标，就不能假定它们天然等价。** 多元素场景往往有足够余量掩盖误差，单元素/边界场景才会把它暴露出来；这种问题继续加缓冲只是缓解，应该让两端直接复用同一个测量来源。
+
+---
+
+## 2026-07-09 · 飞书 CardKit 流式回复接入：type=template、SDK 同步路径丢 body、sequence 严格递增，三个坑一个比一个隐蔽
+
+目标很朴素：飞书 IM 收到消息后，agent 生成期间实时 patch 同一张卡片内容，模拟 SSE 体感（飞书客户端不支持真流式推送，patch 是唯一可行方案）。最终落地的链路是 `agent.runner.run_stream` 异步生成器逐字 yield → `feishu.send_text_stream` 边累积边 PUT element content，typewriter 效果由飞书服务端在 `streaming_mode=true` 下自动渲染。一路撞上三个坑，**第一个最容易被再撞上**（文档把两条路线写一起，不仔细看就混），后两个属于 SDK/服务端细节但同样会让排错时间翻倍。
+
+**坑一：`type=template` 跟 `type=card` 是两条不同的路线，混了直接 200380 "template does not exist"。** 飞书 IM 发送 `interactive` 消息时，`content` JSON 长得像 `{"type": "X", "data": {...}}`，但 `X` 取值不同就走完全不同的卡系统：① `type=template` + `data.template_id` 对应**飞书 Card Builder GUI** 创建的"模板"（可视化拖拽那种），走模板管理 API 提前创建、提前分配 id；② `type=card` + `data.card_id` 对应**CardKit v1 card entity**（API 现场 create 出来、可被 streaming update 那种）。两者 id 形态一样（都是 `7660...` 开头的 19 位数字串），飞书拿到的是 `type=card`+`template_id` 时会**按 template 路线找**，找不到就返 `200380`。**官方文档把两种 type 写在同一节里**，第一遍很容易照着「interactive 消息 content 格式」示例直接照抄一个，示例里恰好给的是 template，模板一抄就用——但实际项目要做的是 CardKit 流式，差一步就撞墙。修复明确落在 `backend/agent/gateway/feishu.py:659` 的 `content` 字段，并把"为什么是 card 不是 template"写进了 docstring。教训：飞书 IM 的 `interactive.content.type` 选错不是"功能降级"，是**直接 200380 不可达**——以后给任何新平台接 CardKit 都要先确认走哪条路、写代码前就把 type 选对，不要等撞了再回来查。
+
+**坑二：lark SDK `client.cardkit.v1.card.create()` 同步路径丢 body（200610 body is nil），用 `acreate()` 异步路径绕过。** 排查路径本身就是个反例：① 怀疑 body 构造——`{type: 'card_json', data: '<stringified card 2.0 JSON>'}` 用 `JSON.marshal` 出来格式正确；② 怀疑权限——但用户后台 `cardkit:card:write` 是开过的；③ 同样的 body 直接走 `httpx + 手动取 tenant_access_token` 调 → **200 成功**，拿到真实 card_id（如 `7660280254204284101`），说明 body 没问题、权限没问题；④ 缩到 SDK 内部——`Transport.execute` 同步路径走的是 `requests + data=bytes`，headers 合并用的是 `request.headers` 引用、body 走 `requests` 的 `data` 参数，实际发出去的 body 是空的。**SDK 自己的 `cardkit_create`（`channel/driver.py:266`）就是用 `acreate` 异步路径绕开这个 bug 的**，等于官方代码自己已经踩过。修复：`_do_create_card` / `_do_update_card` 从 `def` 改成 `async def`，内部用 `client.cardkit.v1.card.acreate/aupdate`（走 `httpx + json=` 参数），外层 `send_text_stream` 直接 `await`，去掉 `asyncio.to_thread` 包装。教训：**当 SDK 同步调用报 body 异常、而同样的 body 走直 HTTP 又成功时，第一反应应该是「绕 SDK」而不是「改 body」**——SDK 是飞书官方在维护，但它的 Transport 同步路径在 2.x 确实有 bug（不一定每个版本都修，且不一定在 changelog 里明写），cardkit 这条路官方自己都默认走异步，不要硬刚同步。
+
+**坑三：`sequence` 必须是严格递增的 int（从 1 起），不能是 timestamp，否则返 9499。** PUT element 跟 PUT 全卡 body 都需要 `sequence` 字段（流式更新服务端判"第几段"用），最初图省事用了 `int(time.time()*1000)` 当 sequence——服务端判参数类型不是合法 int（更可能是嫌跳跃太大或非正整数），返 9499。改成模块级 `dict[card_id, int]` 跨调用递增、每张卡从 1 计起，跨 worker 进程各自从 1 开始互不冲突（飞书按 `card_id` 维度判单调、不要求跨进程全局连续）。`uuid` 字段每段必须新值——spec 200770 同 UUID 只生效一次，复用旧的会被服务端当"重复段"直接丢弃，所以每次 patch 都是 `uuid.uuid4().hex`。节流参数（实测：飞书 cardkit update QPS ~20/s）：每 ≥200ms 或 ≥30 字才调一次，避免抖动；单次失败只 log 不中断，下一次继续。
+
+**整套修复两个 commit 上线（`5ecf20b` 接入、`50bacda` 修 SDK bug），仅本机 worker 进程有效；supervisor 会热重载，但生产 worker 实际加载的是哪个版本需要看启动时间确认**——若 `send_card_message` 仍报 200380，多半是 worker 进程加载的是 `5ecf20b`（修了坑二但没修坑一那个早期版本），需要 `kill -TERM <pid>` 让 supervisor 重新拉起。**注意只动对应平台子进程、不要重启整个 `gugu-supervisor.service`**，会连累 QQ/微信两个平台的长连接一起断。
+
+---
+
+## 2026-07-08 · facts.json 拆成 profile/pattern：一份文件混两种判断标准，模型会来回摇摆
+
+起因是翻自己的 facts.json 发现里面全是"BestSSR 明天到期""某项目推迟到 8/31"这类一次性/带时效的内容，跟"住南京""自由创作者"这种真正的稳定身份混在一起——查了下是旧版 `facts.md` 迁移到 `facts.json` 时，格式转换但没做内容筛选，一律打成 `observed/中置信`，从此再没被清过（observed 不衰减，只能靠某轮对话恰好戳中矛盾才会被反思删掉，这种"静默过时"的情况基本不会触发）。
+
+写了个 `scripts/refresh_memory.py`，用 LLM 复核现有 facts、对不该留的条目投票删除，第一次直接单次调用跑全量——**删除比例从一次到下一次，同一份数据、同一份 prompt，从 40% 跳到 94%，包括明确要保护的 ADR/开源协议决策也被反复误删**。加了"3 次独立调用取多数票"降低方差后依然会跑偏：把 prompt 从"只关于用户本人 + 一堆例外（咕咕项目决策例外、长期任务规则例外……）"这种主规则+补丁式结构，改成两个完全独立、单一标准的判断——才算稳定下来。
+
+根因：不是数据量或运气问题，是**一份 facts.json 里塞了两种性质不同的内容**（"这个人是谁"跟"咕咕项目自己的架构决策/长期行为规则"），靠一条主规则加例外去分辨，模型在两者间判断权重不稳定，同一批输入前后摇摆。拆成两个文件后天然消解了这个问题：
+
+- **`profile.json`**（用户画像）：只回答"这个人是谁"——身份/所在地/稳定喜好，`{id,text,ts}`，不带 kind/conf，不衰减。
+- **`pattern.json`**（原 facts.json 改名）：行为/决策模式，判据是"抽象测试"——去掉具体项目名/数字/日期，还剩不剩一个能套到其他情境的通用模式；剩就留，不剩（某次具体决定的内容）就该在 memory.md 里，不进 pattern。
+
+两者都允许跟 `memory.md` 内容重合（画像/模式是精炼摘要，memory 是完整叙事，同一件事不同详略度不算冗余），但纯执行细节（"某项目存了几张参考图"）不该出现在这两层。
+
+改动落到：`store.py`（新增 profile 读写、facts.json 更名 pattern.json、read_memory 返回 profile+pattern 两个 key）、`reflection.py`+`reflection.md`（反思输出拆成 profile_add/remove + pattern_add/remove，各自单一标准）、`builder.py`（注入拆两块）、`commands.py`/`tools/memory.py`（`/memory`、`/forget`、`remember` 都改成两个文件都读写）。迁移零风险：`read_facts_list` 找不到 pattern.json 就依次退回旧 facts.json / facts.md，一次性挪过去，旧文件留着不删；`scripts/refresh_memory.py --cleanup-legacy` 事后清掉。
+
+过程里踩了一次真实的数据事故：批量复核跑在真实生产数据上（167 条 pattern），一次不稳定的调用把 87% 的内容误删，包括本该保护的 ADR/开源协议决策——靠之前 `cat` 完整读过一次原始 facts.json、被系统持久化在本地缓存文件里，才把 167 条完整恢复回去。教训：**LLM 判断的批量删除操作，在结果差异这么大之前不该被信任为"直接改真实数据"**，多次独立调用+投票是必须的，不是可选加固。详见 `docs/agent/11-记忆系统.md` §2/§3/§12。
+
+同一批改动里顺手做了：给 `facts.json` 的写入加缩进换行（之前是压成一行的 JSON，人工核对时没法看）；发现并修了 `DELETE /memory`（清除全部记忆）漏删新增文件名的 bug，改成直接删整个 `.agent/` 目录（复用已有的 `delete_prefix`，账户注销那条路径本来就在用），以后新增记忆文件不用再记得同步更新这份清单。顺带补了一个一直没做的功能：用户自助注销账号（之前只有管理员在后台点删除），复用同一套 `delete_account` 逻辑，前端要求二次输入密码确认。
+
+---
+
+## 2026-07-08 · 定时任务按需精简工具/上下文：在哪个时机做判断
+
+背景是排查完"定时任务推送混入旁白"那个 bug（见下一条）之后顺带算了笔账：`run_ephemeral`（定时任务执行）不建 session、不流式，完全享受不到 prompt 缓存——`persona.md`+`skills.md`+`policy.md`+技能索引这套"稳定前缀"实测 ~1.25 万字，网页/IM 场景靠 prompt cache 一个 session 内只用全价付一次，定时任务每次触发都是全价。而且不管任务实际是什么，都无条件加载并注入最多 25 个项目、10 条日历事件、文件概览、完整记忆——"提醒我喝水"和"收集科技新闻+天气"这种完全用不上项目/日历/记忆的任务，跟真正需要这些上下文的任务，注入的东西一样多。
+
+**要不要做、什么时候做这个"裁剪判断"，讨论了几轮**：
+
+- 运行时（每次触发）临时判断：不稳定（同一个任务今天判"要项目上下文"明天判"不要"），而且判断本身还要走一次 LLM 调用，抵消一部分省下来的 token，划不来。
+- 创建时判断，一次定下来、之后反复复用：定时任务的本质就是"设一次、跑很多次"，创建这一刻用户/咕咕正处于完整交互上下文里，判断准确度最高，且创建是低频操作，这次多花一点成本换来长期稳定的省钱收益。**最终选了这条。**
+
+**创建路径分两条，判断方式不一样**：
+
+1. **聊天里让咕咕建任务**：给 `create_scheduled_task`/`update_scheduled_task` 工具加 `context_config` 参数（`tool_groups` 数组 + `projects`/`calendar`/`files`/`memory` 四个布尔开关），咕咕在创建任务的**同一轮工具调用**里顺手把这个也填了——不是单独起一次分类调用，是让本来就要发生的这次结构化输出多带几个字段，几乎不额外花钱。
+2. **网页 `/schedules` 页表单直接建**：这条路径没有 agent 在场，压根没人做这个判断。补了一次轻量分类调用（复用记忆/反思共用的 `agent/memory/_llm.py` 的 `complete_json`，prompt 和输出都很小），但用的是当前激活的默认模型——项目目前没有小模型路由/分层配置，"轻量"指的是这次调用本身 token 少，不是模型便宜。
+
+**两个安全阀，都是讨论中被问出来的**：
+
+- `meta`（`use_skill`）工具组不管分类判不判得到都强制带上（`agent/runner.py` 里 `tool_groups | {"meta"}`）——漏了这一组会导致天气等按需 skill 彻底拉不到，是"功能直接坏掉"，跟"多花点 token"完全不是一个量级的代价，不能只信分类结果。
+- `update_scheduled_task` 改了 `instruction` 又没有同时给出新的 `context_config`，直接把旧配置清空退回全量，而不是留着可能已经过期的裁剪配置——不然会出现"指令改了但工具集没跟上，新指令要用的工具被裁掉，任务悄悄跑不动"的静默失败，比多花点 token 更难排查。
+
+**教训**：省 token 这类优化最容易在"图省事"的地方留坑——运行时判断看着更"智能"（每次都重新算），实际上既不稳定又抵消收益；真正稳的做法往往是"在信息最全、频率最低的那个时间点，一次性把决定做扎实，之后就别再猜了"。
+
+**上线后走查，抓到一处真实的『两份清单容易漂移』**：`TOOL_GROUPS`（12 个工具组名的枚举，喂给分类 prompt 和工具 schema 用）最初是从 `DefaultProfile.tools` 手抄的一份重复列表，放在 `app/api/v1/scheduled_tasks.py` 里。这正是 docs/devlog.md 2026-07-03 条目那次"两份『该刷哪些』的清单分散在前后端，迟早漂移"同一类坑——以后要是给 `DefaultProfile.tools` 加一个新工具组（比如以后接入 `im`），这份手抄的副本不会跟着变，新组永远不会出现在定时任务能选的范围里，而且不会报错、只是静默漏掉。改成直接引用 `TOOL_GROUPS = DefaultProfile.tools`（不是复制），一处更新两处生效。这一步不是新增功能，是同一个 PR 里顺手补的债，好在改的时候正好想起了 2026-07-03 那次教训，不然大概率又要等真出问题才发现。
+
+**本地测过 token 收益，量级比预期更大、大头出乎意料**：拿 15 个项目 + 8 条日程 + 一份真实体量的记忆构造测试数据，用项目自带的 `estimate_tokens`（不调真实 API，纯本地估算，量级可信但不是精确计费数字）分别测了"提醒喝水"（简单任务）和"收集科技新闻+南京天气"（复杂任务）两种场景：
+
+- 简单任务：全量 ≈25430 tok → 按需（只留 `meta`）≈10471 tok，省 ≈59%。
+- 复杂任务：全量 ≈25430 tok → 按需（`web`+`search`+`meta`）≈11485 tok，省 ≈55%。
+
+**意外发现**：省下来的大头不是项目/日历/记忆这些上下文数据（15 项目+8 日程+记忆只占 ≈996 tok 差异），是**工具 schema 本身**——58 个工具的完整 schema 算下来 ≈14084 tok，比上下文数据贵一个数量级。这个项目的工具 description 写得比较详细（利于模型用对参数），代价是每个工具的 schema 本身就不便宜，工具数量才是这次优化真正的杠杆，上下文开关是锦上添花。
+
+**还没验证、明确留着的风险**：这次测试用的是手动指定的"理想" `context_config`，不是真让 LLM 跑一遍分类再看结果——分类判断本身准不准（尤其是会不会漏选复杂任务真正需要的工具组）、裁剪后的最终答案跟全量模式比是否等价，都还没做端到端验证。存量任务不受影响（`context_config` 为 `NULL` 时全量兜底，行为不变），只有被编辑过的任务才会拿到新的裁剪配置，这块目前也还没决定要不要写个一次性脚本回填存量任务。
+
+## 2026-07-08 · 定时任务推送混入模型旁白：两个问题叠在一起，天气 skill 是导火索
+
+真实翻车案例：用户设的"科技新闻+南京天气"定时任务，推送开头是一大段"我来收集...先并行启动...第一个搜索结果...JSON 太长被截断，换 wttr.in 的纯文本格式..."——像是模型内部规划过程被当成正文发出来了。
+
+**根因一（导火索）**：`agent/skills/weather.md` 只给了精简格式的正例（`format=3`/`?0`/`?1`），没有明确禁止 wttr.in 的完整 JSON 格式（`?format=j1`），也没讲清楚"查未来某天"要用相对索引（`?1`/`?2`）而不是绝对日期。模型在文档没兜底的情况下现场发挥，诌了个不存在的 `date=` 参数（wttr.in 忽略未知参数、照常返回默认数据，模型误判成"接口不支持"），又切到全量 JSON，撞上 `http_get` 统一的 4000 字符截断（`agent/tools/web.py`），JSON 从中间被切断解析不出来，只能反复换方式重试——每次重试模型都会说一句"这次怎么弄"。
+
+**根因二（真正没兜住的地方）**：`agent/runner.py` 的 `_collect` 函数负责把 SSE 流按轮收集成最终推送文本，但它的"结尾拼接"逻辑只处理了"MiniMax 重述开场白"这一种情况（本轮若以上一轮全文为前缀就替换、否则原样 `append`），并不区分"这轮文字是工具调用前的过渡旁白"还是"真正的总结回复"——只要每轮说的话不同，就会被 `"".join()` 原样拼进最终文本。网页聊天场景不会暴露这个问题，因为是流式展示给用户看的，中途的过程文字本来就会被看到；但 IM 消息（`run_collect`）和定时任务（`run_ephemeral`）都是**一次性推送整段文本**，过程旁白混进去就变成了大杂烩。
+
+**要不要"只取最后一轮"这个修法本身也讨论了一圈**：单纯改 `_collect` 只取最后一轮文本，有个隐藏风险——如果模型的回答本来就分散在多轮里说完（比如这次任务，新闻部分在查完新闻那轮说完、天气部分在最后一轮才说），"只取最后一轮"会把新闻部分也一起丢掉，比现在的"堆一起"还糟。所以最终采用两层修法：① 在 `agent/context/builder.py` 新增 `non_streaming` 参数（`run_collect`/`run_ephemeral` 传 `True`），仿照已有的 `_source_block` 注入模式，按执行上下文自动注入一段「这轮不流式展示、工具用完后一次性给完整总结、别分段说」的提示——只在非流式路径出现，不占用网页聊天的常驻 prompt 预算；② 在这个提示生效的前提下，`_collect` 才能放心地只取 `rounds[-1]`（若为空则回退最近一条非空轮次）。两层配合，缺一不可——单独改 prompt 不能保证模型 100% 照做，单独改代码会有把合法分段内容当垃圾丢掉的风险。
+
+**教训**：非流式投递场景（IM/定时任务）和流式场景（网页）对"模型该怎么说话"的要求本质不同——流式场景允许、甚至欢迎过程感；非流式场景只有一次机会，必须要求模型自己在生成阶段就把内容收束好，不能指望在消费端靠代码去猜"这句是不是该扔掉"。
+
+## 2026-07-04 · 飞书/微信支持消息引用识别，QQ 协议层做不到
+
+用户在 IM 里"引用/回复"某条历史消息发送时，之前咕咕只看到新发的这条文本，感知不到"这句话是针对哪条历史消息说的"——三个平台的接入代码原本都没读取引用字段。用真实引用消息在三个平台上实测，能力差异很大。
+
+**QQ** 官方机器人 C2C 单聊协议（`botpy` 的 `message_reference`）验证是空的、引用内容也没拼进文本，协议层硬限制，判定不可行、跳过。
+
+**飞书** SDK 收消息事件自带 `parent_id`（被引用消息 id），但只给 id，需要多调一次 `GetMessage` API 反查内容——中间踩了个坑：咕咕自己的回复走 `interactive` 卡片（`_do_send` 优先发卡片，不是纯 `text`），反查回来的卡片内容被飞书归一化成 `{"tag":"text","text":...}`，跟发送时原始的 `{"tag":"markdown","content":...}` 结构不一样，且 `elements` 是数组的数组（按分组/分段组织），第一版按扁平列表解析直接崩 `AttributeError`，改成递归拍平 + 两种字段名兼容后才拿到真实内容。
+
+**微信** iLink 最省事，引用消息的 `item.ref_msg.message_item` 直接内嵌了被引用消息的完整内容（含 `text_item`），不用额外查询。
+
+两边实现都只包装送进 LLM 的文本（新增 `llm_text`，不改原始 `text`），router/秒回表情逻辑继续用原始文本判关键词，不受影响。改动：`agent/gateway/{feishu,wechat}.py` 新增 `_fetch_quoted_text`/`_extract_quoted_text`。
+
+## 2026-07-04 · 全项目安全审计 + 一批修复
+
+对认证授权与多租户隔离 / 注入·SSRF·文件与工具 / 密钥·配置·日志·部署面三个攻击面做了一轮完整审计（报告 [docs/security/安全审计报告-2026-07-03.md](docs/security/安全审计报告-2026-07-03.md)）。核心结论是应用层内核扎实——`get_owned` 归属校验全覆盖、错误脱敏真挂在 `registry.dispatch` 唯一收口、IM 凭据 AES-GCM 加密且经 env 注入子进程、登录防枚举、JWT 算法固定、SQL 全参数化、无命令注入/反序列化面、13 个 `/admin/*` 全挂 `require_admin`，逐条核实到位；审计中还证伪了两条误报（上传 `ext` "路径穿越"——`rsplit('.',1)` 取的段按定义不含 `..`，实测所有 PoC 都逃不出用户目录；admin 决策轨迹"IDOR 泄露对话"——正文其实已 `_redact_text` 脱敏）。默认凭据（默认 admin 口令 / 默认 `secret_key`）经确认生产端已设强值、不成立，仅建议将来加启动 fail-closed 守卫。
+
+本次修复的真实问题：
+
+1. **H3 SSRF 重定向绕过**——`send_file` 下载网络图片时 `follow_redirects=True`，而私网校验只查初始 URL，公网页可 302 跳 `169.254.169.254`/内网绕过（对比 `http_get` 早已 `follow_redirects=False`，两处不一致即遗漏）；改为手动跟随、每一跳都重新过 `_url_is_safe`（最多 3 跳）。
+2. **H2 全站无限流**——新增轻量 Redis 固定窗口限流件（fail-open，Redis 挂了不锁死登录），挂到用户登录（10 次/5min·按 IP+用户名）、注册（20/h）、找回密码（5/h）、admin 登录（10/5min）。
+3. **H4 邀请码注册竞态**——查 `used_at is None` 与置位之间无行锁，并发同码可注册多号；改为原子 `UPDATE … WHERE used_at IS NULL`、`rowcount≠1` 即拒（实测两并发抢同码 `rowcounts=[1,0]`）。
+4. **上传无大小上限**——加单文件 200MB 硬闸（整个请求体一次性进内存、配额可能为 None）。
+5. **安全响应头缺失**——中间件补 `X-Content-Type-Options`/`X-Frame-Options: SAMEORIGIN`/`Referrer-Policy`/`HSTS`（CSP 因 Vue 内联风险暂缓）。
+6. **config 端点回传 traceback**——PATCH/init-db 的 500 不再把 `format_exc()` 塞进 detail，改服务端日志 + 前端通用消息。
+7. **嵌套 error 漏脱敏**——`_redact_result` 改递归，批量工具 `failed`/`saved` 列表里 `{"error": str(e)}` 的原始路径/连接串也过 `sanitize_error`（实测嵌套已抹、正常内容不动）。
+8. **重置链接信任 Origin 头**——改用服务端 `request.base_url`（经 nginx 固定为真实域名），防伪造 Origin 投毒钓鱼。
+9. **审计日志恒记 "admin"**——`require_admin` 把 `payload["sub"]` 落到 `request.state.admin_username`，多管理员可归因。
+
+全部改动经 `py_compile` + 模块导入 + devserver 上 10 项回归测试（真实 DB/Redis）验证通过。暂缓项（需更大改动，报告 §9 列明）：H3 的 DNS-rebinding 残留（pin IP 会破 HTTPS）、token 撤销、admin 日志 SSE token 走 URL（需前端换 fetch 流式）、加密密钥与 JWT 密钥解耦（需迁移重加密）、XFF 可信代理白名单。改动文件：`app/core/ratelimit.py` 新增 + `agent/tools/{files,base}.py` + `app/api/v1/{auth,admin_auth,config}.py` + `app/main.py`。
+
+## 2026-07-07 · 文件编辑功能：从 hljs 叠加到 CodeMirror 的弯路
+
+给预览窗加文本/代码编辑功能，txt/md 直接上普通 textarea 没问题。代码类扩展名想要"编辑的同时也有语法高亮"，第一版走的是经典 highlight-overlay 手法：透明 textarea 叠在 hljs 高亮结果的 `<pre>` 上面，每次 `@input` 重新跑一次 `hljs.highlight()` 更新下层显示。
+
+实测 1100 行文件打字直接卡到几秒——用户在 Chrome Performance 面板量出来单次按键"处理用时"从 520ms 一路涨到 3300+ms，越打越卡。一开始怀疑是 hljs 计算本身慢，加了 150ms 防抖，结果引出新问题：因为编辑框文字色是透明的、全靠下层高亮层显色，防抖等于人为让每个刚打的字符必须等 150ms 才"显形"，体验更差。回头单独测 `hljs.highlight()` 才发现它其实只要 15-25ms——真正的开销在于每次都要把高亮结果整个通过 `v-html` 塞回 DOM（大量 `<span>`，浏览器重新解析/布局/绘制），这是"整份重新高亮 + 整体替换 DOM"这个架构本身的问题，不是调参能解决的。
+
+换成 CodeMirror 6 之后从根上解决：它做虚拟滚动（只渲染可视区域）+ 增量分词，编辑大文件的开销跟总行数无关。中间又踩了个小坑——`vue-codemirror` 组件内部本来就默认带了一份 `basicSetup`（含行号 + 折叠 gutter），跟 `:extensions` 传参无关；一开始自己又在 `:extensions` 里传了一份 `basicSetup`，两份的行号 gutter + 折叠 gutter 叠在一起，表现为编辑器左侧出现"4 列行号"。改法是不再自己传 `basicSetup`，只传主题和语法高亮配色，行号/折叠交给组件内置的那份。
+
+最后代码类文件的语法高亮配色没有照抄只读预览的 hljs 配色方案——试过手工把 lezer 的 tag 分类映射到 hljs 同款 atom-one-light 配色，两套语法树分类方式差太多、对不齐，效果反而更别扭，最终代码正文用 CodeMirror 自己的默认配色（`defaultHighlightStyle`），只有左侧行号 gutter 数值抄了只读预览的 `.tv-ln` 样式。
+
+CodeMirror 全部懒加载（`defineAsyncComponent` + 动态 `import()`），只有真正编辑代码文件才会下载，不影响主 bundle 体积。
+
+**教训**：性能问题先测量再下结论——"防抖"是治"调用太频繁"的药，不是治"单次调用本身太贵"的药，吃错药只会让问题从一种难受的形态变成另一种。
+
+## 2026-07-06 · http_get 按 Content-Type 自动提取正文
+
+真实验证案例——某文档站首页截断到 4000 字符给模型的内容 100% 是 `<meta>`/CSS/JS 头部噪音，网页明明抓得到（200），但截断发生在提取正文之前，模型拿到的东西完全没法用。
+
+`agent/tools/web.py` 新增依赖 `trafilatura`：`text/html` 用 trafilatura 提取正文转 markdown（去导航/广告噪音，带内联链接——想接着读某条链接直接再调一次 `http_get`，不用重新搜，等于免费拿到"多跳阅读"能力）；提取不出实质内容（可能是纯 JS 渲染页面）直接提示模型改走 `web_search`/`deep_research`，不把空内容硬塞给模型自己猜；`application/pdf` 复用 `app/core/doctext.py` 现成的 pdftotext 提取；其它（JSON/纯文本，含天气用的 wttr.in）原样返回不受影响。
+
+## 2026-07-06 · docx/xlsx/pptx 预览转换失败：两层部署配置问题叠在一起
+
+真实翻车案例，用户传的 docx 打不开，报"转换失败 (500)"。
+
+① 三个 systemd 单元（`gugu-backend`/`gugu-worker`/`gugu-supervisor`）的 `Environment="PATH=..."` 只填了 venv 的 bin 目录、把系统路径整个顶掉，`libreoffice`/`pdftotext` 这些系统命令再装也找不到（`FileNotFoundError`）。改成 venv bin 优先、后面接完整系统路径。
+
+② 修完①露出第二层：三个单元开了 `ProtectSystem=strict`，`$HOME/.config` 对进程只读，LibreOffice 建不了默认用户 profile 直接失败（`returncode=1`，stderr 只留一条不相关的 `javaldx` 警告，真实原因不会自己冒出来）。给两处 LibreOffice 调用都加 `-env:UserInstallation` 指到本次调用专属的临时目录（`PrivateTmp=true` 保证可写），不用放宽沙箱安全设置。
+
+均已在 devserver 实测验证。
+
+## 2026-07-06 · 弹窗毛玻璃背景/阴影全局失真：`:deep(.bm-card)` 根本没生效
+
+`BaseModal` 是多根组件（遮罩 + 卡片两个平级根），Vue scoped CSS 的父作用域属性只挂在组件根节点，穿不到嵌套一层的 `.bm-card`——各弹窗一直靠 `:deep(.bm-card)` 定制背景/阴影，实测这条选择器压根没命中该元素（DevTools 里连"被覆盖"都算不上，是完全不在匹配规则列表里）。只是巧合地 `BaseModal` 原本的默认底色和多数弹窗的期望值接近，这个问题才一直没被发现，直到项目编辑卡（想要透明）和已归档弹窗（想要浅色玻璃）对比出明显差异才暴露。
+
+改法：不再依赖跨组件 CSS 选择器，`BaseModal` 加 `background`/`blur` prop 由调用方直接传值；项目编辑卡/个人设置一直想要的「透明 + 内嵌高光阴影」直接并入 `BaseModal` 默认值；单栏弹窗（新建项目/上传文件/定时任务/已归档）统一走 `--panel-bg`，顺带把这个变量的不透明度从 96% 降到 90%，全站用到它的地方（含咕咕聊天窗主区、项目编辑卡右栏）一起调整。涉及组件：`ProfileModal.vue`/`ProjectModal.vue`/`NewProjectModal.vue`/`UploadModal.vue`/`Schedules/index.vue`/`ArchivedProjectsModal.vue`。
+
+## 2026-07-06 · 弹窗淡入期间玻璃不糊：又一次冤枉 backdrop-filter 的性能，真凶是 CSS 规范里的隔离组
+
+GuguChat 大窗口开着，再叠开一个项目/新建项目弹窗，弹窗的毛玻璃在**整个 0.2s 淡入动画期间完全不模糊**——底下聊天窗的文字清清楚楚透上来，动画一结束模糊才"啪"地贴上，观感就是玻璃迟到了。
+
+**① 惯性思维：又往"渲染慢"上猜，连错两轮。** 有了 07-01 白带那次的印象（backdrop-filter 重栅格开销大），第一反应还是性能：先给 `.panel-left` 加 `will-change: backdrop-filter`（提前建合成层，让模糊"预热"）——没用；发现出问题的其实是 `.modal-right`，同样加上——还是没用；再改成挂载后双 `requestAnimationFrame` 按住 `opacity:0` 等两帧、让 GPU 先把模糊算完再露出（FloatPreviewWindow 处理图片解码用过的同款手法）——**依然没用**。用户录了 performance trace，把 325 帧 Screenshot 逐帧抽出来看，铁证：淡入的每一帧里底下窗口都是清晰的，不存在"算到一半"的中间态——模糊不是慢，是**整段没在工作**。
+
+**② 用户一句"可能和容器层级有关"点醒。** 回头翻 filter-effects-2 规范：**`opacity < 1` 的元素是一个隔离组（backdrop root），它子孙的 `backdrop-filter` 只能在组内采样，采不到组外的内容**。BaseModal 的淡入把 opacity 过渡挂在卡片容器 `.bm-center`/`.bm-card` 上——也就是说淡入的整个过程中，玻璃面板被半透明祖先罩在隔离组里，**根本"看不见"后面的 GuguChat**，模糊自然是死的；opacity 回到正好 1 的一瞬间隔离解除，模糊突然出现。这是规范规定的正确行为，不是 Chrome 的 bug，所以任何"预热/提前建层"都注定无效——不是算得慢，是被隔离。（第一轮就该多想一步的反证：`.modal-left`/`.modal-right` 自己根本没有任何动画属性，却在动画期间失效——问题显然在祖先链上，而不在元素自己。）
+
+**③ 修法也是用户提的：「blur 启动渲染动画」。** 进场彻底不碰 opacity，改成**让模糊半径本身参与动画**——遮罩的压暗（background-color）+模糊从 0 涨到位，`.bm-card`/`.panel-left`/`.modal-right` 的 blur 从 0 过渡到各自满值。全程没有任何半透明祖先，采样从第一帧就是活的，视觉上是"玻璃当着你的面凝结成型"，比原来的淡入还好看。三个实现细节：(a) Vue Transition 根节点没了可监听的过渡属性，必须 `:duration="200"` 定时收尾，否则下一帧就摘 enter-active、ramp 跑不完；(b) 面板的 ramp 规则得放 global.css——BaseModal 的 scoped 样式够不到 slot 里的玻璃面板（slot 内容带的是调用方的 scope id）；(c) from 态要 `!important` 压过 blur prop 写到 `.bm-card` 上的 inline 样式。离场保留 opacity 淡出：关闭瞬间模糊失效会被同步淡出盖住，肉眼不可察，不值得做反向 ramp。
+
+**教训**：① **同一个 API 的第二个坑不一定是第一个坑的重演**——白带是性能（重栅格），这次是语义（隔离组），一开始拿性能思路套语义问题，白扔两轮修复；② **"动画期间整段失效、结束瞬间恢复"这个波形本身就是关键证据**——性能问题是渐进的（会看到半成品帧），语义/开关型问题才是二值的，从 trace 帧序列看出"没有中间态"那一刻就该放弃性能假设；③ 用户的直觉又一次是一等情报（"和容器层级有关"、"做一个 blur 启动渲染动画"——诊断方向和最终修法都是用户先提的）；④ 沉淀成红线进 design.md：**玻璃元素的祖先链上不要挂 opacity/filter/mask 类动画，弹窗进场一律走「玻璃 ramp」**。详见 design.md「弹窗动画规范」+ commit a976cdc。
+
+## 2026-07-03 · 抽共享拖拽 composable，顺手炸出两个"看起来有反应、实际没挪窝"的静默 bug
+
+文件库文件卡改 pointer 模式那次（见下方 07-01 条目群）只覆盖了 `Files/index.vue`，项目编辑卡的文件面板还留在原生 `draggable`/`dragstart`。用户提议干脆抽成共享 composable，两边都用同一份——`useFileDragDrop.ts` 就是这么来的：抓取判断单选/多选、起物理拖拽、拖拽中找落点高亮、松手判定目标派发移动，这条编排两边完全一样，只有卡片选择器/面包屑规则/落地后刷新策略这些差异点做成配置项。项目编辑卡首次转 pointer 模式接入。
+
+**改完之后开始报 bug，两个都不好查，且互相看起来很像。** 用户先说"拖到面包屑'个人文件'那段没反应"，我对着代码逐行读了很久、还专门起了个 agent 去查后端 PATCH 校验和缓存索引逻辑，双双查无实据——**因为这两处逻辑单独读代码真的挑不出错**，问题不在判断本身对不对，而在运行时状态。后来用户又反馈"现在拖进任何文件夹都不行了，刷新又弹回原处"——一开始以为是同一个 bug 的另一种表现，其实是两个完全独立的问题撞在一起。
+
+**根因① NaN 静默失败。** 文件夹对象身上挂着两个不同语义的 id：`f.id` 是带命名空间前缀的字符串（`"f:65"`，给框选功能用，要跟 DOM 的 `data-folder-key` 属性对上）；`f.folderId` 才是数据库里的真实数字 id，API 调用要用这个。落点判定代码从 `data-folder-key` 读出字符串后 `Number(...)` 转数字——`Number("f:65")` 是 `NaN`，不管拖到哪张文件夹卡片，发给后端的 `folder_id` 实际上永远是 `null`。这个错配从最早把文件卡转 pointer 模式那次就已经埋下：原生拖拽时代 `@drop="onFolderDrop(f, $event)"` 靠 Vue 事件闭包直接拿到 `f` 对象本体，从来不需要从 DOM 属性反查 id；转成 `elementFromPoint` + `document.querySelector` 这套之后，才第一次需要"从命中的 DOM 元素反推出真实数字 id"，而没人注意到 `data-folder-key` 存的其实是给另一个功能（框选）用的字符串。**靠给 `dispatchDrop` 加一行 `console.log` 打印 `elementFromPoint` 命中元素和读到的属性值，一眼就看到 `attr: "f:65"`、`key: NaN`**——这比继续读代码快得多。修复：给文件夹卡片单独挂一个只放真实数字 id 的 `data-folder-id`，跟框选专用的 `data-folder-key` 分开，拖拽逻辑改读前者。
+
+**根因② 时序坑：读到了被提前清空的状态。** `dispatchDrop` 一开始会立刻清空 `draggingFileIds`/`draggingFolderIds`（让卡片马上退出"拖拽中"视觉态，不用等异步的移动请求跑完）。但我新写的 `_acceptable()`（判断"这个面包屑目标接不接受当前拖的东西"）却在清空**之后**才被调用——不光 `dispatchDrop` 自己的面包屑分支这样，`usePhysicsDrag` 稍后（下一帧 `requestAnimationFrame`）调用的 `resolveAbsorbTarget` 也是这样。两处读到的 `draggingFileIds.value` 永远是空集合，`_acceptable` 恒为 `false`，直接 `return`、什么都不做。而拖拽过程中的悬浮高亮检测发生在清空**之前**，完全正常——所以呈现出来就是"面包屑亮起来了、也确实是有效目标，松手却像没这回事"，非常反直觉。这个是这次重构新引入的 bug（旧的原生拖拽版本用的是 `isBcDroppable(seg)`，一个纯函数、不依赖任何会被清空的响应式状态，从没踩过这个坑）。**同样是靠加日志把 `_acceptable` 的入参和返回值打出来才看清**——先看到 `target` 本身是对的（`acceptsFiles: true`），但 `acceptable: false`，才回头去查 `_acceptable` 内部读的是哪个变量、这个变量什么时候被清空。修复：留一份不随清空动作变化的快照 `_dragSnapshot`，专给这两处收尾逻辑用。
+
+用户还顺口问了句"是不是那次安全评审的 `get_owned()` 改造搞的"——查了下 diff，那次是纯粹的等价替换（`db.get + if user_id!=` → `get_owned()`，语义完全没变），而且这次的 `folder_id: null` 是浏览器发出请求**之前**就已经算错的（Network 面板截图能直接看到 payload 本身就是错的），跟后端怎么处理这个输入没有任何关系——两件事纯属巧合撞在同一个时间段被发现。
+
+**教训**：① **两个 bug 同时出现、症状还相似时，先假设是两个独立问题，别急着往一个根因上凑**——这次差点把"面包屑没反应"和"文件夹卡片也不行"当成同一件事的两种表现，浪费了一轮排查。② **纯读代码查不出的 bug，加个 `console.log` 打运行时真实状态比继续读代码快得多**——两个根因都是"单独看逻辑完全说得通，实际数据不对"，这类 bug 静态分析天然抓瞎，agent 去查后端/缓存索引也是同理（逻辑本身没错，错的是上游传进来的值）。③ **重构时留意"这个值什么时候被清空、谁会在清空之后还想读它"**——`_acceptable()` 读的响应式 ref 会被同一个函数自己提前清空，这种同函数内的读写时序坑，本地跑一遍很难靠直觉发现，得靠实际触发。④ 用户主动提出的"是不是某次修复搞的"要认真核实而不是想当然回答——这次查完 diff 反而更确信两件事无关，属于巧合共时。
+
+## 2026-07-01 · 磨砂玻璃「白带」查凶记：被冤枉的 backdrop-filter，与两个搅在一起的 bug
+
+顶栏和日历工具栏的磨砂玻璃，一 hover 下方可点击内容，下沿就闪一条**白带**；快速点小时格，整个日历面板还会**暗一下**。查这俩花了很久，绕了一大圈，教训比 bug 本身值钱：**别把两个 bug 当一个，别靠猜、要靠 perf trace。**
+
+**① 一路被 backdrop-filter 带偏。** 白带在磨砂卡下沿，第一反应就是 `backdrop-filter` 的锅，于是把「合成隔离」的招试了个遍：顶栏 `transform: translateZ(0)`、`isolation: isolate`、把 `.page-content` 提成独立合成层、把玻璃搬到 `::before` 隔离层……**全部无效**，还顺手搞出圆角被 squircle 裁歪的新问题。关键线索是用户给的两条：(a) DevTools **性能录制时白带不出现**（录制走了另一条栅格路径 → 这是**栅格时序**问题，不是布局）；(b)「感觉和 `.page-content` 覆盖面太广有关」。
+
+**② perf trace 一录，真凶现形。** 让用户录了段 trace，重绘榜首是 `.cal-chip`（日历里的活动条/项目条）——**2800+ 次重绘**，`compositeFailed` 里挂着 `box-shadow`。根因在 `global.css`：`.cal-chip:hover` 的高光用了 **`box-shadow: inset 0 0 0 100px rgba(255,255,255,.45)`**（拿超大 inset 阴影当「白色叠层」）。**inset box-shadow 无法 GPU 合成** → 每次 hover 一个条就是 0.25s 的主线程重绘 → 级联把父级 glass-card / layout-main 一起重绘 → 拖累顶栏/工具栏 `backdrop-filter` 的边缘重栅格 → 露白带。**不是 backdrop-filter 的锅，是 box-shadow 把它拖下水的。** 修法：所有 hover/高光从 `box-shadow`/`background` 改成 **`::after` + `opacity` 叠层**（opacity 走合成器线程、零主线程重绘），一处处换掉（`.cal-chip`、月格 `.cell-hovered`、周日期头、`.wv-ev`、`transition: all` 的 `.cell-num`……）。
+
+**③ 规则沉淀 + faux 玻璃。** 白带本质是 **Chrome `backdrop-filter` 在「背后内容会变」时的边缘重栅格伪影**——Safari/WebKit 架在 Core Animation 上没这问题。于是定下一条设计红线：**`backdrop-filter` 只给「背后是静态的」元素**——「包着内容」的卡片（cal-main、侧栏、弹窗，背后是静态页面渐变）随便用；「浮在会动内容之上」的浮层（顶栏、工具栏）**绝不能用**。给这类浮层做了个不依赖 backdrop-filter 的 **`GlassBg` 活玻璃组件**（页面背景副本 + 半透明 tint + 高光，跨引擎一致、无白带，还给将来「自定义壁纸」留了接入点：换成服务端预模糊的壁纸图 + `background-attachment: fixed` 即可）。
+
+**④ 那个「变暗」根本是另一个 bug，跟 backdrop-filter 无关。** 白带治好后，「快速点小时格面板变暗」还在。又往 backdrop-filter 重栅格上猜了几轮（`contain: paint`、去 cal-main 的 blur……全没用），最后是**用户自己诊断对的**：「好像是 hover 效果短暂消失导致的」。真凶是 `.glass-card:hover` —— hover 时背景从 `--glass-bg`(0.56) 变到 `--glass-bg-hover`(0.70，更白)、带 0.25s 过渡。你在日历里操作时鼠标一直在 cal-main 上 = 常态 0.70；**快速点击时 `:hover` 掉一帧 → 背景朝 0.56 淡回 = 「暗一下」**，hover 回来又淡亮。修法一行：中和 `cal-main:hover`（背景/阴影与基态一致，无可闪的变化）。
+
+**教训**：① **两个症状不一定同源**——白带（box-shadow 拖累 backdrop-filter）和变暗（`:hover` 背景过渡掉帧）搅在一起，把「变暗」也当 backdrop-filter 猜，白绕好几轮；② **视觉/渲染 bug 别靠猜合成属性**，perf trace 里 `compositeFailed` + 重绘 nodeName 榜一录一个准，比试十个 `translateZ` 都强；③ **用户的观察是一等情报**（「录制时不闪」定性成栅格时序、「hover 效果消失」直接点破变暗真因）；④ 顺带一条通用红线：**`backdrop-filter` 只在静态背后用，浮层走 faux 玻璃。** 详见 `CHANGELOG` 0.15.1。
+
+## 2026-06-29 · 安全隐患记一笔：工具错误信息泄露（原始异常透传）
+
+用咕咕时遇到个文件移动失败的 bug，让它自己写了份报告，结果报告里**把原始 OS 异常原样贴了出来**：`[Errno 13] Permission denied: 'uploads/019efd7c-…-…/个人文件'`——内部存储布局、用户 UUID 全露了。顺手做了次安全分析。
+
+**结论：这一例直接危害低，但暴露了一个该修的"原始透传"模式。** 低的原因查实了三点：`/uploads` 没被静态托管（全后端无 `.mount()`）、文件访问全走鉴权 API（逐用户归属校验）、且这报告是给文件主人本人看——所以泄露路径/UUID **换不来文件访问**。但模式本身不安全：`agent/tools/files.py` 多处 `return {"error": f"…{str(e)}"}` 把原始异常（含路径）透传，一旦哪天异常引用到**别人**的路径/UUID、或藏了**连接串/API key/token**，就会原样漏出去；而且原始串进了**模型上下文 + 决策轨迹 + 日志**，扩散面不止用户那一眼。
+
+**设计三层（药+网+出口）；② 网当天就落地了。** ② `sanitize_error()` + `_redact_result()` 挂 `registry.dispatch`（工具唯一咽喉），在 tool_result **回模型之前**统一抹 path/UUID/连接串/key/traceback——一处覆盖全部 55 工具，且**只动 error 字段、绝不碰正常结果**（`read_file` 正文含 uploads/UUID 字样也原样不动，实测验过），原始异常仍 print+traceback 进服务端日志。脱敏边界刻意放 **dispatch（给模型前）**，不是 UI 层——否则模型上下文/决策轨迹已被污染。③ 出口复用已有 `sanitize_outbound`。① 药（工具按业务层造干净消息）可继续收敛、非必需（网已兜住）。详见 `security/安全-工具错误信息脱敏.md`。
+
+**教训 / 红线**：**绝不把 `str(e)`/traceback 直接放进给用户或模型的字段**。异常里常藏路径、UUID、连接串、API key、token——用户/模型只该看业务层描述，原始细节走 log。新工具的 except 默认走 dispatch 级脱敏，别各自 `f"…{e}"`。另：咕咕生成的 bug 报告外发前先抹 UUID/路径。（顺带：那个移动失败本身是 OS 文件权限问题、不是鉴权漏洞，咕咕"token 只有 read 权限"的推测是错的、会误导排查。）
+
+## 2026-06-29 · 完整 2b（结构化 facts/总线/命令）+ 误判捕获 v2 + 面板阈值可调 + 反思门控修正
+
+接着 6-28 那批往下推，把记忆与感知又夯了一层。主线是「**别把会变/会错/查错的东西当永真，也别让一个粗信号糊住真问题**」。
+
+**① 完整 2b：facts 从 markdown 行升级成结构化 `facts.json`。** 每条带 `kind`(observed 亲述/inferred 推断)/`conf`/`imp`/`ts`。反思吐 `facts_add`(对象)/`facts_remove`，`apply_facts_ops` 应用：命中相似条**印证**(升 conf、刷新 ts、亲述升级 observed)、否则新增；注入按 `effective×importance` 过滤排序，**observed 不衰减、inferred 按 45 天半衰期淡出**(复用 decay.py)——旧推断自然过期不再赖着。旧 `facts.md` 首次读取自动迁移。配套上了 `events/bus.py`(记忆变更发 `MemoryUpdated` + 审计 listener，Core 不耦合下游) 和 `/memory`/`/forget` 控制命令(web 短路、零 LLM)。
+
+**② 一个本以为简单、其实是短中文死穴的点：facts 去重的相似度阈值。** 用字符 bigram Jaccard 判「是不是同一条」，一开始设 0.55，结果「用户喜欢猫」和「用户喜欢狗」≈0.6 会被**误并成一条、丢信息**。短中文事实「同骨架、差一个关键名词」太常见，阈值必须抬到 0.7 挡住这类假阳性；代价是「插画师/自由插画师」这种插字改写不自动合并、留成两条近似——**刻意取舍：宁留近似重复，绝不误并**。
+
+**③ 误判捕获 v2：从正则改成反思 LLM 判，还能分类型。** 用户一句「查错了数据会算进误判吗」点破两个问题：(a) 正则注定**漏召回**——纠正词表里只有 `不对，`，用户真说「**错了，**这是排位赛数据」反而抓不到；(b) 正则**分不清**「读错需求(感知错)」和「查错数据(执行错)」，后者会把感知误判率虚高。改法：反思那次 LLM 顺带输出 `correction:{is_correction, kind}`，`kind` ∈ `感知误读`/`数据或执行错`，零额外调用，正则降级为兜底(仅 extract 失败时用)。面板据 kind 拆出「**感知误判率**」(只算感知误读，这才是感知系统要优化的)与「纠错构成」。真模型验证：查错数据→数据执行错、要陪伴却给方案→感知误读、普通问题→非纠正，全判对。
+
+> 上线后用户拿真实对话又试出一类假阳性：一段 F1 查数据的多轮纠错里，用户最后说「**是我错了，你刚搜的是对的**」——这是用户认自己错、咕咕反而对，却被误判成「咕咕被纠正」算进了误判率。根因是 correction 提示把「错」字本身当线索。修法：把原则**钉死成「谁错了」**——`is_correction=true` 的唯一条件是错的主体为「咕咕本人这次的回答/理解」，错的是别人（用户自己 / 第三方「他记错了」/ 外部源「官网写错了」/ 聊话题「那判罚是错的」）一律 false。5 例矩阵全判对。**教训：判「是不是纠正」不能看关键词，得看主体——同一个「错」字，矛头指向谁，结论相反。**
+
+**④ 感知面板阈值可调。** 活跃门槛/标红误判率/歧义线/最小样本做成顶部阈值条，改完即时重切；后端把这些提成 query 参数(默认即原常量)。**只改「怎么看」这屏数据，不动系统行为阈值**(lens/decay 等仍留代码常量、按红线人调走部署)——给「会坑所有人的旋钮」开方便口子是要克制的。
+
+**⑤ 反思门控修正：确认轮带动作也要反思。** 「嗯/好的」这类纯应答词原本整轮跳过反思，但它们常用来**确认咕咕的方案**。判据改成「**这轮咕咕有没有动作(用工具)**」而非消息长短：「要建项目吗?」→「嗯」→真建了 → 反思记下；「嗯」→纯寒暄回应 → 照样跳、不浪费调用。配合早先网关层的 `awaiting`(让「嗯」确认能被 agent 处理)，「嗯当确认用」这条线就闭环了：**网关放行 + 反思记录**两头都通。
+
+**一句话：** facts 会变(增量+衰减)、判断会错(误判分类型)、确认不是废话(带动作就记)——都是同一种「别一刀切、别把粗信号当真值」的克制。性能上也确认过：反思全程 fire-and-forget 后台跑、不挡用户，单次 ~1800 in + ≤900 out、不带历史。
+
+## 2026-06-28 · 感知系统 P0–P2 落地 + 记忆增量化/时间衰减 + 一个静默吃掉全部老用户反思的坑
+
+围绕「把决策环最上游的『感知』做成显式、可观测、可 per-user 成长」连做了一串，全程守住**聊天热路径只有一次 LLM**（观测和学习都塞进异步反思）。
+
+**① 感知诊断面板「没数据」——两个叠在一起的坑。** 发了好几轮对话面板还是空。逐层排除（阈值→Redis 空→反思没跑→对话崩）后挖出两层：(a) 另一 agent 的「会话总结」给 `conversation_sessions` 加了 `summary` 列但没跑迁移 → 对话直接崩 → 反思根本没机会跑（`create_all` 只建缺表不补列，必须 alembic）；(b) **真正的静默杀手**：`complete_json` 的 `max_tokens=500` 太小。反思要回显**整份 facts**（老用户攒了 900+ 字）+ daily/summary/perception，输出超 500 被截断 → JSON 解析失败 → 返回 `{}` → 什么都不写。**对空 facts 的新用户正常、对有积累的老用户全废**，所以特别难发现。先治标（max_tokens 跟量走、上限放到模型最大），再立刻意识到这是 2b 该根治的。
+
+**② 反思增量化（2b · delta）——根治上面的脆弱性。** 让反思**只吐这轮的增删** `facts_add`/`facts_remove`、不再回显整份 facts；`store.apply_facts_delta` 应用（删按内容匹配：照抄原文 exact 优先、子串≥4 字兜底防泛词误删；增去重追加）。输出体量**不再随 facts 增长**，截断坑从源头消失，`max_tokens` 回落固定 900。旧 prompt（回显整份）兼容回退。线上真模型验证：6 条种子 facts，对话推翻 1 条 + 新增 2 条 → 精确删 1 增 2、其余 5 条一字不动。
+
+**③ summary 时间衰减。** summary 没 TTL，会一直当「最近状态」用——其实几天就该打折。写时盖 `summary.ts`，注入时按半衰期（5 天）权重换话术档（新鲜直接给 / 半旧「约 N 天前、可能已变」/ 过时「多半过时、别据此提具体事」）。抽出通用件 `agent/decay.py`，给后面 lens 的 confidence 衰减复用。
+
+**④ per-user 解读先验 lens v1（P2，最关键的自学习层）。** 第 5 类记忆：「怎么读懂这个用户」的偏置规则（如 `「还行」→ 多半不太行`），存 `.agent/lens.json`。设计死守几条：**事件驱动**（反思多吐一个 `lens_hint` 字段当燃料、零额外热路径 LLM）；**防过拟合双闸**（模型自律 + 候选须**复现**才提拔成规则——一次性误会不立刻学成偏见）；confidence 会动（新规则 0.6 / 印证↑ / 半衰期 30 天衰减 / 低于 0.25 退休）；注入「解读镜片」**偏置不独裁**。
+
+**⑤ lens 复现匹配的真正难点：跨改写认出同一条规则。** 模型两次表述同一规则，用词差很多（「说…通常…多问一句」vs「讲…其实多半…追问」），整句字符 bigram Jaccard 只 0.16，认不出是同一条。词面相似度做不到语义等价。解法：让模型按**规范格式** `「触发语」→ 含义/应对` 输出，匹配**以触发语为键**（「没事」的两次不同表述能收敛、「没事」vs「随便」不会误并）。这是 lens 能可靠复现去重的关键设计。真模型验证：纠正对话「我说还行其实不太行」→ 模型吐出 `「还行」→ 多半是不太行，别照字面接`，格式完全贴合。
+
+**一句话总结:** ②③④ 都靠同一条原则——**别把「会变/会错」的东西当永真**：facts 增量改不整份重写、summary 会过时要打折、lens 从「错」里学且要复现验证才信。而①再次印证：**静默失败最坑**（截断→`{}`→无写入，无报错），排查记忆链路时要直接验「反思到底写没写盘」而不是猜。
+
+## 2026-06-27 · 生产部署连环坑：被冲的状态文件、create_all/alembic 不同步、废弃 NOT NULL 列
+
+本地改完一批（默认问候、精力硬拦等）push 到 main、devserver `git reset --hard` 对齐后，往**生产**（`www.gugugu.site`，阿里云 1Panel + systemd，和 192.168.110.51 那台 dev 是两台机）推这版，结果踩了一长串坑——几乎每一步都暴露一个「dev 想当然、prod 不成立」的假设，逐个记下来（都已沉进 `ops/deploy.md`）。
+
+**① `make stop` 说「未运行」但服务在跑。** 生产 backend 是 systemd `gugu-backend.service` 托管的，而 `make start/stop` 管的是 Makefile 另起的手动 uvicorn——两套进程。在生产用 `make` 控制后端只会迷惑 +抢端口，**一律 `systemctl`**。
+
+**② 服务 `status=203/EXEC` 起不来。** 203 = systemd 执行不了 ExecStart 里的 `.venv/bin/...` → **venv 被这次部署冲没了**（`reset --hard`/`clean`/重新解压都可能干掉 gitignore 的 `.venv`）。重建 venv + 装依赖才起得来。
+
+**③ `password authentication failed for user "pm"`。** 部署把 `.env`/`config.override.json` 也冲了，DB 密码退回占位值（用户原话「忘了重建 env 了」）。教训:**任何代码刷新后，启动/迁移前先确认 `.venv` + `.env` + `config.override.json` 三样都在、DB 密码对**。
+
+**④ `alembic upgrade head` 从 base 重放、第一条就炸 `DuplicateColumnError: column "description" already exists`。** 这是核心认知坑:**生产库的表结构一直是后端启动 `create_all` 按模型直接建的，`alembic_version` 表从来是空的**——alembic 以为啥都没迁，从头重放，撞上 `create_all` 早建好的列（非幂等的老 `add_description` 一撞即死）。dev 一直假设「迁移是 schema 的唯一真相」，prod 上根本不是。恢复:`alembic stamp head` 让它停止重放（只写版本号、不动表），再把本次新迁移真正该加的「新列/新表」手动补上（新迁移多写成 `IF NOT EXISTS`，直接在库上跑零风险）。
+
+**⑤ 自食其果:「旧库和新工具系统不兼容」。** stamp head 之后，建项目报 `null value in column "notes" violates not-null constraint`。根因正是**我前一步嘴上说「删废弃列的迁移非必需、先别跑」——错的**。新代码把 `notes` 字段从模型删了、INSERT 不再带它，但旧库那列还是 `NOT NULL` 且**没有 DB 默认值**（默认本是 ORM 在 Python 侧给的，删字段后没人给）→ 每次 INSERT 都插 NULL → 违约、建项目全崩。**废弃的 NOT-NULL 无默认列必须删**，不删就挡死所有写入。删掉 `projects.notes` + `scheduled_tasks.action_type` 后恢复。
+
+**⑥ 怎么一次性查清所有差别（而不是逐个撞）。** 用 `alembic revision --autogenerate` 当**只读差异扫描器**:它把当前模型 vs 实际库的所有出入生成成一个文件（不改库），`upgrade()` 里 `op.add_column`/`drop_column`/`alter_column` 一目了然。读完即删（它是 head 之上的游离迁移，留着会被后续 upgrade 整份应用）。这次跑出来 `upgrade()` 是空的 `pass` → **确认生产库已和新模型 100% 一致**，连环坑收尾。注意它有假阳性（server_default、索引命名等），当对照清单用、别整份 apply。
+
+**附带两记:** 部署后所有数据页 `summary 401` —— 重建 env 时 `SECRET_KEY` 变了、旧登录 token 全失效，**重新登录即恢复**（根治:SECRET_KEY 跨部署保持同一值）。还有 1.6G 小机上 `make install` 把 unit 重置回 `--workers 2`（≈660M）贴着 OOM 线，得重新 `sed` 降单 worker。
+
+**一句话总结:** 这串坑的共同根:**生产环境的真实状态和 dev 的脑内模型不一致**——prod 的 schema 是 `create_all` 攒的不是 alembic 迁的、状态文件会被部署冲掉、删字段的迁移不跑就留下挡路的 NOT NULL 列。排查的通用解法也统一:**别逐个撞，用工具拿全量真相**（`alembic autogenerate` 看 schema 差异、`pg_stat_activity`/配置确认连的哪个库、`journalctl`+`logs/gugu.log` 分清 systemd 视角和 Python 真错）。全部订正/补进了 `ops/deploy.md` §5.1 / §6 / §6.2 + 常见问题表。
+
+## 2026-06-27 · 对话默认问候改成生成 + 一个「前导 assistant 被剥」的隐蔽坑
+
+把 GuguChat 打开时那条写死的默认问候改成**咕咕自己生成**（带点记忆、像熟人开口），方案沉在 `agent/proposals/对话默认问候-生成方案.md`。几轮迭代把节奏定型：**进入全新对话时**后台轻量直连生成一句（不走 agent 循环、不计精力），内存 ref 不跨刷新缓存；打开对话框时走**打字机动画**逐字冒（生成版 / 兜底都走）；生成没好就从静态兜底池随机取一条。中途纠了个浪费：本来「每次刷新都生成」，但刷新常停在老会话（`SESSION_KEY` 还在、问候根本不显示）→ 改成由 `GuguChat` 据 `SESSION_KEY` 判断，只在真·全新对话才生成。
+
+**真正值得记的是「问候纳入对话」逮到的坑。** 用户回复问候后，咕咕却**当成对话刚开始又重新寒暄**。第一反应是「问候没发给后端」，但其实它发了、也入库为新会话首条 `assistant`（`created_at` 早于用户消息）了。真正的根因藏在 `agent/sanitize.py`：发给 Anthropic/MiniMax 的消息序列**首条必须是 user**，`sanitize_messages` 第 4 步据此 `while norm[0].role != "user": pop(0)`——把那条**前导 assistant 问候每轮都剥掉**，模型永远收不到。所以「把非用户发出的话塞成历史前导 assistant」这条路根本走不通。改法：新会话首轮把问候**注入 system prompt**（"你已经说过：「…」，别重复"），保持序列 user 开头；DB 那条 assistant 仍留着只供会话回看显示。教训沉成通用约束写进了 `agent/00-总览.md`「五、消息序列约束」：**想让模型看到非用户输入的上下文，走 system prompt，别靠前导 assistant 历史**；排查「模型无视某条历史」先看它 sanitize 后还在不在。又一次印证——**先怀疑数据没到，往往其实是到了又被某层清洗悄悄丢了**（和之前 best-effort SSE 丢事件同型）。
+
+---
+
+## 2026-06-27 · 状态命名 + 动画化、实时刷新系统性补课、又一轮真实性守卫
+
+接着可靠性那波，今天是一串「用户在用中发现 → 当场修」的迭代，几条线索其实指向同一些底层模式。
+
+**状态命名 + 动画化。** 先把对话里所有「状态气泡」做成后台可配（特殊状态 + ~55 个工具，留空回退默认），又加了「一个状态多个名字、随机显示」。设计上定了**单一数据源**：工具名/复查前缀/整理中由后端在 `tool_call` 事件里解析好再下发（前端不再拼「复查·」前缀），只有「思考中」是无 SSE 事件的纯前端态，单开 `GET /agent/ui-labels` 取。随机点也分两边：后端 `_pick_label` 每次发事件抽、前端 `watch(thinking)` 每次进思考态抽。中途用户要「所有状态都用 SSE 动画方式出现、切换太快要排队」——做了个**状态动画队列**：SSE 事件入队、逐个打字机入场，每条放完才切下一条，真回复 token 一到就打断让位。思考默认最后定回三个点。
+
+**实时刷新的系统性补课。** 用户两次反馈「咕咕改完 md 预览不刷新」「重构项目后项目卡不动」。挖下去是同一个根：**视图刷新只依赖 best-effort 的 events SSE**（Redis pub/sub 发完即弃，dev `--reload` 重启 / 订阅竞态就丢事件——和之前首条空气泡同类）。而对话结束的兜底 `refreshAfterTools` 又有两处洞：① 文件分支只刷文件管理器、没 bump 预览要的 `rev.files`；② **前端工具集和后端 `RESOURCE_BY_TOOL` 早就漂移了**——`_PROJECT_TOOLS` 漏了 `set_stages`/`update_todo`（重构正用这俩！），`_FILE_TOOLS` 把 `move_items` 错写成根本不存在的 `move_file`、还缺 `copy_file`。修法统一成**确定性刷新**：工具一 `tool_done`（改完那刻）就走**已连好的对话流** bump 对应资源，不等回合末、不靠会丢的 SSE；并把工具集对齐后端权威映射、加注释防再漂。教训：**best-effort 的实时通道必须配一条确定性兜底**，而且两份「该刷哪些」的清单分散在前后端 → 迟早漂移，至少要互相注明出处。顺带预览还做了滚动位置存 localStorage（刷新会销毁重建组件，内存变量留不住）+ 下载 URL cache-bust（否则「刷新了但浏览器给缓存」表现成没刷）。
+
+**又一轮真实性守卫——这次靠轨迹日志逮到。** 用户：「咕咕说复制进项目了，其实在原地复制了一份。」翻 `agent.traj`（上一波加的 P1 轨迹）当场还原：`copy_file` target 传得对，是工具 bug——跨项目复制时 `folder_id` 默认继承了源文件夹（属于原项目）→ 落回原地，却照样 `ok`，模型据此谎报。抽 `_target_loc` 统一目标定位（跨项目不继承源文件夹）。然后**举一反三扫了所有工具**，逮到一批同类「空转报成功」：`update_client/event/scheduled_task/todo` 没给任何改动字段也 commit + 报 success → 全改成「没实际改动就报错」。沉淀出一条工具自律：**没产生实际效果（no-op / 解析失败退化 / 目标解析不出）一律报错，绝不 return success**，否则就是给上层喂谎报素材。MAX_VERIFY 也按用户要求 3→5。这波再次印证上次的体会——**先有可观测（轨迹），这种「谎报」才从「猜」变「翻一眼就定位」**。
+
+**杂项 + 起步。** mimo 标题不更新（思考吃光 30 token 取不到标题，禁 thinking + 挑 text 块修了）；mode2 文件卡拖影比面板卡大（克隆体挂 body 丢了 `.modal.stages-expanded` 上下文，给克隆打标记类补回版式）。最后和用户讨论了**新手引导**方案并落成 `agent/proposals/新手引导-实现方案.md`（注册播种 + 延迟欢迎气泡 + claim-once 情境引导 + 回头看 + demo 控制面板，全静态文案随机、后端持久化），待开工。
+
+---
+
+## 2026-06-26 · Agent 可靠性大改：从「工具没正确调用」一路挖到守卫体系
+
+起因是用户一句「咕咕不管 M3 还是 mimo 都有很严重的工具没正确调用的问题」。两个模型都中 → 八成是**共享逻辑回归**，不是某个 provider 特有。让我别急着改、先把整条思维链查清楚。
+
+**取证式诊断**。先看 `AgentUsage`：最近一片请求 **`tools=None`**——模型根本没调任何工具。但隔离探测发现**模型本身正常**：给真实 system prompt + 54 个工具，问「列出我所有项目」，M3 干净利落地发 `tool_use: list_projects`。那为什么生产里不调？翻到出问题的会话（session 190，一段「改文件」灾难）才看清：咕咕在**用嘴假装**——「让我读一下文件…读到了，文件里是带数字的列表…改好了」，全程一个工具没调，用户都看穿了「你根本没读文件」。再把这段被污染的历史 replay 给同一个 M3，它**继续叙述假装、还编造文件内容**。**根因实锤**：模型某轮没真调工具、改用文字假装，这段叙述进了历史后**自我强化**——它看到自己「过去都是用嘴读写」，就跟着堕落。与模型无关，是上下文条件反射。
+
+**拉 OpenClaw 仓库取经**（用户找了另一个 agent 逐层读 + ChatGPT 的见解）。结论很统一：OpenClaw 的可靠性**不是靠更聪明的 prompt**，是四件工程事——① 把 agent 拆成**可观测 pipeline**；② 每个反复出现的坑加一个**确定性守卫**（不是再写 prompt）；③ 工具系统**确定性 + 强类型契约**；④ 诚实承认**强模型是底座**（cloud 模型/32B+ 才可靠，没银弹让弱模型可靠调工具）。核心理念一句话：**Runtime 信 Tool、不信 Assistant**——Assistant 说「保存好了」但没看到工具事件，就该认为它在胡说。但要拨正一个误读：「模型要不要发出 tool_use」这步**没有 hook 能强制**，能硬的只是「检测到失败→重试」，OpenClaw 这步也是靠 prompt + 强模型，和我们一样。
+
+**修法：prompt 红线 + 代码守卫（坑→守卫，别坑→prompt）**。
+- prompt 层：`skills.md` 加反叙述铁律（绝不用文字假装操作）、`policy.md` 澄清「不报工具名≠不调工具」、`persona.md` 加「看图信眼睛别反射性联网」。
+- 代码层（`core.py` 两路同构）：**narration 兜底**（`_looks_like_narration` 抓「让我读…读到了…改好了/已创建」+ 零工具 → `_NARRATION_NUDGE` 逼真调）；**决策守卫**（`_is_decision_dodge` 抓「用户明确命令改 + 回复『不用改/已合理』驳回 + 零工具」→ `_DECISION_NUDGE` 逼执行或问清）；mimo 空回复兜底（`empty_retry`）。
+- 顺手做了可观测（P1 `agent.traj` 工具调用轨迹）和工程加固（P4 `SkillRegistry.add` 注册期契约 fail-fast，重名/坏 schema 启动就炸）。
+
+**关键洞察被实测反复验证：提示词软、守卫硬。** M3 提示词就够——被污染历史下也能「认错 + 真调工具」。但 **mimo 提示词救不动**：同样场景它嘴上认错、接着编造文件内容，零工具；只有 narration 守卫抓到→注入 nudge 逼一轮，mimo 才乖乖调 `read_file`。**mimo 的可靠性全靠代码守卫兜，M3 靠提示词。** 这正反两面把「模型是底座」钉死了。
+
+**踩坑：正则是高精度低召回，全链路实测才逮得到逃逸。** 单元测试我把检测正则调到「该抓的抓、疑问/邀约不误伤」（如「都保存了吗？」「要不要帮你建一个？」一律放过）。但在 devserver 上跑**真实 LLMRunner 循环 + live mimo + 强污染历史**做全链路检测，~24 轮里逮到 **1 次逃逸**：mimo 说「我再确认一下。确认了，已经是每行一个的格式了」——真假装，但措辞我没覆盖。补了 ③ 组（`确认了`/`已经是X格式了`）。**这种逃逸单元测试测不出，必须全链路跑真实模型才暴露。**
+
+**反过来又踩了误触发的坑——而且是用户先发现的。** 上线后用户说「咕咕输出完会再出现一次气泡然后收回，是在复查吗？」。查下来：一半是 intended（做了增删改后的静默自检，确认文字缓冲后丢弃，本来就这表现）；但另一半是 bug——我把完成断言泛化得太宽，「记 / 整理 / 安排 / 确认」这些**既能是工具动作、也是普通对话高发词**也被当成了假装。咕咕正常回句「已经记下了 / 已经安排好了 / 确认过这方向可行」（根本不需要工具）就误触发守卫、逼它重来一轮 → 前端就是那个「气泡又收回」。`确认了` 那个补丁更是直接命中「确认过这方向可行」。**最终把完成断言收窄到只收强 CRUD 动词**（建/创建/保存/删/发/移/归档/重命名），口语词全剔除，实测 0/13 误触发、0/10 漏抓。两个坑合起来一个教训：**narration 这类启发式检测，单元测试的「零误伤」只在我想到的样本上成立——低召回（逃逸）和误触发（口语词）都只有在真实流量里才暴露，得靠全链路实测 + 用户反馈兜。**
+
+**live 验证**。devserver 网页后端跑 `uvicorn --reload`，代码同步进来自动重载；真实循环 ×N 跑下来，**run3 亲眼看到守卫自动接管**（mimo 第一轮假装→循环代码自己 `_new_round` 注入 nudge→转去真调 `read_file`），全链路 ~93% 最终真调工具。IM（飞书/QQ）的 systemd 服务没 --reload，得 `sudo systemctl restart gugu-worker gugu-supervisor` 才让 mimo-on-IM 拿到代码守卫（提示词在 IM 也热读，故 M3-on-IM 已好）。
+
+**体会**：① **能确定性化的别交给模型**——但「决定要不要调工具」这步确定性化不了，守卫只能「检测失败→重试」，这是天花板。② **先可观测再优化**——今天「调没调工具」猜了好几轮，有了 `agent.traj` 轨迹就是翻一眼。③ **弱模型靠工程补、强模型省一半事**——守卫把 mimo 从「经常假装」拉到 ~93%，但补不平残余不确定性，重工具任务 M3 仍更稳。沉淀成三份文档：`agent/01-架构图.md`（三张图）、`agent/03-可靠性.md`（可靠性工程 + P0–P4 Roadmap）、本文。
+
+---
+
+## 2026-06-26 · Agent 大改：Tools/Skills 分层 + 自建搜索 + 口径/记忆排查
+
+这天主要在 agent 后端，几条线串起来。
+
+**先把 `skills/` 改名 `tools/`**：原来的 `agent/skills/` 全是函数调用工具，名实不符。改名后把 `skills/` 这个词腾出来给真正的「prompt skills」——带触发条件的剧本 md，渐进式按需加载：system prompt 只注入索引（一行 name + 何时用），模型相关时调 `use_skill` 把正文拉进来再照做，skill 数量可无限扩不撑上下文。配套加了 `http_get`（窄口联网取数，**带 SSRF 私网拦截**——后端在内网，旁边就是 Redis/DB，裸 http_get 等于给模型开了打内网的口子，必须拦私网段 + 不跟随重定向）。第一个 skill 是天气（wttr.in）。
+
+**weather 之后想做 news，踩了"要不要浏览器"**：原版 news skill 用 `browser_use`（我们没有），且新闻首页 JS 重、`http_get` 抓的截断 HTML 全是导航栏。结论：要么建真浏览器（重），要么换 RSS（http_get 抓干净的 XML）。选了 RSS，后来发现人民网 RSS 也不稳，索性**删掉 news skill**，新闻归入通用搜索。
+
+**搜索分层：自建 SearXNG（免费）+ Tavily（深度）**。目标是把 ~80% 普通联网（找官网/文档/事实/新闻）从烧配额的 Tavily 挪到免费的自建搜索。`web_search` 接 SearXNG、Tavily 改名 `deep_research`，路由按任务分写进 `skills.md`。部署 SearXNG 踩了一串：① devserver 拉不动 Docker Hub（i/o timeout，走 daocloud 镜像源）；② 内存只剩 600M，用 `--memory` 死锁容器防 OOM 拖垮后端；③ **国内只有 sogou/quark/360search 可达**，google/bing/ddg 全超时——工具固定带这三个引擎。后来用户在 1Panel 自己部署到 110.50，403 是因为 SearXNG 默认不开 json 输出（`search.formats` 要加 json，且这段是 `search:` 顶层、别误塞进 `server:`）。还发现 `category: news` 在国内毫无用（news 类别引擎全被墙），去掉了。后台 Admin 加了 SearXNG/Tavily 配置 + 测试按钮。
+
+**修了个真实线上 bug：「咕咕开小差了」**。多工具对话后追问会 400。复现是：工具轮被持久化进 content_json，追问时历史按 token 窗口截断，`sanitize_messages` 用"全局 id 是否存在"判断 tool 配对——"开头必须是 user"会丢掉打头的 `assistant(tool_use)`、把紧跟的 `tool_result` 变孤儿，MiniMax 直接报 `tool result's tool id not found`。改成**按位置标记合法对**（只认相邻的 tool_use→tool_result），并补了回归冒烟。
+
+**两轮提示词收口径**。① 语气：从 GPT 的人际/情绪心理学视角看，咕咕自我更正时说"确实不该 / 没过脑子 / 完事"会让用户不适——给 persona 加了「和善底线」（纠正方案不纠正人、归因到用途而非人、别让用户照顾 AI 情绪、把选择权交还用户），并和用户新加的「语气/长度」设置衔接（short/formal 加兜底，和善是不可调的底线）；顺带把 emoji 从"6 个黑名单"换成"极简 + 只标内容类别"，并按用户意见**去掉了 emoji 风格的用户选项**（rich 档正好违背极简）。② 工具名泄露：加了搜索工具后，咕咕被问"这是怎么搜到的"会抖出 `use_skill→http_get→wttr.in` 三步、被问"http_get 是什么"会复述工具名——`policy.md` 原有规矩没压住（黑名单还是老工具、没专门管"问机制"）。补全新工具名 + 加"被问怎么做到的"专门口径 + "用户直接甩工具名也别复述"，`run_ephemeral` 实测 4 类套话 0 泄露。
+
+**收尾几件小事**：按用户意见隐藏总览面板（默认进项目、注释路由让它不进 bundle、代码留着以后做团队功能）；排查"记忆只到 25 号"——查下来 devserver 的 daily.md 顶部就是 26 号、反思正常，原来是用户在 Mac 本地后端看的，那是另一套独立的本地存储，不是 bug。
+
+**最后一个有意思的：让咕咕"不确定就主动查"。** 用户发现问"月薪喵是什么"（一个新出圈的猫表情包梗），咕咕"没听过、你从哪看的"踢皮球。第一反应是给 skills 加条"遇到不懂就 web_search"，但用户叫停了——说别把"帮用户"降成 if-else 规则，真正该去掉的是 skills 里"省工具用"的成本焦虑（它压着咕咕不敢主动搜）。去掉框架后实测更糟：咕咕这回不踢皮球了，但**凭字面编了个"工资自嘲梗"**（错的）。于是看清这俩失败（踢皮球 / 编答案）是同一个根——没有"答之前先确认自己是不是真知道"的自觉，这是性格不是工具规则。最终给 persona 加「不确定就去查证、别糊弄」（立足"给对的答案才是真帮用户"，限定在新词/热梗/易变事实，稳定常识仍直接答）。实测"月薪喵"→ 真去搜、给出真实含义（博主的布偶猫），"Python 是什么"→ 直接答不多搜。**这次的体会：「主动帮用户」是性格层的事，往 skills 塞规则只会按下葫芦浮起瓢（不踢皮球了就改成编）。**
+
+---
+
+## 2026-06-26 · 通知气泡改版 + GuguChat 加宽 + 预览闪烁修复
+
+围绕「悬浮球生态」（咕咕球 / 聊天小窗 / 音乐播放器 / 通知气泡）做了一轮统一。
+
+**通知气泡彻底对齐咕咕生态**：原本是右下角独立风格的 toast（自己一套圆角/阴影、4 条堆叠、5 秒进度条自动消失、可选配色）。改成：
+- 视觉与小窗 / 播放器同款玻璃面板（`blur(28px)` + 20 圆角 + `glass-shadow-lg` + 内高光 `::after`），宽 360px 三者右对齐成一列。
+- 行为改为**新通知把旧的顶上去**：`column-reverse` 下新条插到底部（贴近球），旧条 `nb-move` 上移、停留 1 秒后自动消失（每条进可见栈时排一个 1s 计时器，被下一条顶上去就触发）。最新这条不自动超时。
+- **去掉进度条**，最新这条只能点关闭按钮关、或被下一条顶替——通知是 admin 广播的重要信息，不该自己悄悄消失；旧条则在被顶替 1 秒后退场，避免堆积。
+- 开 / 合**以咕咕球圆心为缩放原点**，逻辑直接抄音乐播放器：贴球时 `calc(100% - 25px) calc(100% + (anchor-53)px)` 指向 FAB 圆心，被小窗 / 播放器顶高时退化为 `50% 50%` 自身中心。原点由 `uiStore.chatNotifyOrigin` 实时算好传过去。
+
+**通知支持完整 Markdown**：新建 `utils/markdown.js`，一个**独立的 `marked` 实例**。不能直接复用 GuguChat 的 `renderMd`——那套是 `marked.use()` 改全局配置、还挂了 hljs 代码高亮和复制按钮，是聊天专用。隔离实例只要 GFM + 软换行 + 链接新标签打开，两边互不污染。气泡和 admin 预览各写了一套紧凑 `:deep()` md 排版（标题/列表/代码/引用/表格…）。admin 发布页顺手去掉了配色选项，`content` 后端是 `Text` 不限长。
+
+**GuguChat 小窗 + 播放器加宽**：`SMALL_W` 316→360，播放器 316→332（外宽含 padding 正好 360，和小窗对齐）。
+
+**播放器随聊天放大缩回球**：聊天展开（放大）时，播放器原本会浮在展开窗右下角（z 比窗口高），很碍眼。给 `v-if` 加 `&& !expanded`，它就走 `mini-player` 离场动画缩回 FAB——而 `transform-origin` 早就指向球心，天然就是「缩进球里」。退出放大再弹回。
+
+**项目卡文件预览滚动闪烁**：用户反馈滚文件网格偶发闪屏，怀疑是抽屉预览代码冲突。查下来不是——`FilePreviewModal` 关闭时 `v-if` 不在 DOM。真因是每个文件卡 `.fc-thumb-area` 常驻 `will-change: transform`，几十上百个卡片把合成器层预算撑爆，叠加 `.modal-right` 的 `backdrop-filter` 滚动时偶发重合成闪烁。去掉常驻 `will-change`（保留 `translateZ(0)` 维持遮罩层），滚动容器 `.file-content` 再加 `isolation: isolate` 隔离重绘。`will-change` 常驻在大量元素上本就是反模式。
+
+---
+
+## 2026-06-26 · 一批体验打磨：FAB/气泡/颜色/日历联动/预览实时刷新
+
+本次迭代无新功能模块，全是从真实使用中暴露的交互细节：
+
+**咕咕 FAB 只跳图标**：原来 `ai-fab--typing` 加在 `<button>` 上，整个圆圈都在跳，视觉廉价。改到内层 `<svg>` 后圆形底座静止，只有图标轻微弹跳（translateY 0→-2px→0，0.2s），更克制。
+
+**空气泡问题**：agent 有时只输出空白 token，气泡就出来了但没内容。两层修复：① 渲染条件加 `.trim()` 判断；② stream 结束后 `finally` 里检查 `text?.trim()`，空的就从 `messages` 里 `splice` 掉。
+
+**agent 建项目不撞颜色**：之前随机选颜色会选到已有卡的颜色，视觉上撞色。新增 `_pick_unused_color`——先查当前用户所有项目已用色集合，从预设里过滤出未用的再随机；全用完了才退化为全随机。
+
+**新建项目弹窗两行变紧凑**：客户+日期并一行，看板状态+颜色并一行，用 `grid 1fr 1fr`，状态按钮字号和间距缩小，颜色 chip 缩到 20px 并 `flex-wrap: nowrap`，单行不溢出。
+
+**DateSpanPicker 省年**：`fmt()` 判断是否当年，是则只输出「月/日」，不是才输出「年/月/日」。影响所有用到 `DateSpanPicker` 的地方，包括项目卡、新建弹窗。
+
+**全局注册 DatePicker/DateSpanPicker**：这两个组件被 Calendar、ProjectModal、CalendarPanel 等多处 import，提到 `main.js` `app.component()` 全局注册，各处无需单独 import。
+
+**定时任务自定义日期单选**：原来用 `DateSpanPicker` 选区间（对应 `@once:...:end=...`），改为 `DatePicker` 单日，cron 格式简化为 `@once:YYYY-MM-DDTHH:mm`，parseCron 同步移除 endDate 解析。
+
+**文档预览实时刷新**：发现 agent 编辑文件后，`FilePreviewModal` 和 `FloatPreviewWindow` 的 blob URL 不会更新（它们只在 `file` prop 变化时重加载）。解法：watch `liveStore.rev.files`，文件改动 SSE 到来时对 `isText` 类型文件重新 fetch。图片/视频/PDF 跳过，因为 agent 不会就地修改这些格式。
+
+**日历多选→添加项目**：拖选多日后侧栏"添加活动"按钮变为"添加项目"（渐变紫，与顶栏同款），点击走已有的 `uiStore.newProjectRange + openNewProject` 通路，弹窗自动填入所选日期范围。`ctxAddProject` 加 fallback：无 `cellCtx.range` 时用 `activeRange.value`（侧栏点击场景）。
+
+---
+
+## 2026-06-25 · 已完成列折叠的月份改 v-if：别让攒了几百个的项目卡全量挂载
+
+`DoneColumn.vue`（项目看板「已完成」列）按年→月折叠，但折叠用的是 `v-show`——**只切 `display:none`，里面的 `ProjectCard` 照样全部挂载**。已完成项目随时间累积到几百个时，初次渲染要 mount 几百个 526 行、十几个 computed 的大卡片（虽不发网络请求，但实例化 + DOM + 响应式开销都在），明显拖慢。
+
+改法：折叠容器的三处 `v-show` → `v-if`（年 body、月 cards、未设置日期 body）。默认 `onMounted` 只开当前年+当前月，于是**初次只渲染「最近完成」置顶 3 个 + 当前月那几张**，展开某月才按需挂载、折叠回去即卸载。`npx vite build` 通过。
+
+> `v-show` 适合频繁切换、想保留状态的场景；这里卡片纯由 props 驱动、且大多数长期折叠，`v-if` 的按需挂载/卸载更划算。
+
+---
+
+## 2026-06-25 · 批量上传/缩略图并发限流：共享 pLimit，别把连接和带宽打满
+
+低配生产（2C/2G + 有限带宽）批量拖几十个文件时，尾部请求 503/超时。根因是浏览器单域名 HTTP/1.1 约 6 连接，而前端**一次性把所有上传请求全发出去**（`ProjectModal.uploadFiles` 的 `Promise.allSettled(tasks.map(...))` 无上限），上传完成又同时触发同样多的 `/thumb` 请求，两者叠加瞬间打满。
+
+**做法**：抽一个共享并发限流器 `@/utils/concurrency.js` `pLimit(n)`（任务排队、按阈值放行、完成即补位），上传与缩略图加载**共用同一实现**，阈值集中两个常量：`UPLOAD_CONCURRENCY=3` / `THUMB_CONCURRENCY=6`，带宽紧只调一处。
+
+三处限流现状：① 上传 = `ProjectModal` 套 `pLimit(3)`（新增；`UploadModal`/`ProjectCard` 本就 `for` 串行）；② 缩略图加载 = `useThumbCache` 改用共享 `pLimit(6)`（替换原 `_acquire/_release`）；③ 缩略图生成（后端）= `_THUMB_SEM=Semaphore(cpu-1)`（早有，2C=1）。
+
+注意：仅**单客户端内**限流，多用户并发仍可能叠加——真要全局限得后端中间件信号量，当前量级不必要。`npx vite build` 通过。详见 `ops/performance.md` 十三节。
+
+---
+
+## 2026-06-26 · 给咕咕加「定时任务」技能：功能完整 + 尽量少调用
+
+先清理 reminder 遗留（`action_type` 整列删，含 DB 迁移），再加 `skills/scheduled_tasks.py`
+（list/create/update/delete 四件套，进 DefaultProfile）。两条硬约束贯穿设计：
+
+**功能完整**：CRUD 齐；create 一次带齐 name+instruction+cron+channels；update 含改名/改时间/改渠道/启停；
+delete 走两步 confirm；cron 支持 crontab 与 `@once:<ISO>`，复用 API 层 `_validate_cron`/`_norm_channels`。
+
+**尽量少调用**：① create 一口气建好，cron 由模型从自然语言直接生成、不绕中间「解析时间」工具；
+② update/delete **按任务名定位**（`task="每天进度"`），不必先 list 再操作（仿项目 `_resolve_project`）；
+③ list 一次返回全部。④ **故意不进 `RESOURCE_BY_TOOL`**——定时任务是单行写入、风险低，进去会每次触发
+自我核实那一轮，反而多调用，与「少调用」冲突，所以不放（代价：建完 /schedules 页不自动刷新，可接受）。
+
+附带：`_humanize_cron` 把 `0 9 * * *`→「每天 09:00」，skills.md 要求**对用户只说人话时间、绝不甩 cron 串**；
+设 feishu/qq 渠道前确认绑定。冒烟：建/按名改/按名删(两步)/非法cron拦截/cron人话化 全过，工具数 47→51。
+
+---
+
+## 2026-06-25 · 日历项目长条永远填不满 100%：一个 off-by-one
+
+日历里 100% 完成的项目长条只填到 ~90%。`barSegFill`（`Calendar/index.vue`）把完成度 %
+映射到项目日期跨度上填充，但两处天数口径不一致：
+
+- `total = daysBetween(start, end)`（**不含端点**，6/1~6/10 = 9）
+- `segEndOff = daysBetween(start, segEnd) + 1`（**含端点**，= 10）
+
+→ `progressDays` 最大只到 `total`(9)，而末段 `segEndOff = total+1`(10)，`9 >= 100% 段尾` 永不成立
+→ 末段走比例 `9/10 = 90%`。其实整条进度都被低估（50% 显示成 45%）。修复：`total` 也 `+ 1` 与
+`segEndOff` 对齐。验证：100% 单段 90→100、跨周末段 75→100、50% 45→50。
+
+> 这类"时间区间 / 索引"的 ±1 最容易藏在"含不含端点"上——map 进度到天数时，progressDays 的
+> 标尺（total）必须和判定点（segEndOff）用同一种端点口径。
+
+---
+
+## 2026-06-25 · 回收站一键清空 + 堵住咕咕泄露内部术语
+
+两个从真实使用里暴露的问题：
+
+**1. 回收站只能 50 个 50 个删，没法一键清空。** 根因：`list_trash` 写死最近 50 条且不翻页（116 个只看得到 50，删完再冒下 50），`permanent_delete` 又只收单个 `file_id` → 删 N 个要调 N 次，撞 `MAX_ROUNDS` 上限就卡住。后端其实早有一键清空（`DELETE /trash`，网页"清空"按钮用的），只是 **agent 没有对应工具**。修复：`permanent_delete` 加 **`all=true`**（复用清空逻辑、一次全删、走同样两步 confirm、按数量提示）；`list_trash` 列满 50 时附"还有更多、清空用 all=true"提示；skills.md 加硬规则"清空回收站一次 all=true，绝不逐个删"。
+
+**2. 咕咕把内部机制词泄露给用户。** 实际聊天里冒出了 `confirm=true` / `list_trash` / `system 注入的 116` / 空数组 `[]` / "调用 N 个"。policy.md 本有"不外露工具名/JSON"，但太笼统没对号入座。修复：把这次漏的**每个原词**作为反面清单钉进 policy.md，并给正反改写（❌「发了 50 个调用全失败、list_trash 返回 []、system 注入的 116 对不上」→ ✅「回收站清空啦，现在是空的 ✅」）。`builder.build()` 每次请求重读 .md，下条消息即生效、不用重启。
+
+> 注：那次"文件不在回收站"是用户自己在网页删了，不是咕咕乱删 ID——排除了行为问题。
+
+---
+
+## 2026-06-25 · "咕咕开小差了"真凶：历史窗口截断留下孤儿 tool_result
+
+用户反复"开小差"，排查绕了一大圈（先怀疑本地 DB 连接池、Redis、LLM key——全是好的），
+最后从共享 DB 的 SystemLog + devserver 的 `gugu-web-dev.log` 揪出真凶。
+
+### 排查链（记一笔，少走弯路）
+
+1. 前端文案区分来源：`咕咕开小差了 😵‍💫` = 后端发的 **error 事件**（core.py LLM 失败的 detail）；
+   `网络不太好 📡` 才是前端纯网络兜底。看到"开小差"就说明后端在报错，不是连不上。
+2. 本地 gugu.log 不增长 → 用户其实打的是 **devserver**（和本地共用 192.168.110.50 的 DB/Redis，
+   日志混在一起；traceback 路径 `/home/coffeiz/...python3.12` = Linux 才认出来）。
+3. devserver 还有个坑：手动 `--reload` uvicorn 占着 8000，systemd `gugu-backend` 绑不上 →
+   崩溃重启 **6031 次**（`Address already in use`）。这是噪声，不是"开小差"的因。
+4. 真错在 `gugu-web-dev.log`：`BadRequestError 400 invalid params, tool result's...` 与
+   `IndexError`（print 截断在 120 字符看不全）。
+
+### 根因
+
+`tokens.select_history` 按 token 预算"整条进出"裁历史，但**不守 tool_use/tool_result 配对**：
+窗口可能从一个带 `tool_result` 的 user 消息开头，而它对应的 `assistant tool_use` 正好被裁在窗外
+→ **孤儿 tool_result** → MiniMax（anthropic 兼容端点，比官方严）报
+`invalid params, tool result's tool id(xxx) not found (2013)`。有时它返回畸形流让 SDK 抛 `IndexError`，
+是同一病根的另一种表现。会话越长越容易踩（一个 136 条的会话是重灾区）。web.py 又把历史**原样**塞给 LLM，没有任何合法性清洗。
+
+### 修复
+
+`sanitize.sanitize_messages()`（`agent/sanitize.py`），在 web.py 发送前清洗：删孤儿
+tool_use/tool_result、删空消息/空 text 块、保证首条 user、合并连续同角色。**验证**：直接打 MiniMax，
+构造孤儿场景原样发 → 400（还原了那条确切报错），清洗后 → 200。
+
+> 经验：MiniMax 其实**容忍**连续同角色（实测 200），真正致命的是孤儿 tool_result。
+> 但合并同角色无害、留作健壮性。print 调试信息别截断太狠（`str(e)[:120]` 把关键的 tool id 切没了）。
+
+---
+
+## 2026-06-25 · 下线项目「备注」功能：贯穿全栈的字段删除
+
+项目备注（`Project.notes`）整体下线，从数据层到 UI 一条龙删干净：
+
+- **后端**：模型 `Project.notes` 列、schema（ProjectCreate/Update/Response）、API（`projects.py` 的 `_to_resp`/`create_project`）、全局搜索（`search.py` 不再按 notes 匹配）。
+- **agent 工具（数据集）**：`skills/projects.py` 里 `create_project`/`update_project` 的 `notes` 入参、`get_project`/`list`/序列化的 `notes` 字段、以及工具描述里的"备注"字样全部移除——模型从此既不会写也不会读项目备注。
+- **前端**：`stores/projects.js` 默认对象、`NewProjectModal`/`ProjectModal` 的备注 textarea + 自动保存 watcher + CSS、`Privacy.vue` 文案。
+- **迁移**：`20260625000001_drop_project_notes.py`，`DROP COLUMN IF EXISTS`（幂等）。
+
+两个注意点：① 只删**项目**的 notes，**客户**（`Client.notes`）和**邀请码**（`InviteCode.note`）的备注保留。② 模型改完应用即可正常工作（DB 那列还在、ORM 不映射、新建走 DB 默认值），**跑迁移才真正删列且不可逆**——本地/devserver/prod 各自决定何时 `alembic upgrade head`。改了 `skills/projects.py`（大脑），IM worker 需重启才生效。
+
+---
+
+## 2026-06-25 · 给 agent 加"自我核实"闭环：防"嘴上说建好了、实际没建全"
+
+模型偶尔会建项目/任务时漏建几个阶段或待办，却回一句"都建好啦 ✅"。靠 prompt 提醒("做完检查一下")不稳——它经常跳过。于是改成**代码强制**的核实闭环（`core.py`）。
+
+### 机制：`did_mutate` 开关 + 注入式自检轮
+
+- 本轮只要调过增删改工具（复用实时刷新用的 `RESOURCE_BY_TOOL` 全集，32 个）→ 置 `did_mutate`。
+- 模型说"完成"（不再调工具）时，若 `did_mutate` 且核实未满 `MAX_VERIFY=3` → **注入一条「系统自检」user 消息**，强制它用查询工具（`get_project`/`list_files`…）查证真生效/完整，**不全就当场补做**。
+- **关键：是闭环不是定额**。自检轮里如果只查没改 → `did_mutate` 保持 False → 收尾结束（**通过即停**）；如果补做了（又调增删改）→ `did_mutate` 重新置位 → 再来一轮自检。直到"只查不改"或封顶 3 轮。
+- **只读任务零开销**：没动过数据就不触发。Anthropic / OpenAI 两路同构，轮预算 `MAX_ROUNDS + MAX_VERIFY*2`，核实轮不挤占任务的 6 轮。
+
+### 两个坑
+
+- skills.md 原有一条"工具成功返回=完成，别反复 get/read 确认"（省 token）。它和强制自检**直接打架**——加了例外条款：收到「系统自检」必须照做。
+- 自检 prompt 要写明"**核实无误就简短确认一句、别把流程念一遍**"，否则模型会在核实轮啰嗦复述，徒增 token。
+
+### 代价（写给低配生产）
+
+每个含增删改的任务**至少多 1 轮 LLM 调用**（自检轮），2C/2G + MiniMax 上成本和响应时间都会涨。换"不漏建"的确定性，值；嫌重可把 `_mutset` 收窄到只盖 create_*，或调小 `MAX_VERIFY`。
+
+### 静默自检（补丁）：别"二次检查重复说一遍差不多的话"
+
+上线后发现 UX 回归：前端所有 token 都拼进**同一个气泡**（`aiIdx` 跨轮不重置），自检轮的确认（"已核实，项目X的3阶段都在 ✅"）直接拼到首条"建好了…"后面，几乎重复。web.py 原有的去重只做**精确前缀匹配**，自检是**改写/换词**，前缀对不上 → 漏过。
+
+改在 **core.py 源头**（web/IM 统一受益）：引入 `verify_mode`（进入核实阶段就持续到收尾，含其 `get_*` 查证轮）+ `verify_fixed`。核实阶段模型文字**先缓冲不实时发**——干净通过整段丢弃；只有补做时在补做那轮发一次"发现漏了X"说明。坑：自检几乎总要先调 `get_project` 查证，确认落在**下一轮**，所以 `verify_mode` 必须**跨轮持续**（最初按单轮标志写错了，冒烟测试抓出来）。
+
+### 冒烟测试（无 API 成本）
+
+在接缝处打桩（`_stream_round`/OpenAI client/`registry.dispatch`），用脚本化假回复驱动 **core.py 真实循环**，`backend/scripts/smoke_self_verify.py`，5 场景 23 断言全绿：① 干净通过→确认被抑制（核心诉求，断言"已核实"不在流出文本里）；② 发现漏→只发一次"发现漏了X"、中间/末尾确认静默；③ 纯查询不触发；④ 反复补做封顶 3 轮不报错；⑤ OpenAI 路同构。
+
+---
+
+## 2026-06-25 · 生产整机卡死：以为是自己传的代码，真凶是 pgAdmin + 2G OOM
+
+第一次把咕咕部署到自己的生产服务器（阿里云 2C/2G + 1Panel），传了几个文件后**整机卡死、网页打不开**。第一反应是「我刚传的代码把后端搞崩了」——结果完全不是。
+
+### 排查：先看「谁在烧 CPU」，而不是猜
+
+```bash
 ps aux --sort=-%cpu | head        # CPU 谁占满
 free -h                            # 内存
 journalctl -u gugu-backend -n 40   # 有没有崩/被杀
- CASEPROTECT5 
+```
+
+`ps` 一看，烧 100% CPU 的是 **pgAdmin**（`gunicorn ... run_pgadmin:app`），咕咕的 worker/web 才占 1%、好好的。pgAdmin 是 1Panel 应用商店装的、跑在 Docker 里，**崩溃重启循环**——PID 一直变（`kill` 掉立刻换个新的），连它的启动探活代码 `import config; print(...)` 都在 100% CPU 上转。它还绑在公网 80 端口，很可能在被扫描爆破。
+
+`journalctl` 又发现咕咕 **backend 被 `code=killed status=9/KILL` 杀过几次**——`status=9` = SIGKILL，是**系统 OOM killer** 干的：pgAdmin + Postgres + Redis + 咕咕挤在 2G（实际可用 1.6G）里把内存吃爆，内核挑了 backend 杀。
+
+### 根因链
+
+pgAdmin 崩溃重启循环 → 烧满 CPU + 吃内存 → 整机卡 + 内存到顶时 OOM 杀掉咕咕 backend。**和我传文件没半点关系。**
+
+### 处理
+
+1. **停掉 pgAdmin**（Docker 容器，`docker stop` / 1Panel 停用；这台机根本不需要它，看库用本地客户端远程连）→ CPU 立刻回正常。
+2. **加 4G swap** → 防内存峰值再触发 OOM。
+3. worker 并发度调小、不用的 IM bot 停用 → 降咕咕自身占用。
+
+### 教训
+
+- **整机卡死先 `ps aux --sort=-%cpu | head` 看是谁，别先怀疑自己刚改的东西**——这次真凶是个完全无关的第三方应用。
+- **`status=9/KILL` 八成是 OOM**，不是代码 bug。2G 小机必配 swap。
+- **生产机别堆非必要的重应用**（pgAdmin、各种面板插件）——它们和你的服务抢同一份 CPU/内存，一个崩溃循环就能拖垮全机。
+- 调优细节见 `ops/deploy.md` §3.8「低配服务器调优」。
+
+---
+
+## 2026-06-25 · 并发化扩量踩的三个连接/配置坑
+
+把 worker 从串行改并发、上多 key 分流那几天，真正卡住我的不是并发逻辑本身，而是三个「看着不相关、根因藏得深」的连接/配置坑。
+
+### 坑一：SSE 长连接把 DB 连接池吃光 → 整站卡死
+
+现象：前后端一重启、或多开几个标签页，**所有 API 一起挂**（30s 超时），不只是聊天。
+
+根因：`/live/stream`（实时刷新 SSE）走 `Depends(get_current_user)`，而它 `Depends(get_db)`——于是 **DB session 在 SSE 整条长连接的生命周期里一直不释放**。每条 SSE = 占一个池连接。默认池 `pool_size=5 + overflow=10 = 15`，浏览器重连几次就打满，之后所有请求 `QueuePool limit ... timeout`。
+
+修：SSE 不需要查 DB，只要鉴权。新增 `get_current_user_id`（只解 JWT、不碰 DB），SSE 端点改用它；连接池也调大到 15+25。
+
+> **教训**：长连接 / 流式端点**绝不要挂 `Depends(get_db)`**——普通请求几十毫秒就还连接，SSE 能挂几小时。要鉴权就只解 token，别顺手拿 db。
+
+### 坑二：uvicorn --reload 被 SSE 卡死，改一次代码要强杀
+
+改完后端 `--reload` 卡在 `Waiting for connections to close`——SSE 长连接不主动断，reload 永远等不到「连接关完」，后端一直不可用，只能 `pkill -9` 重起。快速迭代时尤其要命。
+
+解：`uvicorn ... --reload --timeout-graceful-shutdown 1`——1 秒强制断连，reload 秒级完成。（和坑一同源：SSE 长连接既占池、又卡 reload。）
+
+### 坑三：config override 漏了一个段，整组开关静默失效
+
+后台把「对话历史压缩」开关关掉、保存、刷新——**又自己打开了**。
+
+根因：`apply_override` 给 `db/redis/storage/ai/quota/search/ai_presets` 都写了合并块，**唯独漏了 `agent`**，`top_fields` 还把 `agent` 排除在外。结果 `agent` 段（对话压缩、`worker_concurrency`、`memory_enabled`…）的 override **写进了 `config.override.json`，但 `apply_override` 根本不读** → `settings.agent.*` 永远是 schema 默认值。最坑的是**不报错**：保存成功、文件里也确实有 `false`，就是读回来是 `true`。
+
+修：补上 `if "agent" in override: ...` 合并块。一并修好了之前也悄悄失效的 `worker_concurrency` / `memory_enabled`。
+
+> **教训**：加一个新配置段，**必须同步在 `apply_override` 加合并块**，否则静默失效——没有任何报错指向你，只能靠「保存的值读不回来」反推。排查时记住：**「写盘成功」和「读回正确」是两回事**，要分别验。
+
+---
+
+## 2026-06-23 · 聊天文件收发：三个藏得很深的坑
+
+做「用户给咕咕发文件 / 咕咕发文件回去」（网页 + 飞书），踩了三个根因都不在表面的坑：
+
+**1. 飞书发文件「没收到」→ 暂存撞 asyncio loop。**
+飞书收文件后要把字节暂存（`stage_sync`，给 IM 网关用的同步版）。咕咕一直说「暂存失败/没收到」。日志挖出来是 `RuntimeError: Cannot run the event loop while another loop is running`——lark SDK 的 handler **本身就跑在一个运行中的 asyncio loop** 里，我却在当前线程 `new_event_loop().run_until_complete()`，直接撞车。
+修法：把 async 的 `storage.put` 丢到**独立线程**用 `asyncio.run` 跑（新线程没有运行中的 loop），元数据用**同步 redis** 客户端（避开 async 客户端的跨 loop 复用问题）。教训：**别假设自己不在 loop 里**——第三方 SDK 的回调经常已经在 loop 中。
+
+**2. 实时同步时咕咕回复显示「空气泡」→ markdown 缓存渲染漏了 html。**
+之前为性能把 AI 气泡改成「持久化消息读 `msg.html`（预渲染），只有流式才实时 `renderMd`」。但 IM 实时 `appended` 进来的助手消息只塞了 `text` 没塞 `html` → 非流式分支读到 undefined → 空气泡。修：append 时就 `renderMd` 设 `html`、带上 `files` 卡片，AI 空文本不渲染气泡。教训：**加缓存字段后，所有写入口都得补上**，否则某条路径的数据就是「半成品」。
+
+**3. `agent_usage.tools_used` 缺列 → 所有生成全崩。**
+并行改动给模型加了 `tools_used` 字段但没建迁移，生产库没这列 → 每次存用量 `UndefinedColumnError` → `run_collect` 整个 except 掉 → 看起来像「咕咕全坏了」。手动 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 救活（迁移文件待补）。教训：**模型字段改动必须配迁移**，缺一列能让整条链路静默崩。
+
+资源下载/上传的平台 API 用法参考了 QwenPaw（飞书 `im.v1.message_resource.get` 下载、`im.v1.image/file.create` 上传）。QQ 的发文件还没做。
+
+---
+
+## 2026-06-23 · 漏重启 worker：实时不生效 + QQ 会话没标 source（同一个根因）
+
+实时刷新和 IM 标题都做完、也单测过了，用户却反馈「IM 消息依旧不实时、新建 session 不刷新、QQ 会话没标记成 qq」。两个 bug，同一个根因。
+
+### 大脑跑在 worker，我一直只重启 supervisor
+
+排查时按 source 这条线查：QQ 会话 `source` 没设成 `qqbot` → 说明 `req.source` 没传到 `run_collect`。但翻 `worker.py` 的 `handle()`，`AgentRequest(..., source=platform)` 明明是对的，`qq.py` 入队也带了 `platform:"qqbot"`。代码没问题，那就是**跑的进程是旧的**。
+
+`ps` 一看：worker 进程 pid 还停在 **12:49** 启动的那个，而我这下午改的实时代码、source 传递全在之后。**关键认知盲点**：咕咕的大脑（`run_collect` + 工具 dispatch）跑在**独立的 `worker` 进程**里——
+
+```
 网关(qq/feishu) 收消息 → 入队 ──→ worker 消费 → run_collect(大脑) → 发回 + publish事件
-   ↑ gateway 管这些                  ↑ 这个进程我从没重启过
- CASEPROTECT6 
+   ↑ supervisor 管这些                  ↑ 这个进程我从没重启过
+```
+
+我每次「重启 IM 栈」都只杀了 supervisor + 网关，**网关只负责收消息入队**，真正跑大脑、发实时事件、写 source 的 worker 一直是旧代码。栽在同一个地方好几次都没意识到 worker 是第三个独立进程。
+
+### 修 + 验证
+
+重启 worker 后：新建 QQ 会话 `source='qqbot'` ✓；用 curl 模拟浏览器订阅 `/live/stream`，独立进程 `events.publish` 的事件跨进程送达 ✓。两个 bug 一起好。
+
+### 教训
+
+- **改 `agent/` 大脑代码必须重启 worker**，光重启 supervisor 没用；`make restart` 只管 web。已写进 `ops/deploy.md` 2.7。
+- 调试顺序对了：先盯一个**具体的可证伪现象**（source 没写对），顺着它确认「代码对 → 那就是进程旧」，比对着「实时为什么不工作」空想快得多。
+- 进程模型要在脑子里清晰：web(uvicorn) / supervisor(+网关子进程) / worker 是**三个**独立常驻进程，各管一段，别当成一坨。
+
+---
+
+## 2026-06-23 · 实时刷新：Redis pub/sub → SSE（顺带想清楚了站内 IM 的地基）
+
+用户反馈「IM 发的消息、咕咕创建整理项目/活动/文件 都不会实时更新」。拆开是两个层面的洞。
+
+### 根因：IM 的改动根本没有通道到网页
+
+web 聊天本来有 `refreshAfterTools`——流结束后按用过的工具刷对应 store。但它**只对 web 生效**：IM（飞书/QQ）走的是另一条路（worker → `run_collect`），网页这边毫不知情。而且翻代码发现 Calendar 视图 `import` 了 `calendarSignal` 却**根本没 watch 它**，等于 web 改了日历视图也不刷——一个潜伏的 bug。
+
+光靠「web 流里的 `tool_done` 事件」补不了 IM——**IM 没有 web 流**。要让 IM 的改动到网页，必须有**推送通道**。
+
+### 方案：挂在 dispatch 这个唯一咽喉上
+
+关键发现：`registry.dispatch` 是 **web agent 和 IM worker 共用的唯一工具执行入口**。在这一个点上 publish「资源变了」，两条路就都覆盖了。Redis 已经在用（IM 队列 + 心跳），pub/sub 顺手：
+
+```
 工具成功 → events.publish(user_id, 资源)  →  Redis PUBLISH events:{user_id}
                                           →  SSE /live/stream（前端 fetch streaming 订阅）
                                           →  bump rev[资源] → store/视图 watch 重新拉
- CASEPROTECT7 
+```
+按 `events:{user_id}` 隔离频道，**没有跨用户扇出**——这是流量会不会炸的分水岭。
+
+### 从「刷列表」到「消息级追加」——想清楚了 native IM 的地基
+
+第一版只发 `{resources:['sessions']}`，前端刷会话列表。用户问「为什么消息不会追加」「以后做站内 IM 是不是还得做」「流量会不会太大」——三连问其实把方向问明白了：
+
+- **追加是任何 IM 的核心，不是附加项**。粗粒度「刷列表」是桥接场景的取巧；站内 IM 必须做到消息级推送。
+- **现在搭的 pub/sub → SSE 就是它的地基**，不浪费。于是直接做成 IM-ready：事件带 `session_id + appended`（这一来一回），前端判断是当前会话就把气泡追加进去。
+- **流量反而更省**：粗粒度是「改一条 → 整列表 refetch」，消息级是「只发那一条增量」。加上按收件人定向、空闲只 keepalive，流量下限就是「消息本身」，省不掉也不该省。
+
+### 留的尾巴（记清楚）
+
+web 自身聊天（`web.py` 流式）暂未 publish → 同账号多网页标签不互相同步。做站内 IM 时让 web 也 publish 即可，链路现成。已读/送达/在线状态/顺序去重是 IM 进阶项，地基已就位。
+
+详见 `agent/00-总览.md`「实时刷新」一节、`CHANGELOG.md`。
+
+---
+
+## 2026-06-23 · 咕咕读历史对话 + 隐藏导航悬停 URL
+
+两件小事，但第二件踩了「需求别想当然」的教训。
+
+### 咕咕能翻以前的对话了
+
+此前咕咕只能看**当前 session 的上下文**和**提炼出的记忆**，翻不了以前那次具体聊了啥。加 `conversations` skill 两个工具：`search_conversations(keyword?)`（搜消息正文+标题、按 session 聚合带片段；不传则列最近）、`read_conversation(session_id)`（读完整原文）。**严格按 `user_id` 隔离**，读他人 session 返回"不属于你"（实测验证）。和记忆系统互补——**记忆是提炼结论，这是原始原文**，要细节时才翻。
+
+### 「隐藏导航栏 URL」——先理解错成隐藏地址栏
+
+用户说"隐藏导航栏的 url"，我**第一反应是隐藏地址栏路径**，于是把两个 router 都换成 `createMemoryHistory`（路由进内存、地址栏永远停在根）。用户回："我不是说这些"——还反问我**这网站到底该不该隐藏地址栏**。
+
+我给了真实意见：**不该**。URL 路径不是机密，数据靠 token/角色守，藏路径属于"安全靠隐蔽"几乎没用；却实打实丢了**刷新留在原页、深链、前进后退**。于是全回退。
+
+用户真正要的是**消除侧栏链接悬停时浏览器状态栏的 URL 预览**。根因：`<router-link>` 渲染成 `<a href>`，悬停就露目标地址。改法：侧栏项换成 `<div>` + 编程式 `router.push`，**没有 `href` 就没有悬停预览**；自己用 `route.path` 算 active 高亮、补 `tabindex`/`role=link`/回车跳转保住可访问性。主站 `NavItem.vue` + 后台 `AdminLayout.vue` 都改。
+
+**教训**：含糊需求（"隐藏 url"）至少有三种解（藏地址栏 / 藏悬停预览 / 改 hash），我挑了最重的那种还动了架构。该先一句话确认再动手，而不是猜一个就改一片。
+
+详见 `CHANGELOG.md`。
+
+---
+
+## 2026-06-23 · IM 统一 BYO + 服务面板 + 发文件 + 健壮性一波（接 QQ 之后）
+
+QQ 跑通后这一大批：把飞书也并到 BYO、加运维面板、让咕咕能发文件、补一堆健壮性。记几个有价值的点。
+
+### 飞书也是「扫码即创」——又一次推翻「合作墙」
+
+继 QQ 之后，飞书同样被我先误判为"需要官方接入资质"。扒 QwenPaw 源码 + 实测发现飞书有公开的 **OAuth 2.0 设备授权流（RFC 8628）**：`POST accounts.feishu.cn/oauth/v1/app/registration`（init→begin→poll），手机飞书扫码授权后**自动创建 PersonalAgent 应用**、poll 直接返回 `client_id/secret`。**无鉴权、无资质**。
+
+于是把飞书从「Admin 共享 bot + OAuth 用户绑定」**整个换成 BYO**（每用户扫码建自己的 app），和 QQ 统一：
+- supervisor 飞书+QQ 都从 `user_bots` 表读、env 注入凭据；worker 都用 `owner_user_id` 认人（bot 即归属，省掉 `PlatformBinding`）。
+- 删掉一整套旧代码：`feishu_bind.py`(OAuth)、`feishu_event.py`(webhook)、`PlatformBinding` 模型、Admin 频道面板、`FeishuSettings`/`active_im_bots`。
+- 坑：device flow **轮询等待时按 RFC 8628 返回 HTTP 400 + `{"error":"authorization_pending"}`** —— poll 不能 `raise_for_status`，否则一直当失败。
+- **教训重复**：又是"看起来很官方就以为够不着"。一个 `curl` 比三轮猜测有用。两次都栽在这。
+
+### 工具异常会冲垮整轮对话（健壮性大坑）
+
+用户报"咕咕生成一个字就出问题了"。查到 `registry.dispatch` 对工具 handler **没有 try/except**——任何工具抛异常都会穿透 core → web.py 的 `except` → 整轮报「咕咕出了点问题」。一个工具崩 = 整个对话崩。
+
+修：dispatch 包 try/except，把 `{"error":"工具 X 执行出错…"}` 当**结果**返给 LLM（并打日志）。LLM 按 persona 铁律如实说没做成、不假装成功，**对话继续**。顺带把错误文案友好化+分类（网络→「网络不太好」、其他→「开小差」）。
+
+### 发文件：工具 → 前端 UI 的旁路
+
+咕咕要能在窗口发可下载文件。普通工具结果只回给 LLM，没法推 UI。于是开一条旁路：工具结果带 `_artifact` → dispatch 返回 `(文本, artifact)` → core 在 tool_done 后多推 `{type:'file'}` → web 透传给前端渲下载卡片。**任何工具想推 UI 元素都能走这条**。持久化到 `conversation_messages.files`（新列+迁移），刷新后还在。
+
+### 服务面板：kill + systemd 自愈
+
+Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面板看状态 + 一键重启。重启用 **kill pid + 靠 systemd `Restart=always` 复活**（同用户无需 sudo；杀前核对 `/proc/cmdline` 防误杀）。dev 没 systemd 不自愈 → 加了"后端自己 Popen 拉起"兜底，`systemctl is-enabled` 判断走哪条。
+
+### 并行 agent 协作的坑
+
+这阶段有另一个 agent 同时在改前端。踩到：① 它插了个排序选择器到 `v-if/v-else` 中间 → 整个 build 挂（`v-else` 不相邻）；② 它给 `ConversationSession` 加了 `source` 列**但没迁移**，本地我 ALTER 过不报错、**服务器全新 DB 会缺列崩**。
+- **教训**：模型加列必须配迁移（`create_all` 只建表不加列）；提交时只 `git add` 自己动过的文件，别把别人半成品一起提了。
+
+### 收尾
+
+- 网页生成中发消息会**排队**，生成完接力发（和 IM 的 Redis 队列行为一致）。
+- `create_project` 未填日期默认 start=今天、deadline=一周后。
+- IM 对话**补上会话历史**（之前 `run_collect` 没读历史 → "聊着聊着变新会话"）。
+
+详见 `agent/00-总览.md`、`agent/20-IM接入架构.md`、`CHANGELOG.md`。
+
+---
+
+## 2026-06-23 · QQ 接入：从「以为是合作墙」到扫码自动连接（根因拆解）🦐
+
+**结论先行**：QQ 实现了「手机扫码 → QQ App 内选 bot 授权 → 咕咕自动填好 AppSecret」，体验等同 QwenPaw/OpenClaw。**实测整套 q.qq.com 接口无鉴权、无需任何合作方资质**——一度误判为「腾讯官方合作墙」，被用户的实测和扒源码推翻。这条记录的价值在于**纠错过程**：别想当然把「看起来很官方的能力」判成够不着。
+
+### 背景诉求
+
+用户要的不是"填 AppID/Secret"，而是 QwenPaw 那种「扫码即连、自动填 key」。先做了两版都不对：
+1. **共享 bot + 用户验证码绑定** —— 用户要的是每人自带 bot（BYO），不是一个共享 bot。
+2. **BYO + 二维码指向 `q.qq.com` 网页** —— 用户指出 QwenPaw 扫码进的是 **QQ App 内授权页**，不是网页。
+
+### 几次误判（关键教训）
+
+| 当时判断 | 实际 | 错在哪 |
+|---|---|---|
+| 「扫码即创是飞书 openclaw CLI 的非公开接口，QQ 没有」 | QQ 有公开的 bind_task 流程 | 没去查 QQ 侧，拿飞书经验套 |
+| 「`source=QwenPaw` 是注册过的接入方白名单，独立项目用不了」 | source 只是标签，`source=Gugu` 照样跳转 | 没让用户实测就下结论 |
+| 「扫码进 QQ App 选 bot 是腾讯给合作方的原生深链，复刻不了」 | 就是个带 `task_id` 的普通网页(QQ webview 打开)，task 由公开接口创建 | 把"看起来原生/官方"等同于"够不着" |
+
+### 拆解真相的两步
+
+1. **用户给了真实 QR 链接**：`connect.html?task_id=<uuid>&_wv=2&source=QwenPaw` —— 暴露了 `task_id` 是核心，`_wv=2` 是 QQ webview 标志，`source` 是来源标签。
+2. **用户实测 `source=Gugu` 能正常跳转** → source 不是墙；剩下唯一问题是"怎么创建 task_id"。
+3. **扒 QwenPaw 源码**（开源 `qrcode_auth_handler.py`）找到全套：
+   - `POST q.qq.com/lite/create_bind_task {"key": <base64随机32字节>}` → `task_id`
+   - 轮询 `POST q.qq.com/lite/poll_bind_result {"task_id"}` → `status==2` 时返回 `bot_appid`(明文) + `bot_encrypt_secret`
+   - secret 是 **AES-256-GCM**（raw = iv(12) + 密文 + tag），用第 1 步的 key 解密
+   - **安全模型**：接口无鉴权，但 secret 用调用方本地生成的 key 加密回传，只有创建者能解 → 所以公开也安全
+4. **本地实测 `create_bind_task`**：我们自己的后端直接 POST 就拿到了合法 `task_id`，坐实"无鉴权可复刻"。
+
+### 实现（咕咕侧）
+
+- `app/api/v1/qq_connect.py`：`POST /me/qq/connect`(建 task，aes_key 只存 Redis 服务端) + `GET /me/qq/connect/{task_id}`(轮询→AES 解密→写 `user_bots`)
+- 前端 ProfileModal：QQ 主操作「扫码连接」(自动) + 「手动填」兜底
+- QQ 走 **BYO 模型**：`user_bots` 表存每用户凭据；supervisor 从 DB 读、按 bot 起独立网关（凭据走 env 注入）；worker 用 payload 的 `owner_user_id` 直接认人（bot 即归属，无需绑定）
+
+### 收尾的坑：发消息无回应
+
+连上后发消息咕咕不回 —— 不是代码问题，是 **supervisor 和 worker 没在跑**（只起了 web 后端）。这俩是独立进程必须单独常驻。起来后日志立刻通：
+```
 [qq:3] 收到 BBFF2AB9...: 'hello'
 [worker] qqbot 回复 → 'hey～今天有什么要推进的…'
- CASEPROTECT8 
+```
+> `ps | grep worker` 会被内核线程 `kworker` 误匹配，排查时差点看走眼。
+
+### 反思
+
+- **别替用户判"够不着"**：一个 `curl` 就能验证的事（create_bind_task 无鉴权），比三轮"我觉得是合作墙"有用得多。
+- **开源参照物先扒源码**：QwenPaw 开源，机制全在 `qrcode_auth_handler.py`，早看早做完。
+- 详细机制见 `qq-scan-connect` 记忆 + `agent/20-IM接入架构.md` §3.2。
+
+---
+
+## 2026-06-23 · 里程碑：咕咕首个 IM 平台（飞书）端到端打通 🎉
+
+**第一次让咕咕住进 IM**——飞书私聊里发消息，咕咕带完整人格/记忆/工具回复，全程经队列+独立 worker，平台无关骨架可复用到 QQ/微信。架构与决策见 `agent/20-IM接入架构.md`、`agent/00-总览.md` Phase 4。
+
+### 端到端链路
+
+```
 飞书私聊消息
   → 网关 gateway/feishu.py（lark-oapi WebSocket 长连，收 im.message.receive_v1）
   → produce_sync 入队 Redis Streams（im:inbound）
   → worker.py 独立进程 consume
   → run_collect(AgentRequest)：复用 loaders/builder/core/sanitize，攒完整回复（人格+记忆+41工具）
   → feishu.send_text（lark.Client im.v1.message.create）发回飞书
- CASEPROTECT9 text
+```
+
+实测：私聊发"你是谁"→ 咕咕回"我是咕咕，你的创作搭子…"（带人格），送达飞书。两条连发都正确处理。
+
+### 为什么这样搭（关键决策）
+
+- **不用 OpenClaw**：飞书/QQ/微信都走官方直连。飞书用官方 `lark-oapi`，WebSocket 长连**不需要公网 URL/webhook**，最省事。
+- **bot 创建 vs 用户绑定分开**：一个 bot（owner 一次性建，凭据走 `.env` 的 `FEISHU__APP_ID/SECRET`，**不做后台 UI**），所有用户私聊它各开小窗；用户身份靠后续 OAuth 扫码绑定区分（当前临时全映射 root123）。
+- **队列+独立 worker（不内联）**：收消息↔跑大模型解耦，为高流量留缝；worker 独立进程，避免多 uvicorn worker 重复消费长连接。
+- **同步 produce**：lark `ws.Client.start()` 是同步阻塞 loop、事件 handler 同步，故网关用 `redis.produce_sync`（独立同步客户端），worker 侧仍用异步 consume。
+
+### 踩的坑
+
+- **worker 阻塞读超时**：`XREADGROUP block=5000ms` 时 redis 客户端默认读超时更短 → 反复 `TimeoutError: Timeout reading from`。修：`get_redis` 设 `socket_timeout=None`（阻塞读不能有读超时）。
+- **过度撤回**：误把后端飞书网关/配置一起 git checkout 撤了（本意只删前端 Admin 飞书卡片）→ 从 context 重建后端。教训：撤回前分清"前端 UI"与"后端能力"，shared 文件别一把 checkout。
+
+### 现状与下一步
+
+- 跑起来 = 两个独立后台进程：`python -m agent.gateway.feishu`（网关）+ `python -m worker`（worker）。
+- 已落地骨架：`app/core/redis.py`（Streams + produce_sync）、`agent/runner.py`（非流式）、`worker.py`、`agent/gateway/feishu.py`（收+发）。
+- **下一步**：OAuth 2.0 用户扫码绑定（方案 A 轻绑定）——绑定表 `(platform,open_id)↔user_id` + 后端授权URL/回调 + 设置页二维码 + 网关 open_id 解析，替换临时的 root123 映射，实现"每人各聊各的"。
+
+---
+
+## 2026-06-23 · Agent：记忆深化 + prompt 缓存 + IM 接入架构
+
+接上一日，把记忆系统从"能记"做到"记得干净、注入便宜、写得克制"，并定下 IM 接入方案。详见 `agent/00-总览.md`、`agent/20-IM接入架构.md`。
+
+### 1. 记忆 facts 调和重写（治矛盾/膨胀）
+
+反思从"只输出新增、追加去重"改为"输出调和后的**完整事实**、覆盖写回"：保留仍成立、修正矛盾、合并重复、删过时，强约束"别无故删/别清空"，加防误删兜底（原有事实但模型返回空则不覆盖）。实测把"只去过杭州 vs 去过CP"这类矛盾、推测、评判噪音重写消除。`remember` 工具仍走追加。
+
+### 2. 记忆三层压缩（daily → memory，无 weekly）
+
+- 砍掉原设计的 weekly 中间层，压缩定为 **daily → memory.md** 两段（咕咕只需"近期/长期"两档）
+- `memory/_llm.py`：抽出反思/压缩共用的 LLM 调用（provider 路由 + JSON 解析）
+- `memory/compress.py` + `prompts/compress.md`：daily **按累积条数**压缩——保留最近 30、攒到 40 触发、最老 10 条 LLM 摘要沉淀进 memory.md、硬上限 60；约每 10 轮压一次
+- `store.py` 加 memory.md 读写、`read_memory` 返回 facts/memory/daily；`builder.py` 注入「长期记忆」段
+- **三层定稿**：facts（永久档案）/ memory（永久沉淀，越压越精）/ daily（最近 30–40，老的流进 memory）
+
+### 3. 反思写侧省钱：琐碎对话门槛
+
+`reflection.schedule()` 加 `_worth_reflecting()`：用户消息整条命中纯应答/寒暄词黑名单（嗯/好的/谢谢/哈哈/👍…）则跳过反思。精确匹配、保守，长句或短的有意义内容（"南京"/"我是插画师"）照常反思。省写侧约 20–40% 无效调用。
+
+### 4. prompt 缓存（读侧近乎免费）
+
+- `core.py` Anthropic/MiniMax 路：system（人格+记忆+上下文）打 `cache_control` 缓存断点，缓存 tools+system，多轮工具循环只重算新消息，命中读取便宜 ~90%；`_usage` 加 `cache_read` 观测
+- **实测 MiniMax M3**：第 2 次调用 `cache_read=1487 / input=1`，确认命中
+- OpenAI 兼容路为自动前缀缓存，结构已 system 在前，无需改
+
+### 5. 成本策略定论（1M 上下文 + 缓存背景下）
+
+- **读/注入侧**（记忆/工具/人格）：1M 上下文 + 缓存命中 → 几乎免费，**记忆注入不必 trim**；`context_tokens` 保持 25600（历史 token 每轮重算、缓存不了，不必追 1M）
+- **写/反思侧**：缓存帮不到，靠琐碎门槛省
+- facts/memory/daily 容量与压缩参数维持现状，不再细调
+
+### 6. 提示词文件化收口
+
+反思（reflection.md）、压缩（compress.md）均为 md 文件，热读 + 兜底 + Admin 在线编辑（`agent_admin.py` `SPECIAL_PROMPTS=["persona","reflection","compress"]`，前端「系统提示词」tab 显「人格/记忆反思/记忆压缩」）。标题生成 prompt 经评估保持内联（用户决定不抽）。
+
+### 7. IM 多平台接入架构（设计，未开工）
+
+新增 `agent/20-IM接入架构.md`：飞书 / QQ / 微信**官方直连、不用 OpenClaw**（lark-oapi / botpy / iLink）；从一开始按「收消息 ↔ 跑大模型」解耦的**队列 + worker 架构**建，为高流量留缝（AgentRequest/Response + dispatch 间接层）。现状：Redis 配了没用、无队列/worker、`--workers 1`；落地从 Redis+Streams 起步、6 步逐缝验证。00-总览.md Phase 4 已对齐、删 OpenClaw/webhook 旧话；小模型相关项统一标「最后做·暂无条件」。
+
+---
+
+## 2026-06-22 · Agent：Skill 一等公民 + 记忆 Phase 2a + 联网搜索
+
+详细架构见 `agent/00-总览.md`。本次四块工作：
+
+### 1. Skill 一等公民重构
+
+原 `DefaultProfile.tool_names` 手抄全部工具名，与各 skill 的 `Tool` 声明双重维护（加工具改两处、漏一处静默失效）。改为：`SkillRegistry` 增 `_skills`（skill→有序工具名）+ `add_skill()`/`tools_of()`；`BaseProfile.skills`（skill 名列表）+ `tool_names` 派生属性。`DefaultProfile.skills` 一行替代扁平清单。工具集与重构前集合相等（验证通过），行为零变化。
+
+### 2. 记忆系统 Phase 2a（精简闭环）
+
+- `memory/store.py`：读写 `.agent/{facts,daily}.md`，经 `StorageBackend`（本地/OSS），单库无 DB 同步问题；`merge_facts` 内容去重、`append_daily` 滚动 30 条
+- `memory/reflection.py`：对话后单次非流式 LLM 提炼 `{facts,daily}`，`schedule()` fire-and-forget（持后台任务引用防 GC），失败不影响对话
+- `skills/memory.py`：`remember` 工具（主动记忆）
+- builder 记忆 section 仅非空时注入；loaders.load_memory 改 async；web.py memory_enabled 时注入 + 反思
+- **简化偏差**：facts.md 而非 facts.json、两层而非三层、无 compressor/events/identity（昵称用 `User.display_name`）
+- **实测**：真实对话已能写入 facts；首版提炼偏噪音（记了推测/世界常识/矛盾/评判），据此收紧反思提示词（见 4）
+
+### 3. 联网搜索（Tavily）+ 搜索配额
+
+- `skills/search.py`：`web_search` 工具（第 41 个），调 Tavily Search API
+- 配置：`config.py` 加 `SearchSettings.tavily_api_key`，走通用 `/admin/config`（GET 打码、PATCH 存 override）；前端 Agent 配置页「联网搜索」卡片输 key + config store 加 `search` 段 + `tavily_api_key` 进 `PASSWORD_FIELDS`
+- **搜索配额**：`QuotaSettings.default_search_limit_daily` + 新建 `search_usage` 表（create_all 自动建，无手写 migration）；`web_search` 执行前数当天次数、超则拒（仅拦搜索、不拦对话），成功才记一行。前端配额管理页加「每日搜索次数上限」。先只做全局、暂无 per-user 覆盖
+- 边界：`used >= limit` 拦截，30 上限 → 当天放行 0–29、第 30 次后拦
+
+### 4. 反思提示词文件化 + 收紧
+
+- 原 `_SYS` 内联常量 → `prompts/reflection.md`，`reflection.py` 每次现读（热生效）+ 兜底；接进 Admin（`agent_admin.py` 的 `SPECIAL_PROMPTS=["persona","reflection"]`），前端「系统提示词」tab 显示「记忆反思」+ 谨慎提示
+- 收紧规则（治首版噪音）：只记用户本人、不记推测、不记世界常识/一时状态、不评判、宁少勿多 1–3 条
+
+### 注记
+
+- web.py 持久化段：工具中间消息（tool_use/tool_result）以 `content_json`（JSONB）逐条落库；`core.py` 用 `model_dump()` 序列化 SDK 对象保证 JSON 安全
+- 后端 uvicorn 未开 `--reload`，改 Admin 端点/模型需 `make restart` 才生效
+
+---
+
+## 2026-06-21 · 缩略图根因排查：Pillow 未安装导致全量加载原图
+
+### 背景
+
+用户反馈总览页和文件库滚动卡顿、图片加载慢、渐进式效果失效。为此陆续做了大量前端优化（`shallowRef` 批量更新、`preDecodeBlobs`、`will-change`、`backdrop-filter` 移除、IntersectionObserver 懒加载等），体验有所改善但根本问题未解决。
+
+### 根因
+
+**`Pillow` 未写入 `requirements.txt`，venv 中从未安装。**
+
+后端 `/files/{id}/thumb` 端点调用 `_generate_thumbs_sync()` 生成 WebP 缩略图，但所有调用都在 `except Exception: pass` 中静默失败。最终降级路径返回**原始大图**（几百KB～几MB JPEG/PNG）。
+
+前端把这张大图当成 `tiny`（预期 20px WebP）缓存到 blob Map，渲染时浏览器需要解码全尺寸图片：
+- `tiny` 不是 20px 小图，blur 占位失去意义
+- `card` 返回原图，文件库加载几十张 MB 级图片
+- 浏览器 HTTP Cache 缓存了这些大图响应（`max-age=86400`），强刷页面也不请求后端，旧 blob 持续命中
+
+### 排查过程
+
+1. 发现 blob cache 里存在 JPEG/PNG 类型，怀疑降级逻辑触发
+2. 在后端端点加日志，发现浏览器根本没有发 thumb 请求到服务器（HTTP Cache 直接命中）
+3. 清除 site data 后，强刷仍无 thumb 请求 → uvicorn 日志无任何 `/thumb` 条目
+4. 直接在 venv 中测试 `from PIL import Image` → `ModuleNotFoundError`
+5. 确认 Pillow 从未安装，`requirements.txt` 缺失该依赖
+
+### 修复内容
+
+| 位置 | 改动 |
+|------|------|
+| `requirements.txt` | 新增 `Pillow>=10.0.0` |
+| `_generate_thumbs_sync` | 修复 RGBA/透明通道处理（PNG 保留 RGBA，其余转 RGB） |
+| `get_thumb` 端点 | 降级改为输出缩小 JPEG，最后兜底才返回原图；移除静默 `except: pass`，改为打印 traceback |
+| `useThumbCache.js` | fetch 加 `cache: 'no-cache'`，强制跳过浏览器 HTTP Cache，确保拿到最新 WebP |
+
+### 反思
+
+之前所有前端优化（`shallowRef`、`preDecodeBlobs`、懒加载、`backdrop-filter`）都是在治标，真正的性能瓶颈是后端返回了全尺寸原图。正确的 WebP 生效后（tiny 几百字节，card 几 KB），滚动卡顿和加载慢的问题基本消失，前端优化才能真正发挥作用。
+
+**教训：依赖静默失败 + 降级兜底会掩盖真实问题，重要依赖必须写入 requirements.txt 并在 CI/部署时验证。**
+
+---
+
+## 核心愿景
+
+通用项目管理 Web，通过自然语言管理进度、文件、排期，支持自然语言交互。适用于插画约稿、动画制作、工程项目等任何需要进度追踪的场景。
+
+---
+
+## 技术栈
+
+| 层 | 选型 |
+|---|---|
+| 前端 | Vue 3 + Vite + Pinia + Vue Router |
+| UI 库 | Arco Design Vue |
+| 后端 | FastAPI + PostgreSQL |
+| 模型 | Qwen + LangChain（待接入） |
+
+---
+
+## 已完成功能（早期阶段）
+
+### 布局 & 全局
+- DefaultLayout：顶栏（glassmorphism，`position: absolute; z-index: 10`）+ 侧边栏 + 内容区
+- 顶栏内容：页面标题、日期、搜索框、"导入文件"、"新建项目"按钮
+- 侧边栏底部用户卡片（头像 + 姓名，无职业）+ 设置弹窗
+- 自然语言悬浮球（`z-index: 1000`）+ 聊天弹窗（`z-index: 999`），点击外部自动收起
+- 导航：总览 / 项目 / 日历 / 文件库 / 客户 / 通知
+- 滚动条始终占位（`overflow-y: scroll; scrollbar-gutter: stable`）防止切页抖动
+
+### 总览页（Dashboard）
+- 项目列表（ProjectList）：状态徽章（待开始 / 进行中 / 已完成）、当前阶段、截稿倒计时
+- 最近文件（FilePanel）：分 tab 展示 + 拖拽上传区
+- 玻璃拟态卡片，hover 非线性上浮动画 `cubic-bezier(0.34, 1.2, 0.64, 1)`
+
+### 项目页（Projects）
+- 三列看板：待开始 / 进行中 / 已完成
+- HTML5 拖拽换列（`@dragstart / @dragover / @drop`）
+- ProjectCard：显示项目自定义当前阶段、阶段进度点、截稿倒计时、进度条
+- ProjectModal（全屏）：阶段编辑器、项目重命名、看板状态选择、进度滑块、截稿日、客户
+- NewProjectModal（全局挂载于 DefaultLayout）：表单 + 8色渐变预设 + 实时预览
+
+### 数据层（Mock）
+- `useProjectStore`（Pinia）：`kanbanColumns`、项目字段、Actions
+- `useUiStore`：`openNewProject`、`notifCount`
+
+---
+
+## 待开发（早期规划）
+
+| 优先级 | 功能 |
+|---|---|
+| 高 | 日历页完整实现 |
+| 高 | 文件库页完整实现 |
+| 高 | 数据库模型 + Alembic 迁移 |
+| 高 | 后端 CRUD API（项目 / 文件） |
+| 中 | 替换 Mock 数据为真实 API |
+| 中 | 自然语言管理集成（Qwen + LangChain） |
+| 低 | 客户管理页 |
+| 低 | 通知系统 |
+
+---
+
+## 2026-06-22 · 阶段自动完成 + 状态联动 Bug 群
+
+### 背景
+
+实现「最后阶段进度满时自动标记已完成、拖回时还原阶段与待办」功能后，连续出现四个相互关联的 bug。
+
+### 根因逐一拆解
+
+**Bug 1 · `_stageBeforeDone` 记录了错误的阶段**
+
+`setStage` 在调用 `moveProject('done')` 之前已执行 `p.currentStage = stageKey`（最后阶段），导致 `moveProject` 里 `p._stageBeforeDone = p.currentStage` 拿到的是最后阶段 key，而非操作前的原始阶段。
+
+修法：在修改 `currentStage` 之前先记下 `originalStageKey`，直接写入 `p._stageBeforeDone`；`moveProject` 改为「已设则不覆盖」。
+
+**Bug 2 · 从已完成拖回时 todo 未还原**
+
+`moveProject`（看板拖拽触发）只还原了 `currentStage` 和 `progress`，完全缺少 todo 还原逻辑。`setStage` 的退回路径有正确的 `autoCompleted` 还原遍历，但 `moveProject` 未复用，导致拖回后所有阶段 todo 依然处于全勾状态。
+
+修法：在 `moveProject` 的 `done → active` 分支里加同样的还原遍历，并将还原后的 `stages` 一并 patch 到后端。
+
+**Bug 3 · 编辑卡状态胶囊不实时更新**
+
+Modal 内 `localStatus` 是本地 `ref`，只在 `watch(() => props.project?.id, ...)` 触发（即打开不同项目）时初始化一次。`moveProject` 修改了 store 的 `p.status`，但 `localStatus` 对此无感，胶囊卡在旧状态。
+
+修法：新增 `watch(() => props.project?.status, ...)` 单独跟踪 status 变化，实时同步 `localStatus`。
+
+**Bug 4 · 胶囊更新有明显延迟**
+
+`setStage` 的执行链：`await _patchProject`（网络）→ `await moveProject`（网络）→ 才设 `p.status = 'done'`。胶囊需等两次网络回包才变色。
+
+修法：把 `p.status = 'done'`、`p.doneAt`、`p._stageBeforeDone` 全部移到第一个 `await` 之前做乐观更新，并合并为一次 `_patchProject` 调用，Vue 在下一 tick 立即重渲。
+
+### 教训
+
+- **「提前修改共享状态再传给子函数」会破坏子函数的快照逻辑**：调用者改了 `p.currentStage`，被调用者再读它时拿到的是已被污染的值。今后凡是要在调用链中「传递修改前状态」，必须在第一次修改前就显式保存。
+- **乐观更新要在第一个 `await` 之前完成**：只要有一行同步赋值在 `await` 之后，用户就会感受到延迟。
+
+---
+
+## 2026-08-01 · 完成列底部月份展开“瞬间完成”误判
+
+### 现象
+
+完成列底部月份（例如 6 月）展开时看起来像没有动画；较小的月份展开正常。
+
+### 排查过程
+
+对 Demo 与 Gugu 同时记录展开前、目标高度写入、动画开始和 100ms 的高度。两边都正确写入了 `height` 和相同的缓出曲线，FLIP 链路没有失效。
+
+### 根因
+
+组动画使用固定时长时，小月份只需要移动几十像素，而底部月份可能有数千像素内容。同一条 `cubic-bezier(.22, 1, .36, 1)` 在前 100ms 已完成大部分位移，因此大组视觉上像瞬间展开，实际动画仍在执行。
+
+### 修复
+
+组高度动画改为按位移计算时长，并限制在 `200ms～350ms`：
+
+```text
 duration = clamp(abs(targetHeight - currentHeight) / speed, 200, 350)
- CASEPROTECT10 
+```
+
+这不是 DOM 结构或 FLIP 冲突，而是固定时长与内容高度比例造成的视觉问题。
+
+### 教训
+
+遇到“大内容动画看起来瞬间完成”时，先比较实际位移和动画进度，不要直接假设动画链路失效。小内容的正常表现不能证明大内容的时长策略合理。
+
+## 设计规范（早期版本）
+
+- **色系**：紫蓝渐变主色 `#8b8fbe → #c4afc8`，成功绿 `#5a9e88`，警告橙 `#b07858`
+- **玻璃拟态**：`backdrop-filter: blur(20px)`，`rgba(255,255,255,0.26~0.48)` 背景，白色内描边
+- **圆角**：`--radius-sm: 10px`，`--radius-md: 14px`，`--radius-lg: 18px`
+- **动画**：hover 弹性 `cubic-bezier(0.34,1.2,0.64,1)`，遮罩/阴影 `cubic-bezier(0.4,0,0.2,1)`，Modal 入场 `cubic-bezier(0.34,1.3,0.64,1)`
+- **Z-index 层级**：内容(default) → 渐变遮罩(5) → 顶栏(10) → Modal(200~300) → 对话球(1000) / 聊天(999)
+
+## 2026-07-16 · 拖拽系统模块化重构收口
+
+### 结构调整
+
+- `DragSession` / `DragRegistry` 只负责生命周期与 cleanup；physics、clone、落地动画和业务数据留在各自模块。
+- 单卡、多卡运行时迁移到 `interaction/single.ts`、`interaction/multi.ts`，`useDragEngine.ts` 只负责兼容入口和依赖组装。
+- 落地动画拆为 `animation/`，DOM 滚动工具与全局拖拽 listener 分别集中到 `interaction/dom.ts`、`interaction/listeners.ts`。
+- 文件、画布、项目、抽屉拖拽通过 adapter 接入，原有 `usePhysicsDrag.ts`、`useCardDrag.ts`、`useFileDragDrop.ts` 入口保留兼容转发。
+
+### 时序与状态
+
+- `requestAnimationFrame`、timeout、transitionend 和落地回调统一检查当前 session；同源新拖拽会通过 Registry 取消旧 session 并执行旧 cleanup。
+- 删除主入口的 `_pendingCleanups` Map，落地 cleanup 改由 `DragSession.addCleanup()` 管理。
+- 当前仍保留 `_active` 作为单套物理 listener 的调度锁；它不是 session 状态，现阶段不支持两套物理拖拽并行。
+
+### 验证
+
+- `npm run typecheck` 通过。
+- `npm run test:run` 通过：16 个测试文件、201 个测试。
+- `npm run typecheck:strict` 确认本次拖拽模块无新增错误；仓库已有 3 个错误仍位于 `useBoxSelection.ts`、`Files/index.vue`、`ProjectModal.vue`。
+- 文件库、项目页、画布和抽屉的实际拖拽行为仍需按架构方案的最终验收清单进行桌面端手测。
+
+## 2026-07-16 · 项目分组标题与年/月按钮的让位动画 (P0)
+
+### 问题
+
+0.19.1 那条「抽屉与画布之间的拖拽收尾」把拖拽飞行/落地/收尾链路修通了（详见 [devlog.md](docs/devlog.md) 2026-07-15 条目），但还有几个 P0 残留没补：当同组卡片增减时，分组标题、年/月折叠按钮会因 flex 重排瞬间跳到新位置，没有 FLIP 平移过渡。
+
+- `CanvasSidebar.project-group-title` 不在 `drawer-project-cards` TransitionGroup 内，是 TransitionGroup 外面的兄弟 div。
+- `DoneColumn.year-row` / `month-row` 被 `.year-group` / `.month-group` 包装层套住，按钮跟下方的卡片列表捆成一个 group 一起做 flex 重排。
+- `DoneColumn`「未设置日期」区也是同款 `.year-group` 包装。
+
+### 修复策略
+
+把所有「想让位但被外层 wrapper 套住」的元素都提到 TransitionGroup 的直接子项上，各自带稳定 key，让 Vue 的 `.*-move` 类能正确被注入做 FLIP。
+
+### 踩坑：Vue 3 `<template v-for>` 子元素禁止 `:key`
+
+第一版用 `<template v-for="yg in groupedByYear" :key="yg.year">` 包 button + TransitionGroup 两个兄弟（key 分别挂在 `button :key="`year-row-${yg.year}`"` 和 `<TransitionGroup :key="`year-body-${yg.year}`"` 上）。devserver 报 500，Vite 直接编译失败：
+
+```
 [vite:vue] <template v-for> key should be placed on the <template> tag.
 ```
 
@@ -871,128 +1953,3 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - OpenAI 兼容路径接入 conversation 末尾缓存断点后，Qwen 连续三轮测试的后两轮缓存命中率达到 98%+。
 - Kimi 多数轮次达到 94%+，偶发低命中随后自动恢复，暂未发现业务侧组装异常。
 - 将“Session baseline 与 conversation 分段缓存”记录为后续可选方案，待确认多断点兼容性和实际收益后再实施。
-
-## 2026-08-24 · History 完整性审计：引用修复后的下一处边界
-
-### 背景
-
-近期修复了 IM 引用消息在下一轮 History 中丢失的问题：引用正文继续单独保存在
-`ConversationMessage.quoted_text`，模型侧通过稳定的引用上下文前缀恢复，网页展示仍使用原始
-`content`，避免把引用正文直接拼进聊天气泡。
-
-### 审计结论
-
-对照 `ConversationMessage` 持久化字段、Web/IM runner、History builder 和 Provider adapter 后，
-发现当前轮模型输入与后续 History 仍有一处重要差异：附件解析结果只存在当前轮的 `aug_text`。
-消息落库时保存的是原始用户正文和附件卡片；下一轮 History 只恢复图片附件的轻量 `attach_id` 引用，
-不会恢复文本文件解析内容、语音转写结果或普通文件附件的稳定存在信息。
-
-因此当前策略表现为：
-
-- 图片：保留 `attach_id`，不重复写入 base64，模型需要时可再次读取；
-- 文本/文档附件：当前轮可以注入解析正文，后续 History 不再看到解析结果；
-- 语音：当前轮可以使用转写文本，后续 History 不再看到该转写文本；
-- thinking/reasoning：Provider 切换时主动清除，属于兼容策略，不是意外丢失；
-- UI-only 交互状态：保存在交互表和前端事件中，不作为模型历史，属于正确隔离；
-- 工具调用、工具结果、Skill/Tool Schema、RAG：已使用 canonical block 保存，再由 Provider adapter 转换。
-
-### 规范方向
-
-现有 `canonicalize_tool_messages()` 只覆盖工具及上下文事件，不能完整表达普通消息、引用、附件、
-发言人和时间。后续应建立统一 History Contract，并在持久化边界做一次归一化：
-
-1. 原始正文保持不可变，用于网页/IM 展示；
-2. 模型上下文使用 canonical blocks 表达文本、引用、附件引用、转写文本、工具事件和 RAG；
-3. Provider adapter 只负责把 canonical history 转换成各自 wire format；
-4. 明确省略策略：不持久化 base64、供应商 thinking 签名和 UI-only 状态；
-5. 未知 block 必须有统一的保留或文本化规则，不能由 OpenAI/Anthropic 路径分别决定；
-6. 为 Web、QQ、微信、飞书及 OpenAI/Anthropic 建立同一组 History 完整性回归测试。
-
-### 当前状态
-
-引用恢复已补充跨平台测试并通过。附件上下文持久化和完整 History 归一化暂未在本条目中实施，
-后续优先补稳定附件引用/转写文本的历史契约，再考虑是否新增数据库字段。
-
-## 2026-08-24 · 上下文预算口径统一：移除本地估算对压缩触发的影响
-
-### 问题
-
-此前上下文链路同时存在两套“预算”概念：一套来自 provider 实际返回的输入 token，另一套来自
-本地 `estimate_tokens()` 对 system、snapshot、history、RAG 和工具 schema 的估算。两套口径对
-中文、工具块、动态尾部和 provider 开销的处理并不一致，导致同一 session 可能出现上一轮看似未超限、
-下一轮却提前压缩，或者压缩后再次按旧估算截断的情况；这也会让 baseline 更新点和下一轮输入大小漂移。
-
-### 修复原则
-
-- 正常请求的压缩触发、重试和预算判断只接受 provider 的实际 usage 或 overflow 结果；
-- `ContextBudget` 只作为统一的预算分项/诊断结构，不再作为历史读取或压缩触发器；
-- 本地 token 估算仅保留给回归测试、诊断展示和 provider overflow 后的确定性兜底，不得提前改变正常上下文；
-- 压缩结果通过 LoopScope 的 `Context compaction` span 记录，后续以 baseline 生命周期继续追踪；
-- provider 边界保留 `context-layout` 元数据，用于核对 history 顺序、消息数量和序列指纹，不记录正文。
-
-### 回归覆盖
-
-新增压缩回归：在强制压缩路径中替换本地 `estimate_tokens()` 为失败桩，压缩仍必须成功，证明正常压缩
-不依赖本地 token 估算。现有 `ContextBudget` 分项、provider overflow 兜底、工具轮次原子性和 baseline
-测试继续覆盖兼容诊断与确定性保护路径。
-
-### 验证
-
-后端上下文相关测试通过；后续新增预算字段或压缩触发条件时，必须同时验证 provider usage 与 LoopScope
-的压缩 span，禁止重新引入第二套本地预算触发逻辑。
-
-## 2026-08-25 · PRD-AGENT-4 文档与发布收口
-
-### 收口内容
-
-- 将 `ContextBudget`、provider overflow retry、90% usage 收尾压缩、baseline 增量读取和 pending 生命周期的权威说明统一收口到 PRD-AGENT-4。
-- 归档 PRD-AGENT-3 的旧固定窗口语义；PRD-LLM-8 保留缓存目标但不再承载上下文压缩实现；PRD-IM-6 保留渠道复用与物理保留规则。
-- 保留 `context-layout` 和 baseline 生命周期诊断字段。它们只记录数量、token、hash/摘要指纹和阶段，不记录消息正文、附件内容或凭据，也不注入模型上下文。
-
-### 验证
-
-- ContextBudget、历史读取、压缩、消息原子边界、core retry 和 provider history 专项：`72 passed`。
-- 本次没有伪造迁移前后的线上 token/cache 对比；真实脱敏长群 trace 继续作为上线后的观察项，避免把不同 provider、模型和会话状态混为可比数据。
-
-## 2026-08-25 · DeepSeek 前缀缓存限制整理
-
-- DeepSeek 走 OpenAI-compatible 自动前缀缓存，当前不发送未经确认的显式 `cache_control`；缓存命中依赖请求前缀结构稳定，客户端不能指定服务端断点。
-- 20-run 脱敏测试中，首轮为冷缓存；Run 3 起曾稳定命中约 `12,032` token，但随着工具历史增长命中量没有继续推进，缓存率从 `78.04%` 降至 `68.10%`。该现象只能说明早期前缀稳定，不能直接归因于 provider 能力或某一个业务字段。
-- 已将约束、已确认事实、未确认假设和后续 A/B 验证方案整理到 `docs/reports/DEEPSEEK-PREFIX-CACHE-CONSTRAINTS-20260825.md`。后续以 canonical/wire/schema/tail digest 的首个差异为准，不把 `12,032` 或假设的缓存粒度硬编码进实现。
-
-## 2026-08-25 · 用户 Skill Phase 4 按需注入与变更生效
-
-- 用户 Skill metadata 现在按 owner 合并到每次运行的 Capability Snapshot；首轮目录只包含简介，不加载 Skill 正文。
-- `use_skill` 通过数据库 owner 隔离查询启用中的用户 Skill，正文仍按需进入工具结果；正文更新后以 content digest 判断并重新加载，停用后不会从旧 session 扩大能力范围。
-- Web、IM 和定时任务统一使用用户能力快照；关联工具在快照构建时按当前授权集合收窄，实际执行仍由 registry/dispatch 权限检查决定。
-- LoopScope 只记录 Skill source、owner fingerprint 和 content digest 等脱敏元数据，不记录 Skill 正文或用户标识。
-
-验证：用户 Skill 与能力注入专项 `27 passed`，Python `compileall` 通过。
-
-## 2026-08-25 · AGENT-5 分支式上下文压缩与缓存保持收口
-
-- inline compaction 与持久 baseline 现在共用同一份 branch/fallback 候选生成策略：历史输入不超过 `96,000` 字符时只发一次摘要请求，超限才按 `48,000` 字符块滚动合并。
-- 新增摘要候选契约：必须为非空纯文本、最多 `10,000` 字符，不能重复携带外层 `<compacted-summary>` 标记；校验失败直接丢弃，当前消息和 baseline 均不变化。
-- baseline 提交前抽出纯 CAS 判断，baseline id 或 hash 任一变化都会丢弃旧候选；provider overflow 重试继续通过 `protected_from` 保留当前 run 的用户消息、工具调用和工具结果。
-- 诊断只保留模式、数量、长度、耗时和 hash 等脱敏字段，不记录历史正文。
-
-验证：上下文压缩专项 `41 passed`，Python compileall 与 `git diff --check` 通过；各 provider 的真实线上复测保留为发布后观测项。
-
-## 2026-08-26 · RAG scope 缓存与召回并行优化
-
-- 群组/成员记忆文档使用 `scope_version + updated_at` revision，并保留 30 分钟进程内投影缓存；记忆变更事件会主动失效对应 owner 的 scope 投影。
-- 自动召回把同一请求的群组与成员 scope 合并为一次检索；来源 Retriever、scope 文档加载和持久化索引查询不再串行等待。
-- Rust sidecar 继续作为跨 worker 的长期索引持有者；新增 `sidecar_reused`、`index_build_ms`、`search_ms`、来源 `retrieve_ms` 等脱敏阶段日志，区分本地缓存命中与 sidecar 复用。
-- 自动召回超时任务现在有完成回收和 32 个后台任务上限，避免上游超时导致任务无限堆积；超时仍不会取消可能持有数据库连接的查询协程。
-
-验证：RAG 模块 compileall、完整后端 pytest 与 `git diff --check` 通过；线上继续观察 `t=rag` 的 stages 和 `sidecar_reused` 分布。
-### 清理临时探针（2026-08-26）
-
-- 移除 IM 文本选项消费路径中遗留的原始诊断输出。
-- 清理 QQ 表情解析器中已过期的“入站探针”注释；保留 Context 布局审计、RAG 阶段耗时、能力检测和媒体元数据探测等正式功能。
-
-## 2026-08-26 · 工具 Schema 原文精简
-
-- 直接收短工具定义中的 `description` 与参数说明，去掉重复操作手册和大段示例；保留工具用途、关键限制、必填关系和危险操作提示。
-- 思维笔记块协议改为简短结构说明，真实 JSON Schema 的 `type`、`enum`、`required`、`items` 等约束未改变；Provider 仍直接使用 canonical schema，不再维护第二套投影或运行时补丁。
-- 颜色枚举、字段名和 handler 均未改动，便于后续继续按单个工具审阅文案。

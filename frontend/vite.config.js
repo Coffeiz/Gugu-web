@@ -70,8 +70,6 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    // 与 Admin dev server 保持一致，确保 @vite/client 始终拿到具体布尔值。
-    forwardConsole: false,
     // 通过自定义域名/内网穿透访问 dev server 时，需把域名加入白名单，否则 Vite 拦截 Host 头
     allowedHosts: ['myhome.coffeiz.space'],
     proxy: {
@@ -81,7 +79,6 @@ export default defineConfig({
       '/api': {
         target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
-        ws: true,
       },
     },
   },

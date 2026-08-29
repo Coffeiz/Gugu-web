@@ -10,7 +10,7 @@
       <slot name="thumb"></slot>
     </div>
     <div v-else class="fc-icon-area">
-      <component :is="fileListIcon(ext)" class="fc-big-icon" :size="iconSize" />
+      <component :is="fileListIcon(ext)" class="fc-big-icon" :size="iconSize" weight="bold" />
     </div>
 
     <div class="fc-label">

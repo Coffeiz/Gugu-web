@@ -104,13 +104,13 @@ html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
   border-color: transparent;
-  box-shadow: none;
+  box-shadow: var(--elevation-card);
 }
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover {
   color: var(--content-on-accent);
   background: var(--action-primary-bg-hover);
   border-color: transparent;
-  box-shadow: none;
+  box-shadow: var(--elevation-card-hover);
 }
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:disabled {
   color: var(--content-disabled);
@@ -240,29 +240,9 @@ html[data-theme][data-family] .file-browser-toolbar :is(.breadcrumb, .file-bread
   min-width: 0;
   overflow: hidden;
 }
-html[data-theme][data-family] .file-browser-toolbar .breadcrumb-nav {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-/* The shared breadcrumb layout hides overflow by default; the toolbar wrapper owns the
-   actual horizontal viewport so narrow paths can scroll instead of being clipped. */
-html[data-theme][data-family] .file-browser-toolbar .breadcrumb-viewport :is(.breadcrumb, .file-breadcrumb) {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-html[data-theme][data-family] .file-browser-toolbar .breadcrumb-viewport :is(.breadcrumb, .file-breadcrumb)::-webkit-scrollbar {
-  display: none;
-}
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) {
   box-sizing: border-box;
   min-height: var(--file-toolbar-control-height);
-  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -275,30 +255,12 @@ html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) {
   font-weight: var(--file-toolbar-font-weight);
   line-height: 1;
   white-space: nowrap;
-  flex-shrink: 0;
-  transition: none;
-}
-html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) .bc-label {
-  display: block;
-  flex: 0 0 auto;
-  min-width: max-content;
-  white-space: nowrap;
-}
-html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg).is-breadcrumb-compressed .bc-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg):hover:not(.active):not(.bc-cur) {
   color: var(--file-toolbar-fg-hover);
   background: var(--action-soft);
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.active, .bc-cur) {
-  flex: 0 0 auto;
-  min-width: 0;
   color: var(--file-toolbar-fg);
   background: transparent;
 }

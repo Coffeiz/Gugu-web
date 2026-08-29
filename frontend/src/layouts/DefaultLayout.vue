@@ -11,8 +11,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><span class="btn-content"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />上传文件</span></a-button>
-          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><span class="btn-content"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />新建项目</span></a-button>
+          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
+          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
         </div>
       </header>
 
@@ -80,8 +80,8 @@ import { useLiveStore } from '@/stores/live'
 import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
-import Icon from '@/components/common/Icon.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
+import { PhPlus, PhUploadSimple } from '@phosphor-icons/vue'
 import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
@@ -258,52 +258,35 @@ const todayStr = computed(() => {
 
 .topbar-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
-}
-
-/* 顶栏搜索框和操作按钮共享同一个中号控件高度，避免 Arco 默认尺寸让按钮比搜索框短。 */
-.topbar-actions .arco-btn {
-  box-sizing: border-box;
-  height: var(--control-height-md);
-  min-height: var(--control-height-md);
-  padding-top: 0;
-  padding-bottom: 0;
-  line-height: var(--control-height-md);
-}
-.topbar-actions .btn-content {
-  display: inline-flex;
-  align-items: center;
-  height: 100%;
-  line-height: var(--line-height-ui);
 }
 
 /* 顶栏按钮不做悬停上浮；上传文件走次要按钮 token，新建项目走全局 press-fx 阴影。 */
 .btn-ghost-custom {
-  --topbar-btn-shadow: none;
-  background: var(--surface-raised) !important;
-  border: 1px solid var(--action-outline) !important;
+  --topbar-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.95);
+  background: var(--action-secondary-bg) !important;
+  border: 1px solid var(--action-secondary-border) !important;
   border-radius: var(--radius-sm) !important;
   color: var(--action-secondary-fg) !important;
-  box-shadow: none !important;
+  box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
   transition: background 0.2s ease-out, box-shadow 0.2s ease-out,
               transform 0.15s ease, opacity 0.15s ease !important;
 }
 .topbar .btn-ghost-custom:hover {
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  color: var(--control-fg-strong) !important;
-  box-shadow: none !important;
+  background: var(--action-secondary-bg-hover) !important;
+  border-color: var(--action-secondary-border-hover) !important;
+  color: var(--action-secondary-fg-hover) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 3px 10px rgba(80,90,110,0.12) !important;
 }
 .btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .btn-primary-custom {
-  --topbar-btn-shadow: none;
+  --topbar-btn-shadow: 0 3px 12px rgba(123,127,178,0.3);
   background: var(--action-primary-bg) !important;
   border: none !important;
   border-radius: var(--radius-sm) !important;
-  box-shadow: none !important;
+  box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
   transition: box-shadow 0.2s ease-out, opacity 0.2s ease-out,
               transform 0.15s ease !important;

@@ -9,7 +9,7 @@
         :style="{ transformOrigin: uiStore.chatNotifyOrigin }"
       >
         <button class="nb-close" @click="dismiss(item.id)" title="关闭">
-          <Icon name="action.close" :size="13" />
+          <PhX weight="bold" :size="13" />
         </button>
         <div v-if="item.title" class="nb-head">
           <span class="nb-dot" :class="{ typing: item.typing }" />
@@ -24,7 +24,8 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import { ref, reactive, watch } from 'vue'
+import { PhX } from '@phosphor-icons/vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 
@@ -189,14 +190,6 @@ function dismiss(id: number) {
   border-radius: 20px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), inset 1px 0 0 rgba(255,255,255,0.5);
   pointer-events: none;
-}
-
-/* 暗色只重映射边缘 token，避免沿用亮色主题的纯白高光；亮色基线保持不变。 */
-:global(html[data-theme='dark'][data-family]) .nb-item {
-  border-color: var(--border-default);
-}
-:global(html[data-theme='dark'][data-family]) .nb-item::after {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), inset 1px 0 0 var(--highlight-muted);
 }
 
 /* 标题行：圆点 + 标题，预留右上角关闭按钮的位置 */

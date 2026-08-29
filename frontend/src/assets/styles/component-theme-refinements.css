@@ -55,22 +55,14 @@ html[data-theme][data-family] .event-form-body .popup-save,
 html[data-theme][data-family] .sched-page .btn-primary {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
-  filter: none !important;
-  box-shadow: none !important;
-  transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
-}
-/* 顶栏按钮沿用定时任务按钮的亮度 hover；仅过渡 filter，避免渐变背景切换造成闪烁。 */
-html[data-theme][data-family] .topbar .btn-primary-custom {
-  transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-primary:hover,
 html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
 html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
 html[data-theme][data-family] .sched-page .btn-primary:not(:disabled):hover {
-  background: var(--action-primary-bg) !important;
-  filter: brightness(1.05) !important;
-  box-shadow: none !important;
+  background: var(--action-primary-bg-hover) !important;
+  box-shadow: var(--elevation-card-hover) !important;
 }
 
 /* ── Calendar grid / weekend fidelity ──────────────────────────────────────────────── */
@@ -167,12 +159,6 @@ html[data-theme='dark'][data-family] .cal-page .wv-ev {
 /* ── Calendar toolbar ───────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .cal-toolbar { --gb-tint: var(--surface-glass); }
 html[data-theme][data-family] .cal-toolbar:hover { --gb-tint: var(--surface-glass-hover); }
-/* 当前页面可使用任意调色板，但这两个玻璃面板沿用 Aero 的白色高光契约。 */
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .cal-toolbar {
-  --gb-highlight-strong: var(--aero-glass-highlight);
-  --gb-highlight-side: var(--aero-glass-highlight-side);
-  border-top-color: var(--aero-glass-border);
-}
 html[data-theme][data-family] .cal-toolbar .nav-btn,
 html[data-theme][data-family] .cal-toolbar .period-btn {
   color: var(--control-fg);
@@ -184,13 +170,13 @@ html[data-theme][data-family] .cal-toolbar .period-btn:hover { background: var(-
 html[data-theme][data-family] .cal-toolbar .today-btn {
   color: var(--control-fg);
   background: var(--control-bg);
-  border-color: var(--input-border);
-  box-shadow: none;
+  border-color: var(--control-border);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
 }
 html[data-theme][data-family] .cal-toolbar .today-btn:hover {
   color: var(--control-fg-strong);
   background: var(--control-bg-hover);
-  border-color: var(--input-border-hover);
+  border-color: var(--control-border-hover);
 }
 html[data-theme][data-family] .cal-toolbar .view-toggle {
   --pill-bg: var(--segmented-pill-bg);
@@ -199,29 +185,6 @@ html[data-theme][data-family] .cal-toolbar .view-toggle {
 }
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
-
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .chat-window {
-  --gugu-chat-highlight: var(--aero-glass-highlight);
-  border-top-color: var(--aero-glass-border);
-}
-
-/* Mono 亮色是实体中性表面，不应继承其他亮色调色板的 Aero 白色高光。
-   两个组件都显式回到 Mono 的弱高光和中性边界，避免 GlassBg/窗口伪元素再次叠出白线。 */
-html[data-theme='light'][data-family='mono'] .cal-toolbar {
-  --gb-highlight-strong: var(--highlight-strong);
-  --gb-highlight-side: var(--highlight-side);
-  border-top-color: var(--border-strong);
-}
-html[data-theme='light'][data-family='mono'] .chat-window {
-  --gugu-chat-highlight: var(--highlight-strong);
-  border-top-color: var(--border-strong);
-}
-
-/* 个人设置左侧栏的分界线同样由 border-right + inset 侧向高光组成，亮色非 Aero 时保持一致。 */
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .bm-card .pm-layout > .pm-nav.panel-left {
-  --panel-glass-border: var(--aero-glass-border);
-  --panel-glass-side-highlight: var(--aero-glass-highlight-side);
-}
 
 /* ── Disabled navigation entries ────────────────────────────────────────────────────── */
 html[data-theme][data-family] .sidebar .soon-item { color: var(--content-disabled); }

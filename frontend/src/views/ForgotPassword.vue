@@ -4,7 +4,22 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
-      <AuthBrand />
+      <div class="card-brand">
+        <div class="brand-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 7h.01"/>
+            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
+            <path d="M20 7l2 .5-2 .5"/>
+            <path d="M10 18v3"/>
+            <path d="M14 17.75V21"/>
+            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-name">咕咕</div>
+          <div class="brand-sub">找回密码</div>
+        </div>
+      </div>
 
       <template v-if="!sent">
         <p class="hint">输入你注册时填写的邮箱，我们会给你发一封重置密码的邮件。</p>
@@ -46,7 +61,6 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import AuthBrand from '@/components/common/AuthBrand.vue'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const email   = ref('')
@@ -103,14 +117,24 @@ async function handleSubmit() {
   background: rgba(255,255,255,0.56);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.76);
-  border-radius: 20px; padding: 28px 32px 32px;
+  border-radius: 20px; padding: 36px 32px;
   box-shadow:
     0 20px 60px rgba(80,90,110,0.12),
     inset 0 1px 0 rgba(255,255,255,0.95),
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
 
-.hint { font-size: 13px; color: var(--content-secondary); line-height: 1.6; margin: 0 0 18px; }
+.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.brand-icon {
+  width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
+}
+.brand-name { font-size: 18px; font-weight: 700; color: #1e2028; }
+.brand-sub  { font-size: 12px; color: #8a8fa8; margin-top: 2px; }
+
+.hint { font-size: 13px; color: #8a8fa8; line-height: 1.6; margin: 0 0 18px; }
 
 .field { margin-bottom: 14px; }
 .field label {
@@ -143,10 +167,10 @@ async function handleSubmit() {
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: background-color 0.15s;
-  box-shadow: none;
+  cursor: pointer; transition: opacity 0.15s, transform 0.15s;
+  box-shadow: 0 4px 16px rgba(123,127,178,0.32);
 }
-.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
+.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .done-box { text-align: center; padding: 8px 0 4px; }

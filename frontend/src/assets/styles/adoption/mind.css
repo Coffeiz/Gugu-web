@@ -7,14 +7,14 @@ html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); 
    toolbar's object picker. Drawer/toolbar/picker are .glass-card: remap the whole component contract,
    including --glass-card-blur. product.css owns the final Mono .glass-card backdrop declaration and
    resolves this local token, so content cards can stay no-blur without a specificity fight here. */
-html[data-family='mono'] .mind-tabs {
+html[data-family='v2'] .mind-tabs {
   background: var(--chrome-glass-bg);
   border-color: var(--chrome-glass-border);
   box-shadow: var(--chrome-glass-shadow);
   backdrop-filter: var(--chrome-glass-blur);
   -webkit-backdrop-filter: var(--chrome-glass-blur);
 }
-html[data-family='mono'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
+html[data-family='v2'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   --glass-card-background: var(--chrome-glass-bg);
   --glass-card-background-hover: var(--chrome-glass-bg);
   --glass-card-border: var(--chrome-glass-border);
@@ -27,14 +27,14 @@ html[data-family='mono'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   box-shadow: var(--glass-card-shadow);
 }
 
-/* Notes timeline. Mono uses quieter elevation, so these content cards get a stronger real
+/* Notes timeline. Mono/V2 uses quieter elevation, so these content cards get a stronger real
    outline for separation; file/project references inherit their own shared card contracts. */
 html[data-theme][data-family] .tl-col {
   --glass-card-background: var(--mind-timeline-bg);
   --glass-card-border: var(--border-default);
   --glass-card-shadow: var(--card-shadow);
 }
-html[data-family='mono'] .tl-col { --glass-card-border: var(--border-strong); }
+html[data-family='v2'] .tl-col { --glass-card-border: var(--border-strong); }
 html[data-theme][data-family] .tl-col.dragging {
   background: var(--glass-card-background-hover);
   border-color: var(--glass-card-border-hover);
@@ -50,7 +50,7 @@ html[data-theme][data-family] .note-card {
   border-color: var(--note-border);
   box-shadow: var(--note-shadow);
 }
-html[data-family='mono'] .note-card { border-color: var(--border-strong); }
+html[data-family='v2'] .note-card { border-color: var(--border-strong); }
 html[data-theme][data-family] .note-card::after {
   background: transparent;
   box-shadow: inset 0 1px 0 var(--note-highlight);

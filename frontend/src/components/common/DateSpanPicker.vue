@@ -3,7 +3,7 @@
     <div class="drp-input" :class="{ open, 'has-value': startDate || endDate, placeholder: !startDate && !endDate }" @click="toggle">
       <svg class="drp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <rect x="1" y="2" width="12" height="11" rx="3"/>
-        <path d="M4 1v3M10 1v3M1 6h12"/>
+        <path d="M4 1v2M10 1v2M1 6h12"/>
       </svg>
       <span v-if="startDate || endDate">
         <span>{{ fmt(startDate) }}</span>
@@ -13,7 +13,9 @@
       <span v-else>{{ placeholder }}</span>
     </div>
 
-    <PopupMenu ref="popupMenuRef" :show="open" :anchor="wrapRef" :style="popupStyle" popup-class="drp-popup-host drp-popup">
+    <Teleport to="body">
+      <Transition name="drp-pop">
+        <div v-if="open" class="drp-popup" :style="popupStyle" ref="popupRef">
 
           <!-- 头部导航 -->
           <div v-if="!yearMode" class="drp-header">
@@ -93,14 +95,15 @@
               <button class="drp-today" @click.stop="cursor = new Date(today.getFullYear(), today.getMonth(), 1)">今天</button>
             </div>
           </template>
-    </PopupMenu>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { nextZ } from '@/composables/windowz'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import { nextZ, registerPopover } from '@/composables/windowz'
 
 const props = defineProps({
   startDate: { type: String, default: '' },
@@ -111,7 +114,7 @@ const emit = defineEmits(['update:startDate', 'update:endDate'])
 
 const open      = ref(false)
 const wrapRef   = ref<HTMLElement | null>(null)
-const popupMenuRef = ref<InstanceType<typeof PopupMenu> | null>(null)
+const popupRef  = ref<HTMLElement | null>(null)
 const popupStyle = ref({})
 const yearMode  = ref(false)
 const phase     = ref('start')   // 'start' | 'end'
@@ -247,13 +250,24 @@ function clear() {
 function onClickOutside(e: MouseEvent) {
   if (!open.value) return
   if (wrapRef.value?.contains(e.target as Node)) return
-  if (popupMenuRef.value?.contains(e.target as Node)) return
+  if (popupRef.value?.contains(e.target as Node)) return
   open.value = false
   yearMode.value = false
 }
 
+// 日期范围选择器会 Teleport 到 body。注册为宿主窗口的浮层，编辑卡/新建卡被点击置顶时，
+// 仍让已打开的日期弹层保持在宿主之上，直到这次外部点击完成关闭。
+let unregisterPopover: (() => void) | null = null
+watch(open, v => {
+  unregisterPopover?.()
+  unregisterPopover = v
+    ? registerPopover(z => { popupStyle.value = { ...popupStyle.value, zIndex: z } })
+    : null
+})
+
 onMounted(() => document.addEventListener('click', onClickOutside, true))
 onUnmounted(() => {
+  unregisterPopover?.()
   document.removeEventListener('click', onClickOutside, true)
 })
 
@@ -305,7 +319,7 @@ watch(() => props.startDate, v => {
   font-size: var(--font-size-md); font-weight: 700;
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
-  font-family: var(--font-family-ui);
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .drp-period-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
 .drp-period-caret.up { transform: rotate(180deg); }
@@ -335,7 +349,7 @@ watch(() => props.startDate, v => {
   border: none; background: none; cursor: pointer; padding: 0;
   font-size: var(--font-size-sm); font-weight: 500; line-height: 1;
   border-radius: 7px;
-  font-family: var(--font-family-ui);
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
   position: relative;
   isolation: isolate;
 }
@@ -374,7 +388,7 @@ watch(() => props.startDate, v => {
 .drp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
   font-size: var(--font-size-sm); font-weight: 500; cursor: pointer;
-  font-family: var(--font-family-ui);
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .drp-year-btn.this-year:not(.selected) { font-weight: 700; }
 .drp-year-btn.selected {
@@ -388,9 +402,11 @@ watch(() => props.startDate, v => {
 .drp-clear, .drp-today {
   font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 7px; border: none;
-  cursor: pointer; font-family: var(--font-family-ui);
+  cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .drp-clear { background: none; }
 
-:global(.popup-menu-host.drp-popup-host) { padding: 12px; box-sizing: border-box; }
+.drp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
+.drp-pop-leave-active { transition: opacity 0.1s, transform 0.1s ease-in; }
+.drp-pop-enter-from, .drp-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-4px); }
 </style>

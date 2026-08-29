@@ -5,7 +5,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
-from sqlalchemy import and_, select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -15,7 +15,7 @@ from app.core.redis import get_redis
 from app.core.security import hash_password, verify_password, create_user_token, get_current_user
 from app.core.tz import now_utc, iso_utc
 from app.db.session import get_db
-from app.models import User, AgentUsage, FrontendEvent
+from app.models import User, InviteCode, AgentUsage, FrontendEvent
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.services import email as email_svc
 
@@ -25,6 +25,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: UserRegister, request: Request, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "register", 20, 3600)   # 同 IP 每小时最多 20 次注册尝试
+    # 验证邀请码
+    inv_result = await db.execute(
+        select(InviteCode).where(InviteCode.code == body.invite_code.strip().upper())
+    )
+    invite = inv_result.scalars().first()
+    if not invite:
+        raise HTTPException(400, "邀请码无效")
+    if invite.used_at is not None:
+        raise HTTPException(400, "邀请码已被使用")
+
     existing = await db.execute(
         select(User).where(
             (User.username == body.username) | (User.email == body.email)
@@ -42,6 +52,15 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
     db.add(user)
     await db.flush()
 
+    # 原子占用邀请码：WHERE used_at IS NULL 保证并发下只有一个请求能抢到（防 TOCTOU 一码多注册）。
+    claimed = await db.execute(
+        InviteCode.__table__.update()
+        .where(and_(InviteCode.id == invite.id, InviteCode.used_at.is_(None)))
+        .values(used_at=now_utc(), used_by=user.id)
+    )
+    if claimed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(400, "邀请码已被使用")
     await db.commit()
     await db.refresh(user)
 

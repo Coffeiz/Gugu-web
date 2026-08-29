@@ -40,7 +40,7 @@
               v-for="ev in lay.visibleChips" :key="ev.id"
               class="event-chip cal-chip"
               :class="{ 'chip-proj': ev.calendarType === 'project', 'chip-ev-click': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
-              :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.calendarType === 'project' && ev.status === 'done' ? 'pointer' : (ev.calendarType ? 'grab' : 'default') }"
+              :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.calendarType ? 'pointer' : 'default' }"
               @click.left.stop="ev.calendarType === 'project' ? emit('open-project', ev) : (ev.calendarType === 'event' && emit('edit-event', ev, $event))"
               @contextmenu.prevent.stop="ev.calendarType === 'event' && emit('edit-event', ev, $event)"
               @mousedown.stop="ev.calendarType === 'project' ? emit('start-project-chip-drag', ev, $event) : (ev.calendarType === 'event' && emit('start-event-drag', ev, $event))"
@@ -76,16 +76,15 @@
               background: [deadlineWarnLayer(bar), `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`].filter(Boolean).join(', '),
               borderColor: bar.accent + '70',
               color: darkenHex(bar.accent),
-              cursor: bar.status === 'done' ? 'pointer' : 'grab',
             }"
           >
-            <div v-if="bar.startsHere && bar.status !== 'done'" class="bar-rh bar-rh-left" @mousedown.stop.prevent="emit('start-bar-resize', bar, 'start', $event)"></div>
+            <div v-if="bar.startsHere" class="bar-rh bar-rh-left" @mousedown.stop.prevent="emit('start-bar-resize', bar, 'start', $event)"></div>
             <template v-if="bar.startsHere || (bar.colStart ?? 0) === 0">
               <span class="bar-proj-tag">项目</span>
               <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
               <span class="bar-label">{{ bar.name }}</span>
             </template>
-            <div v-if="bar.endsHere && bar.status !== 'done'" class="bar-rh bar-rh-right" @mousedown.stop.prevent="emit('start-bar-resize', bar, 'end', $event)"></div>
+            <div v-if="bar.endsHere" class="bar-rh bar-rh-right" @mousedown.stop.prevent="emit('start-bar-resize', bar, 'end', $event)"></div>
           </div>
         </template>
       </div>

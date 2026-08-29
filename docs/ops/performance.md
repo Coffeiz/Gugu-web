@@ -1,100 +1,19 @@
-# 咕咕 · 性能优化文档
+# 咕咕 · 前端性能优化文档
 
-> 最后更新：2026-08-30（全栈性能盘点）
+> 最后更新：2026-07-02（核对 §十一 现状，标注 backdrop-filter 已恢复 + 后续 GlassBg 方案）
 
 ---
 
 ## 易读概述（不懂前端也能看懂）
 
-这篇文档记录的是"为什么咕咕网页版一开始感觉卡、后来怎么变流畅的"，并补充后端、Agent、RAG 和运维侧的性能措施。核心思路就两条：
+这篇文档记录的是"为什么咕咕网页版一开始感觉卡、后来怎么变流畅的"。核心思路就两条：
 
 1. **少下载、少请求**：图片、文件列表这些数据，只要没变就别重新问后端要，用浏览器本地缓存（内存里的、或者刷新也不丢的 sessionStorage）先顶上，用户几乎感觉不到等待。
 2. **少占用浏览器的"画图资源"**：有些视觉效果（比如卡片的毛玻璃模糊效果）看着好看，但会让浏览器每次都重新计算一遍怎么画，攒起来就是明显的卡顿感。该效果影响不到实际观感时就把它去掉或换个更省资源的实现方式。
 
 文档里的每一节对应一个具体问题和一个具体修法，越往后越进阶（并发限流、根因排查）。真正的性能瓶颈曾经不在前端这些优化点上，而是**后端一个依赖包没装**（Pillow 缺失导致缩略图功能整体失效，见下面第一节）——这提醒我们排查性能问题时先看有没有更底层的"地基没打好"，再去抠前端细节。
 
-⚠️ **阅读方式**：下面的「当前盘点」是以 2026-08-30 工作区代码为准的现状清单；后面的 §一至 §十三保留历史问题、方案和演进细节。若历史章节和当前盘点冲突，以当前盘点和代码为准。性能数字只有在报告明确给出测试口径时才视为实测，不把经验值写成基准结果。
-
-## 当前盘点（2026-08-30）
-
-### 1. 前端加载、渲染与交互
-
-| 优化 | 当前实现 | 状态与边界 |
-|---|---|---|
-| 路由级懒加载 | 普通页面、Admin 页面均使用 `component: () => import(...)` | 已落地；首次进入某路由才加载页面 chunk |
-| 聊天虚拟列表 | `@tanstack/vue-virtual` 只挂载视口附近消息，动态测量行高 | 已落地；长会话恢复时避免一次性渲染和 Markdown 解析 |
-| Markdown 按需解析 | 历史消息先保留 `html: null`，进入虚拟列表后再解析 | 已落地；减少长会话打开时的 CPU 尖峰 |
-| 缩略图懒加载 | `useLazyThumb.ts` / 聊天缩略图指令使用 `IntersectionObserver` | 已落地；只在接近视口时取 card 图 |
-| 缩略图渐进加载 | tiny 预热、card 按需加载、`Image.decode()` 预解码 | 已落地；降低滚入视口时的下载、解码峰值 |
-| 上传/缩略图并发 | `pLimit`，上传 3、缩略图 6 | 已落地；限制单客户端并发，不等于全局限流 |
-| 文件领域缓存 | Pinia `useFilesCacheStore` 统一缓存文件夹、文件和 version，并建立 folder/project 索引 | 当前实现；旧的 `services/cache.ts` 扁平 sessionStorage 文件列表缓存已移除 |
-| 页面导航缓存 | 文件库导航路径、聊天当前会话使用 sessionStorage | 已落地；仅保存轻量 UI 状态，不作为业务数据真源 |
-| 日历缓存 | `CalendarPanel` 模块级事件缓存和节假日缓存 | 已落地；按年月复用，写操作后乐观更新对应缓存 |
-| 动态玻璃背景 | 顶栏、日历等易出现白带的场景使用 `GlassBg`；静态卡片保留原生 blur | 已落地；不是全局删除 `backdrop-filter` |
-| 代码分包 | 路由分包和 TextViewer 的 CodeMirror 异步加载 | 已落地；构建仍有超大公共 chunk，见「待优化」 |
-
-### 2. 后端 API、数据库和文件处理
-
-| 优化 | 当前实现 | 状态与边界 |
-|---|---|---|
-| 异步请求链路 | FastAPI async endpoint、SQLAlchemy async session、外部阻塞操作用 `asyncio.to_thread` | 已落地；阻塞库仍需逐项检查，不能只看 endpoint 是否 async |
-| 数据库连接池 | `pool_pre_ping`、`pool_size=15`、`max_overflow=25`、`pool_timeout=10`、`pool_recycle=1800` | 已落地；web/worker 每进程独立连接池，连接数需按部署规模核算 |
-| 连接池生命周期 | `async with` session、显式 `dispose_engine`、跨事件循环重建旧池 | 已落地；用于降低连接泄漏和 loop 绑定错误，不能替代业务方正确关闭 session |
-| 查询边界 | 对会话、事件、文件、搜索、管理列表普遍使用 `limit`/分页；Agent 上下文有项目、事件、笔记和文件上限 | 已落地；复杂管理列表仍应继续检查排序字段索引 |
-| 数据库索引 | workspace、knowledge index owner/source/time 等索引，启动初始化带 advisory lock、DDL timeout | 已落地；索引覆盖仍需按真实慢查询补充，不能仅靠 `limit` 保证快 |
-| 图片缩略图 | Pillow 生成 WebP，磁盘缓存，失败时小 JPEG fallback，CPU 信号量限制生成并发 | 已落地；缩略图响应 private cache 1 天 |
-| 文件/附件响应 | 缩略图、头像和附件使用 private `Cache-Control`；流式接口使用 no-cache 与 `X-Accel-Buffering: no` | 已落地；权限数据不使用公共缓存 |
-| 后台化副作用 | 上传后的缩略图预生成、反馈邮件等通过 `BackgroundTasks` | 已落地；后台任务失败不会阻塞主响应，但不提供持久队列保证 |
-| 流式传输 | Agent、实时事件、终端使用 `StreamingResponse`；实时通道避免缓存和代理缓冲 | 已落地；客户端断连、provider 延迟仍需单独观测 |
-
-### 3. Agent、LLM 与上下文
-
-| 优化 | 当前实现 | 状态与边界 |
-|---|---|---|
-| 共享主循环 | Anthropic/OpenAI provider 差异收口到 `LoopDriver`，避免两套循环重复执行 | 已落地；减少维护分叉，不直接减少 provider token |
-| Prompt 缓存稳定性 | 静态 system prefix 固定；动态行为、记忆、时间等放到 conversation 的 system reminder | 已落地；目标是保护 provider 前缀缓存，动态尾部不设置缓存锚点 |
-| provider 缓存适配 | 按 provider/model 判断自动前缀缓存、显式 cache control、单锚点能力 | 已落地；DeepSeek、MiniMax 等行为不同，不能统一假设 |
-| 工具 Schema 注入 | 支持简介模式与全量模式，当前默认简介模式；简介模式为 `description_short + 紧凑字段签名` | 已落地；效果以 `docs/reports/schema-probes/` 和具体 A/B 报告为准 |
-| 上下文读取限额 | 项目、事件、最近笔记、个人文件、RAG 结果均有数量/字符上限 | 已落地；控制 prompt 体积，也避免单条大数据拖慢请求 |
-| 会话历史限制 | 历史消息有 `HISTORY_MAX_MSGS=500`，上下文压缩有分支输入和摘要字符/token上限 | 已落地；压缩仍会产生一次额外 LLM 请求 |
-| 并行上下文加载 | 多来源 RAG、动态上下文等通过 `asyncio.gather` 并行读取 | 已落地；并行度和数据库连接池压力需要一起评估 |
-| 运行时观测 | LoopScope 记录 schema token、cache read/write、fresh input、digest 和缓存锚点诊断 | 已落地；只记录脱敏诊断，不记录聊天正文、工具参数和密钥 |
-
-### 4. RAG、记忆和检索
-
-| 优化 | 当前实现 | 状态与边界 |
-|---|---|---|
-| Python 索引缓存 | 按 owner/backend/revision 缓存，带 TTL、owner/global 字节预算、LRU 和并发锁 | 已落地；多 worker 进程之间不共享 Python 内存 |
-| Rust/Tantivy sidecar | 词法检索可走持久化 Rust sidecar，和 Python 路径共用 revision/cache 编排 | 已落地；Admin 可选后端，sidecar 不改变权限过滤和业务表回查责任 |
-| Memory scope 缓存 | owner/daily/group/member 文档投影按 revision + 30 分钟 TTL 缓存，写入事件触发失效 | 已落地；revision 读取失败时重建，不把错误缓存成永久结果 |
-| 向量缓存 | Memory/Knowledge 文档向量复用 owner cache 与 TTL，按模型/版本区分 | 已落地；向量覆盖不足时按设计回退词法检索 |
-| RAG 结果边界 | 最多 10 个 active results、每来源最多 3 个、注入最多 3000 字符 | 已落地；目标是控制延迟和上下文膨胀，不等同于质量保证 |
-| 搜索查询限流 | 搜索词长度、查询数量、URL 检查次数、每日额度和外部响应体积均有上限 | 已落地；外部服务延迟仍受供应商影响 |
-
-### 5. 运行时、媒体和沙盒
-
-- 视频转码并发限制为 2；视觉输入在超大尺寸/体积时降采样和压缩，文本抽取有字节与字符上限。
-- 沙盒执行有 semaphore、超时、输出上限、PID/CPU/内存/磁盘配额；终端使用 PTY 和流式输出，不把长输出一次性塞进页面。
-- IM 会话、绑定任务、上一轮消息和配置同步均使用 TTL；失败的外部连接使用退避或有限重试，避免故障时忙等。
-- 文件上传单文件、附件、下载和搜索外部响应都有硬上限，优先保护服务稳定性而不是无限等待。
-
-## 已验证的性能证据
-
-| 领域 | 证据 | 结论 |
-|---|---|---|
-| Provider prompt cache | `docs/reports/TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN-20260825.md`、`docs/reports/TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN-20260826.md` | MiniMax 连续对话缓存稳定性较好；DeepSeek 受前缀边界和 provider 行为影响，不能直接类比 |
-| Tool Schema | `docs/reports/schema-probes/` 及其 A/B 报告 | 简介/全量差异应同时看 schema token、总 input、cache ratio 和工具参数准确率 |
-| RAG lexical | `docs/reports/TEST-RAG-PHASE5-RUST-TANTIVY评估-2026-08-24.md` | sidecar 核心检索显著快于基线，但报告明确不等于生产端到端 P95 |
-| 文件缩略图 | 本文 §十二、§十三及对应前端实现 | WebP、懒加载、预解码和并发限制共同解决大图下载与滚动峰值 |
-
-## 当前待优化与观测缺口
-
-1. 前端构建仍有超过 500KB 的 chunk，且 `useOnboarding` 同时静态/动态导入，动态导入未形成真正分包。
-2. 数据库连接池按进程创建，web、worker 和 sidecar 的总连接数需要结合部署实例数和 PostgreSQL 上限压测确认。
-3. RAG 多 worker 缓存不共享；高并发下可能重复构建同一 owner 的索引，需要跨进程协调或外部缓存时再处理。
-4. 当前性能报告覆盖了缓存、RAG 和文件缩略图，但缺少统一的真实用户端到端指标：首屏、路由切换、首 token、工具续轮、API P95/P99 和数据库慢查询。
-5. `backdrop-filter` 仍应按动态背景场景取舍；不能用全局删除或全局开启作为统一结论。
-6. 性能诊断不得写入聊天正文、附件名、工具参数、用户标识或密钥；新增指标应优先记录时长、计数、大小和脱敏 digest。
+⚠️ **需要注意**：§十一「移除 glass-card 的 backdrop-filter」这条优化后来发生了变化——2026-07-01（0.15.1）起，`.glass-card` 的 `backdrop-filter` 已经**恢复**（当前 `frontend/src/assets/styles/global.css` 里可以看到），改用更精细的按需方案：对会遇到"白带"视觉问题的浮层（顶栏、日历工具栏等，背后是会动的内容）换成不依赖 `backdrop-filter` 的 `GlassBg` 组件；对普通静态背景的卡片保留原生 `backdrop-filter` 也没问题。也就是说 §十一原文描述的"全局移除"已不是当前状态，详见该节末尾的更新说明。
 
 ## 目录
 
@@ -113,9 +32,6 @@
 - [十二、WebP 缩略图根因修复](#十二webp-缩略图根因修复)
 - [十三、并发限流：批量上传 + 缩略图加载](#十三并发限流批量上传--缩略图加载)
 - [缓存层总览](#缓存层总览)
-- [当前盘点（2026-08-30）](#当前盘点2026-08-30)
-- [已验证的性能证据](#已验证的性能证据)
-- [当前待优化与观测缺口](#当前待优化与观测缺口)
 
 ---
 

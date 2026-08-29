@@ -8,7 +8,7 @@
         @dragstart="emit('drag-start', stage, ti)" @dragend="emit('drag-end')"
         @dragover.prevent.stop="emit('drag-over', stage, ti, $event)">
         <button class="todo-check" :class="{ checked: todo.done }" @click.stop="emit('toggle', todo)">
-          <Icon name="status.success" v-if="todo.done" :size="9" />
+          <PhCheck v-if="todo.done" :size="9" weight="bold" />
         </button>
         <input v-if="editingTodo === todo.id" :class="['todo-input', `todo-input-${stage.key}`]"
           :data-tid="todo.id" v-model="todo.text" :title="todo.text"
@@ -18,7 +18,7 @@
           @keydown.esc="emit('finish-edit')" @keydown.backspace="!todo.text && emit('remove', stage, todo.id)" />
         <span v-else class="todo-name" :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
           @click.stop="emit('start-edit', todo.id)">{{ todo.text || '待办事项' }}</span>
-        <button class="todo-del" @click.stop="emit('remove', stage, todo.id)"><Icon name="action.close" :size="8" /></button>
+        <button class="todo-del" @click.stop="emit('remove', stage, todo.id)"><PhX :size="8" weight="bold" /></button>
       </div>
     </TransitionGroup>
     <button class="todo-add-btn" @click.stop="emit('add', stage)">＋ 添加待办</button>
@@ -26,8 +26,8 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
+import { PhCheck, PhX } from '@phosphor-icons/vue'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
 
 defineProps({

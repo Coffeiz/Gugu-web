@@ -40,7 +40,7 @@ const md = `# 隐私政策
 ### 注册时
 - **用户名**、**邮箱**：用于登录和身份识别
 - **密码**：仅存储 bcrypt 哈希值，我们无法还原你的明文密码
-- **注册信息**：用于创建账号和提供登录服务
+- **邀请码**：验证后标记失效，不再保留用途以外的信息
 
 ### 使用过程中
 - **项目数据**：你创建的项目、阶段、待办事项、截止日期
@@ -278,7 +278,7 @@ const html = sanitizeHtml(marked(md) as string)
 .md-content :deep(li) { margin-bottom: 3px; }
 .md-content :deep(strong) { font-weight: 600; }
 .md-content :deep(code) {
-  font-family: var(--font-family-mono); font-size: 12px;
+  font-family: monospace; font-size: 12px;
   background: rgba(0,0,0,0.05); border-radius: 4px;
   padding: 1px 5px;
 }

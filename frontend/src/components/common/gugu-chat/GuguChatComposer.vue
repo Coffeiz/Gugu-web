@@ -6,23 +6,7 @@
     </div>
     <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
   </div>
-  <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded }">
-    <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" aria-label="命令列表">
-      <button
-        v-for="(item, index) in filteredCommands"
-        :key="item.command"
-        class="chat-command-item"
-        :class="{ active: index === commandIndex }"
-        type="button"
-        role="option"
-        :aria-selected="index === commandIndex"
-        @mousedown.prevent
-        @click="chooseCommand(item)"
-      >
-        <code>{{ item.command }}</code>
-        <span class="chat-command-copy"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-      </button>
-    </div>
+  <div class="chat-input-row">
     <button v-if="!recording" class="att-btn" @click="fileInput?.click()" title="添加附件">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
     </button>
@@ -39,7 +23,6 @@
       rows="1"
       v-enter.exact.prevent="() => onSend()"
       @paste="onPaste"
-      @keydown="onKeydown"
     />
     <div v-else class="rec-bar">
       <span class="rec-dot"></span>
@@ -48,17 +31,14 @@
       <button class="rec-cancel" @click="onCancelRecord">取消</button>
     </div>
     <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : (streaming ? onStopStreaming() : onSend())">
-      <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
-      <Icon name="action.next" v-else-if="!streaming" :size="expanded ? 14 : 13" />
-      <Icon name="action.stop-fill" v-else  :size="expanded ? 14 : 13" />
+      <PhCheck      v-if="recording"  weight="bold" :size="expanded ? 14 : 13" />
+      <PhArrowRight v-else-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
+      <PhStop       v-else            weight="fill"  :size="expanded ? 14 : 13" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import Icon from '@/components/common/Icon.vue'
-import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -67,6 +47,8 @@ import { loadChatCommands, type ChatCommandOption } from './chatCommands'
  * 发送后收起多行输入框时操作它（focus/测宽度重新量高度/清空后收起高度），
  * 通过 defineExpose 暴露 focus()/fitTextarea()/resetHeight()，不重新拿一份引用。
  */
+import { ref } from 'vue'
+import { PhArrowRight, PhStop, PhCheck } from '@phosphor-icons/vue'
 import type { ChatFile } from './chatTypes'
 import { SMALL_W, SIDEBAR_W } from './chatConstants'
 
@@ -90,75 +72,13 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
-const commandMenuVisible = ref(false)
-const commandIndex = ref(0)
-const chatCommands = ref<ChatCommandOption[]>([])
-const inputRowEl = ref<HTMLElement | null>(null)
-function commandsForValue(value: string) {
-  const match = value.match(/^\/([^\s]*)$/)
-  if (!match) return []
-  const query = match[1].toLowerCase()
-  return chatCommands.value.filter(item => item.command.slice(1).startsWith(query))
-}
-const filteredCommands = computed(() => commandsForValue(props.modelValue))
-
-function updateCommandMenu(value: string) {
-  const matches = commandsForValue(value)
-  commandMenuVisible.value = matches.length > 0
-  if (commandIndex.value >= matches.length) commandIndex.value = 0
-}
 
 function onInput(e: Event) {
   const el = e.target as HTMLTextAreaElement
-  commandIndex.value = 0
-  updateCommandMenu(el.value)
   emit('update:modelValue', el.value)
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 120) + 'px'
 }
-
-function chooseCommand(item: ChatCommandOption) {
-  commandMenuVisible.value = false
-  commandIndex.value = 0
-  emit('update:modelValue', item.insert)
-  requestAnimationFrame(() => expInputEl.value?.focus())
-}
-
-function onKeydown(event: KeyboardEvent) {
-  if (!commandMenuVisible.value || !filteredCommands.value.length) {
-    if (event.key === 'Escape') commandMenuVisible.value = false
-    return
-  }
-  if (event.key === 'ArrowDown') {
-    event.preventDefault()
-    commandIndex.value = (commandIndex.value + 1) % filteredCommands.value.length
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault()
-    commandIndex.value = (commandIndex.value - 1 + filteredCommands.value.length) % filteredCommands.value.length
-  } else if (event.key === 'Enter' || event.key === 'Tab') {
-    event.preventDefault()
-    chooseCommand(filteredCommands.value[commandIndex.value])
-  } else if (event.key === 'Escape') {
-    event.preventDefault()
-    commandMenuVisible.value = false
-  }
-}
-
-function onOutsidePointerdown(event: PointerEvent) {
-  if (!commandMenuVisible.value) return
-  const target = event.target
-  if (target instanceof Node && inputRowEl.value?.contains(target)) return
-  commandMenuVisible.value = false
-}
-
-onMounted(() => {
-  document.addEventListener('pointerdown', onOutsidePointerdown, true)
-  void loadChatCommands().then((items) => { chatCommands.value = items }).catch(() => {
-    // 命令注册表不可用时不展示过期的本地列表，避免把不存在的命令提示给用户。
-    chatCommands.value = []
-  })
-})
-onUnmounted(() => document.removeEventListener('pointerdown', onOutsidePointerdown, true))
 
 const fileInput   = ref<HTMLInputElement | null>(null)
 const expInputEl  = ref<HTMLTextAreaElement | null>(null)
@@ -237,7 +157,6 @@ defineExpose({
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
 .chat-input-row {
   display: flex; align-items: flex-end; gap: 8px;   /* 输入框多行增高时，附件/发送按钮贴底对齐 */
-  position: relative;
   padding: 10px 13px;
   border-top: 1px solid rgba(255,255,255,0.65);
   background: rgba(255,255,255,0.55);
@@ -246,48 +165,6 @@ defineExpose({
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   flex-shrink: 0;
 }
-.chat-command-menu {
-  position: absolute;
-  left: 8px;
-  bottom: calc(100% + 8px);
-  z-index: 5;
-  width: min(290px, calc(100% - 16px));
-  max-height: min(280px, calc(100vh - 120px));
-  overflow-y: auto;
-  padding: 5px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-card-solid);
-  box-shadow: var(--elevation-popup);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-}
-/* 命令菜单有圆角，原生滑块轨道必须避开上下边缘，避免伸出弹窗轮廓。 */
-.chat-command-menu::-webkit-scrollbar {
-  width: calc(var(--scrollbar-size-default) + 2px);
-}
-.chat-command-menu::-webkit-scrollbar-track {
-  margin-block: var(--scrollbar-safe-inset);
-}
-.chat-command-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--content-primary);
-  text-align: left;
-  cursor: pointer;
-}
-.chat-command-item:hover, .chat-command-item.active { background: var(--sidebar-item-hover); }
-.chat-command-item code { flex: 0 0 70px; color: var(--selection-fg); font: 11px var(--font-family-mono); }
-.chat-command-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.chat-command-copy strong { font-size: 12px; font-weight: 650; }
-.chat-command-copy small { overflow: hidden; color: var(--content-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.chat-input-row.is-expanded .chat-command-menu { left: 42px; width: min(320px, calc(100% - 54px)); }
 /* 录音条：录音时替换输入框 */
 .rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); height: 28px; min-width: 0; }   /* 与按钮(28)等高 → flex-end 底对齐时内容也居中对齐，不再偏低 */
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #e15c5c; flex-shrink: 0; animation: rec-pulse 1s ease-in-out infinite; }
@@ -324,6 +201,6 @@ defineExpose({
   transition: transform 0.15s; flex-shrink: 0;
 }
 .send-btn svg { display: block; }
-.send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); transform: none; }
+.send-btn:hover:not(:disabled) { transform: scale(1.1); }
 .send-btn:disabled { opacity: 0.55; cursor: default; }
 </style>

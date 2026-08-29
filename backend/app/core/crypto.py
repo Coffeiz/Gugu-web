@@ -57,6 +57,7 @@ def decrypt_secret(token: str) -> str:
     except Exception:
         return token
 
+
 class EncryptedString(TypeDecorator):
     """透明加解密的字符串列：写入前加密、读出后解密，业务代码零改动。"""
     impl = Text

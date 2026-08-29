@@ -13,13 +13,13 @@
             </div>
             <div class="fp-header-actions">
               <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" title="文件信息" @click="openInfo">
-                <Icon name="status.info" :size="16" />
+                <PhInfo weight="bold" :size="16" />
               </button>
               <button class="fp-action-btn" title="下载" @click="handleDownload">
-                <Icon name="action.download" :size="16" />
+                <PhDownloadSimple weight="bold" :size="16" />
               </button>
               <button class="fp-action-btn fp-close-btn" title="关闭 (Esc)" @click="$emit('close')">
-                <Icon name="action.close" :size="16" />
+                <PhX weight="bold" :size="16" />
               </button>
             </div>
           </div>
@@ -31,7 +31,7 @@
               <span>{{ converting ? '正在转换文档…' : '加载中…' }}</span>
             </div>
             <div v-else-if="error" class="fp-status fp-error">
-              <Icon name="status.warning" :size="32" style="opacity:.5" />
+              <PhWarningCircle :size="32" style="opacity:.5" />
               <span>{{ error }}</span>
             </div>
             <template v-else-if="blobUrl || videoSrc">
@@ -55,7 +55,7 @@
         <div class="fp-info-title" @mousedown.prevent="startInfoDrag">
           <span>文件信息</span>
           <button class="fp-action-btn fp-close-btn" @click="showInfo = false">
-            <Icon name="action.close" :size="15" />
+            <PhX weight="bold" :size="15" />
           </button>
         </div>
         <div class="fp-info-body">
@@ -100,7 +100,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
 import type { FileMeta } from '@/stores/filesCache'
-import Icon from '@/components/common/Icon.vue'
+import { PhInfo, PhDownloadSimple, PhX, PhWarningCircle } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { useLiveStore } from '@/stores/live'
@@ -203,8 +203,7 @@ watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined]
 }, { immediate: true })
 
 const liveStore = useLiveStore()
-watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.resource !== 'files') return
+watch(() => liveStore.fileEvent, (event) => {
   if (event?.origin === CLIENT_ID) return
   if (props.show && props.file && isText.value) load(props.file, true)
 })
@@ -477,7 +476,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
-.fp-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
+.fp-info-mono { font-family: monospace; font-size: 11px; }
 .info-pop-enter-active,
 .info-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
 .info-pop-enter-from,
