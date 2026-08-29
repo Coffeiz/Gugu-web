@@ -1,7 +1,7 @@
 <template>
   <button class="col-toggle-btn" @click="togglePmStages"
     :title="stagesExpanded ? '恢复文件区' : '展开阶段区'">
-    <Icon :name="stagesExpanded ? 'action.back' : 'action.next'" :size="13" />
+    <Icon :name="stagesExpanded ? 'action.chevron-back' : 'action.chevron-next'" :size="13" />
   </button>
 
   <FileBrowserToolbar
