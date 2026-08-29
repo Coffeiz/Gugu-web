@@ -1,6 +1,7 @@
 :root {
   /* Surfaces */
   --surface-page: var(--theme-page);
+  --surface-auth-page: var(--theme-auth-page, var(--theme-page));
   --surface-canvas: var(--theme-page);
   /* 所有侧栏统一在主题底色上增加轻微高光，保持不同页面的侧栏亮度一致。 */
   --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 90%, #fff 10%);

@@ -26,6 +26,7 @@
 }
 :root[data-family='glass'][data-theme='dark']:not([data-palette='aero']) {
   --theme-page: linear-gradient(145deg,var(--palette-page-start) 0%,var(--palette-page-mid) 60%,var(--palette-page-end) 100%);
+  --theme-auth-page: linear-gradient(145deg,var(--palette-page-start) 0%,var(--palette-page-mid) 60%,var(--palette-page-end) 100%);
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 5%,rgba(20,22,35,.86));
   --theme-base: color-mix(in srgb,var(--palette-surface) 86%,transparent);
   --theme-glass: color-mix(in srgb,var(--palette-surface) 76%,transparent);
@@ -64,6 +65,7 @@
 }
 :root[data-family='mono'][data-theme='dark']:not([data-palette='mono']) {
   --theme-page: radial-gradient(900px 560px at 80% -10%,color-mix(in srgb,var(--theme-action-primary) 12%,transparent),transparent 62%),radial-gradient(760px 480px at 16% 110%,color-mix(in srgb,var(--theme-action-primary) 9%,transparent),transparent 66%),linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 8%,#1c1921),color-mix(in srgb,var(--theme-action-primary) 10%,#17151b));
+  --theme-auth-page: linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 8%,#1c1921) 0%,color-mix(in srgb,var(--theme-action-primary) 9%,#19171f) 52%,color-mix(in srgb,var(--theme-action-primary) 10%,#17151b) 100%);
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 6%,#19171e);
   --theme-base: color-mix(in srgb,var(--theme-action-primary) 8%,#201d25);
   --theme-glass: color-mix(in srgb,var(--theme-action-primary) 8%,#221f28);

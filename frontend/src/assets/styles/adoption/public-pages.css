@@ -3,11 +3,11 @@
    and Privacy can consume the same semantic surface/content tokens without duplicating rules. */
 
 html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) {
-  background: var(--surface-page);
+  background: var(--surface-auth-page);
   color: var(--content-primary);
 }
 
-html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) .glow-1 {
+html[data-theme='dark'][data-family] .privacy-page .glow-1 {
   background: radial-gradient(
     circle,
     color-mix(in srgb,var(--action-primary) 18%,transparent) 0%,
@@ -15,12 +15,17 @@ html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) .glow-1 {
   );
 }
 
-html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) .glow-2 {
+html[data-theme='dark'][data-family] .privacy-page .glow-2 {
   background: radial-gradient(
     circle,
     color-mix(in srgb,var(--action-primary-hover) 12%,transparent) 0%,
     transparent 65%
   );
+}
+
+/* 认证页使用完整的夜色线性渐变；角落径向层会把背景切成两个点状泛光。 */
+html[data-theme='dark'][data-family] .auth-page .bg-glow {
+  display: none;
 }
 
 html[data-theme='dark'][data-family] :is(.auth-card, .privacy-card) {
