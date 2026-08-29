@@ -472,7 +472,7 @@ const {
   isoFromPoint,
   daysBetween,
   commitDrag: () => { void commitDrag() },
-  closeMorePopup: () => { morePopup.value.open = false },
+  closeMorePopup,
 })
 
 async function commitDrag() {
@@ -511,6 +511,11 @@ const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
+const morePopupAnchor = ref<HTMLElement | null>(null)
+function closeMorePopup() {
+  morePopup.value.open = false
+  morePopupAnchor.value = null
+}
 
 // ── 动态行高测量 ──
 const BAR_H    = 20  // 每条 bar / chip 的行高（slot 高，含间距）
@@ -595,6 +600,11 @@ function dayLayout(iso: string, week: { iso: string }[], wi: number) {
 
 // ── 统一"更多"弹窗 ──
 function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
+  const anchor = e.currentTarget as HTMLElement | null
+  if (morePopup.value.open && morePopupAnchor.value === anchor) {
+    closeMorePopup()
+    return
+  }
   const d     = new Date(iso + 'T00:00:00')
   const label = `${d.getMonth()+1}月${d.getDate()}日`
   const w     = 230
@@ -611,14 +621,16 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
     : { position: 'fixed', top: (rect.bottom + gap) + 'px',                      left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'top' }
 
   morePopup.value = { open: true, items, dateLabel: label, style }
+  morePopupAnchor.value = anchor
 }
 
 function onMoreProject(item: CalItem) {
-  morePopup.value.open = false
+  closeMorePopup()
   openProject(item)
 }
 
 function onMoreEditEvent(payload: { item: CalItem; event: MouseEvent }) {
+  // 编辑活动与“更多”面板允许并存，避免点击活动时先销毁来源面板导致编辑弹窗的定位/动画抖动。
   openEditForm(payload.item, payload.event, true)
 }
 
@@ -1090,6 +1102,10 @@ function clampPopupIntoView(elRef: { value: HTMLElement | null }, styleRef: { va
 function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, _nativeEv: MouseEvent, _useMousePos = false) {
   showAddForm.value = false
   if (typeof ev.id !== 'number') return
+  if (eventModalStore.floating && eventModalStore.openEventId === ev.id) {
+    eventModalStore.closeModal()
+    return
+  }
   const width = 240
   const editHeight = 300
   let left: number, top: number
@@ -1134,8 +1150,10 @@ function handleClickOutside(e: MouseEvent) {
       pickerOpen.value = false
   }
   if (morePopup.value.open) {
-    if (!morePopupRef.value?.contains(target))
-      morePopup.value.open = false
+    // 触发器位于 PopupMenu 外部，捕获阶段不能依赖按钮的 stopPropagation；
+    // 否则点击同一个“更多”按钮会先关闭、再被按钮处理器重新打开。
+    if (!target.closest('.chip-more-btn, .wv-more') && !morePopupRef.value?.contains(target))
+      closeMorePopup()
   }
   if (cellCtx.value) {
     if (!cellCtxRef.value?.contains(target)) cellCtx.value = null
@@ -1281,7 +1299,7 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
 .upcoming-item:last-child { margin-bottom: 0; }
 
-.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: var(--event-popup-radius); box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .add-event-popup.shared-event-popup { padding: 0; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
