@@ -167,6 +167,12 @@ html[data-theme='dark'][data-family] .cal-page .wv-ev {
 /* ── Calendar toolbar ───────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .cal-toolbar { --gb-tint: var(--surface-glass); }
 html[data-theme][data-family] .cal-toolbar:hover { --gb-tint: var(--surface-glass-hover); }
+/* 当前页面可使用任意调色板，但这两个玻璃面板沿用 Aero 的白色高光契约。 */
+html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']) .cal-toolbar {
+  --gb-highlight-strong: var(--aero-glass-highlight);
+  --gb-highlight-side: var(--aero-glass-highlight-side);
+  border-top-color: var(--aero-glass-border);
+}
 html[data-theme][data-family] .cal-toolbar .nav-btn,
 html[data-theme][data-family] .cal-toolbar .period-btn {
   color: var(--control-fg);
@@ -193,6 +199,17 @@ html[data-theme][data-family] .cal-toolbar .view-toggle {
 }
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
+
+html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']) .chat-window {
+  --gugu-chat-highlight: var(--aero-glass-highlight);
+  border-top-color: var(--aero-glass-border);
+}
+
+/* 个人设置左侧栏的分界线同样由 border-right + inset 侧向高光组成，亮色非 Aero 时保持一致。 */
+html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']) .bm-card .pm-layout > .pm-nav.panel-left {
+  --panel-glass-border: var(--aero-glass-border);
+  --panel-glass-side-highlight: var(--aero-glass-highlight-side);
+}
 
 /* ── Disabled navigation entries ────────────────────────────────────────────────────── */
 html[data-theme][data-family] .sidebar .soon-item { color: var(--content-disabled); }

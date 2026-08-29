@@ -29,7 +29,7 @@
         <div class="pm-nav-spacer"></div>
         <button class="pm-logout pm-danger-nav" @click="openDeleteAccount">
           <Icon name="user.remove" size="sm" tone="inherit" />
-          注销账号
+          <span>注销账号</span>
         </button>
       </div>
 
@@ -231,12 +231,20 @@ async function doDeleteAccount() {
 .pm-nav-spacer { flex: 1; }
 .pm-logout {
   display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;
-  border-radius: var(--radius-sm); border: 1px solid transparent; background: none;
+  border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent;
   font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer;
-  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+  position: relative; isolation: isolate; overflow: hidden;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.pm-logout::before {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--danger-button-bg); opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
 .pm-logout:hover,
-.pm-logout.pm-danger-nav:hover { background: var(--danger-button-bg); color: var(--danger-button-fg); border-color: var(--danger-button-border); }
+.pm-logout.pm-danger-nav:hover { background: transparent; color: var(--danger-button-fg); border-color: var(--danger-button-border); }
+.pm-logout:hover::before,
+.pm-logout.pm-danger-nav:hover::before { opacity: 1; }
 
 .pm-confirm-overlay {
   position: fixed; inset: 0; background: var(--modal-overlay-bg); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);

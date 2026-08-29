@@ -19,6 +19,10 @@
   --glass-card-shadow-hover: var(--glass-card-shadow);
   --glass-card-blur: var(--glass-blur);
   --glass-card-transition: var(--motion-default) var(--motion-ease-standard);
+  /* Calendar/Chat 在切换调色板时仍沿用 Aero 的玻璃白边。 */
+  --aero-glass-border: rgba(255,255,255,.76);
+  --aero-glass-highlight: rgba(255,255,255,.95);
+  --aero-glass-highlight-side: rgba(255,255,255,.55);
   --popup-background: var(--surface-popup);
   --popup-border: var(--border-strong);
   --popup-radius: var(--radius-md);
