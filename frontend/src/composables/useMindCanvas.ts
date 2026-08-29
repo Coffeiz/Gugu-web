@@ -87,8 +87,8 @@ export function itemAnchorAt(item: MindCanvasItem, side: AnchorSide, pos?: { x: 
   return { x: x + w / 2, y: y + h }
 }
 
-const MIN_SCALE = 0.45
-const MAX_SCALE = 1.7
+export const MIN_SCALE = 0.3
+export const MAX_SCALE = 1.5
 
 type PanInput = Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY'>
 

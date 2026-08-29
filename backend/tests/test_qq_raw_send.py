@@ -1,6 +1,38 @@
 from agent.gateway import qq
 
 
+def test_qq_identify_subscribes_to_interaction_events():
+    assert qq._INTENTS & qq._INTENT_GROUP_AND_C2C
+    assert qq._INTENTS & qq._INTENT_PUBLIC_GUILD_MESSAGES
+    assert qq._INTENTS & qq._INTENT_DIRECT_MESSAGE
+    assert qq._INTENTS & qq._INTENT_INTERACTION
+
+
+async def test_ack_qq_interaction_uses_official_callback_endpoint(monkeypatch):
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((channel_id, method, path, json_body))
+        return None
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    assert await qq._ack_qq_interaction("bot-1", "interaction-42") is True
+    assert calls == [("bot-1", "PUT", "/interactions/interaction-42", {"code": 0})]
+
+    calls.clear()
+    assert await qq._ack_qq_interaction("bot-1", "interaction-42", code=3) is True
+    assert calls == [("bot-1", "PUT", "/interactions/interaction-42", {"code": 3})]
+
+
+async def test_ack_qq_interaction_without_id_is_noop(monkeypatch):
+    async def fail_request(*args, **kwargs):
+        raise AssertionError("不应调用 QQ API")
+
+    monkeypatch.setattr(qq, "_qq_request", fail_request)
+    assert await qq._ack_qq_interaction("bot-1", "") is False
+
+
 async def _fake_next_seq(msg_id):
     return 1
 
@@ -23,6 +55,56 @@ async def test_post_sends_markdown(monkeypatch):
     assert body["markdown"] == {"content": "你好"}
 
 
+async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((path, json_body))
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    await qq._post_keyboard(
+        "bot-1", "ou_1", "请选择", "msg-1", group=False,
+        prompt={
+            "prompt_id": 17,
+            "platform_user_id": "ou_1",
+            "options": [{"id": "yes", "label": "确认", "token": "opaque-token"}],
+        },
+    )
+
+    path, body = calls[0]
+    assert path == "/v2/users/ou_1/messages"
+    assert body["msg_type"] == 2
+    assert body["markdown"] == {"content": "请选择"}
+    button = body["keyboard"]["content"]["rows"][0]["buttons"][0]
+    assert button["action"]["type"] == 1
+    assert button["action"]["data"] == "17:opaque-token"
+    assert button["action"]["permission"] == {"type": 2}
+    assert button["action"]["click_limit"] == 1
+    assert button["group_id"] == "gugu-prompt-17"
+    assert "session_id" not in repr(body)
+
+
+async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append(json_body)
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    await qq._post_keyboard(
+        "bot-1", "ou_1", "请选择", "msg-1", group=False,
+        prompt={"prompt_id": 17, "options": [{"id": "yes", "label": "确认", "token": "t"}]},
+        message_format="smart",
+    )
+
+    assert calls[0]["msg_type"] == 2
+    assert calls[0]["markdown"] == {"content": "请选择"}
+    assert "content" not in calls[0]
+
+
 async def test_post_compat_mode_sends_plain_text(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []
@@ -40,6 +122,24 @@ async def test_post_compat_mode_sends_plain_text(monkeypatch):
         "msg_seq": 1,
         "msg_id": "msg-1",
     }]
+
+
+async def test_post_removes_web_only_gugu_links_for_qq(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append(json_body)
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    await qq._post(
+        "bot-1", "ou_1", "文件已保存：[打开文件](gugu://open-file/123)", "msg-1", "smart"
+    )
+
+    assert calls[0]["msg_type"] == 0
+    assert calls[0]["content"] == "文件已保存：打开文件"
+    assert "gugu://" not in str(calls[0])
 
 
 async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypatch):

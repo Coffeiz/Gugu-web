@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from app.services.conversations import get_session, list_messages, list_recent_sessions, search_messages
+from app.services.conversations import get_session, list_messages, list_recent_sessions
 
 from app.search.query import normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -18,7 +18,7 @@ def _fmt(dt) -> str:
 
 
 async def _search_conversations(db, user_id, args: dict):
-    keyword = (args.get("keyword") or "").strip()
+    keyword = (args.get("query") or args.get("keyword") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
     search_queries = normalize_queries(keyword, queries)
     mode = normalize_mode(args.get("mode"))
@@ -33,21 +33,28 @@ async def _search_conversations(db, user_id, args: dict):
             for s in rows
         ]}
 
-    # 有关键词 → 搜消息正文 + 标题，按 session 聚合，每条给匹配片段
-    rows = await search_messages(
-        db, user_id,
-        search_queries, mode, limit * 4,
-    )
-
     seen: dict[int, dict] = {}
-    for msg, sess in rows:
-        if sess.id in seen:
+    # 有关键词 → 统一走 RAG service；工具仍只返回 session 摘要和匹配片段，
+    # 完整消息继续由 read_conversation 读取。
+    from agent.rag.service import search_conversations
+    recall = await search_conversations(
+        db, user_id, " ".join(search_queries), queries=search_queries,
+        match_mode=mode, limit=limit * 4,
+    )
+    for item in recall.get("results", []):
+        session_id = int(item.get("source_id") or 0)
+        if not session_id or session_id in seen:
             continue
-        snippet = (msg.content or "")[:140]
-        seen[sess.id] = {
-            "session_id": sess.id, "title": sess.title, "summary": sess.summary or "",
-            "source": sess.source, "updated_at": _fmt(sess.updated_at),
-            "match": {"role": ("你" if msg.role == "user" else "咕咕"), "snippet": snippet},
+        seen[session_id] = {
+            "session_id": session_id,
+            "title": item.get("title") or "未命名对话",
+            "summary": item.get("summary") or "",
+            "source": item.get("session_source") or "web",
+            "updated_at": _fmt_from_iso(item.get("session_updated_at")),
+            "match": {
+                "role": ("你" if item.get("role") == "user" else "咕咕"),
+                "snippet": str(item.get("text") or "")[:140],
+            },
         }
         if len(seen) >= limit:
             break
@@ -56,6 +63,16 @@ async def _search_conversations(db, user_id, args: dict):
         return {"matches": [], "hint": f"没找到提到「{' / '.join(search_queries)}」的过去对话"}
     return {"matches": list(seen.values()),
             "note": "用 read_conversation(session_id) 看某条对话的完整内容"}
+
+
+def _fmt_from_iso(value) -> str:
+    if not value:
+        return ""
+    try:
+        from datetime import datetime
+        return _fmt(datetime.fromisoformat(str(value)))
+    except (TypeError, ValueError):
+        return ""
 
 
 async def _read_conversation(db, user_id, args: dict):
@@ -110,28 +127,35 @@ class ConversationsSkill(BaseSkill):
     tools = [
         Tool(
             name="search_conversations", label="搜历史对话",
-            description="搜用户**过去的对话**（其他 session）。当用户提到「上次/之前那次聊的」「我们以前说过的 X」等，用它按一个或多个关键词找（默认 OR）。不传 keyword/queries 则列最近对话。只搜当前用户自己的，安全。",
+            description_short='搜索历史对话；关键字段 query/limit，支持 keyword/queries 兼容别名；省略关键词列最近对话',
+            description="搜索用户过去的其他对话；可按关键词查找，不传关键词则列最近对话。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
-                    "queries": {"type": "array", "items": {"type": "string"},
-                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
-                    "mode": {"type": "string", "enum": ["OR", "AND"],
-                             "description": "关键词匹配模式，默认 OR"},
-                    "limit": {"type": "integer", "description": "返回条数，默认 6，最多 20"},
+                    "query": {"type": "string"},
+                    "keyword": {"type": "string"},
+                    "queries": {"type": "array", "items": {"type": "string"}},
+                    "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "limit": {"type": "integer"},
                 },
+                "oneOf": [
+                    {"required": ["query"], "not": {"anyOf": [{"required": ["keyword"]}, {"required": ["queries"]}]}},
+                    {"required": ["keyword"], "not": {"anyOf": [{"required": ["query"]}, {"required": ["queries"]}]}},
+                    {"required": ["queries"], "not": {"anyOf": [{"required": ["query"]}, {"required": ["keyword"]}]}},
+                    {"not": {"anyOf": [{"required": ["query"]}, {"required": ["keyword"]}, {"required": ["queries"]}]}},
+                ],
             },
             handler=_search_conversations,
         ),
         Tool(
             name="read_conversation", label="读历史对话",
+            description_short='读取历史对话；关键字段 session_id',
             description="读某条历史对话的完整消息（先用 search_conversations 拿到 session_id）。用于把过去那次聊的细节翻出来。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "integer", "description": "对话 id"},
-                    "limit": {"type": "integer", "description": "最多读几条消息，默认 40，最多 100"},
+                    "session_id": {"type": "integer"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                 },
                 "required": ["session_id"],
             },
@@ -139,11 +163,12 @@ class ConversationsSkill(BaseSkill):
         ),
         Tool(
             name="bind_web_session", label="绑定网页会话",
+            description_short='绑定网页会话；关键字段 session_id',
             description="仅 owner 私聊可用：把当前 IM 私聊绑定到一个属于自己的 Web 对话，之后 IM 会继续该对话。先用 search_conversations 找到 session_id；群聊不能绑定。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "integer", "description": "要继续的 Web 对话 id"},
+                    "session_id": {"type": "integer"},
                 },
                 "required": ["session_id"],
             },

@@ -16,6 +16,8 @@ import {
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useLiveStore } from '@/stores/live'
+import type { LiveEventPayload } from '@/types/live-events'
+import { isMindLandingActive, onMindLandingSettled } from '@/interaction/runtime/canvas'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -67,6 +69,28 @@ export const useMindStore = defineStore('mind', () => {
   // 抽屉→画布先创建负 id placeholder。regrab 可能发生在 createRefNode/addCanvasItem 完成前，
   // 此时不能拿负 id 调后端；只保留前端最新位置/取消意图，等真实 item id 到手后一次性交接。
   const pendingProjectRefCreates = new Map<number, { clientKey: string; cancelled: boolean }>()
+  let pendingMindRefresh = false
+
+  function refreshMindFromLiveEvent() {
+    if (!loaded.value) return
+    fetchNotes()
+    if (canvasesLoaded.value) fetchCanvases()
+    if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value)
+  }
+
+  function requestMindRefresh() {
+    if (isMindLandingActive()) {
+      pendingMindRefresh = true
+      return
+    }
+    refreshMindFromLiveEvent()
+  }
+
+  onMindLandingSettled(() => {
+    if (!pendingMindRefresh) return
+    pendingMindRefresh = false
+    refreshMindFromLiveEvent()
+  })
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -528,10 +552,39 @@ export const useMindStore = defineStore('mind', () => {
   // （画布卡片渲染的是 loadCanvas 拉回来的快照，不是 notes 数组本身，两处都要刷）。
   // 画布列表也需要同步——跨标签页创建/删除画布后，抽屉列表才能实时反映最新状态。
   const live = useLiveStore()
+  function applyCanonicalEvent(event: LiveEventPayload): boolean {
+    const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
+    const kind = payload?.kind
+    const value = payload?.entity ?? payload
+    if (!value || typeof value !== 'object') return false
+    if (kind === 'note') {
+      const note = value as MindNote
+      const index = notes.value.findIndex(item => item.id === Number(event.entity_id))
+      if (event.operation === 'delete') { if (index >= 0) notes.value.splice(index, 1); return index >= 0 }
+      if (index >= 0) notes.value.splice(index, 1, note)
+      else if (event.operation === 'create') notes.value = [note, ...notes.value].sort(byCapturedDesc)
+      else return false
+      return true
+    }
+    if (kind === 'canvas') {
+      const canvas = value as MindCanvas
+      const index = canvases.value.findIndex(item => item.id === Number(event.entity_id))
+      if (event.operation === 'delete') { if (index >= 0) canvases.value.splice(index, 1); return index >= 0 }
+      if (index >= 0) canvases.value.splice(index, 1, canvas)
+      else if (event.operation === 'create') canvases.value = [canvas, ...canvases.value]
+      else return false
+      return true
+    }
+    return false
+  }
+  watch(() => live.resourceEvent, (event) => {
+    if (!event || event.resource !== 'mind' || !loaded.value) return
+    if (!applyCanonicalEvent(event)) {
+      requestMindRefresh()
+    }
+  })
   watch(() => live.rev.mind, () => {
-    if (loaded.value) fetchNotes()
-    if (canvasesLoaded.value) fetchCanvases()
-    if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value)
+    requestMindRefresh()
   })
 
   return {

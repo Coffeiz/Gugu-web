@@ -4,11 +4,11 @@
       {{ allSelected ? '取消全选' : '全选' }}
     </button>
   </template>
-  <button class="empty-trash-btn" @click.stop="emit('empty')"><PhTrash :size="12" weight="bold" /> 清空回收站</button>
+  <button class="empty-trash-btn" @click.stop="emit('empty')"><Icon name="action.delete" :size="12" /> 清空回收站</button>
 </template>
 
 <script setup lang="ts">
-import { PhTrash } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 defineProps({ hasItems: Boolean, allSelected: Boolean })
 const emit = defineEmits<{ 'toggle-select': []; empty: [] }>()
 </script>

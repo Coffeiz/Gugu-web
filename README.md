@@ -7,7 +7,7 @@
 <!-- 演示 GIF（基本操作 + IM 对话）弄好后取消下面这行注释，图片放 docs/assets/banner.gif -->
 <!-- <img src="docs/assets/banner.gif" alt="咕咕演示" width="720"> -->
 
-[![project](https://img.shields.io/badge/个人项目管理-596780?style=flat)](docs/product/overview.md)
+[![project](https://img.shields.io/badge/个人项目管理-596780?style=flat)](docs/product/OVERVIEW.md)
 [![mind](https://img.shields.io/badge/思维画布-7B78A8?style=flat)](docs/product/思维面板/设计草案.md)
 [![assistant](https://img.shields.io/badge/咕咕协作-5B8E7D?style=flat)](docs/agent/00-总览.md)
 <br>
@@ -69,7 +69,7 @@
 
 **IM 接入** · 飞书（WebSocket 长连）· QQ 官方机器人 · 微信
 
-**部署** · 生产用裸机 + systemd（[`backend/start.sh`](backend/start.sh)）· 本地开发用 Docker Compose，见下方「快速开始」
+**部署** · 本地开发用源码挂载 Docker Compose；生产用构建物 Docker Compose + Nginx（默认 `9595`），裸机 systemd 仍可用，详见 [部署文档](docs/ops/DEPLOY.md)
 
 ---
 
@@ -113,6 +113,41 @@ docker compose up -d
 #      docker compose down                      停止（加 -v 连数据卷一起删）
 ```
 
+### 方式一（生产）：构建物 Docker Compose + Nginx
+
+生产环境使用 `docker-compose.prod.yml`。它只消费已构建的前后端镜像，不挂载源码、不运行
+Vite 热更新或 Uvicorn reload；数据库迁移、PostgreSQL、Redis、SearXNG、文件存储和 Admin
+配置卷由 Compose 管理，默认通过 Nginx 从 `9595` 提供访问。
+
+```bash
+# 在仓库根目录构建并推送镜像；前端还需要提供同级 gugu-interaction-runtime
+docker build -f backend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-backend:版本号 .
+docker build --build-context runtime=../gugu-interaction-runtime \
+  -f frontend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
+docker push ghcr.io/coffeiz/gugu-web-backend:版本号
+docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
+
+# 服务器准备 backend/.env、searxng/settings.yml 和生产密码
+export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
+export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
+export GUGU_DB_PASSWORD='生产数据库密码'
+docker compose -f docker-compose.prod.yml up -d
+```
+
+默认连接 Compose 内部的 PostgreSQL：`GUGU_DB_HOST=postgres`。如果已有外部数据库，
+只需覆盖 `GUGU_DB_HOST`、`GUGU_DB_PORT`、`GUGU_DB_NAME`、`GUGU_DB_USER` 和
+`GUGU_DB_PASSWORD`，后端会改连外部地址；不需要修改镜像。
+
+Redis 默认同样连接 Compose 内部的 `redis:6379`。使用外部 Redis 时覆盖
+`GUGU_REDIS_HOST`、`GUGU_REDIS_PORT` 和 `GUGU_REDIS_PASSWORD` 即可。
+
+访问 `http://服务器地址:9595`。Shell 沙盒和受控 egress 默认随 Compose 启动；准备 Rootless Docker
+后，`sandboxd` 会通过宿主机 Docker Socket 提供沙盒执行，`egress-proxy` 只通过内部网络提供公网出口。
+不需要时可设置 `GUGU_SANDBOX_ENABLED=false` 关闭沙盒执行，或设置
+`GUGU_SANDBOX_NETWORK_PROFILE=none` 让沙盒默认断网；两者都不需要修改 Compose 文件。临时公网访问仍需
+在 Admin → Shell 沙盒中开启，并在会话首次使用时确认。完整的配置卷、
+迁移和 Nginx 说明见 [生产构建物 Compose](docs/ops/DEPLOY.md#310-生产构建物-compose默认端口-9595)。
+
 ### 方式二：本地开发
 
 #### 后端
@@ -139,8 +174,8 @@ make dev-web               # Web 热重载（前台运行，Ctrl+C 停止）
 #### 前端
 ```bash
 cd frontend
-npm install
-npm run dev                # http://localhost:5173
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter gugu-web dev                # http://localhost:5173
 ```
 
 ---
@@ -149,10 +184,10 @@ npm run dev                # http://localhost:5173
 
 | 想了解 | 从这里开始 |
 |--------|------------|
-| 产品与代码 | [项目总览](docs/product/overview.md) · [完整文档导航](docs/README.md) |
+| 产品与代码 | [项目总览](docs/product/OVERVIEW.md) · [完整文档导航](docs/README.md) |
 | 咕咕协作 | [对话引擎架构](docs/agent/00-总览.md) |
-| 后端与文件 | [后端与 API](docs/backend/backend.md) · [存储规范](docs/backend/storage.md) |
-| 本地与生产 | [部署文档](docs/ops/deploy.md) |
+| 后端与文件 | [后端与 API](docs/backend/backend.md) · [存储规范](docs/backend/STORAGE.md) |
+| 本地与生产 | [部署文档](docs/ops/DEPLOY.md) |
 
 接口以运行中的 [OpenAPI 文档](http://localhost:8000/docs) 为准；后端常用运维命令可通过 `backend/start.sh --help` 查看。
 
@@ -186,7 +221,7 @@ npm run dev                # http://localhost:5173
 - [ ] 客户管理前端页面
 - [ ] 团队 / 企业版（ToB）
 
-详细规划见 [`docs/product/wishlist.md`](docs/product/wishlist.md)。
+详细规划见 [`docs/product/WISHLIST.md`](docs/product/WISHLIST.md)。
 
 ---
 
@@ -195,7 +230,7 @@ npm run dev                # http://localhost:5173
 - 微信（iLink）引用消息暂不支持识别原文——平台协议限制，非代码 bug。
 - QQ 引用较早消息时，可能因平台时效窗口拿不到引用上下文。
 
-完整记录（现象/影响/结论/规避）见 [`docs/ops/known-issues.md`](docs/ops/known-issues.md)。
+完整记录（现象/影响/结论/规避）见 [`docs/ops/KNOWN-ISSUES.md`](docs/ops/KNOWN-ISSUES.md)。
 
 ---
 
@@ -205,12 +240,12 @@ npm run dev                # http://localhost:5173
 
 | 文档 | 内容 |
 |------|------|
-| [docs/product/overview.md](docs/product/overview.md) | 项目总览、技术栈、API、进度 |
-| [docs/backend/storage.md](docs/backend/storage.md) | 文件存储结构（权威） |
+| [docs/product/OVERVIEW.md](docs/product/OVERVIEW.md) | 项目总览、技术栈、API、进度 |
+| [docs/backend/STORAGE.md](docs/backend/STORAGE.md) | 文件存储结构（权威） |
 | [docs/backend/backend.md](docs/backend/backend.md) | 后端开发参考 |
 | [docs/development/design.md](docs/development/design.md) | UI/UX 设计规范 |
-| [docs/product/wishlist.md](docs/product/wishlist.md) | 功能规划 |
-| [docs/devlog.md](docs/devlog.md) | 早期开发记录 |
+| [docs/product/WISHLIST.md](docs/product/WISHLIST.md) | 功能规划 |
+| [docs/DEVLOG.md](docs/DEVLOG.md) | 早期开发记录 |
 
 ---
 

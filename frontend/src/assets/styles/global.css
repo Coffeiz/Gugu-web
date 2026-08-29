@@ -1,3 +1,4 @@
+@import './fonts.css';
 @import './variables.css';
 /* 文件列表行/表头/checkbox 的唯一 paint owner：文件库、项目编辑卡、回收站共用。
    全局引入而不是靠 Runtime 行组件挂载才加载——回收站是纯 div 列表，不渲染任何
@@ -13,8 +14,6 @@ svg { shape-rendering: geometricPrecision; }
    与内部几处独立滚动的子面板一并列上，同一条规则、别各自散着写。 */
 .admin-main,
 .sidebar-nav,
-.trace-list,
-.trace-detail,
 .log-table-wrap {
   scrollbar-gutter: auto;
 }
@@ -24,28 +23,31 @@ svg { shape-rendering: geometricPrecision; }
    排除掉 arco 组件自带的 checkbox（它们有自己的 class，不吃这条全局规则）。 */
 input[type="checkbox"]:not(.arco-checkbox-icon) {
   appearance: none; -webkit-appearance: none;
-  width: 16px; height: 16px; flex-shrink: 0;
-  border: 1.5px solid rgba(123, 127, 178, 0.35);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.6);
+  width: var(--control-checkbox-size); height: var(--control-checkbox-size); flex-shrink: 0;
+  border: var(--control-checkbox-border-width) solid var(--action-outline);
+  border-radius: var(--control-checkbox-radius);
+  background: var(--control-bg);
   position: relative;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 input[type="checkbox"]:not(.arco-checkbox-icon):hover {
-  border-color: rgba(123, 127, 178, 0.6);
+  border-color: var(--action-primary);
 }
 input[type="checkbox"]:not(.arco-checkbox-icon):checked {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(123, 127, 178, 0.35);
+  box-shadow: none;
 }
 input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
   content: '';
-  position: absolute; inset: 0;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='10'%20viewBox='0%200%2010%2010'%20fill='none'%3E%3Cpolyline%20points='1.5,5%204,7.5%208.5,2.5'%20stroke='white'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+  position: absolute;
+  left: 50%; top: 50%; right: auto; bottom: auto;
+  width: var(--control-checkbox-mark-width); height: var(--control-checkbox-mark-height);
+  border-left: var(--control-checkbox-mark-stroke) solid var(--content-on-accent);
+  border-bottom: var(--control-checkbox-mark-stroke) solid var(--content-on-accent);
+  transform: translate(-50%, -50%) rotate(-45deg);
+  transform-origin: center;
 }
 
 /* 悬停抬起 + 按下下沉的通用反馈：文件卡/项目卡统一用这一套手感（真正的“卡片”才抬起）。
@@ -73,12 +75,12 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
    才下沉：编辑、阶段、颜色、待办、删除和之后新增的所有控件都会自然保持 hover 状态，
    不再靠一份会漏项的子元素白名单逐个撤销。画布贴纸的连接提示移至 canvas-card-effects.css。 */
 /* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
-   咕咕聊天里的文件条都是这一挂——按钮/挤在气泡堆里的文件条，抬起要么跟布局不搭要么显得
-   跟旁边气泡割裂，只保留点击下沉这一半效果。 */
+   咕咕聊天里的文件条由自己的主题化规则负责阴影——按钮/挤在气泡堆里的文件条，抬起要么跟布局
+   不搭要么显得跟旁边气泡割裂，只保留点击下沉这一半效果。 */
 .press-fx {
   transition: transform var(--motion-hover-control) ease, opacity var(--motion-hover-control) ease, box-shadow var(--motion-hover-card) ease-out;
 }
-.press-fx.press-fx:hover {
+.press-fx.press-fx:hover:not(.msg-file) {
   --topbar-btn-shadow: 0 4px 14px rgba(80,90,110,0.3);
   box-shadow: 0 4px 14px rgba(80,90,110,0.3) !important;   /* 按钮面积更小，阴影提到 30% 才看得见；仍不做上浮 */
 }
@@ -214,6 +216,8 @@ body {
   border-radius: 14px;
   corner-shape: round;
 }
+.fc-card:has(.rename-input-inline),
+.folder-card:has(.rename-input-inline) { overflow: visible; }
 .fc-card {
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
               box-shadow 0.25s ease, background 0.2s, border-color 0.2s;
@@ -245,17 +249,36 @@ body {
   display: inline-block; position: relative;
   max-width: 100%; vertical-align: top;
 }
+.rename-sizer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: var(--rename-input-radius);
+  box-shadow: var(--input-focus-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.rename-sizer:focus-within::after { opacity: 1; }
 .rename-ghost {
   display: block; visibility: hidden; white-space: pre;
   font: inherit; padding: 0 5px; min-width: 2ch;
 }
 .rename-input-inline {
   position: absolute; inset: 0; width: 100%;
+  box-sizing: border-box;
   outline: none;
-  background: rgba(255,255,255,0.9); border: 1px solid rgba(123,127,178,0.4);
-  border-radius: 4px; padding: 0 4px;
-  font: inherit; color: inherit;
+  background: var(--rename-input-bg); border: 1px solid var(--rename-input-border);
+  border-radius: var(--rename-input-radius); padding: var(--rename-input-padding);
+  font: inherit; color: var(--rename-input-fg); caret-color: var(--action-primary);
+  box-shadow: var(--input-hover-shadow);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+              border-color var(--motion-hover-control) var(--motion-ease-standard),
+              box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
+.fc-name:has(.rename-input-inline),
+.fd-name:has(.rename-input-inline) { overflow: visible; }
 
 /* ── 面板左侧栏通用毛玻璃样式 ── */
 .panel-left {

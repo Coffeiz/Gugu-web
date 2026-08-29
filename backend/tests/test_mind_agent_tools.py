@@ -2,7 +2,7 @@
 from app.core.mind import upsert_relation
 from app.models import MindNode, Project
 from agent.tools.mind import (
-    _create_note, _delete_note, _mind_get, _mind_search, _restore_note, _undo_last_gugu_note,
+    _create_note, _delete_note, _note_get, _note_search, _restore_note, _undo_last_gugu_note,
     _update_note,
 )
 
@@ -15,12 +15,12 @@ async def _mk_note(db, user, text: str, title: str | None = None) -> MindNode:
     return node
 
 
-async def test_mind_search_returns_matches_and_one_hop_neighbors(db, user_a):
+async def test_note_search_returns_matches_and_one_hop_neighbors(db, user_a):
     matched = await _mk_note(db, user_a, "发布前需要完成回归测试", "发布清单")
     neighbor = await _mk_note(db, user_a, "测试通过后再安排上线")
     await upsert_relation(db, user_a.id, matched.id, neighbor.id)
 
-    result = await _mind_search(db, user_a.id, {"q": "发布"})
+    result = await _note_search(db, user_a.id, {"q": "发布"})
 
     assert result["count"] == 1
     assert result["matches"][0]["node_id"] == matched.id
@@ -36,42 +36,50 @@ async def test_mind_search_returns_matches_and_one_hop_neighbors(db, user_a):
     assert result["related"][0]["node"]["node_id"] == neighbor.id
 
 
-async def test_mind_search_accepts_multiple_keywords(db, user_a):
+async def test_note_search_accepts_unified_query_alias(db, user_a):
+    matched = await _mk_note(db, user_a, "统一搜索参数", "搜索参数")
+
+    result = await _note_search(db, user_a.id, {"query": "统一搜索"})
+
+    assert result["matches"][0]["node_id"] == matched.id
+
+
+async def test_note_search_accepts_multiple_keywords(db, user_a):
     await _mk_note(db, user_a, "部署方案", "部署")
     await _mk_note(db, user_a, "上线清单", "上线")
 
-    result = await _mind_search(db, user_a.id, {"queries": ["部署", "上线"]})
+    result = await _note_search(db, user_a.id, {"queries": ["部署", "上线"]})
 
     assert {match["title"] for match in result["matches"]} == {"部署", "上线"}
 
 
-async def test_mind_search_skips_deleted_and_other_users_nodes(db, user_a, user_b):
+async def test_note_search_skips_deleted_and_other_users_nodes(db, user_a, user_b):
     deleted = await _mk_note(db, user_a, "秘密计划")
     deleted.deleted_at = deleted.created_at
     await db.commit()
     await _mk_note(db, user_b, "秘密计划")
 
-    result = await _mind_search(db, user_a.id, {"q": "秘密"})
+    result = await _note_search(db, user_a.id, {"q": "秘密"})
 
     assert result["count"] == 0
     assert result["matches"] == []
 
 
-async def test_mind_get_returns_full_content_and_neighbor(db, user_a):
+async def test_note_get_returns_full_content_and_neighbor(db, user_a):
     node = await _mk_note(db, user_a, "# 完整正文\n\n这是完整内容", "一条笔记")
     neighbor = await _mk_note(db, user_a, "关联笔记")
     await upsert_relation(db, user_a.id, node.id, neighbor.id)
 
-    result = await _mind_get(db, user_a.id, {"node_id": node.id})
+    result = await _note_get(db, user_a.id, {"node_id": node.id})
 
     assert result["node"]["content_md"] == "# 完整正文\n\n这是完整内容"
     assert result["related"][0]["node"]["node_id"] == neighbor.id
 
 
-async def test_mind_get_hides_other_users_node(db, user_a, user_b):
+async def test_note_get_hides_other_users_node(db, user_a, user_b):
     node = await _mk_note(db, user_b, "不该泄露")
 
-    result = await _mind_get(db, user_a.id, {"node_id": node.id})
+    result = await _note_get(db, user_a.id, {"node_id": node.id})
 
     assert result == {"error": "找不到这条思维节点"}
 

@@ -34,7 +34,6 @@ html[data-theme][data-family] .design-page .scrollbar-overflow-surface {
   height:150px;
   overflow:auto;
   scrollbar-gutter:stable;
-  scrollbar-color:var(--scrollbar-thumb) transparent;
   padding:var(--space-sm);
   background:var(--surface-soft);
   border-bottom:1px solid var(--border-hairline);
@@ -68,16 +67,6 @@ html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-
 html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-track:horizontal {
   margin-inline:var(--scrollbar-safe-inset);
   margin-block:0;
-}
-html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-thumb,
-html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-thumb {
-  min-height:var(--scrollbar-min-thumb);
-  background:var(--scrollbar-thumb);
-  border-radius:var(--radius-pill);
-}
-html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-thumb:hover,
-html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-thumb:hover {
-  background:var(--scrollbar-thumb-hover);
 }
 html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-corner,
 html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-corner { background:transparent; }

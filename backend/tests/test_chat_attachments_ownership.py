@@ -58,6 +58,102 @@ async def test_stage_creates_draft_row(db, user_a, storage):
 
 
 @pytest.mark.asyncio
+async def test_reuse_attachment_creates_new_row_with_shared_storage_key(db, user_a, storage):
+    source = await chat_attach.stage(
+        user_a.id, "source.png", "png", "image/png", b"hello",
+        platform="qq", platform_message_id="msg-1", attachment_index=0,
+    )
+
+    reused = await chat_attach.reuse_attachment(
+        user_a.id,
+        platform="qq",
+        platform_message_id="msg-1",
+        attachment_index=0,
+        extra={"quoted": True},
+    )
+
+    assert reused is not None
+    assert reused["attach_id"] != source["attach_id"]
+    assert reused["storage_key"] == source["storage_key"]
+    assert reused["quoted"] is True
+    rows = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.platform_message_id == "msg-1")
+    )).scalars().all()
+    assert {row.attach_id for row in rows} == {source["attach_id"], reused["attach_id"]}
+    assert await storage.exists(source["storage_key"])
+
+
+@pytest.mark.asyncio
+async def test_reuse_attachment_selects_the_requested_source_index(db, user_a, storage):
+    """同一条 QQ 消息有多个附件时，引用必须按稳定的附件序号复用对应字节。"""
+    first = await chat_attach.stage(
+        user_a.id, "first.png", "png", "image/png", b"first",
+        platform="qq", platform_message_id="multi-msg", attachment_index=0,
+    )
+    second = await chat_attach.stage(
+        user_a.id, "second.png", "png", "image/png", b"second",
+        platform="qq", platform_message_id="multi-msg", attachment_index=1,
+    )
+
+    reused = await chat_attach.reuse_attachment(
+        user_a.id,
+        platform="qq",
+        platform_message_id="multi-msg",
+        attachment_index=1,
+        extra={"quoted": True},
+    )
+
+    assert reused is not None
+    assert reused["storage_key"] == second["storage_key"]
+    assert reused["storage_key"] != first["storage_key"]
+    assert reused["quoted"] is True
+
+
+@pytest.mark.asyncio
+async def test_reuse_attachment_falls_back_when_source_object_is_missing(db, user_a, storage):
+    """源附件行残留但物理对象丢失时，不能返回指向不存在对象的新附件行。"""
+    source = await chat_attach.stage(
+        user_a.id, "missing.png", "png", "image/png", b"hello",
+        platform="qq", platform_message_id="missing-object", attachment_index=0,
+    )
+    await storage.delete(source["storage_key"])
+
+    reused = await chat_attach.reuse_attachment(
+        user_a.id,
+        platform="qq",
+        platform_message_id="missing-object",
+        attachment_index=0,
+    )
+
+    assert reused is None
+    rows = (await db.execute(
+        select(ChatAttachment).where(
+            ChatAttachment.platform_message_id == "missing-object",
+        )
+    )).scalars().all()
+    assert [row.attach_id for row in rows] == [source["attach_id"]]
+
+
+@pytest.mark.asyncio
+async def test_reuse_attachment_isolated_by_user(db, user_a, user_b, storage):
+    """相同平台消息标识不能跨用户命中源附件。"""
+    source = await chat_attach.stage(
+        user_a.id, "private.png", "png", "image/png", b"private",
+        platform="qq", platform_message_id="same-platform-id", attachment_index=0,
+    )
+
+    reused = await chat_attach.reuse_attachment(
+        user_b.id,
+        platform="qq",
+        platform_message_id="same-platform-id",
+        attachment_index=0,
+    )
+
+    assert reused is None
+    assert await storage.exists(source["storage_key"])
+
+
+@pytest.mark.asyncio
 async def test_stage_rolls_back_storage_when_db_insert_fails(db, user_a, storage, monkeypatch):
     async def _boom(*a, **kw):
         raise RuntimeError("db insert failed")

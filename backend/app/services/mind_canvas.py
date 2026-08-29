@@ -105,10 +105,6 @@ async def delete_canvas(db, user_id, canvas_id, *, commit=False):
     else:
         await db.flush()
 
-    # 发送实时更新事件，触发前端画布列表刷新
-    from app.core import events
-    await events.publish(user_id, "mind.canvas", "delete", {"canvas_id": canvas_id})
-
     return True
 
 
@@ -499,4 +495,3 @@ async def search_placeable_entities(db, user_id, selected, normalized, mode, lim
         ).order_by(CalendarEvent.created_at.desc()).limit(limit))).scalars().all()
         matches.extend(("event", row) for row in rows)
     return matches
-

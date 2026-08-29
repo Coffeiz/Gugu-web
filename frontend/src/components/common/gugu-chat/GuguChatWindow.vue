@@ -27,14 +27,22 @@
     <!-- 主区域（始终存在，消息列表永不销毁） -->
     <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
       <div class="chat-header">
-        <SessionTitleEdit
-          v-if="expanded && sessionId"
-          class="chat-title"
-          header
-          :title="currentSessionTitle"
-          :on-rename="(t) => onRenameSession(sessionId!, t)"
-        />
+        <template v-if="expanded && sessionId">
+          <SessionTitleEdit
+            class="chat-title"
+            header
+            :title="currentSessionTitle"
+            :on-rename="(t) => onRenameSession(sessionId!, t)"
+          />
+          <span v-if="currentSessionGoalStatus" class="chat-goal-indicator" :class="`is-${currentSessionGoalStatus}`" :title="currentSessionGoalStatus === 'paused' ? '目标任务已暂停' : '目标任务进行中'">
+            <i :class="currentSessionGoalStatus === 'paused' ? 'ri-pause-circle-line' : 'ri-focus-3-line'" aria-hidden="true" />
+            {{ currentSessionGoalStatus === 'paused' ? '目标已暂停' : '目标进行中' }}
+          </span>
+        </template>
         <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
+        <span v-if="currentSessionWorkspaceName" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
+          · {{ currentSessionWorkspaceName }}
+        </span>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
@@ -42,24 +50,26 @@
         </span>
         <div class="btn-group">
           <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" title="展开">
-            <PhArrowsOut weight="bold" :size="13" />
+            <Icon name="action.expand" :size="13" />
           </button>
           <button v-if="expanded" class="exp-icon-btn" @click="onExitExpanded" title="收起">
-            <PhArrowsIn weight="bold" :size="14" />
+            <Icon name="action.collapse" :size="14" />
           </button>
           <button class="popup-close-btn" @click="onClose">
-            <PhX weight="bold" :size="13" />
+            <Icon name="action.close" :size="13" />
           </button>
         </div>
       </div>
 
       <GuguChatMessageList
         ref="messageListRef"
-        :messages="messages" :is-group-session="isGroupSession"
+        :messages="messages" :session-id="sessionId" :is-group-session="isGroupSession"
         :copied-id="copiedId" :voice-playing-id="voicePlayingId"
         :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
+        :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
+        @interaction-select="onInteractionSelect"
       />
 
       <!-- 输入框 -->
@@ -79,6 +89,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+import Icon from '@/components/common/Icon.vue'
 /**
  * 聊天窗口外壳：窗口 DOM、标题栏、展开/收起按钮、消息列表与输入框的挂载点。
  * 不拥有任何业务状态——messages / inputText / 附件 / 录音 / 流式 / 会话全部由父组件
@@ -89,8 +101,6 @@
  * composerRef（GuguChatComposer 实例，暴露 focus/fitTextarea/resetHeight）。通过
  * defineExpose 暴露给父组件，父组件再注入 useChatWindow / useChatConversation。
  */
-import { ref, computed } from 'vue'
-import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
@@ -104,6 +114,9 @@ const props = defineProps<{
   streaming: boolean
   isChatDragging: boolean
   currentSessionTitle: string
+  currentSessionWorkspaceName: string | null
+  currentSessionGoalActive: boolean
+  currentSessionGoalStatus: 'active' | 'paused' | null
   sessionId: number | null
   presenceKind: string
   presenceText: string
@@ -115,6 +128,7 @@ const props = defineProps<{
   voicePlayingId: string | null
   statusKind: string
   statusTyped: string
+  sessionSettling: boolean
   // 输入框
   inputText: string
   pendingAtt: ChatFile[]
@@ -136,6 +150,7 @@ const props = defineProps<{
   onOpenFile: (file: ChatFile) => void
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
+  onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
   onPromptConnect: () => void
   onRenameSession: (id: number, title: string) => void
   onEnterExpanded: () => void
@@ -233,9 +248,41 @@ defineExpose({
   flex-shrink: 0;
 }
 .chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
-.chat-title { font-size: 13px; font-weight: 700; }
-.chat-title.is-new-session { display: inline-block; padding: 2px 6px; }
+.chat-title { display:inline-flex; align-items:center; font-size: 13px; font-weight: 700; }
+.chat-title.is-new-session { display: inline-flex; padding: 2px 6px; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
+.chat-workspace-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--content-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.chat-workspace-name.is-compact { flex: 1 1 auto; }
+.chat-goal-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 130px;
+  padding: 3px 7px;
+  border: 1px solid var(--action-primary);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--action-soft);
+  color: var(--action-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.chat-goal-indicator i { font-size: 13px; }
+.chat-goal-indicator.is-paused {
+  border-color: var(--border-subtle);
+  background: var(--surface-soft);
+  color: var(--content-secondary);
+}
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; }
@@ -279,11 +326,14 @@ defineExpose({
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
+:deep(.chat-messages.is-session-settling) { visibility: hidden; }
 .chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
 :deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }
 .chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px 12px; }
+:deep(.msg-virtual-row.is-tool-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-tool-row),
+:deep(.msg-virtual-row.is-interaction-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-interaction-row) { padding-bottom: var(--space-xs); }
 :deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
 .chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }
 

@@ -1,8 +1,7 @@
 <template>
   <button class="col-toggle-btn" @click="togglePmStages"
     :title="stagesExpanded ? '恢复文件区' : '展开阶段区'">
-    <PhCaretLeft v-if="stagesExpanded" :size="13" weight="bold" />
-    <PhCaretRight v-else :size="13" weight="bold" />
+    <Icon :name="stagesExpanded ? 'action.chevron-back' : 'action.chevron-next'" :size="13" />
   </button>
 
   <FileBrowserToolbar
@@ -40,8 +39,8 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
-import { PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import FileBrowserToolbar from '@/components/common/file-browser/FileBrowserToolbar.vue'
 import ProjectFileBreadcrumb from '@/views/Projects/components/ProjectFileBreadcrumb.vue'
 

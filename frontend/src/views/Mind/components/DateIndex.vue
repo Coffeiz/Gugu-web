@@ -145,6 +145,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
 })
 
+defineExpose({
+  settleTo: (index: number) => motion.settleTo(index),
+})
+
 const today = localDayKey(new Date())
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
 function fmtLabel(iso: string) {

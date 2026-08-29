@@ -14,7 +14,7 @@
   --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
 
   /* Floating app chrome is distinct from content cards. Aero resolves to its normal glass surface;
-     Mono/V2 remaps only this role below so cards keep their quieter solid language while
+     Mono remaps only this role below so cards keep their quieter solid language while
      navigation/drawers/toolbars retain backdrop glass. */
   --chrome-glass-bg: var(--surface-glass);
   --chrome-glass-border: var(--border-strong);
@@ -22,9 +22,9 @@
   --chrome-glass-blur: var(--glass-blur);
 }
 
-/* Mono/V2 uses quieter card separation than Aero, so key content cards should not rely on elevation
+/* Mono uses quieter card separation than Aero, so key content cards should not rely on elevation
    alone. Floating chrome remains translucent rather than reusing the more solid content surface. */
-html[data-family='v2'] {
+html[data-family='mono'] {
   --project-card-border: var(--border-strong);
   --project-card-hover-border: var(--border-hover);
   --chrome-glass-bg: color-mix(in srgb,var(--surface-floating) 76%,transparent);
@@ -51,16 +51,14 @@ html[data-theme='dark'][data-family] {
   --topbar-shadow-hover: var(--topbar-shadow);
   --gugu-chat-session-hover: transparent;
 
-  /* Dark primary fills are intentionally quieter than the foreground accent. This is the shared
-     fill for topbar primary actions and calendar current-date markers.
-     Kept as flat color-mix (not a gradient) so the background-color transition animates on hover —
-     CSS cannot interpolate between two gradients. */
-  --action-primary-bg: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));
-  --action-primary-bg-hover: color-mix(in srgb,var(--action-primary) 54%,var(--surface-base));
+  /* Dark primary fills remain quieter than the foreground accent, with the same restrained
+     vertical gradient as light mode. */
+  --action-primary-fill: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));
+  --action-primary-fill-hover: color-mix(in srgb,var(--action-primary) 54%,var(--surface-base));
 
   /* Dark secondary actions use surface-based fills instead of the light glass literals. */
-  --action-secondary-bg: var(--surface-soft);
-  --action-secondary-bg-hover: var(--surface-soft-hover);
+  --action-secondary-fill: var(--surface-soft);
+  --action-secondary-fill-hover: var(--surface-soft-hover);
   --action-secondary-border: var(--border-default);
   --action-secondary-border-hover: var(--border-hover);
   --action-secondary-fg: var(--content-secondary);
@@ -87,7 +85,7 @@ html[data-theme='dark'][data-family] {
   --settings-popup-border: var(--border-default);
   --settings-popup-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
   --settings-popup-item-fg: var(--content-primary);
-  --settings-popup-hover-bg: var(--color-accent-faint);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
   --settings-popup-danger: var(--status-danger);
   --settings-popup-danger-hover-bg: var(--status-danger-bg);
   --settings-popup-divider: var(--border-subtle);
@@ -95,7 +93,7 @@ html[data-theme='dark'][data-family] {
 
 /* Mono settings uses the same geometry as Aero but switches only its surface vocabulary: a solid
    neutral card plus the family border. No final paint property lives here, so there is no CSS race. */
-html[data-theme='light'][data-family='v2'] {
+html[data-theme='light'][data-family='mono'] {
   --settings-popup-bg: var(--surface-card-solid);
   --settings-popup-border: var(--border-strong);
   --settings-popup-shadow: var(--elevation-popup);
@@ -105,7 +103,7 @@ html[data-theme='light'][data-family='v2'] {
   --settings-popup-danger-hover-bg: var(--status-danger-bg);
   --settings-popup-divider: var(--border-subtle);
 }
-html[data-theme='dark'][data-family='v2'] {
+html[data-theme='dark'][data-family='mono'] {
   --settings-popup-bg: var(--surface-card-solid);
   --settings-popup-border: var(--border-strong);
   --settings-popup-shadow: var(--elevation-popup);
@@ -142,7 +140,7 @@ html[data-theme='dark'][data-family] .pm-nav-item.active {
   border-color: var(--sidebar-item-active-border);
   box-shadow: inset 0 1px 0 var(--highlight-soft);
 }
-html[data-theme='dark'][data-family] .pm-nav-item:hover {
+html[data-theme='dark'][data-family] .pm-nav-item:hover:not(.active) {
   color: var(--content-primary);
   background: var(--color-accent-faint);
 }
@@ -152,10 +150,10 @@ html[data-theme='dark'][data-family] .pm-nav-divider {
 
 html[data-theme][data-family] .topbar .btn-ghost-custom,
 html[data-theme][data-family] .sample-topbar .sample-ghost {
-  --topbar-btn-shadow: inset 0 1px 0 var(--highlight-muted);
-  box-shadow: var(--topbar-btn-shadow) !important;
+  --topbar-btn-shadow: none;
+  box-shadow: none !important;
 }
 html[data-theme][data-family] .topbar .btn-ghost-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-ghost:hover {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
+  box-shadow: none !important;
 }

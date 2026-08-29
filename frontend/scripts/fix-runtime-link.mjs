@@ -8,7 +8,7 @@
  * 使 TS/Vite 无法解析该包。本脚本在 `npm install` / `npm ci` 后（postinstall）
  * 把链接统一修正为相对 node_modules 的正确路径。链接有效时幂等跳过。
  */
-import { existsSync, lstatSync, readlinkSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, lstatSync, readlinkSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,8 +18,11 @@ const link = join(root, '..', 'node_modules', 'gugu-interaction-runtime')
 // frontend/scripts/.. = frontend，/.. = Gugu-web，/.. = workspace
 const target = join(root, '..', '..', '..', 'gugu-interaction-runtime')
 
-// 链接有效（能读到目标包的 package.json）则跳过
-if (existsSync(join(link, 'package.json'))) {
+// 只有确实指向兄弟仓库时才跳过；pnpm 可能留下可读但过期的 store 副本。
+const pointsToWorkspace = (() => {
+  try { return realpathSync(link) === realpathSync(target) } catch { return false }
+})()
+if (pointsToWorkspace && existsSync(join(link, 'package.json'))) {
   console.log('[fix-runtime-link] gugu-interaction-runtime 链接有效，跳过')
   process.exit(0)
 }

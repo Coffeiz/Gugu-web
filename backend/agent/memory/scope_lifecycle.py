@@ -28,9 +28,13 @@ def _filters(model, scope: MemoryScope) -> List[Any]:
 async def _db_session():
     import app.db.session as db_session
 
-    if db_session._engine is None:
-        db_session._build_engine()
-    return db_session._SessionLocal()
+    # scope 预览会出现在自动 RAG 热路径，必须复用统一的引擎生命周期，
+    # 处理 reset_engine 和跨事件循环场景，不能直接调用私有构造函数。
+    db_session.ensure_engine()
+    session_factory = db_session._SessionLocal
+    if session_factory is None:
+        raise RuntimeError("记忆 scope 数据库会话工厂未初始化")
+    return session_factory()
 
 
 async def is_tombstoned(scope: MemoryScope) -> bool:

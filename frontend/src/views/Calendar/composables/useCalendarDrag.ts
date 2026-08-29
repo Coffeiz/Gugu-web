@@ -83,6 +83,7 @@ export function useCalendarDrag({ drag, dragOverIso, isoFromPoint, daysBetween, 
   }
 
   function startProjectChipDrag(item: CalendarRenderItem, e: MouseEvent) {
+    if (!canDrag(item)) return
     startDrag('proj-chip', item, e)
   }
 
@@ -93,6 +94,7 @@ export function useCalendarDrag({ drag, dragOverIso, isoFromPoint, daysBetween, 
   }
 
   function startBarDrag(item: CalendarRenderItem, e: MouseEvent) {
+    if (!canDrag(item)) return
     const anchorIso = isoFromPoint(e.clientX, e.clientY) ?? item.startDate
     if (!item.startDate || !anchorIso) return
     const offsetDays = daysBetween(item.startDate, anchorIso)
@@ -100,6 +102,7 @@ export function useCalendarDrag({ drag, dragOverIso, isoFromPoint, daysBetween, 
   }
 
   function startBarResize(item: CalendarRenderItem, edge: 'start' | 'end', e: MouseEvent) {
+    if (!canDrag(item)) return
     startDrag(edge === 'start' ? 'proj-resize-start' : 'proj-resize-end', item, e)
   }
 

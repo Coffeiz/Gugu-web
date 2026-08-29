@@ -192,8 +192,9 @@ test.describe('GuguChat 悬浮窗', () => {
     await expect(aiBubbles).toHaveCount(2, { timeout: 30000 })
     await expect(aiBubbles.nth(0)).not.toBeEmpty()
     await expect(aiBubbles.nth(1)).not.toBeEmpty()
-    await expect(chatWindow.locator('.msg', { hasText: firstText })).toHaveCount(1)
-    await expect(chatWindow.locator('.msg', { hasText: queuedText })).toHaveCount(1)
+    // AI 回复可能复述用户输入；这里验证用户气泡本身，避免把回复里的同名文本也算进去。
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: firstText })).toHaveCount(1)
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toHaveCount(1)
   })
 
   test('点击侧栏会话标题区域能切换会话', async ({ page }) => {
@@ -226,7 +227,9 @@ test.describe('GuguChat 悬浮窗', () => {
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
     await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
     // 发完 A 后当前激活的就是 A，直接从侧栏 active item 取 session id（不依赖后端 API）
+    await expect(sidebar.locator('.exp-session-item.active')).toHaveAttribute('data-session-id', /^\d+$/, { timeout: 10000 })
     const sessionAId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
+    expect(sessionAId).toMatch(/^\d+$/)
 
     // 会话 B：新建 + 发消息 + 等回复，记录 B 的 session id
     const textB = `e2e-switch-b-${Date.now()}`
@@ -237,7 +240,10 @@ test.describe('GuguChat 悬浮窗', () => {
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toBeVisible()
     await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
     // 发完 B 后当前激活的就是 B
+    await expect(sidebar.locator('.exp-session-item.active')).toHaveAttribute('data-session-id', /^\d+$/, { timeout: 10000 })
     const sessionBId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
+    expect(sessionBId).toMatch(/^\d+$/)
+    expect(sessionBId).not.toBe(sessionAId)
 
     // 当前激活的是 B（后端按 updated_at 倒序，B 最新在前）
     const sessionAItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionAId}"]`)
@@ -246,6 +252,7 @@ test.describe('GuguChat 悬浮窗', () => {
 
     // 点击会话 A 的标题区域（.exp-session-title，占 item 大部分宽度）——修复前这里被
     // @click.stop 拦截无法切换；修复后应切回 A，消息区显示 A 的消息。
+    await expect(sessionAItem).toBeVisible()
     await sessionAItem.locator('.exp-session-title').click()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toHaveCount(0)

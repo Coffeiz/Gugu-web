@@ -41,7 +41,7 @@ const goBack = () => (window.history.length > 1 ? router.back() : router.push('/
 <style scoped>
 .nf-page {
   min-height: 100vh;
-  background: var(--bg-gradient, linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #9aa2b8 100%));
+  background: var(--surface-page, var(--bg-gradient, linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #9aa2b8 100%)));
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-sans); position: relative; overflow: hidden;
 }
@@ -49,59 +49,56 @@ const goBack = () => (window.history.length > 1 ? router.back() : router.push('/
 .bg-glow { position: absolute; border-radius: 50%; pointer-events: none; filter: blur(80px); }
 .glow-1 {
   width: 500px; height: 500px; top: -120px; left: -100px;
-  background: radial-gradient(circle, rgba(123,127,178,0.18) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--action-primary) 18%, transparent) 0%, transparent 65%);
 }
 .glow-2 {
   width: 380px; height: 380px; bottom: -100px; right: -80px;
-  background: radial-gradient(circle, rgba(196,175,200,0.14) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--status-info) 14%, transparent) 0%, transparent 65%);
 }
 
 .nf-card {
   width: 420px; max-width: calc(100vw - 40px); position: relative; z-index: 1;
   text-align: center;
-  background: rgba(255,255,255,0.56);
+  background: var(--surface-glass);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.76);
+  border: 1px solid var(--border-strong);
   border-radius: 20px; padding: 40px 36px;
-  box-shadow:
-    0 20px 60px rgba(80,90,110,0.12),
-    inset 0 1px 0 rgba(255,255,255,0.95),
-    inset 1px 0 0 rgba(255,255,255,0.55);
+  box-shadow: var(--elevation-window);
 }
 
 .nf-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 22px; }
 .brand-icon {
   width: 40px; height: 40px; border-radius: 12px; flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--brand-gradient);
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--action-primary) 35%, transparent);
 }
-.brand-name { font-size: 17px; font-weight: 700; color: #1e2028; }
+.brand-name { font-size: 17px; font-weight: 700; color: var(--content-primary); }
 
 .nf-code {
   font-size: 84px; font-weight: 800; line-height: 1; letter-spacing: 0.02em;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--brand-gradient);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
   margin-bottom: 14px;
 }
-.nf-title { font-size: 19px; font-weight: 700; color: #1e2028; margin-bottom: 10px; }
-.nf-desc { font-size: 13.5px; line-height: 1.7; color: #8a8fa8; margin: 0 0 26px; }
+.nf-title { font-size: 19px; font-weight: 700; color: var(--content-primary); margin-bottom: 10px; }
+.nf-desc { font-size: 13.5px; line-height: 1.7; color: var(--content-secondary); margin: 0 0 26px; }
 
 .nf-actions { display: flex; gap: 10px; justify-content: center; }
 .btn-primary {
   padding: 10px 22px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   border: none; border-radius: 11px;
-  font-size: 14px; font-weight: 600; color: white;
+  font-size: 14px; font-weight: 600; color: var(--content-on-accent);
   cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 16px rgba(123,127,178,0.32);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--action-primary) 32%, transparent);
 }
-.btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary:hover { background: var(--action-primary-bg-hover); transform: translateY(-1px); }
 .btn-ghost {
   padding: 10px 22px;
-  background: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.76);
-  border-radius: 11px; font-size: 14px; font-weight: 600; color: #6b7088;
+  background: var(--control-bg); border: 1px solid var(--control-border);
+  border-radius: 11px; font-size: 14px; font-weight: 600; color: var(--control-fg);
   cursor: pointer; transition: background 0.15s, transform 0.15s;
 }
-.btn-ghost:hover { background: rgba(255,255,255,0.85); transform: translateY(-1px); }
+.btn-ghost:hover { background: var(--control-bg-hover); color: var(--control-fg-strong); transform: translateY(-1px); }
 </style>

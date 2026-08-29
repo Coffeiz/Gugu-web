@@ -2,17 +2,22 @@
 # docker-compose.yml 把源码目录挂载进容器（见其 volumes），这个镜像只负责提供
 # Node 运行时 + 预装好的 node_modules，改代码不用重建镜像。生产环境不用这个镜像：
 # `npm run build` 出静态文件，交给 nginx/CDN 或塞进后端的 StaticFiles 挂载即可。
-FROM node:20-slim
+FROM node:22-slim
 
-WORKDIR /app
+WORKDIR /workspace
+RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 
-# 依赖单独一层：package.json 没变时改代码不用重装。
-COPY package.json package-lock.json* ./
-RUN npm install
+# 依赖单独一层：workspace 元数据和 manifest 没变时改代码不用重装。
+COPY Gugu-web/package.json Gugu-web/pnpm-lock.yaml Gugu-web/pnpm-workspace.yaml Gugu-web/.npmrc ./
+COPY Gugu-web/frontend/package.json ./frontend/package.json
+COPY Gugu-web/frontend/scripts/ ./frontend/scripts/
+COPY gugu-interaction-runtime/ ./gugu-interaction-runtime/
+RUN pnpm install --filter gugu-web --frozen-lockfile
 
-COPY . .
+COPY Gugu-web/frontend/ ./frontend/
+WORKDIR /workspace/frontend
 
 EXPOSE 5173
 
 # vite.config.js 里 server.host:true 已经绑定 0.0.0.0，不需要额外传 --host。
-CMD ["npm", "run", "dev"]
+CMD ["pnpm", "dev"]

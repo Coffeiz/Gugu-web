@@ -1,3 +1,5 @@
+import { localDayKey, parseUtc } from '@/utils/dateAttribution'
+
 export interface StorageSnapshot {
   taken_at: string
   object_count: number
@@ -5,11 +7,7 @@ export interface StorageSnapshot {
 }
 
 export function snapshotDateKey(value: string): string {
-  const date = new Date(value)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  return localDayKey(parseUtc(value))
 }
 
 export function formatSnapshotDate(key: string): string {

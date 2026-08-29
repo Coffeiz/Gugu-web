@@ -8,7 +8,7 @@
         <div class="fp-info-title" @mousedown.prevent="startDrag">
           <span>文件信息</span>
           <button class="fp-action-btn fp-close-btn" @click="$emit('close')">
-            <PhX weight="bold" :size="15" />
+            <Icon name="action.close" :size="15" />
           </button>
         </div>
         <div class="fp-info-body">
@@ -53,8 +53,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { nextZ } from '@/composables/windowz'
-import { PhX } from '@phosphor-icons/vue'
-
+import Icon from '@/components/common/Icon.vue'
 const props = defineProps({
   show: Boolean,
   file: Object,
@@ -152,7 +151,7 @@ onUnmounted(() => {
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
-.fp-info-mono { font-family: monospace; font-size: 11px; }
+.fp-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
 
 .fp-action-btn {
   width: 28px; height: 28px; border-radius: 7px; border: none;

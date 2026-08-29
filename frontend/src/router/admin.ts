@@ -44,6 +44,9 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Admin/Agent/index.vue'),
         meta: { title: 'Agent 配置' },
       },
+      { path: 'agent-behavior', name: 'AdminAgentBehavior', component: () => import('@/views/Admin/AgentBehavior/index.vue'), meta: { title: 'Agent 能力' } },
+      { path: 'agent-memory', name: 'AdminAgentMemory', component: () => import('@/views/Admin/AgentMemory/index.vue'), meta: { title: 'Agent 记忆' } },
+      { path: 'agent-usage', name: 'AdminAgentUsage', component: () => import('@/views/Admin/AgentUsage/index.vue'), meta: { title: 'Agent 用量统计' } },
       {
         path: 'users',
         name: 'AdminUsers',
@@ -57,10 +60,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '配额管理' },
       },
       {
-        path: 'invite-codes',
-        name: 'AdminInviteCodes',
-        component: () => import('@/views/Admin/InviteCodes/index.vue'),
-        meta: { title: '邀请码管理' },
+        path: 'sandbox',
+        name: 'AdminSandbox',
+        component: () => import('@/views/Admin/Sandbox/index.vue'),
+        meta: { title: 'Shell 沙盒' },
       },
       {
         path: 'feedback',

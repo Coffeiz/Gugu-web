@@ -64,6 +64,7 @@ async def ingest_qq_media(
     owner: str,
     message_id: str = "",
     emoji_refs: list[dict] | None = None,
+    platform_message_id: str = "",
 ) -> list:
     """下载 QQ 附件和可解析的系统表情，并返回当前消息的 attach_id 列表。"""
     raw = [item for item in attachments if isinstance(item, dict)]
@@ -100,8 +101,23 @@ async def ingest_qq_media(
     message_bytes = 0
     connector = aiohttp.TCPConnector(resolver=_SafeResolver())
     async with aiohttp.ClientSession(connector=connector) as sess:
-        for item in raw:
+        for item_index, item in enumerate(raw):
             url = item.get("url")
+            source_message_id = str(item.get("source_platform_message_id") or platform_message_id or "")
+            source_index = item.get("source_attachment_index", item_index)
+            if item.get("source_platform_message_id"):
+                from app.core import chat_attach
+
+                reused = await chat_attach.reuse_attachment(
+                    owner,
+                    platform="qq",
+                    platform_message_id=source_message_id,
+                    attachment_index=int(source_index) if source_index is not None else None,
+                    extra={"quoted": True},
+                )
+                if reused:
+                    out.append(reused["attach_id"])
+                    continue
             if not url:
                 continue
             if not url.startswith("http"):
@@ -156,10 +172,13 @@ async def ingest_qq_media(
                     continue
 
                 from app.core import media_transcode
+                from app.core.config import get_settings
+                from agent import providers
 
                 is_voice = False
                 if ext not in ("mp3", "wav", "flac", "m4a", "ogg"):
-                    converted = media_transcode.to_mimo_mp3(data, ext, mime)
+                    converted = media_transcode.to_provider_audio(
+                        data, ext, mime, providers.adapter_for(get_settings().ai))
                     if converted is not None:
                         data, ext, mime, name = converted, "mp3", "audio/mpeg", (name or "语音")
                         is_voice = True
@@ -180,12 +199,19 @@ async def ingest_qq_media(
                 if is_voice:
                     duration = media_transcode.probe_duration(data, ext)
                     meta = await im_attachments.stage_voice(
-                        owner, name, ext, mime, data, duration=duration, platform="qq"
+                        owner, name, ext, mime, data, duration=duration, platform="qq",
+                        platform_message_id=platform_message_id,
+                        attachment_index=item_index,
                     )
                 else:
                     from app.core import chat_attach
 
                     stage_kwargs = {"platform": "qq", "extra": extra or None}
+                    if platform_message_id:
+                        stage_kwargs.update({
+                            "platform_message_id": platform_message_id,
+                            "attachment_index": item_index,
+                        })
                     if is_qq_face:
                         stage_kwargs["kind"] = "image"
                     meta = await chat_attach.stage(owner, name, ext, mime, data, **stage_kwargs)

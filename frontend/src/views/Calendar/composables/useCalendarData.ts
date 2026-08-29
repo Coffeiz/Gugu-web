@@ -35,6 +35,8 @@ function normalizeCalendarEvent(event: EventResponse): CalendarEvent {
   })
 }
 
+type LiveCalendarEvent = { operation: string; entity_id?: string | number | null; payload?: unknown }
+
 export function useCalendarData({ cursor, projects, doneMode }: CalendarDataOptions) {
   const extraEvents = ref<CalendarEvent[]>([])
   const nextMonthEvents = ref<CalendarEvent[]>([])
@@ -90,6 +92,27 @@ export function useCalendarData({ cursor, projects, doneMode }: CalendarDataOpti
     eventsCache[monthKey(date)] = items
   }
 
+  function applyLiveEvent(event: LiveCalendarEvent): boolean {
+    const id = Number(event.entity_id)
+    if (!Number.isFinite(id)) return false
+    const remove = (list: CalendarEvent[]) => {
+      const index = list.findIndex(item => Number(item.id) === id)
+      if (index < 0) return false
+      if (event.operation === 'delete') list.splice(index, 1)
+      else if (event.payload && typeof event.payload === 'object') list.splice(index, 1, normalizeCalendarEvent(event.payload as EventResponse))
+      return true
+    }
+    if (remove(extraEvents.value) || remove(nextMonthEvents.value) || remove(spilloverEvents.value)) return true
+    if (event.operation !== 'create' || !event.payload || typeof event.payload !== 'object') return false
+    const item = normalizeCalendarEvent(event.payload as EventResponse)
+    const targetMonth = monthKey(new Date(`${item.date}T00:00:00`))
+    if (targetMonth === monthKey(cursor.value)) extraEvents.value.push(item)
+    else if (targetMonth === monthKey(new Date(cursor.value.getFullYear(), cursor.value.getMonth() + 1, 1))) nextMonthEvents.value.push(item)
+    else return false
+    eventsCache[targetMonth] = targetMonth === monthKey(cursor.value) ? extraEvents.value : nextMonthEvents.value
+    return true
+  }
+
   async function refreshFromSignal() {
     clearCache()
     await Promise.all([fetchEvents(), fetchSpilloverEvents()])
@@ -140,6 +163,7 @@ export function useCalendarData({ cursor, projects, doneMode }: CalendarDataOpti
     fetchSpilloverEvents,
     refreshFromSignal,
     cacheMonth,
+    applyLiveEvent,
     normalizeCalendarEvent,
   }
 }

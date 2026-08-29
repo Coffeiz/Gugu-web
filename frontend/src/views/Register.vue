@@ -4,22 +4,7 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
-      <div class="card-brand">
-        <div class="brand-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 7h.01"/>
-            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-            <path d="M20 7l2 .5-2 .5"/>
-            <path d="M10 18v3"/>
-            <path d="M14 17.75V21"/>
-            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">咕咕</div>
-          <div class="brand-sub">创建新账号</div>
-        </div>
-      </div>
+      <AuthBrand />
 
       <form @submit.prevent="handleRegister" novalidate>
         <div class="field">
@@ -37,21 +22,9 @@
           <input v-model="form.password" type="password" placeholder="至少 8 位"
             autocomplete="new-password" :disabled="loading" />
         </div>
-        <div class="field">
-          <label>邀请码</label>
-          <input v-model="form.inviteCode" type="text" placeholder="GUGU-XXXX-XXXX"
-            autocomplete="off" :disabled="loading" style="text-transform:uppercase;letter-spacing:0.05em" />
-        </div>
-
-        <label class="ack-row">
-          <input type="checkbox" v-model="acknowledged" class="ack-input" />
-          <span class="ack-box">
-            <svg v-if="acknowledged" width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </span>
+        <Checkbox v-model="acknowledged" class="ack-row">
           <span class="ack-label">测试阶段数据随时可能清空，我已知晓并会自行备份</span>
-        </label>
+        </Checkbox>
 
         <div v-if="error" class="error-msg">{{ error }}</div>
 
@@ -76,16 +49,18 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import Checkbox from '@/components/common/Checkbox.vue'
+import AuthBrand from '@/components/common/AuthBrand.vue'
 
 const router  = useRouter()
 const auth    = useAuthStore()
-const form    = reactive({ username: '', email: '', password: '', inviteCode: '' })
+const form    = reactive({ username: '', email: '', password: '' })
 const loading      = ref(false)
 const error        = ref('')
 const acknowledged = ref(false)
 
 async function handleRegister() {
-  if (!form.username || !form.email || !form.password || !form.inviteCode) {
+  if (!form.username || !form.email || !form.password) {
     error.value = '请填写全部信息'; return
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
@@ -96,7 +71,7 @@ async function handleRegister() {
   }
   loading.value = true; error.value = ''
   try {
-    await auth.register(form.username, form.email, form.password, form.inviteCode)
+    await auth.register(form.username, form.email, form.password)
     router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '操作失败'
@@ -131,22 +106,12 @@ async function handleRegister() {
   background: rgba(255,255,255,0.56);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.76);
-  border-radius: 20px; padding: 36px 32px;
+  border-radius: 20px; padding: 28px 32px 32px;
   box-shadow:
     0 20px 60px rgba(80,90,110,0.12),
     inset 0 1px 0 rgba(255,255,255,0.95),
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
-
-.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-.brand-icon {
-  width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
-}
-.brand-name { font-size: 18px; font-weight: 700; color: #1e2028; }
-.brand-sub  { font-size: 12px; color: #8a8fa8; margin-top: 2px; }
 
 .field { margin-bottom: 14px; }
 .field label {
@@ -179,33 +144,18 @@ async function handleRegister() {
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 16px rgba(123,127,178,0.32);
+  cursor: pointer; transition: background-color 0.15s;
+  box-shadow: none;
 }
-.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .ack-row {
-  display: flex; align-items: flex-start; gap: 9px;
-  margin-bottom: 12px; cursor: pointer;
-  user-select: none;
-}
-.ack-input { display: none; }
-.ack-box {
-  flex-shrink: 0; margin-top: 1px;
-  width: 16px; height: 16px; border-radius: 5px;
-  border: 1.5px solid rgba(123,127,178,0.35);
-  background: rgba(255,255,255,0.6);
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-}
-.ack-input:checked + .ack-box {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  border-color: transparent;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.35);
+  align-items: center;
+  margin-bottom: 12px;
 }
 .ack-label {
-  font-size: 12px; color: #8a8fa8; line-height: 1.55;
+  font-size: 12px; color: var(--content-secondary); line-height: 16px;
 }
 
 .card-footer {

@@ -8,8 +8,8 @@
     <div class="fc-ghost-fill" :style="{ width: `${progress}%` }" />
     <span v-if="!isFolder" class="fc-ext-badge">{{ ext || '—' }}</span>
     <div class="fc-icon-area">
-      <PhFolder v-if="isFolder" class="fc-big-icon" :size="86" weight="bold" />
-      <component v-else :is="fileListIcon(ext)" class="fc-big-icon" :size="86" weight="bold" />
+      <Icon name="file.folder" v-if="isFolder" class="fc-big-icon" :size="86" />
+      <component v-else :is="fileListIcon(ext)" class="fc-big-icon" :size="86" />
     </div>
     <div class="fc-label">
       <div class="fc-name" :title="name">{{ name }}</div>
@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
-import { PhFolder } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 
 const props = defineProps({

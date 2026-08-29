@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from agent.security.sanitize import tool_rounds_only
+from agent.security.sanitize import sanitize_messages, tool_rounds_only
 
 
 def _assistant_tool_use(uid="t1", name="create_project"):
@@ -61,3 +61,73 @@ def test_empty_and_stringonly_messages_dropped():
     assert tool_rounds_only([]) == []
     assert tool_rounds_only([{"role": "user", "content": "普通文字"}]) == []
     assert tool_rounds_only([{"role": "assistant", "content": []}]) == []
+
+
+def test_canonical_and_openai_tool_messages_are_kept():
+    canonical_call = {"role": "assistant", "content": [{"type": "tool_call"}]}
+    canonical_result = {"role": "tool", "content": [{"type": "tool_result"}]}
+    openai_call = {"role": "assistant", "content": None, "tool_calls": [{"id": "call-1"}]}
+    assert tool_rounds_only([canonical_call, canonical_result, openai_call]) == [
+        canonical_call, canonical_result, openai_call,
+    ]
+
+
+def test_sanitize_drops_tool_result_without_id_without_raising():
+    messages = [
+        {"role": "user", "content": "开始"},
+        _assistant_tool_use("call-1"),
+        _user_tool_result("call-1"),
+        {"role": "user", "content": [{"type": "tool_result", "content": "坏数据"}]},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert len(cleaned) == 3
+    assert cleaned[2]["content"][-1]["tool_use_id"] == "call-1"
+    assert all(
+        block.get("tool_use_id")
+        for message in cleaned
+        for block in message["content"]
+        if block.get("type") == "tool_result"
+    )
+
+
+def test_sanitize_preserves_leading_system_snapshot():
+    """真正的 system snapshot 仍保留；它与 user-role reminder 是两种消息。"""
+    messages = [
+        {"role": "system", "content": "[system-reminder]\n项目快照\n[/system-reminder]"},
+        {"role": "user", "content": "看看项目"},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert [item["role"] for item in cleaned] == ["system", "user"]
+    assert "项目快照" in cleaned[0]["content"][0]["text"]
+
+
+def test_sanitize_keeps_user_reminder_boundary():
+    messages = [
+        {"role": "user", "content": "[system-reminder]\n时间\n[/system-reminder]"},
+        {"role": "user", "content": "当前问题"},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert [item["role"] for item in cleaned] == ["user", "user"]
+    assert cleaned[0]["content"][0]["text"].startswith("[system-reminder]")
+    assert cleaned[1]["content"][0]["text"] == "当前问题"
+
+
+def test_sanitize_merges_current_time_with_same_user_message():
+    messages = [
+        {"role": "user", "content": "[system-reminder]\n08-28 12:00\n[/system-reminder]"},
+        {"role": "user", "content": "当前问题"},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert len(cleaned) == 1
+    assert [block["text"] for block in cleaned[0]["content"]] == [
+        "[system-reminder]\n08-28 12:00\n[/system-reminder]",
+        "当前问题",
+    ]

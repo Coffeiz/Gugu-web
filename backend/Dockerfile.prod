@@ -1,0 +1,25 @@
+# 咕咕后端生产镜像：只复制构建上下文，不挂载宿主机源码。
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker.io nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ARG PIP_INDEX_URL=https://pypi.org/simple
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt
+
+COPY backend ./
+RUN mkdir -p logs \
+    && chmod 755 docker-entrypoint.sh
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -sf http://127.0.0.1:8000/health || exit 1
+
+ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

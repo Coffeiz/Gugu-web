@@ -38,6 +38,7 @@ from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.files.selection import build_batch_zip
 from app.services.files.previews import (
+    GENERIC_IMAGE_MIMES,
     IMAGE_MIMES,
     PreviewError,
     delete_thumb_cache,
@@ -229,13 +230,14 @@ async def upload_file(
 
     await db.commit()
     await db.refresh(f)
+    resp = to_related_file_response(f, result.project, result.folder_name)
     if not result.was_overwrite:
-        await events.publish(current_user.id, "files", origin=origin)
+        await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=f.id,
+                             event_payload={"kind": "file", "entity": resp.model_dump(mode="json", by_alias=True)})
     else:
         # 覆盖上传不广播前端 files 事件，但最近更新时间/排序可能改变 snapshot 输入。
         await events.bump_context_revision(current_user.id, "files")
 
-    resp = to_related_file_response(f, result.project, result.folder_name)
     if _is_img:
         background_tasks.add_task(pregenerate_thumb, f.storage_key, f.id)
     return resp
@@ -354,9 +356,11 @@ async def confirm_upload(
     # 完全没被碰过（copy 是 rename_file 里那一步，早于这里），不会有数据丢失窗口。
     if result.old_storage_key is not None:
         await storage.delete(result.old_storage_key)
-    await events.publish(current_user.id, "files", origin=origin)
+    response = to_related_file_response(result.file, result.project, result.folder_name)
+    await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=result.file.id,
+                         event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)})
 
-    return to_related_file_response(result.file, result.project, result.folder_name)
+    return response
 
 
 # ── PATCH /files/{fid} ───────────────────────────────────────────────────────
@@ -380,9 +384,11 @@ async def update_file(
     )
     await db.commit()
     await db.refresh(result.file)
-    await events.publish(current_user.id, "files", origin=origin)
+    response = to_related_file_response(result.file, result.project, result.folder_name)
+    await events.publish(current_user.id, "files", origin=origin, operation="update", entity_id=result.file.id,
+                         event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)})
 
-    return to_related_file_response(result.file, result.project, result.folder_name)
+    return response
 
 
 class _FileContentBody(_BaseModel):
@@ -409,8 +415,10 @@ async def update_file_content(
     f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
-    await events.publish(current_user.id, "files", origin=origin)
-    return to_file_response(f)
+    response = to_file_response(f)
+    await events.publish(current_user.id, "files", origin=origin, operation="update", entity_id=f.id,
+                         event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)})
+    return response
 
 
 # ── POST /files/{fid}/copy ────────────────────────────────────────────────────
@@ -431,9 +439,11 @@ async def copy_file(
         on_conflict=body.on_conflict, overwrite_file_id=body.overwrite_file_id)
     await db.commit()
     await db.refresh(result.file)
-    await events.publish(current_user.id, "files", origin=origin)
+    response = to_related_file_response(result.file, result.project, result.folder_name)
+    await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=result.file.id,
+                         event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)})
 
-    return to_related_file_response(result.file, result.project, result.folder_name)
+    return response
 
 
 # ── DELETE /files/{fid} （软删除→回收站）────────────────────────────────────
@@ -525,7 +535,7 @@ async def get_thumb(
         raise HTTPException(404, "文件不存在")
 
     mime = (f.mime_type or '').lower()
-    if mime not in IMAGE_MIMES:
+    if mime not in IMAGE_MIMES and mime not in GENERIC_IMAGE_MIMES:
         raise HTTPException(415, "不是图片文件")
 
     try:
@@ -538,6 +548,8 @@ async def get_thumb(
         )
     except FileNotFoundError:
         raise HTTPException(404, "物理文件丢失")
+    except PreviewError as error:
+        raise HTTPException(error.status_code, error.detail)
     return FastAPIResponse(content=content, media_type=media_type,
                            headers={"Cache-Control": "private, max-age=86400"})
 

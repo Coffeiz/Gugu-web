@@ -1,15 +1,10 @@
 <template>
   <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" :style="{ zIndex: fabZ }" @click="$emit('click')" title="咕咕">
-    <svg ref="svgRef"
-         :class="{ 'ai-fab-spin': hasAudioFile && !spinningBack, 'ai-fab--typing': fabJumping }"
-         :style="hasAudioFile && !spinningBack ? { animationPlayState: audioPlaying ? 'running' : 'paused' } : {}"
-         width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M16 7h.01"/>
-      <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-      <path d="M20 7l2 .5-2 .5"/>
-      <path d="M10 18v3"/>
-      <path d="M14 17.75V21"/>
-    </svg>
+    <span ref="svgRef"
+          class="ai-fab-logo"
+          :class="{ 'ai-fab-spin': hasAudioFile && !spinningBack, 'ai-fab--typing': fabJumping }"
+          :style="hasAudioFile && !spinningBack ? { animationPlayState: audioPlaying ? 'running' : 'paused' } : {}"
+          aria-hidden="true" />
   </button>
 </template>
 
@@ -31,7 +26,7 @@ defineProps<{
 
 defineEmits<{ click: [] }>()
 
-const svgRef = ref<SVGSVGElement | null>(null)
+const svgRef = ref<HTMLElement | null>(null)
 defineExpose({ svgEl: computed(() => svgRef.value) })
 </script>
 
@@ -62,7 +57,7 @@ defineExpose({ svgEl: computed(() => svgRef.value) })
   box-shadow: var(--gugu-fab-hover-shadow);
 }
 .ai-fab:focus-visible { outline: none; box-shadow: var(--gugu-fab-hover-shadow), var(--control-focus-shadow); }
-.ai-fab svg { position: relative; z-index: 1; }
+.ai-fab-logo { position:relative; left:1px; z-index:1; width:var(--gugu-fab-logo-size); height:var(--gugu-fab-logo-size); display:block; background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(255,255,255,.78)); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
 .ai-fab-spin { animation: fab-spin 8s linear infinite; transform-origin: center; }
 @keyframes fab-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .ai-fab--playing::before, .ai-fab--playing::after {

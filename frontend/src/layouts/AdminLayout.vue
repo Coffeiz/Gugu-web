@@ -2,22 +2,7 @@
   <div class="admin-layout">
     <aside class="admin-sidebar">
       <!-- 品牌 -->
-      <div class="sidebar-brand">
-        <div class="brand-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 7h.01"/>
-            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-            <path d="M20 7l2 .5-2 .5"/>
-            <path d="M10 18v3"/>
-            <path d="M14 17.75V21"/>
-            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-          </svg>
-        </div>
-        <div class="brand-text">
-          <div class="brand-name">咕咕</div>
-          <div class="brand-tag">管理后台</div>
-        </div>
-      </div>
+      <Brand variant="admin" subtitle="管理后台" />
 
       <div class="sidebar-rule" />
 
@@ -25,86 +10,89 @@
       <nav class="sidebar-nav">
         <div class="nav-group-label">配置</div>
         <div class="nav-item" :class="{ active: isActive('/config') }" role="link" tabindex="0" @click="go('/config')">
-          <PhGear :size="14" />
+          <Icon name="admin.settings" size="sm" />
           系统配置
         </div>
         <div class="nav-item" :class="{ active: isActive('/agent') }" role="link" tabindex="0" @click="go('/agent')">
-          <PhRobot :size="14" />
+          <Icon name="admin.robot2" size="sm" />
           Agent 配置
         </div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><Icon name="admin.sliders" size="sm" />Agent 能力</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-memory') }" role="link" tabindex="0" @click="go('/agent-memory')"><Icon name="admin.brain" size="sm" />Agent 记忆</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-usage') }" role="link" tabindex="0" @click="go('/agent-usage')"><Icon name="admin.analytics" size="sm" />Agent 用量</div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">数据</div>
         <div class="nav-item" :class="{ active: isActive('/analytics') }" role="link" tabindex="0" @click="go('/analytics')">
-          <PhChartLine :size="14" />
+          <Icon name="admin.analytics" size="sm" />
           数据总览
         </div>
         <div class="nav-item" :class="{ active: isActive('/analytics-usage') }" role="link" tabindex="0" @click="go('/analytics-usage')">
-          <PhChartBar :size="14" />
+          <Icon name="admin.bar-chart" size="sm" />
           使用分析
         </div>
         <div class="nav-item" :class="{ active: isActive('/perception') }" role="link" tabindex="0" @click="go('/perception')">
-          <PhBrain :size="14" />
+          <Icon name="admin.brain" size="sm" />
           感知诊断
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">管理</div>
         <div class="nav-item" :class="{ active: isActive('/feedback') }" role="link" tabindex="0" @click="go('/feedback')">
-          <PhFlag :size="14" />
+          <Icon name="admin.flag" size="sm" />
           用户反馈
         </div>
-        <div class="nav-item" :class="{ active: isActive('/invite-codes') }" role="link" tabindex="0" @click="go('/invite-codes')">
-          <PhTicket :size="14" />
-          邀请码
-        </div>
         <div class="nav-item" :class="{ active: isActive('/users') }" role="link" tabindex="0" @click="go('/users')">
-          <PhUsers :size="14" />
+          <Icon name="communication.team" size="sm" />
           用户管理
         </div>
         <div class="nav-item" :class="{ active: isActive('/quota') }" role="link" tabindex="0" @click="go('/quota')">
-          <PhStack :size="14" />
+          <Icon name="admin.stack" size="sm" />
           配额管理
+        </div>
+        <div class="nav-item" :class="{ active: isActive('/sandbox') }" role="link" tabindex="0" @click="go('/sandbox')">
+          <Icon name="admin.computer" size="sm" />
+          Shell 沙盒
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运维</div>
         <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
-          <PhPulse :size="14" />
+          <Icon name="admin.pulse" size="sm" />
           服务状态
         </div>
         <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
-          <PhGauge :size="14" />
+          <Icon name="admin.gauge" size="sm" />
           运维监控
         </div>
         <div class="nav-item" :class="{ active: isActive('/storage-audit') }" role="link" tabindex="0" @click="go('/storage-audit')">
-          <PhFolderSimpleDashed :size="14" />
+          <Icon name="admin.folder" size="sm" />
           存储对账
         </div>
         <div class="nav-item" :class="{ active: isActive('/storage-monitor') }" role="link" tabindex="0" @click="go('/storage-monitor')">
-          <PhChartLine :size="14" />
+          <Icon name="admin.analytics" size="sm" />
           存储监控
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运营</div>
         <div class="nav-item" :class="{ active: isActive('/notifications') }" role="link" tabindex="0" @click="go('/notifications')">
-          <PhBellRinging :size="14" />
+          <Icon name="admin.bell" size="sm" />
           通知发布
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">日志</div>
         <div class="nav-item" :class="{ active: isActive('/audit-log') }" role="link" tabindex="0" @click="go('/audit-log')">
-          <PhClipboard :size="14" />
+          <Icon name="admin.clipboard" size="sm" />
           操作日志
         </div>
         <div class="nav-item" :class="{ active: isActive('/system-logs') }" role="link" tabindex="0" @click="go('/system-logs')">
-          <PhTerminal :size="14" />
+          <Icon name="admin.terminal" size="sm" />
           系统日志
         </div>
         <div class="nav-item" :class="{ active: isActive('/debug') }" role="link" tabindex="0" @click="go('/debug')">
-          <PhBug :size="14" />
+          <Icon name="admin.bug" size="sm" />
           Debug 日志
         </div>
       </nav>
@@ -118,7 +106,7 @@
             <div class="user-name">{{ adminStore.adminUser?.username ?? 'Admin' }}</div>
           </div>
           <button class="logout-btn" title="退出登录" @click="handleLogout">
-            <PhSignOut :size="14" />
+            <Icon name="user.sign-out" size="sm" />
           </button>
         </div>
       </div>
@@ -134,11 +122,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
-import {
-  PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhTicket, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge,
-  PhFolderSimpleDashed,
-} from '@phosphor-icons/vue'
+import Brand from '@/components/common/Brand.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -177,34 +161,17 @@ function handleLogout() {
 .admin-sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: var(--surface-page);
+  background: var(--sidebar-bg);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: inset -1px 0 0 var(--sidebar-highlight);
   overflow: hidden;
   padding: 24px 14px;
   gap: 0;
 }
-
-/* 品牌 — 水平居中，对齐前端 logo 布局 */
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 0 8px;
-  margin-bottom: 20px;
-}
-.brand-icon {
-  width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--palette-purple-500), var(--palette-purple-400));
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
-}
-.brand-text { line-height: 1; }
-.brand-name { font-size: var(--font-size-lg); font-weight: 700; color: var(--content-primary); }
-.brand-tag  { font-size: var(--font-size-xs); color: var(--content-muted); margin-top: 3px; }
 
 .sidebar-rule {
   height: 1px;
@@ -219,6 +186,7 @@ function handleLogout() {
   margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
   /* 滚动条由全局浮层契约统一管理，不为它预留布局空间。 */
 }
+.nav-sub { padding-left: 28px; font-size: 12px; color: var(--content-muted); }
 /* 出现滚动条时，flex column 会把 1px 高的分割线（及其它子项）压缩至 0 使其消失——
    固定不收缩，让溢出交给滚动而非挤压内容。 */
 .sidebar-nav > * { flex-shrink: 0; }
@@ -237,13 +205,13 @@ function handleLogout() {
 }
 .nav-item:hover:not(.disabled) {
   color: var(--content-primary);
-  background: var(--surface-glass);
+  background: var(--sidebar-item-hover);
 }
 .nav-item.active {
-  color: var(--content-primary);
-  background: var(--surface-glass-hover);
-  border-color: var(--border-strong);
-  box-shadow: inset 0 1px 0 var(--border-subtle);
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
   font-weight: 600;
 }
 .nav-item.disabled { color: var(--content-muted); cursor: default; }
