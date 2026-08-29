@@ -247,7 +247,8 @@ class SearchSettings(BaseModel):
         description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
     )
     ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
-    similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
+    similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
+    similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
     similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")
     similar_image_timeout_seconds: int = Field(20, ge=5, le=60, description="相似图搜索请求超时秒数")

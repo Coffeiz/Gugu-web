@@ -276,20 +276,6 @@
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
-              <span>站内全局搜索后端</span>
-              <span class="behavior-desc">默认使用 ILIKE 兼容查询；持久化 BM25 索引可作为灰度路径开启。索引未覆盖的来源仍继续使用兼容查询。</span>
-            </div>
-            <AdminSelect
-              :model-value="generalSearchDraft.global_search_backend"
-              :options="[
-                { value: 'index', label: '持久化索引（BM25）' },
-                { value: 'ilike', label: 'ILIKE 兼容模式' },
-              ]"
-              @update:model-value="generalSearchDraft.global_search_backend = $event"
-            />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
               <span>SearXNG 地址（通用搜索 web_search）</span>
               <span class="behavior-desc">自建 SearXNG 实例地址，留空=禁用通用搜索。同机填 http://127.0.0.1:端口，内网/1Panel 部署填对应内网 IP:端口</span>
             </div>
@@ -405,80 +391,17 @@
         @save="saveDeepResearch"
       />
 
-      <!-- ── 相似图搜索 ── -->
-      <section v-if="activeTab === 'behavior' && behaviorTab === 'search'" class="config-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(218,157,111,0.15);--stroke:#da9d6f">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="8.5" cy="8.5" r="5.5"/>
-              <path d="M12.5 12.5L17 17M6.5 8.5h4M8.5 6.5v4"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>相似图搜索</h3>
-            <p>使用百度千帆根据用户图片查找相似候选；独立于关键词图片搜索和通用联网搜索。</p>
-          </div>
-        </div>
-
-        <div class="behavior-grid">
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>百度千帆 API Key</span>
-              <span class="behavior-desc">Web/私聊所有者可用，群成员需显式加入 Bot 工具白名单</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
-              <span v-if="searchTest.baidu_similar_images.msg" :title="searchTest.baidu_similar_images.msg"
-                    :style="{ color: searchTest.baidu_similar_images.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
-                {{ searchTest.baidu_similar_images.msg }}
-              </span>
-              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.baidu_similar_images.loading" @click="testSearch('baidu_similar_images')">
-                {{ searchTest.baidu_similar_images.loading ? '测试中…' : '测试' }}
-              </button>
-              <Checkbox v-model="similarImageDraft.similar_image_enabled" aria-label="启用百度千帆相似图搜索" />
-              <input type="password" class="behavior-input" style="width:280px; flex-shrink:0;"
-                     v-model="similarImageDraft.baidu_qianfan_api_key" autocomplete="new-password"
-                     placeholder="百度 API Key（留空=不修改）" />
-            </div>
-          </div>
-
-          <div class="behavior-item">
-            <div class="behavior-label">
-              <span>默认结果数</span>
-              <span class="behavior-desc">范围 1～50；用户也可以在对话中指定数量</span>
-            </div>
-            <input type="number" class="behavior-input" v-model.number="similarImageDraft.similar_image_default_count" min="1" max="50" />
-          </div>
-
-          <div class="behavior-item">
-            <div class="behavior-label">
-              <span>每日限额</span>
-              <span class="behavior-desc">按用户统计</span>
-            </div>
-            <input type="number" class="behavior-input" v-model.number="similarImageDraft.similar_image_limit_daily" min="1" />
-          </div>
-
-          <div class="behavior-item">
-            <div class="behavior-label">
-              <span>请求超时</span>
-              <span class="behavior-desc">范围 5～60 秒</span>
-            </div>
-            <input type="number" class="behavior-input" v-model.number="similarImageDraft.similar_image_timeout_seconds" min="5" max="60" />
-          </div>
-        </div>
-
-        <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!similarImageError }">
-            <template v-if="similarImageSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
-            <template v-else-if="similarImageError">{{ similarImageError }}</template>
-          </span>
-          <button class="btn-ghost" @click="resetSimilarImageSearch">撤销修改</button>
-          <button class="btn-primary" :class="{ loading: similarImageSaving }" :disabled="similarImageSaving" @click="saveSearch('similar')">
-            <svg v-if="similarImageSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ similarImageSaving ? '保存中…' : '保存' }}
-          </button>
-        </div>
-      </section>
+      <SimilarImageConfig
+        v-if="activeTab === 'behavior' && behaviorTab === 'search'"
+        :draft="similarImageDraft"
+        :test="searchTest.baidu_similar_images"
+        :saving="similarImageSaving"
+        :saved="similarImageSaved"
+        :error="similarImageError"
+        @test="testSearch('baidu_similar_images')"
+        @reset="resetSimilarImageSearch"
+        @save="saveSearch('similar')"
+      />
 
       <!-- ── 语音识别模型 ── -->
       <section v-if="activeTab === 'behavior' && behaviorTab === 'voice'" class="config-card">
@@ -655,7 +578,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
-import Checkbox from '@/components/common/Checkbox.vue'
 import { useRoute } from 'vue-router'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import PermissionSettings from './components/PermissionSettings.vue'
@@ -672,6 +594,7 @@ import ConfigField from '../Config/components/ConfigField.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
+import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()

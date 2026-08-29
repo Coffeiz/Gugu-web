@@ -100,6 +100,34 @@
         </div>
       </section>
 
+      <!-- ── 站内搜索 ── -->
+      <section id="sec-search" class="config-card search-config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(122,184,200,0.15);--stroke:#7ab8c8">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5L17 17"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>站内全局搜索</h3>
+            <p>选择站内数据的搜索后端；不影响 Agent 的联网搜索。</p>
+          </div>
+          <div class="search-provider-group">
+            <AdminSelect
+              class="search-provider-select"
+              :model-value="draft.search.global_search_backend"
+              :options="[
+                { value: 'index', label: '持久化索引（BM25）' },
+                { value: 'ilike', label: 'ILIKE 兼容模式' },
+              ]"
+              aria-label="站内全局搜索后端"
+              @update:model-value="draft.search.global_search_backend = $event"
+            />
+            <p class="config-card-note">BM25 持久化索引适合稳定检索；ILIKE 兼容模式无需索引维护。</p>
+          </div>
+        </div>
+      </section>
+
       <!-- ── 文件存储 ── -->
       <section id="sec-storage" class="config-card">
         <div class="card-head">
@@ -236,6 +264,7 @@
 import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
+import AdminSelect from '@/components/AdminSelect.vue'
 import ConfigField from './components/ConfigField.vue'
 import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
@@ -245,6 +274,7 @@ const adminStore  = useAdminStore()
 const draft = reactive({
   db:      JSON.parse(JSON.stringify(configStore.cfg.db)),
   redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
+  search:  JSON.parse(JSON.stringify(configStore.cfg.search)),
   storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
   smtp:    JSON.parse(JSON.stringify(configStore.cfg.smtp)),
   security: JSON.parse(JSON.stringify(configStore.cfg.security ?? {
@@ -257,6 +287,7 @@ onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
+  Object.assign(draft.search,  configStore.cfg.search)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
@@ -395,6 +426,7 @@ async function save() {
   await configStore.saveConfig({
     db:      { ...draft.db },
     redis:   { ...draft.redis },
+    search:  { global_search_backend: draft.search.global_search_backend },
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
     security: { ...draft.security },
@@ -404,6 +436,7 @@ async function save() {
 function resetDraft() {
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
+  Object.assign(draft.search,  configStore.cfg.search)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
@@ -483,6 +516,11 @@ async function testSmtp() {
 
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field-grid :deep(.span2) { grid-column: span 2; }
+
+.search-provider-group { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-left: auto; min-width: 0; }
+.config-card-note { margin: 0; color: rgba(255,255,255,0.35); font-size: 12px; line-height: 1.5; text-align: right; }
+.search-provider-select { flex-shrink: 0; }
+.search-config-card .card-head { margin-bottom: 0; }
 
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; }
 .provider-grid { flex-wrap: wrap; }

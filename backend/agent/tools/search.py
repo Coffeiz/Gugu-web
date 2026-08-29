@@ -565,7 +565,7 @@ async def _image_search_by_image(db, user_id, args: dict):
     cfg = settings.search
     user_credential = await get_active_credential(db, user_id, "similar_image_search")
     image_key = decrypt_value(user_credential) if user_credential else cfg.baidu_qianfan_api_key
-    if (not user_credential and not cfg.similar_image_enabled) or not image_key:
+    if cfg.similar_image_provider != "baidu_qianfan" or not image_key:
         return {"error": "相似图搜索尚未配置或未启用，请管理员先在 Admin 配置百度千帆 API Key"}
 
     count = args.get("max_results") or cfg.similar_image_default_count
