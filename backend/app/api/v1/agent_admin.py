@@ -27,12 +27,21 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, text, literal_column
+from sqlalchemy import case, select, func, text, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage, ConversationSession, ConversationMessage, User
+
+_SPLIT_CACHE_PROVIDERS = ("anthropic", "minimax")
+
+
+def _effective_input_tokens(provider: str, tokens_in: int, cache_read: int, cache_write: int) -> int:
+    """按供应商 usage 约定计算完整输入 token 数。"""
+    if (provider or "").lower() in _SPLIT_CACHE_PROVIDERS:
+        return tokens_in + cache_read + cache_write
+    return tokens_in
 
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -60,6 +69,21 @@ def _mask_key(key: str) -> str:
     if len(key) <= 8:
         return "•" * len(key)
     return key[:3] + "•" * (len(key) - 7) + key[-4:]
+
+
+def _effective_input_expr():
+    """返回统一口径的完整输入 token 表达式。
+
+    Anthropic 将 cache_read/cache_write 与 input_tokens 分开返回；其他兼容
+    OpenAI 的供应商通常已经把缓存 token 包含在 tokens_in 中，不能再次相加。
+    """
+    return case(
+        (
+            func.lower(AgentUsage.provider).in_(_SPLIT_CACHE_PROVIDERS),
+            AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write,
+        ),
+        else_=AgentUsage.tokens_in,
+    )
 
 
 def _ensure_presets(override: dict) -> dict:
@@ -313,7 +337,7 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     total_row = await db.execute(
         select(
             func.count(AgentUsage.id),
-            func.coalesce(func.sum(AgentUsage.tokens_in), 0),
+            func.coalesce(func.sum(_effective_input_expr()), 0),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
@@ -327,7 +351,7 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     today_row = await db.execute(
         select(
             func.count(AgentUsage.id),
-            func.coalesce(func.sum(AgentUsage.tokens_in), 0),
+            func.coalesce(func.sum(_effective_input_expr()), 0),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
@@ -341,7 +365,7 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
             AgentUsage.model,
             AgentUsage.provider,
             func.count(AgentUsage.id),
-            func.coalesce(func.sum(AgentUsage.tokens_in), 0),
+            func.coalesce(func.sum(_effective_input_expr()), 0),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
@@ -386,7 +410,9 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     daily_sql = """
             SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
-                   COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                   COALESCE(SUM(CASE WHEN LOWER(provider) IN ('anthropic', 'minimax')
+                                     THEN tokens_in + cache_read + cache_write
+                                     ELSE tokens_in END), 0) AS tokens_in,
                    COALESCE(SUM(tokens_out), 0) AS tokens_out,
                    COALESCE(SUM(cache_read), 0) AS cache_read,
                    COALESCE(SUM(cache_write), 0) AS cache_write
@@ -407,7 +433,53 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     for d in range(1, days_in_month + 1):
         key = date(year, mon, d).isoformat()
         entry = daily_map.get(key, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
-        daily.append({"date": key, **entry})
+        daily.append({
+            "date": key,
+            **entry,
+            "cache_ratio": round(entry["cache_read"] / entry["tokens_in"], 6)
+            if entry["tokens_in"] else 0,
+        })
+
+    # 最近 7 天独立于当前月，避免月初/月末查看时被月份边界截断。
+    recent_start = datetime(today.year, today.month, today.day) - timedelta(days=6)
+    recent_sql = """
+            SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
+                   COUNT(*) AS calls,
+                   COALESCE(SUM(CASE WHEN LOWER(provider) IN ('anthropic', 'minimax')
+                                     THEN tokens_in + cache_read + cache_write
+                                     ELSE tokens_in END), 0) AS tokens_in,
+                   COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                   COALESCE(SUM(cache_read), 0) AS cache_read,
+                   COALESCE(SUM(cache_write), 0) AS cache_write
+            FROM agent_usage
+            WHERE created_at >= :recent_start AND created_at < :recent_end
+    """
+    recent_params = {
+        "recent_start": recent_start,
+        "recent_end": datetime(today.year, today.month, today.day) + timedelta(days=1),
+    }
+    if model:
+        recent_sql += " AND model = :model"
+        recent_params["model"] = model
+    recent_sql += " GROUP BY to_char(created_at, 'YYYY-MM-DD') ORDER BY day"
+    recent_rows = await db.execute(text(recent_sql), recent_params)
+    recent_map = {
+        r[0]: {
+            "calls": r[1], "tokens_in": r[2], "tokens_out": r[3],
+            "cache_read": r[4], "cache_write": r[5],
+        }
+        for r in recent_rows.all()
+    }
+    recent_daily = []
+    for offset in range(7):
+        key = (today - timedelta(days=6 - offset)).isoformat()
+        entry = recent_map.get(key, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
+        recent_daily.append({
+            "date": key,
+            **entry,
+            "cache_ratio": round(entry["cache_read"] / entry["tokens_in"], 6)
+            if entry["tokens_in"] else 0,
+        })
 
     return {
         "total":   {"calls": total_calls, "tokens_in": total_in, "tokens_out": total_out, "cache_read": total_cache_read, "cache_write": total_cache_write, "cache_ratio": round(total_cache_read / total_in, 6) if total_in else 0},
@@ -417,6 +489,7 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
         "months":   available_months,
         "month":    target_month,
         "daily":    daily,
+        "recent_daily": recent_daily,
     }
 
 
