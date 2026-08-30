@@ -308,9 +308,9 @@ services:
       VITE_API_PROXY_TARGET: http://backend:8000
     volumes:
       - ./frontend:/workspace/frontend
-      # 匿名卷盖住容器内的 node_modules，不被上面那条源码挂载覆盖掉——否则宿主机若没有
-      # （或平台不同的）node_modules，容器启动即报模块缺失。
-      - /workspace/node_modules
+      # 源码目录挂载会覆盖镜像内的 frontend/node_modules；依赖卷必须挂在被覆盖的
+      # 子目录上，否则 pnpm dev 启动时找不到 Vite。
+      - /workspace/frontend/node_modules
     depends_on:
       - backend
 

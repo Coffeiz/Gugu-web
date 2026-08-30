@@ -1,6 +1,13 @@
 # 咕咕后端生产镜像：只复制构建上下文，不挂载宿主机源码。
 FROM python:3.12-slim
 
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+
+RUN sed -i \
+        -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
+        -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
+        /etc/apt/sources.list.d/debian.sources
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker.io nodejs \
