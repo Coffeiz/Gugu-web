@@ -31,6 +31,7 @@ class ModelRunConfig:
     model: object
     use_anthropic: bool
     context_tokens: int
+    is_byok: bool = False
 
 # 下面这几个判断函数（PRD-LLM-1 FR-LLM-2）改成委托 agent/providers.py 的
 # adapter_for()——provider 差异知识收拢到那一个文件，这里只是保留现有签名/
@@ -154,6 +155,15 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     updates = {"provider": row.provider, "api_format": row.api_format,
                "api_key": decrypt_value(row), "base_url": row.base_url or getattr(base, "base_url", ""),
                "model": row.model or getattr(base, "model", "")}
+    if getattr(row, "context_tokens", None) is not None:
+        updates["context_tokens"] = row.context_tokens
+    if getattr(row, "max_tokens", None) is not None:
+        updates["max_tokens"] = row.max_tokens
+    if getattr(row, "thinking", None) is not None:
+        updates["thinking"] = row.thinking
+    if getattr(row, "reasoning_effort", None) is not None:
+        updates["reasoning_effort"] = row.reasoning_effort
     model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
     return ModelRunConfig(model=model, use_anthropic=use_anthropic_for(model),
-                          context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)))
+                          context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
+                          is_byok=True)

@@ -161,17 +161,22 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
 
     # 异常标记
     flags = []
+    flag_items = []
     for row in by_intent:
         if row["count"] >= min_n and row["misperc_rate"] and row["misperc_rate"] > rate_hi:
             flags.append(f"intent「{row['intent']}」误判率偏高 {row['misperc_rate']:.0%}（n={row['count']}）")
+            flag_items.append({"kind": "intent", "intent": row["intent"], "rate": row["misperc_rate"], "count": row["count"]})
     if avg_ambiguity is not None and avg_ambiguity > ambig_hi:
         flags.append(f"平均歧义度偏高 {avg_ambiguity}（模型普遍读不准 / 该多澄清）")
+        flag_items.append({"kind": "ambiguity", "value": avg_ambiguity})
     if len(perc) >= 50 and not any(x["intent"] in ("情绪", "陪伴") and x["count"] for x in by_intent):
         flags.append("情绪/陪伴型占比为 0 —— 情绪需求可能被系统性误归类")
+        flag_items.append({"kind": "emotion_zero"})
     if overall_misperc_rate is not None:
         for row in by_model:
             if row["count"] >= min_n and row["misperc_rate"] and row["misperc_rate"] > overall_misperc_rate + 0.1:
                 flags.append(f"模型「{row['model']}」误判率 {row['misperc_rate']:.0%} 明显高于整体 {overall_misperc_rate:.0%}")
+                flag_items.append({"kind": "model", "model": row["model"], "rate": row["misperc_rate"], "overall_rate": overall_misperc_rate})
 
     return {
         "window_hours": hours,
@@ -191,6 +196,7 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "feedback_distribution": [{"feedback": k, "count": v} for k, v in feedback_count.most_common()],
         "feedback_total": len(fb_events),
         "flags": flags,
+        "flag_items": flag_items,
         "note": f"口径：活跃用户（窗口内 ≥{min_events} 轮）{len(active)} 人；头部指标按用户宏平均（重度用户不主导）",
     }
 

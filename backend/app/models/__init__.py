@@ -45,6 +45,7 @@ class User(Base):
     token_limit_weekly:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    quota_window_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
     is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
     timezone:             Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)   # IANA 时区（如 Asia/Shanghai）；前端首登探测写入，日期归属/展示按它换算（见 docs/backend/时区与时钟迁移方案.md）
@@ -135,6 +136,10 @@ class UserProviderCredential(Base):
     key_version: Mapped[int] = mapped_column(Integer, default=1)
     base_url: Mapped[str] = mapped_column(String(500), default="")
     model: Mapped[str] = mapped_column(String(200), default="")
+    max_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    thinking: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    reasoning_effort: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     vision: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -911,6 +916,7 @@ class AgentUsage(Base):
     cache_write: Mapped[int]          = mapped_column(Integer, default=0)
     model:      Mapped[str]           = mapped_column(String(100))
     provider:   Mapped[str]           = mapped_column(String(50))
+    is_byok:    Mapped[bool]           = mapped_column(Boolean, default=False, nullable=False, index=True)
     tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
 

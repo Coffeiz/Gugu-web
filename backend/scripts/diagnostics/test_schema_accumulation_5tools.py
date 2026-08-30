@@ -39,9 +39,30 @@ def repeated_cases(rounds: int) -> list[tuple[str, str, dict]]:
     return cases[:rounds]
 
 
+def select_model(settings, selector: str | None):
+    if not selector:
+        return pick_model(settings, None)
+    presets = getattr(settings, "ai_presets", None)
+    items = list(getattr(presets, "items", None) or []) if presets else []
+    needle = selector.strip().lower()
+    matches = [
+        item for item in items
+        if needle in " ".join(
+            str(getattr(item, key, ""))
+            for key in ("name", "provider", "model")
+        ).lower()
+    ]
+    if not matches:
+        raise RuntimeError(f"未找到匹配的模型预设：{selector}")
+    if len(matches) > 1:
+        labels = ", ".join(str(getattr(item, "name", "")) for item in matches)
+        raise RuntimeError(f"模型预设匹配不唯一：{labels}")
+    return matches[0]
+
+
 async def main_async(args: argparse.Namespace) -> int:
     settings = get_settings()
-    model_cfg = pick_model(settings, None)
+    model_cfg = select_model(settings, args.preset)
     if not getattr(model_cfg, "api_key", ""):
         raise RuntimeError("当前默认模型没有配置 API key")
     anthropic = use_anthropic_for(model_cfg)
@@ -58,10 +79,17 @@ async def main_async(args: argparse.Namespace) -> int:
 
     registry.dispatch = diagnostic_dispatch
     try:
-        variants = (
+        all_variants = (
             ("description", description_openai, description_anthropic),
             ("full", full_openai, full_anthropic),
         )
+        requested_variants = {item.strip() for item in args.variants.split(",") if item.strip()}
+        unknown_variants = requested_variants - {item[0] for item in all_variants}
+        if unknown_variants:
+            raise RuntimeError(f"未知 Schema 模式：{', '.join(sorted(unknown_variants))}")
+        variants = tuple(item for item in all_variants if item[0] in requested_variants)
+        if not variants:
+            raise RuntimeError("至少选择一个 Schema 模式")
         for label, openai_schema, anthropic_schema in variants:
             Tool.to_openai = openai_schema
             Tool.to_anthropic = anthropic_schema
@@ -87,8 +115,14 @@ async def main_async(args: argparse.Namespace) -> int:
                 "measured_rounds": len(rows),
                 "schema_tokens_total": metrics["schema_tokens"] * requests,
                 "catalog_tokens_total": metrics["catalog_tokens"] * requests,
-                "first_round_input": rows[0].get("usage", {}).get("provider_input", 0) if rows else 0,
-                "last_round_input": rows[-1].get("usage", {}).get("provider_input", 0) if rows else 0,
+                # 连续上下文长度取每个 run 最后一次 provider 请求；provider_input
+                # 是本次 run 内所有子请求的累计值，只用于消耗统计，不能代表上下文长度。
+                "first_context_input": rows[0].get("usage", {}).get("provider_input_latest", 0) if rows else 0,
+                "last_context_input": rows[-1].get("usage", {}).get("provider_input_latest", 0) if rows else 0,
+                "run_input_total": sum(
+                    int(row.get("usage", {}).get("provider_input", 0) or 0)
+                    for row in rows
+                ),
                 "accuracy": sum(bool(row.get("accurate")) for row in rows),
                 "schema_errors": sum(bool(row.get("schema_error")) for row in rows),
                 "input_total": sum(int(row.get("usage", {}).get("provider_input", 0) or 0) for row in rows),
@@ -121,6 +155,9 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="脱敏结果 JSON 路径")
     parser.add_argument("--rounds", type=int, default=20, help="预热后执行的连续轮数")
     parser.add_argument("--case-timeout", type=float, default=180, help="每轮超时秒数")
+    parser.add_argument("--variants", default="description,full",
+                        help="逗号分隔的 Schema 模式：description、full")
+    parser.add_argument("--preset", help="只读选择模型预设，按名称、提供商或模型名匹配")
     args = parser.parse_args()
     if not args.allow_real_llm:
         print("拒绝执行：请显式追加 --allow-real-llm")

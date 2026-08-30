@@ -768,7 +768,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_get", label="读取思维画布",
-            description_short='读取画布节点、连接和 viewport；关键字段 canvas_id',
+            description_short='读取画布节点、连接和 viewport。',
             description="读取画布节点、连接和最后查看的 camera/viewport；排布时参考节点实际尺寸。",
             input_schema={
                 "type": "object",
@@ -825,7 +825,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_create", label="创建思维画布",
-            description_short='创建思维画布；关键字段 title/project_id',
+            description_short='创建思维画布。',
             description="按用户明确要求创建一张当前用户自己的思维画布；不能替用户猜测标题或项目。",
             input_schema={
                 "type": "object",
@@ -896,7 +896,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_node", label="调整画布节点",
-            description_short='调整画布节点位置/层级；关键字段 item_id/updates',
+            description_short='调整画布节点位置和层级。',
             description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项传 item_id，批量传 updates；不支持修改 w/h。",
             input_schema={
                 "type": "object",
@@ -913,7 +913,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_remove_node", label="移除画布节点",
-            description_short='移除画布节点视图；关键字段 item_id/item_ids',
+            description_short='移除画布节点视图。',
             description="从指定画布移除一个或多个节点视图，最多 20 个；不会删除项目、文件、活动或画布便签正文。单项调用使用 item_id，批量调用使用 item_ids 数组。",
             input_schema={
                 "type": "object",
@@ -925,7 +925,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_note", label="修改画布便签",
-            description_short='修改画布便签；关键字段 node_id/version',
+            description_short='修改画布便签。',
             description="按 node_id 和 version 修改一个或多个画布专属便签，最多 20 个；不能修改普通时间流 note。单项调用使用 node_id/version，批量调用使用 updates 数组。",
             input_schema={
                 "type": "object",
@@ -972,7 +972,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_anchor", label="调整画布连接点",
-            description_short='修改连接两端；关键字段 relation_id/source_side/target_side',
+            description_short='修改连接两端。',
             description="修改指定画布关系两端使用的连接点。source_side/target_side 分别对应读取结果中的 source_node_id/target_node_id；只改变画布视图，不改变关系语义。",
             input_schema={
                 "type": "object",
@@ -988,7 +988,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_disconnect", label="断开画布连接",
-            description_short='断开画布连接；关键字段 relation_id/relation_ids',
+            description_short='断开画布连接。',
             description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",

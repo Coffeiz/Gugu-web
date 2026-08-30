@@ -6,7 +6,7 @@ adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, or_, select
@@ -448,11 +448,12 @@ async def get_commands(current_user: User = Depends(get_current_user)):
 async def get_greeting(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    locale: str = Query(default="zh-CN", pattern="^(zh-CN|ja-JP|en-US)$"),
 ):
     """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
     from app.core.config import get_settings
     from agent import greeting
-    text = await greeting.generate(db, current_user.id, get_settings())
+    text = await greeting.generate(db, current_user.id, get_settings(), locale=locale)
     return {"text": text}
 
 

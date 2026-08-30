@@ -883,7 +883,7 @@ class LLMRunner:
                 import anthropic
                 busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
                 detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError' if not busy else 'chatUi.networkError'}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
@@ -927,13 +927,23 @@ class LLMRunner:
                          f"format={driver.api_format}", e)
                 _log.error("LLM 调用中途出错：%s", type(e).__name__)
                 detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError'}, ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
             total_out += result.usage_out
             total_cache += result.cache_tokens
             run_context_usage = max(run_context_usage, _provider_context_usage(driver, result))
+            # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
+            # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
+            yield stream_event(
+                "_provider_usage",
+                round_id=round_id,
+                input=int(result.usage_in or 0),
+                context_input=int(_provider_context_usage(driver, result) or 0),
+                output=int(result.usage_out or 0),
+                cache_read=int(result.cache_tokens or 0),
+            )
 
             _requires_tools = result.requires_tools
             if _requires_tools is None:

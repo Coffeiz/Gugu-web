@@ -177,7 +177,7 @@ class TrashSkill(BaseSkill):
         ),
         Tool(
             name="restore_file", label="还原文件",
-            description_short='还原文件；关键字段 file_id',
+            description_short='还原文件。',
             description="把回收站里的文件还原回原位置。",
             input_schema={
                 "type": "object",
@@ -189,7 +189,7 @@ class TrashSkill(BaseSkill):
         ),
         Tool(
             name="restore_folder", label="还原文件夹",
-            description_short='还原文件夹；关键字段 folder_id',
+            description_short='还原文件夹。',
             description="把回收站里的文件夹及其子文件、子文件夹还原回原位置。",
             input_schema={
                 "type": "object",
@@ -201,7 +201,7 @@ class TrashSkill(BaseSkill):
         ),
         Tool(
             name="permanent_delete", label="永久删除",
-            description_short='永久删除；关键字段 file_id/folder_id；all=true 清空回收站全部内容，必须先确认目标再带凭证执行',
+            description_short='永久删除；清空回收站或删除目标前必须确认。',
             description="永久删除回收站文件或顶层文件夹；必须先确认目标，再带 confirm 凭证执行。",
             input_schema={
                 "type": "object",

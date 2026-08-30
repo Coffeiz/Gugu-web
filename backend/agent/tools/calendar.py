@@ -240,7 +240,7 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="create_event",
             label="新建日历事件",
-            description_short='创建活动或截止提醒；可带 reminders/reminder_channels',
+            description_short='创建活动或截止提醒；可设置提醒。',
             description=("在日历上创建事件或截止提醒。可一次把提醒也带上（reminders）——这样「建活动+设提醒」一个调用搞定，"
                          "不用再单独调 add_event_reminder。"),
             input_schema={
@@ -271,7 +271,7 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="list_events",
             label="查询日历事件",
-            description_short='查询日历事件；关键字段 from/to/type',
+            description_short='查询日历事件；支持按时间和类型筛选。',
             description="查询日历事件，可按日期范围和类型筛选。每个活动会**连同它自己的提醒**一起返回（reminders 字段，无提醒则不带），不用再逐个查提醒。",
             input_schema={
                 "type": "object",
@@ -320,7 +320,7 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="delete_event",
             label="删除日历事件",
-            description_short='删除日历事件；关键字段 event_id',
+            description_short='删除日历事件。',
             description="删除一个或多个日历事件/活动（无回收站，不可恢复，会连带删除活动提醒）。单项传 event_id/event，批量传 event_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
@@ -341,7 +341,7 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="add_event_reminder",
             label="给活动加提醒",
-            description_short='给活动加提醒；reminders/lead_minutes 二选一，lead_minutes 默认 30，channels 默认 [web]',
+            description_short='给活动加提醒；支持设置提醒时间和通知渠道。',
             description="给已有日历活动添加提醒；提醒绑定活动，不同于独立定时任务。",
             input_schema={
                 "type": "object",
@@ -383,7 +383,7 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="remove_event_reminder",
             label="删除活动提醒",
-            description_short='删除活动提醒；关键字段 reminder_id',
+            description_short='删除活动提醒。',
             description="删除某个活动提醒（用 list_event_reminders 拿到的 reminder_id）。只删活动提醒，不影响独立定时任务。",
             input_schema={
                 "type": "object",

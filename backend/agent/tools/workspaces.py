@@ -125,7 +125,7 @@ class WorkspacesSkill(BaseSkill):
         ),
         Tool(
             name="get_workspace", label="查看工作区",
-            description_short="查看工作区详情；关键字段 workspace_id",
+            description_short="查看工作区详情。",
             description="查看一个工作区及其项目/文件夹绑定；workspace_id 不能当作 project_id 使用。",
             input_schema={
                 "type": "object", "properties": {
@@ -155,7 +155,7 @@ class WorkspacesSkill(BaseSkill):
         ),
         Tool(
             name="update_workspace", label="更新工作区",
-            description_short="更新工作区；关键字段 workspace_id/name/enabled",
+            description_short="更新工作区。",
             description="修改工作区名称或启用状态，不改变项目/文件夹绑定。",
             input_schema={
                 "type": "object", "properties": {
@@ -167,7 +167,7 @@ class WorkspacesSkill(BaseSkill):
         ),
         Tool(
             name="delete_workspace", label="删除工作区",
-            description_short="删除工作区；关键字段 workspace_id，执行前确认",
+            description_short="删除工作区，执行前确认。",
             description="删除工作区声明并解除会话绑定，不删除项目、文件夹或文件；执行前需确认。",
             input_schema={
                 "type": "object", "properties": {

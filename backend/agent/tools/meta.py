@@ -214,7 +214,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="create_skill",
             label="创建咕咕技能",
-            description_short='创建用户自定义技能；保存可复用做法，关键字段 name/description_short/body/related_tools',
+            description_short='创建用户自定义技能并保存可复用做法。',
             description=(
                 "创建可复用的 Prompt Skill；不是项目，也不是调用已有技能。需要 name、description_short、body、related_tools；不能注册工具或扩大权限。"
             ),

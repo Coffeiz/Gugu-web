@@ -15,6 +15,18 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 # 项目状态英文枚举 → 中文（注入上下文时翻好，免得咕咕照搬英文说给用户）
 _STATUS_ZH = {"pending": "待开始", "active": "进行中", "done": "已完成"}
+_LANGUAGE_NAMES = {"zh-CN": "简体中文", "ja-JP": "日本語", "en-US": "English"}
+
+
+def _language_block(style_prefs: dict | None) -> str:
+    """把用户的界面语言作为 system prompt 的第一条交流规则。"""
+    locale = (style_prefs or {}).get("locale")
+    language = _LANGUAGE_NAMES.get(locale, "简体中文")
+    return (
+        "## 当前交流语言\n"
+        f"当前用户界面语言为「{language}」。除非用户明确要求使用其他语言，"
+        f"否则请始终使用「{language}」与用户交流，包括回答、解释、错误提示和工具调用结果。"
+    )
 
 
 def _files_block(fo: dict | None) -> str:
@@ -111,7 +123,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     now_str += date_boundary_note(_now.hour)
 
     # === 静态部分（完全不变） ===
-    static_parts = []
+    static_parts = [_language_block(style_prefs)]
 
     persona = _personality_block(style_prefs or {})
     if not persona:

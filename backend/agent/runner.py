@@ -98,7 +98,7 @@ async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[st
 
 def _im_identity_block(req: AgentRequest, history: list) -> str:
     """把 IM 身份元数据作为内部事实提供给模型，禁止模型凭熟悉感猜身份。"""
-    if req.source not in IM_SOURCES:
+    if req.source not in IM_SOURCES or not req.chat_id:
         return ""
     chat_type = "群聊" if req.chat_id else "私聊"
     role = req.im_role or ("owner" if not req.chat_id else "unknown")
@@ -347,11 +347,21 @@ async def _run_collect_unlocked(
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
             )
-            from agent.im.context_loader import format_group_memory
+            from agent.im.context_loader import format_group_memory, format_platform_user_memory
             group_memory = (data.im_memory or {}).get("group") or {}
             group_block = format_group_memory({"group": group_memory})
             if group_block:
                 snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
+            # 私聊 member 只把当前平台用户的稳定记忆放进 snapshot；不注入 daily
+            # 或 owner 记忆。群聊仍只走上面的群公开记忆分支。
+            private_member_memory = {}
+            if not req.chat_id and context_policy.restricted:
+                private_member_memory = (data.im_memory or {}).get("platform_user") or {}
+                member_block = format_platform_user_memory(
+                    {"platform_user": private_member_memory}
+                )
+                if member_block:
+                    snapshot_context = f"{snapshot_context}\n\n---\n\n{member_block}"
             return {
                 "system_prompt": static_prompt,
                 "snapshot_context": snapshot_context,
@@ -360,7 +370,9 @@ async def _run_collect_unlocked(
                 "user_tz": data.user_tz,
                 "im_channels": data.im_channels,
                 # 共享 snapshot 只保存当前群公开记忆；成员个人记忆按请求动态读取。
-                "im_memory": {"group": group_memory},
+                "im_memory": ({"group": group_memory}
+                              if req.chat_id else
+                              {"platform_user": private_member_memory}),
                 "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory),
             }
 
@@ -390,8 +402,11 @@ async def _run_collect_unlocked(
             strip_thinking = False
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
-        _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
-        _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
+        # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
+        _proactive_lead = ""
+        if req.chat_id:
+            _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
+            _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
@@ -877,12 +892,14 @@ async def _run_scheduled_once(
             set_ctx_tz(user_tz)
             if minimal_context:
                 projects, events, files_overview, memory, im_channels = [], [], None, {}, []
+                style_prefs = {}
             else:
                 projects = await loaders.load_projects(db, user_id)
                 events = await loaders.load_events(db, user_id, tz=user_tz)
                 files_overview = await loaders.load_files_overview(db, user_id)
                 memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
                 im_channels = await loaders.load_im_channels(user_id)
+                style_prefs = await loaders.load_style_prefs(db, user_id)
 
         prompt_name = profile.prompt_file.removesuffix(".md")
         static_prompt, snapshot_context, now_str = builder.build_split(
@@ -893,6 +910,7 @@ async def _run_scheduled_once(
             memory,
             files_overview,
             skills=profile.skills,
+            style_prefs=style_prefs,
             im_channels=im_channels,
             non_streaming=True,
             include_projects=not minimal_context,

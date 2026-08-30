@@ -133,7 +133,7 @@ def baseline_hash(messages: list) -> str:
     return digest(normalized)
 
 
-def snapshot_is_usable(session, now: datetime | None = None) -> bool:
+def snapshot_is_usable(session, now: datetime | None = None, *, locale: str | None = None) -> bool:
     """判断当前 session 是否已有未过期的可复用 snapshot。"""
     context = getattr(session, "session_context", None)
     return bool(
@@ -141,6 +141,7 @@ def snapshot_is_usable(session, now: datetime | None = None) -> bool:
         and context.get("system_prompt") is not None
         and context.get("session_info") is not None
         and not is_expired(session, now)
+        and (locale is None or context.get("locale", "zh-CN") == locale)
     )
 
 
@@ -233,6 +234,7 @@ def initialize_snapshot(
     im_memory: dict | None = None,
     context_revision: int = 0,
     memory_summary_hash: str = "",
+    locale: str = "zh-CN",
     covered_messages: list[dict] | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
@@ -271,6 +273,7 @@ def initialize_snapshot(
         "context_revision": context_revision,
         "rag_revision": str(context_revision),
         "memory_summary_hash": memory_summary_hash,
+        "locale": locale,
         "snapshot_context_hash": digest(snapshot_context),
         "history_baseline_message_id": int(getattr(session, "baseline_message_id", 0) or 0),
         **preserved_control,
@@ -333,13 +336,14 @@ async def ensure_snapshot(
     load_context: Callable[[], Awaitable[dict]],
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
+    locale: str | None = None,
 ) -> dict:
     """返回本会话冻结的上下文；仅在首次/过期时调用业务 loader。
 
     ``load_context`` 返回已经渲染好的 prompt 输入，避免 runner、Web 各自维护一套
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。
     """
-    if snapshot_is_usable(session, now):
+    if snapshot_is_usable(session, now, locale=locale):
         _record_snapshot_event(session, "hit")
         context = snapshot_context(session)
         _set_rag_snapshot_context(context["snapshot_context"], context.get("rag_revision"))
@@ -364,6 +368,7 @@ async def ensure_snapshot(
         im_channels=payload.get("im_channels") or {},
         im_memory=payload.get("im_memory") or {},
         memory_summary_hash=str(payload.get("memory_summary_hash") or ""),
+        locale=str(payload.get("locale") or locale or "zh-CN"),
         context_revision=current_revision,
         covered_messages=payload.get("covered_messages") or [],
         now=now,

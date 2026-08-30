@@ -273,7 +273,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description_short='创建定时任务；cron 支持五段式或 @once:<ISO>；channels 默认 [web]，QQ 用 delivery_mode',
+            description_short='创建定时任务；支持周期执行和 QQ 私聊或群聊投递。',
             description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
             input_schema={
                 "type": "object",
@@ -293,7 +293,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="update_scheduled_task", label="更新定时任务",
-            description_short='修改定时任务；cron 用 cron 或 @once:<ISO>；channels 不改时省略，delivery_mode=owner_private/current_group 用于 QQ 投递',
+            description_short='修改定时任务；可调整执行计划和 QQ 投递范围。',
             description="修改定时任务内容、投递渠道或启停；按 task_id 或 task 定位。只改 delivery_mode 时省略 channels，改时间用 cron/@once。",
             input_schema={
                 "type": "object",
@@ -315,7 +315,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
-            description_short='删除定时任务；关键字段 task_id',
+            description_short='删除定时任务。',
             description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。确认后传 confirm=true 和上一步的 confirm_token。",
             input_schema={
                 "type": "object",

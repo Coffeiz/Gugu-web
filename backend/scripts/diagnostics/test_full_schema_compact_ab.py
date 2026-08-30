@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -105,11 +106,82 @@ def payload(raw: str) -> dict[str, Any] | None:
 
 
 def _text_in_blocks(value: Any) -> str:
+    """提取 blocks 中的文本，避免把 JSON 字段顺序误当成内容顺序。"""
     if isinstance(value, dict):
-        return " ".join(_text_in_blocks(item) for item in value.values())
+        if value.get("type") == "text" and isinstance(value.get("text"), str):
+            return value["text"]
+        return " ".join(
+            _text_in_blocks(item)
+            for key, item in value.items()
+            if key not in {"type", "name", "format"}
+        )
     if isinstance(value, list):
         return " ".join(_text_in_blocks(item) for item in value)
-    return str(value) if isinstance(value, str) else ""
+    return value if isinstance(value, str) else ""
+
+
+def aggregate_usage_rows(
+    rows: list[dict[str, int]], anthropic: bool, *, provider_request_count: int | None = None,
+) -> dict[str, Any]:
+    """按连续 run 聚合 usage，并允许传入真实 provider 请求数。
+
+    core 为一个 run 只发送一个最终 ``_usage`` 事件，不能用 usage 事件数量
+    推断 provider 请求数；调用方应统计 ``round_start``。
+    """
+    requests: list[dict[str, int | float]] = []
+    for row in rows:
+        provider_input = int(row.get("input", 0) or 0)
+        if anthropic:
+            provider_input += int(row.get("cache_read", 0) or 0)
+        cache_read = int(row.get("cache_read", 0) or 0)
+        requests.append({
+            "input": int(row.get("input", 0) or 0),
+            "context_input": int(row.get("context_input", 0) or 0),
+            "output": int(row.get("output", 0) or 0),
+            "cache_read": cache_read,
+            "provider_input": provider_input,
+            "cache_ratio": round(cache_read / provider_input, 6) if provider_input else 0,
+        })
+    provider_input_total = sum(int(item["provider_input"]) for item in requests)
+    cache_read_total = sum(int(item["cache_read"]) for item in requests)
+    latest = requests[-1] if requests else {
+        "provider_input": 0, "context_input": 0,
+    }
+    return {
+        "input": sum(int(item["input"]) for item in requests),
+        "context_input": sum(int(item["context_input"]) for item in requests),
+        "output": sum(int(item["output"]) for item in requests),
+        "cache_read": cache_read_total,
+        "provider_input": provider_input_total,
+        "total_tokens": provider_input_total + sum(int(item["output"]) for item in requests),
+        "cache_ratio": round(cache_read_total / provider_input_total, 6) if provider_input_total else 0,
+        "provider_request_count": (
+            int(provider_request_count)
+            if provider_request_count is not None else len(requests)
+        ),
+        "first_provider_input": requests[0]["provider_input"] if requests else 0,
+        "last_provider_input": requests[-1]["provider_input"] if requests else 0,
+        "context_input_latest": latest["context_input"],
+        "provider_input_latest": latest["provider_input"],
+        "provider_requests": requests,
+    }
+
+
+def history_metrics(messages: PromptMessages) -> dict[str, Any]:
+    """只记录连续会话的结构，不把用户正文或工具参数写入测试结果。"""
+    conversation = list(getattr(messages, "conversation", messages))
+    roles = Counter(
+        str(item.get("role") or "unknown")
+        for item in conversation
+        if isinstance(item, dict)
+    )
+    serialized = json.dumps(conversation, ensure_ascii=False, separators=(",", ":"))
+    return {
+        "message_count": len(conversation),
+        "chars": len(serialized),
+        "roles": dict(roles),
+        "canonical_batch_count": len(getattr(messages, "canonical_batch_digests", ())),
+    }
 
 
 def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str, *, description_mode: bool, settings) -> dict[str, Any]:
@@ -223,8 +295,10 @@ async def run_continuous_case(
         )
         calls: list[dict[str, Any]] = []
         usage_rows: list[dict[str, int]] = []
+        provider_usage_rows: list[dict[str, int]] = []
         errors: list[str] = []
         text_parts: list[str] = []
+        provider_request_count = 0
         try:
             async for raw in generation:
                 event = payload(raw)
@@ -232,10 +306,17 @@ async def run_continuous_case(
                     continue
                 if event.get("type") == "tool_call":
                     calls.append({"name": event.get("name"), "input": event.get("input")})
+                elif event.get("type") == "round_start":
+                    provider_request_count += 1
                 elif event.get("type") == "token":
                     text_parts.append(str(event.get("content") or ""))
                 elif event.get("type") == "_usage":
                     usage_rows.append({
+                        key: int(event.get(key) or 0)
+                        for key in ("input", "context_input", "output", "cache_read")
+                    })
+                elif event.get("type") == "_provider_usage":
+                    provider_usage_rows.append({
                         key: int(event.get(key) or 0)
                         for key in ("input", "context_input", "output", "cache_read")
                     })
@@ -249,13 +330,10 @@ async def run_continuous_case(
             "kind": "tool_selection", "expected": tool_name,
             "actual": [call.get("name") for call in calls],
         }
-        usage = usage_rows[-1] if usage_rows else {
-            "input": 0, "context_input": 0, "output": 0, "cache_read": 0,
-        }
-        provider_input = usage["input"] + (usage["cache_read"] if anthropic else 0)
-        usage["provider_input"] = provider_input
-        usage["total_tokens"] = provider_input + usage["output"]
-        usage["cache_ratio"] = round(usage["cache_read"] / provider_input, 6) if provider_input else 0
+        usage = aggregate_usage_rows(
+            provider_usage_rows or usage_rows, anthropic,
+            provider_request_count=len(provider_usage_rows) or provider_request_count,
+        )
         rows.append({
             "turn": turn,
             "accurate": bool(target) and mismatch is None and not errors,
@@ -303,14 +381,18 @@ async def run_continuous_sequence(
             "role": "user",
             "content": f"[当前测试目标工具：{tool_name}] {prompt}",
         })
+        history_before = history_metrics(messages)
         generation = runner.run(
             _UID, system if anthropic else None, messages,
             anthropic, model_cfg,
         )
         calls: list[dict[str, Any]] = []
         usage_rows: list[dict[str, int]] = []
+        provider_usage_rows: list[dict[str, int]] = []
         errors: list[str] = []
         text_parts: list[str] = []
+        compactions: list[dict[str, Any]] = []
+        provider_request_count = 0
         try:
             async for raw in generation:
                 event = payload(raw)
@@ -318,6 +400,8 @@ async def run_continuous_sequence(
                     continue
                 if event.get("type") == "tool_call":
                     calls.append({"name": event.get("name"), "input": event.get("input")})
+                elif event.get("type") == "round_start":
+                    provider_request_count += 1
                 elif event.get("type") == "token":
                     text_parts.append(str(event.get("content") or ""))
                 elif event.get("type") == "_usage":
@@ -325,8 +409,18 @@ async def run_continuous_sequence(
                         key: int(event.get(key) or 0)
                         for key in ("input", "context_input", "output", "cache_read")
                     })
+                elif event.get("type") == "_provider_usage":
+                    provider_usage_rows.append({
+                        key: int(event.get(key) or 0)
+                        for key in ("input", "context_input", "output", "cache_read")
+                    })
                 elif event.get("type") == "error":
                     errors.append(str(event.get("detail") or "error")[:120])
+                elif event.get("type") == "_context_compaction":
+                    compactions.append({
+                        "applied": bool(event.get("applied")),
+                        "reason": str(event.get("reason") or "")[:80],
+                    })
         finally:
             await generation.aclose()
         target = next((call for call in calls if call.get("name") == tool_name), None)
@@ -353,15 +447,13 @@ async def run_continuous_sequence(
             "kind": "tool_selection", "expected": tool_name,
             "actual": [call.get("name") for call in calls],
         }
-        usage = usage_rows[-1] if usage_rows else {
-            "input": 0, "context_input": 0, "output": 0, "cache_read": 0,
-        }
-        provider_input = usage["input"] + (usage["cache_read"] if anthropic else 0)
-        usage["provider_input"] = provider_input
-        usage["total_tokens"] = provider_input + usage["output"]
-        usage["cache_ratio"] = round(usage["cache_read"] / provider_input, 6) if provider_input else 0
+        usage = aggregate_usage_rows(
+            provider_usage_rows or usage_rows, anthropic,
+            provider_request_count=len(provider_usage_rows) or provider_request_count,
+        )
         if text_parts:
             messages.append({"role": "assistant", "content": "".join(text_parts)})
+        history_after = history_metrics(messages)
         return {
             "turn": turn,
             "tool": tool_name,
@@ -371,6 +463,9 @@ async def run_continuous_sequence(
             "usage": usage,
             "error": errors or None,
             "schema_error": mismatch,
+            "history_before": history_before,
+            "history_after": history_after,
+            "history_compactions": compactions,
         }
 
     warmup_tool, warmup_prompt, warmup_expected = cases[0]

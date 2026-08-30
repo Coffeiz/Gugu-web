@@ -161,13 +161,15 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                                            content=req.greeting.strip()))
                 await db.flush()
 
+        style_prefs = await loaders.load_style_prefs(db, user_id)
+        current_locale = style_prefs.get("locale", "zh-CN")
+
         async def _load_snapshot():
             user_tz = await loaders.load_user_tz(db, user_id)
             projects = await loaders.load_projects(db, user_id)
             events = await loaders.load_events(db, user_id, tz=user_tz)
             notes = await loaders.load_recent_notes(db, user_id)
             files_overview = await loaders.load_files_overview(db, user_id)
-            style_prefs = await loaders.load_style_prefs(db, user_id)
             memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
             im_channels = await loaders.load_im_channels(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(
@@ -182,9 +184,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                                       "profile": profile.prompt_file},
                     "user_tz": user_tz, "im_channels": im_channels, "im_memory": {},
                     "memory_summary_hash": session_snapshot.memory_summary_hash(memory),
+                    "locale": current_locale,
                     }
 
-        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
+        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot, locale=current_locale)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
 
@@ -659,9 +662,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     except BaseException as e:
         generation_failed = True
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
-        msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
+        is_network_error = _is_network_error(e)
+        msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
-        await genstream.publish(session_id, {"type": "error", "message": msg})
+        await genstream.publish(session_id, {
+            "type": "error",
+            "message": msg,
+            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+        })
     finally:
         # LoopScope 正常由 genstream 的 done/error 事件收尾；事件发布前异常、
         # Redis 发布失败或后台任务被提前终止时，仍需提交一个终态，避免该 run

@@ -190,6 +190,27 @@ def _history_cache_state(messages: list) -> tuple[int, set[int]]:
     return stable_limit, anchor_indices
 
 
+def _cache_message_copy(messages: list, rendered: list[dict], stable_limit: int):
+    """复制缓存标记后的消息，同时保留 PromptMessages 的动态尾缀边界。"""
+    if not hasattr(messages, "conversation"):
+        return rendered
+
+    from agent.context.assembly import PromptMessages
+
+    result = PromptMessages(
+        rendered[:stable_limit],
+        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+    )
+    if len(rendered) > stable_limit:
+        result.set_dynamic_tail(rendered[stable_limit:])
+    result._cache_anchor_indices = list(getattr(messages, "cache_anchor_indices", ()))
+    for name in ("canonical_context", "_canonical_batches", "_canonical_batch_digests",
+                 "_canonical_batch_metadata"):
+        if hasattr(messages, name):
+            setattr(result, name, getattr(messages, name))
+    return result
+
+
 def _with_history_cache(messages: list) -> list:
     """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
 
@@ -242,20 +263,23 @@ def _with_history_cache(messages: list) -> list:
         msg["content"] = new_content
         new_messages.append(msg)
 
-    return new_messages
+    return _cache_message_copy(messages, new_messages, stable_limit)
 
 
 def _with_single_history_cache(messages: list) -> list:
-    """只给稳定 conversation 的最新消息添加一个历史缓存锚点。"""
-    stable_limit, _ = _history_cache_state(messages)
+    """给稳定 conversation 保留跨 Run baseline 和最新尾部两个历史锚点。"""
+    stable_limit, anchor_indices = _history_cache_state(messages)
     if stable_limit <= 0:
         return list(messages)
-    latest_anchor = stable_limit - 1
+    remember_anchor = getattr(messages, "remember_cache_anchor", None)
+    if remember_anchor is not None:
+        for index in sorted(anchor_indices):
+            remember_anchor(index)
     new_messages = []
     for index, message in enumerate(messages):
         clone = dict(message)
         content = clone.get("content")
-        if index == latest_anchor:
+        if index in anchor_indices and index < stable_limit:
             if isinstance(content, list) and content:
                 clone["content"] = content[:-1] + [
                     {**content[-1], "cache_control": {"type": "ephemeral"}}
@@ -265,7 +289,7 @@ def _with_single_history_cache(messages: list) -> list:
                     "type": "text", "text": content,
                     "cache_control": {"type": "ephemeral"},
                 }]
-        else:
+        elif message.get("role") != "system":
             if isinstance(content, list):
                 clone["content"] = [
                     {key: value for key, value in block.items() if key != "cache_control"}
@@ -273,7 +297,7 @@ def _with_single_history_cache(messages: list) -> list:
                     for block in content
                 ]
         new_messages.append(clone)
-    return new_messages
+    return _cache_message_copy(messages, new_messages, stable_limit)
 
 
 class AnthropicDriver:
@@ -462,15 +486,16 @@ class OpenAIDriver:
         supports_explicit_cache = adapter.supports_explicit_cache(model)
 
         # OpenAI 兼容 provider 的 cache_control 语义并不统一。经过验证的 Qwen
-        # 端点会把标记作为缓存边界；如果给每个 system 都标记，缓存会被截在
-        # snapshot 的前缀处。稳定 conversation 的唯一锚点统一由 run_round
-        # 的显式策略放在末尾，动态尾部也不会被纳入。DeepSeek 走服务端自动缓存，
+        # 端点会把标记作为缓存边界；连续的 system 消息都是稳定前缀的一部分，
+        # 必须一起标记，才能覆盖 system + snapshot。稳定 conversation 的唯一
+        # 历史锚点统一由 run_round 的显式策略放在末尾，动态尾部也不会被纳入。
+        # DeepSeek 走服务端自动缓存，
         # 不进入这条分支。
         if supports_explicit_cache:
             cache_messages = getattr(messages, "conversation", messages)
             for message in cache_messages:
                 if message.get("role") != "system":
-                    continue
+                    break
                 content = message.get("content")
                 if isinstance(content, str):
                     message["content"] = [{
@@ -481,7 +506,6 @@ class OpenAIDriver:
                     content[-1] = {
                         **content[-1], "cache_control": {"type": "ephemeral"},
                     }
-                break
 
         declared = providers.capability_snapshot(ai)
         tools = registry.openai_schemas(tool_names) if declared.get("tools", True) else []

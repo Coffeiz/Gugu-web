@@ -18,6 +18,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -151,10 +152,16 @@ def anthropic_tool_calls(response: Any) -> tuple[list[dict], list[dict]]:
 def openai_tool_calls(response: Any) -> tuple[list[dict], dict]:
     message = response.choices[0].message
     raw_calls = list(getattr(message, "tool_calls", None) or [])
+
+    def field(value: Any, name: str, default: Any = None) -> Any:
+        if isinstance(value, dict):
+            return value.get(name, default)
+        return getattr(value, name, default)
+
     calls = [
         {
-            "id": str(getattr(call, "id", None) or "diagnostic-call"),
-            "name": str(getattr(getattr(call, "function", None), "name", None) or "unknown"),
+            "id": str(field(call, "id") or "diagnostic-call"),
+            "name": str(field(field(call, "function", {}), "name") or "unknown"),
         }
         for call in raw_calls
     ]
@@ -164,7 +171,14 @@ def openai_tool_calls(response: Any) -> tuple[list[dict], dict]:
     }
     if raw_calls:
         assistant["tool_calls"] = [
-            call.model_dump() if hasattr(call, "model_dump") else dict(call)
+            call.model_dump() if hasattr(call, "model_dump") else {
+                "id": str(field(call, "id") or "diagnostic-call"),
+                "type": str(field(call, "type") or "function"),
+                "function": {
+                    "name": str(field(field(call, "function", {}), "name") or "unknown"),
+                    "arguments": str(field(field(call, "function", {}), "arguments") or "{}"),
+                },
+            }
             for call in raw_calls
         ]
     return calls, assistant
@@ -253,13 +267,46 @@ async def call_openai(target: Target, system: str, messages: list[dict], tools: 
     else:
         client = providers.build_openai_client(target.ai, timeout)
     try:
-        return await client.chat.completions.create(
+        stream = await client.chat.completions.create(
             model=getattr(target.ai, "model", ""),
             max_tokens=min(int(getattr(target.ai, "max_tokens", 512) or 512), 512),
             temperature=float(getattr(target.ai, "temperature", 0.2) or 0.2),
             messages=[system_message, *messages],
+            stream=True,
+            stream_options={"include_usage": True},
             **request_kwargs,
         )
+        content = ""
+        reasoning = ""
+        tool_buf: dict[int, dict[str, str]] = {}
+        usage = None
+        async for chunk in stream:
+            if getattr(chunk, "usage", None):
+                usage = chunk.usage
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            content += getattr(delta, "content", None) or ""
+            reasoning += getattr(delta, "reasoning_content", None) or ""
+            for tool_call in getattr(delta, "tool_calls", None) or []:
+                item = tool_buf.setdefault(tool_call.index, {"id": "", "name": "", "arguments": ""})
+                item["id"] = item["id"] or (getattr(tool_call, "id", None) or "")
+                function = getattr(tool_call, "function", None)
+                if function:
+                    item["name"] += getattr(function, "name", None) or ""
+                    item["arguments"] += getattr(function, "arguments", None) or ""
+        raw_calls = [
+            SimpleNamespace(
+                id=item["id"] or "diagnostic-call",
+                type="function",
+                function=SimpleNamespace(name=item["name"] or "unknown", arguments=item["arguments"]),
+            )
+            for _, item in sorted(tool_buf.items())
+        ]
+        if usage is None:
+            usage = SimpleNamespace(prompt_tokens=0, completion_tokens=0)
+        message = SimpleNamespace(content=content, tool_calls=raw_calls, reasoning_content=reasoning)
+        return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)])
     finally:
         await client.close()
 

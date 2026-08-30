@@ -151,7 +151,7 @@ class MemorySkill(BaseSkill):
     tools = [
         Tool(
             name="save_knowledge", label="保存知识",
-            description_short='保存知识；关键字段 title/content；可设 source_type 和 confidence',
+            description_short='保存可复用知识；支持来源类型和置信度。',
             description=(
                 "保存用户明确要求长期保留的事实、规则或资料摘要。"
                 "默认写入 owner 知识库，不把普通聊天自动保存为知识。"
@@ -174,7 +174,7 @@ class MemorySkill(BaseSkill):
         ),
         Tool(
             name="remember", label="记住",
-            description_short='记住；关键字段 text；target=profile/pattern，profile 可设 type，pattern 可设 importance 1~5；省略 target 用 profile',
+            description_short='记住用户信息或行为模式；省略目标时保存为用户画像。',
             description="记录用户的稳定信息或做事方式；默认写入 profile，行为模式写入 pattern，并自动去重。",
             input_schema={
                 "type": "object",
@@ -191,7 +191,7 @@ class MemorySkill(BaseSkill):
         ),
         Tool(
             name="delete_knowledge", label="删除知识",
-            description_short='删除已保存知识；关键字段 knowledge_id/confirm',
+            description_short='删除已保存知识。',
             description=(
                 "删除一条已保存的知识条目并停止检索。必须先不带 confirm 请求确认，"
                 "再携带确认凭证执行；历史版本不会被物理覆盖。"

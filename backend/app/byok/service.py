@@ -35,7 +35,11 @@ async def validate_master_key(db: AsyncSession) -> str:
 def credential_view(row: UserProviderCredential) -> dict:
     return {"id": row.id, "provider": row.provider, "api_format": row.api_format,
             "capability": row.capability,
-            "base_url": row.base_url, "model": row.model, "vision": row.vision,
+            "base_url": row.base_url, "model": row.model,
+            "max_tokens": getattr(row, "max_tokens", None), "vision": row.vision,
+            "context_tokens": getattr(row, "context_tokens", None),
+            "thinking": getattr(row, "thinking", None),
+            "reasoning_effort": getattr(row, "reasoning_effort", None),
             "vision_video": row.vision_video, "vision_audio": row.vision_audio,
             "vision_detail": row.vision_detail, "enabled": row.enabled,
             "has_value": bool(row.encrypted_value), "last_verified_at": row.last_verified_at,
@@ -70,6 +74,15 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
                "model": row.model or getattr(base, "model", ""), "vision": row.vision,
                "vision_video": row.vision_video, "vision_audio": row.vision_audio,
                "vision_detail": row.vision_detail}
+    if capability == "llm":
+        if getattr(row, "max_tokens", None) is not None:
+            updates["max_tokens"] = row.max_tokens
+        if getattr(row, "context_tokens", None) is not None:
+            updates["context_tokens"] = row.context_tokens
+        if getattr(row, "thinking", None) is not None:
+            updates["thinking"] = row.thinking
+        if getattr(row, "reasoning_effort", None) is not None:
+            updates["reasoning_effort"] = row.reasoning_effort
     return base.model_copy(update=updates) if hasattr(base, "model_copy") else base
 
 

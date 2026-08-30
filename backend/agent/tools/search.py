@@ -620,15 +620,14 @@ class SearchSkill(BaseSkill):
     tools = [
         Tool(
             name="web_search", label="联网搜索",
-            description_short='搜索公网网页；关键字段 query/max_results，max_results 范围 1~20',
+            description_short='搜索公网网页。',
             description="搜索公网网页，返回标题、链接和摘要；需要读正文或深入研究时用 deep_research。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                    "query": {"type": "string"},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
-                        "description": "返回结果数（默认 5，范围 1~20）",
                     },
                 },
                 "required": ["query"],
@@ -638,7 +637,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="image_search", label="图片搜索",
-            description_short='搜索图片候选；mode=text/image，text 用 query，image 用 attach_id；需分析时再用 inspect_images，max_results 范围 1~20',
+            description_short='搜索图片候选；支持文字搜索和以图搜图。',
             description="搜索图片或以图搜图，只返回候选；需要分析用 inspect_images，需要发送用 send_file。",
             input_schema={
                 "type": "object",
@@ -692,18 +691,16 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="deep_research", label="深度研究",
-            description_short='深度研究；关键字段 query，depth=basic/advanced，max_results 范围 1~20',
+            description_short='对指定主题进行深度研究。',
             description="阅读和研究外部资料，返回总结或引用；普通网页查找用 web_search。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "研究问题或检索主题，可使用自然语言问题"},
+                    "query": {"type": "string"},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
-                        "description": "返回结果数（默认 5，范围 1~20）",
                     },
-                    "depth": {"type": "string", "enum": ["basic", "advanced"],
-                              "description": "搜索深度，默认 basic（advanced 更深但更慢）"},
+                    "depth": {"type": "string", "enum": ["basic", "advanced"]},
                 },
                 "required": ["query"],
             },
