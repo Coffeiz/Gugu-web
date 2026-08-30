@@ -162,7 +162,9 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 await db.flush()
 
         style_prefs = await loaders.load_style_prefs(db, user_id)
-        current_locale = style_prefs.get("locale", "zh-CN")
+        current_locale = req.locale or style_prefs.get("locale", "zh-CN")
+        if req.locale:
+            style_prefs = {**style_prefs, "locale": req.locale}
 
         async def _load_snapshot():
             user_tz = await loaders.load_user_tz(db, user_id)

@@ -29,8 +29,6 @@ CASES = [
     ("create_project", "创建项目‘接口重构’，开始日期为 2026-09-01，截止日期为 2026-09-30。", {"name": "接口重构", "start_date": "2026-09-01", "deadline": "2026-09-30"}),
     ("note_create", "记一条笔记：下周检查接口文档。", {"blocks": [{"type": "paragraph", "content": [{"type": "text", "text": "下周检查接口文档"}]}]}),
 ]
-
-
 def repeated_cases(rounds: int) -> list[tuple[str, str, dict]]:
     cases = []
     for index in range(rounds):
@@ -103,6 +101,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     settings, model_cfg, anthropic,
                     repeated_cases(args.rounds),
                     description_mode=label == "description",
+                    tool_names=tool_names,
                 ),
                 timeout=args.case_timeout * (args.rounds + 1),
             )

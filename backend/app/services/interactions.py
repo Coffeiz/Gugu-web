@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tz import now_utc
 from app.models import ConversationSession, InteractionAction, InteractionPrompt
 
+TOOL_BUDGET_WINDOW = timedelta(minutes=30)
+
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -205,10 +207,10 @@ async def create_tool_budget_prompt(*, user_id, session_id: int | None) -> tuple
             title="步骤较多，要继续吗？",
             body="本轮已达到普通工具调用次数。选择继续只解除当前会话的工具次数限制，不会创建持续目标任务；也可以先停在这里。",
             options=[
-                {"id": "continue", "label": "继续执行", "action_type": "unlimited_mode"},
+                {"id": "continue", "label": "继续执行", "action_type": "tool_budget_window"},
                 {"id": "cancel", "label": "先停在这里", "action_type": "cancel"},
             ],
-            context={"unlimited_mode": True},
+            context={"tool_budget_window_seconds": int(TOOL_BUDGET_WINDOW.total_seconds())},
         )
         await db.commit()
         return prompt, rendered
@@ -344,9 +346,7 @@ async def consume_action(
             ),
             action.option_id,
         )
-    # ``run_unlimited`` 只由当前 Agent 协程消费，不写入 session_context。
-    # 持久化的无限模式只能通过显式 /unlimited 命令开启。
-    if context.get("unlimited_mode") and action.option_id == "continue":
+    if context.get("tool_budget_window_seconds") and action.option_id == "continue":
         session = await db.scalar(select(ConversationSession).where(
             ConversationSession.id == prompt.session_id,
             ConversationSession.user_id == user_id,
@@ -354,9 +354,10 @@ async def consume_action(
         if session is None:
             raise LookupError("会话不存在")
         session_context = dict(session.session_context or {})
-        session_context["unlimited_mode"] = True
-        if session_context.get("goal_mode") and not session_context.get("goal_text"):
-            session_context["goal_mode"] = False
+        # 这是固定窗口：每次对话只读取过期时间，不在使用时续期。
+        session_context["tool_budget_unlimited_until"] = (
+            now + TOOL_BUDGET_WINDOW
+        ).isoformat()
         session.session_context = session_context
     result = {
         "kind": prompt.kind,

@@ -15,7 +15,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt
 

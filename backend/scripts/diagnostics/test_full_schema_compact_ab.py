@@ -210,6 +210,61 @@ def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str,
     return result
 
 
+def select_model(settings, selector: str | None):
+    """按预设名称、提供商或模型名选择诊断目标。"""
+    if not selector:
+        return pick_model(settings, None)
+    presets = getattr(settings, "ai_presets", None)
+    items = list(getattr(presets, "items", None) or []) if presets else []
+    needle = selector.strip().lower()
+    matches = [
+        item for item in items
+        if needle in " ".join(
+            str(getattr(item, key, ""))
+            for key in ("name", "provider", "model")
+        ).lower()
+    ]
+    if not matches:
+        raise RuntimeError(f"未找到匹配的模型预设：{selector}")
+    if len(matches) > 1:
+        labels = ", ".join(str(getattr(item, "name", "")) for item in matches)
+        raise RuntimeError(f"模型预设匹配不唯一：{labels}")
+    return matches[0]
+
+
+def sequence_metrics(rows: list[dict[str, Any]], anthropic: bool) -> dict[str, Any]:
+    """按连续 run 汇总真实 provider usage，不把 run 总 input 当上下文长度。"""
+    accurate = sum(bool(row.get("accurate")) for row in rows)
+    usage_rows = [row.get("usage", {}) for row in rows if row.get("usage")]
+    first = usage_rows[0] if usage_rows else {}
+    last = usage_rows[-1] if usage_rows else {}
+    fresh_input_total = sum(int(item.get("input", 0) or 0) for item in usage_rows)
+    cache_read_total = sum(int(item.get("cache_read", 0) or 0) for item in usage_rows)
+    provider_input_total = fresh_input_total + (cache_read_total if anthropic else 0)
+    output_total = sum(int(item.get("output", 0) or 0) for item in usage_rows)
+    return {
+        "measured_rounds": len(rows),
+        "accuracy": accurate,
+        "accuracy_rate": round(accurate / len(rows) * 100, 2) if rows else 0,
+        "schema_errors": sum(bool(row.get("schema_error")) for row in rows),
+        "first_context_input": int(first.get("provider_input_latest", 0) or 0),
+        "last_context_input": int(last.get("provider_input_latest", 0) or 0),
+        "run_input_total": sum(int(item.get("provider_input", 0) or 0) for item in usage_rows),
+        "provider_input_total": provider_input_total,
+        "output_total": output_total,
+        "cache_read_total": cache_read_total,
+        "cache_rate": round(cache_read_total / provider_input_total, 6) if provider_input_total else 0,
+        "provider_request_total": sum(
+            int(item.get("provider_request_count", 0) or 0) for item in usage_rows
+        ),
+        "context_input_monotonic": all(
+            int(usage_rows[index].get("provider_input_latest", 0) or 0)
+            >= int(usage_rows[index - 1].get("provider_input_latest", 0) or 0)
+            for index in range(1, len(usage_rows))
+        ),
+    }
+
+
 def matches_expected(tool_name: str, actual: Any, expected: dict[str, Any]) -> bool:
     if not isinstance(actual, dict):
         return False
@@ -356,6 +411,7 @@ async def run_continuous_case(
 async def run_continuous_sequence(
     settings, model_cfg, anthropic: bool, cases: list[tuple[str, str, dict[str, Any]]],
     turns: int = 1, *, description_mode: bool = False,
+    tool_names: list[str] | None = None,
 ) -> dict[str, Any]:
     """一个策略只创建一个会话：warmup 后依次输入 case1、case2...。"""
     from agent.core import LLMRunner
@@ -364,7 +420,7 @@ async def run_continuous_sequence(
     if not cases:
         return {"warmup": None, "cases": []}
     system = _test_system("当前 case 指定的工具")
-    tool_names = list(DefaultProfile().tool_names)
+    tool_names = list(tool_names or DefaultProfile().tool_names)
     capability_context = None
     if description_mode:
         from agent.capabilities.injector import build_fixed_adapter_context, catalog_block
@@ -544,7 +600,7 @@ async def main_async(args: argparse.Namespace) -> int:
     from agent.profiles import DefaultProfile
 
     settings = get_settings()
-    model_cfg = pick_model(settings, None)
+    model_cfg = select_model(settings, args.preset)
     if not getattr(model_cfg, "api_key", ""):
         raise RuntimeError("当前默认模型没有配置 API key")
     anthropic = use_anthropic_for(model_cfg)
@@ -582,6 +638,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     run_continuous_sequence(
                         settings, model_cfg, anthropic, CASES,
                         description_mode=label == "description",
+                        tool_names=tool_names,
                     ),
                     timeout=args.case_timeout * (len(CASES) + 1),
                 )
@@ -610,31 +667,26 @@ async def main_async(args: argparse.Namespace) -> int:
         release(model_cfg)
     summary = {}
     for label, rows in results.items():
-        summary[label] = {
-            "cases": len(rows),
-            "accurate": sum(bool(row.get("accurate")) for row in rows),
-            "accuracy_rate": round(sum(bool(row.get("accurate")) for row in rows) / len(rows) * 100, 2) if rows else 0,
-            "completed": sum(bool(row.get("usage")) for row in rows),
-            "schema_errors": sum(bool(row.get("schema_error")) for row in rows),
-        }
-        turns = [row for row in rows if row.get("tool") != "sequence"]
-        summary[label].update({
-            "fresh_input_total": sum(int(turn.get("usage", {}).get("input", 0) or 0) for turn in turns),
-            "context_input_total": sum(int(turn.get("usage", {}).get("context_input", 0) or 0) for turn in turns),
-            "output_total": sum(int(turn.get("usage", {}).get("output", 0) or 0) for turn in turns),
-            "cache_read_total": sum(int(turn.get("usage", {}).get("cache_read", 0) or 0) for turn in turns),
-            "continuation_errors": sum(
-                1 for turn in turns if turn.get("error") and any("续轮" in str(error) for error in turn["error"])
-            ),
-        })
-        summary[label]["provider_input_total"] = summary[label]["fresh_input_total"] + (
-            summary[label]["cache_read_total"] if anthropic else 0
+        sequence_summary = sequence_metrics(rows, anthropic)
+        schema_metrics_for_mode = mode_metrics.get(label, {})
+        fixed_tokens_per_request = (
+            int(schema_metrics_for_mode.get("schema_tokens", 0) or 0)
+            + int(schema_metrics_for_mode.get("catalog_tokens", 0) or 0)
         )
-        summary[label]["total_tokens"] = summary[label]["provider_input_total"] + summary[label]["output_total"]
-        summary[label]["cache_ratio"] = round(
-            summary[label]["cache_read_total"] / summary[label]["provider_input_total"], 6
-        ) if summary[label]["provider_input_total"] else 0
-        summary[label].update(mode_metrics.get(label, {}))
+        warmup_requests = 1
+        actual_provider_requests = sequence_summary["provider_request_total"] + warmup_requests
+        summary[label] = {
+            **sequence_summary,
+            "warmup_requests": warmup_requests,
+            "actual_provider_request_total": actual_provider_requests,
+            "fixed_tokens_per_request": fixed_tokens_per_request,
+            "fixed_tokens_logical_total": fixed_tokens_per_request * (len(rows) + 1),
+            "fixed_tokens_actual_total": fixed_tokens_per_request * actual_provider_requests,
+            "schema_tokens_total": mode_metrics.get(label, {}).get("schema_tokens", 0) * (len(rows) + 1),
+            "catalog_tokens_total": mode_metrics.get(label, {}).get("catalog_tokens", 0) * (len(rows) + 1),
+            "total_tokens": sequence_summary["provider_input_total"] + sequence_summary["output_total"],
+            **mode_metrics.get(label, {}),
+        }
     print(json.dumps({"summary": summary}, ensure_ascii=False), flush=True)
     if args.output:
         Path(args.output).write_text(json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -647,6 +699,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="脱敏结果 JSON 路径")
     parser.add_argument("--case-timeout", type=float, default=180, help="连续会话中每个 case 的超时秒数")
     parser.add_argument("--mode", choices=("description", "full", "both"), default="both", help="测试生产注入模式")
+    parser.add_argument("--preset", help="只读选择模型预设，按名称、提供商或模型名匹配")
     args = parser.parse_args()
     if not args.allow_real_llm:
         print("拒绝执行：请显式追加 --allow-real-llm")

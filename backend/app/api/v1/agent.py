@@ -4,7 +4,7 @@
 adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 web adapter →
 包成 StreamingResponse；以及对话会话的纯 CRUD 端点。
 """
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
@@ -36,6 +36,7 @@ _MAX_ATTACH_BYTES = 10 * 1024 * 1024   # 单个聊天附件上限 10MB
 
 class ChatRequest(BaseModel):
     message: str
+    locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     session_id: Optional[int] = None
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
@@ -315,6 +316,7 @@ async def chat(
         source="web",
         attachments=body.attachments or [],
         greeting=body.greeting,
+        locale=body.locale,
         origin=request.headers.get("X-Client-Id"),
         interaction_prompt_id=body.interaction_prompt_id,
         interaction_token=body.interaction_token,

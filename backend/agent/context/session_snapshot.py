@@ -258,6 +258,7 @@ def initialize_snapshot(
         key: previous_context[key]
         for key in (
             "goal_text", "goal_status", "goal_mode", "unlimited_mode",
+            "tool_budget_unlimited_until",
             # 姿态正文已经进入 history 后，digest 是跨 snapshot 生命周期的去重水位。
             "stance_digest",
         )

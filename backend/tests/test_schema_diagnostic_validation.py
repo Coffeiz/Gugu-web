@@ -2,6 +2,7 @@ from scripts.diagnostics.test_full_schema_compact_ab import (
     aggregate_usage_rows,
     matches_expected,
     schema_mismatch,
+    sequence_metrics,
 )
 
 
@@ -36,3 +37,40 @@ def test_usage_aggregation_records_all_provider_requests_in_a_run():
     assert usage["first_provider_input"] == 100
     assert usage["last_provider_input"] == 140
     assert len(usage["provider_requests"]) == 2
+
+
+def test_sequence_metrics_uses_latest_context_and_provider_totals():
+    rows = [
+        {
+            "accurate": True,
+            "usage": {
+                "input": 100,
+                "provider_input": 100,
+                "provider_input_latest": 60,
+                "output": 5,
+                "cache_read": 80,
+                "provider_request_count": 2,
+            },
+        },
+        {
+            "accurate": True,
+            "usage": {
+                "input": 140,
+                "provider_input": 140,
+                "provider_input_latest": 90,
+                "output": 7,
+                "cache_read": 120,
+                "provider_request_count": 3,
+            },
+        },
+    ]
+
+    summary = sequence_metrics(rows, anthropic=False)
+
+    assert summary["first_context_input"] == 60
+    assert summary["last_context_input"] == 90
+    assert summary["run_input_total"] == 240
+    assert summary["provider_input_total"] == 240
+    assert summary["cache_read_total"] == 200
+    assert summary["provider_request_total"] == 5
+    assert summary["context_input_monotonic"] is True
