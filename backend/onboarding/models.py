@@ -15,19 +15,11 @@ from app.db.types import UtcDateTime
 
 
 def default_state() -> dict:
-    """新用户的初始 onboarding 状态。键见 docs/agent/proposals/新手引导-实现方案.md §2。"""
+    """新用户的初始播种状态。"""
     return {
         "seeded": False,
         "seeded_project_id": None,
-        "seeded_project_name": None,   # 回头看(08) 回填用
-        "welcome_shown": False,
-        "guide_shown": False,
-        "lookback_shown": False,
-        "hints": {
-            "file_lib": False, "music": False, "calendar": False,
-            "stage_switch": False, "todo_roam": False, "todo_newproj": False,
-            "im_bind": False, "schedules": False,
-        },
+        "seeded_project_name": None,
     }
 
 

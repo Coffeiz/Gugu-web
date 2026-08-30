@@ -47,7 +47,7 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
 
     # 新手引导播种（独立子系统，best-effort：内部已吞异常，不影响注册）
     from onboarding.seed import seed_for_user
-    await seed_for_user(db, user)
+    await seed_for_user(db, user, locale=body.locale)
 
     return TokenResponse(
         access_token=create_user_token(user.id),
@@ -276,27 +276,29 @@ async def get_quota(
     async def _used(since: datetime) -> int:
         r = await db.execute(
             select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
-            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since))
+            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False)))
         )
         return r.scalar() or 0
 
-    # 6h 固定窗口 + 周窗口：**与 quota.is_exhausted（硬拦）共用同一套 CST 口径**——
-    # 否则 UI 按 UTC 窗口显示「精力已恢复」、后端按 CST 窗口仍判耗尽 → 出现「明明恢复了还被拦」的矛盾。
+    # 6h 用户窗口 + 周窗口：与 quota.is_exhausted（硬拦）共用同一套口径。
     from agent import quota as _quota
-    window_start = _quota.six_h_window_start(now)
-    reset_6h_at = window_start + timedelta(hours=6)   # 下次重置（精力清零）时刻
-    used_6h = await _used(window_start)
+    stored_window_start = current_user.quota_window_started_at
+    window_active = stored_window_start is not None and now < stored_window_start + timedelta(hours=6)
+    window_start = stored_window_start if window_active else None
+    reset_6h_at = window_start + timedelta(hours=6) if window_start else None
+    used_6h = await _used(window_start) if window_start else 0
 
     week_start = _quota._week_start(now)
     used_weekly = await _used(week_start)
 
-    limit_6h     = current_user.token_limit_6h     or settings.quota.default_token_limit_6h
-    limit_weekly = current_user.token_limit_weekly  or settings.quota.default_token_limit_weekly
+    has_byok = await _quota.has_active_byok_llm(db, current_user.id, settings)
+    limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
+    limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
 
     return {
         "used_6h":      used_6h,
         "limit_6h":     limit_6h,
-        "reset_6h_at":  iso_utc(reset_6h_at),   # 下次精力重置时刻
+        "reset_6h_at":  iso_utc(reset_6h_at) if reset_6h_at else None,   # 当前窗口结束时刻
         "used_weekly":  used_weekly,
         "limit_weekly": limit_weekly,
     }

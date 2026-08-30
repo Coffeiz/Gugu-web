@@ -31,6 +31,7 @@ class UserRegister(CamelModel):
     username: str
     email: str
     password: str
+    locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
 
 
 class UserLogin(CamelModel):
@@ -594,6 +595,7 @@ class ClientResponse(CamelModel):
 # ── UserPreferences ───────────────────────────────────────────────────────────
 
 class PreferencesResponse(CamelModel):
+    locale:          Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None  # 用户显式选择的界面语言
     lastStages:        list[str] = []
     stageTemplates:    list[dict] = []
     replyTone:         Optional[str] = None   # natural / formal / lively
@@ -614,6 +616,7 @@ class PreferencesResponse(CamelModel):
     personalityPreferenceAvailable: bool = True
 
 class PreferencesUpdate(CamelModel):
+    locale:          Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     lastStages:        Optional[list[str]]  = None
     stageTemplates:    Optional[list[dict]] = None
     replyTone:         Optional[str] = None
