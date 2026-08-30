@@ -53,7 +53,7 @@
 ### 测试
 
 - 补充 ContextBudget、压缩重试、baseline 生命周期、session pending gate 与 provider usage 阈值回归测试；上下文专项测试 64 passed，devserver 专项测试 67 passed。
-- 补充上下文快照、压缩后前缀一致性、Provider cache capability、LoopScope usage、IM identity、流式脱敏和 Agent loop 的回归测试，并保留缓存调优实测报告：[`OPT-CACHE-TUNING-2026-08-21.md`](docs/reports/OPT-CACHE-TUNING-2026-08-21.md)。
+- 补充上下文快照、压缩后前缀一致性、Provider cache capability、LoopScope usage、IM identity、流式脱敏和 Agent loop 的回归测试，并保留缓存调优实测报告：[`2026-08-21-OPT-CACHE-TUNING.md`](docs/reports/2026-08-21-OPT-CACHE-TUNING.md)。
 - 补充相似图 `image_url` 解析、网络图片读取次数限制、工具意图守卫和纯进度回复重试回归测试。
 
 ## [0.22.0] - 2026-08-17
@@ -990,7 +990,7 @@ agent 工具层 `_delete_project` 还在导入已被移除的函数（“删项�
 - **慢尾兜底**：`core._stream_round` 对 429/超时/网络/5xx 在出 token 前退避重试。
 - **配额耗尽能力降级**：不再一刀切拦死，降到只读工具集+婉拒重操作，查询/对话照常。
 - **连接池 + SSE**：SSE 鉴权改不查 DB，池调优修“试运行/重启后整站卡死”。
-- 压测详见 [docs/ops/并发压测结果.md](docs/ops/并发压测结果.md)。
+- 压测详见 [docs/ops/2026-06-25-TEST-CONCURRENCY-LOAD.md](docs/ops/2026-06-25-TEST-CONCURRENCY-LOAD.md)。
 
 ### 定时任务 + 提醒工作流
 

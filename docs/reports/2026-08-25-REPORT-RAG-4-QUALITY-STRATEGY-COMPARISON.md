@@ -3,7 +3,7 @@
 ## 范围
 
 本记录对应 `PRD-RAG-4` Phase 5/6。线上真实数据的只读复测结果沿用
-[`RAG质量完整复测报告-20260825.md`](./RAG质量完整复测报告-20260825.md)；本次补齐
+[`2026-08-25-TEST-RAG-QUALITY-FULL-RETEST.md`](./2026-08-25-TEST-RAG-QUALITY-FULL-RETEST.md)；本次补齐
 自动化策略对照输出和统一诊断字段，不把没有人工标注的数据伪装成 Precision/Recall。
 
 | 对照策略 | 用途 | 线上是否采用 |

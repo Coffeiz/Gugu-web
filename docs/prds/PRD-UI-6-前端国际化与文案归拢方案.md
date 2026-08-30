@@ -1,8 +1,8 @@
 # PRD-UI-6 前端国际化与文案归拢方案
 
-> 状态：🟡 Phase 0 已完成，等待 Phase 1
+> 状态：✅ Phase 2 已完成
 > 创建：2026-08-30
-> 最近更新：2026-08-30
+> 最近更新：2026-08-30（共享组件与个人设置子面板继续迁移）
 > 关联模块：`frontend/src/`、`backend/app/api/`、`docs/prds/`
 > 背景参考：`docs/prds/【已完成】PRD-UI-5-CSS样式职责收口与主题层统一.md`、`frontend/src/router/`、`frontend/src/services/`
 
@@ -10,12 +10,12 @@
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
-| i18n runtime 与语言切换 | 🔲 待实现 | Phase 0 已确定三语、机器语言映射、偏好优先级和 fallback；尚未引入 runtime |
-| 前端界面文案归拢 | 🟡 已盘点 | 已完成来源域和候选类型盘点，实际页面迁移留在 Phase 1/2 |
-| 日期、数字和状态格式化 | 🟡 部分完成 | 页面存在局部格式化逻辑，尚未统一接收 locale |
-| API 错误文案 | 🟡 部分完成 | 后端仍有直接返回展示文本的接口；前端不能稳定按错误码翻译 |
+| i18n runtime 与语言切换 | ✅ 已完成 Phase 1 | 已接入 `vue-i18n`、三语消息、浏览器语言映射、fallback、运行时切换和用户 `locale` 偏好 |
+| 前端界面文案归拢 | 🟡 Phase 1 已完成 | common/navigation、认证、布局、弹层、toast、Admin 导航、终端和思维顶部高频文案已迁移，业务页面全量迁移留在 Phase 2 |
+| 日期、数字和状态格式化 | 🟡 Phase 1 已完成 | 已提供共享 formatter 并迁移顶栏日期和文件大小入口，业务页面剩余格式化留在 Phase 2 |
+| API 错误文案 | 🟡 适配层已完成 | 已支持 `code + params` 前端适配；后端业务错误码迁移留在 Phase 3 |
 | 用户内容与 Agent 内容边界 | ✅ 已确定 | 用户输入、文件名、Markdown、Agent 回复和 IM 正文默认原样展示，不进入界面翻译表 |
-| 翻译回归验证 | 🔲 待实现 | Phase 0 已确定验收项，当前仍没有 key 完整性、fallback 或语言切换测试 |
+| 翻译回归验证 | ✅ Phase 1 基础覆盖 | 已加入 locale key 完整性、语言策略和 formatter 单测；浏览器双语验收留在 Phase 3 |
 
 ## 1. 背景与目标
 
@@ -198,18 +198,20 @@ frontend/src/**/*.test.ts            # locale、fallback、formatter 和错误�
 
 ### Phase 0：盘点与边界 ✅
 
-- [x] `UI6-001` 建立前端固定文案清单并区分 UI message、用户 content、协议值和第三方原文；验收：候选来源域、类型归属和迁移结论见 [`PRD-UI-6-PHASE0-前端文案盘点.md`](../reports/PRD-UI-6-PHASE0-前端文案盘点.md)。
+- [x] `UI6-001` 建立前端固定文案清单并区分 UI message、用户 content、协议值和第三方原文；验收：候选来源域、类型归属和迁移结论见 [`2026-08-30-AUDIT-PRD-UI-6-PHASE0-FRONTEND-COPY-INVENTORY.md`](../reports/2026-08-30-AUDIT-PRD-UI-6-PHASE0-FRONTEND-COPY-INVENTORY.md)。
 - [x] `UI6-002` 确定 `zh-CN`、`ja-JP`、`en-US`、机器语言映射、runtime 依赖和用户偏好字段；验收：唯一 key 命名、自动适配优先级、fallback 和 ownership 已在 Phase 0 报告中固定。
 
-### Phase 1：Runtime 与共享文案
+### Phase 1：Runtime 与共享文案 ✅
 
-- [ ] `UI6-003` 新增 i18n runtime、locale 注册表、类型约束和语言偏好初始化；验收：未选择语言时自动适配机器语言，显式选择可覆盖并持久化，缺失 key 可检测。
-- [ ] `UI6-004` 迁移 `common`、`navigation`、认证、布局、通用弹层、toast 和 formatter；验收：高频共享文案不再由组件直接维护，三语测试通过。
+- [x] `UI6-003` 新增 i18n runtime、locale 注册表、类型约束和语言偏好初始化；验收：未选择语言时自动适配机器语言，显式选择可覆盖并持久化，缺失 key 可检测。实现见 `frontend/src/i18n/registry.ts`，策略与持久化回归见 `frontend/src/i18n/index.test.ts`。
+- [x] `UI6-004` 迁移 `common`、`navigation`、认证、布局、通用弹层、toast 和 formatter；验收：高频共享文案不再由组件直接维护，三语测试通过。共享错误入口同时接入 `frontend/src/services/api.ts` 与 `frontend/src/composables/useAppToast.ts`。
 
 ### Phase 2：业务页面与 Admin
 
-- [ ] `UI6-005` 按页面域迁移项目、文件、日历、思维面板、终端、咕咕聊天和通知文案；验收：固定 UI 文案均来自 locale，用户内容未被翻译。
-- [ ] `UI6-006` 迁移 Admin 路由标题、菜单、表单、权限、日志和错误展示；验收：Admin 页面在三种语言下无明显溢出，权限和业务状态不变。
+- [x] `UI6-005` 按 [`Phase 2 逐面板迁移清单`](../reports/2026-08-30-TRACK-PRD-UI-6-PHASE2-PANEL-MIGRATION.md) 完成项目、文件、日历、思维、终端、定时任务、技能、咕咕聊天和通知文案迁移；清单 A 区全部达到 ✅，固定 UI 文案均来自 locale，用户内容未被翻译。
+- [x] `UI6-006` 按同一份逐面板清单完成 Admin 路由标题、菜单、表单、权限、日志、图表 tooltip 和错误展示迁移；清单 B/C 区全部达到 ✅，静态扫描、类型检查、测试和构建通过。
+
+> Phase 2 执行台账：[`2026-08-30-TRACK-PRD-UI-6-PHASE2-PANEL-MIGRATION.md`](../reports/2026-08-30-TRACK-PRD-UI-6-PHASE2-PANEL-MIGRATION.md)。后续按该清单逐项更新状态，不再以中文匹配行数量作为完成依据。
 
 ### Phase 3：API 错误与完整验收
 

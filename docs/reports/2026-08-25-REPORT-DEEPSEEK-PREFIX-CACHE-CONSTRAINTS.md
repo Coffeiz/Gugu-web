@@ -2,7 +2,7 @@
 
 日期：2026-08-25
 范围：Gugu-web 的 DeepSeek OpenAI-compatible 请求链路
-关联：`PRD-LLM-12-DeepSeek自动缓存与上下文断点专项优化.md`、`TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN-20260825.md`
+关联：`PRD-LLM-12-DeepSeek自动缓存与上下文断点专项优化.md`、`2026-08-25-TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN.md`
 
 ## 1. 结论摘要
 
@@ -91,7 +91,7 @@ static system
 
 ## 4. 真实测试观察
 
-`TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN-20260825.md` 的 DeepSeek 20-run 样本：
+`2026-08-25-TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN.md` 的 DeepSeek 20-run 样本：
 
 | 指标 | 结果 |
 | --- | ---: |

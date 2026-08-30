@@ -189,7 +189,7 @@ corepack pnpm --filter gugu-web dev                # http://localhost:5173
 
 | 想了解 | 从这里开始 |
 |--------|------------|
-| 产品与代码 | [项目总览](docs/product/OVERVIEW.md) · [完整文档导航](docs/README.md) |
+| 产品与代码 | [项目总览](docs/product/OVERVIEW.md) · [完整文档导航](docs/OVERVIEW.md) |
 | 咕咕协作 | [对话引擎架构](docs/agent/00-总览.md) |
 | 后端与文件 | [后端与 API](docs/backend/backend.md) · [存储规范](docs/backend/STORAGE.md) |
 | 本地与生产 | [部署文档](docs/ops/DEPLOY.md) |
@@ -241,7 +241,7 @@ corepack pnpm --filter gugu-web dev                # http://localhost:5173
 
 ## 📖 文档索引
 
-`docs/` 按主题分成 `agent/`（对话引擎相关，含子目录 `proposals/`/`_archive/`）、`backend/`、`product/`、`ops/`、`security/` 五类，完整导航见 [`docs/README.md`](docs/README.md)。常用入口：
+`docs/` 按主题分成 `agent/`（对话引擎相关，含子目录 `proposals/`/`_archive/`）、`backend/`、`product/`、`ops/`、`security/` 五类，完整导航见 [`docs/OVERVIEW.md`](docs/OVERVIEW.md)。常用入口：
 
 | 文档 | 内容 |
 |------|------|

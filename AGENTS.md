@@ -47,7 +47,7 @@
 ## 语言与提交
 
 - 注释、日志、用户文案、文档和 commit message 使用简体中文。
-- Changelog 只记录简短用户可感知变化；详细排查过程写入 `docs/DEVLOG.md`。
+- Changelog 只记录简短用户可感知变化；详细排查过程按 `docs/devlog/README.md` 约定写入 `docs/devlog/` 下的独立记录。
 
 ## Git 提交完整性
 
