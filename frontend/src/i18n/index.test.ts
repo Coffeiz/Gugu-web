@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
+import { createI18n } from 'vue-i18n'
 import { detectBrowserLocale, mapBrowserLocale, localeOptions } from './types'
 import { getLocale, setLocale } from './index'
 import { messages } from './messages'
 
 describe('i18n locale policy', () => {
+  function messagePaths(value: unknown, prefix = ''): string[] {
+    if (typeof value === 'string') return [prefix]
+    if (!value || typeof value !== 'object') return []
+    return Object.entries(value).flatMap(([key, child]) =>
+      messagePaths(child, prefix ? `${prefix}.${key}` : key),
+    )
+  }
+
   it('语言选择器使用稳定的原生名称', () => {
     expect(localeOptions).toEqual([
       { value: 'zh-CN', label: '简体中文' },
@@ -15,6 +24,16 @@ describe('i18n locale policy', () => {
     expect(messages['zh-CN'].layout.followSystemOption).toBe('跟随系统')
     expect(messages['ja-JP'].layout.followSystemOption).toBe('システムに従う')
     expect(messages['en-US'].layout.followSystemOption).toBe('Follow system')
+  })
+
+  it('所有语言包文案都能被 vue-i18n 正常解析', () => {
+    const paths = messagePaths(messages['en-US'])
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const localI18n = createI18n({ legacy: false, locale, messages })
+      for (const path of paths) {
+        expect(() => localI18n.global.t(path)).not.toThrow()
+      }
+    }
   })
   it('maps supported browser language families', () => {
     expect(mapBrowserLocale('zh-TW')).toBe('zh-CN')
