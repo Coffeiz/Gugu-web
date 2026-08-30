@@ -253,6 +253,9 @@
   --runtime-drag-glass-border: var(--border-strong);
   --runtime-drag-glass-filter: blur(12px) saturate(1.15);
   --runtime-drag-glass-shadow: 0 22px 50px color-mix(in srgb,var(--content-primary) 18%,transparent);
+  /* 咕咕卡片抓取层：保留旧版卡片底色与 Runtime 通用玻璃的两层观感。 */
+  --gugu-card-drag-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);
+  --gugu-card-drag-thumb-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);
 
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }

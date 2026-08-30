@@ -160,6 +160,15 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(runtimeAdoption).not.toContain("html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {\n")
   })
 
+  it('亮色咕咕卡片 grabbing 恢复卡片底色层和缩略图独立层', () => {
+    expect(componentSurfaces).toContain('--gugu-card-drag-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);')
+    const selector = "html[data-theme='light'][data-family] :is(.proj-card, .drawer-project-card, .pr-card, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])"
+    expect(runtimeAdoption).toContain(selector)
+    expect(cssBlock(runtimeAdoption, selector)).toContain('background: var(--gugu-card-drag-bg) !important;')
+    expect(runtimeAdoption).toContain('.fc-thumb-area')
+    expect(runtimeAdoption).toContain('.fc-thumb-full.fc-loaded')
+  })
+
   it('亮色 Mono 画布卡片 grabbing 复用 Mono 描边，landing 不会被锁死', () => {
     const selector = "html[data-theme='light'][data-family='mono'] :is(.mind-project-card, .drawer-project-card, .proj-card, .pr-card, .note-card, .entity-sticker, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])"
     expect(runtimeAdoption).toContain(selector)

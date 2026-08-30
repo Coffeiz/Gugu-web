@@ -105,3 +105,23 @@ html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-pr
   background-color: var(--surface-card-solid) !important;
   border-color: var(--border-strong) !important;
 }
+
+/* 亮色咕咕卡片的抓取代理需要恢复旧版的第二层卡片底色。Runtime 的通用 glass 只提供
+   一层 rgba 白色表面，迁移旧拖拽实现时丢掉了这层覆盖，导致项目/文件卡只剩透明玻璃。
+   仅作用抓取阶段，landing 仍交给目标卡片自身的视觉 morph。 */
+html[data-theme='light'][data-family] :is(.proj-card, .drawer-project-card, .pr-card, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  background: var(--gugu-card-drag-bg) !important;
+  backdrop-filter: var(--runtime-drag-glass-filter);
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter);
+}
+
+/* 图片卡的缩略图区是独立内容层，恢复旧版的底色和轻微透出；图片本身不被模糊。 */
+html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-area {
+  background: var(--gugu-card-drag-thumb-bg);
+  backdrop-filter: var(--runtime-drag-glass-filter);
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter);
+}
+html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-tiny,
+html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-full.fc-loaded {
+  opacity: .75;
+}
