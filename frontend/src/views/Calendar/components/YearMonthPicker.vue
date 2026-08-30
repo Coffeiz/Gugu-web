@@ -7,7 +7,7 @@
         <button class="picker-nav" @click.stop="$emit('next-year')"><Icon name="action.next" :size="12" /></button>
       </div>
       <div class="picker-months">
-        <button v-for="m in 12" :key="m" class="picker-month" :class="{ active: m - 1 === cursor.getMonth() && year === cursor.getFullYear() }" @click.stop="$emit('select', year, m - 1)">{{ m }}月</button>
+        <button v-for="m in 12" :key="m" class="picker-month" :class="{ active: m - 1 === cursor.getMonth() && year === cursor.getFullYear() }" @click.stop="$emit('select', year, m - 1)">{{ monthLabel(m - 1) }}</button>
       </div>
     </div>
   </Transition>
@@ -15,8 +15,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
-defineProps<{
+const { t, locale } = useI18n()
+const props = defineProps<{
   open: boolean
   year: number
   cursor: Date
@@ -30,6 +32,12 @@ defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
+function monthLabel(month: number) {
+  if (locale.value === 'en-US') {
+    return new Intl.DateTimeFormat(locale.value, { month: 'short' }).format(new Date(props.year, month, 1))
+  }
+  return `${month + 1}${t('calendar.month')}`
+}
 function contains(target: Node) {
   return !!root.value?.contains(target)
 }

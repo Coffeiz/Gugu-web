@@ -121,8 +121,6 @@ export const useProjectStore = defineStore('projects', () => {
     const created = mapProjectResponse(await projectsApi.create(payload))
     projects.value.unshift(created)
     rememberConfirmed(created)
-    // 新手引导：手动新建第一个项目后弹一句（claim-once 保证只第一次）
-    import('@/composables/useOnboarding').then(m => m.fireHint('todo_newproj')).catch(() => {})
     return created
   }
 

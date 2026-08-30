@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
 import type { components } from '@/types/api'
+import { getLocale } from '@/i18n'
 
 type UserResponse = components['schemas']['UserResponse']
 
@@ -36,7 +37,7 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password }),
+      body: JSON.stringify({ username, email, password, locale: getLocale() }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))

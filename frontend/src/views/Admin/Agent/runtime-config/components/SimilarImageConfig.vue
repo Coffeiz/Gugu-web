@@ -7,24 +7,24 @@
         </svg>
       </div>
       <div class="card-title-block">
-        <h3>相似图搜索</h3>
-        <p>根据用户图片查找相似候选；保存有效 Provider Key 后启用，不再单独维护开启开关。</p>
+        <h3>{{ t('searchConfigUi.similar') }}</h3>
+        <p>{{ t('searchConfigUi.similarHint') }}</p>
       </div>
     </div>
 
     <div class="behavior-grid">
       <div class="behavior-item" style="grid-column: 1 / -1;">
         <div class="behavior-label">
-          <span>搜索 Provider</span>
-          <span class="behavior-desc">当前支持百度千帆；未保存有效 Key 时不会调用外部服务。</span>
+          <span>{{ t('searchConfigUi.searchProvider') }}</span>
+          <span class="behavior-desc">{{ t('searchConfigUi.providerKeyHint') }}</span>
         </div>
         <div class="provider-input-row">
           <span v-if="test.msg" :title="test.msg" class="test-message" :class="{ success: test.ok, error: !test.ok }">{{ test.msg }}</span>
-          <button class="btn-ghost" :disabled="test.loading" @click="$emit('test')">{{ test.loading ? '测试中…' : '测试' }}</button>
+          <button class="btn-ghost" :disabled="test.loading" @click="$emit('test')">{{ test.loading ? t('searchConfigUi.saving') : t('searchConfigUi.testConnection') }}</button>
           <AdminSelect
             :model-value="draft.similar_image_provider"
             :options="providerOptions"
-            aria-label="相似图搜索 Provider"
+            :aria-label="t('searchConfigUi.providerAria')"
             @update:model-value="draft.similar_image_provider = $event"
           />
           <input
@@ -32,37 +32,38 @@
             type="password"
             class="behavior-input provider-key-input"
             autocomplete="new-password"
-            placeholder="百度 API Key（保存有效 Key 后启用）"
+            :placeholder="t('searchConfigUi.providerKeyPlaceholder')"
           />
         </div>
       </div>
 
       <div class="behavior-item">
-        <div class="behavior-label"><span>默认结果数</span><span class="behavior-desc">范围 1～50；用户也可以在对话中指定数量</span></div>
-        <input v-model.number="draft.similar_image_default_count" type="number" class="behavior-input" min="1" max="50" />
+        <div class="behavior-label"><span>{{ t('searchConfigUi.defaultCount') }}</span><span class="behavior-desc">{{ t('searchConfigUi.countHint') }}</span></div>
+        <input v-model.number="draft.similar_image_default_count" type="number" class="behavior-input number-input" min="1" max="50" />
       </div>
       <div class="behavior-item">
-        <div class="behavior-label"><span>每日限额</span><span class="behavior-desc">按用户统计</span></div>
-        <input v-model.number="draft.similar_image_limit_daily" type="number" class="behavior-input" min="1" />
+        <div class="behavior-label"><span>{{ t('searchConfigUi.dailyLimit') }}</span><span class="behavior-desc">{{ t('searchConfigUi.byUser') }}</span></div>
+        <input v-model.number="draft.similar_image_limit_daily" type="number" class="behavior-input number-input" min="1" />
       </div>
       <div class="behavior-item">
-        <div class="behavior-label"><span>请求超时</span><span class="behavior-desc">范围 5～60 秒</span></div>
-        <input v-model.number="draft.similar_image_timeout_seconds" type="number" class="behavior-input" min="5" max="60" />
+        <div class="behavior-label"><span>{{ t('searchConfigUi.timeout') }}</span><span class="behavior-desc">{{ t('searchConfigUi.timeoutHint') }}</span></div>
+        <input v-model.number="draft.similar_image_timeout_seconds" type="number" class="behavior-input number-input" min="5" max="60" />
       </div>
     </div>
 
     <div class="card-actions">
       <span class="save-hint" :class="{ error: !!error }">
-        <template v-if="saved">已保存</template><template v-else-if="error">{{ error }}</template>
+        <template v-if="saved">{{ t('searchConfigUi.saved') }}</template><template v-else-if="error">{{ error }}</template>
       </span>
-      <button class="btn-ghost" @click="$emit('reset')">撤销修改</button>
-      <button class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? '保存中…' : '保存' }}</button>
+      <button class="btn-ghost" @click="$emit('reset')">{{ t('searchConfigUi.undo') }}</button>
+      <button class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? t('searchConfigUi.saving') : t('searchConfigUi.save') }}</button>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import AdminSelect from '@/components/AdminSelect.vue'
+import { useI18n } from 'vue-i18n'
 
 defineProps<{
   draft: Record<string, any>
@@ -75,6 +76,7 @@ defineProps<{
 defineEmits<{ test: []; reset: []; save: [] }>()
 
 const providerOptions = [{ value: 'baidu_qianfan', label: '百度千帆' }]
+const { t } = useI18n()
 </script>
 
 <style scoped>
@@ -88,13 +90,16 @@ const providerOptions = [{ value: 'baidu_qianfan', label: '百度千帆' }]
 .similar-image-card .behavior-grid { display:flex; flex-direction:column; gap:2px; }
 .similar-image-card .behavior-item { display:flex; align-items:center; justify-content:space-between; gap:18px; min-height:52px; padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.06); }
 .similar-image-card .behavior-item:last-child { border-bottom:none; }
+.similar-image-card .number-input { width:96px; flex:0 0 96px; text-align:center; }
 .similar-image-card .behavior-label { display:flex; flex:1; min-width:0; flex-direction:column; gap:3px; }
 .similar-image-card .behavior-label span:first-child { font-size:13px; font-weight:500; color:rgba(255,255,255,0.8); }
 .similar-image-card .behavior-desc { font-size:12px; line-height:1.45; color:rgba(255,255,255,0.3); }
 .provider-input-row { display:flex; align-items:center; justify-content:flex-end; gap:10px; min-width:0; }
+.provider-input-row > .btn-ghost,
+.provider-input-row > .behavior-input,
+.provider-input-row :deep(.asel-trigger) { min-height:34px; box-sizing:border-box; }
 .provider-key-input { width:280px; flex:0 0 280px; }
-.similar-image-card .behavior-input { background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 10px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.8); text-align:center; outline:none; transition:border-color .15s; }
-.similar-image-card .behavior-input:focus { border-color:rgba(123,127,178,0.4); }
+.similar-image-card .behavior-input { border-radius:8px; padding:6px 10px; font-size:13px; font-weight:600; text-align:center; outline:none; }
 .similar-image-card .test-message { max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .test-message.success { color:#4caf7d; }.test-message.error { color:#e07070; }
 .similar-image-card .card-actions { display:flex; align-items:center; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.07); }

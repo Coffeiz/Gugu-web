@@ -2,8 +2,8 @@
   <div class="cal-sidebar glass-card">
     <div class="sidebar-top">
       <div class="sidebar-date-label">{{ selectedDateLabel }}</div>
-      <button v-if="hasActiveRange" class="add-event-btn add-proj-btn" @click="$emit('add-project')"><Icon name="action.add" :size="13" />添加项目</button>
-      <button v-else ref="addButton" class="add-event-btn" @click="$emit('add-event', addButton)"><Icon name="action.add" :size="13" />添加活动</button>
+      <button v-if="hasActiveRange" class="add-event-btn add-proj-btn" @click="$emit('add-project')"><Icon name="action.add" :size="13" />{{ t('calendar.addProject') }}</button>
+      <button v-else ref="addButton" class="add-event-btn" @click="$emit('add-event', addButton)"><Icon name="action.add" :size="13" />{{ t('calendar.addEvent') }}</button>
     </div>
 
     <div v-if="selectedEvents.length" class="sidebar-events">
@@ -14,9 +14,9 @@
         <div class="sidebar-ev-bar" :style="{ background: ev.accent }"></div>
         <div class="sidebar-ev-body">
           <div class="sidebar-ev-name" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">
-            <span v-if="ev.calendarType === 'project'" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
-            <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
-            <span v-if="ev.time" class="sidebar-ev-time" :class="{ 'has-end-time': ev.endTime }">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
+            <span v-if="ev.calendarType === 'project'" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">{{ t('calendar.project') }}</span>
+            <span v-else class="ev-type-badge ev-event-badge">{{ t(`calendar.types.${ev.type || 'event'}`) }}</span>
+            <span v-if="ev.time" class="sidebar-ev-time" :class="{ 'has-end-time': ev.endTime }">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">{{ t('calendar.nextDay') }}</span></span>
             {{ ev.name }}
             <span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><Icon name="status.success" :size="9" /></span>
           </div>
@@ -27,19 +27,19 @@
             <div class="sidebar-ev-desc">{{ ev.startDate?.slice(5).replace('-','/') }} → {{ ev.endDate?.slice(5).replace('-','/') }}<template v-if="ev.currentStage"> · {{ ev.currentStage }}</template></div>
           </template>
         </div>
-        <button v-if="ev.calendarType === 'event'" class="ev-del-btn" @click.stop="$emit('delete-event', ev)" title="删除活动"><Icon name="action.delete" :size="12" /></button>
+        <button v-if="ev.calendarType === 'event'" class="ev-del-btn" @click.stop="$emit('delete-event', ev)" :title="t('calendar.deleteEvent')"><Icon name="action.delete" :size="12" /></button>
       </div>
     </div>
-    <div v-else class="sidebar-empty"><Icon name="navigation.calendar" :size="26" style="opacity:0.3" /><span>当天无日程</span></div>
+    <div v-else class="sidebar-empty"><Icon name="navigation.calendar" :size="26" style="opacity:0.3" /><span>{{ t('calendar.noSchedule') }}</span></div>
 
     <div class="sidebar-divider"></div>
-    <div class="sidebar-section-title">近期节点</div>
+    <div class="sidebar-section-title">{{ t('calendar.upcoming') }}</div>
     <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row" :class="{ 'upcoming-proj': ev.calendarType === 'project', 'upcoming-ev': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
          :style="{ cursor: ev.calendarType ? 'pointer' : 'default' }"
          @click.left="ev.calendarType === 'project' ? $emit('open-project', ev) : (ev.calendarType === 'event' && $emit('edit-event', { item: ev, event: $event }))"
          @contextmenu.prevent="ev.calendarType === 'event' && $emit('edit-event', { item: ev, event: $event })">
       <div class="cap-capsule" :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
-        <span class="cap-tag" :class="ev.calendarType === 'project' ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">{{ ev.calendarType === 'project' ? '项目' : '活动' }}</span>
+        <span class="cap-tag" :class="ev.calendarType === 'project' ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">{{ ev.calendarType === 'project' ? t('calendar.project') : t('calendar.event') }}</span>
         <span v-if="ev.calendarType === 'project'" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
         <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><Icon name="status.success" :size="9" /></span></span>
         <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: (ev.daysLeft ?? 0) <= 3 }">{{ ev.daysLabel }}</span>
@@ -50,10 +50,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import { isNextDay } from '@/composables/useEventEditForm'
 import { capBg, hexAlpha, darkenHex } from '../utils/calendarColors'
-import { typeLabel } from '../domain/calendarRules'
 import type { CalendarRenderItem } from '../domain/calendarTypes'
 
 defineProps<{
@@ -72,6 +72,7 @@ defineEmits<{
 }>()
 
 const addButton = ref<HTMLElement | null>(null)
+const { t } = useI18n()
 </script>
 
 <style scoped>

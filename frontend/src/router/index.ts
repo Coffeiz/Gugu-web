@@ -64,31 +64,31 @@ const routes: RouteRecordRaw[] = [
         path: 'projects',
         name: 'Projects',
         component: () => import('@/views/Projects/index.vue'),
-        meta: { title: '项目' },
+        meta: { title: 'navigation.projects' },
       },
       {
         path: 'calendar',
         name: 'Calendar',
         component: () => import('@/views/Calendar/index.vue'),
-        meta: { title: '日历' },
+        meta: { title: 'navigation.calendar' },
       },
       {
         path: 'files',
         name: 'Files',
         component: () => import('@/views/Files/index.vue'),
-        meta: { title: '文件库' },
+        meta: { title: 'navigation.files' },
       },
       {
         path: 'skills',
         name: 'Skills',
         component: () => import('@/views/Skills/index.vue'),
-        meta: { title: '技能' },
+        meta: { title: 'navigation.skills' },
       },
       {
         path: 'terminals',
         name: 'Terminals',
         component: () => import('@/views/Terminals/index.vue'),
-        meta: { title: '终端' },
+        meta: { title: 'navigation.terminals' },
       },
       {
         // 思维面板：记录时间流与空间画布共享便签本体，但各自拥有独立界面。
@@ -96,7 +96,7 @@ const routes: RouteRecordRaw[] = [
         // （笔记页UI设计.md）；topbar 的全局搜索由页内胶囊条的便签筛选补位
         path: 'mind',
         component: () => import('@/views/Mind/index.vue'),
-        meta: { title: '思维', fullBleed: true },
+        meta: { title: 'navigation.mind', fullBleed: true },
         children: [
           {
             path: '',
@@ -110,13 +110,13 @@ const routes: RouteRecordRaw[] = [
             path: 'notes',
             name: 'MindNotes',
             component: () => import('@/views/Mind/NotesView.vue'),
-            meta: { title: '思维', fullBleed: true },
+            meta: { title: 'navigation.mind', fullBleed: true },
           },
           {
             path: 'canvases',
             name: 'MindCanvas',
             component: () => import('@/views/Mind/CanvasView.vue'),
-            meta: { title: '思维', fullBleed: true },
+            meta: { title: 'navigation.mind', fullBleed: true },
           },
         ],
       },
@@ -124,7 +124,7 @@ const routes: RouteRecordRaw[] = [
         path: 'schedules',
         name: 'Schedules',
         component: () => import('@/views/Schedules/index.vue'),
-        meta: { title: '定时任务' },
+        meta: { title: 'navigation.schedules' },
       },
       // /dev 索引页：列出下面所有 dev 工具的入口，新加工具只需要在 devRegistry.ts
       // 里加一条，不需要再想"入口放哪"。同样仅 dev 注册。

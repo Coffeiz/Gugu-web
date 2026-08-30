@@ -1,18 +1,19 @@
 <template>
   <div class="skills-page">
     <section class="skills-panel glass-card">
-      <header class="section-header"><ActionButton fit @click="openCreate"><Icon name="action.add" :size="14" />新建技能</ActionButton></header>
-      <div v-if="error" class="error-banner">{{ error }} <button @click="load">重试</button></div>
-      <div v-if="loading" class="empty-state">正在加载技能…</div>
-      <div v-else-if="!skills.length" class="empty-state"><Icon name="resource.skill" :size="32" /><strong>还没有技能</strong><span>把常用流程写下来，之后就不用每次重复说明。</span><ActionButton fit @click="openCreate">创建第一个技能</ActionButton></div>
-      <div v-else class="skill-list scroll-surface scroll-surface--compact"><article v-for="skill in skills" :key="skill.slug" class="skill-card"><div class="skill-main"><div class="skill-title"><h2>{{ skill.name }}</h2><span class="status" :class="{ off: !skill.enabled }">{{ skill.enabled ? '已启用' : '已停用' }}</span></div><p>{{ skill.description_short }}</p><div class="skill-meta"><span>{{ skill.slug }}</span><span v-if="skill.related_tools.length">{{ skill.related_tools.length }} 个关联工具</span><span>更新于 {{ formatDate(skill.updated_at) }}</span></div></div><div class="skill-actions"><ToggleSwitch :model-value="skill.enabled" :aria-label="skill.enabled ? '停用' : '启用'" @update:model-value="toggleSkill(skill)" /><button class="text-btn" @click="openEdit(skill)">编辑</button><button class="text-btn danger" @click="removeSkill(skill)">删除</button></div></article></div>
+      <header class="section-header"><ActionButton fit @click="openCreate"><Icon name="action.add" :size="14" />{{ t('skills.create') }}</ActionButton></header>
+      <div v-if="error" class="error-banner">{{ error }} <button @click="load">{{ t('skills.retry') }}</button></div>
+      <div v-if="loading" class="empty-state">{{ t('skills.loading') }}</div>
+      <div v-else-if="!skills.length" class="empty-state"><Icon name="resource.skill" :size="32" /><strong>{{ t('skills.emptyTitle') }}</strong><span>{{ t('skills.emptyHint') }}</span><ActionButton fit @click="openCreate">{{ t('skills.createFirst') }}</ActionButton></div>
+      <div v-else class="skill-list scroll-surface scroll-surface--compact"><article v-for="skill in skills" :key="skill.slug" class="skill-card"><div class="skill-main"><div class="skill-title"><h2>{{ skill.name }}</h2><span class="status" :class="{ off: !skill.enabled }">{{ skill.enabled ? t('skills.enabled') : t('skills.disabled') }}</span></div><p>{{ skill.description_short }}</p><div class="skill-meta"><span>{{ skill.slug }}</span><span v-if="skill.related_tools.length">{{ t('skills.relatedTools', { count: skill.related_tools.length }) }}</span><span>{{ t('skills.updatedAt', { date: formatDate(skill.updated_at) }) }}</span></div></div><div class="skill-actions"><ToggleSwitch :model-value="skill.enabled" :aria-label="skill.enabled ? t('skills.disable') : t('skills.enable')" @update:model-value="toggleSkill(skill)" /><button class="text-btn" @click="openEdit(skill)">{{ t('skills.edit') }}</button><button class="text-btn danger" @click="removeSkill(skill)">{{ t('skills.delete') }}</button></div></article></div>
     </section>
-    <SkillForm v-if="formOpen" :skill="editing" :tools="tools" :busy="saving" :external-error="error" @close="formOpen = false" @save="saveForm" />
+    <SkillForm :key="formKey" :show="formOpen" :skill="editing" :tools="tools" :busy="saving" :external-error="error" @close="formOpen = false" @save="saveForm" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
@@ -22,19 +23,21 @@ import { useUserSkills } from './composables/useUserSkills'
 import SkillForm from './components/SkillForm.vue'
 
 const { skills, tools, loading, saving, error, load, save, toggle, remove } = useUserSkills()
+const { t, locale } = useI18n()
 const formOpen = ref(false)
+const formKey = ref(0)
 const editing = ref<UserSkillItem | null>(null)
 onMounted(load)
-function openCreate() { editing.value = null; formOpen.value = true }
-function openEdit(skill: UserSkillItem) { editing.value = skill; formOpen.value = true }
+function openCreate() { editing.value = null; formKey.value++; formOpen.value = true }
+function openEdit(skill: UserSkillItem) { editing.value = skill; formKey.value++; formOpen.value = true }
 async function saveForm(data: UserSkillWrite) { await save(data, editing.value?.slug); formOpen.value = false }
 async function toggleSkill(skill: UserSkillItem) { try { await toggle(skill) } catch { /* 错误已由 composable 写入页面状态 */ } }
 async function removeSkill(skill: UserSkillItem) {
-  if (await confirmDialog({ title: '删除技能', message: `确认删除「${skill.name}」？此操作不可恢复。`, tone: 'danger', confirmText: '删除技能' })) {
+  if (await confirmDialog({ title: t('skills.deleteTitle'), message: t('skills.deleteMessage', { name: skill.name }), tone: 'danger', confirmText: t('skills.deleteConfirm') })) {
     try { await remove(skill) } catch { /* 错误已由 composable 写入页面状态 */ }
   }
 }
-function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString('zh-CN') : '—' }
+function formatDate(value: string | null) { return value ? new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium' }).format(new Date(value)) : '—' }
 </script>
 
 <style scoped>

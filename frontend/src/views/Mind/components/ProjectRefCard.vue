@@ -22,15 +22,15 @@
 
     <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
-      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+      <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
       <template #connect />
     </CardAffordances>
   </div>
   <div v-else ref="missingRef" class="mind-project-card pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" :data-project-id="item.node.refId" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
     @mouseenter="onEnter" @mouseleave="onLeave">
-    <span class="pr-kind">项目</span>
-    <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>
+    <span class="pr-kind">{{ t('files.project') }}</span>
+    <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || t('projects.projectName') }}</div>
     <!-- 客户/日期跟真实项目卡（ProjectCardBody 的 .proj-meta/.card-footer）同款字号/间距，
          数据来自创建引用时缓存的 ref_snapshot——项目被删只丢阶段/文件数这类高频变化的信息，
          客户和日期这种"当时是什么样"的快照还留着。没缓存到的字段各自不渲染，不留空行。 -->
@@ -45,10 +45,10 @@
          project 算出来是 null、都会落进这条 v-else 分支——之前不分这两种情况，一律显示
          "已删除，仅保留快照"，缓存刚加载完那一下会先说谎再改口。跟 FileRefCard.vue 同一个
          坑（见其注释），这里只是文字层面的表现，不像文件卡那样有缩略图区带来的跳动。 -->
-    <span class="pr-deleted">{{ projectStore.loading ? '加载中…' : '已删除，仅保留快照' }}</span>
+    <span class="pr-deleted">{{ projectStore.loading ? t('common.status.loading') : t('filesUi.deletedSnapshot') }}</span>
     <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
-      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+      <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
     </CardAffordances>
   </div>
@@ -56,6 +56,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -63,6 +64,7 @@ import { itemSize } from '@/composables/useMindCanvas'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import { useProjectStore } from '@/stores/projects'
 import CardAffordances from '@/components/common/CardAffordances.vue'
+const { t } = useI18n()
 import ProjectCardBody from './ProjectCardBody.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 import { MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'

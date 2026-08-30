@@ -51,6 +51,7 @@ html[data-theme='light'][data-family='mono'] :is(.mind-project-card, .drawer-pro
    代理根的 landing phase 识别这层，继续保留源层的 Runtime 毛玻璃，只让目标层
    的项目渐变负责淡入，避免底色在 pointerup 后瞬间切换。 */
 html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card {
+  background: var(--gugu-card-drag-bg) !important;
   background-image: none !important;
   border-color: var(--runtime-drag-glass-border) !important;
   backdrop-filter: var(--runtime-drag-glass-filter) !important;

@@ -1,4 +1,5 @@
 import { nextTick, computed, type Ref } from 'vue'
+import { i18n } from '@/i18n'
 import { agentApi, getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
 import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
@@ -110,7 +111,7 @@ export function useChatSessions(options: {
   const webSessions = computed(() => sessions.value.filter(s => !s.source || s.source === 'web'))
   const imSessions = computed(() => sessions.value.filter(s => s.source && s.source !== 'web'))
   const currentSessionTitle = computed(() =>
-    !sessionId.value ? '新对话' : (sessions.value.find(s => s.id === sessionId.value)?.title ?? '对话')
+    !sessionId.value ? i18n.global.t('chatUi.newConversation') : (sessions.value.find(s => s.id === sessionId.value)?.title ?? i18n.global.t('chatUi.conversation'))
   )
   const currentSessionWorkspaceName = computed(() =>
     !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.workspaceName ?? null)
@@ -214,7 +215,7 @@ export function useChatSessions(options: {
               interaction: {
                 promptId: Number(item.id), kind: String(item.kind || 'confirm'),
                 toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
-                title: String(item.title || '需要确认'), body: String(item.body || ''),
+                title: String(item.title || i18n.global.t('chatUi.confirmRequired')), body: String(item.body || ''),
                 options: Array.isArray(item.options) ? item.options : [],
                 resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
               },

@@ -2,7 +2,7 @@
   <BaseModal :show="show" width="480px" background="var(--panel-bg)" @close="$emit('close')">
     <div class="ap-modal">
       <div class="ap-header">
-        <span class="ap-title">已归档项目</span>
+        <span class="ap-title">{{ t('projects.archived') }}</span>
         <button class="ap-close" @click="$emit('close')">
           <Icon name="action.close" :size="14" />
         </button>
@@ -10,8 +10,8 @@
 
       <div ref="layoutRoot" class="ap-body">
         <!-- 只有真·首次（还没任何缓存数据）才显示加载态；已有数据后台静默刷新不再闪这个 -->
-        <div v-if="projectStore.archivedLoading && !projectStore.archivedLoaded" class="ap-empty">加载中…</div>
-        <div v-else-if="!projectStore.archivedProjects.length" class="ap-empty">暂无已归档项目</div>
+        <div v-if="projectStore.archivedLoading && !projectStore.archivedLoaded" class="ap-empty">{{ t('common.status.loading') }}</div>
+        <div v-else-if="!projectStore.archivedProjects.length" class="ap-empty">{{ t('projects.noArchived') }}</div>
 
         <template v-else>
           <!-- 年目录（同「已完成」列的年/月折叠约定）-->
@@ -49,10 +49,10 @@
                     <span class="ap-dot" :style="{ background: p.color }"></span>
                     <div class="ap-info">
                       <div class="ap-name">{{ p.name }}</div>
-                      <div class="ap-sub">{{ p.client || '无客户' }} · {{ statusLabel(p.status) }}</div>
+                      <div class="ap-sub">{{ p.client || t('projects.noClient') }} · {{ statusLabel(p.status) }}</div>
                     </div>
                     <button class="ap-restore" :disabled="restoringId === p.id" @click="restore(p.id)">
-                      {{ restoringId === p.id ? '恢复中…' : '取消归档' }}
+                      {{ restoringId === p.id ? t('projects.restoring') : t('projects.cancelArchive') }}
                     </button>
                   </div>
                 </div>
@@ -73,16 +73,18 @@ import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'
 import type { Project } from '@/types/project'
 import { naturalCompare } from '@/utils/textSort'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ show: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
 
 const projectStore = useProjectStore()
+const { t } = useI18n()
 const restoringId = ref<number | null>(null)
 const layoutRoot = ref<HTMLElement | null>(null)
 
-const STATUS_LABELS: Record<string, string> = { pending: '待开始', active: '进行中', done: '已完成' }
-function statusLabel(status: string) { return STATUS_LABELS[status] ?? status }
+const STATUS_KEYS: Record<string, string> = { pending: 'projects.notStarted', active: 'projects.inProgress', done: 'projects.done' }
+function statusLabel(status: string) { return t(STATUS_KEYS[status] ?? status) }
 
 // 没有专门的「归档时间」字段，用 updatedAt（归档这个 PATCH 本身会刷新它）当分组依据
 const openYears  = ref(new Set<string>())

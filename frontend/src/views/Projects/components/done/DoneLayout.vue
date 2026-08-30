@@ -1,6 +1,6 @@
 <template>
   <div ref="layoutRoot" class="done-layout-root">
-    <div v-if="!groups.length" class="col-empty">拖拽项目到此</div>
+    <div v-if="!groups.length" class="col-empty">{{ t('projects.dragProjectsHere') }}</div>
     <template v-else>
       <DoneGroup v-if="recent.items.length" v-memo="groupMemo(recent)" :group="recent" :ownership-version="ownershipVersionFor(recent.items)" :is-project-detached="isProjectDetached" @card-click="$emit('card-click', $event)" />
       <template v-for="group in groups" :key="group.key">
@@ -16,6 +16,7 @@
 
 <script setup lang="ts">
 import { nextTick, ref, toRef, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Project } from '@/types/project'
 import { runtime } from '@/interaction/runtime'
 import { useDoneGroups } from './useDoneGroups'
@@ -27,6 +28,7 @@ const props = defineProps({
   ownershipVersionFor: { type: Function as PropType<(projects: Project[]) => number>, required: true },
   isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },
 })
+const { t } = useI18n()
 defineEmits(['card-click'])
 const initialYear = String(new Date().getFullYear())
 const initialMonth = `${initialYear}${String(new Date().getMonth() + 1).padStart(2, '0')}月`

@@ -10,29 +10,29 @@
     </div>
     <FilePasteButton v-if="canPaste" compact :count="pasteCount" @paste="emit('paste')" />
     <button v-if="showSelection" class="sel-mode-btn select-mode-btn" :class="{ on: selectionMode }"
-      @click.stop="emit('toggle-selection')" title="多选模式">
+      @click.stop="emit('toggle-selection')" :title="t('sharedUi.selectionMode')">
       <Icon name="status.check-square" :size="13" />
     </button>
     <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1">
-      <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" title="网格视图">
+      <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" :title="t('sharedUi.gridView')">
         <Icon name="file.function" :size="13" />
       </button>
-      <button :class="{ on: viewMode === 'list' }" @click="emit('update:view-mode', 'list')" title="列表视图">
+      <button :class="{ on: viewMode === 'list' }" @click="emit('update:view-mode', 'list')" :title="t('sharedUi.listView')">
         <Icon name="navigation.list" :size="13" />
       </button>
     </SegmentedControl>
     <button v-if="showNewFolderButton && !showNewFolder" class="new-folder-btn" @click.stop="emit('update:show-new-folder', true)">
-      <Icon name="file.folder-add" :size="13" />新建文件夹
+      <Icon name="file.folder-add" :size="13" />{{ t('sharedUi.createFolder') }}
     </button>
     <div v-else-if="showNewFolderButton" class="new-folder-inline" @click.stop>
-      <input ref="folderInput" class="new-folder-input" :value="newFolderName" placeholder="文件夹名称"
+      <input ref="folderInput" class="new-folder-input" :value="newFolderName" :placeholder="t('sharedUi.folderName')"
         @input="emit('update:new-folder-name', ($event.target as HTMLInputElement).value)"
         @keydown.enter="emit('create-folder')" @keyup.esc="cancelFolder" autofocus />
-      <button class="btn-confirm-sm" :disabled="folderLoading" @click="emit('create-folder')">确定</button>
+      <button class="btn-confirm-sm" :disabled="folderLoading" @click="emit('create-folder')">{{ t('sharedUi.confirm') }}</button>
       <button class="btn-cancel-sm" @click="cancelFolder">✕</button>
     </div>
-    <button v-if="showNewWorkspaceButton" class="new-folder-btn workspace-btn" :class="{ 'workspace-remove-btn': workspaceExists }" :title="workspaceExists ? '解除当前文件夹的工作区' : '使用当前文件夹添加工作区'" @click.stop="emit('create-workspace')">
-      <Icon :name="workspaceExists ? 'action.delete' : 'admin.stack'" :size="13" />{{ workspaceExists ? '删除工作区' : '添加工作区' }}
+    <button v-if="showNewWorkspaceButton" class="new-folder-btn workspace-btn" :class="{ 'workspace-remove-btn': workspaceExists }" :title="workspaceExists ? t('sharedUi.removeWorkspace') : t('sharedUi.addWorkspace')" @click.stop="emit('create-workspace')">
+      <Icon :name="workspaceExists ? 'action.delete' : 'admin.stack'" :size="13" />{{ workspaceExists ? t('sharedUi.removeWorkspace') : t('sharedUi.addWorkspace') }}
     </button>
     <SortMenu v-if="showSort" :options="sortOptions" :sort-key="sortKey" :sort-dir="sortDir" @select="emit('sort-select', $event)" />
     <slot name="extra" />
@@ -49,6 +49,9 @@ import SortMenu from '@/components/common/SortMenu.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   canPaste: Boolean,

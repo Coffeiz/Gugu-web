@@ -11,8 +11,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><span class="btn-content"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />上传文件</span></a-button>
-          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><span class="btn-content"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />新建项目</span></a-button>
+          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><span class="btn-content"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />{{ t('common.actions.upload') }}</span></a-button>
+          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><span class="btn-content"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />{{ t('common.actions.createProject') }}</span></a-button>
         </div>
       </header>
 
@@ -95,6 +95,8 @@ import NotificationBubble   from '@/components/common/NotificationBubble.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useI18n } from 'vue-i18n'
+import { formatDate } from '@/utils/formatters'
 
 const previewStore = usePreviewStore()
 const audioStore   = useAudioStore()
@@ -114,6 +116,7 @@ const projectStore   = useProjectStore()
 const authStore      = useAuthStore()
 const liveStore      = useLiveStore()
 const prefsStore     = usePreferencesStore()
+const { t }          = useI18n()
 
 const uploadDialogOpen = ref(false)
 const uploadProjects   = ref([])
@@ -151,7 +154,7 @@ onMounted(async () => {
     uiStore.fetchNotifications()   // 拉持久通知（含离线漏掉的）：关浏览器重开还在
     uiStore.checkLoginBubble()     // 上线补弹最近一条有效气泡（只一次、过期不弹）
     liveStore.connect()   // 开实时事件订阅：咕咕/IM 改了数据网页自动刷新
-    runOnboarding(router)          // 新手引导：延迟弹欢迎/引导气泡 + 高亮引导项目（fire-and-forget）
+    runOnboarding(router)          // 读取播种项目 ID，供新建项目表单排除
     // 对话框默认问候的生成不在这儿无条件触发——只有「全新对话（无可恢复会话）」才需要，
     // 由 GuguChat onMounted 据 SESSION_KEY 决定（刷新停在老会话时不空跑生成）。
   }
@@ -161,14 +164,12 @@ onMounted(async () => {
 
 onBeforeUnmount(() => liveStore.disconnect())
 
-const currentTitle = computed(() => route.meta.title || '总览')
+const currentTitle = computed(() => route.meta.title ? t(String(route.meta.title)) : t('navigation.defaultTitle'))
 const fullBleed    = computed(() => !!route.meta.fullBleed)
 const isCanvasWorkspace = computed(() => route.path.startsWith('/mind/canvases'))
 
 const todayStr = computed(() => {
-  const d = new Date()
-  const weekdays = ['日', '一', '二', '三', '四', '五', '六']
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · 星期${weekdays[d.getDay()]}`
+  return formatDate(new Date(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
 })
 </script>
 

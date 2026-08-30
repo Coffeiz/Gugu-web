@@ -2,11 +2,11 @@
   <Transition name="chat-drop-fade">
     <div v-if="open" class="cb-overlay" @click.self="$emit('close')">
       <div class="cb-modal popup-menu">
-        <div class="cb-title">扫码绑定{{ label }}</div>
+        <div class="cb-title">{{ t('chatUi.scanBind') }}{{ label }}</div>
         <canvas ref="canvasEl" class="cb-qr"></canvas>
         <div v-if="err" class="cb-err">{{ err }}</div>
-        <div v-else class="cb-hint">{{ hint || '生成二维码中…' }}</div>
-        <button class="cb-cancel" @click="$emit('close')">取消</button>
+        <div v-else class="cb-hint">{{ hint || t('chatUi.generatingQr') }}</div>
+        <button class="cb-cancel" @click="$emit('close')">{{ t('common.actions.cancel') }}</button>
       </div>
     </div>
   </Transition>
@@ -20,6 +20,7 @@
  * canvasEl 通过 defineExpose 暴露给它做 QRCode.toCanvas(canvasEl, ...)。
  */
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 defineProps<{
   open: boolean
@@ -31,6 +32,7 @@ defineProps<{
 defineEmits<{ close: [] }>()
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
+const { t } = useI18n()
 defineExpose({ canvasEl: computed(() => canvasEl.value) })
 </script>
 

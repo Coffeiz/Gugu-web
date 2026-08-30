@@ -1,4 +1,5 @@
 import { readonly, ref } from 'vue'
+import { i18n } from '@/i18n'
 
 export type AppToastKind = 'error' | 'success' | 'info'
 
@@ -50,7 +51,7 @@ export function showAppNotice(message: string, duration?: number) {
   showAppToast(message, { kind: 'info', duration })
 }
 
-export function errorMessage(error: unknown, fallback = '操作失败，请稍后重试') {
+export function errorMessage(error: unknown, fallback = i18n.global.t('errors.requestFailed')) {
   return error instanceof Error && error.message ? error.message : fallback
 }
 

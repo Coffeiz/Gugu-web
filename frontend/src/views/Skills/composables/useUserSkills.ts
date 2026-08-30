@@ -1,7 +1,9 @@
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { userSkillsApi, type SkillToolItem, type UserSkillItem, type UserSkillWrite } from '@/services/api'
 
 export function useUserSkills() {
+  const { t } = useI18n()
   const skills = ref<UserSkillItem[]>([])
   const tools = ref<SkillToolItem[]>([])
   const loading = ref(false)
@@ -16,7 +18,7 @@ export function useUserSkills() {
       skills.value = data.skills
       tools.value = data.tools
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '加载 Skill 失败'
+      error.value = err instanceof Error ? err.message : t('skills.loadFailed')
     } finally {
       loading.value = false
     }
@@ -33,7 +35,7 @@ export function useUserSkills() {
       else await userSkillsApi.create(data)
       await load()
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '保存 Skill 失败'
+      error.value = err instanceof Error ? err.message : t('skills.saveFailed')
       throw err
     } finally {
       saving.value = false
@@ -48,7 +50,7 @@ export function useUserSkills() {
       await userSkillsApi.update(skill.slug, { enabled })
       skill.enabled = enabled
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '更新 Skill 状态失败'
+      error.value = err instanceof Error ? err.message : t('skills.toggleFailed')
       throw err
     }
   }
@@ -59,7 +61,7 @@ export function useUserSkills() {
       await userSkillsApi.delete(skill.slug)
       await load()
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '删除 Skill 失败'
+      error.value = err instanceof Error ? err.message : t('skills.deleteFailed')
       throw err
     }
   }

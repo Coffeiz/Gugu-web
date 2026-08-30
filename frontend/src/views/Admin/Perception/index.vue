@@ -2,21 +2,21 @@
   <div class="perc-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">感知诊断</h2>
-        <p class="page-desc">咕咕「读懂用户需求」健康度 · 仅活跃用户、按用户宏平均（重度用户不主导）</p>
+        <h2 class="page-title">{{ t('perception.title') }}</h2>
+        <p class="page-desc">{{ t('perception.description') }}</p>
       </div>
       <div class="header-right">
-        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
+        <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('perception.excludeDevelopers')" @update:model-value="excludeDev = $event; load()">{{ t('perception.excludeDevelopers') }}</Checkbox>
         <AdminSegmentTabs
           :model-value="String(hours)"
           :tabs="ranges"
           size="compact"
           class="data-header-control"
-          aria-label="感知诊断时间范围"
+          :aria-label="t('perception.range')"
           @update:model-value="setRange"
         />
-        <button class="dl-btn data-header-control" @click="exportData" :disabled="exporting">{{ exporting ? '导出中…' : '导出数据' }}</button>
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+        <button class="dl-btn data-header-control" @click="exportData" :disabled="exporting">{{ exporting ? t('perception.exporting') : t('perception.export') }}</button>
+        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" :title="t('perception.refresh')" :aria-label="t('perception.refresh')">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
@@ -25,111 +25,111 @@
     <!-- 阈值条：只改「怎么看」这屏数据（口径 + 标红线），不动系统行为 -->
     <div class="ctrl-bar">
       <span class="ctrl-grp">
-        <label>活跃门槛</label>
+        <label>{{ t('perception.activeThreshold') }}</label>
         <input type="number" min="1" step="1" v-model.number="minEvents" @change="load">
-        <span class="ctrl-u">轮</span>
+        <span class="ctrl-u">{{ t('perception.rounds') }}</span>
       </span>
       <span class="ctrl-grp">
-        <label>标红误判率</label>
+        <label>{{ t('perception.misreadThreshold') }}</label>
         <input type="number" min="0" max="100" step="5" v-model.number="rateHiPct" @change="load">
         <span class="ctrl-u">%</span>
       </span>
       <span class="ctrl-grp">
-        <label>歧义偏高线</label>
+        <label>{{ t('perception.ambiguityThreshold') }}</label>
         <input type="number" min="0" max="100" step="5" v-model.number="ambigHi" @change="load">
       </span>
       <span class="ctrl-grp">
-        <label>最小样本</label>
+        <label>{{ t('perception.minSample') }}</label>
         <input type="number" min="1" step="1" v-model.number="minN" @change="load">
       </span>
-      <button v-if="!isDefault" class="ctrl-reset" @click="resetThresholds">复位默认</button>
-      <span class="ctrl-note">阈值只改这屏的看法（口径/标红），不影响线上行为</span>
+      <button v-if="!isDefault" class="ctrl-reset" @click="resetThresholds">{{ t('perception.reset') }}</button>
+      <span class="ctrl-note">{{ t('perception.thresholdHint') }}</span>
     </div>
 
-    <div v-if="loading && !loaded" class="state-msg">加载中…</div>
+    <div v-if="loading && !loaded" class="state-msg">{{ t('perception.loading') }}</div>
     <div v-else-if="err" class="state-msg err">{{ err }}</div>
-    <div v-else-if="!data.active_users" class="state-msg">{{ data.note || '暂无活跃用户数据' }}</div>
+    <div v-else-if="!data.active_users" class="state-msg">{{ data.note || t('perception.noActiveUsers') }}</div>
 
     <template v-else>
       <!-- 异常标红 -->
-      <div v-if="data.flags && data.flags.length" class="flag-strip">
-        <div v-for="(f, i) in data.flags" :key="i" class="flag-item"><span class="flag-dot">!</span>{{ f }}</div>
+      <div v-if="data.flag_items?.length || data.flags?.length" class="flag-strip">
+        <div v-for="(f, i) in localizedFlags" :key="i" class="flag-item"><span class="flag-dot">!</span>{{ f }}</div>
       </div>
 
       <section class="data-section">
-        <div class="section-head"><h3>总览</h3></div>
+        <div class="section-head"><h3>{{ t('perception.overview') }}</h3></div>
         <div class="cards-grid">
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
           <div class="card-val">{{ data.active_users }}</div>
-          <div class="card-lbl">活跃用户（≥{{ data.min_events }} 轮）</div>
+          <div class="card-lbl">{{ t('perception.activeUsers', { count: data.min_events }) }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ data.perc_total }}</div>
-          <div class="card-lbl">观察数 · 纠正 {{ data.misperc_total }}</div>
+          <div class="card-lbl">{{ t('perception.observations', { count: data.misperc_total }) }}</div>
         </div>
         <div class="card" :class="rateCard(data.perception_misperc_rate)">
           <div class="card-icon ic-amber"><Icon name="admin.pulse" size="md" /></div>
           <div class="card-val">{{ pct(data.perception_misperc_rate) }}</div>
-          <div class="card-lbl">感知误判率（仅误读·宏平均）</div>
+          <div class="card-lbl">{{ t('perception.misreadRate') }}</div>
         </div>
         <div class="card" :class="{ 'card-active': (data.avg_ambiguity ?? 0) > ambigHi }">
           <div class="card-icon ic-amber"><Icon name="admin.brain" size="md" /></div>
           <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
-          <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
+          <div class="card-lbl">{{ t('perception.ambiguity', { value: data.avg_emo_strength ?? '—' }) }}</div>
         </div>
         </div>
       </section>
 
       <template v-if="data.misperc_by_kind && data.misperc_by_kind.length">
         <section class="data-section">
-          <div class="section-head"><h3>纠错构成</h3><p>反思 LLM 判定 · 区分「读错需求」与「数据/执行错」</p></div>
+          <div class="section-head"><h3>{{ t('perception.correction') }}</h3><p>{{ t('perception.correctionHint') }}</p></div>
           <div class="chart-frame compact-chart">
-            <AdminBarChart :labels="kindChart.labels" :values="kindChart.values" unit=" 条" :max="kindChart.max" />
+            <AdminBarChart :labels="kindChart.labels" :values="kindChart.values" :unit="t('perception.countUnit')" :max="kindChart.max" />
           </div>
         </section>
       </template>
 
       <section class="data-section">
-        <div class="section-head"><h3>需求类型分布 &amp; 误判率</h3><p>每类一条：整体占比为总长度，其中误判部分内嵌高亮</p></div>
-        <div v-if="!intents.length" class="state-msg sm-sm">暂无数据</div>
+        <div class="section-head"><h3>{{ t('perception.intent') }}</h3><p>{{ t('perception.intentHint') }}</p></div>
+        <div v-if="!intents.length" class="state-msg sm-sm">{{ t('perception.noData') }}</div>
         <IntentDistribution v-else :items="intents" :rate-high="rateHiPct / 100" />
       </section>
 
       <template v-if="data.by_model && data.by_model.length">
         <section class="data-section">
-          <div class="section-head"><h3>按模型</h3></div>
+          <div class="section-head"><h3>{{ t('perception.byModel') }}</h3></div>
           <div class="chart-frame">
-            <AdminBarChart :labels="modelChart.labels" :values="modelChart.values" unit=" 条" :max="modelChart.max" :height="modelChart.height" />
+            <AdminBarChart :labels="modelChart.labels" :values="modelChart.values" :unit="t('perception.countUnit')" :max="modelChart.max" :height="modelChart.height" />
           </div>
         </section>
       </template>
 
       <template v-if="data.emotion_distribution && data.emotion_distribution.length">
         <section class="data-section">
-          <div class="section-head"><h3>情绪分布</h3></div>
+          <div class="section-head"><h3>{{ t('perception.emotion') }}</h3></div>
           <div class="chart-frame compact-chart">
-            <AdminBarChart :labels="emotionChart.labels" :values="emotionChart.values" unit=" 条" :max="emotionChart.max" />
+            <AdminBarChart :labels="emotionChart.labels" :values="emotionChart.values" :unit="t('perception.countUnit')" :max="emotionChart.max" />
           </div>
         </section>
       </template>
 
       <section class="data-section">
-        <div class="section-head"><h3>反馈信号</h3><p>学习闭环的燃料 · 用户怎么接上一轮（正:确认夸赞/顺着聊/主动分享 · 负:改写重问/无视跳开）</p></div>
-        <div v-if="!data.feedback_distribution?.length" class="state-msg sm-sm">暂无反馈信号（采集器 2026-07-02 上线,聊几轮就会积累）</div>
+        <div class="section-head"><h3>{{ t('perception.feedback') }}</h3><p>{{ t('perception.feedbackHint') }}</p></div>
+        <div v-if="!data.feedback_distribution?.length" class="state-msg sm-sm">{{ t('perception.noFeedback') }}</div>
         <div v-else class="chart-frame compact-chart">
-          <AdminBarChart :labels="feedbackChart.labels" :values="feedbackChart.values" unit=" 条" :max="feedbackChart.max" />
+          <AdminBarChart :labels="feedbackChart.labels" :values="feedbackChart.values" :unit="t('perception.countUnit')" :max="feedbackChart.max" />
         </div>
       </section>
     </template>
 
     <!-- 错读案例预览（独立于活跃用户统计，始终显示） -->
     <section class="data-section">
-      <div class="section-head"><div><h3>错读案例</h3><p>咕咕「读错需求」的脱敏反思 · 最近 {{ misread.length }} 条</p></div>
-        <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? '下载中…' : '下载完整记录' }}</button>
+      <div class="section-head"><div><h3>{{ t('perception.misreadCases') }}</h3><p>{{ t('perception.misreadHint', { count: misread.length }) }}</p></div>
+        <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? t('perception.downloading') : t('perception.download') }}</button>
       </div>
-      <div v-if="!misread.length" class="state-msg sm-sm">暂无错读案例（需发生一次「误读 + 用户纠正」才记一条）</div>
+      <div v-if="!misread.length" class="state-msg sm-sm">{{ t('perception.noMisread') }}（{{ t('perception.sampleRound') }}）</div>
       <div v-else class="mr-list">
         <div v-for="(c, i) in misread" :key="i" class="mr-row">
           <span class="mr-time">{{ fmtTs(c.ts) }}</span>
@@ -143,16 +143,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import IntentDistribution from './components/IntentDistribution.vue'
+const { t } = useI18n()
 
 interface PerceptionData {
   active_users?: number
   note?: string
   flags?: string[]
+  flag_items?: Array<{ kind: 'intent' | 'ambiguity' | 'emotion_zero' | 'model'; intent?: string; rate?: number; count?: number; value?: number; model?: string; overall_rate?: number }>
   min_events?: number
   perc_total?: number
   misperc_total?: number
@@ -221,6 +224,16 @@ const feedbackChart = computed(() => {
 const misread = ref<any[]>([])
 const dling = ref(false)
 const excludeDev = ref(false)
+const localizedFlags = computed(() => {
+  const items = data.value.flag_items || []
+  if (items.length) return items.map(item => {
+    if (item.kind === 'intent') return t('perception.flagIntent', { intent: item.intent, rate: pct(item.rate), count: item.count })
+    if (item.kind === 'ambiguity') return t('perception.flagAmbiguity', { value: item.value })
+    if (item.kind === 'emotion_zero') return t('perception.flagEmotionZero')
+    return t('perception.flagModel', { model: item.model, rate: pct(item.rate), overall: pct(item.overall_rate) })
+  })
+  return data.value.flags || []
+})
 
 async function load() {
   loading.value = true
@@ -309,8 +322,7 @@ onMounted(load)
 .ctrl-bar { margin: 20px 36px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 12px 14px; background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; }
 .ctrl-grp { display: flex; align-items: center; gap: 6px; }
 .ctrl-grp label { font-size: 11.5px; color: var(--content-secondary); }
-.ctrl-grp input { width: 54px; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 6px; color: var(--input-fg); font-size: 12px; padding: 4px 7px; text-align: right; outline: none; transition: border-color .15s; }
-.ctrl-grp input:focus { border-color: var(--input-border-focus); }
+.ctrl-grp input { width: 54px; height: 28px; min-height: 28px; line-height: 28px; padding: 0 7px; text-align: center; }
 .ctrl-u { font-size: 11px; color: var(--content-tertiary); }
 .ctrl-reset { background: var(--control-bg); border: 1px solid var(--control-border); color: var(--content-secondary); font-size: 11.5px; border-radius: 6px; padding: 4px 10px; cursor: pointer; transition: all .15s; }
 .ctrl-reset:hover { background: var(--control-bg-hover); color: var(--content-primary); }

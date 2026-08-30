@@ -2,17 +2,17 @@
   <div class="syslog-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">系统日志</h2>
-        <p class="page-desc">后端运行时的错误与警告记录</p>
+        <h2 class="page-title">{{ t('adminLogs.systemTitle') }}</h2>
+        <p class="page-desc">{{ t('adminLogs.systemDescription') }}</p>
       </div>
     </div>
 
     <div class="toolbar">
       <AdminSelect v-model="filterLevel" :options="levelOptions" style="width:140px" />
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
+      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminLogs.refresh')" :aria-label="t('adminLogs.refresh')">
         <Icon name="action.refresh" size="sm" />
       </button>
-      <span class="toolbar-count" v-if="filtered.length">{{ filtered.length }} 条</span>
+      <span class="toolbar-count" v-if="filtered.length">{{ t('adminLogs.count', { count: filtered.length }) }}</span>
     </div>
 
     <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
@@ -20,14 +20,14 @@
     <div class="log-table-wrap">
       <div class="log-table">
         <div class="lt-head">
-          <span class="col-time">时间</span>
-          <span class="col-level">级别</span>
-          <span class="col-module">模块</span>
-          <span class="col-msg">消息</span>
+          <span class="col-time">{{ t('adminLogs.time') }}</span>
+          <span class="col-level">{{ t('adminLogs.level') }}</span>
+          <span class="col-module">{{ t('adminLogs.module') }}</span>
+          <span class="col-msg">{{ t('adminLogs.message') }}</span>
         </div>
 
-        <div v-if="loading && !items.length" class="lt-empty">加载中…</div>
-        <div v-else-if="!filtered.length" class="lt-empty">暂无日志</div>
+        <div v-if="loading && !items.length" class="lt-empty">{{ t('adminLogs.loading') }}</div>
+        <div v-else-if="!filtered.length" class="lt-empty">{{ t('adminLogs.empty') }}</div>
 
         <template v-else>
           <div
@@ -52,7 +52,7 @@
             </div>
             <div v-if="expanded === row.id && row.traceback" class="lt-traceback" @click.stop>
               <button class="tb-copy" @click.stop="copyLog(row)">
-                {{ copiedId === row.id ? '已复制 ✓' : '复制日志' }}
+                {{ copiedId === row.id ? t('adminLogs.copied') : t('adminLogs.copy') }}
               </button>
               <pre>{{ row.traceback }}</pre>
             </div>
@@ -78,9 +78,11 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
+const { t } = useI18n()
 
 const adminStore = useAdminStore()
 

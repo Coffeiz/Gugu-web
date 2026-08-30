@@ -1,9 +1,11 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
 import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderCards'
+import { projectStatusLabelKey } from '@/utils/projectStages'
 import type { NavSeg, FolderCard as FolderCardMeta } from '@/utils/filesNav'
 
 interface DirectoryProjectStore {
@@ -34,6 +36,7 @@ interface DirectoryOptions {
 
 export function useFileLibraryDirectory(options: DirectoryOptions) {
   const { projectStore, cacheStore, currentType, currentSeg, loading, sortKey, sortDir } = options
+  const { t, locale } = useI18n()
   const contents = ref<{ folders: FolderCardMeta[]; files: FileMeta[] }>({ folders: [], files: [] })
   const trashFolders = ref<TrashFolderMeta[]>([])
   const expandedTrashFolders = ref(new Set<number>())
@@ -77,9 +80,9 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         : null
       contents.value = {
         folders: [
-          { id: 'personal', type: 'personal', displayName: '个人文件', count: personalCount },
-          { id: 'projects', type: 'projects', displayName: '项目文件', count: projectStore.projects.length },
-          { id: 'trash', type: 'trash', displayName: '回收站', count: null },
+          { id: 'personal', type: 'personal', displayName: t('filesUi.personalFiles'), count: personalCount },
+          { id: 'projects', type: 'projects', displayName: t('filesUi.projectFiles'), count: projectStore.projects.length },
+          { id: 'trash', type: 'trash', displayName: t('filesUi.trash'), count: null },
         ],
         files: [],
       }
@@ -113,7 +116,7 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     }
 
     if (type === 'projects') {
-      contents.value = { folders: statusFolders(projectStore.projects, projectStore.kanbanColumns), files: [] }
+      contents.value = { folders: statusFolders(projectStore.projects, projectStore.kanbanColumns.map(column => ({ ...column, label: t(projectStatusLabelKey(column.key)) }))), files: [] }
       return
     }
 
@@ -168,6 +171,8 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
       contents.value = { folders: folderItems, files: cacheStore.getFolderFiles(folderId) }
     }
   }
+
+  watch(locale, () => loadContents())
 
   return { contents, trashFolders, expandedTrashFolders, trashFolderContents, sortedTrashFolders, loadContents }
 }

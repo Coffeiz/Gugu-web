@@ -1,69 +1,69 @@
 <template>
   <div>
     <div class="pm-section">
-      <div class="pm-section-label">模型配置</div>
-      <p class="pm-field-hint">凭据只在服务端加密保存，不会回显到页面、对话或日志。每类模型可单独启用；全部停用时使用 Admin 默认配置。</p>
-      <div v-if="needsReconfigure" class="pm-msg err">BYOK 主密钥校验失败，请重新输入并保存各 Provider API Key。</div>
-      <div v-if="loading" class="pm-field-hint">加载中…</div>
+      <div class="pm-section-label">{{ t('profileByokUi.title') }}</div>
+      <p class="pm-field-hint">{{ t('profileByokUi.hint') }}</p>
+      <div v-if="needsReconfigure" class="pm-msg err">{{ t('profileByokUi.reconfigure') }}</div>
+      <div v-if="loading" class="pm-field-hint">{{ t('profileByokUi.loading') }}</div>
       <div v-else-if="error" class="pm-msg err">{{ error }}</div>
       <template v-else>
         <div v-for="group in groups" :key="group.value" class="byok-group">
-          <div class="byok-group-heading"><div class="byok-group-title">{{ group.label }}</div><button class="pm-style-chip" @click="openEditor(group.value)">＋ 添加模型</button></div>
-          <div v-if="itemsFor(group.value).length === 0" class="pm-field-hint">尚未配置</div>
+          <div class="byok-group-heading"><div class="byok-group-title">{{ t(group.labelKey) }}</div><button class="pm-style-chip" @click="openEditor(group.value)">{{ t('profileByokUi.addModel') }}</button></div>
+          <div v-if="itemsFor(group.value).length === 0" class="pm-field-hint">{{ t('profileByokUi.notConfigured') }}</div>
           <div v-if="itemsFor(group.value).length" class="byok-card-grid">
             <template v-for="item in itemsFor(group.value)" :key="item.id">
             <div class="byok-card">
               <div class="byok-card-head">
                 <div class="byok-card-main">
-                  <div class="byok-name">{{ item.provider }}<span v-if="item.model"> · {{ item.model }}</span><template v-if="item.capability === 'llm'"><span v-for="dim in visionDims.filter(entry => item[entry.field])" :key="dim.key" class="byok-capability-tag">{{ dim.label }}</span></template></div>
-                  <div class="byok-meta">{{ item.api_format || '自动协议' }} · {{ item.has_value ? '已加密保存' : '无凭据' }}</div>
+                  <div class="byok-name">{{ providerLabel(item.provider) }}<span v-if="item.model"> · {{ item.model }}</span><template v-if="item.capability === 'llm'"><span v-for="dim in visionDims.filter(entry => item[entry.field])" :key="dim.key" class="byok-capability-tag">{{ t(dim.labelKey) }}</span></template></div>
+                  <div class="byok-meta">{{ item.api_format || t('profileByokUi.autoProtocol') }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}</div>
                 </div>
               </div>
               <div class="byok-card-actions">
-                <button class="pm-style-chip" :class="{ active: item.enabled }" @click="toggle(item)">{{ item.enabled ? '已启用' : '已停用' }}</button>
-                <button v-if="item.capability === 'llm'" class="pm-style-chip" :disabled="visionTesting?.startsWith(`${item.id}:`)" @click="probeCardVisionAll(item)">{{ visionTesting === `${item.id}:all` ? '检测中…' : '检测多模态' }}</button>
-                <button class="pm-style-chip" :disabled="testing === item.id" @click="test(item)">{{ testing === item.id ? '测试中…' : '测试' }}</button>
-                <button class="pm-style-chip" @click="openEditor(item.capability, item)">编辑</button>
-                <button class="pm-danger-btn" @click="remove(item)">删除</button>
+                <button class="pm-style-chip" @click="openEditor(item.capability, item)">{{ t('profileByokUi.edit') }}</button>
+                <button class="pm-style-chip" :disabled="testing === item.id" @click="test(item)">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button>
+                <button v-if="item.capability === 'llm'" class="pm-style-chip" :disabled="visionTesting?.startsWith(`${item.id}:`)" @click="probeCardVisionAll(item)">{{ visionTesting === `${item.id}:all` ? t('profileByokUi.probing') : t('profileByokUi.probe') }}</button>
+                <button class="pm-style-chip" :class="{ active: item.enabled }" @click="toggle(item)">{{ item.enabled ? t('profileByokUi.enabled') : t('profileByokUi.disabled') }}</button>
+                <button class="pm-danger-btn" @click="remove(item)">{{ t('profileByokUi.delete') }}</button>
               </div>
             </div>
             <Transition :name="editors[item.id] || closingEditors.has(item.id) ? 'byok-editor' : 'byok-editor-none'" @after-leave="clearClosingEditor(item.id)">
             <div v-if="editors[item.id]" :key="item.id" class="byok-editor byok-editor--expanded" @click="setActiveEditor(item.id)">
-            <div class="byok-editor-title">编辑模型配置</div>
+            <div class="byok-editor-title">{{ t('profileByokUi.editTitle') }}</div>
             <div class="byok-form-grid">
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(editors[item.id]).length }">
                 <ProviderSelect :model-value="editors[item.id].provider" :providers="providerOptionsFor(editors[item.id].capability)" @update:model-value="applyProvider(editors[item.id], $event)" />
-                <ProviderSelect v-if="childProviderOptionsFor(editors[item.id]).length" :model-value="childSelectionFor(editors[item.id])" :providers="childProviderOptionsFor(editors[item.id])" placeholder="选择子选项" @update:model-value="applyProviderChild(editors[item.id], $event)" />
+                <ProviderSelect v-if="childProviderOptionsFor(editors[item.id]).length" :model-value="childSelectionFor(editors[item.id])" :providers="childProviderOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(editors[item.id], $event)" />
               </div>
-              <InterfaceTypeSelect v-if="editors[item.id].provider === 'mimo'" label="接口格式" :model-value="editors[item.id].api_format || 'openai'" :options="[{ key: 'openai', label: 'OpenAI 兼容' }, { key: 'anthropic', label: 'Anthropic 兼容' }]" hint="Anthropic 兼容支持思考块、缓存和读取库内图片" @update:model-value="editors[item.id].api_format = String($event)" />
-              <InterfaceTypeSelect v-else-if="editors[item.id].provider === 'ollama'" label="接口类型" :model-value="editors[item.id].api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="editors[item.id].api_format = String($event)" />
-              <input v-model="editors[item.id].base_url" class="form-input" placeholder="Base URL（可选）" />
-              <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" placeholder="API Key（留空保持不变）" />
-              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? '语音模型名（可选）' : '模型名（可选）'" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? '获取中…' : '获取列表' }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">暂无可用模型</div><button v-for="model in modelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
-              <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">思考强度</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" placeholder="选择思考强度（继承默认）" @update:model-value="applyThinkingOption(editors[item.id], $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">上下文预算</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" placeholder="输入 Token" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" placeholder="输出 Token" /></div></div></template>
-              <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="visionDims" title="多模态能力" :probing="visionTesting" @probe="probeVision" />
+              <InterfaceTypeSelect v-if="editors[item.id].provider === 'mimo'" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || 'openai'" :options="[{ key: 'openai', label: t('profileByokUi.openaiCompatible') }, { key: 'anthropic', label: t('profileByokUi.anthropicCompatible') }]" :hint="t('profileByokUi.anthropicHint')" @update:model-value="editors[item.id].api_format = String($event)" />
+              <InterfaceTypeSelect v-else-if="editors[item.id].provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="editors[item.id].api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="editors[item.id].api_format = String($event)" />
+              <input v-model="editors[item.id].base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
+              <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKeyKeep')" />
+              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><button v-for="model in modelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
+              <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeVision" />
             </div>
-            <div class="byok-editor-actions"><button class="pm-style-chip" :disabled="testing === item.id" @click="test({ id: item.id, capability: editors[item.id].capability })">{{ testing === item.id ? '测试中…' : '测试' }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">取消</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? '保存中…' : '保存配置' }}</button></div>
+            <div class="byok-editor-actions"><button class="pm-style-chip" :disabled="testing === item.id" @click="test({ id: item.id, capability: editors[item.id].capability })">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
             </div>
             </Transition>
             </template>
           </div>
           <div v-if="newEditor && newEditor.capability === group.value" class="byok-editor byok-editor--new">
-            <div class="byok-editor-title">添加{{ group.label }}配置</div>
+            <div class="byok-editor-title">{{ t('profileByokUi.addConfig', { label: t(group.labelKey) }) }}</div>
             <div class="byok-form-grid">
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(newEditor).length }">
                 <ProviderSelect :model-value="newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" @update:model-value="applyProviderTo(newEditor, $event)" />
-                <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" placeholder="选择子选项" @update:model-value="applyProviderChild(newEditor, $event)" />
+                <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(newEditor, $event)" />
               </div>
-              <InterfaceTypeSelect v-if="newEditor.provider === 'mimo'" label="接口格式" :model-value="newEditor.api_format || 'openai'" :options="[{ key: 'openai', label: 'OpenAI 兼容' }, { key: 'anthropic', label: 'Anthropic 兼容' }]" hint="Anthropic 兼容支持思考块、缓存和读取库内图片" @update:model-value="newEditor.api_format = String($event)" />
-              <InterfaceTypeSelect v-else-if="newEditor.provider === 'ollama'" label="接口类型" :model-value="newEditor.api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="newEditor.api_format = String($event)" />
-              <input v-model="newEditor.base_url" class="form-input" placeholder="Base URL（可选）" />
-              <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" placeholder="API Key" />
-              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" placeholder="模型名（可选）" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? '获取中…' : '获取列表' }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">暂无可用模型</div><button v-for="model in modelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
-              <template v-if="newEditor.capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">思考强度</div><AdminSelect v-model="newEditor.thinking_mode" :options="thinkingOptionsFor(newEditor)" placeholder="选择思考强度（继承默认）" @update:model-value="applyThinkingOption(newEditor, $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">上下文预算</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" placeholder="输入 Token" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" placeholder="输出 Token" /></div></div></template>
-              <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="visionDims" title="多模态能力" :probing="visionTesting" @probe="probeNewVision" />
+              <InterfaceTypeSelect v-if="newEditor.provider === 'mimo'" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || 'openai'" :options="[{ key: 'openai', label: t('profileByokUi.openaiCompatible') }, { key: 'anthropic', label: t('profileByokUi.anthropicCompatible') }]" :hint="t('profileByokUi.anthropicHint')" @update:model-value="newEditor.api_format = String($event)" />
+              <InterfaceTypeSelect v-else-if="newEditor.provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="newEditor.api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="newEditor.api_format = String($event)" />
+              <input v-model="newEditor.base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
+              <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
+              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><button v-for="model in modelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <template v-if="newEditor.capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="newEditor.thinking_mode" :options="thinkingOptionsFor(newEditor)" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(newEditor, $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
+              <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeNewVision" />
             </div>
-            <div class="byok-editor-actions"><button class="pm-style-chip" @click="closeNewEditor">取消</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? '保存中…' : '保存配置' }}</button></div>
+            <div class="byok-editor-actions"><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
           </div>
           <div v-if="message && messageCapability === group.value" class="byok-message pm-msg" :class="messageType">{{ message }}</div>
         </div>
@@ -74,51 +74,49 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { byokApi } from '@/services/api'
 import AdminSelect from '@/components/AdminSelect.vue'
 import ProviderSelect from '@/views/Admin/Agent/components/ProviderSelect.vue'
 import InterfaceTypeSelect from '@/views/Admin/Agent/components/InterfaceTypeSelect.vue'
 import MultimodalCapabilities from '@/components/common/MultimodalCapabilities.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import { useI18n } from 'vue-i18n'
+import { MODEL_PROVIDERS, type ModelProvider } from '@/utils/modelProviders'
 
 type Item = { id: number; capability: string; provider: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; vision: boolean; vision_video: boolean; vision_audio: boolean; vision_detail: string; has_value: boolean; enabled: boolean; [key: string]: any }
 type ThinkingMode = 'default' | 'disabled' | 'adaptive' | 'low' | 'medium' | 'high' | 'max'
 type Editor = { id?: number; capability: string; provider: string; value: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; thinking_mode: ThinkingMode; vision: boolean; vision_video: boolean; vision_audio: boolean; vision_detail: string; local_runtime?: string; ollama_mode?: string }
 type ThinkingOption = { value: ThinkingMode; label: string }
-type ProviderOption = { value: string; label: string; base_url: string; model: string }
-const modelProviders: ProviderOption[] = [
-  { value: 'openai', label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1', model: 'gpt-4o' }, { value: 'anthropic', label: 'Anthropic 兼容', base_url: 'https://api.anthropic.com/v1', model: 'claude-opus-4-8' },
-  { value: 'qwen', label: 'DashScope（百炼）', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' }, { value: 'glm', label: '智谱 GLM', base_url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.2' },
-  { value: 'deepseek', label: 'DeepSeek', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash-vision-exp' }, { value: 'minimax', label: 'MiniMax', base_url: 'https://api.minimaxi.com/anthropic', model: 'MiniMax-M3' },
-  { value: 'mimo', label: 'MiMo（小米）', base_url: 'https://api.xiaomimimo.com/v1', model: 'mimo-mono.5' }, { value: 'ollama', label: 'Ollama', base_url: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b' },
-  { value: 'local', label: '本地兼容服务', base_url: '', model: '' },
-]
+type ProviderOption = ModelProvider
+const modelProviders: readonly ProviderOption[] = MODEL_PROVIDERS
 const groups = [
-  { value: 'llm', label: '通用模型' }, { value: 'speech_to_text', label: '语音模型' },
+  { value: 'llm', labelKey: 'profileByokUi.generalModel' }, { value: 'speech_to_text', labelKey: 'profileByokUi.speechModel' },
 ]
-const visionDims = [{ key: 'image', label: '图片', field: 'vision' }, { key: 'video', label: '视频', field: 'vision_video' }, { key: 'audio', label: '音频', field: 'vision_audio' }] as const
-const providerChildren: Record<string, Array<{ key: string; label: string }>> = {
-  glm: [{ key: 'general', label: '通用 API' }, { key: 'coding', label: 'Coding Plan' }],
-  local: [{ key: 'llama.cpp', label: 'llama.cpp' }, { key: 'vllm', label: 'vLLM' }, { key: 'other', label: '其它兼容服务' }],
-  ollama: [{ key: 'local', label: '本地 Ollama' }, { key: 'cloud', label: 'Ollama Cloud' }],
+const visionDims = [{ key: 'image', labelKey: 'profileByokUi.image', field: 'vision' }, { key: 'video', labelKey: 'profileByokUi.video', field: 'vision_video' }, { key: 'audio', labelKey: 'profileByokUi.audio', field: 'vision_audio' }] as const
+const providerChildren: Record<string, Array<{ key: string; labelKey: string }>> = {
+  glm: [{ key: 'general', labelKey: 'profileByokUi.generalApi' }, { key: 'coding', labelKey: 'profileByokUi.codingPlan' }],
+  local: [{ key: 'llama.cpp', labelKey: 'profileByokUi.llamaCpp' }, { key: 'vllm', labelKey: 'profileByokUi.vllm' }, { key: 'other', labelKey: 'profileByokUi.otherCompatible' }],
+  ollama: [{ key: 'local', labelKey: 'profileByokUi.localOllama' }, { key: 'cloud', labelKey: 'profileByokUi.ollamaCloud' }],
 }
 const thinkingLabels: Record<ThinkingMode, string> = {
-  default: '继承默认', disabled: '关闭思考', adaptive: '自适应',
-  low: '低', medium: '中', high: '高', max: '最大',
+  default: 'profileByokUi.inheritDefault', disabled: 'profileByokUi.disableThinking', adaptive: 'profileByokUi.adaptiveThinking',
+  low: 'profileByokUi.low', medium: 'profileByokUi.medium', high: 'profileByokUi.high', max: 'profileByokUi.maximum',
 }
 const providerEfforts: Record<string, ThinkingMode[]> = {
   deepseek: ['low', 'high', 'max'],
   ollama: ['low', 'medium', 'high', 'max'],
 }
-const ollamaInterfaceOptions = [
-  { key: 'native', label: 'Ollama 原生' },
-  { key: 'openai', label: 'OpenAI 兼容' },
-]
+const ollamaInterfaceOptions = computed(() => [
+  { key: 'native', label: t('profileByokUi.ollamaNative') },
+  { key: 'openai', label: t('profileByokUi.openaiCompatible') },
+])
+const { t } = useI18n()
+const localizedVisionDims = computed(() => visionDims.map(dim => ({ ...dim, label: t(dim.labelKey) })))
 const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
-function providersFor(capability: string): ProviderOption[] {
+function providersFor(capability: string): readonly ProviderOption[] {
   return capability === 'speech_to_text' ? modelProviders.filter(item => ['openai', 'qwen', 'local'].includes(item.value)) : modelProviders
 }
 function thinkingEffortsFor(draft: Pick<Editor, 'provider' | 'model'>): ThinkingMode[] {
@@ -128,10 +126,10 @@ function thinkingEffortsFor(draft: Pick<Editor, 'provider' | 'model'>): Thinking
 function thinkingOptionsFor(draft: Pick<Editor, 'provider' | 'model'>): ThinkingOption[] {
   const supportsThinking = ['deepseek', 'qwen', 'mimo', 'glm', 'glm-coding', 'ollama'].includes(draft.provider)
   return [
-    { value: 'default', label: thinkingLabels.default },
-    { value: 'disabled', label: thinkingLabels.disabled },
-    ...(supportsThinking ? [{ value: 'adaptive' as ThinkingMode, label: thinkingLabels.adaptive }] : []),
-    ...thinkingEffortsFor(draft).map(value => ({ value, label: thinkingLabels[value] })),
+    { value: 'default', label: t(thinkingLabels.default) },
+    { value: 'disabled', label: t(thinkingLabels.disabled) },
+    ...(supportsThinking ? [{ value: 'adaptive' as ThinkingMode, label: t(thinkingLabels.adaptive) }] : []),
+    ...thinkingEffortsFor(draft).map(value => ({ value, label: t(thinkingLabels[value]) })),
   ]
 }
 function thinkingModeFor(thinking: Editor['thinking'], effort: string | null): ThinkingMode {
@@ -148,10 +146,14 @@ function applyThinkingOption(draft: Editor, value: ThinkingMode) {
   draft.reasoning_effort = value === 'adaptive' ? '' : value
 }
 function providerOptionsFor(capability: string) {
-  return providersFor(capability).map(provider => ({ key: provider.value, label: provider.label }))
+  return providersFor(capability).map(provider => ({ key: provider.value, label: t(provider.labelKey) }))
+}
+function providerLabel(value: string) {
+  const provider = modelProviders.find(item => item.value === value)
+  return provider ? t(provider.labelKey) : value
 }
 function childProviderOptionsFor(draft: Pick<Editor, 'provider' | 'base_url' | 'local_runtime' | 'ollama_mode'>) {
-  return providerChildren[draft.provider] || []
+  return (providerChildren[draft.provider] || []).map(child => ({ key: child.key, label: t(child.labelKey) }))
 }
 function childSelectionFor(draft: Pick<Editor, 'provider' | 'base_url' | 'local_runtime' | 'ollama_mode'>) {
   if (draft.provider === 'glm') return (draft.base_url || '').includes('/api/coding/') ? 'coding' : 'general'
@@ -273,9 +275,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOn
 .byok-subsection .asel-wrap { min-width: 0; }
 .byok-subsection .asel-trigger { width: 100%; box-sizing: border-box; }
 .byok-budget-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.byok-budget-grid input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
-.byok-budget-grid input[type='number']::-webkit-inner-spin-button,
-.byok-budget-grid input[type='number']::-webkit-outer-spin-button { margin: 0; appearance: none; -webkit-appearance: none; }
 .byok-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .model-picker { position: relative; min-width: 0; }
 .model-picker-row { display: flex; gap: 6px; }

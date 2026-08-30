@@ -5,12 +5,12 @@
       <div v-for="item in items" :key="item.name" class="capability-catalog-item">
         <div class="capability-catalog-item-head">
           <code>{{ item.name }}</code>
-          <span>{{ item.category || '未分类' }}</span>
+          <span>{{ item.category || t('capabilityUi.uncategorized') }}</span>
         </div>
         <p>{{ item.description_short }}</p>
         <small>{{ toolItems
-          ? (item.permissions.length ? `权限：${item.permissions.join('、')}` : '无额外权限声明')
-          : (item.related_tools.length ? `关联工具：${item.related_tools.join('、')}` : '未声明关联工具') }}</small>
+          ? (item.permissions.length ? `${t('capabilityUi.permissions')}：${item.permissions.join('、')}` : t('capabilityUi.noExtraPermissions'))
+          : (item.related_tools.length ? `${t('capabilityUi.relatedTools')}：${item.related_tools.join('、')}` : t('capabilityUi.noRelatedTools')) }}</small>
       </div>
     </div>
   </div>
@@ -18,12 +18,14 @@
 
 <script setup lang="ts">
 import type { CapabilityCatalogItem } from '../useCapabilityCatalog'
+import { useI18n } from 'vue-i18n'
 
 defineProps<{
   title: string
   items: CapabilityCatalogItem[]
   toolItems?: boolean
 }>()
+const { t } = useI18n()
 </script>
 
 <style scoped>

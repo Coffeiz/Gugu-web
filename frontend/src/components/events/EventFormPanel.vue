@@ -2,20 +2,22 @@
   <div class="event-form-body">
     <div class="popup-header">
       <span class="popup-title">{{ title }}</span>
-      <button class="popup-close-btn" @click="emit('close')" title="关闭">
+      <button class="popup-close-btn" @click="emit('close')" :title="t('common.actions.close')">
         <Icon name="action.close" :size="12" />
       </button>
     </div>
     <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus"
                      @save="emit('save')" @close="emit('close')" @test-reminder="emit('test-reminder')" />
     <div class="popup-actions">
-      <button class="popup-save" @click="emit('save')" :disabled="!event.name">保存</button>
-      <button v-if="showDelete" class="popup-delete" @click="emit('delete')">删除</button>
+      <button class="popup-save" @click="emit('save')" :disabled="!event.name">{{ t('common.actions.save') }}</button>
+      <button v-if="showDelete" class="popup-delete" @click="emit('delete')">{{ t('common.actions.delete') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import Icon from '@/components/common/Icon.vue'
 import EventFormFields from './EventFormFields.vue'
 import { type EventDraft, type useEventEditForm } from '@/composables/useEventEditForm'

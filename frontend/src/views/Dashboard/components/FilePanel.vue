@@ -1,7 +1,7 @@
 <template>
   <div class="glass-card file-panel" ref="panelRef">
     <div class="section-header">
-      <span class="section-title">最近文件</span>
+      <span class="section-title">{{ t('dashboardUi.recentFiles') }}</span>
     </div>
 
     <div class="file-grid">
@@ -41,15 +41,15 @@
         </template>
 
         <div class="fc-hover-actions">
-          <button class="file-card-btn" :title="renamingId === f.id ? '确认' : '重命名'"
+          <button class="file-card-btn" :title="renamingId === f.id ? t('sharedUi.confirm') : t('sharedUi.rename')"
             @mousedown.prevent @click.stop="renamingId === f.id ? commitRename(f) : startRename(f)">
             <Icon name="status.success" v-if="renamingId === f.id" :size="11" />
             <Icon name="action.edit" v-else :size="11" />
           </button>
-          <button class="file-card-btn" title="下载" @click.stop="downloadFile(f)">
+          <button class="file-card-btn" :title="t('sharedUi.download')" @click.stop="downloadFile(f)">
             <Icon name="action.download" :size="11" />
           </button>
-          <button class="file-card-btn del" title="移到回收站" @click.stop="deleteFile(f)">
+          <button class="file-card-btn del" :title="t('sharedUi.moveToTrash')" @click.stop="deleteFile(f)">
             <Icon name="action.delete" :size="11" />
           </button>
         </div>
@@ -65,7 +65,7 @@
         @click.prevent="openUpload"
       >
         <Icon name="action.upload" :size="22" style="opacity:0.4" />
-        <span class="fc-upload-text">上传文件</span>
+        <span class="fc-upload-text">{{ t('common.actions.upload') }}</span>
       </label>
     </div>
   </div>
@@ -88,6 +88,7 @@ import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
+import { useI18n } from 'vue-i18n'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
 import Icon from '@/components/common/Icon.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
@@ -102,6 +103,7 @@ const uploadOpen    = ref(false)
 // 统一到全局 filesCache store（原来是 services/cache 那第三套独立缓存）。「最近文件」= 全部文件按
 // id 倒序（新文件 id 更大）取前几个。增删改走 store 增量 API，任何页面/SSE 改了 store，这里自动更新。
 const store         = useFilesCacheStore()
+const { t } = useI18n()
 const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a.id))
 const thumbMap      = shallowRef<Record<number, { tiny?: string | null; card?: string | null }>>({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref<number | string | null>(null)

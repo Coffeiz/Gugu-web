@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="menu-pop" @before-leave="raiseLeaveLayer" @after-leave="emit('after-leave')">
       <!-- v-if 只在打开或离场过渡期间挂载，避免每个业务实例长期留下隐藏 host 占位。 -->
-      <div v-if="show" ref="popupRef" class="popup-menu-host" :class="[popupClass, { 'popup-menu-host--transparent': transparent }]" :style="popupStyle" @mousedown.stop @click.stop @contextmenu.prevent>
+      <div v-if="show" ref="popupRef" class="popup-menu-host" :class="[popupClass, { 'popup-menu-host--transparent': transparent }]" :style="transparent ? { ...popupStyle, padding: 0, border: 0, background: 'transparent', boxShadow: 'none', backdropFilter: 'none', WebkitBackdropFilter: 'none' } : popupStyle" @mousedown.stop @click.stop @contextmenu.prevent>
         <slot />
       </div>
     </Transition>
@@ -69,6 +69,13 @@ function position() {
   popupStyle.value = { ...popupStyle.value, ...props.style, left: `${left}px`, top: `${top}px`, minWidth: props.placement === 'bottom' ? `${rect.width}px` : undefined, zIndex: popupZ.value || nextZ() }
 }
 function refresh() { void nextTick(position) }
+watch(() => props.style, value => {
+  const next = { ...popupStyle.value, ...value }
+  for (const key of ['top', 'bottom', 'left', 'right', 'width', 'minWidth', 'transformOrigin']) {
+    if (!(key in value)) delete next[key]
+  }
+  popupStyle.value = next
+}, { deep: true })
 watch(() => props.show, value => {
   unregister?.(); unregister = value ? registerPopover(setPopupZ) : null
   if (value) { popupZ.value = nextZ(); popupStyle.value = { ...popupStyle.value, ...props.style, zIndex: popupZ.value }; refresh() } else popupZ.value = TOP_Z + 1
@@ -76,7 +83,7 @@ watch(() => props.show, value => {
   if (!value && popupRef.value) {
     setPopupZ(100001)
   }
-})
+}, { immediate: true })
 onMounted(() => { document.addEventListener('mousedown', raiseBeforeAnchorInteraction, true); window.addEventListener('resize', refresh); window.addEventListener('scroll', refresh, true) })
 onBeforeUnmount(() => { unregister?.(); document.removeEventListener('mousedown', raiseBeforeAnchorInteraction, true); window.removeEventListener('resize', refresh); window.removeEventListener('scroll', refresh, true) })
 defineExpose({ contains: (target: Node) => !!popupRef.value?.contains(target), element: () => popupRef.value })

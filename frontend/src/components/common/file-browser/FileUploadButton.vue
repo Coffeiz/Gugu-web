@@ -1,13 +1,14 @@
 <template>
   <label class="fub" :class="[mode, { dragging }]">
     <Icon name="action.upload" :size="mode === 'grid' ? 22 : 13" />
-    <span class="fub-text">上传文件</span>
+    <span class="fub-text">{{ t('common.actions.upload') }}</span>
     <input type="file" hidden multiple @change="emit('select', $event)" />
   </label>
 </template>
 
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
 /**
  * 文件库网格/列表和项目文件区网格/列表共用的上传入口——之前四处各画一份（文件库列表甚至
  * 漏画了），图标大小、文字包裹方式、hover 颜色都不一致。上传拖拽悬停态（dragging）由调用方
@@ -19,6 +20,7 @@ defineProps({
   dragging: { type: Boolean, default: false },
 })
 const emit = defineEmits<{ select: [e: Event] }>()
+const { t } = useI18n()
 </script>
 
 <style scoped>

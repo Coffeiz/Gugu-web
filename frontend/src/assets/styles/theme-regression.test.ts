@@ -43,9 +43,9 @@ const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
-const paletteFiles = ['aero', 'mono', 'rose', 'sky', 'sage'].map(name => ({
+const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sky', 'sky'], ['sage', 'sage']].map(([file, name]) => ({
   name,
-  css: load(`./tokens/palettes/${name}.css`) + load('./tokens/palettes/color-base.css'),
+  css: load(`./tokens/palettes/${file}.css`) + load('./tokens/palettes/color-base.css'),
 }))
 const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
@@ -131,7 +131,7 @@ describe('主题 CSS 回归契约', () => {
     expect(materialCompositionCss).toContain('var(--palette-page-start)')
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
-    expect(materialCompositionCss).toContain(":not([data-palette='mono'])")
+    expect(materialCompositionCss).toContain(":not([data-palette='cafe'])")
     expect(materialCompositionCss).not.toMatch(/--theme-(shadow|blur|radius)\s*:/)
     expect(load('./tokens/themes/mono-light.css')).toContain("--theme-border-strong: rgba(42,35,49,.15)")
     expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
@@ -168,7 +168,7 @@ describe('主题 CSS 回归契约', () => {
 
   it('亮色导航选中项使用实体亮面，通知 active paint 不重复', () => {
     expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
-    expect(componentCss).toContain('--sidebar-item-active-light-bg: rgba(255,255,255,.94)')
+    expect(componentCss).toContain('--sidebar-item-active-light-bg: color-mix(in srgb,var(--action-primary) 8%,rgba(255,255,255,.94))')
     expect(componentSurfacesCss).toContain("html[data-theme='light'][data-family]")
     expect(componentSurfacesCss).toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
   })
@@ -352,8 +352,8 @@ describe('主题 CSS 回归契约', () => {
 
   it('页面 Mono 配色与便签 Amber 色卡保持独立', () => {
     const monoCss = load('./tokens/palettes/mono.css')
-    expect(monoCss).toContain('--theme-action-primary: #746b78')
-    expect(monoCss).toContain('--theme-action-primary: #c0b5c4')
+    expect(monoCss).toContain('--theme-action-primary: #715653')
+    expect(monoCss).toContain('--theme-action-primary: #be9d98')
     expect(monoCss).not.toContain('#ffc05f')
     expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("label: 'Amber', token: '--note-paper-amber'")
   })

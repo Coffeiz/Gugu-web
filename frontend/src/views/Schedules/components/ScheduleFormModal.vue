@@ -1,42 +1,42 @@
 <template>
   <BaseModal :show="props.show" width="420px" background="var(--panel-bg)" @close="emit('close')">
     <div class="sched-modal">
-      <input v-model="form.name" ref="nameRef" class="title-input" placeholder="任务名称" maxlength="100" />
+      <input v-model="form.name" ref="nameRef" class="title-input" :placeholder="t('schedules.taskName')" maxlength="100" />
       <div class="divider divider-full"></div>
 
       <label class="field">
-        <span>提醒内容</span>
-        <textarea v-model="form.payload" ref="payloadRef" rows="3" placeholder="如：收集昨天的科技新闻" @input="resizePayload"></textarea>
+        <span>{{ t('schedules.reminder') }}</span>
+        <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t('schedules.reminderPlaceholder')" @input="resizePayload"></textarea>
       </label>
       <div class="divider"></div>
 
       <div class="field">
-        <span>重复</span>
+        <span>{{ t('schedules.repeat') }}</span>
         <div class="repeat-tabs">
           <button v-for="opt in REPEAT_OPTS" :key="opt.v" type="button" class="repeat-tab"
             :class="{ on: repeatMode === opt.v }" @click="repeatMode = opt.v">{{ opt.label }}</button>
         </div>
         <div v-if="repeatMode === 'interval'" class="interval-presets">
-          <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
-            :class="{ on: intervalPreset === String(minutes) }" @click="selectIntervalPreset(minutes)">{{ minutes }}分钟</button>
+            <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
+            :class="{ on: intervalPreset === String(minutes) }" @click="selectIntervalPreset(minutes)">{{ minutes }}{{ t('schedules.intervalUnit') }}</button>
           <button type="button" class="interval-preset" :class="{ on: intervalPreset === 'custom' }"
-            @click="selectIntervalPreset('custom')">自定义</button>
+            @click="selectIntervalPreset('custom')">{{ t('schedules.custom') }}</button>
         </div>
         <div v-if="repeatMode === 'custom'" class="date-range">
-          <DatePicker v-model="customStartDate" placeholder="选择日期" />
+          <DatePicker v-model="customStartDate" :placeholder="t('schedules.selectDate')" />
         </div>
       </div>
       <div class="divider"></div>
 
       <label v-if="repeatMode !== 'interval' || intervalPreset === 'custom'" class="field time-field">
-        <span>{{ repeatMode === 'interval' ? '分钟' : '时间' }}</span>
-        <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" placeholder="例如 15" />
+        <span>{{ repeatMode === 'interval' ? t('schedules.minutes') : t('schedules.time') }}</span>
+        <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" :placeholder="t('scheduleUi.intervalPlaceholder')" />
         <TimeInput v-else v-model="form.time" />
       </label>
       <div v-if="repeatMode !== 'interval' || intervalPreset === 'custom'" class="divider"></div>
 
       <div class="field">
-        <span>发到哪</span>
+        <span>{{ t('schedules.sendTo') }}</span>
         <div class="chans">
           <template v-for="channel in CHANNELS" :key="channel.value">
             <Checkbox v-if="channel.value === 'web' || props.imChannels.includes(channel.value)"
@@ -50,8 +50,8 @@
 
         <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
       <div class="modal-actions">
-        <ActionButton variant="secondary" @click="emit('close')">取消</ActionButton>
-        <ActionButton :disabled="props.busy" @click="submit">{{ props.task ? '保存' : '创建' }}</ActionButton>
+        <ActionButton variant="secondary" @click="emit('close')">{{ t('schedules.cancel') }}</ActionButton>
+        <ActionButton :disabled="props.busy" @click="submit">{{ props.task ? t('schedules.save') : t('schedules.createAction') }}</ActionButton>
       </div>
     </div>
   </BaseModal>
@@ -59,6 +59,7 @@
 
 <script setup lang="ts">
 import { nextTick, reactive, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Checkbox from '@/components/common/Checkbox.vue'
@@ -77,19 +78,20 @@ const emit = defineEmits<{
   (event: 'close'): void
   (event: 'save', data: Record<string, any>): void
 }>()
+const { t } = useI18n()
 
-const REPEAT_OPTS: { v: RepeatMode; label: string }[] = [
-  { v: 'interval', label: '分钟' }, { v: 'daily', label: '每日' },
-  { v: 'weekday', label: '工作日' }, { v: 'weekend', label: '周末' },
-  { v: 'custom', label: '自定义' },
-]
+const REPEAT_OPTS = computed<{ v: RepeatMode; label: string }[]>(() => [
+  { v: 'interval', label: t('schedules.minutes') }, { v: 'daily', label: t('schedules.daily') },
+  { v: 'weekday', label: t('schedules.weekday') }, { v: 'weekend', label: t('schedules.weekend') },
+  { v: 'custom', label: t('schedules.custom') },
+])
 const INTERVAL_PRESETS = [1, 5, 10, 30, 60]
-const CHANNELS = [
-  { value: 'web', label: 'web 通知' },
-  { value: 'feishu', label: '飞书' },
-  { value: 'qq', label: 'QQ' },
-  { value: 'wechat', label: '微信' },
-]
+const CHANNELS = computed(() => [
+  { value: 'web', label: t('schedules.webNotice') },
+  { value: 'feishu', label: t('schedules.feishu') },
+  { value: 'qq', label: t('schedules.qq') },
+  { value: 'wechat', label: t('schedules.wechat') },
+])
 const repeatMode = ref<RepeatMode>('daily')
 const customStartDate = ref('')
 const intervalMinutes = ref(5)
@@ -150,8 +152,8 @@ function toggleChannel(channel: string, checked: boolean) {
   form.channels = [...channels]
 }
 function submit() {
-  if (!form.name.trim()) { formErr.value = '名称不能为空'; return }
-  if (!form.channels.length) { formErr.value = '至少选一个发送渠道'; return }
+  if (!form.name.trim()) { formErr.value = t('schedules.nameRequired'); return }
+  if (!form.channels.length) { formErr.value = t('schedules.channelRequired'); return }
   formErr.value = ''
   emit('save', {
     name: form.name.trim(), payload: form.payload,
@@ -187,8 +189,6 @@ function submit() {
 .interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
 .interval-preset:hover { border-color: var(--option-border-hover); }
 .interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
-.time-field input[type=number] { appearance: textfield; }
-.time-field input[type=number]::-webkit-inner-spin-button, .time-field input[type=number]::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .chans { display: flex; gap: 18px; }
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }

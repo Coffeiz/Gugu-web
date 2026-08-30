@@ -12,21 +12,22 @@
           @focus="($event.target as HTMLInputElement).select()"
         />
       </span>
-      <span v-else class="ci-title">{{ (localTitles.get(canvas.id) ?? canvas.title) || '未命名画布' }}</span>
+      <span v-else class="ci-title">{{ (localTitles.get(canvas.id) ?? canvas.title) || t('mindUi.unnamedCanvas') }}</span>
       <div class="ci-actions">
-        <button :disabled="savingIds.has(canvas.id)" :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @mousedown.prevent @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
+        <button :disabled="savingIds.has(canvas.id)" :title="editingId === canvas.id ? t('mindUi.confirm') : t('mindUi.rename')" class="ci-btn" @mousedown.prevent @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
           <Icon v-if="editingId === canvas.id" name="status.success" :size="11" />
           <Icon v-else name="action.edit" :size="11" />
         </button>
-        <button :disabled="savingIds.has(canvas.id)" title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><Icon name="action.delete" :size="11" /></button>
+        <button :disabled="savingIds.has(canvas.id)" :title="t('mindUi.deleteCanvas')" class="ci-btn ci-delete" @click.stop="remove(canvas)"><Icon name="action.delete" :size="11" /></button>
       </div>
     </div>
-    <button class="canvas-create-card" data-layout-key="canvas-create" @click="emit('create')"><Icon name="action.add" :size="14" />新建画布</button>
+    <button class="canvas-create-card" data-layout-key="canvas-create" @click="emit('create')"><Icon name="action.add" :size="14" />{{ t('mindUi.newCanvas') }}</button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onBeforeUpdate, onUpdated, ref, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
@@ -39,6 +40,7 @@ const props = defineProps({
   rename: { type: Function as PropType<(id: number, title: string) => Promise<unknown>>, required: true },
 })
 const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void }>()
+const { t } = useI18n()
 const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
@@ -66,7 +68,7 @@ onUpdated(() => {
 })
 
 function open(id: number) { emit('open', id) }
-async function remove(canvas: MindCanvas) { if (await confirmDialog({ title: '删除画布', message: `删除画布「${canvas.title || '未命名画布'}」？`, tone: 'danger', confirmText: '删除画布' })) emit('delete', canvas) }
+async function remove(canvas: MindCanvas) { if (await confirmDialog({ title: t('mindUi.deleteCanvas'), message: t('mindUi.deleteCanvasMessage', { name: canvas.title || t('mindUi.unnamedCanvas') }), tone: 'danger', confirmText: t('mindUi.deleteCanvas') })) emit('delete', canvas) }
 function startRename(canvas: MindCanvas) {
   if (savingIds.value.has(canvas.id)) return
   editingId.value = canvas.id
@@ -100,7 +102,7 @@ async function commitRename(id: number) {
     localTitles.value.delete(id)
   } catch {
     localTitles.value.delete(id)
-    showAppError(`画布重命名失败，已恢复为「${previous || '未命名画布'}」`)
+    showAppError(t('mindUi.renameCanvasFailed', { name: previous || t('mindUi.unnamedCanvas') }))
   } finally {
     const remaining = new Set(savingIds.value)
     remaining.delete(id)

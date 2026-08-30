@@ -1,8 +1,8 @@
 <template>
   <div class="section stages-section">
     <div class="stages-header">
-      <label class="section-label">项目阶段 <span class="label-hint">拖拽排序</span></label>
-      <button class="add-stage-btn" @click="handleAddStage">＋ 添加</button>
+      <label class="section-label">{{ t('projects.stages') }} <span class="label-hint">{{ t('projects.dragSort') }}</span></label>
+      <button class="add-stage-btn" @click="handleAddStage">＋ {{ t('projects.addStage') }}</button>
     </div>
     <div class="stage-flow scroll-surface scroll-surface--compact" ref="stageFlowRef">
       <TransitionGroup name="stage-flip">
@@ -65,7 +65,7 @@
         :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
         <span class="node-label">{{ stageDrag.ghostLabel }}</span>
         <div v-if="stageDrag.ghostTodos.length" class="ghost-todos">
-          <div v-for="t in stageDrag.ghostTodos" :key="t.id" class="ghost-todo" :class="{ done: t.done }">{{ t.text || '待办事项' }}</div>
+          <div v-for="todo in stageDrag.ghostTodos" :key="todo.id" class="ghost-todo" :class="{ done: todo.done }">{{ todo.text || t('projects.todo') }}</div>
         </div>
       </div>
     </Teleport>
@@ -79,6 +79,8 @@ import type { ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
 import { useProjectTodos } from '@/composables/projects/useProjectTodos'
 import ProjectTodosPanel from './ProjectTodosPanel.vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 
 const props = defineProps({
   stages: { type: Array as PropType<ProjectStage[]>, required: true },

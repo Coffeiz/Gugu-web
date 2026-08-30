@@ -52,6 +52,12 @@ const adoptedForms = load('./adoption/forms.css')
 const configField = load('../../views/Admin/Config/components/ConfigField.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('项目阶段待办循环不遮蔽 i18n 翻译函数', () => {
+    expect(projectCard).not.toContain('v-for="(t, i) in currentTodos"')
+    expect(projectCard).toContain('v-for="(todo, i) in currentTodos"')
+    expect(projectCard).toContain(':placeholder="t(\'projects.todoPlaceholder\')"')
+  })
+
   it('Admin field-input 使用完整实线边框，避免回落到浏览器原生双层描边', () => {
     const sharedFieldBlock = cssBlock(adoptedForms, '.field-input')
     expect(sharedFieldBlock).toContain('border: 1px solid var(--input-border);')
@@ -153,7 +159,9 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
     // 日期弹层及其年份子弹层必须各自只有一个 PopupMenu 根，不能再套重复 surface。
     expect(datePicker).toContain('<PopupMenu :show="open"')
-    expect(datePicker).toContain('popup-class="dp-popup-host"')
+    expect(datePicker).toContain(':style="{ ...popupStyle, padding: 0 }"')
+    expect(datePicker).not.toContain(':transparent="true"')
+    expect(datePicker).not.toContain('popup-class="dp-popup-host"')
     expect(datePicker).not.toContain('popup-menu-dark')
     expect(adminDatePicker).toContain('<PopupMenu :show="show"')
     expect(adminDatePicker).toContain('popup-class="adp-popup-host"')

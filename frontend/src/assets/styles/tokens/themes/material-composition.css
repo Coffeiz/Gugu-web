@@ -1,6 +1,6 @@
 /* This layer composes palette colors into Aero material roles. Mono keeps its complete material
    recipes in mono-light.css and mono-dark.css, so it is intentionally absent from this file. */
-:root[data-family='glass'][data-theme='light']:not([data-palette='aero']) {
+:root[data-family='glass'][data-theme='light']:not([data-palette='mist']) {
   --theme-page: linear-gradient(160deg,var(--palette-page-start) 0%,var(--palette-page-mid) 35%,var(--palette-page-end) 100%);
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 4%,rgba(255,255,255,.42));
   --theme-base: color-mix(in srgb,var(--palette-surface-strong) 90%,transparent);
@@ -24,7 +24,7 @@
   --theme-border-hover: color-mix(in srgb,var(--palette-highlight) 40%,rgba(255,255,255,.92));
   --theme-highlight-rest: color-mix(in srgb,var(--palette-highlight) 95%,transparent);
 }
-:root[data-family='glass'][data-theme='dark']:not([data-palette='aero']) {
+:root[data-family='glass'][data-theme='dark']:not([data-palette='mist']) {
   --theme-page: linear-gradient(145deg,var(--palette-page-start) 0%,var(--palette-page-mid) 60%,var(--palette-page-end) 100%);
   --theme-auth-page: linear-gradient(145deg,var(--palette-page-start) 0%,var(--palette-page-mid) 60%,var(--palette-page-end) 100%);
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 5%,rgba(20,22,35,.86));
@@ -51,7 +51,7 @@
 
 /* Mono 保留自己的实体面板、阴影和圆角配方；非 Mono 调色板只负责给这些材质染上邻近色。
    默认 mono 调色板不进入这里，以保持原本的暖灰 Mono 视觉。 */
-:root[data-family='mono'][data-theme='light']:not([data-palette='mono']) {
+:root[data-family='mono'][data-theme='light']:not([data-palette='cafe']) {
   --theme-page: radial-gradient(900px 560px at 78% -8%,color-mix(in srgb,var(--theme-action-primary) 10%,transparent),transparent 62%),radial-gradient(700px 440px at 18% 110%,color-mix(in srgb,var(--theme-action-primary) 8%,transparent),transparent 65%),linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 6%,#f5f3f6),color-mix(in srgb,var(--theme-action-primary) 9%,#eeecf0));
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 6%,#f8f6f9);
   --theme-base: color-mix(in srgb,var(--theme-action-primary) 7%,#f7f5f8);
@@ -63,7 +63,7 @@
   --theme-raised: color-mix(in srgb,var(--theme-action-primary) 3%,#ffffff);
   --theme-floating: color-mix(in srgb,var(--theme-action-primary) 5%,#fdfcfe);
 }
-:root[data-family='mono'][data-theme='dark']:not([data-palette='mono']) {
+:root[data-family='mono'][data-theme='dark']:not([data-palette='cafe']) {
   --theme-page: radial-gradient(900px 560px at 80% -10%,color-mix(in srgb,var(--theme-action-primary) 12%,transparent),transparent 62%),radial-gradient(760px 480px at 16% 110%,color-mix(in srgb,var(--theme-action-primary) 9%,transparent),transparent 66%),linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 8%,#1c1921),color-mix(in srgb,var(--theme-action-primary) 10%,#17151b));
   --theme-auth-page: linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 8%,#1c1921) 0%,color-mix(in srgb,var(--theme-action-primary) 9%,#19171f) 52%,color-mix(in srgb,var(--theme-action-primary) 10%,#17151b) 100%);
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 6%,#19171e);

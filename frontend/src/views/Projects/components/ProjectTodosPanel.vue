@@ -13,15 +13,15 @@
         <input v-if="editingTodo === todo.id" :class="['todo-input', `todo-input-${stage.key}`]"
           :data-tid="todo.id" v-model="todo.text" :title="todo.text"
           :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-          placeholder="待办事项" @blur="emit('finish-edit'); emit('save')"
+          :placeholder="t('projects.todo')" @blur="emit('finish-edit'); emit('save')"
           v-enter.prevent="() => (emit('finish-edit'), emit('save'))"
           @keydown.esc="emit('finish-edit')" @keydown.backspace="!todo.text && emit('remove', stage, todo.id)" />
         <span v-else class="todo-name" :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-          @click.stop="emit('start-edit', todo.id)">{{ todo.text || '待办事项' }}</span>
+          @click.stop="emit('start-edit', todo.id)">{{ todo.text || t('projects.todo') }}</span>
         <button class="todo-del" @click.stop="emit('remove', stage, todo.id)"><Icon name="action.close" :size="8" /></button>
       </div>
     </TransitionGroup>
-    <button class="todo-add-btn" @click.stop="emit('add', stage)">＋ 添加待办</button>
+    <button class="todo-add-btn" @click.stop="emit('add', stage)">＋ {{ t('projects.addTodo') }}</button>
   </div>
 </template>
 
@@ -29,6 +29,8 @@
 import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 
 defineProps({
   stage: { type: Object as PropType<ProjectStage>, required: true },

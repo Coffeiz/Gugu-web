@@ -1,17 +1,17 @@
 <template>
-  <div class="intent-distribution" aria-label="需求类型分布与误判率">
+  <div class="intent-distribution" :aria-label="t('perception.intent')">
     <div class="intent-legend" aria-hidden="true">
-      <span><i class="legend-main"></i>整体占比</span>
-      <span><i class="legend-misread"></i>其中误判</span>
+      <span><i class="legend-main"></i>{{ t('perceptionUi.overall') }}</span>
+      <span><i class="legend-misread"></i>{{ t('perceptionUi.misread') }}</span>
     </div>
     <div v-for="item in items" :key="item.intent" class="intent-row">
       <div class="intent-meta">
         <span class="intent-name">{{ item.intent }}</span>
-        <span class="intent-sample">{{ item.count }} 条</span>
+        <span class="intent-sample">{{ item.count }}{{ t('perception.countUnit') }}</span>
         <span class="intent-share">{{ item.pct.toFixed(0) }}%</span>
-        <span class="intent-rate" :class="rateClass(item.misperc_rate)">误判 {{ percent(item.misperc_rate) }}</span>
+        <span class="intent-rate" :class="rateClass(item.misperc_rate)">{{ t('perceptionUi.misreadRateShort') }} {{ percent(item.misperc_rate) }}</span>
       </div>
-      <div class="intent-track" :aria-label="`${item.intent}：整体占比 ${item.pct.toFixed(0)}%，误判率 ${percent(item.misperc_rate)}`">
+      <div class="intent-track" :aria-label="t('perceptionUi.intentBarLabel', { intent: item.intent, share: item.pct.toFixed(0), rate: percent(item.misperc_rate) })">
         <div class="intent-bar" :style="{ width: `${Math.max(0, Math.min(100, item.pct / maxShare * 100))}%` }">
           <span class="intent-misread" :style="{ width: `${Math.max(0, Math.min(100, item.misperc_rate * 100))}%` }"></span>
         </div>
@@ -22,6 +22,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 interface IntentRow {
   intent: string

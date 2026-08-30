@@ -137,6 +137,7 @@
       <LlmPresetEditor
         v-if="editTarget"
         :draft="editTarget"
+        :visible="!editClosing"
         :is-new="editIsNew"
         :saving="editSaving"
         :error="editError"
@@ -153,7 +154,8 @@
         :model-options="modelOptions"
         :filtered-models="filteredModelOptions"
         :probing-dim="probingDim"
-        @close="editTarget = null"
+        @close="closePresetEditor"
+        @after-close="finishPresetClose"
         @save="savePreset"
         @set-provider="setEditProviderSelection"
         @open-model-menu="modelMenuOpen = true"
@@ -339,7 +341,7 @@
             </div>
             <input
               type="number"
-              class="behavior-input"
+              class="behavior-input number-input"
               v-model.number="generalSearchDraft.max_results"
               min="1" max="20"
             />
@@ -353,8 +355,7 @@
             <div style="display:flex; align-items:center; gap:8px;">
               <input
                 type="number"
-                class="behavior-input"
-                style="width: 120px;"
+                class="behavior-input number-input"
                 v-model.number="ragIndexTtlDays"
                 min="7" max="365"
               />
@@ -366,7 +367,7 @@
 
         <div class="card-actions">
           <span class="save-hint" :class="{ error: !!generalSearchError }">
-            <template v-if="generalSearchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-if="generalSearchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>{{ t('agent.saved') }}</template>
             <template v-else-if="generalSearchError">{{ generalSearchError }}</template>
           </span>
           <button class="btn-ghost" @click="resetGeneralSearch">{{ t('agentConfigUi.undo') }}</button>
@@ -449,7 +450,7 @@
 
         <div class="card-actions">
           <span class="save-hint" :class="{ error: !!voiceError }">
-            <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>{{ t('agent.saved') }}</template>
             <template v-else-if="voiceError">{{ voiceError }}</template>
             <template v-else-if="voiceTestMsg">{{ voiceTestMsg }}</template>
           </span>
@@ -520,7 +521,7 @@
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>维度 dimensions</span><span class="behavior-desc">0＝用模型默认（qwen3-embedding:0.6b 默认 1024）；部分模型支持指定降维。<b>改了维度＝换模型，需重建向量</b></span></div>
-            <input type="number" class="behavior-input" style="width:280px" v-model.number="embeddingDraft.dimensions" placeholder="0（模型默认）" />
+            <input type="number" class="behavior-input number-input" v-model.number="embeddingDraft.dimensions" placeholder="0（模型默认）" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>连通测试</span><span class="behavior-desc">用上面填的参数发一次 embed，看通不通、返回几维（改完先保存再测更准，测试用的是当前输入值）</span></div>
@@ -550,7 +551,7 @@
 
         <div class="card-actions">
           <span class="save-hint" :class="{ error: !!embeddingError }">
-            <template v-if="embeddingSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-if="embeddingSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>{{ t('agent.saved') }}</template>
             <template v-else-if="embeddingError">{{ embeddingError }}</template>
           </span>
           <button class="btn-ghost" @click="resetEmbedding">撤销修改</button>
@@ -594,6 +595,7 @@ import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
+import { MODEL_PROVIDERS } from '@/utils/modelProviders'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
@@ -630,45 +632,37 @@ function switchTab(key: string) {
 }
 
 // ── LLM 预设 ──────────────────────────────────────────────────────────────
-const PROVIDERS = [
-  { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
-  { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
-  { key: 'qwen',      label: 'DashScope(百炼)', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
-  { key: 'glm',       label: '智谱 GLM',       base_url: 'https://open.bigmodel.cn/api/paas/v4',              model: 'glm-5.2' },
-  { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-v4-flash-vision-exp' },
-  { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
-  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-mono.5' },
-  { key: 'ollama',    label: 'Ollama',      base_url: 'http://127.0.0.1:11434/v1',                          model: 'qwen3:8b' },
-  { key: 'local',     label: '本地兼容服务', base_url: '',                                                   model: '' },
-]
+const PROVIDERS = computed(() => [
+  ...MODEL_PROVIDERS.map(provider => ({ key: provider.value, label: t(provider.labelKey), base_url: provider.base_url, model: provider.model })),
+])
 
 // MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
-const API_FORMATS = [
-  { key: 'openai',    label: 'OpenAI 格式' },
-  { key: 'anthropic', label: 'Anthropic 兼容' },
-]
+const API_FORMATS = computed(() => [
+  { key: 'openai',    label: t('adminAgentUi.formatOpenai') },
+  { key: 'anthropic', label: t('adminAgentUi.formatAnthropic') },
+])
 
 const capabilityProbeLoading = ref(false)
 const capabilityProbeResult = ref<Record<string, { status?: string; detail?: string }>>({})
 
 // 多模态三维度：图片→vision，视频→vision_video，音频→vision_audio
-const visionDims = [
-  { key: 'image', label: '图片', hint: '用户发的图片直接给模型「看」' },
-  { key: 'video', label: '视频', hint: '用户发的视频直接给模型「看」' },
-  { key: 'audio', label: '音频', hint: '用户发的音频直接给模型「听」' },
-]
-const DEEPSEEK_EFFORTS = [
-  { key: '', label: '默认' },
-  { key: 'low', label: '低' },
-  { key: 'high', label: '高' },
-  { key: 'max', label: '最大' },
-]
-const IMAGE_DETAIL_LEVELS = [
-  { key: 'auto', label: '自动' },
-  { key: 'low', label: '低' },
-  { key: 'high', label: '高' },
-  { key: 'original', label: '原图' },
-]
+const visionDims = computed(() => [
+  { key: 'image', label: t('agent.image'), hint: t('adminAgentUi.imageHint') },
+  { key: 'video', label: t('agent.video'), hint: t('adminAgentUi.videoHint') },
+  { key: 'audio', label: t('agent.audio'), hint: t('adminAgentUi.audioHint') },
+])
+const DEEPSEEK_EFFORTS = computed(() => [
+  { key: '', label: t('adminAgentUi.defaultOption') },
+  { key: 'low', label: t('adminAgentUi.low') },
+  { key: 'high', label: t('adminAgentUi.high') },
+  { key: 'max', label: t('adminAgentUi.maximum') },
+])
+const IMAGE_DETAIL_LEVELS = computed(() => [
+  { key: 'auto', label: t('adminAgentUi.auto') },
+  { key: 'low', label: t('adminAgentUi.low') },
+  { key: 'high', label: t('adminAgentUi.high') },
+  { key: 'original', label: t('adminAgentUi.original') },
+])
 
 // edit modal
 interface LlmPresetRecord {
@@ -699,6 +693,7 @@ interface LlmPresetDraft extends Partial<LlmPresetRecord> {
   capability_overrides: Record<string, boolean>
 }
 const editTarget   = ref<LlmPresetDraft | null>(null)
+const editClosing  = ref(false)
 const editIsNew    = ref(false)
 const editSaving   = ref(false)
 const editError    = ref('')
@@ -721,16 +716,17 @@ async function togglePool(p: LlmPresetRecord) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ in_pool: next }),
     })
-    if (!res.ok) throw new Error('更新失败')
+    if (!res.ok) throw new Error(t('adminAgentUi.operationFailed'))
     p.in_pool = next
   } catch (e) {
-    showMsg('更新分流失败：' + (e instanceof Error ? e.message : String(e)), true)
+    showMsg(t('adminAgentUi.routingFailed', { message: e instanceof Error ? e.message : String(e) }), true)
   }
 }
 
 function openNewPreset() {
+  editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -739,6 +735,7 @@ function openNewPreset() {
 }
 
 function openEditPreset(p: LlmPresetRecord) {
+  editClosing.value = false
   editIsNew.value  = false
   editTarget.value = { ...p, api_key: '', vision_detail: p.vision_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
@@ -746,6 +743,17 @@ function openEditPreset(p: LlmPresetRecord) {
   modelListError.value = ''
   modelMenuOpen.value = false
   capabilityProbeResult.value = p.capability_probe || {}
+}
+
+function closePresetEditor() {
+  editClosing.value = true
+}
+
+function finishPresetClose() {
+  if (!editClosing.value) return
+  editTarget.value = null
+  editClosing.value = false
+  modelMenuOpen.value = false
 }
 
 function closeModelMenuSoon() {
@@ -767,7 +775,7 @@ async function probeCapabilities(id: string) {
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/capabilities`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.detail || '能力检测失败')
+    if (!res.ok) throw new Error(data.detail || t('adminAgentUi.capabilityProbeFailed'))
     target.capability_checked_at = data.checked_at || ''
     target.capability_fingerprint = data.fingerprint || ''
     capabilityProbeResult.value = data.results || {}
@@ -785,7 +793,7 @@ async function probeCapabilities(id: string) {
     }
     target.capability_overrides = next
   } catch (e) {
-    editError.value = e instanceof Error ? e.message : '能力检测失败'
+    editError.value = e instanceof Error ? e.message : t('adminAgentUi.capabilityProbeFailed')
   } finally {
     capabilityProbeLoading.value = false
   }
@@ -823,12 +831,12 @@ async function fetchModelList() {
       res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${target.id}/models`)
     }
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.detail || '获取模型列表失败')
+    if (!res.ok) throw new Error(data.detail || t('adminAgentUi.modelsLoadFailed'))
     modelOptions.value = Array.isArray(data.models) ? data.models : []
-    if (!modelOptions.value.length) modelListError.value = '服务商没有返回可用模型，请手动输入'
+    if (!modelOptions.value.length) modelListError.value = t('adminAgentUi.modelsEmpty')
   } catch (error) {
     modelOptions.value = []
-    modelListError.value = error instanceof Error ? error.message : '获取模型列表失败'
+    modelListError.value = error instanceof Error ? error.message : t('adminAgentUi.modelsLoadFailed')
   } finally {
     modelListLoading.value = false
   }
@@ -836,7 +844,7 @@ async function fetchModelList() {
 
 function setEditProvider(key: string) {
   const target = editTarget.value
-  const pv = PROVIDERS.find(p => p.key === key)
+  const pv = PROVIDERS.value.find(p => p.key === key)
   if (!pv || !target) return
   target.provider = key
   target.base_url = pv.base_url
@@ -916,11 +924,11 @@ async function savePreset() {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || `保存失败（${res.status}）`)
+      throw new Error(err.detail || t('adminAgentUi.saveFailedStatus', { status: res.status }))
     }
-    editTarget.value = null
+    editClosing.value = true
     await fetchPresets()
-    showMsg('已保存')
+    showMsg(t('adminAgentUi.saved'))
   } catch (e) {
     editError.value = (e instanceof Error ? e.message : String(e))
   } finally {
@@ -960,10 +968,10 @@ async function probeVision(id: string | number | undefined, dim?: string) {
     const data = await res.json()
     if (dim) {
       // 单维度（弹窗内）
-      const label = visionDims.find(d => d.key === dim)?.label || dim
-      if (data.supported === true)       showMsg(`✅ ${label}：支持，已开启`)
-      else if (data.supported === false) showMsg(`${label}：不支持，已设为关闭：${data.detail}`, true)
-      else                               showMsg(`${label}：测不准：${data.detail}`, true)
+      const label = visionDims.value.find(d => d.key === dim)?.label || dim
+      if (data.supported === true)       showMsg(t('adminAgentUi.dimensionSupported', { label }))
+      else if (data.supported === false) showMsg(t('adminAgentUi.dimensionUnsupported', { label, detail: data.detail }), true)
+      else                               showMsg(t('adminAgentUi.dimensionUnknown', { label, detail: data.detail }), true)
       if (data.supported === true || data.supported === false) {
         const field = dim === 'image' ? 'vision' : 'vision_' + dim
         target![field] = data.supported
@@ -972,7 +980,7 @@ async function probeVision(id: string | number | undefined, dim?: string) {
       // 全维度（卡片）
       const results = data.results || {}
       const ok: string[] = [], no: string[] = [], unk: string[] = []
-      for (const d of visionDims) {
+      for (const d of visionDims.value) {
         const r = results[d.key]
         if (!r) continue
         if (r.supported === true) ok.push(d.label)
@@ -980,14 +988,14 @@ async function probeVision(id: string | number | undefined, dim?: string) {
         else unk.push(d.label)
       }
       const parts: string[] = []
-      if (ok.length) parts.push(`支持：${ok.join('、')}`)
-      if (no.length) parts.push(`不支持：${no.join('、')}`)
-      if (unk.length) parts.push(`测不准：${unk.join('、')}`)
-      showMsg(parts.length ? `检测完成 — ${parts.join('；')}` : '检测完成，未返回结果')
+      if (ok.length) parts.push(t('adminAgentUi.supportedList', { values: ok.join('、') }))
+      if (no.length) parts.push(t('adminAgentUi.unsupportedList', { values: no.join('、') }))
+      if (unk.length) parts.push(t('adminAgentUi.unknownList', { values: unk.join('、') }))
+      showMsg(parts.length ? t('adminAgentUi.probeComplete', { details: parts.join('；') }) : t('adminAgentUi.probeNoResult'))
     }
     await fetchPresets()   // 刷新卡片徽章
   } catch (e) {
-    showMsg('检测失败：' + (e instanceof Error ? e.message : String(e)), true)
+    showMsg(t('adminAgentUi.probeFailed', { message: e instanceof Error ? e.message : String(e) }), true)
   } finally {
     probingId.value = null
     probingDim.value = null
@@ -1119,16 +1127,11 @@ function resetPermissions() {
 
 .behavior-input {
   width: 72px;
-  background: rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 13px; font-weight: 600;
-  color: rgba(255,255,255,0.8);
   text-align: center; outline: none;
-  transition: border-color 0.15s;
 }
-.behavior-input:focus { border-color: rgba(123,127,178,0.4); }
 
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1146,8 +1149,8 @@ function resetPermissions() {
 .strategy-select { display: flex; align-items: center; gap: 6px; min-height: 34px; font-size: 12px; color: rgba(255,255,255,0.5); }
 .pca-btn--pool-on { background: rgba(123,127,178,0.22); color: rgba(180,176,224,1); }
 .conc-input {
-  width: 52px; height: 34px; box-sizing: border-box; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 5px 8px; outline: none;
+  width: 52px; height: 34px; box-sizing: border-box;
+  border-radius: 8px; font-size: 12px; padding: 5px 8px; outline: none; text-align: center;
 }
 .presets-loading { padding: 40px 0; text-align: center; font-size: 13px; color: rgba(255,255,255,0.25); }
 

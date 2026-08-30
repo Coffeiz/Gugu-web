@@ -199,7 +199,7 @@ html[data-theme][data-family] .cal-toolbar .view-toggle {
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
 
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .chat-window {
+html[data-theme='light'][data-family][data-palette]:not([data-palette='mist']):not([data-palette='cafe']) .chat-window {
   --gugu-chat-highlight: var(--aero-glass-highlight);
   border-top-color: var(--aero-glass-border);
 }
@@ -211,7 +211,7 @@ html[data-theme='light'][data-family='mono'] .chat-window {
 }
 
 /* 个人设置左侧栏的分界线同样由 border-right + inset 侧向高光组成，亮色非 Aero 时保持一致。 */
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .bm-card .pm-layout > .pm-nav.panel-left {
+html[data-theme='light'][data-family][data-palette]:not([data-palette='mist']):not([data-palette='cafe']) .bm-card .pm-layout > .pm-nav.panel-left {
   --panel-glass-border: var(--aero-glass-border);
   --panel-glass-side-highlight: var(--aero-glass-highlight-side);
 }

@@ -1,19 +1,19 @@
 <template>
   <FileBrowserBreadcrumb tag="nav" class-name="file-breadcrumb">
-    <button class="pm-nav-hist-btn" :disabled="!canGoBack" @click="emit('goBack')" title="后退">
+    <button class="pm-nav-hist-btn" :disabled="!canGoBack" @click="emit('goBack')" :title="t('sharedUi.back')">
       <Icon name="action.back" :size="13" />
     </button>
-    <button class="pm-nav-hist-btn" :disabled="!canGoForward" @click="emit('goForward')" title="前进">
+    <button class="pm-nav-hist-btn" :disabled="!canGoForward" @click="emit('goForward')" :title="t('sharedUi.forward')">
       <Icon name="action.next" :size="13" />
     </button>
     <button v-if="folderStack.length === 0" class="bc-seg"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-      <span class="bc-label">项目文件</span>
+      <span class="bc-label">{{ t('sharedUi.projectFiles') }}</span>
     </button>
     <RuntimeBreadcrumbTarget v-else class="bc-seg" target-id="bc:-1"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-        <span class="bc-label">项目文件</span>
+        <span class="bc-label">{{ t('sharedUi.projectFiles') }}</span>
     </RuntimeBreadcrumbTarget>
     <template v-for="(segment, index) in folderStack" :key="segment.id">
       <Icon name="action.next" :size="10" class="bc-sep" />
@@ -32,10 +32,12 @@
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { FolderMeta } from '@/stores/filesCache'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
 import RuntimeBreadcrumbTarget from '@/components/common/file-browser/RuntimeBreadcrumbTarget.vue'
 import { breadcrumbSurfaceId } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
+const { t } = useI18n()
 
 defineProps({
   canGoBack: Boolean,

@@ -6,8 +6,8 @@
       :value="modelValue"
       class="search-input-field"
       type="search"
-      :placeholder="placeholder"
-      :aria-label="ariaLabel || placeholder"
+      :placeholder="placeholder || t('common.search')"
+      :aria-label="ariaLabel || placeholder || t('common.search')"
       @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       @focus="emit('focus', $event)"
       @blur="emit('blur', $event)"
@@ -15,7 +15,7 @@
       @compositionend="emit('compositionend', $event)"
       @keydown="emit('keydown', $event)"
     />
-    <button v-if="clearable && modelValue" class="search-input-clear" title="清除" @click="clear">
+    <button v-if="clearable && modelValue" class="search-input-clear" :title="t('common.actions.clear')" :aria-label="t('common.actions.clear')" @click="clear">
       <Icon name="action.close" :size="13" />
     </button>
   </div>
@@ -24,9 +24,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
 defineProps({
   modelValue: { type: String, default: '' },
-  placeholder: { type: String, default: '搜索' },
+  placeholder: { type: String, default: '' },
   ariaLabel: { type: String, default: '' },
   active: { type: Boolean, default: false },
   clearable: { type: Boolean, default: false },
@@ -34,6 +35,7 @@ defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'focus', 'blur', 'compositionstart', 'compositionend', 'keydown', 'clear'])
 const inputEl = ref<HTMLInputElement | null>(null)
+const { t } = useI18n()
 
 function clear() {
   emit('update:modelValue', '')

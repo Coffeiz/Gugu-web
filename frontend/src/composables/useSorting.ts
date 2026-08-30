@@ -1,16 +1,16 @@
-import { ref, reactive, type Ref } from 'vue'
+import { computed, ref, reactive, type Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 export type SortDir = 'asc' | 'desc'
 
-export const SORT_OPTIONS: { key: string; label: string }[] = [
-  { key: 'name',      label: '名称' },
-  { key: 'type',      label: '类型' },
-  { key: 'stage',     label: '阶段' },
-  { key: 'createdAt', label: '创建时间' },
-  { key: 'size',      label: '大小' },
-]
+export const SORT_OPTION_KEYS = ['name', 'type', 'stage', 'createdAt', 'size'] as const
 
 export function useSorting() {
+  const { t } = useI18n()
+  const SORT_OPTIONS = computed(() => SORT_OPTION_KEYS.map(key => ({
+    key,
+    label: t(`filesViewUi.${key === 'stage' ? 'projectStage' : key === 'createdAt' ? 'date' : key}`),
+  })))
   const sortKey      = ref('name')
   const sortDir: Ref<SortDir> = ref<SortDir>('asc')
   const sortMenuOpen = ref(false)

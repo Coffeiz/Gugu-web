@@ -90,12 +90,10 @@ onUnmounted(stopOwnershipSubscription)
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
 watch(() => uiStore.pendingProjectHighlight, (id) => {
   if (id == null) return
-  const ms  = uiStore.pendingProjectHighlightMs || 1800        // 缺省 1.8s；新手引导设 5000
-  const cls = uiStore.pendingProjectHighlightBreath ? 'onboard-flash' : 'search-flash'  // 引导用「呼吸」动画
+  const ms  = uiStore.pendingProjectHighlightMs || 1800
   uiStore.pendingProjectHighlight = null
   uiStore.pendingProjectHighlightMs = null
-  uiStore.pendingProjectHighlightBreath = false
-  _flashProject(id, ms, cls)
+  _flashProject(id, ms, 'search-flash')
 }, { immediate: true })
 
 function _flashProject(id, ms = 1800, cls = 'search-flash') {

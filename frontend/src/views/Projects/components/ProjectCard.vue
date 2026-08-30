@@ -22,7 +22,7 @@
             :key="n"
             class="star-btn"
             :class="{ active: prioValue >= n }"
-            :title="PRIO_LABELS[n]"
+            :title="t(PRIO_LABELS[n])"
             @click="setPriority(n)"
           >
             <svg width="11" height="11" viewBox="0 0 16 16">
@@ -53,7 +53,7 @@
           @mousedown.stop
           @pointerdown.stop
         >
-          <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
+          <span class="ps-label">{{ currentStageLabel || t('projects.phase') }}</span>
           <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
           <svg class="ps-caret" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
         </span>
@@ -66,7 +66,7 @@
             <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
           </svg>
           <template v-if="project.status === 'done'">
-            <span class="done-label"><Icon name="status.success" :size="9" /> 完成</span>
+            <span class="done-label"><Icon name="status.success" :size="9" /> {{ t('projects.done') }}</span>
             <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
           </template>
           <template v-else>
@@ -102,11 +102,11 @@
           <template v-if="fileUploading">
             <svg v-if="fileUploadDone" width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span>{{ fileUploadDone ? '已上传' : `${fileUploadPct}%` }}</span>
+            <span>{{ fileUploadDone ? t('projects.uploadDone') : `${fileUploadPct}%` }}</span>
           </template>
           <template v-else>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span>放入项目</span>
+            <span>{{ t('projects.uploadToProject') }}</span>
           </template>
         </div>
       </div>
@@ -128,50 +128,50 @@
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
   <PopupMenu ref="stagePopRef" :show="stagePopOpen" :style="stagePopStyle" popup-class="todo-pop-popup">
       <div class="tp-header">
-        <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
+        <span class="tp-title">{{ currentStageLabel || t('projects.currentPhase') }}</span>
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
-        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><Icon name="action.close" :size="11" /></button>
+        <button class="popup-close-btn" @click="closeStagePop" :title="t('common.actions.close')"><Icon name="action.close" :size="11" /></button>
       </div>
       <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
-        <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
+        <div v-for="(todo, i) in currentTodos" :key="todo.id" class="tp-item"
              :class="{ 'tp-ghost': tpDrag === i }"
-             :draggable="editingTp !== t.id"
+             :draggable="editingTp !== todo.id"
              @dragstart="tpDragStart(i)"
              @dragend="tpDragEnd"
              @dragover.prevent="tpDragOver(i, $event)">
-          <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
-            <Icon name="status.success" v-if="t.done" :size="9" />
+          <button class="tp-check" :class="{ checked: todo.done }" @click="toggleTodo(todo)">
+            <Icon name="status.success" v-if="todo.done" :size="9" />
           </button>
           <input
-            v-if="editingTp === t.id"
+            v-if="editingTp === todo.id"
             class="tp-input"
-            :data-tpid="t.id"
-            v-model="t.text"
-            :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-            placeholder="待办事项"
+            :data-tpid="todo.id"
+            v-model="todo.text"
+            :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+            :placeholder="t('projects.todoPlaceholder')"
             @blur="editingTp = null; persistTodos()"
             v-enter="() => (editingTp = null, persistTodos())"
             @keydown.esc="editingTp = null"
-            @keydown.backspace="!t.text && removeTodo(t.id)"
+            @keydown.backspace="!todo.text && removeTodo(todo.id)"
           />
-          <span v-else class="tp-name" :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                @click="startEditTp(t.id)">{{ t.text || '待办事项' }}</span>
-          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><Icon name="action.close" :size="8" /></button>
+          <span v-else class="tp-name" :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                @click="startEditTp(todo.id)">{{ todo.text || t('projects.todoPlaceholder') }}</span>
+          <button class="tp-del" @click="removeTodo(todo.id)" :title="t('common.actions.delete')"><Icon name="action.close" :size="8" /></button>
         </div>
       </TransitionGroup>
-      <div v-else class="tp-empty">还没有待办</div>
-      <button class="tp-add" @click="addTodo">＋ 添加待办</button>
+      <div v-else class="tp-empty">{{ t('projects.noTodos') }}</div>
+      <button class="tp-add" @click="addTodo">＋ {{ t('projects.addTodo') }}</button>
   </PopupMenu>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, nextTick, useAttrs, watch, onUnmounted, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime } from '@/interaction/runtime'
-import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import Icon from '@/components/common/Icon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -183,6 +183,7 @@ import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 defineOptions({ inheritAttrs: false })
 
 const attrs = useAttrs()
+const { t } = useI18n()
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
 })
@@ -333,7 +334,6 @@ function toggleTodo(t: ProjectTodo) {
   const target = t.done ? firstIncompleteStageIdx(stages) : -1
   if (target > idx) {
     persistTodos(stages[target].key)
-    fireHint('stage_switch')   // 新手引导：第一次推进阶段
   } else {
     persistTodos()
   }
@@ -358,8 +358,8 @@ onUnmounted(closeStagePop)
 
 // ── 推进状态列 ────────────────────────────────────────────
 const STATUS_NEXT: Record<string, string>  = { pending: 'active', active: 'done' }
-const STATUS_LABEL: Record<string, string> = { pending: '移至进行中', active: '标记完成' }
-const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ?? '')
+const STATUS_LABEL: Record<string, string> = { pending: 'projects.moveToActive', active: 'projects.markDone' }
+const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ? t(STATUS_LABEL[props.project.status]) : '')
 
 async function advance() {
   const next = STATUS_NEXT[props.project.status]
@@ -369,7 +369,7 @@ async function advance() {
 // ── 星级优先级 ────────────────────────────────────────────
 // 1=低, 2=中, 3=高；null=无
 const PRIO_MAP: Record<string, number>    = { low: 1, medium: 2, high: 3 }
-const PRIO_LABELS: Record<number, string> = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_LABELS: Record<number, string> = { 1: 'projects.low', 2: 'projects.medium', 3: 'projects.high' }
 const PRIO_KEYS   = [null, 'low', 'medium', 'high']
 
 const prioValue = computed(() => props.project.priority ? (PRIO_MAP[props.project.priority] ?? 0) : 0)
@@ -637,12 +637,5 @@ async function setPriority(n: number) {
 @keyframes proj-search-flash {
   0%, 30% { box-shadow: 0 0 0 3px rgba(123,127,178,0.7), 0 8px 22px rgba(80,90,110,0.22); }
   100%    { box-shadow: 0 2px 8px rgba(80,90,110,0.07); }
-}
-/* 新手引导高亮：一次「呼吸」——光晕由弱渐强再渐弱（时长由 JS 动态设为 5s） */
-.proj-card.onboard-flash { animation: proj-onboard-breath 5s ease-in-out forwards; }
-@keyframes proj-onboard-breath {
-  0%   { box-shadow: 0 0 0 0 rgba(123,127,178,0), 0 2px 8px rgba(80,90,110,0.07); }
-  50%  { box-shadow: 0 0 0 5px rgba(123,127,178,0.45), 0 8px 26px rgba(123,127,178,0.28); }
-  100% { box-shadow: 0 0 0 0 rgba(123,127,178,0), 0 2px 8px rgba(80,90,110,0.07); }
 }
 </style>

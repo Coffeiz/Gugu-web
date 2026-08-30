@@ -1,7 +1,7 @@
 <template>
   <div class="agent-memory-page">
-    <div class="page-header"><div class="page-title-block"><h2 class="page-title">Agent 记忆</h2><p class="page-desc">管理记忆维护与自动知识召回；关闭 RAG 后可进行无自动召回的对照测试。</p></div></div>
-    <AdminSegmentTabs v-model="activeTab" :tabs="tabs" aria-label="Agent 记忆分类" class="memory-tabs" />
+    <div class="page-header"><div class="page-title-block"><h2 class="page-title">{{ t('adminExtraUi.memoryTitle') }}</h2><p class="page-desc">{{ t('adminExtraUi.memoryDescription') }}</p></div></div>
+    <AdminSegmentTabs v-model="activeTab" :tabs="tabs" :aria-label="t('adminExtraUi.memoryCategory')" class="memory-tabs" />
     <div class="panels-wrap">
       <template v-if="activeTab === 'maintenance'">
         <MemoryMaintenanceSettings />
@@ -13,13 +13,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import MemoryMaintenancePanel from '../Agent/memory/components/MemoryMaintenancePanel.vue'
 import MemoryRecallPanel from '../Agent/memory/components/MemoryRecallPanel.vue'
 import MemoryMaintenanceSettings from '../Agent/memory/components/MemoryMaintenanceSettings.vue'
 const activeTab = ref('maintenance')
-const tabs = [{ key: 'maintenance', label: '记忆维护' }, { key: 'retrieval', label: '记忆召回' }]
+const { t } = useI18n()
+const tabs = computed(() => [{ key: 'maintenance', label: t('adminExtraUi.maintenance') }, { key: 'retrieval', label: t('adminExtraUi.retrieval') }])
 </script>
 
 <style scoped>

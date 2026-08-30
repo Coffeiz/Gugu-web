@@ -3,7 +3,7 @@
     <div class="pm-layout">
       <div class="pm-nav panel-left">
         <div class="pm-user-block">
-          <div class="pm-avatar" :class="{ uploading: avatarUploading }" @click="triggerAvatarUpload" title="点击更换头像">
+          <div class="pm-avatar" :class="{ uploading: avatarUploading }" @click="triggerAvatarUpload" :title="t('sharedUi.changeAvatar')">
             <img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="pm-avatar-img" />
             <template v-else>{{ initial }}</template>
             <div class="pm-avatar-overlay">
@@ -23,13 +23,13 @@
           <div v-if="item.divider" class="pm-nav-divider"></div>
           <button v-else class="pm-nav-item" :class="{ active: activeNav === item.key }" @click="item.key && (activeNav = item.key)">
             <Icon :name="item.icon || ''" size="sm" tone="inherit" />
-            {{ item.label }}
+            {{ t(item.label) }}
           </button>
         </template>
         <div class="pm-nav-spacer"></div>
         <button class="pm-logout pm-danger-nav" @click="openDeleteAccount">
           <Icon name="user.remove" size="sm" tone="inherit" />
-          <span>注销账号</span>
+          <span>{{ t('sharedUi.deleteAccount') }}</span>
         </button>
       </div>
 
@@ -58,13 +58,13 @@
     <Transition name="pm-confirm">
     <div v-if="showDeleteAccount" class="pm-confirm-overlay" :style="{ zIndex: TOP_Z }" @click.self="closeDeleteAccount">
       <div class="pm-confirm-box">
-        <p class="pm-confirm-title">确认注销账号？</p>
-        <p class="pm-confirm-desc">账号及全部数据（项目、文件、日历、聊天记录、咕咕记忆等）将被<strong>永久删除</strong>，此操作不可恢复。</p>
-        <input v-model="deletePwd" type="password" class="form-input pm-confirm-input" placeholder="输入密码确认" @keyup.enter="doDeleteAccount" />
+        <p class="pm-confirm-title">{{ t('sharedUi.confirmDeleteAccount') }}</p>
+        <p class="pm-confirm-desc">{{ t('sharedUi.deleteAccountDescription') }}</p>
+        <input v-model="deletePwd" type="password" class="form-input pm-confirm-input" :placeholder="t('sharedUi.passwordConfirmation')" @keyup.enter="doDeleteAccount" />
         <p v-if="deleteErr" class="pm-msg err">{{ deleteErr }}</p>
         <div class="pm-confirm-actions">
-          <button class="btn-cancel" @click="closeDeleteAccount">取消</button>
-          <button class="pm-danger-btn" :disabled="!deletePwd || deleting" @click="doDeleteAccount">{{ deleting ? '注销中…' : '确认注销' }}</button>
+          <button class="btn-cancel" @click="closeDeleteAccount">{{ t('common.actions.cancel') }}</button>
+          <button class="pm-danger-btn" :disabled="!deletePwd || deleting" @click="doDeleteAccount">{{ deleting ? t('sharedUi.deleting') : t('sharedUi.confirmDelete') }}</button>
         </div>
       </div>
     </div>
@@ -91,27 +91,29 @@ import ProfileByokPane from './ProfileModal/ProfileByokPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
 const router = useRouter()
 const authStore = useAuthStore()
+const { t } = useI18n()
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const initial = computed<string>(() => (displayLabel.value.charAt(0) || '?').toUpperCase())
 
 const navItems = [
-  { key: 'info', label: '个人信息', icon: 'user.default' },
-  { key: 'account', label: '账号设置', icon: 'user.security' },
-  { key: 'prefs', label: '偏好设置', icon: 'user.settings' },
+  { key: 'info', label: 'sharedUi.personalInfo', icon: 'user.default' },
+  { key: 'account', label: 'sharedUi.account', icon: 'user.security' },
+  { key: 'prefs', label: 'sharedUi.preferences', icon: 'user.settings' },
   { divider: true },
-  { key: 'gugu', label: '咕咕设置', icon: 'user.gugu' },
-  { key: 'im', label: '接入咕咕', icon: 'communication.chat' },
-  { key: 'byok', label: '模型配置', icon: 'user.security' },
-  { key: 'tools', label: '能力配置', icon: 'admin.wrench' },
-  { key: 'workspaces', label: '工作区', icon: 'admin.folder' },
+  { key: 'gugu', label: 'sharedUi.guguSettings', icon: 'user.gugu' },
+  { key: 'im', label: 'sharedUi.connectGugu', icon: 'communication.chat' },
+  { key: 'byok', label: 'sharedUi.modelConfig', icon: 'user.security' },
+  { key: 'tools', label: 'sharedUi.capabilityConfig', icon: 'admin.wrench' },
+  { key: 'workspaces', label: 'sharedUi.workspaces', icon: 'admin.folder' },
 ]
 const activeNav = ref('info')
-const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
+const currentNavLabel = computed(() => { const key = navItems.find(n => !n.divider && n.key === activeNav.value)?.label; return key ? t(key) : '' })
 const infoMsg = ref('')
 const infoMsgType = ref('ok')
 
@@ -309,8 +311,8 @@ async function doDeleteAccount() {
 .pm-palette-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
 .pm-palette-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
 .pm-palette-swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: #7b7fb2; box-shadow: 0 0 0 2px color-mix(in srgb, var(--content-on-accent) 55%, transparent); }
-.pm-palette-swatch.palette-aero { background: #7b7fb2; }
-.pm-palette-swatch.palette-mono { background: #746b78; }
+.pm-palette-swatch.palette-mist { background: #7b7fb2; }
+.pm-palette-swatch.palette-cafe { background: #715653; }
 .pm-palette-swatch.palette-rose { background: #c98f98; }
 .pm-palette-swatch.palette-sky { background: #83a9c2; }
 .pm-palette-swatch.palette-sage { background: #84ab9e; }

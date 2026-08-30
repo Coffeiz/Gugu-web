@@ -7,7 +7,7 @@
       inputmode="numeric"
       maxlength="2"
       placeholder="HH"
-      aria-label="小时"
+      :aria-label="t('sharedUi.hour')"
       @focus="selectPart"
       @input="onPartInput('hour', $event)"
       @paste="onPaste"
@@ -21,7 +21,7 @@
       inputmode="numeric"
       maxlength="2"
       placeholder="MM"
-      aria-label="分钟"
+      :aria-label="t('sharedUi.minute')"
       @focus="selectPart"
       @input="onPartInput('minute', $event)"
       @paste="onPaste"
@@ -32,12 +32,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = withDefaults(defineProps<{
   modelValue: string
   boxed?: boolean
 }>(), { boxed: true })
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+const { t } = useI18n()
 
 const hourRef = ref<HTMLInputElement | null>(null)
 const minuteRef = ref<HTMLInputElement | null>(null)

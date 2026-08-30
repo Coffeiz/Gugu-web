@@ -2,7 +2,7 @@
   <div class="tool-event-bubble">
     <button class="tool-event-head" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
       <span class="tool-event-state" :class="`is-${msg.toolStatus || 'running'}`" aria-hidden="true" />
-      <span class="tool-event-label">{{ msg.toolLabel || msg.toolName || '工具调用' }}</span>
+      <span class="tool-event-label">{{ msg.toolLabel || msg.toolName || t('chatUi.toolCall') }}</span>
       <span class="tool-event-meta">{{ statusText }}</span>
       <span v-if="durationText" class="tool-event-duration">{{ durationText }}</span>
       <FlipChevron :open="expanded" :size="10" :transition="'transform var(--motion-hover-card) var(--motion-ease-emphasis)'" aria-hidden="true" />
@@ -19,11 +19,11 @@
       <div v-if="expanded" class="tool-detail-shell">
         <div class="tool-event-detail">
           <div v-if="msg.toolInput !== undefined" class="tool-event-section">
-            <span class="tool-event-caption">输入</span>
+            <span class="tool-event-caption">{{ t('chatUi.input') }}</span>
             <pre>{{ formatValue(msg.toolInput) }}</pre>
           </div>
           <div v-if="msg.toolResult !== undefined" class="tool-event-section">
-            <span class="tool-event-caption">结果</span>
+            <span class="tool-event-caption">{{ t('chatUi.result') }}</span>
             <pre>{{ formatValue(msg.toolResult) }}</pre>
           </div>
         </div>
@@ -33,6 +33,8 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed, ref } from 'vue'
 import FlipChevron from '@/components/common/FlipChevron.vue'
 import type { ChatMessage } from './chatTypes'
@@ -40,7 +42,7 @@ import type { ChatMessage } from './chatTypes'
 const props = defineProps<{ msg: ChatMessage }>()
 const expanded = ref(false)
 const statusText = computed(() => ({
-  running: '进行中', waiting: '等待回复', success: '已完成', error: '失败', skipped: '已跳过',
+  running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
 }[props.msg.toolStatus || 'running']))
 const durationText = computed(() => {
   if (props.msg.toolDurationMs == null || props.msg.toolDurationMs < 0) return ''

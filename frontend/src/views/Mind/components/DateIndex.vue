@@ -15,6 +15,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { localDayKey } from '@/utils/dateAttribution'
 import { useDateScrubberMotion } from '../composables/useDateScrubberMotion'
 import { clampScrubberPosition, pitchAt, positionForIndex, tickVisual } from '../utils/dateScrubberMath'
@@ -23,6 +24,7 @@ const props = defineProps<{
   groups: { date: string; count: number }[]
   centerFrac: number
 }>()
+const { t, locale } = useI18n()
 const emit = defineEmits<{
   (e: 'scrub', frac: number): void
   (e: 'snap', date: string): void
@@ -150,15 +152,17 @@ defineExpose({
 })
 
 const today = localDayKey(new Date())
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
 function fmtLabel(iso: string) {
+  const date = new Date(iso + 'T00:00:00')
   const days = Math.round((new Date(today + 'T00:00:00').getTime() - new Date(iso + 'T00:00:00').getTime()) / 86400000)
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days === 2) return '前天'
-  if (days > 2 && days <= 7) return '周' + WEEKDAY[new Date(iso + 'T00:00:00').getDay()]
-  const [year, month, day] = iso.split('-')
-  return year === today.slice(0, 4) ? `${+month}月${+day}日` : `${year}年${+month}月${+day}日`
+  if (days === 0) return t('mindUi.today')
+  if (days === 1) return t('mindUi.yesterday')
+  if (days === 2) return t('mindUi.dayBeforeYesterday')
+  if (days > 2 && days <= 7) return new Intl.DateTimeFormat(locale.value, { weekday: 'short' }).format(date)
+  const options: Intl.DateTimeFormatOptions = today.slice(0, 4) === iso.slice(0, 4)
+    ? { month: 'numeric', day: 'numeric' }
+    : { year: 'numeric', month: 'numeric', day: 'numeric' }
+  return new Intl.DateTimeFormat(locale.value, options).format(date)
 }
 </script>
 

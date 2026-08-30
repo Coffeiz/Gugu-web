@@ -1,6 +1,6 @@
 <template>
   <div class="pty-terminal-shell" :class="{ 'is-disconnected': !connected }">
-    <div ref="terminalRef" class="pty-terminal" aria-label="交互式终端"></div>
+    <div ref="terminalRef" class="pty-terminal" :aria-label="t('terminalUi.interactiveLabel')"></div>
     <div v-if="statusText" class="pty-terminal-status" role="status">{{ statusText }}</div>
   </div>
 </template>
@@ -11,12 +11,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from 'xterm'
 import 'xterm/css/xterm.css'
 import { getToken } from '@/services/api'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ terminalId: string; restartToken?: number }>()
+const { t } = useI18n()
 const emit = defineEmits<{ status: [value: { terminalId: string; cols?: number; rows?: number }]; exit: [terminalId: string]; error: [message: string] }>()
 const terminalRef = ref<HTMLElement | null>(null)
 const connected = ref(false)
-const statusText = ref('正在连接…')
+const statusText = ref('')
 let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let socket: WebSocket | null = null
@@ -45,11 +47,12 @@ function resize() {
 function scheduleReconnect() {
   if (intentionalClose || reconnectTimer !== null) return
   const delay = Math.min(5000, 300 * 2 ** reconnectAttempt++)
-  statusText.value = `连接已断开，${Math.ceil(delay / 1000)} 秒后重连…`
+  statusText.value = t('terminalUi.disconnected', { seconds: Math.ceil(delay / 1000) })
   reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connect() }, delay)
 }
 function connect(forcePromptRecovery = false) {
   if (intentionalClose) return
+  statusText.value = t('terminalUi.connecting')
   if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
   const generation = ++socketGeneration
   const previous = socket
@@ -83,10 +86,10 @@ function connect(forcePromptRecovery = false) {
       else if (message.type === 'exit') {
         if (outputDecoder) terminal?.write(outputDecoder.decode())
         outputDecoder = null
-        statusText.value = '终端已退出'; connected.value = false; intentionalClose = true; emit('exit', props.terminalId)
+        statusText.value = t('terminalUi.exited'); connected.value = false; intentionalClose = true; emit('exit', props.terminalId)
       }
-      else if (message.type === 'error') emit('error', message.message ?? '终端连接失败')
-    } catch { emit('error', '终端输出格式无效') }
+      else if (message.type === 'error') emit('error', message.message ?? t('terminalUi.connectionFailed'))
+    } catch { emit('error', t('terminalUi.invalidOutput')) }
   }
   current.onerror = () => { if (isCurrent()) connected.value = false }
   current.onclose = () => {

@@ -12,13 +12,13 @@
               <span class="fp-name" :title="file.displayName">{{ file.displayName }}</span>
             </div>
             <div class="fp-header-actions">
-              <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" title="文件信息" @click="openInfo">
+              <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" :title="t('files.info')" @click="openInfo">
                 <Icon name="status.info" :size="16" />
               </button>
-              <button class="fp-action-btn" title="下载" @click="handleDownload">
+              <button class="fp-action-btn" :title="t('common.actions.download')" @click="handleDownload">
                 <Icon name="action.download" :size="16" />
               </button>
-              <button class="fp-action-btn fp-close-btn" title="关闭 (Esc)" @click="$emit('close')">
+              <button class="fp-action-btn fp-close-btn" :title="`${t('common.actions.close')} (Esc)`" @click="$emit('close')">
                 <Icon name="action.close" :size="16" />
               </button>
             </div>
@@ -28,7 +28,7 @@
           <div class="fp-body">
             <div v-if="loading" class="fp-status">
               <div class="fp-spinner"></div>
-              <span>{{ converting ? '正在转换文档…' : '加载中…' }}</span>
+              <span>{{ converting ? t('files.converting') : t('files.loading') }}</span>
             </div>
             <div v-else-if="error" class="fp-status fp-error">
               <Icon name="status.warning" :size="32" style="opacity:.5" />
@@ -53,38 +53,38 @@
         @mousedown.stop
       >
         <div class="fp-info-title" @mousedown.prevent="startInfoDrag">
-          <span>文件信息</span>
+          <span>{{ t('files.info') }}</span>
           <button class="fp-action-btn fp-close-btn" @click="showInfo = false">
             <Icon name="action.close" :size="15" />
           </button>
         </div>
         <div class="fp-info-body">
           <div class="fp-info-row">
-            <span class="fp-info-label">文件名</span>
+            <span class="fp-info-label">{{ t('files.name') }}</span>
             <span class="fp-info-val">{{ file.displayName }}.{{ file.ext?.toLowerCase() }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">格式</span>
+            <span class="fp-info-label">{{ t('files.format') }}</span>
             <span class="fp-info-val">{{ file.ext?.toUpperCase() }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">大小</span>
+            <span class="fp-info-label">{{ t('files.size') }}</span>
             <span class="fp-info-val">{{ file.size }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">创建时间</span>
+            <span class="fp-info-label">{{ t('files.createdAt') }}</span>
             <span class="fp-info-val">{{ file.createdAt }}</span>
           </div>
           <div v-if="file.projectName" class="fp-info-row">
-            <span class="fp-info-label">所属项目</span>
+            <span class="fp-info-label">{{ t('files.project') }}</span>
             <span class="fp-info-val">{{ file.projectName }}</span>
           </div>
           <div v-if="file.folderName" class="fp-info-row">
-            <span class="fp-info-label">所在文件夹</span>
+            <span class="fp-info-label">{{ t('files.folderLocation') }}</span>
             <span class="fp-info-val">{{ file.folderName }}</span>
           </div>
           <div v-if="file.stageName" class="fp-info-row">
-            <span class="fp-info-label">阶段</span>
+            <span class="fp-info-label">{{ t('files.stage') }}</span>
             <span class="fp-info-val">{{ file.stageName }}</span>
           </div>
           <div v-if="file.mimeType" class="fp-info-row">
@@ -110,11 +110,13 @@ import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/windowz'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   show: Boolean,
   file: { type: Object as PropType<Partial<FileMeta>>, default: undefined },
 })
+const { t } = useI18n()
 const emit = defineEmits(['close'])
 
 const blobUrl    = ref<string | null>(null)
@@ -190,7 +192,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       blobUrl.value = URL.createObjectURL(blob)
     }
   } catch (e) {
-    error.value = '无法加载文件：' + (e instanceof Error ? e.message : e)
+    error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })
   } finally {
     loading.value    = false
     converting.value = false

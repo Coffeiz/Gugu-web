@@ -5,29 +5,29 @@
     <nav class="nav">
       <div class="nav-divider"></div>
       <div class="nav-section">
-        <span class="nav-label">工作台</span>
-        <NavItem to="/projects" icon="navigation.projects">项目<template #badge>{{ projectStore.activeCount }}</template></NavItem>
-        <NavItem to="/calendar" icon="navigation.calendar">日历</NavItem>
-        <NavItem to="/mind" icon="canvas.note">思维</NavItem>
-        <NavItem to="/schedules" icon="admin.alarm">定时任务</NavItem>
+        <span class="nav-label">{{ t('navigation.workspace') }}</span>
+        <NavItem to="/projects" icon="navigation.projects">{{ t('navigation.projects') }}<template #badge>{{ projectStore.activeCount }}</template></NavItem>
+        <NavItem to="/calendar" icon="navigation.calendar">{{ t('navigation.calendar') }}</NavItem>
+        <NavItem to="/mind" icon="canvas.note">{{ t('navigation.mind') }}</NavItem>
+        <NavItem to="/schedules" icon="admin.alarm">{{ t('navigation.schedules') }}</NavItem>
       </div>
 
       <div class="nav-divider"></div>
       <div class="nav-section">
-        <span class="nav-label">资源</span>
-        <NavItem to="/files" icon="file.folder">文件库</NavItem>
-        <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">终端</NavItem>
-        <NavItem to="/skills" icon="resource.skill">技能</NavItem>
-        <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
-        <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>
+        <span class="nav-label">{{ t('navigation.resources') }}</span>
+        <NavItem to="/files" icon="file.folder">{{ t('navigation.files') }}</NavItem>
+        <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">{{ t('navigation.terminals') }}</NavItem>
+        <NavItem to="/skills" icon="resource.skill">{{ t('navigation.skills') }}</NavItem>
+        <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">{{ t('navigation.customers') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
+        <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">{{ t('navigation.team') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
       </div>
 
       <div class="nav-divider"></div>
       <div class="nav-section">
-        <span class="nav-label">通知</span>
+        <span class="nav-label">{{ t('navigation.notifications') }}</span>
         <div class="notif-anchor" ref="notifBtnRef">
           <button class="nav-item notif-btn" :class="{ 'notif-active': notifOpen }" @click.stop="toggleNotif">
-            <Icon name="admin.bell" class="nav-icon" size="sm" tone="inherit" /><span class="nav-label-text">通知</span><span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
+            <Icon name="admin.bell" class="nav-icon" size="sm" tone="inherit" /><span class="nav-label-text">{{ t('navigation.notifications') }}</span><span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
           </button>
         </div>
       </div>
@@ -36,10 +36,10 @@
     <div ref="userCardRef" class="user-card" :class="{ open: settingsOpen }" @click.stop="toggleSettings">
       <div class="avatar"><img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" /><template v-else>{{ userInitial }}</template></div>
       <div class="user-info"><div class="user-name">{{ userLabel }}</div></div>
-      <div class="theme-mode-quick" role="group" aria-label="主题模式" @click.stop>
+      <div class="theme-mode-quick" role="group" :aria-label="t('layout.themeMode')" @click.stop>
         <button
           :title="themeModeTitle"
-          aria-label="切换主题模式"
+          :aria-label="t('layout.switchTheme')"
           :aria-pressed="true"
           @click="cycleTheme"
         ><Icon v-if="preference === 'system'" name="theme.system" size="sm" tone="inherit" /><Icon v-else-if="resolved === 'light'" name="theme.light" size="sm" tone="inherit" /><Icon v-else name="theme.dark" size="sm" tone="inherit" /></button>
@@ -53,16 +53,16 @@
   <Teleport to="body">
     <Transition name="popup">
       <div v-if="settingsOpen" class="settings-popup" :style="settingsStyle" @click.stop>
-        <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />提交反馈</button>
+        <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />{{ t('layout.submitFeedback') }}</button>
         <div class="settings-menu-sep"></div>
-        <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />个人设置</button>
+        <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />{{ t('layout.profile') }}</button>
         <div class="settings-menu-sep"></div>
-        <button class="settings-menu-item danger" @click="handleLogout"><Icon name="user.sign-out" size="sm" tone="inherit" />退出登录</button>
+        <button class="settings-menu-item danger" @click="handleLogout"><Icon name="user.sign-out" size="sm" tone="inherit" />{{ t('layout.logout') }}</button>
       </div>
     </Transition>
     <Transition name="notif-pop">
       <div v-if="notifOpen" class="notif-popup" ref="notifPopupRef" :style="notifStyle" @click.stop>
-        <div class="notif-header"><span class="notif-title">通知</span><button class="notif-mark-all" @click="markAllRead">全部已读</button></div>
+        <div class="notif-header"><span class="notif-title">{{ t('navigation.notifications') }}</span><button class="notif-mark-all" @click="markAllRead">{{ t('layout.markAllRead') }}</button></div>
         <div class="notif-list scroll-surface scroll-surface--compact">
           <div v-for="n in notifications" :key="n.id ?? ''" class="notif-item" :class="{ unread: n.unread }" @click="n.id != null && uiStore.markRead(n.id)">
             <span class="notif-dot" :style="{ background: n.color }"></span>
@@ -70,7 +70,7 @@
             <span v-if="n.unread" class="notif-badge"></span>
           </div>
         </div>
-        <div v-if="notifications.length === 0" class="notif-empty">暂无通知</div>
+        <div v-if="notifications.length === 0" class="notif-empty">{{ t('layout.noNotifications') }}</div>
       </div>
     </Transition>
   </Teleport>
@@ -89,19 +89,21 @@ import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
 import Brand from './Brand.vue'
 import { workspacesApi } from '@/services/api'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 const { preference, resolved, setTheme } = useTheme()
+const { t } = useI18n()
 
-const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
+const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || t('layout.unknownUser'))
 const userInitial = computed(() => (userLabel.value[0] ?? '?').toUpperCase())
-const currentModeLabel = computed(() => resolved.value === 'dark' ? '暗色' : '亮色')
+const currentModeLabel = computed(() => resolved.value === 'dark' ? t('layout.dark') : t('layout.light'))
 const themeModeTitle = computed(() => preference.value === 'system'
-  ? `当前显示：${currentModeLabel.value}（跟随系统）`
-  : `当前显示：${currentModeLabel.value}，点击切换`)
+  ? t('layout.currentDisplay', { mode: `${currentModeLabel.value}${t('layout.followSystem')}` })
+  : `${t('layout.currentDisplay', { mode: currentModeLabel.value })}${t('layout.clickToSwitch')}`)
 const feedbackOpen = ref(false)
 const terminalVisible = ref(false)
 
@@ -202,7 +204,7 @@ onUnmounted(() => {
 .theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:none; }
 /* settings-popup 保留原来的纯 translateY 淡入淡出；不要交给通用 popup scale cadence。 */
 .popup-enter-active,.popup-leave-active { transition:opacity .15s,transform .15s; }.popup-enter-from,.popup-leave-to { opacity:0; transform:translateY(6px); }
-.soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { margin-left:auto; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; }
+.soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 4px 9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { width:max-content; min-width:0; box-sizing:border-box; margin-left:auto; margin-right:0; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; text-align:center; white-space:nowrap; }
 </style>
 
 <style>

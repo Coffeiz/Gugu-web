@@ -4,13 +4,13 @@
 
       <!-- 头部 -->
       <div class="modal-header">
-        <button class="status-ball" :class="'sb-' + form.status" @click.stop="cycleStatus" :title="projectStore.kanbanColumns.find(c => c.key === form.status)?.label ?? form.status"></button>
+        <button class="status-ball" :class="'sb-' + form.status" @click.stop="cycleStatus" :title="t(projectStatusLabelKey(form.status))"></button>
         <input
           ref="nameInputRef"
           v-model="form.name"
           class="header-name-input"
           :class="{ error: errors.name }"
-          placeholder="项目名称"
+          :placeholder="t('projects.projectName')"
           @input="errors.name = ''"
         />
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
@@ -22,15 +22,15 @@
         <!-- 客户 & 项目周期 同行 -->
         <div class="section-row">
           <div class="field">
-            <label>客户</label>
-            <input v-model="form.client" placeholder="客户名称（选填）" />
+            <label>{{ t('projects.client') }}</label>
+            <input v-model="form.client" :placeholder="t('projects.clientPlaceholder')" />
           </div>
           <div class="field">
-            <label>项目周期</label>
+            <label>{{ t('projects.period') }}</label>
             <DateRangePicker
               v-model:startDate="form.startDate"
               v-model:endDate="form.deadline"
-              placeholder="选择开始 — 截止"
+              :placeholder="t('projects.periodPlaceholder')"
             />
           </div>
         </div>
@@ -39,7 +39,7 @@
 
         <!-- 项目颜色 -->
         <div class="section">
-          <label class="section-label">项目颜色</label>
+          <label class="section-label">{{ t('projects.color') }}</label>
           <div class="color-grid">
             <button
               v-for="c in colorPresets"
@@ -59,35 +59,35 @@
         <div class="section stages-section">
             <div class="stages-header">
               <label class="section-label">
-                项目阶段
-                <span class="label-hint">拖拽排序</span>
+                {{ t('projects.stages') }}
+                <span class="label-hint">{{ t('projects.dragSort') }}</span>
               </label>
               <!-- 模板按钮 -->
               <div class="tpl-selector" ref="tplSelectorRef">
                 <button class="tpl-trigger" @click.stop="tplOpen = !tplOpen">
                   <Icon name="navigation.apps" :size="11" />
-                  模板
+                  {{ t('projects.template') }}
                 </button>
                 <Teleport to="body">
                   <Transition name="tpl-pop">
                     <div v-if="tplOpen" class="tpl-panel" :style="tplPanelStyle" ref="tplPanelRef">
-                      <div class="tpl-panel-head">选择模板</div>
+                      <div class="tpl-panel-head">{{ t('projects.chooseTemplate') }}</div>
 
                       <!-- 模板列表 -->
                       <div class="tpl-list">
-                        <div v-if="!templates.length" class="tpl-empty">暂无模板</div>
-                        <div v-for="t in templates" :key="t.id" class="tpl-item">
+                        <div v-if="!templates.length" class="tpl-empty">{{ t('projects.noTemplates') }}</div>
+                        <div v-for="tpl in templates" :key="tpl.id" class="tpl-item">
                           <!-- 名称区：普通 or 重命名输入 -->
-                          <button v-if="renamingId !== t.id" class="tpl-apply" @click.stop="applyTpl(t)">
-                            <span class="tpl-name">{{ t.name }}</span>
-                            <span class="tpl-stages-preview">{{ t.stages.map((s: any) => s.label ?? s).join(' · ') }}</span>
+                          <button v-if="renamingId !== tpl.id" class="tpl-apply" @click.stop="applyTpl(tpl)">
+                            <span class="tpl-name">{{ tpl.name }}</span>
+                            <span class="tpl-stages-preview">{{ tpl.stages.map((s: any) => s.label ?? s).join(' · ') }}</span>
                           </button>
                           <span v-else class="rename-sizer" @click.stop>
                             <span class="rename-ghost">{{ renameText || ' ' }}</span>
                             <input
                               class="rename-input-inline"
                               v-model="renameText"
-                              v-enter="() => commitRename(t.id)"
+                              v-enter="() => commitRename(tpl.id)"
                               @keyup.esc="renamingId = null"
                               ref="renameInputRef"
                             />
@@ -95,14 +95,14 @@
                           <!-- 编辑/确认按钮（始终显示） -->
                           <button
                             class="tpl-rename-btn"
-                            :title="renamingId === t.id ? '确认' : '重命名'"
-                            @click.stop="renamingId === t.id ? commitRename(t.id) : startRename(t)"
+                            :title="renamingId === tpl.id ? t('projects.confirm') : t('projects.rename')"
+                            @click.stop="renamingId === tpl.id ? commitRename(tpl.id) : startRename(tpl)"
                           >
-                            <Icon name="action.edit" v-if="renamingId !== t.id" :size="10" />
+                            <Icon name="action.edit" v-if="renamingId !== tpl.id" :size="10" />
                             <Icon name="status.success" v-else :size="10" />
                           </button>
                           <!-- 删除按钮（始终显示） -->
-                          <button class="tpl-del-btn" title="删除" @click.stop="removeTemplate(t.id)">
+                          <button class="tpl-del-btn" :title="t('projects.delete')" @click.stop="removeTemplate(tpl.id)">
                             <Icon name="action.close" :size="10" />
                           </button>
                         </div>
@@ -114,22 +114,22 @@
                       <div v-if="!savingTpl" class="tpl-save-row">
                         <button class="tpl-save-btn" @click.stop="savingTpl = true">
                           <Icon name="action.add" :size="10" />
-                          保存当前为模板
+                          {{ t('projects.saveAsTemplate') }}
                         </button>
                       </div>
                       <div v-else class="tpl-save-input-row" @click.stop>
                         <input
                           class="tpl-name-input"
                           v-model="newTplName"
-                          placeholder="模板名称"
+                          :placeholder="t('projects.templateName')"
                           v-enter="commitSave"
                           @keyup.esc="savingTpl = false; newTplName = ''"
                           ref="tplNameInputRef"
                         />
-                        <button class="tpl-rename-btn" title="保存" @click.stop="commitSave">
+                        <button class="tpl-rename-btn" :title="t('common.actions.save')" @click.stop="commitSave">
                           <Icon name="status.success" :size="10" />
                         </button>
-                        <button class="tpl-del-btn" title="取消" @click.stop="savingTpl = false; newTplName = ''">
+                        <button class="tpl-del-btn" :title="t('common.actions.cancel')" @click.stop="savingTpl = false; newTplName = ''">
                           <Icon name="action.close" :size="10" />
                         </button>
                       </div>
@@ -148,12 +148,12 @@
                   <div class="stage-num"
                     :class="{ 'stage-num--active': form.currentStageIdx === stage.origIdx }"
                     @click.stop="form.currentStageIdx = stage.origIdx"
-                    title="设为当前阶段"
+                    :title="t('projects.setCurrentStage')"
                   >{{ i + 1 }}</div>
                   <input
                     v-model="form.stages[stage.origIdx].label"
                     class="stage-input"
-                    :placeholder="`阶段 ${i + 1}`"
+                    :placeholder="t('projects.stagePlaceholder', { index: i + 1 })"
                     @mousedown.stop
                     :ref="el => { if (el) stageInputRefs[stage.origIdx] = el as HTMLElement }"
                   />
@@ -172,18 +172,18 @@
                       v-model="todo.text"
                       :title="todo.text"
                       :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                      placeholder="待办事项"
+                      :placeholder="t('projects.todoPlaceholder')"
                       v-enter.prevent="() => addNpTodo(stage.origIdx)"
                       @keydown.backspace="!todo.text && removeNpTodo(stage.origIdx, todo.id)"
                     />
                     <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><Icon name="action.close" :size="10" /></button>
                   </div>
-                  <button class="np-todo-add-btn" @click.stop="addNpTodo(stage.origIdx)">＋ 添加待办</button>
+                  <button class="np-todo-add-btn" @click.stop="addNpTodo(stage.origIdx)">＋ {{ t('projects.addTodo') }}</button>
                 </div>
               </div>
               <button class="add-stage-btn" @click="addStage">
                 <Icon name="action.add" :size="10" />
-                添加阶段
+                {{ t('projects.addStage') }}
               </button>
             </div>
         </div>
@@ -191,15 +191,15 @@
 
       <!-- 底部 -->
       <div class="modal-footer">
-        <ActionButton variant="secondary" @click="$emit('close')">取消</ActionButton>
-        <ActionButton @click="handleCreate">创建</ActionButton>
+        <ActionButton variant="secondary" @click="$emit('close')">{{ t('projects.cancel') }}</ActionButton>
+        <ActionButton @click="handleCreate">{{ t('projects.create') }}</ActionButton>
       </div>
 
       <Teleport to="body">
         <div v-if="stageDrag.active" class="np-stage-ghost"
           :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
           <div class="stage-num">{{ stageDrag.ghostNum }}</div>
-          <span class="np-ghost-label">{{ stageDrag.ghostLabel || `阶段 ${stageDrag.ghostNum}` }}</span>
+          <span class="np-ghost-label">{{ stageDrag.ghostLabel || t('projects.stagePlaceholder', { index: stageDrag.ghostNum }) }}</span>
         </div>
       </Teleport>
 
@@ -221,12 +221,15 @@ import { onboardingProjectId } from '@/composables/useOnboarding'
 import Icon from '@/components/common/Icon.vue'
 import CloseButton from '@/components/common/CloseButton.vue'
 import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
+import { projectStatusLabelKey } from '@/utils/projectStages'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
 const emit  = defineEmits(['close'])
 
 const projectStore    = useProjectStore()
 const uiStore         = useUiStore()
+const { t } = useI18n()
 const stagesEditorRef = ref<HTMLElement | null>(null)
 const nameInputRef    = ref<HTMLInputElement | null>(null)
 async function startNameEdit() {
@@ -350,7 +353,7 @@ function getLastStages(): FormStage[] {
     const last = [...projects].sort((a, b) => (b.id > a.id ? 1 : -1))[0]
     if (last.stages?.length) return last.stages.map(toObj)
   }
-  return [{ label: '计划', todos: [] }, { label: '执行', todos: [] }, { label: '交付', todos: [] }]
+  return [{ label: t('projects.defaultPlan'), todos: [] }, { label: t('projects.defaultExecution'), todos: [] }, { label: t('projects.defaultDelivery'), todos: [] }]
 }
 
 const defaultForm = () => {
@@ -504,8 +507,8 @@ function cycleStatus() {
 
 function handleCreate() {
   const name = form.name.trim()
-  if (!name) { errors.name = '请填写项目名称'; return }
-  if (INVALID_NAME_RE.test(name)) { errors.name = '不能包含：\\ / : * ? " < > |'; return }
+  if (!name) { errors.name = t('projects.fillName'); return }
+  if (INVALID_NAME_RE.test(name)) { errors.name = t('projects.invalidName'); return }
   const stages = form.stages.filter(s => s.label.trim())
   prefsStore.saveLastStages(stages.map(s => s.label.trim()))
   projectStore.addProject({

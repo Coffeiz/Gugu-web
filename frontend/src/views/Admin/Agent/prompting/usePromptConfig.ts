@@ -1,10 +1,12 @@
 import { ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { i18n } from '@/i18n'
 
 export interface PromptProfile { profile: string }
 export interface PromptPlaceholder { key: string; desc: string }
 
 export function usePromptConfig() {
+  const t = i18n.global.t
   const adminStore = useAdminStore()
   const activeProfile = ref('default')
   const profiles = ref<PromptProfile[]>([])
@@ -22,25 +24,25 @@ export function usePromptConfig() {
     }
     try {
       const res = await adminStore.authFetch(`/api/v1/admin/agent/prompts/${encodeURIComponent(profile)}`)
-      if (!res.ok) throw new Error(`加载失败（${res.status}）`)
+      if (!res.ok) throw new Error(t('adminAgentUi.loadFailedStatus', { status: res.status }))
       const data = await res.json()
       promptCache[profile] = data.content || ''
       promptContent.value = promptCache[profile]
     } catch (error) {
-      promptError.value = `加载失败：${error instanceof Error ? error.message : String(error)}`
+      promptError.value = t('adminAgentUi.loadFailed', { message: error instanceof Error ? error.message : String(error) })
     }
   }
 
   async function refreshProfiles() {
     try {
       const res = await adminStore.authFetch('/api/v1/admin/agent/prompts')
-      if (!res.ok) throw new Error(`加载失败（${res.status}）`)
+      if (!res.ok) throw new Error(t('adminAgentUi.loadFailedStatus', { status: res.status }))
       const data = await res.json()
       profiles.value = data.profiles || []
       placeholders.value = data.placeholders || []
       await loadPrompt(activeProfile.value)
     } catch (error) {
-      promptError.value = `加载失败：${error instanceof Error ? error.message : String(error)}`
+      promptError.value = t('adminAgentUi.loadFailed', { message: error instanceof Error ? error.message : String(error) })
     }
   }
 
@@ -73,7 +75,7 @@ export function usePromptConfig() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: promptContent.value }),
       })
-      if (!res.ok) throw new Error(`保存失败（${res.status}）`)
+      if (!res.ok) throw new Error(t('adminAgentUi.saveFailedStatus', { status: res.status }))
       promptCache[activeProfile.value] = promptContent.value
       promptSaved.value = true
       setTimeout(() => { promptSaved.value = false }, 3000)

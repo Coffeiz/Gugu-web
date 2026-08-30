@@ -1,73 +1,54 @@
 <template>
-  <div class="onb-dev">
-    <h2>新手引导 · Demo 控制面板</h2>
-    <p class="hint">作用于<strong>当前登录用户自己</strong>。改完不必重注册，直接在这里触发 / 重置 / 重建。
-      访问路径 <code>/dev/onboarding</code>。</p>
+  <main class="onb-dev">
+    <header class="page-head">
+      <div><p class="eyebrow">DEVELOPER · ONBOARDING</p><h1>{{ t('devOnboarding.title') }}</h1><p class="intro">{{ t('devOnboarding.description') }}</p></div>
+      <code>/dev/onboarding</code>
+    </header>
 
-    <div class="row">
-      <button @click="refresh">刷新状态</button>
-      <button @click="reset">重置已读标记（气泡可重弹）</button>
-      <button class="warn" @click="reseed">重新播种引导项目（删旧建新）</button>
-    </div>
+    <section class="hero-card">
+      <div class="hero-copy"><span class="hero-mark">✦</span><div><h2>{{ state?.seeded ? t('devOnboarding.seeded') : t('devOnboarding.notSeeded') }}</h2><p>{{ state?.seeded ? t('devOnboarding.reseedHint') : t('devOnboarding.description') }}</p></div></div>
+      <div class="actions"><button class="button button-ghost" @click="refresh">{{ t('devOnboarding.refresh') }}</button><button class="button button-primary" :disabled="busy" @click="reseed">{{ busy ? t('devOnboarding.reseedStarted') : t('devOnboarding.reseed') }}</button></div>
+    </section>
 
-    <div class="row">
-      <span class="lbl">立刻预览气泡（不改 once）：</span>
-      <button @click="fire('welcome')">欢迎(01)</button>
-      <button @click="fire('guide')">引导(02)</button>
-      <button @click="fire('hint:file_lib')">文件库(07)</button>
-      <button @click="fire('hint:im_bind')">绑定 IM(07)</button>
-      <button @click="fire('lookback')">回头看(08)</button>
-    </div>
+    <section class="status-grid">
+      <article class="status-card"><span class="status-icon">⌂</span><div><p class="card-label">{{ t('devOnboarding.project') }}</p><strong>{{ state?.seeded ? t('devOnboarding.projectKept') : t('devOnboarding.notSeeded') }}</strong><small>{{ t('devOnboarding.projectId') }}：{{ state?.seeded_project_id ?? '—' }}</small></div></article>
+      <article class="status-card"><span class="status-icon">♫</span><div><p class="card-label">{{ t('devOnboarding.mp3') }}</p><strong>{{ t('devOnboarding.projectKept') }}</strong><small>{{ t('devOnboarding.reseedHint') }}</small></div></article>
+      <article class="status-card muted"><span class="status-icon">◌</span><div><p class="card-label">{{ t('devOnboarding.bubble') }}</p><strong>{{ t('devOnboarding.bubbleRemoved') }}</strong><small>{{ t('devOnboarding.description') }}</small></div></article>
+    </section>
 
-    <p v-if="msg" class="msg">{{ msg }}</p>
-
-    <h3>当前状态</h3>
-    <pre class="state">{{ stateText }}</pre>
-  </div>
+    <section class="state-card"><div class="section-head"><div><p class="eyebrow">INSPECT</p><h2>{{ t('devOnboarding.state') }}</h2></div><span class="state-dot" :class="{ ready: !!state }"></span></div><pre>{{ stateText }}</pre></section>
+    <p v-if="msg" class="feedback" role="status">{{ msg }}</p>
+  </main>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { onboardingApi } from '@/services/api'
-import { useUiStore } from '@/stores/ui'
 
-const ui = useUiStore()
-const state = ref(null)
+const { t } = useI18n()
+const state = ref<Record<string, any> | null>(null)
 const msg = ref('')
-const stateText = computed(() => state.value ? JSON.stringify(state.value, null, 2) : '加载中…')
+const busy = ref(false)
+const stateText = computed(() => state.value ? JSON.stringify(state.value, null, 2) : t('devOnboarding.loading'))
 
 async function refresh() {
-  try { state.value = await onboardingApi.getState() } catch (e) { msg.value = '拉取状态失败' }
-}
-async function reset() {
-  await onboardingApi.devReset(); msg.value = '已重置已读标记'; refresh()
+  try { state.value = await onboardingApi.getState() } catch { msg.value = t('devOnboarding.refreshFailed') }
 }
 async function reseed() {
-  msg.value = '重新播种中…'
-  const r = await onboardingApi.devReseed()
-  state.value = r.state; msg.value = '已重新播种引导项目（去项目面板看看）'
-}
-async function fire(key: string) {
-  const { text } = await onboardingApi.devFire(key)
-  if (text) { ui.pushNotification({ title: '', content: text, bubble: true, persist: false, gugu: true }); msg.value = `已弹：${key}` }
-  else msg.value = `${key} 无文案`
+  busy.value = true; msg.value = t('devOnboarding.reseedStarted')
+  try { const r = await onboardingApi.devReseed(); state.value = r.state; msg.value = t('devOnboarding.reseedDone') } catch { msg.value = t('devOnboarding.reseedFailed') } finally { busy.value = false }
 }
 
 onMounted(refresh)
 </script>
 
 <style scoped>
-.onb-dev { max-width: 760px; margin: 0 auto; padding: 28px 24px; color: var(--text-primary, #2a2a3a); }
-h2 { margin: 0 0 6px; }
-.hint { font-size: 13px; color: var(--text-secondary, #6b6b80); line-height: 1.6; margin: 0 0 18px; }
-.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
-.lbl { font-size: 13px; color: var(--text-secondary, #6b6b80); }
-button { padding: 7px 13px; border-radius: 9px; border: 1px solid rgba(123,127,178,0.3);
-  background: rgba(123,127,178,0.08); color: inherit; font-size: 13px; cursor: pointer; }
-button:hover { background: rgba(123,127,178,0.16); }
-button.warn { border-color: rgba(220,120,120,0.4); background: rgba(220,120,120,0.08); }
-.msg { font-size: 13px; color: #5a8f6a; margin: 6px 0 16px; }
-code { font-family: var(--font-family-mono); background: rgba(0,0,0,0.06); padding: 1px 6px; border-radius: 5px; }
-.state { background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
-  padding: 12px 14px; font-size: 12px; line-height: 1.5; overflow: auto; white-space: pre-wrap; }
+.onb-dev { max-width: 1080px; margin: 0 auto; padding: clamp(24px, 4vw, 52px) clamp(18px, 4vw, 48px); color: var(--content-primary); }
+.page-head, .hero-card, .section-head, .hero-copy, .actions, .status-card { display: flex; align-items: center; }
+.page-head { justify-content: space-between; gap: 24px; margin-bottom: 28px; } h1, h2, p { margin: 0; } h1 { font-size: clamp(25px, 3vw, 34px); letter-spacing: -.03em; } h2 { font-size: 18px; } .eyebrow { color: var(--content-tertiary); font-size: 10px; font-weight: 750; letter-spacing: .14em; margin-bottom: 8px; } .intro { color: var(--content-secondary); font-size: 13px; line-height: 1.65; margin-top: 8px; max-width: 650px; } code { color: var(--content-tertiary); font: 11px var(--font-family-mono); background: var(--surface-soft); border: 1px solid var(--border-subtle); padding: 7px 10px; border-radius: var(--radius-sm); }
+.hero-card, .status-card, .state-card { border: 1px solid var(--border-default); background: var(--surface-glass); box-shadow: var(--elevation-card); border-radius: var(--card-radius); } .hero-card { justify-content: space-between; gap: 24px; padding: 22px 24px; margin-bottom: 16px; } .hero-copy { gap: 14px; } .hero-mark, .status-icon { display: grid; place-items: center; color: var(--theme-action-primary); background: var(--theme-selection); border-radius: var(--radius-md); } .hero-mark { width: 42px; height: 42px; font-size: 20px; } .hero-copy p, .status-card small { display: block; color: var(--content-secondary); font-size: 12px; line-height: 1.55; margin-top: 5px; } .actions { gap: 8px; } .button { border: 1px solid var(--border-default); border-radius: var(--control-radius); padding: 9px 13px; font-size: 12px; cursor: pointer; transition: transform var(--motion-hover-control) var(--motion-ease-standard), background var(--motion-hover-control) var(--motion-ease-standard); } .button:hover:not(:disabled) { transform: translateY(-1px); } .button:active:not(:disabled) { transform: translateY(1px); } .button-ghost { color: var(--content-secondary); background: var(--control-bg); } .button-primary { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary); } .button:disabled { cursor: wait; opacity: .6; }
+.status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; } .status-card { align-items: flex-start; gap: 12px; padding: 18px; min-height: 108px; } .status-icon { flex: 0 0 30px; width: 30px; height: 30px; font-size: 15px; } .card-label { color: var(--content-tertiary); font-size: 11px; letter-spacing: .04em; } .status-card strong { display: block; margin-top: 6px; font-size: 14px; } .status-card small { color: var(--content-tertiary); font-size: 11px; } .status-card.muted { opacity: .78; }
+.state-card { padding: 20px 22px; } .section-head { justify-content: space-between; margin-bottom: 14px; } .section-head h2 { margin-top: 0; } .state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-warning); } .state-dot.ready { background: var(--status-success); } pre { margin: 0; padding: 16px; max-height: 420px; overflow: auto; white-space: pre-wrap; color: var(--content-secondary); background: var(--surface-soft); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font: 11px/1.65 var(--font-family-mono); } .feedback { margin-top: 12px; color: var(--status-success); font-size: 12px; }
+@media (max-width: 700px) { .page-head, .hero-card { align-items: flex-start; flex-direction: column; } .page-head code { display: none; } .actions { width: 100%; } .button { flex: 1; } .status-grid { grid-template-columns: 1fr; } }
 </style>

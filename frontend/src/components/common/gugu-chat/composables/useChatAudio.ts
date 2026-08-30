@@ -3,6 +3,7 @@ import { useAudioStore } from '@/stores/audio'
 import { getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
 import type { ChatFile } from '../chatTypes'
+import { i18n } from '@/i18n'
 
 /**
  * 迷你播放器（文件库音频）+ 消息语音条播放的唯一状态所有权：<audio> 元素、
@@ -128,13 +129,13 @@ export function useChatAudio(options: {
         const token = getToken()
         const res = await fetch(`${API_BASE}/agent/attachment/${id}/download`,
           { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-        if (!res.ok) { options.onTip(res.status === 404 ? '这条语音过期啦（语音保留 30 天）🎤' : '语音加载失败了 😵'); return }
+        if (!res.ok) { options.onTip(res.status === 404 ? i18n.global.t('chatUi.voiceExpired') : i18n.global.t('chatUi.voiceLoadFailed')); return }
         url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url
       }
       const a = new Audio(url); _voiceAudio = a; voicePlayingId.value = id
       a.onended = a.onpause = () => { if (voicePlayingId.value === id) voicePlayingId.value = null }
       await a.play()
-    } catch (e) { voicePlayingId.value = null; options.onTip('语音播放失败 🎤') }
+    } catch (e) { voicePlayingId.value = null; options.onTip(i18n.global.t('chatUi.voicePlayFailed')) }
   }
 
   return {

@@ -4,13 +4,13 @@
       <div class="wv-gutter"></div>
       <div v-for="d in weekDays" :key="d.iso" class="wv-dhead" :class="{ today: d.isToday, weekend: d.isWeekend, selected: isDaySelected(d.iso) }"
            @mousedown="emit('all-day-down', $event)" @contextmenu.prevent="emit('all-day-contextmenu', $event)">
-        <span class="wv-dow">周{{ d.cn }}</span>
+        <span class="wv-dow">{{ t('calendarUi.weekPrefix') }}{{ d.cn }}</span>
         <span class="wv-dnum" :class="{ today: d.isToday }">{{ d.dateNum }}</span>
       </div>
     </div>
 
     <div class="wv-allday">
-      <div class="wv-gutter wv-allday-tag">全天</div>
+      <div class="wv-gutter wv-allday-tag">{{ t('calendarUi.allDay') }}</div>
       <div class="wv-allday-grid" :ref="setAllDayGridRef" :style="{ height: wvAllDayH + 'px' }"
            @mousedown="emit('all-day-down', $event)" @mousemove="emit('all-day-hover', $event)" @mouseleave="emit('all-day-leave')" @contextmenu.prevent="emit('all-day-contextmenu', $event)">
         <div v-for="(d, ci) in weekDays" :key="d.iso" class="wv-aco" :class="{ today: d.isToday, weekend: d.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
@@ -23,7 +23,7 @@
         <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip"
              :class="{ 'cal-done': bar.status === 'done', 'bar-start': bar.startsHere, 'bar-end': bar.endsHere }"
              :style="pbarStyle(bar)" @click.stop="emit('open-project', bar)" :title="bar.name">
-          <span class="bar-proj-tag">项目</span>
+          <span class="bar-proj-tag">{{ t('calendar.project') }}</span>
           <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
         </div>
         <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
@@ -31,12 +31,12 @@
                class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.calendarType === 'project' && it.status === 'done' }"
                :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.calendarType === 'project' ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
                @click.stop="it.calendarType === 'project' ? emit('open-project', it) : emit('edit-event', it, $event)" :title="it.name">
-            <span class="chip-proj-tag" :class="{ 'chip-ev-tag': it.calendarType !== 'project' }">{{ it.calendarType === 'project' ? '项目' : '活动' }}</span>
+            <span class="chip-proj-tag" :class="{ 'chip-ev-tag': it.calendarType !== 'project' }">{{ it.calendarType === 'project' ? t('calendar.project') : t('calendar.event') }}</span>
             <span v-if="it.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
           </div>
           <button v-if="weekMoreFor(ci).length" class="chip-more-btn cal-chip wv-more"
                   :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + allDayItemsFor(d.iso).length) * 20) + 'px' }"
-                  @click.stop="emit('show-more', $event, d.iso, weekMoreFor(ci))">+{{ weekMoreFor(ci).length }} 更多</button>
+                  @click.stop="emit('show-more', $event, d.iso, weekMoreFor(ci))">{{ t('calendarUi.moreItems', { count: weekMoreFor(ci).length }) }}</button>
         </template>
       </div>
     </div>
@@ -63,7 +63,7 @@
                :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
                @mousedown.stop="emit('event-down', b.ev, $event)" @mousemove="emit('event-hover', $event)" :title="b.ev.name">
             <span class="wv-ev-t">{{ b.ev.time }}{{ b.ev.endTime ? '–' + b.ev.endTime : '' }}</span>
-            <span class="wv-ev-n"><span class="chip-proj-tag chip-ev-tag">活动</span>{{ b.ev.name }}</span>
+            <span class="wv-ev-n"><span class="chip-proj-tag chip-ev-tag">{{ t('calendar.event') }}</span>{{ b.ev.name }}</span>
             <span v-if="b.ev.description" class="wv-ev-d">{{ b.ev.description }}</span>
           </div>
         </div>
@@ -74,6 +74,8 @@
 
 <script setup lang="ts">
 import { toRefs } from 'vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import type { CalendarHourHover, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from '../domain/calendarTypes'
 import type { TimedLayoutItem } from '../utils/calendarLayout'
 
@@ -127,7 +129,7 @@ const emit = defineEmits<{
 <style scoped>
 .week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
 .wv-gutter { width: 46px; flex: none; }
-.wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding-bottom: 4px; }
+.wv-head { display: flex; border-bottom: 1px solid rgba(123,127,178,0.18); padding: 0 calc(var(--scrollbar-size-default) + 2px) 4px 0; }
 .wv-dhead { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 0; cursor: pointer; }
 .wv-dhead > span { position: relative; z-index: 1; }
 .wv-dhead::before, .wv-dhead::after { content: ''; position: absolute; inset: 2px 4px; border-radius: 7px; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
@@ -144,7 +146,7 @@ const emit = defineEmits<{
 .wv-dhead.weekend .wv-dnum.today { background: linear-gradient(135deg,#b85c5c,#c97070); }
 .wv-dhead.selected .wv-dnum:not(.today) { color: var(--color-primary); }
 .wv-dhead.selected.weekend .wv-dnum:not(.today) { color: rgba(195,90,90,0.9); }
-.wv-allday { display: flex; align-items: stretch; border-bottom: 1px solid rgba(123,127,178,0.18); }
+.wv-allday { display: flex; align-items: stretch; padding-right: calc(var(--scrollbar-size-default) + 2px); }
 .wv-allday-tag { display: flex; align-items: flex-start; justify-content: flex-end; padding: 4px 6px 0 0; font-size: 10px; color: #a8acc4; }
 .wv-allday-grid { position: relative; flex: 1; min-height: 26px; overflow: hidden; }
 .wv-aco { position: absolute; top: 0; bottom: 0; width: 14.2857%; box-sizing: border-box; border-left: 1px solid rgba(123,127,178,0.1); pointer-events: none; }
@@ -162,7 +164,7 @@ const emit = defineEmits<{
 .wv-more { position: absolute; box-sizing: border-box; overflow: hidden; z-index: 1; }
 .chip-more-btn.wv-more { height: 18px; }
 .wv-more:hover { background: rgba(123,127,178,0.22); }
-.wv-body { flex: 1; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
+.wv-body { flex: 1; overflow-y: scroll; min-height: 0; scrollbar-gutter: stable; }
 .wv-grid { display: flex; position: relative; }
 .wv-hours { width: 46px; flex: none; }
 .wv-hour { position: relative; }

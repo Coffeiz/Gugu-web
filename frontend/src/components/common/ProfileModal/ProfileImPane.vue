@@ -1,32 +1,32 @@
 <template>
   <div class="pm-section">
-    <div class="pm-section-label">消息偏好</div>
+    <div class="pm-section-label">{{ t('profileImUi.messagePreferences') }}</div>
     <div class="pm-bot-group-row pm-interaction-preference-row">
-      <div class="pm-field-desc"><span class="pm-field-name">显示工具调用信息</span><span class="pm-field-hint">在 QQ、飞书、微信等 IM 中显示工具执行状态；关闭不影响工具执行和最终回复</span></div>
-      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="preferences.showToolInteractions" aria-label="切换工具调用展示" @update:model-value="toggleToolInteractions" /><span class="pm-switch-label" :class="{ on: preferences.showToolInteractions }">{{ preferences.showToolInteractions ? '已开启' : '已关闭' }}</span></span>
+      <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showToolInteractions') }}</span><span class="pm-field-hint">{{ t('profileImUi.showToolInteractionsHint') }}</span></div>
+      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="preferences.showToolInteractions" :aria-label="t('profileImUi.toggleToolInteractions')" @update:model-value="toggleToolInteractions" /><span class="pm-switch-label" :class="{ on: preferences.showToolInteractions }">{{ preferences.showToolInteractions ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
   </div>
   <div class="pm-sep"></div>
   <div class="pm-section">
-    <div class="pm-section-label">即时通讯</div>
+    <div class="pm-section-label">{{ t('profileImUi.messaging') }}</div>
     <template v-for="platform in platforms" :key="platform.key">
-      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ platform.label }}</span><span class="pm-field-hint">{{ platform.hint }}</span></div><button v-if="!botsOf(platform.key).length" class="pm-bind-btn" :disabled="connecting === platform.key" @click="startConnect(platform.key)">{{ connecting === platform.key ? '生成中…' : '扫码连接' }}</button><span v-else class="pm-field-hint pm-bound-tag">已连接 · 删除后可重连</span></div>
+      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t(platform.labelKey) }}</span><span class="pm-field-hint">{{ t(platform.hintKey) }}</span></div><button v-if="!botsOf(platform.key).length" class="pm-bind-btn" :disabled="connecting === platform.key" @click="startConnect(platform.key)">{{ connecting === platform.key ? t('profileImUi.generating') : t('profileImUi.scanToConnect') }}</button><span v-else class="pm-field-hint pm-bound-tag">{{ t('profileImUi.connectedRebind') }}</span></div>
       <div v-for="bot in botsOf(platform.key)" :key="bot.id" class="pm-bot-item">
-        <div class="pm-bot-item-top"><div class="pm-bot-info"><span class="pm-bot-name">{{ bot.name }}<span v-if="bot.sandbox" class="pm-bot-tag">沙箱</span></span><span class="pm-bot-appid">{{ bot.app_id }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.enabled === true" :aria-label="bot.enabled === true ? '停用机器人' : '启用机器人'" @update:model-value="toggleBot(bot)" /><span class="pm-switch-label" :class="{ on: bot.enabled === true }">{{ bot.enabled === true ? '已启用' : '已停用' }}</span></span><button class="pm-bot-del" @click="removeBot(bot)">删除</button></div>
-        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">QQ 身份绑定</span><span class="pm-field-hint">未绑定时生成验证码，在 QQ 私聊机器人发送“绑定 6 位验证码”</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? '生成中…' : '生成验证码' }}</button><div v-if="bindingCodes[bot.id]" class="pm-binding-code-result"><span class="pm-binding-code-command" title="发送给 QQ 机器人"><span class="pm-binding-code-prefix">绑定</span><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ bindingCodes[bot.id].expiresIn }} 秒内有效</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? '已复制绑定指令' : '复制绑定指令'" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? '已复制' : '复制' }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">已绑定</span></div></div>
-        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">群聊回应</span><span class="pm-field-hint">开启后，咕咕会参与群聊，默认无需 @ 机器人</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_chat_enabled === true" aria-label="切换群聊回应" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: bot.group_chat_enabled === true }">{{ bot.group_chat_enabled === true ? '已开启' : '已关闭' }}</span></span></div>
-        <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">回应方式</span><span class="pm-help-row"><span class="pm-field-hint">选择群消息的处理方式</span><button :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">设置方法</button></span><PopupMenu :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">开启全量消息接收</div><div class="pm-help-pop-step">1. 手机端 QQ 打开机器人所在的群</div><div class="pm-help-pop-step">2. 点机器人的头像进入资料页</div><div class="pm-help-pop-step">3. 点右上角「设置」</div><div class="pm-help-pop-step">4. 打开「全量消息接收」</div><div class="pm-help-pop-note">不开启时机器人只能收到 @ 消息，非 @ 消息不会进入会话记录</div></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ option.label }}</button></div></div>
+        <div class="pm-bot-item-top"><div class="pm-bot-info"><span class="pm-bot-name">{{ displayBotName(bot) }}<span v-if="bot.sandbox" class="pm-bot-tag">{{ t('profileImUi.sandbox') }}</span></span><span class="pm-bot-appid">{{ bot.app_id }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.enabled === true" :aria-label="bot.enabled === true ? t('profileImUi.disableBot') : t('profileImUi.enableBot')" @update:model-value="toggleBot(bot)" /><span class="pm-switch-label" :class="{ on: bot.enabled === true }">{{ bot.enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span><button class="pm-bot-del" @click="removeBot(bot)">{{ t('profileImUi.deleteBot') }}</button></div>
+        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.qqBinding') }}</span><span class="pm-field-hint">{{ t('profileImUi.qqBindingHint') }}</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? t('profileImUi.generating') : t('profileImUi.generateCode') }}</button><div v-if="bindingCodes[bot.id]" class="pm-binding-code-result"><span class="pm-binding-code-command" :title="t('profileImUi.sendToBot')"><span class="pm-binding-code-prefix">{{ t('profileImUi.bindCommand') }}</span><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ t('profileImUi.codeExpiry', { seconds: bindingCodes[bot.id].expiresIn }) }}</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? t('profileImUi.bindingCopied') : t('profileImUi.copyBinding')" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? t('profileImUi.copied') : t('profileImUi.copy') }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">{{ t('profileImUi.bound') }}</span></div></div>
+        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupChat') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupChatHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_chat_enabled === true" :aria-label="t('profileImUi.toggleGroupChat')" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: bot.group_chat_enabled === true }">{{ bot.group_chat_enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
+        <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">{{ t('profileImUi.responseMode') }}</span><span class="pm-help-row"><span class="pm-field-hint">{{ t('profileImUi.responseModeHint') }}</span><button :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">{{ t('profileImUi.guide') }}</button></span><PopupMenu :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">{{ t('profileImUi.fullMessageTitle') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep1') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep2') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep3') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep4') }}</div><div class="pm-help-pop-note">{{ t('profileImUi.fullMessageNote') }}</div></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ t(`profileImUi.${option.key === 'reply_all' ? 'replyAll' : option.key === 'reply_mentions' ? 'replyMentions' : 'recordOnly'}`) }}</button></div></div>
         <template v-if="platform.key === 'qq'">
           <MessageFormatSettings :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
         </template>
         <template v-if="platform.key === 'qq' && bot.group_chat_enabled">
-          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群组记忆</span><span class="pm-field-hint">允许咕咕读取并沉淀当前群的公开信息</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" aria-label="切换群组记忆" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? '已开启' : '已关闭' }}</span></span></div>
-          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群成员记忆</span><span class="pm-field-hint">允许咕咕为群成员分别记录可用的个人偏好</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" aria-label="切换群成员记忆" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? '已开启' : '已关闭' }}</span></span></div>
+          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
+          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
-        <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群成员可用工具</span><span class="pm-field-hint">可多选；未选中的工具不会提供给群成员</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ option.label }}</button></div></div>
+        <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'web_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
       </div>
     </template>
-    <div v-if="connect" class="pm-qr-box"><canvas ref="connectCanvas" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">取消</button></div>
+    <div v-if="connect" class="pm-qr-box"><canvas ref="connectCanvas" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
     <div v-if="connectErr" class="pm-qr-err">{{ connectErr }}</div>
   </div>
 </template>
@@ -37,13 +37,13 @@ import QRCode from 'qrcode'
 import Icon from '@/components/common/Icon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
-import { fireHint } from '@/composables/useOnboarding'
 import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent } from '@/utils/optimisticIntent'
 import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import { useI18n } from 'vue-i18n'
 
 interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
@@ -62,10 +62,11 @@ const groupToolOptions = [
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
 const preferences = usePreferencesStore()
+const { t } = useI18n()
 const platforms = [
-  { key: 'feishu', label: '飞书（自带机器人）', api: feishuConnectApi, hint: '手机飞书扫码 → 授权创建机器人，咕咕自动连接，私聊它直接管项目/文件/日程' },
-  { key: 'qq', label: 'QQ（自带机器人）', api: qqConnectApi, hint: '手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊或在群里 @它管理项目/文件/日程' },
-  { key: 'wechat', label: '微信（个人微信）', api: wechatConnectApi, hint: '手机微信扫码 → 授权个人微信机器人（官方 iLink、无需企业资质），私聊它直接管项目/文件/日程' },
+  { key: 'feishu', labelKey: 'profileImUi.feishu', api: feishuConnectApi, hintKey: 'profileImUi.feishuHint' },
+  { key: 'qq', labelKey: 'profileImUi.qq', api: qqConnectApi, hintKey: 'profileImUi.qqHint' },
+  { key: 'wechat', labelKey: 'profileImUi.wechat', api: wechatConnectApi, hintKey: 'profileImUi.wechatHint' },
 ]
 const bots = ref<Bot[]>([]); const botsOf = (platform: string) => bots.value.filter(bot => bot.platform === platform)
 const helpPopBotId = ref<number | null>(null)
@@ -87,6 +88,18 @@ function toggleToolInteractions() {
 }
 
 function botById(botId: number): Bot | undefined { return bots.value.find(bot => bot.id === botId) }
+function displayBotName(bot: Bot): string {
+  const name = bot.name?.trim() || ''
+  const normalized = name.replace(/\s+/g, '')
+  const defaultKey = bot.platform === 'feishu' && normalized === '我的飞书机器人'
+    ? 'defaultFeishuBot'
+    : bot.platform === 'qq' && normalized === '我的QQ机器人'
+      ? 'defaultQqBot'
+      : bot.platform === 'wechat' && ['我的微信', '我的微信机器人'].includes(normalized)
+        ? 'defaultWechatBot'
+        : null
+  return defaultKey ? t(`profileImUi.${defaultKey}`) : name
+}
 function patchLocalBot(botId: number, patch: BotSettingPatch) {
   const index = bots.value.findIndex(bot => bot.id === botId)
   if (index === -1) return
@@ -144,8 +157,8 @@ function updateBotSetting(botId: number, patch: BotSettingPatch, fallbackError: 
   return task
 }
 
-async function startConnect(platform: string) { const item = platforms.find(value => value.key === platform); if (!item) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = platform === 'feishu' ? '手机飞书扫码 → 授权创建机器人，授权后自动连接' : platform === 'wechat' ? '手机微信扫码 → 授权个人微信机器人，授权后自动连接' : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'; await nextTick(); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || '生成二维码失败'; connect.value = null } finally { connecting.value = '' } }
-function startPoll(platform: (typeof platforms)[number]) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots(); fireHint('im_bind') } else if (result.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码连接'; cancelConnect() } else if (result.status === 'fail') { connectErr.value = '连接失败：' + (result.reason || '未知'); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
+async function startConnect(platform: string) { const item = platforms.find(value => value.key === platform); if (!item) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = t(`profileImUi.${platform}ConnectHint`); await nextTick(); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || t('profileImUi.qrGenerateFailed'); connect.value = null } finally { connecting.value = '' } }
+function startPoll(platform: (typeof platforms)[number]) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots() } else if (result.status === 'expired') { connectErr.value = t('profileImUi.qrExpired'); cancelConnect() } else if (result.status === 'fail') { connectErr.value = t('profileImUi.connectionFailedWithReason', { reason: result.reason || t('profileImUi.unknownError') }); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
 function stopPoll() { if (poll) { clearInterval(poll); poll = null } }
 function resumePoll() {
   if (!connect.value) return
@@ -153,8 +166,8 @@ function resumePoll() {
   if (platform) startPoll(platform)
 }
 function cancelConnect() { stopPoll(); connect.value = null }
-function toggleBot(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { enabled: !current.enabled }, '连接设置失败') }
-async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } } } catch (error) { connectErr.value = error instanceof Error ? error.message : '生成验证码失败' } finally { bindingBotId.value = null } }
+function toggleBot(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { enabled: !current.enabled }, t('profileImUi.connectionSettingsFailed')) }
+async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } } } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.codeGenerateFailed') } finally { bindingBotId.value = null } }
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -175,7 +188,7 @@ async function copyBindingCode(botId: number) {
   const binding = bindingCodes.value[botId]
   if (!binding) return
   const copied = await copyText(`绑定 ${binding.code}`)
-  if (!copied) { connectErr.value = '复制失败，请手动复制绑定指令'; return }
+  if (!copied) { connectErr.value = t('profileImUi.copyFailed'); return }
   copiedBindingBotId.value = botId
   if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
   copyFeedbackTimer = setTimeout(() => { copiedBindingBotId.value = null; copyFeedbackTimer = null }, 1600)
@@ -202,7 +215,7 @@ function setMessageFormat(bot: Bot, scope: 'group' | 'private', mode: string) {
   const patch = scope === 'group' ? { group_message_format: mode } : { private_message_format: mode }
   void updateBotSetting(bot.id, patch, '消息格式设置失败')
 }
-async function removeBot(bot: Bot) { if (!await confirmDialog({ title: '删除机器人', message: `删除「${bot.name}」？删除后这个机器人不再连咕咕。`, tone: 'danger', confirmText: '删除' })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
+async function removeBot(bot: Bot) { if (!await confirmDialog({ title: t('profileImUi.deleteBotTitle'), message: t('profileImUi.deleteBotMessage', { name: displayBotName(bot) }), tone: 'danger', confirmText: t('profileImUi.deleteBot') })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed') } }
 onMounted(() => { void preferences.fetch(); loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
 onDeactivated(clearCopyFeedback)
@@ -306,6 +319,7 @@ onActivated(resumePoll)
    这里要把 hint + button 绑成一行，所以单独再套一个 inline 容器。 */
 .pm-help-row { display: inline-flex; align-items: baseline; gap: 4px; }
 .pm-help-toggle {
+  white-space: nowrap;
   /* 「设置方法」是行内小链接按钮：跟「选择群消息的处理方式」文字同行末尾
      居中显示，跟 hint 同字号 12px（不再小一号看着突兀），用 action-primary
      颜色 + 600 字重区别于普通灰色说明文字，让用户一眼识别为可点击；
@@ -333,7 +347,7 @@ onActivated(resumePoll)
 .pm-help-toggle:focus { outline: none; }
 .pm-help-toggle:focus-visible { outline: 2px solid var(--action-outline); outline-offset: 2px; border-radius: 2px; }
 .pm-help-toggle:active { transform: none; opacity: 1; }
-:global(.popup-menu-host.pm-help-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+:global(.popup-menu-host.pm-help-popup-host) { padding: 0; }
 .pm-help-pop { width: max-content; max-width: 300px; padding: 10px 12px; color: var(--popup-item-fg); }
 .pm-help-pop-title { font-size: 12px; font-weight: 700; color: var(--content-primary); margin-bottom: 6px; }
 .pm-help-pop-step { font-size: 12px; color: var(--content-secondary); line-height: 1.7; }

@@ -1,4 +1,5 @@
 import { ref, watch } from 'vue'
+import { i18n } from '@/i18n'
 import { CLIENT_ID, scheduledTasksApi } from '@/services/api'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveRefresh } from '@/composables/useLiveRefresh'
@@ -8,6 +9,7 @@ import { useLiveStore } from '@/stores/live'
 export type ScheduledTask = Record<string, any>
 
 export function useScheduledTasks() {
+  const t = i18n.global.t
   const tasks = ref<ScheduledTask[]>([])
   const loading = ref(true)
   const busy = ref(false)
@@ -38,7 +40,7 @@ export function useScheduledTasks() {
       await scheduledTasksApi.update(task.id, { enabled: !task.enabled })
       await load()
     } catch (error) {
-      showAppError(`更新任务失败：${errorMessage(error)}`)
+      showAppError(t('schedules.updateFailed', { message: errorMessage(error) }))
     }
   }
 
@@ -46,22 +48,22 @@ export function useScheduledTasks() {
     busy.value = true
     try {
       const result = await scheduledTasksApi.run(task.id)
-      showAppNotice(result.msg || '已执行一次')
+      showAppNotice(result.msg || t('schedules.ranOnce'))
       await load()
     } catch (error) {
-      showAppError(`执行失败：${errorMessage(error)}`)
+      showAppError(t('schedules.runFailed', { message: errorMessage(error) }))
     } finally {
       busy.value = false
     }
   }
 
   async function remove(task: ScheduledTask) {
-    if (!await confirmDialog({ title: '删除定时任务', message: `删除「${task.name}」？`, tone: 'danger', confirmText: '删除' })) return
+    if (!await confirmDialog({ title: t('schedules.deleteTitle'), message: t('schedules.deleteMessage', { name: task.name }), tone: 'danger', confirmText: t('schedules.delete') })) return
     try {
       await scheduledTasksApi.delete(task.id)
       await load()
     } catch (error) {
-      showAppError(`删除任务失败：${errorMessage(error)}`)
+      showAppError(t('schedules.deleteFailed', { message: errorMessage(error) }))
     }
   }
 

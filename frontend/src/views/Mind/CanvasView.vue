@@ -49,6 +49,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import { showAppError } from '@/composables/useAppToast'
@@ -61,6 +62,7 @@ import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
 import { createRelationRuntimeConnection } from './utils/relationRuntimeConnection'
+const { t } = useI18n()
 import {
   setRelationRuntimeConnection as setRuntimeConnection,
   takeRelationRuntimeConnection as takeRuntimeConnection,
@@ -184,7 +186,7 @@ async function activateCanvas(id: number) {
     if (seq === activationSeq) {
       canvasProjectIdsReady.value = true
       canvasReady.value = true
-      showAppError('画布加载失败，请稍后重试')
+      showAppError(t('mindUi.loadFailed'))
     }
     return
   }
@@ -277,7 +279,7 @@ function returnProjectToDrawer(item: MindCanvasItem) {
     ? projectStore.projects.find(project => project.id === item.node.refId)?.status
     : null
   if (projectStatus) canvasSidebarRef.value?.openProjectStatus(projectStatus)
-  void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError('项目移回抽屉失败，已恢复到画布'))
+  void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError(t('mindUi.returnFailed')))
 }
 async function removeRelation(id: number) {
   if (id < 0) {
@@ -401,7 +403,7 @@ async function createCanvasNote() {
   const { x, y } = centerOfViewport()
   // 画布便签不再有"无色"这个选项（见 ColorSwatches.vue 的 allowNone），新建时就得落一个
   // 默认色，不能留 null 等用户自己再点——按用户要求，默认色是橙（'amber'）。
-  await store.createCanvasNote(activeCanvasId.value, { x, y, title: '新便签', color: 'amber' })
+  await store.createCanvasNote(activeCanvasId.value, { x, y, title: t('mindUi.newNote'), color: 'amber' })
 }
 async function addRef(refItem: CanvasRefItem) {
   if (activeCanvasId.value == null) return
@@ -425,7 +427,7 @@ async function addProjectAtScreen(projectId: number, center: { x: number; y: num
   const height = Number.isFinite(size.h) && size.h > 0 ? size.h : 120
   const position = { x: world.x - width / 2, y: world.y - height / 2 }
   const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, position.x, position.y)
-  ready.catch(() => showAppError('添加到画布失败，请重试'))
+  ready.catch(() => showAppError(t('mindUi.addFailed')))
   await nextTick()
   const target = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
   return target

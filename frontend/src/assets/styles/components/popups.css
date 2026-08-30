@@ -1,5 +1,6 @@
 /* 通用弹层的结构与交互样式。Teleport 根节点的外层定位和主题代理仍归 bridges。 */
 .popup-menu {
+  display: flex; flex-direction: column; gap: 1px;
   background: var(--popup-background);
   backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid var(--popup-border);
@@ -37,6 +38,7 @@
 
 /* 暗色弹窗（Admin 用）— 对齐 .popup-menu 结构，暗色配色 */
 .popup-menu-dark {
+  display: flex; flex-direction: column; gap: 1px;
   background: var(--popup-surface-bg);
   backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
   border: 1px solid var(--popup-surface-border);

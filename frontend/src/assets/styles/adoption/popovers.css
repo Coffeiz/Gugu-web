@@ -20,6 +20,22 @@ html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) {
   padding: var(--popup-surface-padding);
 }
 
+/* DatePicker 的毛玻璃由 PopupMenu host 统一绘制；内部只负责日历布局，避免双层 surface。 */
+html[data-theme][data-family] :is(
+  .popup-menu-host > .dp-popup,
+  .popup-menu-host > .adp-popup,
+  .popup-menu-host > .adp-year-popup,
+  .popup-menu-host > .note-picker,
+  .popup-menu-host > .ne-picker
+) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 /* Item paint is scoped to real generic popup containers. Do not target .popup-menu-item globally:
    AppSidebar's settings menu deliberately has its own edge-to-edge pseudo-element hover geometry. */
 html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item {
@@ -102,7 +118,9 @@ html[data-theme][data-family] .dp-year-btn.selected {
   background: var(--action-primary-bg);
   box-shadow: var(--elevation-card);
 }
-html[data-theme][data-family] .dp-footer { border-top-color: var(--popup-divider); }
+html[data-theme][data-family] .dp-footer {
+  border-top-color: color-mix(in srgb, var(--content-primary) 12%, transparent);
+}
 html[data-theme][data-family] .dp-today:hover { background: var(--action-soft-hover); }
 
 /* Shared popover cadence. settings uses AppSidebar's original `popup` transition and is intentionally

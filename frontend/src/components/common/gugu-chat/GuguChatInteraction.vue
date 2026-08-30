@@ -1,6 +1,6 @@
 <template>
   <div class="interaction-bubble">
-    <div class="interaction-title">{{ msg.interaction?.title || '需要确认' }}</div>
+    <div class="interaction-title">{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</div>
     <div class="interaction-body">{{ msg.interaction?.body }}</div>
     <div class="interaction-actions">
       <button v-for="option in (msg.interaction?.options || [])" :key="option.id" type="button"
@@ -8,11 +8,13 @@
         {{ option.label }}
       </button>
     </div>
-    <div v-if="resolved" class="interaction-resolved">已提交</div>
+    <div v-if="resolved" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { ref, watch } from 'vue'
 import type { ChatMessage } from './chatTypes'
 

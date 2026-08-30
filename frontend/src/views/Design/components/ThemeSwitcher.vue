@@ -33,7 +33,7 @@ const themes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' },
 ]
 const palettes: Array<{ value: ThemePalette; label: string }> = [
-  { value: 'aero', label: 'Aero' }, { value: 'mono', label: 'Mono' },
+  { value: 'mist', label: 'Mist' }, { value: 'cafe', label: 'Cafe' },
   { value: 'rose', label: 'Rose' }, { value: 'sky', label: 'Sky' }, { value: 'sage', label: 'Sage' },
 ]
 </script>

@@ -2,21 +2,21 @@
   <div class="project-info-panel" :class="{ 'info-expanded': infoExpanded }">
     <div class="info-block">
       <div class="section">
-        <label class="section-label">客户 / 委托方</label>
-        <input class="field-input" v-model="client" placeholder="客户名称（选填）" />
+        <label class="section-label">{{ t('projects.client') }}</label>
+        <input class="field-input" v-model="client" :placeholder="t('projects.clientPlaceholder')" />
       </div>
 
       <hr class="col-divider" />
 
       <div class="section">
-        <label class="section-label">项目周期</label>
-        <DateSpanPicker v-model:startDate="startDate" v-model:endDate="deadline" placeholder="选择开始 — 截止日期" />
+        <label class="section-label">{{ t('projects.period') }}</label>
+        <DateSpanPicker v-model:startDate="startDate" v-model:endDate="deadline" :placeholder="t('projects.periodPlaceholder')" />
       </div>
 
       <hr class="col-divider" />
 
       <div class="section">
-        <label class="section-label">项目颜色</label>
+        <label class="section-label">{{ t('projects.color') }}</label>
         <div class="color-grid">
           <button
             v-for="preset in colorPresets"
@@ -38,6 +38,8 @@
 import { computed, type PropType } from 'vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 const props = defineProps({
   client: { type: String, required: true },
   startDate: { type: String, required: true },

@@ -1,4 +1,5 @@
 import { shallowRef } from 'vue'
+import { i18n } from '@/i18n'
 
 export type ConfirmTone = 'neutral' | 'warning' | 'danger'
 
@@ -29,8 +30,8 @@ export function confirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
       title: options.title,
       message: options.message,
       tone: options.tone ?? 'neutral',
-      confirmText: options.confirmText ?? '确定',
-      cancelText: options.cancelText ?? '取消',
+      confirmText: options.confirmText ?? i18n.global.t('common.actions.confirm'),
+      cancelText: options.cancelText ?? i18n.global.t('common.actions.cancel'),
       resolve,
     })
     showNext()

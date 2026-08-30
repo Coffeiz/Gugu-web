@@ -1,25 +1,25 @@
 <template>
   <div class="sa-page">
     <div class="sa-head">
-      <h2 class="sa-title">存储对账</h2>
-      <p class="sa-sub">存储 ↔ DB 一致性核查：<b>文件层</b>（存储对象 ↔ File 记录）与<b>目录层</b>（文件夹树 ↔ 磁盘目录）。扫描只读、不改数据；修复需显式操作。</p>
+      <h2 class="sa-title">{{ t('admin.storageAudit') }}</h2>
+      <p class="sa-sub">{{ t('storageAudit.subtitle') }}</p>
     </div>
 
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
-          <h3 class="sa-card-title">旧回收站目录迁移</h3>
-          <p class="sa-card-sub">把旧版 trash/{file_id}/ 文件迁移到保留原目录的新结构；扫描只读，迁移不会覆盖目标文件。</p>
+          <h3 class="sa-card-title">{{ t('storageAuditUi.legacyTitle') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAuditUi.legacyHint') }}</p>
         </div>
         <div class="sa-card-head-right">
-          <button class="sa-btn" :disabled="trashMigrating" @click="scanTrashMigration">扫描旧目录</button>
-          <button v-if="trashMigration?.items?.length" class="sa-btn primary" :disabled="trashMigrating" @click="runTrashMigration">迁移 {{ trashMigration.items.length }} 项</button>
+          <button class="sa-btn" :disabled="trashMigrating" @click="scanTrashMigration">{{ t('storageAudit.scanLegacyTrash') }}</button>
+          <button v-if="trashMigration?.items?.length" class="sa-btn primary" :disabled="trashMigrating" @click="runTrashMigration">{{ t('storageAudit.migrateItems', { count: trashMigration.items.length }) }}</button>
         </div>
       </div>
       <div v-if="trashMigrationMsg" class="sa-inline-msg" :class="trashMigrationKind">{{ trashMigrationMsg }}</div>
       <div v-if="trashMigration" class="recon-summary">
         <template v-if="trashMigration.note">{{ trashMigration.note }}</template>
-        <template v-else>发现 <b>{{ trashMigration.count }}</b> 个旧目录对象</template>
+        <template v-else>{{ t('storageAudit.legacyFound', { count: trashMigration.count }) }}</template>
       </div>
     </section>
 
@@ -27,59 +27,57 @@
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
-          <h3 class="sa-card-title">文件对账</h3>
-          <p class="sa-card-sub">扫描物理对象与 File 表：幽灵记录（DB 有、文件丢）+ 孤儿文件（文件在、DB 无）</p>
+          <h3 class="sa-card-title">{{ t('storageAudit.fileAudit') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAudit.fileAuditHint') }}</p>
         </div>
         <button class="sa-btn" :disabled="fileScanning" @click="scanFiles">
           <Icon name="action.search" size="sm" />
-          {{ fileScanning ? '对账中…' : '扫描' }}
+          {{ fileScanning ? t('storageAudit.scanning') : t('storageAudit.scan') }}
         </button>
       </div>
 
       <div v-if="fileMsg" class="sa-inline-msg" :class="fileMsgKind">{{ fileMsg }}</div>
 
       <div v-if="fileReport" class="recon-report">
-        <div v-if="fileReport.error" class="recon-err">对账失败：{{ fileReport.error }}</div>
+          <div v-if="fileReport.error" class="recon-err">{{ t('storageAudit.fileAudit') }}：{{ fileReport.error }}</div>
         <template v-else>
           <div class="recon-summary">
-            存储 <b>{{ fileReport.backend }}</b>（{{ fileReport.location }}） ·
-            DB 文件 <b>{{ fileReport.db_file_rows }}</b> · 存储对象 <b>{{ fileReport.storage_objects }}</b> ·
-            对得上 <b style="color:#5ab899">{{ fileReport.matched }}</b> ·
-            幽灵 <b :style="{ color: fileReport.ghost_count ? '#e07676' : 'inherit' }">{{ fileReport.ghost_count }}</b> ·
-            孤儿 <b :style="{ color: fileReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ fileReport.orphan_count }}</b> ·
-            位置错位 <b :style="{ color: fileReport.misplaced_count ? '#e0a96a' : 'inherit' }">{{ fileReport.misplaced_count || 0 }}</b>
+            {{ t('storageAuditExtra.storage') }} <b>{{ fileReport.backend }}</b>（{{ fileReport.location }}） ·
+            {{ t('storageAuditExtra.dbFiles') }} <b>{{ fileReport.db_file_rows }}</b> · {{ t('storageAuditExtra.objects') }} <b>{{ fileReport.storage_objects }}</b> ·
+            {{ t('storageAuditExtra.matched') }} <b style="color:#5ab899">{{ fileReport.matched }}</b> ·
+            {{ t('storageAuditExtra.ghosts') }} <b :style="{ color: fileReport.ghost_count ? '#e07676' : 'inherit' }">{{ fileReport.ghost_count }}</b> ·
+            {{ t('storageAuditExtra.orphans') }} <b :style="{ color: fileReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ fileReport.orphan_count }}</b> ·
+            {{ t('storageAuditExtra.misplaced') }} <b :style="{ color: fileReport.misplaced_count ? '#e0a96a' : 'inherit' }">{{ fileReport.misplaced_count || 0 }}</b>
           </div>
-          <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok">
-            ✅ DB 与存储一一对应，路径归属也正确。
-          </div>
+          <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok">✅ {{ t('storageAuditUi.healthy') }}</div>
           <div v-if="fileReport.ghost_count" class="recon-block">
-            <div class="recon-block-title">幽灵记录（DB 有行但物理文件缺失，点开会 404）</div>
+            <div class="recon-block-title">{{ t('storageAuditExtra.ghostRecords') }}</div>
             <div v-for="g in fileReport.ghosts" :key="g.id" class="recon-row">
               <span class="recon-name">{{ g.name }}</span>
-              <span class="recon-meta">{{ g.space }}{{ g.project ? ' · ' + g.project : '' }}{{ g.deleted ? ' · 回收站' : '' }} · {{ g.storage_key }}</span>
+              <span class="recon-meta">{{ g.space }}{{ g.project ? ' · ' + g.project : '' }}{{ g.deleted ? ' · ' + t('storageAuditExtra.trash') : '' }} · {{ g.storage_key }}</span>
             </div>
           </div>
           <div v-if="fileReport.orphan_count" class="recon-block">
             <div class="recon-block-title">
-              孤儿文件（物理文件存在但 DB 无记录，app 里看不见）
+              {{ t('storageAuditExtra.orphanFiles') }}
               <span class="recon-bulk">
-                <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'import')">全部导入</button>
-                <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'delete')">全部删除</button>
+                <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'import')">{{ t('storageAuditExtra.importAll') }}</button>
+                <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'delete')">{{ t('storageAuditExtra.deleteAll') }}</button>
               </span>
             </div>
             <div v-for="o in fileReport.orphans" :key="o" class="recon-row">
               <span class="recon-meta">{{ o }}</span>
               <span class="recon-row-acts">
-                <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans([o], 'import')" title="按路径重建 DB 记录，让它在 app 里现身">导入</button>
-                <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans([o], 'delete')" title="删除物理文件（不可恢复）">删除</button>
+                <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans([o], 'import')" :title="t('storageAuditExtra.importTitle')">{{ t('storageAuditExtra.import') }}</button>
+                <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans([o], 'delete')" :title="t('storageAuditExtra.deleteTitle')">{{ t('storageAuditExtra.delete') }}</button>
               </span>
             </div>
           </div>
           <div v-if="fileReport.misplaced_count" class="recon-block">
             <div class="recon-block-title">
-              物理位置错位（文件所属目录与当前物理路径不一致）
+              {{ t('storageAuditExtra.misplacedHint') }}
               <span class="recon-bulk">
-                <button class="recon-act" :disabled="fileRepairing" @click="repairMisplaced">全部搬回正确目录</button>
+                <button class="recon-act" :disabled="fileRepairing" @click="repairMisplaced">{{ t('storageAuditExtra.moveAll') }}</button>
               </span>
             </div>
             <div v-for="item in fileReport.misplaced_files" :key="item.file_id" class="recon-row">
@@ -87,7 +85,7 @@
               <span class="recon-meta">{{ item.current_key }} → {{ item.expected_key }}</span>
             </div>
           </div>
-          <div v-if="fileReport.truncated" class="recon-meta">（结果较多，列表仅显示前 300 条）</div>
+          <div v-if="fileReport.truncated" class="recon-meta">{{ t('storageAuditExtra.truncated') }}</div>
         </template>
       </div>
     </section>
@@ -95,20 +93,20 @@
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
-          <h3 class="sa-card-title">路径归属修复</h3>
-          <p class="sa-card-sub">匹配物理文件与旧 File 记录，更新 storage_key 和完整文件夹归属；只执行唯一匹配项。</p>
+          <h3 class="sa-card-title">{{ t('storageAuditUi.pathTitle') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAuditUi.pathHint') }}</p>
         </div>
         <div class="sa-card-head-right">
-          <button class="sa-btn" :disabled="pathScanning" @click="scanPathMigration">扫描路径</button>
+          <button class="sa-btn" :disabled="pathScanning" @click="scanPathMigration">{{ t('storageAuditUi.scanPath') }}</button>
           <button v-if="pathReport?.candidates?.length" class="sa-btn primary" :disabled="pathRepairing" @click="repairPathMigration">
-            修复 {{ pathReport.candidates.length }} 项
+            {{ t('storageAuditUi.repairItems', { count: pathReport.candidates.length }) }}
           </button>
         </div>
       </div>
       <div v-if="pathMsg" class="sa-inline-msg" :class="pathMsgKind">{{ pathMsg }}</div>
       <div v-if="pathReport" class="recon-report">
-        <div class="recon-summary">可安全匹配 <b>{{ pathReport.candidate_count }}</b> 项 · 歧义 <b>{{ pathReport.ambiguous_count }}</b> 项</div>
-        <div v-if="pathReport.ambiguous_count" class="recon-meta">存在同名同大小文件，已跳过，需要人工确认。</div>
+        <div class="recon-summary">{{ t('storageAuditExtra.safeMatch') }} {{ t('filesViewUi.items', { count: pathReport.candidate_count }) }} · {{ t('storageAuditExtra.ambiguous') }} {{ t('filesViewUi.items', { count: pathReport.ambiguous_count }) }}</div>
+        <div v-if="pathReport.ambiguous_count" class="recon-meta">{{ t('storageAuditExtra.ambiguousHint') }}</div>
         <div v-for="item in pathReport.candidates" :key="item.file_id" class="recon-row">
           <span class="recon-name">{{ item.name }}</span>
           <span class="recon-meta">{{ item.expected_old_key }} → {{ item.key }}</span>
@@ -120,14 +118,14 @@
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
-          <h3 class="sa-card-title">目录对账</h3>
-          <p class="sa-card-sub">diff 文件夹树期望目录 vs 磁盘目录：补缺失空目录（治 123）、清无主孤儿空目录（治 adr）</p>
+          <h3 class="sa-card-title">{{ t('storageAuditUi.dirTitle') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAuditUi.dirHint') }}</p>
         </div>
         <div class="sa-card-head-right">
-          <input v-model.trim="userId" class="sa-input" placeholder="用户 ID（留空 = 全量）" @keyup.enter="scanDirs()" />
+          <input v-model.trim="userId" class="sa-input" :placeholder="t('storageAuditUi.userId')" @keyup.enter="scanDirs()" />
           <button class="sa-btn" :disabled="dirScanning" @click="scanDirs()">
             <Icon name="action.search" size="sm" />
-            {{ dirScanning ? '对账中…' : '扫描' }}
+            {{ dirScanning ? t('storageAuditUi.reconciling') : t('storageAudit.scan') }}
           </button>
         </div>
       </div>
@@ -138,64 +136,63 @@
         <div class="fd-banner" :class="dirReport.healthy ? 'ok' : 'alert'">
           <Icon v-if="dirReport.healthy" name="status.check-circle" size="md" />
           <Icon v-else name="status.warning" size="md" />
-          <span v-if="dirReport.healthy">目录一致，无缺失、无孤儿、无位置漂移。</span>
+          <span v-if="dirReport.healthy">{{ t('storageAuditUi.healthy') }}</span>
           <span v-else>
-            发现
-            <b v-if="dirReport.missing_dirs.length">{{ dirReport.missing_dirs.length }} 个缺失目录</b>
+            {{ t('storageAuditExtra.found') }}
+            <b v-if="dirReport.missing_dirs.length">{{ t('storageAuditExtra.missingCount', { count: dirReport.missing_dirs.length }) }}</b>
             <span v-if="dirReport.missing_dirs.length && (dirReport.orphan_dirs.length || dirReport.misplaced_files.length)">、</span>
-            <b v-if="dirReport.orphan_dirs.length">{{ dirReport.orphan_dirs.length }} 个孤儿空目录</b>
+            <b v-if="dirReport.orphan_dirs.length">{{ t('storageAuditExtra.orphanCount', { count: dirReport.orphan_dirs.length }) }}</b>
             <span v-if="dirReport.orphan_dirs.length && dirReport.misplaced_files.length">、</span>
-            <b v-if="dirReport.misplaced_files.length">{{ dirReport.misplaced_files.length }} 个位置不一致文件</b>。
+            <b v-if="dirReport.misplaced_files.length">{{ t('storageAuditExtra.misplacedCount', { count: dirReport.misplaced_files.length }) }}</b>。
           </span>
         </div>
 
         <div class="fd-cards">
           <div class="fd-card">
-            <div class="fc-label">已对账文件夹</div>
+            <div class="fc-label">{{ t('storageAuditExtra.scannedFolders') }}</div>
             <div class="fc-value">{{ dirReport.scanned_folders }}</div>
           </div>
           <div class="fd-card" :class="{ warnMiss: dirReport.missing_dirs.length }">
-            <div class="fc-label">缺失目录</div>
+            <div class="fc-label">{{ t('storageAuditUi.missingDirs') }}</div>
             <div class="fc-value">{{ dirReport.missing_dirs.length }}</div>
-            <div class="fc-hint">DB 有夹、盘上没目录 · 可自动补</div>
+            <div class="fc-hint">{{ t('storageAuditExtra.missingHint') }}</div>
           </div>
           <div class="fd-card" :class="{ warnOrphan: dirReport.orphan_dirs.length }">
-            <div class="fc-label">孤儿空目录</div>
+            <div class="fc-label">{{ t('storageAuditUi.orphanDirs') }}</div>
             <div class="fc-value">{{ dirReport.orphan_dirs.length }}</div>
-            <div class="fc-hint">盘上有、无对应文件夹且为空 · 需确认清理</div>
+            <div class="fc-hint">{{ t('storageAuditExtra.orphanHint') }}</div>
           </div>
           <div class="fd-card" :class="{ warnOrphan: dirReport.misplaced_files.length }">
-            <div class="fc-label">位置不一致文件</div>
+            <div class="fc-label">{{ t('storageAuditUi.misplacedFiles') }}</div>
             <div class="fc-value">{{ dirReport.misplaced_files.length }}</div>
-            <div class="fc-hint">DB 归属已变、物理字节还在旧位置 · 需确认搬迁</div>
+            <div class="fc-hint">{{ t('storageAuditExtra.misplacedCardHint') }}</div>
           </div>
         </div>
 
         <div v-if="dirLastFix" class="fd-fix-result">
           <Icon name="status.check-circle" size="sm" />
-          上次修复：补齐 <b>{{ dirLastFix.created }}</b> 个缺失目录，清理 <b>{{ dirLastFix.removed }}</b> 个孤儿目录，
-          搬迁 <b>{{ dirLastFix.relocated }}</b> 个位置不一致文件。
+          {{ t('storageAuditExtra.lastFix', { created: dirLastFix.created, removed: dirLastFix.removed, relocated: dirLastFix.relocated }) }}
         </div>
 
         <div v-if="dirReport.missing_dirs.length" class="fd-section">
-          <div class="sec-title miss">缺失目录（将被自动补齐 · mkdir，安全）</div>
+          <div class="sec-title miss">{{ t('storageAuditExtra.missingSection') }}</div>
           <ul class="dir-list">
             <li v-for="d in dirReport.missing_dirs" :key="d" class="dir-item">{{ d }}</li>
           </ul>
         </div>
 
         <div v-if="dirReport.orphan_dirs.length" class="fd-section">
-          <div class="sec-title orphan">孤儿空目录（无对应文件夹的空骨架 · 清理不可恢复）</div>
+          <div class="sec-title orphan">{{ t('storageAuditExtra.orphanSection') }}</div>
           <ul class="dir-list">
             <li v-for="d in dirReport.orphan_dirs" :key="d" class="dir-item">{{ d }}</li>
           </ul>
           <Checkbox v-model="removeOrphans" class="fd-confirm">
-            我确认清理上述孤儿空目录（仅删空目录，非空目录不受影响，且不可恢复）
+            {{ t('storageAuditUi.confirmOrphans') }}
           </Checkbox>
         </div>
 
         <div v-if="dirReport.misplaced_files.length" class="fd-section">
-          <div class="sec-title orphan">位置不一致文件（DB 归属正常，物理字节还在旧位置 · 不含 mind 空间）</div>
+          <div class="sec-title orphan">{{ t('storageAuditExtra.misplacedSection') }}</div>
           <ul class="dir-list">
             <li v-for="m in dirReport.misplaced_files" :key="m.file_id" class="dir-item misplaced-item">
               <div class="misplaced-name">{{ m.display_name }}（#{{ m.file_id }}）</div>
@@ -203,7 +200,7 @@
             </li>
           </ul>
           <Checkbox v-model="relocateFiles" class="fd-confirm">
-            我确认把上述文件搬到当前归属应在的位置（重命名冲突自动加后缀，不覆盖已有文件）
+            {{ t('storageAuditExtra.relocateConfirm') }}
           </Checkbox>
         </div>
 
@@ -212,7 +209,7 @@
             <Icon name="admin.wrench" size="sm" />
             {{ dirFixBtnLabel }}
           </button>
-          <span class="fd-actions-note">修复在服务端重新扫描后执行——补缺失总是安全；孤儿/位置搬迁仅在勾选确认后才动。</span>
+          <span class="fd-actions-note">{{ t('storageAuditExtra.actionsNote') }}</span>
         </div>
       </template>
     </section>
@@ -221,42 +218,42 @@
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
-          <h3 class="sa-card-title">记忆旧文件清理</h3>
-          <p class="sa-card-sub">咕咕记忆存储格式升级（如 summary.md+summary.ts → summary.json）不会自动删旧文件，只有新文件已确认写过才判定可清；避免误删还没迁移的原始数据。</p>
+          <h3 class="sa-card-title">{{ t('storageAuditUi.memoryTitle') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAuditUi.memoryHint') }}</p>
         </div>
         <button class="sa-btn" :disabled="memScanning" @click="scanLegacyMemory">
           <Icon name="action.search" size="sm" />
-          {{ memScanning ? '扫描中…' : '扫描' }}
+          {{ memScanning ? t('storageAuditExtra.scanning') : t('storageAuditExtra.scan') }}
         </button>
       </div>
 
       <div v-if="memMsg" class="sa-inline-msg" :class="memMsgKind">{{ memMsg }}</div>
 
       <template v-if="memReport">
-        <div v-if="!memReport.files.length" class="recon-ok">✅ 没有发现旧记忆文件。</div>
+        <div v-if="!memReport.files.length" class="recon-ok">✅ {{ t('storageAuditExtra.noLegacy') }}</div>
         <template v-else>
           <div class="recon-summary">
-            共 <b>{{ memReport.files.length }}</b> 个旧文件，其中 <b style="color:#7fc99a">{{ memReport.safeCount }}</b> 个已确认迁移、可安全清理。
+            {{ t('storageAuditExtra.legacySummary', { total: memReport.files.length, safe: memReport.safeCount }) }}
           </div>
           <div class="recon-block">
             <div class="recon-block-title">
-              旧文件列表
+              {{ t('storageAuditExtra.legacyList') }}
               <span class="recon-bulk">
                 <button class="recon-act recon-act-del" :disabled="memCleaning || !memReport.safeCount"
                         @click="cleanupLegacy(memReport.files.filter(f => f.safeToDelete).map(f => f.key))">
-                  全部清理可安全项（{{ memReport.safeCount }}）
+                  {{ t('storageAuditExtra.cleanupSafe', { count: memReport.safeCount }) }}
                 </button>
               </span>
             </div>
             <div v-for="f in memReport.files" :key="f.key" class="recon-row">
               <span class="recon-name">{{ f.legacyFile }}</span>
               <span class="recon-meta">
-                {{ f.key }} · 已被 {{ f.replacedBy }} 取代
-                <template v-if="!f.safeToDelete"> · <span style="color:#d9a94e">新文件不存在，暂不判定可删</span></template>
+                {{ f.key }} · {{ t('storageAuditExtra.replacedBy', { name: f.replacedBy }) }}
+                <template v-if="!f.safeToDelete"> · <span style="color:#d9a94e">{{ t('storageAuditExtra.unsafe') }}</span></template>
               </span>
               <span class="recon-row-acts">
                 <button class="recon-act recon-act-del" :disabled="memCleaning || !f.safeToDelete"
-                        @click="cleanupLegacy([f.key])" title="删除这个旧文件（不可恢复）">删除</button>
+                        @click="cleanupLegacy([f.key])" :title="t('storageAuditExtra.deleteLegacy')">{{ t('storageAuditExtra.delete') }}</button>
               </span>
             </div>
           </div>
@@ -269,10 +266,12 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import Checkbox from '@/components/common/Checkbox.vue'
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 
 interface TrashMigrationReport { backend: string; count: number; items: Array<{ file_id: number; name: string; source_key: string; target_key: string }>; note?: string }
 const trashMigrating = ref(false)
@@ -286,7 +285,7 @@ async function scanTrashMigration() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash')
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '扫描失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.scanFailed', { message: '' }))
     trashMigration.value = data
   } catch (e) {
     trashMigrationKind.value = 'err'
@@ -296,16 +295,16 @@ async function scanTrashMigration() {
 
 async function runTrashMigration() {
   const ids = trashMigration.value?.items.map(item => item.file_id) || []
-  if (!ids.length || !await confirmDialog({ title: '迁移旧回收站文件', message: `确认迁移 ${ids.length} 个旧回收站文件？`, tone: 'warning', confirmText: '开始迁移' })) return
+  if (!ids.length || !await confirmDialog({ title: t('storageAuditExtra.migrationTitle'), message: t('storageAuditExtra.migrationConfirm', { count: ids.length }), tone: 'warning', confirmText: t('storageAuditExtra.migrationStart') })) return
   trashMigrating.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash', {
       method: 'POST', body: JSON.stringify({ file_ids: ids }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '迁移失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.migrationFailed', { message: '' }))
     trashMigrationKind.value = data.skipped?.length ? 'err' : 'ok'
-    trashMigrationMsg.value = `已迁移 ${data.done.length} 项${data.skipped?.length ? `，跳过 ${data.skipped.length} 项` : ''}`
+    trashMigrationMsg.value = t('storageAuditExtra.migrated', { count: data.done.length }) + (data.skipped?.length ? t('storageAuditExtra.skipped', { count: data.skipped.length }) : '')
     await scanTrashMigration()
   } catch (e) {
     trashMigrationKind.value = 'err'
@@ -332,7 +331,7 @@ async function scanPathMigration() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration')
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '路径扫描失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.pathScanFailed', { message: '' }))
     pathReport.value = data
   } catch (e) {
     pathMsgKind.value = 'err'
@@ -342,7 +341,7 @@ async function scanPathMigration() {
 
 async function repairPathMigration() {
   const items = pathReport.value?.candidates || []
-  if (!items.length || !await confirmDialog({ title: '修复文件路径归属', message: `确认修复 ${items.length} 个文件的路径归属？`, tone: 'warning', confirmText: '开始修复' })) return
+  if (!items.length || !await confirmDialog({ title: t('storageAuditExtra.pathRepairTitle'), message: t('storageAuditExtra.pathRepairConfirm', { count: items.length }), tone: 'warning', confirmText: t('storageAuditExtra.pathRepairStart') })) return
   pathRepairing.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration/repair', {
@@ -353,9 +352,9 @@ async function repairPathMigration() {
       })) }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '路径修复失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.pathRepairFailed', { message: '' }))
     pathMsgKind.value = data.failed?.length ? 'err' : 'ok'
-    pathMsg.value = `已修复 ${data.done.length} 项${data.failed?.length ? `，失败 ${data.failed.length} 项` : ''}`
+    pathMsg.value = t('storageAuditExtra.pathRepaired', { count: data.done.length }) + (data.failed?.length ? ` ${t('storageAuditExtra.failed', { count: data.failed.length })}` : '')
     await scanPathMigration()
   } catch (e) {
     pathMsgKind.value = 'err'
@@ -370,7 +369,7 @@ async function scanFiles() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage')
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '对账失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.auditFailed', { message: '' }))
     fileReport.value = data
   } catch (e) {
     fileReport.value = { error: e instanceof Error ? e.message : String(e) }
@@ -381,7 +380,7 @@ async function scanFiles() {
 
 async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   if (fileRepairing.value || !keys.length) return
-  if (action === 'delete' && !await confirmDialog({ title: '删除孤儿物理文件', message: `确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`, tone: 'danger', confirmText: '永久删除' })) return
+  if (action === 'delete' && !await confirmDialog({ title: t('storageAuditExtra.orphanDeleteTitle'), message: t('storageAuditExtra.orphanDeleteConfirm', { count: keys.length }), tone: 'danger', confirmText: t('storageAuditExtra.permanentDelete') })) return
   fileRepairing.value = true
   fileMsg.value = ''
   try {
@@ -390,7 +389,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
       body: JSON.stringify({ action, keys }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '修复失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.repairFailure', { message: '' }))
     const doneSet = new Set<string>(data.done_keys || [])
     if (fileReport.value?.orphans) {
       fileReport.value.orphans = fileReport.value.orphans.filter((k: string) => !doneSet.has(k))
@@ -398,15 +397,14 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
     }
     if (data.failed?.length) {
       fileMsgKind.value = 'err'
-      fileMsg.value = `${data.done} 个成功，${data.failed.length} 个失败：` +
-        data.failed.map((f: any) => `${f.key}: ${f.error}`).join('；')
+      fileMsg.value = t('storageAuditExtra.repairResult', { done: data.done, failed: data.failed.length }) + `: ` + data.failed.map((f: any) => `${f.key}: ${f.error}`).join('；')
     } else {
       fileMsgKind.value = 'ok'
-      fileMsg.value = `已处理 ${data.done} 个孤儿文件（${action === 'import' ? '导入' : '删除'}）`
+      fileMsg.value = t('storageAuditExtra.repaired', { count: data.done, action: action === 'import' ? t('storageAuditExtra.actionImport') : t('storageAuditExtra.actionDelete') })
     }
   } catch (e) {
     fileMsgKind.value = 'err'
-    fileMsg.value = `修复失败：${e instanceof Error ? e.message : String(e)}`
+    fileMsg.value = t('storageAuditExtra.repairFailure', { message: e instanceof Error ? e.message : String(e) })
   } finally {
     fileRepairing.value = false
   }
@@ -414,7 +412,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
 
 async function repairMisplaced() {
   if (fileRepairing.value || !fileReport.value?.misplaced_count) return
-  if (!await confirmDialog({ title: '修复文件物理位置', message: `确认搬回 ${fileReport.value.misplaced_count} 个文件的正确目录？`, tone: 'warning', confirmText: '搬回文件' })) return
+  if (!await confirmDialog({ title: t('storageAuditExtra.relocateTitle'), message: t('storageAuditExtra.relocateConfirmTitle', { count: fileReport.value.misplaced_count }), tone: 'warning', confirmText: t('storageAuditExtra.relocateFiles') })) return
   fileRepairing.value = true
   fileMsg.value = ''
   try {
@@ -423,9 +421,9 @@ async function repairMisplaced() {
       body: JSON.stringify({ relocate_files: true }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '路径修复失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.pathRepairFailed', { message: '' }))
     fileMsgKind.value = 'ok'
-    fileMsg.value = `已搬回 ${data.relocated || 0} 个文件`
+    fileMsg.value = t('storageAuditExtra.relocated', { count: data.relocated || 0 })
     await scanFiles()
   } catch (e) {
     fileMsgKind.value = 'err'
@@ -462,10 +460,10 @@ const dirErr = ref('')
 
 const dirFixBtnLabel = computed(() => {
   const parts: string[] = []
-  if (dirReport.value?.missing_dirs.length) parts.push('补齐缺失')
-  if (removeOrphans.value && dirReport.value?.orphan_dirs.length) parts.push('清理孤儿')
-  if (relocateFiles.value && dirReport.value?.misplaced_files.length) parts.push('搬迁文件')
-  return parts.length ? `执行修复（${parts.join(' + ')}）` : '执行修复'
+  if (dirReport.value?.missing_dirs.length) parts.push(t('storageAuditExtra.actionMissing'))
+  if (removeOrphans.value && dirReport.value?.orphan_dirs.length) parts.push(t('storageAuditExtra.actionOrphan'))
+  if (relocateFiles.value && dirReport.value?.misplaced_files.length) parts.push(t('storageAuditExtra.actionRelocate'))
+  return parts.length ? t('storageAuditExtra.actionWithParts', { parts: parts.join(' + ') }) : t('storageAuditExtra.noAction')
 })
 
 function dirQs(): string {
@@ -480,7 +478,7 @@ async function scanDirs() {
   relocateFiles.value = false
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/folder-doctor/scan${dirQs()}`)
-    if (!res.ok) throw new Error(`扫描失败 (${res.status})`)
+    if (!res.ok) throw new Error(t('storageAuditExtra.scanFailed', { message: `(${res.status})` }))
     dirReport.value = await res.json()
   } catch (e: any) {
     dirErr.value = e.message
@@ -502,7 +500,7 @@ async function repairDirs() {
         relocate_files: relocateFiles.value,
       }),
     })
-    if (!res.ok) throw new Error(`修复失败 (${res.status})`)
+    if (!res.ok) throw new Error(t('storageAuditExtra.repairFailure', { message: `(${res.status})` }))
     const fresh: DoctorReport = await res.json()
     dirLastFix.value = { created: fresh.created, removed: fresh.removed, relocated: fresh.relocated }
     dirReport.value = fresh
@@ -541,11 +539,11 @@ async function scanLegacyMemory() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/agent/memory/legacy-files')
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '扫描失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.scanFailed', { message: '' }))
     memReport.value = data
   } catch (e) {
     memMsgKind.value = 'err'
-    memMsg.value = `扫描失败：${e instanceof Error ? e.message : String(e)}`
+    memMsg.value = t('storageAuditExtra.scanFailed', { message: e instanceof Error ? e.message : String(e) })
     memReport.value = null
   } finally {
     memScanning.value = false
@@ -554,7 +552,7 @@ async function scanLegacyMemory() {
 
 async function cleanupLegacy(keys: string[]) {
   if (memCleaning.value || !keys.length) return
-  if (!await confirmDialog({ title: '删除旧记忆文件', message: `确认删除 ${keys.length} 个旧记忆文件？此操作不可恢复。`, tone: 'danger', confirmText: '永久删除' })) return
+  if (!await confirmDialog({ title: t('storageAuditExtra.cleanupTitle'), message: t('storageAuditExtra.cleanupConfirm', { count: keys.length }), tone: 'danger', confirmText: t('storageAuditExtra.permanentDelete') })) return
   memCleaning.value = true
   memMsg.value = ''
   try {
@@ -563,7 +561,7 @@ async function cleanupLegacy(keys: string[]) {
       body: JSON.stringify({ keys }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '清理失败')
+    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.cleanupFailed', { message: '' }))
     const doneSet = new Set<string>(data.deleted || [])
     if (memReport.value) {
       memReport.value.files = memReport.value.files.filter(f => !doneSet.has(f.key))
@@ -571,11 +569,11 @@ async function cleanupLegacy(keys: string[]) {
     }
     memMsgKind.value = data.skipped?.length ? 'err' : 'ok'
     memMsg.value = data.skipped?.length
-      ? `已删除 ${data.deleted.length} 个，跳过 ${data.skipped.length} 个（重新核实时发现不可安全删除）`
-      : `已删除 ${data.deleted.length} 个旧记忆文件`
+      ? t('storageAuditExtra.deletedSkipped', { deleted: data.deleted.length, skipped: data.skipped.length })
+      : t('storageAuditExtra.deletedLegacy', { count: data.deleted.length })
   } catch (e) {
     memMsgKind.value = 'err'
-    memMsg.value = `清理失败：${e instanceof Error ? e.message : String(e)}`
+    memMsg.value = t('storageAuditExtra.cleanupFailed', { message: e instanceof Error ? e.message : String(e) })
   } finally {
     memCleaning.value = false
   }
@@ -600,11 +598,8 @@ async function cleanupLegacy(keys: string[]) {
 
 .sa-input {
   width: 220px; font-size: 13px; padding: 7px 11px; border-radius: 9px;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.9); outline: none; transition: border-color 0.15s;
+  outline: none;
 }
-.sa-input::placeholder { color: rgba(255,255,255,0.28); }
-.sa-input:focus { border-color: rgba(150,144,196,0.6); }
 
 .sa-btn {
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;

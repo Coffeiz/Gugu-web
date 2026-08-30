@@ -3,6 +3,7 @@
  * 所有请求统一走这里，自动附加 user Bearer token
  */
 import type { components } from '@/types/api'
+import { getLocale, i18n, type SupportedLocale } from '@/i18n'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -46,16 +47,20 @@ async function request<T = any>(method: string, path: string, body: any = null, 
     if (res.status === 401) {
       localStorage.removeItem('user_token')
       window.location.href = '/login'
-      throw new Error('请重新登录')
+      throw new Error(i18n.global.t('errors.loginRequired'))
     }
     const err = await res.json().catch(() => ({}))
     const d = err.detail
-    const msg = !d ? `HTTP ${res.status}`
+    const msg = !d ? i18n.global.t('errors.http', { status: res.status })
       : typeof d === 'string' ? d
       : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
-      : `HTTP ${res.status}`
-    const apiErr = new Error(msg) as Error & { status?: number }
+      : i18n.global.t('errors.http', { status: res.status })
+    const apiErr = new Error(msg) as Error & { status?: number; code?: string; params?: Record<string, unknown> }
     apiErr.status = res.status
+    if (d && typeof d === 'object' && !Array.isArray(d)) {
+      if (typeof (d as any).code === 'string') apiErr.code = (d as any).code
+      if ((d as any).params && typeof (d as any).params === 'object') apiErr.params = (d as any).params
+    }
     throw apiErr
   }
 
@@ -86,15 +91,15 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
       } else {
         try {
           const d = JSON.parse(xhr.responseText).detail
-          const msg = !d ? `HTTP ${xhr.status}`
+          const msg = !d ? i18n.global.t('errors.http', { status: xhr.status })
             : typeof d === 'string' ? d
             : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
-            : `HTTP ${xhr.status}`
+            : i18n.global.t('errors.http', { status: xhr.status })
           reject(new Error(msg))
-        } catch { reject(new Error(`HTTP ${xhr.status}`)) }
+        } catch { reject(new Error(i18n.global.t('errors.http', { status: xhr.status }))) }
       }
     }
-    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
     xhr.send(form)
   })
 }
@@ -109,9 +114,9 @@ export function uploadDirectWithProgress(url: string, file: File, onProgress: (p
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve()
-      else reject(new Error(`OSS 直传失败: HTTP ${xhr.status}`))
+      else reject(new Error(i18n.global.t('errors.http', { status: xhr.status })))
     }
-    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
     xhr.send(file)
   })
 }
@@ -575,7 +580,7 @@ export const agentApi = {
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
-  greeting:        ()                  => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
+  greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
   cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
@@ -598,11 +603,6 @@ export const agentApi = {
 
 export const onboardingApi = {
   getState:  ()             => get('/onboarding/state'),
-  claim:     (key: string)  => post(`/onboarding/claim/${key}`),
-  // demo（作用于当前用户自己）
-  devPools:  ()             => get('/onboarding/dev/pools'),
-  devFire:   (key: string)  => post(`/onboarding/dev/fire/${key}`),
-  devReset:  ()             => post('/onboarding/dev/reset'),
   devReseed: ()             => post('/onboarding/dev/reseed'),
 }
 

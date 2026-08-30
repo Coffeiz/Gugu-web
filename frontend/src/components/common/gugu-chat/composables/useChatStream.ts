@@ -1,4 +1,5 @@
 import { ref, type Ref } from 'vue'
+import { i18n } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
@@ -236,7 +237,7 @@ export function useChatStream(options: {
                 existing.runId = evt.run_id
                 existing.roundId = evt.round_id
                 existing.interaction.toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : existing.interaction.toolCallId
-                existing.interaction.title = String(evt.title || existing.interaction.title || '需要确认')
+                existing.interaction.title = String(evt.title || existing.interaction.title || i18n.global.t('chatUi.confirmRequired'))
                 existing.interaction.body = String(evt.body || existing.interaction.body || '')
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
@@ -247,13 +248,13 @@ export function useChatStream(options: {
                   interaction: {
                     promptId, kind: String(evt.kind || 'confirm'),
                     toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
-                    title: String(evt.title || '需要确认'), body: String(evt.body || ''),
+                    title: String(evt.title || i18n.global.t('chatUi.confirmRequired')), body: String(evt.body || ''),
                     options: evt.options,
                   },
                 })
                 sortLiveTimeline()
               }
-              options.setStatus({ kind: 'text', label: '等待你的确认' })
+              options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.waitingConfirmation') })
               await options.scrollBottom()
             }
           } else if (evt.type === 'token') {
@@ -309,7 +310,9 @@ export function useChatStream(options: {
             if (live()) {
               options.clearStatus()
               playGuguSfx('error')
-              messages.value.push({ id: mkid(), role: 'ai', text: evt.message || evt.detail || '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', time: now() })
+              const messageKey = typeof evt.message_key === 'string' ? evt.message_key : ''
+              const errorText = messageKey ? i18n.global.t(messageKey) : (evt.message || evt.detail || i18n.global.t('chatUi.genericError'))
+              messages.value.push({ id: mkid(), role: 'ai', text: errorText, time: now() })
               aiIdx = messages.value.length - 1
               await options.scrollBottom()
             }
@@ -465,14 +468,14 @@ export function useChatStream(options: {
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
       if (aiIdx === -1 && !r.receivedAssistantContent && !r.detached && !r.aborted && !r.interactionPaused) {
-        messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
+        messages.value.push({ id: mkid(), role: 'ai', text: i18n.global.t('chatUi.noReply'), time: now() })
         await options.scrollBottom()
       }
     } catch (e: any) {
       if (e?.name !== 'AbortError' && sessionId.value === resolvedSid) {
         // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
         options.clearStatus()
-        messages.value.push({ id: mkid(), role: 'ai', text: '咕咕网络不太好 📡 可以再发一遍吗？', time: now() })
+        messages.value.push({ id: mkid(), role: 'ai', text: i18n.global.t('chatUi.networkError'), time: now() })
         await options.scrollBottom()
       }
       // 发送失败时清理本次带的草稿附件（best-effort，只是降低草稿孤儿产生速度的优化，

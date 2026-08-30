@@ -1,6 +1,7 @@
 import { ref, reactive, computed, nextTick, onUnmounted, type Ref, type ComponentPublicInstance } from 'vue'
 import QRCode from 'qrcode'
 import { userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi } from '@/services/api'
+import { i18n } from '@/i18n'
 import type { ImPlatformKey } from '../chatTypes'
 import type GuguChatSidebar from '../GuguChatSidebar.vue'
 import type GuguChatBindDialog from '../GuguChatBindDialog.vue'
@@ -34,16 +35,18 @@ export function useChatImConnect(options: {
   enterExpanded: () => Promise<void> | void
   fetchSessions: () => Promise<void>
 }) {
+  const t = i18n.global.t
+  const platformLabel = (key: ImPlatformKey) => key === 'feishu' ? t('chatUi.feishu') : key === 'wechat' ? t('chatUi.wechat') : 'QQ'
   const IM_PLATFORMS: ImPlatform[] = [
-    { key: 'feishu',  label: '飞书', api: feishuConnectApi },
+    { key: 'feishu',  label: 'Feishu', api: feishuConnectApi },
     { key: 'qq',   label: 'QQ',   api: qqConnectApi },
-    { key: 'wechat',  label: '微信', api: wechatConnectApi },
+    { key: 'wechat',  label: 'WeChat', api: wechatConnectApi },
   ]
   const bots   = ref<Bot[]>([])
   const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false })
   // Sidebar 只需要 key/label 展示，api 对象（feishuConnectApi 等）留在这里，
   // startImConnect/openChatImBind 仍按 IM_PLATFORMS.find(...) 查找。
-  const imPlatformOptions = computed(() => IM_PLATFORMS.map(p => ({ key: p.key, label: p.label })))
+  const imPlatformOptions = computed(() => IM_PLATFORMS.map(p => ({ key: p.key, label: platformLabel(p.key) })))
   const imOnline = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
   const imHighlight = ref(false)
   const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
@@ -83,15 +86,15 @@ export function useChatImConnect(options: {
       const r = await p.api.start()
       connect.value = { platform, id: r.poll_id || r.task_id }   // 飞书 poll_id / QQ & 微信 task_id
       connectHint.value = platform === 'feishu'
-        ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
+        ? t('chatUi.feishuQrHint')
         : platform === 'wechat'
-          ? '手机微信扫码 → 授权后自动连接'
-          : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+          ? t('chatUi.wechatQrHint')
+          : t('chatUi.qqQrHint')
       await nextTick()
       await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 160, margin: 1 })
       _startImPoll(p)
     } catch (e: any) {
-      connectErr.value = e?.message || '生成二维码失败'
+      connectErr.value = e?.message || t('chatUi.qrFailed')
       connect.value = null
     } finally { connecting.value = '' }
   }
@@ -103,8 +106,8 @@ export function useChatImConnect(options: {
       try {
         const r = await p.api.poll(connect.value?.id)
         if (r.status === 'success') { cancelImConnect(); await loadBots(); await options.fetchSessions() }
-        else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码'; cancelImConnect() }
-        else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelImConnect() }
+        else if (r.status === 'expired') { connectErr.value = t('chatUi.qrExpired'); cancelImConnect() }
+        else if (r.status === 'fail') { connectErr.value = t('chatUi.connectFailed', { reason: r.reason || t('chatUi.unknown') }); cancelImConnect() }
       } catch {}
       if (tries > 100) cancelImConnect()   // ~5 分钟超时
     }, 3000)
@@ -123,22 +126,22 @@ export function useChatImConnect(options: {
     const p = IM_PLATFORMS.find(x => x.key === platform)
     if (!p) return
     _stopChatBindPoll()
-    chatBind.platform = platform; chatBind.label = p.label
+    chatBind.platform = platform; chatBind.label = platformLabel(p.key)
     chatBind.err = ''; chatBind.hint = ''; chatBind.id = null; chatBind.open = true
     await nextTick()
     try {
       const r = await p.api.start()
       chatBind.id = r.poll_id || r.task_id
       chatBind.hint = platform === 'feishu'
-        ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
+        ? t('chatUi.feishuQrHint')
         : platform === 'wechat'
-          ? '手机微信扫码 → 授权后自动连接'
-          : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
+          ? t('chatUi.wechatQrHint')
+          : t('chatUi.qqQrHint')
       await nextTick()
       await QRCode.toCanvas(options.bindDialogRef.value?.canvasEl, r.scan_url, { width: 168, margin: 1 })
       _startChatBindPoll(p)
     } catch (e: any) {
-      chatBind.err = e?.message || '生成二维码失败'
+      chatBind.err = e?.message || t('chatUi.qrFailed')
     }
   }
   function _startChatBindPoll(p: ImPlatform) {
@@ -149,8 +152,8 @@ export function useChatImConnect(options: {
       try {
         const r = await p.api.poll(chatBind.id)
         if (r.status === 'success') { closeChatBind(); await loadBots(); await options.fetchSessions() }
-        else if (r.status === 'expired') { chatBind.err = '二维码已过期，关掉再点一次按钮'; _stopChatBindPoll() }
-        else if (r.status === 'fail') { chatBind.err = '连接失败：' + (r.reason || '未知'); _stopChatBindPoll() }
+        else if (r.status === 'expired') { chatBind.err = t('chatUi.qrExpiredRetry'); _stopChatBindPoll() }
+        else if (r.status === 'fail') { chatBind.err = t('chatUi.connectFailed', { reason: r.reason || t('chatUi.unknown') }); _stopChatBindPoll() }
       } catch {}
       if (tries > 100) closeChatBind()
     }, 3000)

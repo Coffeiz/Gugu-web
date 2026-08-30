@@ -2,31 +2,33 @@
   <div v-if="pendingAtt.length || attUploading" class="chat-att-row">
     <div v-for="a in pendingAtt" :key="a.attach_id" class="chat-att-chip">
       <span class="chat-att-name">{{ a.name }}.{{ a.ext }}</span>
-      <button class="chat-att-x" @click="onRemoveAtt(a)" title="移除">×</button>
+        <button class="chat-att-x" @click="onRemoveAtt(a)" :title="t('chat.remove')">×</button>
     </div>
-    <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
+    <span v-if="attUploading" class="chat-att-chip att-up">{{ t('common.status.processing') }}</span>
   </div>
   <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded }">
-    <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" aria-label="命令列表">
-      <button
-        v-for="(item, index) in filteredCommands"
-        :key="item.command"
-        class="chat-command-item"
-        :class="{ active: index === commandIndex }"
-        type="button"
-        role="option"
-        :aria-selected="index === commandIndex"
-        @mousedown.prevent
-        @click="chooseCommand(item)"
-      >
-        <code>{{ item.command }}</code>
-        <span class="chat-command-copy"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-      </button>
-    </div>
-    <button v-if="!recording" class="att-btn" @click="fileInput?.click()" title="添加附件">
+    <Transition name="chat-command-pop">
+      <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" :aria-label="t('chat.commandList')">
+        <button
+          v-for="(item, index) in filteredCommands"
+          :key="item.command"
+          class="chat-command-item"
+          :class="{ active: index === commandIndex }"
+          type="button"
+          role="option"
+          :aria-selected="index === commandIndex"
+          @mousedown.prevent
+          @click="chooseCommand(item)"
+        >
+          <code>{{ item.command }}</code>
+          <span class="chat-command-copy"><strong>{{ t(`chat.commands.${item.command.slice(1)}.label`) }}</strong><small>{{ t(`chat.commands.${item.command.slice(1)}.description`) }}</small></span>
+        </button>
+      </div>
+    </Transition>
+    <button v-if="!recording" class="att-btn" @click="fileInput?.click()" :title="t('chat.addAttachment')" :aria-label="t('chat.addAttachment')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
     </button>
-    <button v-if="!recording" class="att-btn" @click="onStartRecord" title="语音输入">
+    <button v-if="!recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
     </button>
     <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
@@ -35,7 +37,7 @@
       :value="modelValue"
       @input="onInput"
       ref="expInputEl"
-      placeholder="问问项目进度、截止日期…"
+      :placeholder="t('chat.placeholder')"
       rows="1"
       v-enter.exact.prevent="() => onSend()"
       @paste="onPaste"
@@ -44,8 +46,8 @@
     <div v-else class="rec-bar">
       <span class="rec-dot"></span>
       <span class="rec-time">{{ recordSecs }}″</span>
-      <span class="rec-hint">录音中… 点 ✓ 发送</span>
-      <button class="rec-cancel" @click="onCancelRecord">取消</button>
+      <span class="rec-hint">{{ t('chat.recording') }}</span>
+      <button class="rec-cancel" @click="onCancelRecord">{{ t('chat.cancel') }}</button>
     </div>
     <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : (streaming ? onStopStreaming() : onSend())">
       <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
@@ -57,6 +59,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 /**
@@ -69,6 +72,7 @@ import { loadChatCommands, type ChatCommandOption } from './chatCommands'
  */
 import type { ChatFile } from './chatTypes'
 import { SMALL_W, SIDEBAR_W } from './chatConstants'
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: string
@@ -241,8 +245,8 @@ defineExpose({
   padding: 10px 13px;
   border-top: 1px solid rgba(255,255,255,0.65);
   background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* 命令菜单是本行的绝对定位子层；父级若再建立 backdrop 根，菜单会采样到
+     输入栏的已合成结果，而不是下面的消息内容。chat-main 已负责窗口底层材质。 */
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   flex-shrink: 0;
 }
@@ -257,10 +261,21 @@ defineExpose({
   padding: 5px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-card-solid);
+  background: var(--popup-surface-bg);
   box-shadow: var(--elevation-popup);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+.chat-command-pop-enter-active,
+.chat-command-pop-leave-active {
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard),
+              transform var(--motion-hover-control) var(--motion-ease-standard);
+  transform-origin: left bottom;
+}
+.chat-command-pop-enter-from,
+.chat-command-pop-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(.97);
 }
 /* 命令菜单有圆角，原生滑块轨道必须避开上下边缘，避免伸出弹窗轮廓。 */
 .chat-command-menu::-webkit-scrollbar {

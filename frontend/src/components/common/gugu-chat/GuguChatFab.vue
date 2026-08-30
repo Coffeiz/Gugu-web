@@ -1,5 +1,5 @@
 <template>
-  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" :style="{ zIndex: fabZ }" @click="$emit('click')" title="咕咕">
+  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" :style="{ zIndex: fabZ }" @click="$emit('click')" :title="t('chatUi.gugu')">
     <span ref="svgRef"
           class="ai-fab-logo"
           :class="{ 'ai-fab-spin': hasAudioFile && !spinningBack, 'ai-fab--typing': fabJumping }"
@@ -14,6 +14,7 @@
  * Design 页的 GuguChatMock 与这里共享同一组 --gugu-fab-* 令牌，避免样板另画一套。
  */
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 defineProps<{
   rippleActive: boolean
@@ -23,6 +24,7 @@ defineProps<{
   fabJumping: boolean
   audioPlaying: boolean
 }>()
+const { t } = useI18n()
 
 defineEmits<{ click: [] }>()
 

@@ -1,5 +1,5 @@
 /* Default Aero palette. */
-:root[data-palette='aero'][data-theme='light'] {
+:root[data-palette='mist'][data-theme='light'] {
   --theme-action-primary: #7b7fb2;
   --theme-action-hover: #6b6fa0;
   --theme-action-pressed: #5d618e;
@@ -19,7 +19,7 @@
   --theme-scrollbar-thumb: rgba(123,127,178,.24);
   --theme-scrollbar-thumb-hover: rgba(123,127,178,.32);
 }
-:root[data-palette='aero'][data-theme='dark'] {
+:root[data-palette='mist'][data-theme='dark'] {
   --theme-action-primary: #9590c4;
   --theme-action-hover: #aaa6d8;
   --theme-action-pressed: #847fb4;

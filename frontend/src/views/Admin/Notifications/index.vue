@@ -2,28 +2,28 @@
   <div class="notif-page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">通知发布</h2>
-        <p class="page-desc">向所有在线用户推送通知气泡</p>
+        <h2 class="page-title">{{ t('adminNotifications.title') }}</h2>
+        <p class="page-desc">{{ t('adminNotifications.description') }}</p>
       </div>
     </div>
 
     <div class="content-grid">
       <!-- 编辑区 -->
       <div class="compose-card">
-        <div class="compose-title">编写通知</div>
+        <div class="compose-title">{{ t('adminNotifications.compose') }}</div>
 
         <div class="field">
-          <label>标题 <span class="opt">可选</span></label>
-          <input v-model="form.title" placeholder="通知标题（可留空，仅发内容）" maxlength="100" class="text-input" />
+          <label>{{ t('adminNotifications.titleLabel') }} <span class="opt">{{ t('adminNotifications.optional') }}</span></label>
+          <input v-model="form.title" :placeholder="t('adminNotifications.titlePlaceholder')" maxlength="100" class="text-input" />
         </div>
 
         <div class="field">
-          <label>内容 <span class="opt">可选 · 支持 Markdown</span></label>
-          <textarea v-model="form.content" rows="4" placeholder="支持 Markdown：**加粗**、[链接](https://…)、- 列表、`代码`…" class="text-input textarea" />
+          <label>{{ t('adminNotifications.contentLabel') }} <span class="opt">{{ t('adminNotifications.markdownOptional') }}</span></label>
+          <textarea v-model="form.content" rows="4" :placeholder="t('adminNotifications.contentPlaceholder')" class="text-input textarea" />
         </div>
 
         <div class="field">
-          <label>发布渠道</label>
+          <label>{{ t('adminNotifications.channel') }}</label>
           <div class="channel-row">
             <button v-for="c in CHANNELS" :key="c.value"
                     class="channel-chip" :class="{ active: form.channel === c.value }"
@@ -35,7 +35,7 @@
         </div>
 
         <div class="field" v-if="form.channel !== 'center'">
-          <label>气泡时限</label>
+          <label>{{ t('adminNotifications.ttl') }}</label>
           <div class="channel-row">
             <button v-for="t in BUBBLE_TTLS" :key="String(t.value)"
                     class="channel-chip" :class="{ active: form.bubbleTtl === t.value }"
@@ -43,11 +43,11 @@
               {{ t.label }}
             </button>
           </div>
-          <span class="channel-hint">超过时限后，再登录的用户不会再被补弹这条气泡（实时在线的不受影响）</span>
+          <span class="channel-hint">{{ t('adminNotifications.ttlHint') }}</span>
         </div>
 
         <!-- 预览（与用户端咕咕玻璃气泡 1:1 一致） -->
-        <div class="preview-label">预览</div>
+        <div class="preview-label">{{ t('adminNotifications.preview') }}</div>
         <div class="preview-bubble" :class="{ 'pv-bare': !form.title }">
           <button class="pv-close" tabindex="-1">
             <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -56,7 +56,7 @@
           </button>
           <div v-if="form.title || !form.content" class="pv-head">
             <span class="pv-dot" />
-            <div class="pv-title">{{ form.title || '通知标题' }}</div>
+            <div class="pv-title">{{ form.title || t('adminNotifications.defaultTitle') }}</div>
           </div>
           <div v-if="form.content" class="pv-content md-nb" v-html="renderMarkdown(form.content)" />
         </div>
@@ -66,20 +66,20 @@
         <button class="send-btn" :disabled="sending || (!form.title.trim() && !form.content.trim())" @click="send">
           <svg v-if="sending" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="spinning-inf"><path d="M12 7A5 5 0 1 1 7 2"/></svg>
           <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2L2 8l4 2 2 4 2-6z"/></svg>
-          发送给所有用户
+          {{ t('adminNotifications.sendAll') }}
         </button>
       </div>
 
       <!-- 历史 -->
       <div class="history-card">
         <div class="history-header">
-          <span class="compose-title">发送历史</span>
-          <button class="icon-btn" :class="{ spinning: refreshingHistory }" @click="loadHistory" :disabled="loadingHistory" title="刷新">
+          <span class="compose-title">{{ t('adminNotifications.history') }}</span>
+          <button class="icon-btn" :class="{ spinning: refreshingHistory }" @click="loadHistory" :disabled="loadingHistory" :title="t('adminNotifications.refresh')">
             <Icon name="action.refresh" size="sm" />
           </button>
         </div>
 
-        <div v-if="!history.length && !loadingHistory" class="empty-hint">暂无发送记录</div>
+        <div v-if="!history.length && !loadingHistory" class="empty-hint">{{ t('adminNotifications.empty') }}</div>
 
         <div class="history-list">
           <div v-for="n in history" :key="n.id" class="history-row">
@@ -87,9 +87,9 @@
             <div class="hr-body">
               <div class="hr-title">{{ n.title }}</div>
               <div v-if="n.content" class="hr-content">{{ n.content }}</div>
-              <div class="hr-meta">{{ fmtTime(n.created_at) }} · {{ n.target === 'all' ? '全体用户' : n.target }}</div>
+              <div class="hr-meta">{{ fmtTime(n.created_at) }} · {{ n.target === 'all' ? t('adminNotifications.allUsers') : n.target }}</div>
             </div>
-            <button class="del-btn" @click="deleteRecord(n.id)" title="删除记录">
+            <button class="del-btn" @click="deleteRecord(n.id)" :title="t('adminNotifications.delete')">
               <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
                 <line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/>
               </svg>
@@ -102,26 +102,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { showAppNotice } from '@/composables/useAppToast'
 import { renderMarkdown } from '@/utils/markdown'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
 
 const admin = useAdminStore()
+const { t } = useI18n()
 
-const CHANNELS = [
-  { value: 'both',   label: '气泡 + 通知中心', hint: '弹气泡，同时进通知中心（持久、可标已读、重开还在）' },
-  { value: 'bubble', label: '仅气泡',         hint: '只弹气泡：实时在线立即弹；离线者上线时补弹最近一条（在时限内、只一次）。不进通知中心' },
-  { value: 'center', label: '仅通知中心',     hint: '不弹气泡，只进通知中心（持久、未读追踪、离线也不漏）' },
-]
+const CHANNELS = computed(() => [
+  { value: 'both', label: t('adminNotifications.both'), hint: t('adminNotifications.bothHint') },
+  { value: 'bubble', label: t('adminNotifications.bubble'), hint: t('adminNotifications.bubbleHint') },
+  { value: 'center', label: t('adminNotifications.center'), hint: t('adminNotifications.centerHint') },
+])
 // 气泡时限：过了这个时间，再登录的用户不再补弹（永久=只要没被更新的气泡顶掉就一直能补弹）
-const BUBBLE_TTLS = [
-  { value: null, label: '永久' },
-  { value: 24,   label: '1 天' },
-  { value: 72,   label: '3 天' },
-  { value: 168,  label: '7 天' },
-]
+const BUBBLE_TTLS = computed(() => [
+  { value: null, label: t('adminNotifications.permanent') },
+  { value: 24, label: t('adminNotifications.days', { count: 1 }) },
+  { value: 72, label: t('adminNotifications.days', { count: 3 }) },
+  { value: 168, label: t('adminNotifications.days', { count: 7 }) },
+])
 const form = reactive({ title: '', content: '', channel: 'both', bubbleTtl: 24 as number | null })
 const sending = ref(false)
 const err = ref('')
@@ -145,12 +147,12 @@ async function send() {
       }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    showAppNotice('通知已发送')
+    showAppNotice(t('adminNotifications.sent'))
     form.title = ''
     form.content = ''
     await loadHistory()
   } catch (e) {
-    err.value = '发送失败：' + (e instanceof Error ? e.message : e)
+    err.value = t('adminNotifications.sendFailed', { message: e instanceof Error ? e.message : e })
   } finally {
     sending.value = false
   }
@@ -215,13 +217,16 @@ onMounted(loadHistory)
 .opt { font-weight: 400; text-transform: none; letter-spacing: 0; color: rgba(255,255,255,0.2); }
 .text-input {
   width: 100%; box-sizing: border-box;
-  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+  background: var(--input-bg); border: 1px solid var(--input-border);
   border-radius: 10px; padding: 9px 12px;
-  font-size: 13px; color: rgba(255,255,255,0.85); font-family: inherit;
-  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+  font-size: 13px; color: var(--input-fg); font-family: inherit;
+  outline: none; caret-color: var(--action-primary);
+  box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.text-input:focus { border-color: rgba(123,127,178,0.5); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
-.text-input::placeholder { color: rgba(255,255,255,0.2); }
+.text-input:hover:not(:disabled) { background: var(--input-bg-hover); border-color: var(--input-border-hover); }
+.text-input:focus:not(:disabled) { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
+.text-input::placeholder { color: var(--input-placeholder); opacity: .82; }
 .textarea { resize: none; line-height: 1.6; }
 
 /* 发布渠道选择 */

@@ -15,7 +15,7 @@
       <span class="es-kind">{{ label }}</span>
     </div>
     <h3>{{ title }}</h3>
-    <span v-if="isTombstone" class="es-deleted">已删除，仅保留快照</span>
+    <span v-if="isTombstone" class="es-deleted">{{ t('mindUi.deletedSnapshot') }}</span>
     <p v-if="eventDisplay?.description" class="es-desc">{{ eventDisplay.description }}</p>
     <span v-if="eventTimeLabel" class="es-time">
       <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
@@ -29,7 +29,7 @@
       @connect-drag-start="(e, side) => emit('connectDragStart', e, side)"
     >
       <template #actions>
-        <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)">
+        <button :title="t('mindUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)">
           <PhTrash :size="12" weight="bold" />
         </button>
       </template>
@@ -39,6 +39,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { eventsApi, type MindCanvasItem } from '@/services/api'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
@@ -63,11 +64,11 @@ const emit = defineEmits<{
 
 // 项目/文件已有自己的引用卡，这个组件只承担活动等系统对象贴纸。
 const TYPE_ICON = { project: PhStack, file: PhFile, event: PhCalendarBlank } as const
-const TYPE_LABEL = { project: '项目', file: '文件', event: '活动' } as const
+const { t, locale } = useI18n()
 const refType = computed(() => props.item.node.refType || 'event')
 const icon = computed(() => TYPE_ICON[refType.value as keyof typeof TYPE_ICON] || PhCalendarBlank)
-const label = computed(() => TYPE_LABEL[refType.value as keyof typeof TYPE_LABEL] || '对象')
-const title = computed(() => props.item.node.title || '未命名对象')
+const label = computed(() => t(`mindEditorUi.referenceTypes.${refType.value}`, t('mindUi.object')))
+const title = computed(() => props.item.node.title || t('mindUi.unnamedObject'))
 const stickerStyle = computed(() => {
   const { w, h } = itemSize(props.item)
   return {
@@ -109,8 +110,8 @@ const eventTimeLabel = computed(() => {
   const value = eventDisplay.value
   if (!value?.date) return ''
   const date = new Date(`${value.date}T00:00:00`)
-  const dateLabel = `${date.getMonth() + 1}月${date.getDate()}日`
-  if (!value.time) return `${dateLabel} 全天`
+  const dateLabel = new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric' }).format(date)
+  if (!value.time) return `${dateLabel} ${t('mindUi.allDay')}`
   return `${dateLabel} ${value.time}${value.endTime ? `–${value.endTime}` : ''}`
 })
 

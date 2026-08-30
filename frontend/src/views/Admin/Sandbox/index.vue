@@ -2,68 +2,68 @@
   <div class="sandbox-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">Shell 沙盒</h2>
-        <p class="page-desc">管理 Docker 容器沙盒总开关和运行时状态</p>
+        <h2 class="page-title">{{ t('adminSandbox.title') }}</h2>
+        <p class="page-desc">{{ t('adminSandbox.description') }}</p>
       </div>
       <button class="btn-primary" :disabled="loading || !canEnable" @click="toggleSandbox">
-        {{ loading ? '处理中…' : status.enabled ? '关闭沙盒' : '开启沙盒' }}
+        {{ loading ? t('adminSandbox.working') : status.enabled ? t('adminSandbox.disable') : t('adminSandbox.enable') }}
       </button>
     </div>
 
     <section class="section-wrap">
       <div class="section-head">
-        <span class="section-label">运行时状态</span>
-        <span class="section-desc">Docker、Rootless 和当前 Shell 执行器状态</span>
+        <span class="section-label">{{ t('adminSandbox.runtime') }}</span>
+        <span class="section-desc">{{ t('adminSandbox.runtimeHint') }}</span>
       </div>
       <div class="panel-card">
       <div class="status-head">
         <div>
-          <h3>{{ status.message || '正在读取 Docker 状态' }}</h3>
+          <h3>{{ status.message || t('adminSandbox.readingDocker') }}</h3>
         </div>
         <span class="status-pill" :class="`status-${status.state}`">{{ stateLabel }}</span>
       </div>
       <div class="status-grid">
-        <div><span>Docker CLI</span><strong>{{ status.docker_installed ? '已安装' : '未安装' }}</strong></div>
-        <div><span>Docker daemon</span><strong>{{ status.docker_daemon_ready ? '已就绪' : '不可用' }}</strong></div>
-        <div><span>Rootless</span><strong>{{ status.rootless === true ? '已启用' : status.rootless === false ? '未启用' : '未知' }}</strong></div>
-        <div><span>执行器</span><strong>{{ status.executor_ready ? '可用' : '不可用' }}</strong></div>
+        <div><span>Docker CLI</span><strong>{{ status.docker_installed ? t('adminSandbox.installed') : t('adminSandbox.dockerMissing') }}</strong></div>
+        <div><span>Docker daemon</span><strong>{{ status.docker_daemon_ready ? t('adminSandbox.ready') : t('adminSandbox.unavailable') }}</strong></div>
+        <div><span>Rootless</span><strong>{{ status.rootless === true ? t('adminSandbox.enabled') : status.rootless === false ? t('adminSandbox.notEnabled') : t('adminSandbox.unknown') }}</strong></div>
+        <div><span>{{ t('adminSandbox.executor') }}</span><strong>{{ status.executor_ready ? t('adminSandbox.canUse') : t('adminSandbox.cannotUse') }}</strong></div>
       </div>
-      <p v-if="!canEnable && !status.enabled" class="status-note">Docker 未安装、daemon、Rootless 或固定镜像未就绪时不能开启沙盒。Shell 不会回退到宿主机执行。</p>
-      <p v-if="status.enabled" class="status-note">关闭沙盒只停止容器运行态，不删除用户文件、数据卷或配额。</p>
+      <p v-if="!canEnable && !status.enabled" class="status-note">{{ t('adminSandbox.cannotEnable') }}</p>
+      <p v-if="status.enabled" class="status-note">{{ t('adminSandbox.stoppedNotice') }}</p>
       </div>
     </section>
 
     <section class="section-wrap">
       <div class="section-head">
-        <span class="section-label">运行配置</span>
-        <span class="section-desc">生产沙盒使用固定镜像和 Rootless Docker</span>
+        <span class="section-label">{{ t('adminSandbox.config') }}</span>
+        <span class="section-desc">{{ t('adminSandbox.configHint') }}</span>
       </div>
       <div class="panel-card">
-      <div class="config-row"><span>镜像</span><code>{{ status.image }}</code></div>
-      <div class="config-row"><span>固定 digest</span><code>{{ status.image_digest || '未配置' }}</code></div>
-      <div class="config-row"><span>持久空间配额</span><strong>{{ formatBytes(status.persistent_quota_bytes) }}</strong></div>
-      <div class="config-row"><span>临时构建 / cache 配额</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
-      <div class="config-row"><span>网络策略</span><strong>{{ status.network_profile === 'none' ? '断网（固定）' : status.network_profile }}</strong></div>
+      <div class="config-row"><span>{{ t('adminSandbox.image') }}</span><code>{{ status.image }}</code></div>
+      <div class="config-row"><span>{{ t('adminSandbox.digest') }}</span><code>{{ status.image_digest || t('adminSandbox.notConfigured') }}</code></div>
+      <div class="config-row"><span>{{ t('adminSandbox.persistentQuota') }}</span><strong>{{ formatBytes(status.persistent_quota_bytes) }}</strong></div>
+      <div class="config-row"><span>{{ t('adminSandbox.ephemeralQuota') }}</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
+      <div class="config-row"><span>{{ t('adminSandbox.networkPolicy') }}</span><strong>{{ status.network_profile === 'none' ? t('adminSandbox.offline') : status.network_profile }}</strong></div>
       <div class="config-row config-row-switch">
-        <div class="config-row-copy"><span>临时公网访问</span><small>{{ egressHint }}</small></div>
-        <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" aria-label="切换临时公网访问" @update:model-value="toggleEgress" />
+        <div class="config-row-copy"><span>{{ t('adminSandbox.egress') }}</span><small>{{ egressHint }}</small></div>
+        <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" :aria-label="t('adminSandbox.switchEgress')" @update:model-value="toggleEgress" />
       </div>
       <div class="egress-editor">
-        <label class="egress-label" for="egress-proxy-url">受控代理地址</label>
+        <label class="egress-label" for="egress-proxy-url">{{ t('adminSandbox.proxyAddress') }}</label>
         <div class="egress-input-row">
           <input id="egress-proxy-url" v-model="proxyDraft" class="egress-input" type="url" inputmode="url" placeholder="http://egress-proxy:3128" autocomplete="off" />
-          <button type="button" class="btn-ghost" :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? '保存中…' : '保存代理' }}</button>
-          <button type="button" class="btn-ghost" :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? '检查中…' : '验证配置' }}</button>
+          <button type="button" class="btn-ghost" :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? t('adminSandbox.saving') : t('adminSandbox.saveProxy') }}</button>
+          <button type="button" class="btn-ghost" :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? t('adminSandbox.check') : t('adminSandbox.validate') }}</button>
         </div>
-        <p class="egress-note">仅接受不含账号密码的 HTTP(S) 地址。验证配置会检查字段、隔离网络和 sandboxd 前置条件；实际连通性仍由 sandboxd 在执行前确认。</p>
+        <p class="egress-note">{{ t('adminSandbox.proxyHint') }}</p>
         <p v-if="egressMessage" class="action-message" :class="{ error: egressError }">{{ egressMessage }}</p>
       </div>
-      <div class="config-row"><span>容器生命周期</span><strong>{{ status.lifecycle_mode === 'ephemeral' ? '单次命令临时容器' : status.lifecycle_mode }}</strong></div>
-      <p class="section-note">默认断网。临时公网访问需要隔离 egress 网络、受控代理和每次会话确认；配置不完整时开关不可用。</p>
+      <div class="config-row"><span>{{ t('adminSandbox.lifecycle') }}</span><strong>{{ status.lifecycle_mode === 'ephemeral' ? t('adminSandbox.oneShot') : status.lifecycle_mode }}</strong></div>
+      <p class="section-note">{{ t('adminSandbox.policyHint') }}</p>
       <div class="quota-editor">
-        <label><span>持久空间（MB）</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" /></label>
-        <label><span>临时构建 / cache（MB）</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" /></label>
-        <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><button type="button" class="btn-ghost" :disabled="quotaSaving" @click="resetQuotaDraft">撤销修改</button><button type="button" class="btn-primary" :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? '保存中…' : '保存配额' }}</button></div>
+        <label><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" /></label>
+        <label><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" /></label>
+        <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><button type="button" class="btn-ghost" :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</button><button type="button" class="btn-primary" :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveQuota') }}</button></div>
       </div>
       </div>
     </section>
@@ -77,6 +77,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {
   enabled: boolean
@@ -102,6 +103,7 @@ type SandboxStatus = {
 }
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
@@ -118,11 +120,11 @@ const egressError = ref(false)
 const canEnable = computed(() => status.docker_installed && status.docker_daemon_ready && status.rootless === true && status.image_ready)
 const egressHint = computed(() => {
   if (status.egress_config_error) return status.egress_config_error
-  if (!status.egress_proxy_configured) return '尚未配置受控代理'
-  if (!status.egress_network_ready) return '隔离网络尚未部署'
-  return status.network_profile === 'egress' ? '已启用，会话仍需单独确认' : '可按会话临时启用'
+  if (!status.egress_proxy_configured) return t('adminSandbox.proxyNotConfigured')
+  if (!status.egress_network_ready) return t('adminSandbox.networkNotReady')
+  return status.network_profile === 'egress' ? t('adminSandbox.egressEnabled') : t('adminSandbox.egressAvailable')
 })
-const stateLabel = computed(() => ({ ready: '已就绪', disabled: '已关闭', docker_missing: '未安装 Docker', docker_unavailable: 'Docker 不可用', rootless_required: '需要 Rootless', image_unavailable: '镜像未加载' } as Record<string, string>)[status.state] || '未知')
+const stateLabel = computed(() => ({ ready: t('adminSandbox.ready'), disabled: t('adminSandbox.disabled'), docker_missing: t('adminSandbox.dockerMissing'), docker_unavailable: t('adminSandbox.dockerUnavailable'), rootless_required: t('adminSandbox.rootlessRequired'), image_unavailable: t('adminSandbox.imageUnavailable') } as Record<string, string>)[status.state] || t('adminSandbox.unknown'))
 function formatBytes(value: number) {
   if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
   return `${Math.round(value / (1024 * 1024))} MB`
@@ -135,11 +137,11 @@ function resetQuotaDraft() { syncQuotaDraft(); quotaMessage.value = ''; quotaErr
 async function saveQuotas() {
   quotaSaving.value = true; quotaMessage.value = ''; quotaError.value = false
   try {
-    if (quotaDraft.persistentMb < 64 || quotaDraft.ephemeralMb < 64) throw new Error('配额不能低于 64 MB')
+    if (quotaDraft.persistentMb < 64 || quotaDraft.ephemeralMb < 64) throw new Error(t('adminSandbox.quotaTooSmall'))
     await configStore.saveConfig({ sandbox: { persistent_quota_bytes: quotaDraft.persistentMb * 1024 * 1024, ephemeral_quota_bytes: quotaDraft.ephemeralMb * 1024 * 1024 } })
     await loadStatus()
     syncQuotaDraft()
-    quotaMessage.value = '已保存'
+    quotaMessage.value = t('adminSandbox.saved')
   } catch (cause) { quotaError.value = true; quotaMessage.value = cause instanceof Error ? cause.message : String(cause) }
   finally { quotaSaving.value = false }
 }
@@ -166,7 +168,7 @@ async function saveEgressProxy() {
     if (!response.ok) throw new Error(body.detail || `保存代理失败（${response.status}）`)
     Object.assign(status, body)
     proxyDraft.value = body.egress_proxy_url || ''
-    egressMessage.value = '代理配置已保存'
+    egressMessage.value = t('adminSandbox.proxySaved')
   } catch (cause) {
     egressError.value = true
     egressMessage.value = cause instanceof Error ? cause.message : String(cause)
@@ -183,7 +185,7 @@ async function validateEgressProxy() {
     const response = await adminStore.authFetch('/api/v1/admin/sandbox/egress/validate', { method: 'POST' })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body.detail || `验证代理失败（${response.status}）`)
-    egressMessage.value = body.message || '代理配置有效'
+    egressMessage.value = body.message || t('adminSandbox.proxyValid')
   } catch (cause) {
     egressError.value = true
     egressMessage.value = cause instanceof Error ? cause.message : String(cause)

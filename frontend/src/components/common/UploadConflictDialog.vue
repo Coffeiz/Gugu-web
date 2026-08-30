@@ -2,7 +2,7 @@
   <BaseModal :show="open" width="480px" background="var(--panel-bg)" @close="cancel">
     <div class="ucd">
       <div class="ucd-header">
-        <h2>{{ conflicts.length }} 个文件已存在同名</h2>
+        <h2>{{ t('viewerUi.conflictTitle', { count: conflicts.length }) }}</h2>
         <button class="close-btn" @click="cancel">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <path d="M3 3l10 10M13 3L3 13"/>
@@ -11,10 +11,10 @@
       </div>
 
       <div class="ucd-bulk">
-        <span class="ucd-bulk-label">全部：</span>
-        <button class="ucd-bulk-btn" @click="applyAll('overwrite')">覆盖</button>
-        <button class="ucd-bulk-btn" @click="applyAll('keep_both')">保留两者</button>
-        <button class="ucd-bulk-btn" @click="applyAll('skip')">跳过</button>
+        <span class="ucd-bulk-label">{{ t('viewerUi.all') }}：</span>
+        <button class="ucd-bulk-btn" @click="applyAll('overwrite')">{{ t('viewerUi.overwrite') }}</button>
+        <button class="ucd-bulk-btn" @click="applyAll('keep_both')">{{ t('viewerUi.keepBoth') }}</button>
+        <button class="ucd-bulk-btn" @click="applyAll('skip')">{{ t('viewerUi.skip') }}</button>
       </div>
 
       <div class="ucd-list">
@@ -22,21 +22,21 @@
           <span class="ucd-name" :title="c.filename">{{ c.filename }}</span>
           <div class="ucd-choices">
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'overwrite' }">
-              <input type="radio" :name="c.filename" value="overwrite" v-model="choices[c.filename]" />覆盖
+              <input type="radio" :name="c.filename" value="overwrite" v-model="choices[c.filename]" />{{ t('viewerUi.overwrite') }}
             </label>
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'keep_both' }">
-              <input type="radio" :name="c.filename" value="keep_both" v-model="choices[c.filename]" />保留两者
+              <input type="radio" :name="c.filename" value="keep_both" v-model="choices[c.filename]" />{{ t('viewerUi.keepBoth') }}
             </label>
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'skip' }">
-              <input type="radio" :name="c.filename" value="skip" v-model="choices[c.filename]" />跳过
+              <input type="radio" :name="c.filename" value="skip" v-model="choices[c.filename]" />{{ t('viewerUi.skip') }}
             </label>
           </div>
         </div>
       </div>
 
       <div class="ucd-footer">
-        <button class="btn-cancel" @click="cancel">全部取消上传</button>
-        <button class="btn-confirm" @click="confirm">确认</button>
+        <button class="btn-cancel" @click="cancel">{{ t('viewerUi.cancelUpload') }}</button>
+        <button class="btn-confirm" @click="confirm">{{ t('common.actions.confirm') }}</button>
       </div>
     </div>
   </BaseModal>
@@ -45,6 +45,9 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 export interface ConflictItem {
   filename: string

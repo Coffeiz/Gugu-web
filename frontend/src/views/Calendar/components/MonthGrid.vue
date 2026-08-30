@@ -45,8 +45,8 @@
               @contextmenu.prevent.stop="ev.calendarType === 'event' && emit('edit-event', ev, $event)"
               @mousedown.stop="ev.calendarType === 'project' ? emit('start-project-chip-drag', ev, $event) : (ev.calendarType === 'event' && emit('start-event-drag', ev, $event))"
             >
-              <span v-if="ev.calendarType === 'project'" class="chip-proj-tag">项目</span>
-              <span v-else class="chip-proj-tag chip-ev-tag">活动</span>
+              <span v-if="ev.calendarType === 'project'" class="chip-proj-tag">{{ t('calendar.project') }}</span>
+              <span v-else class="chip-proj-tag chip-ev-tag">{{ t('calendar.event') }}</span>
               <span v-if="ev.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
               {{ ev.name }}
             </div>
@@ -54,7 +54,7 @@
               v-if="lay.moreCount > 0"
               class="chip-more-btn cal-chip"
               @click.stop="emit('show-more', $event, d.iso, lay.moreItems)"
-            >+{{ lay.moreCount }} 更多</button>
+            >+{{ lay.moreCount }} {{ t('calendarUi.more') }}</button>
           </div>
         </template>
       </div>
@@ -81,7 +81,7 @@
           >
             <div v-if="bar.startsHere && bar.status !== 'done'" class="bar-rh bar-rh-left" @mousedown.stop.prevent="emit('start-bar-resize', bar, 'start', $event)"></div>
             <template v-if="bar.startsHere || (bar.colStart ?? 0) === 0">
-              <span class="bar-proj-tag">项目</span>
+              <span class="bar-proj-tag">{{ t('calendar.project') }}</span>
               <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
               <span class="bar-label">{{ bar.name }}</span>
             </template>
@@ -96,6 +96,8 @@
 
 <script setup lang="ts">
 import { toRefs } from 'vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import type { CalendarDragState } from '../composables/useCalendarDrag'
 import type { CalendarMonthDay, CalendarRenderItem } from '../domain/calendarTypes'
 import type { DayLayoutResult } from '../utils/calendarLayout'

@@ -1,5 +1,6 @@
 import { marked, type Tokens } from 'marked'
 import hljs from 'highlight.js'
+import { i18n } from '@/i18n'
 
 marked.use({
   breaks: true, gfm: true,
@@ -13,7 +14,7 @@ marked.use({
       const highlighted = hljs.highlight(text, { language }).value
       const label = lang || 'code'
       // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
-      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
+      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">${i18n.global.t('chatUi.copy')}</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
     }
     // 搜索结果图片经常来自有防盗链策略的站点。禁止携带聊天页面 Referer，避免图片
     // 在模型回复里只显示 alt 文本；其余 URL 仍交给聊天 HTML 的 DOMPurify 白名单清洗。

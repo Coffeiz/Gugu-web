@@ -1,17 +1,13 @@
 <template>
       <Teleport to="body">
-        <div
-          v-if="draft"
-          class="modal-mask"
-          @mousedown.self="maskDown = true"
-          @mouseup.self="maskDown && $emit('close'); maskDown = false"
-        >
+        <Transition name="admin-modal" appear @after-leave="$emit('after-close')">
+        <div v-if="visible && draft" class="modal-mask" @click.self="$emit('close')">
           <div class="modal-box">
             <h4 class="modal-title">{{ isNew ? t('adminLlmUi.newPreset') : t('adminLlmUi.editPreset') }}</h4>
 
             <div class="modal-field">
               <label>{{ t('adminLlmUi.presetName') }}</label>
-              <input v-model="draft.name" placeholder="MiniMax 主力" class="modal-input" />
+              <input v-model="draft.name" :placeholder="t('llmExtraUi.modelNamePlaceholder')" class="modal-input" />
             </div>
 
             <div class="modal-field">
@@ -49,17 +45,17 @@
             />
 
             <div class="modal-field">
-              <label>{{ draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? t('llmExtraUi.apiKeyOptional') : t('llmExtraUi.apiKey') }}</label>
-              <input v-model="draft.api_key" type="password" autocomplete="new-password"
-                :placeholder="draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? t('llmExtraUi.localOllama') : t('llmExtraUi.keepUnchanged')" class="modal-input" />
-            </div>
-
-            <div class="modal-field">
               <label>{{ t('llmExtraUi.baseUrl') }}</label>
               <input v-model="draft.base_url" :placeholder="draft.provider === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'https://…'" class="modal-input" />
               <div v-if="draft.provider === 'qwen'" class="modal-hint">
-                百炼建议使用业务空间专属域名：<code>https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</code>（WorkspaceId 在控制台业务空间详情页查看）；通用域名 dashscope.aliyuncs.com 仍可用
+                {{ t('llmExtraUi.bailianHint', { url: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' }) }}
               </div>
+            </div>
+
+            <div class="modal-field">
+              <label>{{ draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? t('llmExtraUi.apiKeyOptional') : t('llmExtraUi.apiKey') }}</label>
+              <input v-model="draft.api_key" type="password" autocomplete="new-password"
+                :placeholder="draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? t('llmExtraUi.localOllama') : t('llmExtraUi.keepUnchanged')" class="modal-input" />
             </div>
 
             <div class="modal-field">
@@ -152,7 +148,7 @@
               />
             </div>
 
-            <MultimodalCapabilities :model="draft" :dims="visionDims" variant="admin" :probing="probingDim" :title="t('adminLlmUi.capabilities')" :hint="t('llmExtraUi.multimodalHint')" @probe="$emit('probe-vision', draft.id, $event)" />
+            <MultimodalCapabilities :model="draft" :dims="visionDims" variant="admin" :probing="probingDim" :probe-label="t('adminLlmUi.detect')" :probing-label="t('adminLlmUi.detecting')" :title="t('adminLlmUi.capabilities')" :hint="t('llmExtraUi.multimodalHint')" @probe="$emit('probe-vision', draft.id, $event)" />
             <div class="modal-actions">
               <span class="save-hint" :class="{ error: !!error }">{{ error }}</span>
               <button class="btn-ghost" @click="$emit('close')">{{ t('adminLlmUi.cancel') }}</button>
@@ -163,10 +159,11 @@
             </div>
           </div>
         </div>
+        </Transition>
       </Teleport>
 </template>
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProviderSelect from '../../components/ProviderSelect.vue'
 import InterfaceTypeSelect from '../../components/InterfaceTypeSelect.vue'
@@ -184,19 +181,20 @@ interface LlmPresetDraft {
   [key: string]: unknown
 }
 const props = defineProps<{
-  draft: LlmPresetDraft | null; isNew: boolean; saving: boolean; error: string
+  draft: LlmPresetDraft | null; visible: boolean; isNew: boolean; saving: boolean; error: string
   providers: Provider[]; apiFormats: Option[]; deepseekEfforts: Option[]; imageDetailLevels: Option[]; visionDims: Option[]
   capabilityLoading: boolean; capabilityResults: Record<string, { status?: string; detail?: string }>; modelLoading: boolean; modelError: string
   modelMenuOpen: boolean; modelOptions: string[]; filteredModels: string[]; probingDim: string | null
 }>()
+const { t } = useI18n()
 const providerGroups = computed(() => props.providers.map(provider => ({
   ...provider,
   children: provider.key === 'glm'
-    ? [{ key: 'general', label: '通用 API' }, { key: 'coding', label: 'Coding Plan' }]
+    ? [{ key: 'general', label: t('adminAgentUi.generalApi') }, { key: 'coding', label: t('adminAgentUi.codingPlan') }]
     : provider.key === 'local'
-      ? [{ key: 'llama.cpp', label: 'llama.cpp' }, { key: 'vllm', label: 'vLLM' }, { key: 'other', label: '其它兼容服务' }]
+      ? [{ key: 'llama.cpp', label: 'llama.cpp' }, { key: 'vllm', label: 'vLLM' }, { key: 'other', label: t('adminAgentUi.otherCompatible') }]
       : provider.key === 'ollama'
-        ? [{ key: 'local', label: '本地 Ollama' }, { key: 'cloud', label: 'Ollama Cloud' }]
+        ? [{ key: 'local', label: t('adminAgentUi.localOllama') }, { key: 'cloud', label: 'Ollama Cloud' }]
       : undefined,
 })))
 const providerOptions = computed(() => providerGroups.value.map(({ children: _children, ...provider }) => provider))
@@ -214,16 +212,14 @@ const childProviderOptions = computed(() => {
   return (provider?.children || []).map(child => ({ key: child.key, label: child.label }))
 })
 const ollamaInterfaceOptions = [
-  { key: 'native', label: 'Ollama 原生' },
-  { key: 'openai', label: 'OpenAI 兼容' },
+  { key: 'native', label: t('adminAgentUi.ollamaNative') },
+  { key: 'openai', label: t('adminAgentUi.providerOpenai') },
 ]
 const $emit = defineEmits<{
-  (event: 'close'): void; (event: 'save'): void; (event: 'set-provider', key: string): void; (event: 'open-model-menu'): void
+  (event: 'close'): void; (event: 'after-close'): void; (event: 'save'): void; (event: 'set-provider', key: string): void; (event: 'open-model-menu'): void
   (event: 'close-model-menu'): void; (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
   (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-vision', id: string | number | undefined, dim: string): void
 }>()
-const { t } = useI18n()
-const maskDown = ref(false)
 function forwardCapabilityOverride(key: string, enabled: boolean) {
   $emit('set-capability-override', key, enabled)
 }
@@ -239,6 +235,10 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .provider-selection-row--single { grid-template-columns:1fr; }
 .provider-selection-row .provider-select { min-width:0; width:100%; }
 .modal-input::placeholder { color: rgba(255,255,255,.2); }
+.modal-input { border-color:var(--input-border); background:var(--input-bg); color:var(--input-fg); box-shadow:var(--input-hover-shadow), 0 0 0 0 transparent; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
+.modal-input:hover:not(:disabled) { background:var(--input-bg-hover); border-color:var(--input-border-hover); }
+.modal-input:focus:not(:disabled) { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-hover-shadow), var(--input-focus-shadow); }.number-input{width:96px;text-align:center}
+.modal-input::placeholder { color:var(--input-placeholder); opacity:.82; }
 .modal-field label { color: rgba(255,255,255,.35); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; }
 .modal-hint code { color: rgba(123,127,178,.9); background: rgba(123,127,178,.12); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; word-break: break-all; }
 .modal-field-row { margin-bottom: 10px; }
@@ -254,8 +254,8 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .option-button-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .option-button-row .toggle-btn { min-height:28px; padding:4px 10px; }
 .option-button-row--center { justify-content:flex-end; }
-.toggle-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
-.model-fetch-btn, .pca-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
+.toggle-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
+.model-fetch-btn, .pca-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .btn-ghost, .btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
 @media(max-width:720px){ .modal-field-row { grid-template-columns:1fr; gap:0; } .modal-box { padding:18px; } }
 </style>

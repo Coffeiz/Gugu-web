@@ -2,29 +2,33 @@
   <div class="audit-log">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">操作日志</h2>
-        <p class="page-desc">记录管理员的所有操作行为</p>
+        <h2 class="page-title">{{ t('adminAudit.title') }}</h2>
+        <p class="page-desc">{{ t('adminAudit.description') }}</p>
       </div>
     </div>
 
-    <div class="audit-tabs" role="tablist">
-      <button class="audit-tab" :class="{ active: view === 'ops' }" @click="view = 'ops'">操作日志</button>
-      <button class="audit-tab" :class="{ active: view === 'security' }" @click="view = 'security'">安全事件</button>
-    </div>
+    <AdminSegmentTabs
+      :model-value="view"
+      :tabs="auditTabs"
+      :aria-label="t('adminAudit.title')"
+      size="compact"
+      class="audit-tabs"
+      @update:model-value="view = $event as 'ops' | 'security'"
+    />
 
     <!-- 筛选栏 -->
     <div v-if="view === 'ops'" class="filter-bar">
       <div class="filter-group">
-        <AdminSelect v-model="filter.action" :options="actionOptions" placeholder="全部操作" />
+        <AdminSelect v-model="filter.action" :options="actionOptions" :placeholder="t('adminAudit.allActions')" />
         <input
           v-model="filter.keyword"
           class="filter-input"
-          placeholder="搜索关键词…"
+          :placeholder="t('adminAudit.search')"
         />
         <div class="date-range">
-          <AdminDatePicker v-model="filter.dateFrom" placeholder="开始日期" />
+          <AdminDatePicker v-model="filter.dateFrom" :placeholder="t('adminAudit.startDate')" />
           <span class="date-sep">—</span>
-          <AdminDatePicker v-model="filter.dateTo" placeholder="结束日期" />
+          <AdminDatePicker v-model="filter.dateTo" :placeholder="t('adminAudit.endDate')" />
         </div>
       </div>
       <div class="filter-actions">
@@ -35,9 +39,9 @@
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          导出 CSV
+          {{ t('adminAudit.export') }}
         </button>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminAudit.refresh')">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
@@ -54,17 +58,17 @@
           <rect x="3" y="4" width="18" height="16" rx="2"/>
           <path d="M7 9h10M7 13h6"/>
         </svg>
-        <span>暂无日志</span>
+        <span>{{ t('adminAudit.empty') }}</span>
       </div>
       <template v-else>
         <table class="log-table">
           <thead>
             <tr>
-              <th style="width:160px">时间</th>
-              <th style="width:120px">操作者</th>
-              <th style="width:100px">操作类型</th>
-              <th>描述</th>
-              <th style="width:130px">IP</th>
+              <th style="width:160px">{{ t('adminAudit.time') }}</th>
+              <th style="width:120px">{{ t('adminAudit.operator') }}</th>
+              <th style="width:100px">{{ t('adminAudit.actionType') }}</th>
+              <th>{{ t('adminAudit.descriptionCol') }}</th>
+              <th style="width:130px">{{ t('adminAudit.ip') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -82,7 +86,7 @@
 
         <!-- 分页 -->
         <div class="pagination">
-          <span class="page-info">共 {{ filtered.length }} 条</span>
+          <span class="page-info">{{ t('adminAudit.count', { count: filtered.length }) }}</span>
           <div class="page-btns">
             <button class="page-btn" :disabled="page <= 1" @click="page--">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -99,9 +103,9 @@
             </button>
           </div>
           <select v-model="pageSize" class="filter-select" style="height:30px;font-size:12px">
-            <option :value="20">20 条/页</option>
-            <option :value="50">50 条/页</option>
-            <option :value="100">100 条/页</option>
+            <option :value="20">{{ t('adminAudit.perPage', { count: 20 }) }}</option>
+            <option :value="50">{{ t('adminAudit.perPage', { count: 50 }) }}</option>
+            <option :value="100">{{ t('adminAudit.perPage', { count: 100 }) }}</option>
           </select>
         </div>
       </template>
@@ -109,23 +113,23 @@
 
     <div v-else class="security-events">
       <div class="security-toolbar">
-        <AdminSelect v-model="securityFilter.action" :options="securityActionOptions" placeholder="全部动作" />
-        <AdminSelect v-model="securityFilter.eventType" :options="securityEventOptions" placeholder="全部事件" />
+        <AdminSelect v-model="securityFilter.action" :options="securityActionOptions" :placeholder="t('adminAudit.allActionsShort')" />
+        <AdminSelect v-model="securityFilter.eventType" :options="securityEventOptions" :placeholder="t('adminAudit.allEvents')" />
         <select v-model.number="securityFilter.sinceMinutes" class="filter-select">
-          <option :value="60">近 1 小时</option>
-          <option :value="1440">近 24 小时</option>
-          <option :value="10080">近 7 天</option>
-          <option :value="129600">近 90 天</option>
+          <option :value="60">{{ t('adminAudit.lastHour') }}</option>
+          <option :value="1440">{{ t('adminAudit.lastDay') }}</option>
+          <option :value="10080">{{ t('adminAudit.last7Days') }}</option>
+          <option :value="129600">{{ t('adminAudit.last90Days') }}</option>
         </select>
-        <button class="icon-btn" :class="{ spinning: securityLoading }" @click="loadSecurity" title="刷新安全事件">
+        <button class="icon-btn" :class="{ spinning: securityLoading }" @click="loadSecurity" :title="t('adminAudit.refreshSecurity')">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
       <div class="log-table-wrap">
         <div v-if="securityLoading" class="state-center"><div class="spinner" /></div>
-        <div v-else-if="!securityRows.length" class="state-center empty">暂无安全事件</div>
+        <div v-else-if="!securityRows.length" class="state-center empty">{{ t('adminAudit.noSecurity') }}</div>
         <table v-else class="log-table security-table">
-          <thead><tr><th>时间</th><th>用户指纹</th><th>事件</th><th>资源</th><th>动作</th><th>来源指纹</th></tr></thead>
+          <thead><tr><th>{{ t('adminAudit.time') }}</th><th>{{ t('adminAudit.userFingerprint') }}</th><th>{{ t('adminAudit.event') }}</th><th>{{ t('adminAudit.resource') }}</th><th>{{ t('adminAudit.actionType') }}</th><th>{{ t('adminAudit.sourceFingerprint') }}</th></tr></thead>
           <tbody>
             <tr v-for="row in securityRows" :key="row.id">
               <td class="col-time">{{ formatTime(row.occurred_at) }}</td>
@@ -146,26 +150,34 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
+import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { fmtLocalDateTime, localDayKey } from '@/utils/dateAttribution'
+import { useI18n } from 'vue-i18n'
 
-const actionOptions = [
-  { value: '',       label: '全部操作' },
-  { value: 'login',  label: '登录' },
-  { value: 'config', label: '配置变更' },
-  { value: 'agent',  label: 'Agent 配置' },
-  { value: 'prompt', label: '提示词' },
-  { value: 'user',   label: '用户管理' },
-]
-const securityActionOptions = [
-  { value: '', label: '全部动作' },
-  { value: 'logged', label: '记录' },
-  { value: 'throttled', label: '限流' },
-  { value: 'suspended', label: '冻结' },
-]
-const securityEventOptions = [
-  { value: '', label: '全部事件' },
-  { value: 'ownership.denied', label: '越权拒绝' },
-]
+const { t } = useI18n()
+
+const actionOptions = computed(() => [
+  { value: '', label: t('adminAudit.allActions') },
+  { value: 'login', label: t('adminAudit.login') },
+  { value: 'config', label: t('adminAudit.config') },
+  { value: 'agent', label: t('adminAudit.agent') },
+  { value: 'prompt', label: t('adminAudit.prompt') },
+  { value: 'user', label: t('adminAudit.user') },
+])
+const securityActionOptions = computed(() => [
+  { value: '', label: t('adminAudit.allActionsShort') },
+  { value: 'logged', label: t('adminAudit.logged') },
+  { value: 'throttled', label: t('adminAudit.throttled') },
+  { value: 'suspended', label: t('adminAudit.suspended') },
+])
+const securityEventOptions = computed(() => [
+  { value: '', label: t('adminAudit.allEvents') },
+  { value: 'ownership.denied', label: t('adminAudit.ownershipDenied') },
+])
+const auditTabs = computed(() => [
+  { key: 'ops', label: t('adminAudit.operations') },
+  { key: 'security', label: t('adminAudit.security') },
+])
 
 const BASE  = import.meta.env.VITE_API_URL ?? '/api/v1'
 const token = localStorage.getItem('admin_token')
@@ -274,12 +286,12 @@ function formatTime(ts: any) {
 }
 
 function actionLabel(action: string) {
-  const map = { login: '登录', config: '配置', agent: 'Agent', prompt: '提示词', user: '用户管理' }
+  const map = { login: t('adminAudit.login'), config: t('adminAudit.config'), agent: t('adminAudit.agent'), prompt: t('adminAudit.prompt'), user: t('adminAudit.user') }
   return map[action as keyof typeof map] ?? action
 }
 
 function securityActionLabel(action: string) {
-  return ({ logged: '记录', throttled: '限流', suspended: '冻结' } as Record<string, string>)[action] ?? action
+  return ({ logged: t('adminAudit.logged'), throttled: t('adminAudit.throttled'), suspended: t('adminAudit.suspended') } as Record<string, string>)[action] ?? action
 }
 
 function shortFingerprint(value: string | null | undefined) {
@@ -291,12 +303,19 @@ onMounted(() => { load(); loadSecurity() })
 
 <style scoped>
 .audit-log { min-height: 100%; }
-.audit-tabs { display: flex; gap: 6px; padding: 22px 36px 0; }
-.audit-tab { padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: rgba(255,255,255,.48); cursor: pointer; }
-.audit-tab.active { border-color: rgba(150,170,220,.35); background: rgba(150,170,220,.12); color: rgba(255,255,255,.88); }
+.audit-tabs { margin: 22px 36px 0; }
 .security-events { padding: 18px 36px 32px; }
 .security-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
 .security-table code { color: rgba(180,190,230,.75); font-size: 11px; }
+.security-events > .log-table-wrap { margin: 14px 0 32px; }
+.security-table { table-layout: fixed; }
+.security-table th:nth-child(1), .security-table td:nth-child(1) { width: 13%; }
+.security-table th:nth-child(2), .security-table td:nth-child(2) { width: 15%; }
+.security-table th:nth-child(3), .security-table td:nth-child(3) { width: 17%; }
+.security-table th:nth-child(4), .security-table td:nth-child(4) { width: 23%; }
+.security-table th:nth-child(5), .security-table td:nth-child(5) { width: 13%; }
+.security-table th:nth-child(6), .security-table td:nth-child(6) { width: 19%; }
+.security-table td { overflow-wrap: anywhere; }
 
 .page-header      { padding: 32px 36px 0; }
 .page-title-block { display: flex; flex-direction: column; }
@@ -313,15 +332,11 @@ onMounted(() => { load(); loadSecurity() })
 
 .filter-select,
 .filter-input {
-  height: 34px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.75);
+  height: 34px; border-radius: 9px;
   font-size: 13px; padding: 0 12px; outline: none;
-  transition: border-color 0.15s;
 }
 .filter-select { cursor: pointer; }
 .filter-input  { width: 180px; }
-.filter-select:focus,
-.filter-input:focus { border-color: rgba(255,255,255,0.25); }
 
 .date-range { display: flex; align-items: center; gap: 6px; }
 .date-sep   { color: rgba(255,255,255,0.25); font-size: 12px; }

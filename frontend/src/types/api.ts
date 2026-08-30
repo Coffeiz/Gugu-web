@@ -1342,86 +1342,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/onboarding/claim/{key}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Claim Onboarding
-         * @description key ∈ {welcome, guide, lookback, hint:<name>}。首次返回文案 + 标记已读，之后 null。
-         */
-        post: operations["claim_onboarding_api_v1_onboarding_claim__key__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/dev/pools": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Dev Pools
-         * @description 各文案池预览（demo 面板展示）。
-         */
-        get: operations["dev_pools_api_v1_onboarding_dev_pools_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/dev/fire/{key}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Fire
-         * @description 取某块随机文案但不标记已读（不重注册、不重置即可反复预览）。
-         */
-        post: operations["dev_fire_api_v1_onboarding_dev_fire__key__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/dev/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Reset
-         * @description 清零自己的已读标记（保留 seeded），气泡可重新自然触发。
-         */
-        post: operations["dev_reset_api_v1_onboarding_dev_reset_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/onboarding/dev/reseed": {
         parameters: {
             query?: never;
@@ -2805,6 +2725,8 @@ export interface components {
         };
         /** PreferencesResponse */
         PreferencesResponse: {
+            /** Locale */
+            locale?: "zh-CN" | "ja-JP" | "en-US" | null;
             /**
              * Laststages
              * @default []
@@ -2839,6 +2761,8 @@ export interface components {
         };
         /** PreferencesUpdate */
         PreferencesUpdate: {
+            /** Locale */
+            locale?: "zh-CN" | "ja-JP" | "en-US" | null;
             /** Laststages */
             lastStages?: string[] | null;
             /** Stagetemplates */
@@ -3316,6 +3240,8 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+            /** Locale */
+            locale?: "zh-CN" | "ja-JP" | "en-US" | null;
         };
         /** UserResponse */
         UserResponse: {
@@ -5930,108 +5856,6 @@ export interface operations {
         };
     };
     get_onboarding_state_api_v1_onboarding_state_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    claim_onboarding_api_v1_onboarding_claim__key__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_pools_api_v1_onboarding_dev_pools_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    dev_fire_api_v1_onboarding_dev_fire__key__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_reset_api_v1_onboarding_dev_reset_post: {
         parameters: {
             query?: never;
             header?: never;

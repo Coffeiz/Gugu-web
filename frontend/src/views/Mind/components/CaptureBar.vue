@@ -7,7 +7,7 @@
     <div ref="bodyRef" class="cb-body">
       <div class="cb-pad">
           <input
-            v-model="title" class="cb-title-input" placeholder="标题（可选）"
+            v-model="title" class="cb-title-input" :placeholder="t('mind.titleOptional')"
             @keydown.enter.exact.prevent="editorRef?.focus()"
             @keydown.enter.meta.prevent="save"
             @keydown.enter.ctrl.prevent="save"
@@ -15,7 +15,7 @@
           <NoteEditor
             ref="editorRef"
             v-model="md"
-            placeholder="记点什么…（Cmd/Ctrl + Enter 记录）"
+            :placeholder="t('mind.placeholder')"
             compact
             @submit="save"
           />
@@ -23,16 +23,16 @@
             <!-- 补录：日期可以往回选，落进它「发生」的那天，而不是今天 -->
             <label class="cb-backfill" :class="{ on: backfill }">
               <input type="checkbox" v-model="backfill" />
-              补录到
+              {{ t('mind.backfill') }}
             </label>
-            <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" placeholder="选择日期" />
+            <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" :placeholder="t('mind.chooseDateShort')" />
             <div class="cb-right">
-              <span class="cb-hint">输入 <code>@</code> 引用项目/文件/活动</span>
-              <button class="cb-min" title="收起（内容保留）" @click="collapse">
+              <span class="cb-hint">{{ t('mind.referenceHint') }}</span>
+              <button class="cb-min" :title="t('mind.collapseKeep')" @click="collapse">
                 <PhCaretDown :size="13" weight="bold" />
               </button>
               <button class="cb-save press-fx" :disabled="!canSave || saving" @click="save">
-                {{ saving ? '记录中…' : '记录' }}
+                {{ saving ? t('mind.recording') : t('mind.record') }}
               </button>
             </div>
           </div>
@@ -43,8 +43,8 @@
       <div class="cb-collapsed" role="button" tabindex="0" @click="expand" @keydown.enter.prevent="expand" @keydown.space.prevent="expand">
         <PhPencilSimple :size="13" weight="bold" class="cb-pencil" />
         <div v-if="title.trim() || md.trim()" class="cb-placeholder md-preview" v-html="collapsedPreview"></div>
-        <div v-else class="cb-placeholder">记点什么…</div>
-        <span class="cb-kbd">随手记</span>
+        <div v-else class="cb-placeholder">{{ t('mind.placeholder') }}</div>
+        <span class="cb-kbd">{{ t('mind.quickNote') }}</span>
       </div>
     </div>
   </div>
@@ -56,8 +56,10 @@ import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
 import DatePicker from '@/components/common/DatePicker.vue'
 import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import NoteEditor from './NoteEditor.vue'
+import { useI18n } from 'vue-i18n'
 
 const emit = defineEmits<{ (e: 'created', md: string, capturedAt?: string): void }>()
+const { t } = useI18n()
 
 const expanded = ref(false)
 const title    = ref('')

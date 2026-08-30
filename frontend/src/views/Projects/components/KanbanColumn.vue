@@ -9,7 +9,7 @@
     <div class="col-header">
       <div class="col-title">
         <span class="col-dot" :style="{ background: colColor }"></span>
-        {{ column.label }}
+        {{ t(projectStatusLabelKey(column.key)) }}
       </div>
       <span class="col-count">{{ projects.length }}</span>
     </div>
@@ -26,7 +26,7 @@
         </Teleport>
         <button :key="`add-${column.key}`" class="add-card" data-flip-target @click="$emit('add-project', column.key)">
           <Icon name="action.add" :size="20" style="opacity:0.5" />
-          <span class="add-card-text">新建项目</span>
+          <span class="add-card-text">{{ t('projects.add') }}</span>
         </button>
       </div>
     </div>
@@ -39,6 +39,9 @@ import { runtime } from '@/interaction/runtime'
 import Icon from '@/components/common/Icon.vue'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
+import { projectStatusLabelKey } from '@/utils/projectStages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 
 const props = defineProps({
   column:   { type: Object, required: true },

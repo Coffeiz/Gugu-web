@@ -10,14 +10,14 @@
     <template #header><div class="cd-head">
       <Transition name="cd-expanded">
         <div v-if="headerVisible" class="cd-expanded-nav">
-          <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
-          <button class="cd-toggle cd-return" title="收起" :disabled="drawerAnimating" @click="togglePanel(panel)"><Icon name="action.next" :size="18" /></button>
+          <span class="cd-title">{{ panel === 'canvases' ? t('mindUi.canvas') : t('mindUi.projects') }}</span>
+          <button class="cd-toggle cd-return" :title="t('mindUi.collapse')" :disabled="drawerAnimating" @click="togglePanel(panel)"><Icon name="action.next" :size="18" /></button>
         </div>
       </Transition>
       <Transition name="cd-compact">
         <div v-if="!expanded" class="cd-compact-nav">
-        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
-        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
+        <button class="cd-toggle" :title="t('mindUi.canvasList')" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
+        <button class="cd-toggle" :title="t('mindUi.projectMaterials')" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
         </div>
       </Transition>
     </div></template>
@@ -45,7 +45,7 @@
     >
        <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
-           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" :no-focus-ring="true" @pointerdown.stop />
+           <SearchInput v-model="projectQuery" class="project-search" :placeholder="t('mindUi.filterProjects')" :no-focus-ring="true" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
@@ -77,7 +77,7 @@
                   </div>
                 </section>
               </div>
-              <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
+              <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">{{ t('mindUi.noMatchingProjects') }}</div>
            </template>
             </DrawerTrack>
          </div>
@@ -88,6 +88,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -120,6 +121,7 @@ const props = defineProps({
     required: true,
   },
 })
+const { t } = useI18n()
 const emit = defineEmits<{
   (e: 'create'): void
   (e: 'open', id: number): void
@@ -145,9 +147,9 @@ const filteredProjects = computed(() => {
   return query ? available.filter(project => `${project.name} ${project.client || ''}`.toLowerCase().includes(query)) : available
 })
 const projectGroups = computed(() => [
-  { status: 'active', label: '进行中', items: filteredProjects.value.filter(project => project.status === 'active') },
-  { status: 'pending', label: '待开始', items: filteredProjects.value.filter(project => project.status === 'pending') },
-  { status: 'done', label: '已完成', items: filteredProjects.value.filter(project => project.status === 'done') },
+  { status: 'active', label: t('mindUi.stages.active'), items: filteredProjects.value.filter(project => project.status === 'active') },
+  { status: 'pending', label: t('mindUi.stages.pending'), items: filteredProjects.value.filter(project => project.status === 'pending') },
+  { status: 'done', label: t('mindUi.stages.done'), items: filteredProjects.value.filter(project => project.status === 'done') },
 ])
 // 三个状态分组标题常驻显示，不因为某个状态一时没有项目就整块消失/出现——这块 UI 结构本身
 // 稳定下来后，也顺带绕开了"分组从无到有/从有到无"这种结构性增删的过渡时机问题（比如卡片

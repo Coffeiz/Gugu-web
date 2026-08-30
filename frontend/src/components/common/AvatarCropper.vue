@@ -1,8 +1,8 @@
 <template>
   <BaseModal :show="show" width="380px" background="var(--panel-bg, rgba(255,255,255,0.86))" @close="$emit('close')">
     <div class="ac">
-      <div class="ac-title">裁切头像</div>
-      <p class="ac-hint">拖动调整位置，滚轮或滑块缩放</p>
+      <div class="ac-title">{{ t('common.cropAvatar') }}</div>
+      <p class="ac-hint">{{ t('common.cropAvatarHint') }}</p>
 
       <!-- 方形裁切视口：圆形遮罩预览最终圆头像效果 -->
       <div
@@ -31,9 +31,9 @@
       </div>
 
       <div class="ac-actions">
-        <button class="ac-btn ghost" @click="$emit('close')">取消</button>
+        <button class="ac-btn ghost" @click="$emit('close')">{{ t('common.actions.cancel') }}</button>
         <button class="ac-btn primary" :disabled="!loaded || busy" @click="confirm">
-          {{ busy ? '处理中…' : '确定' }}
+          {{ busy ? t('common.status.processing') : t('common.actions.confirm') }}
         </button>
       </div>
     </div>
@@ -43,6 +43,9 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import BaseModal from './BaseModal.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{ show: boolean; file: File | null }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'crop', f: File): void }>()
@@ -152,18 +155,18 @@ async function confirm() {
     const srcX = (MARGIN - offset.x) / s             // 裁切区左上角（视口内 MARGIN 处）映回源图
     const srcY = (MARGIN - offset.y) / s
     const img = viewport.value?.querySelector('img') as HTMLImageElement | null
-    if (!img) throw new Error('图片未就绪')
+    if (!img) throw new Error(t('common.imageNotReady'))
 
     const canvas = document.createElement('canvas')
     canvas.width = OUT; canvas.height = OUT
     const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('canvas 不可用')
+    if (!ctx) throw new Error(t('common.canvasUnavailable'))
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(img, srcX, srcY, srcSize, srcSize, 0, 0, OUT, OUT)
 
     const blob = await toBlob(canvas, 'image/webp', 0.9)
              ?? await toBlob(canvas, 'image/jpeg', 0.9)   // 老浏览器不支持 webp 时退回 jpeg
-    if (!blob) throw new Error('导出失败')
+    if (!blob) throw new Error(t('common.exportFailed'))
     const ext = blob.type === 'image/webp' ? 'webp' : 'jpg'
     emit('crop', new File([blob], `avatar.${ext}`, { type: blob.type }))
   } finally {

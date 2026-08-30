@@ -172,6 +172,26 @@ body {
 
 ::placeholder { color: var(--text-secondary); opacity: 0.75; }
 
+/* Admin 大窗口与前台弹窗保持同一套原地淡入淡出节奏。 */
+.admin-modal-enter-active,
+.admin-modal-leave-active {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.admin-modal-enter-active .modal-box {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.admin-modal-leave-active {
+  transition-duration: var(--modal-leave-duration);
+  transition-timing-function: var(--modal-leave-easing);
+}
+.admin-modal-leave-active .modal-box {
+  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing);
+}
+.admin-modal-enter-from,
+.admin-modal-leave-to { opacity: 0; }
+.admin-modal-enter-from .modal-box,
+.admin-modal-leave-to .modal-box { opacity: 0; }
+
 /* 旧版拖拽物理样式已移除，卡片视觉由 interaction runtime 与组件样式负责。 */
 /* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
    全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。

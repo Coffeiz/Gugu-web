@@ -2,33 +2,35 @@
   <section class="config-card prompts-card">
     <div class="card-head">
       <div class="card-icon" style="--ic:rgba(122,184,200,0.14);--stroke:#7ab8c8"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h12M4 10h8M4 14h6"/></svg></div>
-      <div class="card-title-block"><h3>系统提示词</h3><p>各 Profile 的 Prompt 模板，支持占位符，保存后热更新</p></div>
+      <div class="card-title-block"><h3>{{ t('adminAgentPrompt.title') }}</h3><p>{{ t('adminAgentPrompt.description') }}</p></div>
       <div class="profile-switcher">
         <button v-for="profile in profiles" :key="profile.profile" class="toggle-btn" :class="{ active: activeProfile === profile.profile }" :data-label="profile.profile" @click="switchProfile(profile.profile)">{{ profileLabels[profile.profile] || profile.profile }}</button>
       </div>
     </div>
     <div v-if="cautions[activeProfile]" class="persona-caution" :class="`persona-caution--${activeProfile}`">{{ cautions[activeProfile] }}</div>
     <div class="prompt-editor-wrap">
-      <textarea ref="textarea" v-model="promptContent" class="prompt-textarea scroll-surface scroll-surface--editor" placeholder="输入系统提示词模板…" spellcheck="false" />
-      <div class="placeholder-panel"><div class="placeholder-title">可用占位符</div><div v-for="placeholder in placeholders" :key="placeholder.key" class="placeholder-item" title="点击插入" @click="insertPlaceholder(placeholder.key, textarea)"><code>{{ placeholder.key }}</code><span>{{ placeholder.desc }}</span></div></div>
+      <textarea ref="textarea" v-model="promptContent" class="prompt-textarea scroll-surface scroll-surface--editor" :placeholder="t('adminAgentPrompt.inputPlaceholder')" spellcheck="false" />
+      <div class="placeholder-panel"><div class="placeholder-title">{{ t('adminAgentPrompt.placeholders') }}</div><div v-for="placeholder in placeholders" :key="placeholder.key" class="placeholder-item" :title="t('adminAgentPrompt.insert')" @click="insertPlaceholder(placeholder.key, textarea)"><code>{{ placeholder.key }}</code><span>{{ placeholder.desc }}</span></div></div>
     </div>
-    <div class="card-actions"><span class="save-hint" :class="{ error: !!promptError, muted: !promptSaved && !promptError }"><template v-if="promptSaved">✓ 已保存</template><template v-else-if="promptError">{{ promptError }}</template><template v-else>修改后点击保存即时生效，无需重启</template></span><button class="btn-primary" :class="{ loading: promptSaving }" :disabled="promptSaving" @click="savePrompt">{{ promptSaving ? '保存中…' : '保存提示词' }}</button></div>
+    <div class="card-actions"><span class="save-hint" :class="{ error: !!promptError, muted: !promptSaved && !promptError }"><template v-if="promptSaved">{{ t('adminAgentPrompt.saved') }}</template><template v-else-if="promptError">{{ promptError }}</template><template v-else>{{ t('adminAgentPrompt.saveHint') }}</template></span><button class="btn-primary" :class="{ loading: promptSaving }" :disabled="promptSaving" @click="savePrompt">{{ promptSaving ? t('adminAgentPrompt.saving') : t('adminAgentPrompt.save') }}</button></div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { usePromptConfig } from '../usePromptConfig'
+import { useI18n } from 'vue-i18n'
 const { activeProfile, profiles, placeholders, promptContent, promptSaving, promptSaved, promptError, refreshProfiles, switchProfile, insertPlaceholder, savePrompt } = usePromptConfig()
+const { t } = useI18n()
 const textarea = ref<HTMLTextAreaElement | null>(null)
-const profileLabels: Record<string, string> = { persona: '人格', skills: '工具准则', policy: '内容政策', reflection: '记忆反思', compress: '记忆压缩' }
-const cautions: Record<string, string> = {
-  persona: '⚠️ 这是咕咕的人格设定，所有对话共享。谨慎修改。',
-  skills: '🛠️ 这是工具使用准则（Execution Policy），决定咕咕何时调用工具。',
-  policy: '🚫 这是内容政策（红线），定义咕咕不参与的话题和专业免责。',
-  reflection: '⚠️ 这是记忆反思提炼词，需保持 JSON 输出格式。',
-  compress: '⚠️ 这是记忆压缩提炼词，决定近期记忆如何沉淀。',
-}
+const profileLabels = computed<Record<string, string>>(() => ({ persona: t('adminAgentPrompt.persona'), skills: t('adminAgentPrompt.skills'), policy: t('adminAgentPrompt.policy'), reflection: t('adminAgentPrompt.reflection'), compress: t('adminAgentPrompt.compress') }))
+const cautions = computed<Record<string, string>>(() => ({
+  persona: t('adminAgentPrompt.personaCaution'),
+  skills: t('adminAgentPrompt.skillsCaution'),
+  policy: t('adminAgentPrompt.policyCaution'),
+  reflection: t('adminAgentPrompt.reflectionCaution'),
+  compress: t('adminAgentPrompt.compressCaution'),
+}))
 onMounted(refreshProfiles)
 </script>
 

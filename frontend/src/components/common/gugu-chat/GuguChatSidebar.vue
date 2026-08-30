@@ -1,13 +1,13 @@
 <template>
   <div class="exp-sidebar">
     <div class="exp-sidebar-header">
-      <span class="exp-sidebar-title">咕咕</span>
+      <span class="exp-sidebar-title">{{ t('chatUi.gugu') }}</span>
     </div>
 
     <div class="exp-sidebar-divider"></div>
     <div class="exp-session-list scroll-surface scroll-surface--compact">
       <!-- 即时通讯区域：保留真实平台折叠/扫码/会话行为，只统一视觉和最后对话时间。 -->
-      <span class="sidebar-caption">即时通讯</span>
+      <span class="sidebar-caption">{{ t('chatUi.im') }}</span>
       <GuguChatImConnect
         ref="imConnectRef"
         :im-platforms="imPlatforms" :im-open="imOpen" :im-highlight="imHighlight"
@@ -21,7 +21,7 @@
 
       <!-- 网页对话 -->
       <div class="exp-group-divider"></div>
-      <span class="sidebar-caption">最近对话</span>
+      <span class="sidebar-caption">{{ t('chatUi.recent') }}</span>
       <div
         v-for="s in webSessions" :key="s.id"
         class="exp-session-item"
@@ -33,18 +33,18 @@
           <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
           <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
         </div>
-        <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除">
+        <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" :title="t('common.actions.delete')">
           <Icon name="action.delete" :size="12" />
         </button>
       </div>
-      <div v-if="!webSessions.length" class="exp-session-empty">还没有网页对话</div>
+      <div v-if="!webSessions.length" class="exp-session-empty">{{ t('chatUi.noWebSessions') }}</div>
     </div>
 
     <div class="exp-sidebar-divider"></div>
     <div class="exp-new-session-wrap">
       <button class="exp-new-session-btn" @click="onNewSession">
         <Icon name="action.edit" :size="13" />
-        新对话
+        {{ t('chatUi.newConversation') }}
       </button>
     </div>
   </div>
@@ -52,10 +52,13 @@
 
 <script setup lang="ts">
 import { ref, computed, type ComponentPublicInstance } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import GuguChatImConnect from './GuguChatImConnect.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
+
+const { t, locale } = useI18n()
 
 interface ImPlatformOption { key: ImPlatformKey; label: string }
 interface ImConnectState { platform: string; id: string | number }
@@ -88,11 +91,12 @@ function formatSessionTime(raw?: string) {
   if (Number.isNaN(date.getTime())) return ''
   const now = new Date()
   const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
-  if (sameDay) return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (sameDay) return date.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-  if (date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()) return '昨天'
-  if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}/${date.getDate()}`
-  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+  if (date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()) return t('chatUi.yesterday')
+  return new Intl.DateTimeFormat(locale.value, date.getFullYear() === now.getFullYear()
+    ? { month: 'numeric', day: 'numeric' }
+    : { year: 'numeric', month: 'numeric', day: 'numeric' }).format(date)
 }
 
 const imConnectRef = ref<InstanceType<typeof GuguChatImConnect> | null>(null)

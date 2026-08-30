@@ -14,6 +14,17 @@ const APP_VER = (() => {
 // 1.0.1 联调直接编译同级 Runtime 源码。Vite 默认只监视项目根目录，外部
 // /src 改动不会让浏览器失效旧的 /@fs 模块，必须主动监听并整页刷新。
 const RUNTIME_SRC = resolve(__dirname, '../../gugu-interaction-runtime/src')
+const adminEntry = {
+  name: 'admin-entry',
+  configureServer(server) {
+    server.middlewares.use((req, _res, next) => {
+      const url = (req.url || '').split('?')[0]
+      const isAdminPage = url === '/admin' || (url.startsWith('/admin/') && !/\.[a-z0-9]+$/i.test(url))
+      if (isAdminPage) req.url = '/admin/index.html'
+      next()
+    })
+  },
+}
 const runtimeSourceReload = {
   name: 'runtime-source-reload',
   configureServer(server) {
@@ -31,6 +42,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(APP_VER) },
   plugins: [
     vue(),
+    adminEntry,
     runtimeSourceReload,
     Components({
       resolvers: [ArcoResolver({ sideEffect: true })],

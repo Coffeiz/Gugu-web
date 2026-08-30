@@ -3,13 +3,13 @@ import { computed, ref } from 'vue'
 export type ThemePreference = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
 export type ThemeFamily = 'glass' | 'mono'
-export type ThemePalette = 'aero' | 'mono' | 'rose' | 'sky' | 'sage'
+export type ThemePalette = 'mist' | 'cafe' | 'rose' | 'sky' | 'sage'
 
 // 偏好必须在版本门执行后再读取，避免模块导入顺序让旧 localStorage 状态进入内存。
 const preference = ref<ThemePreference>('light')
 const resolved = ref<ResolvedTheme>('light')
 const family = ref<ThemeFamily>('glass')
-const palette = ref<ThemePalette>('aero')
+const palette = ref<ThemePalette>('mist')
 let hydrated = false
 let mediaQuery: MediaQueryList | null = null
 
@@ -31,17 +31,17 @@ function readFamily(): ThemeFamily {
 function readPalette(): ThemePalette {
   const value = localStorage.getItem('gugu-palette')
   const migrated: Record<string, ThemePalette> = {
-    lavender: 'aero', amber: 'mono', coral: 'rose', blue: 'sky', teal: 'sage',
+    lavender: 'mist', amber: 'cafe', aero: 'mist', mono: 'cafe', coral: 'rose', blue: 'sky', teal: 'sage',
   }
   const next = migrated[value ?? '']
   if (next && next !== value) localStorage.setItem('gugu-palette', next)
-  return next ?? 'aero'
+  return next ?? 'mist'
 }
 
 function normalizePalette(value: unknown): ThemePalette {
-  return value === 'aero' || value === 'mono' || value === 'rose' || value === 'sky' || value === 'sage'
+  return value === 'mist' || value === 'cafe' || value === 'rose' || value === 'sky' || value === 'sage'
     ? value
-    : 'aero'
+    : 'mist'
 }
 
 function resolve(value: ThemePreference): ResolvedTheme {

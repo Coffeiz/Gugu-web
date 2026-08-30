@@ -18,7 +18,6 @@ interface NotifInput {
   title?: string
   content?: string
   color?: string
-  gugu?: boolean
   persist?: boolean
   bubble?: boolean
   time?: string | number | Date
@@ -30,7 +29,6 @@ interface LiveNotif {
   id?: number | null
   title?: string
   content?: string
-  gugu?: boolean
 }
 
 export const useUiStore = defineStore('ui', () => {
@@ -48,7 +46,6 @@ export const useUiStore = defineStore('ui', () => {
   const pendingCalendarDate  = ref<string | null>(null)   // 仪表盘小日历点某天 → 跳日历定位到该日（不高亮具体活动）
   const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
   const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
-  const pendingProjectHighlightBreath = ref(false) // true=用「呼吸」动画（新手引导），缺省搜索 flash
 
   // 通知气泡锚点：距视口底部的 px。GuguChat 按小窗/播放器是否展开实时更新，
   // 让通知气泡始终浮在「聊天窗/音乐播放器」上方而不重叠。
@@ -97,9 +94,8 @@ export const useUiStore = defineStore('ui', () => {
       }
     }
     if (bubble) {
-      // gugu=true：用咕咕聊天文字的大小/颜色（新手引导气泡），见 NotificationBubble .nb-gugu
-      liveNotification.value = { seq: ++_liveSeq, id: n.id ?? null, title: n.title, content: n.content, gugu: n.gugu }
-      playGuguSfx(n.gugu ? 'message' : 'notification')
+      liveNotification.value = { seq: ++_liveSeq, id: n.id ?? null, title: n.title, content: n.content }
+      playGuguSfx('notification')
       _markBubbleSeen(n.id)   // 实时弹过的，下次上线别再补弹
     }
   }
@@ -142,6 +138,6 @@ export const useUiStore = defineStore('ui', () => {
     openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
-    pendingProjectHighlightBreath, pendingNoteId,
+    pendingNoteId,
   }
 })

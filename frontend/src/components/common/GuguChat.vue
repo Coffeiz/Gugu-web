@@ -97,6 +97,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
@@ -118,6 +119,7 @@ import { useChatActions } from './gugu-chat/composables/useChatActions'
 import { useChatConversation } from './gugu-chat/composables/useChatConversation'
 import { useChatImConnect } from './gugu-chat/composables/useChatImConnect'
 import { useChatWindow } from './gugu-chat/composables/useChatWindow'
+const { t } = useI18n()
 
 interface QuotaInfo {
   limit_6h?: number | null
@@ -292,6 +294,7 @@ async function exitExpanded() {
 }
 
 onMounted(() => {
+  window.addEventListener('gugu-quota-changed', onQuotaChanged)
   window.addEventListener('beforeunload', saveProgress)
   // 拉一次状态显示名（目前只用到「思考中」候选文案；失败就保持默认三个点）
   agentApi.getUiLabels?.().then(r => {
@@ -317,6 +320,7 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
+  window.removeEventListener('gugu-quota-changed', onQuotaChanged)
   window.removeEventListener('beforeunload', saveProgress)
 })
 
@@ -481,6 +485,7 @@ const imSessionsOf = (platform: ImPlatformKey) => imSessions.value.filter(s => s
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
 const quota = ref<QuotaInfo | null>(null)
 async function loadQuota() { try { quota.value = await authApi.getQuota() } catch {} }
+function onQuotaChanged() { loadQuota() }
 const energyExhausted = computed(() => {
   const q = quota.value
   if (!q) return false
@@ -488,15 +493,15 @@ const energyExhausted = computed(() => {
          (q.limit_weekly != null && (q.used_weekly ?? 0) >= q.limit_weekly)
 })
 // 离线时随机显示「QQ/微信/飞书 离线」之一（每次打开换一个，暗示这些渠道还没接上）
-const _OFFLINE_LABELS = ['QQ 离线', '微信离线', '飞书离线']
+const _OFFLINE_LABEL_KEYS = ['qqOffline', 'wechatOffline', 'feishuOffline'] as const
 const offlineLabel = ref('离线')
-function pickOfflineLabel() { offlineLabel.value = _OFFLINE_LABELS[Math.floor(Math.random() * _OFFLINE_LABELS.length)] }
+function pickOfflineLabel() { offlineLabel.value = t(`chatUi.${_OFFLINE_LABEL_KEYS[Math.floor(Math.random() * _OFFLINE_LABEL_KEYS.length)]}`) }
 const presenceKind  = computed(() => energyExhausted.value ? 'resting' : (imOnline.value ? 'online' : 'offline'))
-const presenceText  = computed(() => presenceKind.value === 'resting' ? '休息中'
-                                   : presenceKind.value === 'online'  ? '在线' : offlineLabel.value)
-const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕精力用完了，歇会儿就回来～'
-                                   : presenceKind.value === 'online'  ? '咕咕在线'
-                                   : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它')
+const presenceText  = computed(() => presenceKind.value === 'resting' ? t('chatUi.resting')
+                                   : presenceKind.value === 'online'  ? t('chatUi.online') : offlineLabel.value)
+const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatUi.restingHint')
+                                   : presenceKind.value === 'online'  ? t('chatUi.onlineHint')
+                                   : t('chatUi.offlineHint'))
 
 </script>
 
