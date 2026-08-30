@@ -113,6 +113,8 @@ async def seed_for_user(db: AsyncSession, user, *, locale: str | None = None) ->
         # 4) 回填状态
         await state.update_state(db, user_id, {
             "seeded": True, "seeded_project_id": proj.id, "seeded_project_name": name,
+            "guide_enabled": True, "guide_version": 1, "current_step": "locale",
+            "completed_steps": [], "dismissed": False, "completed_at": None,
         })
         logger.info("onboarding: 已为用户 %s 播种引导项目 %s（%s）", user_id, proj.id, name)
     except Exception as e:

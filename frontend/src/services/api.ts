@@ -604,6 +604,7 @@ export const agentApi = {
 export const onboardingApi = {
   getState:  ()             => get('/onboarding/state'),
   devReseed: ()             => post('/onboarding/dev/reseed'),
+  devResetGuide: ()         => post('/onboarding/dev/reset-guide'),
 }
 
 export const trackApi = {

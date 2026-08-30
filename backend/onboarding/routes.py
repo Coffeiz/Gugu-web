@@ -42,3 +42,20 @@ async def dev_reseed(
     locale = (prefs.data if prefs else {}).get("locale")
     await seed.seed_for_user(db, current_user, locale=locale)
     return {"ok": True, "state": await state.get_state(db, uid)}
+
+
+@router.post("/dev/reset-guide")
+async def dev_reset_guide(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """仅重置当前账号的引导进度，保留已播种的项目、文件和日历内容。"""
+    result = await state.update_state(db, current_user.id, {
+        "guide_enabled": True,
+        "guide_version": 1,
+        "current_step": "locale",
+        "completed_steps": [],
+        "dismissed": False,
+        "completed_at": None,
+    })
+    return {"ok": True, "state": result}

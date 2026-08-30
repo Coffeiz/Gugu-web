@@ -20,6 +20,12 @@ def default_state() -> dict:
         "seeded": False,
         "seeded_project_id": None,
         "seeded_project_name": None,
+        "guide_enabled": False,
+        "guide_version": 1,
+        "current_step": "locale",
+        "completed_steps": [],
+        "dismissed": False,
+        "completed_at": None,
     }
 
 

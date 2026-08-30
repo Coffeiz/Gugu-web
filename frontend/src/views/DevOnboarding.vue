@@ -7,7 +7,7 @@
 
     <section class="hero-card">
       <div class="hero-copy"><span class="hero-mark">✦</span><div><h2>{{ state?.seeded ? t('devOnboarding.seeded') : t('devOnboarding.notSeeded') }}</h2><p>{{ state?.seeded ? t('devOnboarding.reseedHint') : t('devOnboarding.description') }}</p></div></div>
-      <div class="actions"><button class="button button-ghost" @click="refresh">{{ t('devOnboarding.refresh') }}</button><button class="button button-primary" :disabled="busy" @click="reseed">{{ busy ? t('devOnboarding.reseedStarted') : t('devOnboarding.reseed') }}</button></div>
+      <div class="actions"><button class="button button-ghost" @click="refresh">{{ t('devOnboarding.refresh') }}</button><button class="button button-ghost" :disabled="busy" @click="resetGuide">{{ busy ? t('devOnboarding.resetGuideStarted') : t('devOnboarding.resetGuide') }}</button><button class="button button-primary" :disabled="busy" @click="reseed">{{ busy ? t('devOnboarding.reseedStarted') : t('devOnboarding.reseed') }}</button></div>
     </section>
 
     <section class="status-grid">
@@ -38,6 +38,10 @@ async function refresh() {
 async function reseed() {
   busy.value = true; msg.value = t('devOnboarding.reseedStarted')
   try { const r = await onboardingApi.devReseed(); state.value = r.state; msg.value = t('devOnboarding.reseedDone') } catch { msg.value = t('devOnboarding.reseedFailed') } finally { busy.value = false }
+}
+async function resetGuide() {
+  busy.value = true; msg.value = t('devOnboarding.resetGuideStarted')
+  try { const r = await onboardingApi.devResetGuide(); state.value = r.state; msg.value = t('devOnboarding.resetGuideDone') } catch { msg.value = t('devOnboarding.resetGuideFailed') } finally { busy.value = false }
 }
 
 onMounted(refresh)
