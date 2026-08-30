@@ -65,7 +65,7 @@
   --sidebar-item-fg: var(--color-muted);
   --sidebar-item-hover: var(--action-soft);
   /* 暗色调色板未单独声明 active-bg 时，回退到 raised surface，避免选中项只剩边框。 */
-  --sidebar-item-active: color-mix(in srgb,var(--action-primary) 8%,var(--theme-sidebar-active-bg, var(--surface-raised)));
+  --sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised));
   --sidebar-item-active-fg: var(--theme-sidebar-active-fg);
   --sidebar-item-active-border: var(--theme-sidebar-active-border);
   --sidebar-item-active-shadow: inset 0 1px 0 var(--theme-sidebar-active-highlight);

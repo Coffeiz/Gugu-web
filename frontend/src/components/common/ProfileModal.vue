@@ -108,7 +108,7 @@ const navItems = [
   { divider: true },
   { key: 'gugu', label: 'sharedUi.guguSettings', icon: 'user.gugu' },
   { key: 'im', label: 'sharedUi.connectGugu', icon: 'communication.chat' },
-  { key: 'byok', label: 'sharedUi.modelConfig', icon: 'user.security' },
+  { key: 'byok', label: 'sharedUi.modelConfigNav', icon: 'user.security' },
   { key: 'tools', label: 'sharedUi.capabilityConfig', icon: 'admin.wrench' },
   { key: 'workspaces', label: 'sharedUi.workspaces', icon: 'admin.folder' },
 ]

@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import { i18n } from '@/i18n'
+import { getLocale, i18n } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
@@ -450,7 +450,7 @@ export function useChatStream(options: {
       const res = await fetch(`${API_BASE}/agent/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id),
+        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, attachments: atts.map(a => a.attach_id),
                                ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
         signal: abortCtrl.value.signal,
       })

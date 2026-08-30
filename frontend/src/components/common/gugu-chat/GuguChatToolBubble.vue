@@ -2,7 +2,7 @@
   <div class="tool-event-bubble">
     <button class="tool-event-head" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
       <span class="tool-event-state" :class="`is-${msg.toolStatus || 'running'}`" aria-hidden="true" />
-      <span class="tool-event-label">{{ msg.toolLabel || msg.toolName || t('chatUi.toolCall') }}</span>
+      <span class="tool-event-label">{{ toolLabel }}</span>
       <span class="tool-event-meta">{{ statusText }}</span>
       <span v-if="durationText" class="tool-event-duration">{{ durationText }}</span>
       <FlipChevron :open="expanded" :size="10" :transition="'transform var(--motion-hover-card) var(--motion-ease-emphasis)'" aria-hidden="true" />
@@ -34,13 +34,18 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-const { t } = useI18n()
+const { t, te } = useI18n()
 import { computed, ref } from 'vue'
 import FlipChevron from '@/components/common/FlipChevron.vue'
 import type { ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()
 const expanded = ref(false)
+const toolLabel = computed(() => {
+  const toolName = props.msg.toolName || ''
+  const key = `chatUi.toolLabels.${toolName}`
+  return toolName && te(key) ? t(key) : props.msg.toolLabel || toolName || t('chatUi.toolCall')
+})
 const statusText = computed(() => ({
   running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
 }[props.msg.toolStatus || 'running']))

@@ -64,6 +64,9 @@ export default defineConfig({
     dedupe: ['vue'],
   },
   build: {
+    // Lightning CSS 会把部分 backdrop-filter 标准属性错误折叠为仅带前缀声明，
+    // 导致生产 Chrome 的多层玻璃材质退化为半透明。使用 esbuild 压缩 CSS，保留兼容声明。
+    cssMinify: 'esbuild',
     rollupOptions: {
       input: {
         main:  resolve(__dirname, 'index.html'),

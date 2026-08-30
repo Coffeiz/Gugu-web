@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { beginAccountBoundary } from '@/utils/accountBoundary'
 
 const { api } = vi.hoisted(() => ({
   api: {
@@ -104,5 +105,35 @@ describe('画布加载竞态', () => {
 
     expect(store.canvasRelations).toHaveLength(1)
     expect(normalizeCanvasRelations([relation, { ...relation }])).toEqual([relation])
+  })
+
+  it('画布已不存在时吞掉可恢复的 404，不产生未处理 Promise 异常', async () => {
+    api.listCanvasItems.mockRejectedValue(Object.assign(new Error('画布不存在'), { status: 404 }))
+    api.listCanvasRelations.mockResolvedValue([])
+
+    const store = useMindStore()
+    await store.fetchCanvases()
+    await expect(store.loadCanvas(1)).resolves.toBe(false)
+    expect(store.activeCanvasId).toBeNull()
+    expect(store.canvasItems).toEqual([])
+  })
+
+  it('切换账号后，旧账号的画布响应不能回写到新账号', async () => {
+    const items = deferred<never[]>()
+    const relations = deferred<never[]>()
+    api.listCanvasItems.mockReturnValue(items.promise)
+    api.listCanvasRelations.mockReturnValue(relations.promise)
+
+    const store = useMindStore()
+    await store.fetchCanvases()
+    const loading = store.loadCanvas(1)
+    store.resetAccountState()
+    beginAccountBoundary()
+    items.resolve([])
+    relations.resolve([])
+
+    await expect(loading).resolves.toBe(false)
+    expect(store.activeCanvasId).toBeNull()
+    expect(store.canvasItems).toEqual([])
   })
 })

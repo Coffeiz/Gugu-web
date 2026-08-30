@@ -4,11 +4,31 @@ import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
 import type { components } from '@/types/api'
 import { getLocale } from '@/i18n'
+import { clearGreeting } from '@/composables/useGreeting'
+import { beginAccountBoundary } from '@/utils/accountBoundary'
+import { useUiStore } from './ui'
+import { useLiveStore } from './live'
+import { useFilesCacheStore } from './filesCache'
+import { useProjectStore } from './projects'
+import { useMindStore } from './mind'
+import { onboardingProjectId } from '@/composables/useOnboarding'
 
 type UserResponse = components['schemas']['UserResponse']
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
+
+function resetAccountState() {
+  beginAccountBoundary()
+  clearGreeting()
+  useAudioStore().stop()
+  useUiStore().resetAccountState()
+  useLiveStore().resetAccountState()
+  useFilesCacheStore().resetAccountState()
+  useProjectStore().resetAccountState()
+  useMindStore().resetAccountState()
+  onboardingProjectId.value = null
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
@@ -41,6 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))
+    resetAccountState()
     _saveToken(body.accessToken)
     _setUser(body.user)
   }
@@ -53,6 +74,7 @@ export const useAuthStore = defineStore('auth', () => {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '登录失败'))
+    resetAccountState()
     _saveToken(body.accessToken)
     _setUser(body.user)
   }
@@ -98,6 +120,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   function logout() {
     useAudioStore().stop()
+    resetAccountState()
     token.value = ''
     user.value  = null
     localStorage.removeItem(TOKEN_KEY)

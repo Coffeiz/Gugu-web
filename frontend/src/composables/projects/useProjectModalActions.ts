@@ -4,6 +4,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import type { Project, ProjectStage } from '@/types/project'
 import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import { i18n } from '@/i18n'
 
 interface ProjectModalActionsOptions {
   project: () => Project | null
@@ -76,12 +77,18 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
       ? fileCacheStore.allFolders.filter(folder => folder.projectId === current.id).length
       : 0
 
-    if (fileCount + folderCount > 0) {
-      const parts = []
-      if (fileCount) parts.push(`${fileCount} 个文件`)
-      if (folderCount) parts.push(`${folderCount} 个文件夹`)
-      if (!await confirmDialog({ title: '删除项目', message: `项目「${current.name}」中的 ${parts.join('、')} 将随项目一并删除。`, tone: 'danger', confirmText: '删除' })) return
-    }
+    const parts = []
+    if (fileCount) parts.push(i18n.global.t('projects.fileCount', { count: fileCount }))
+    if (folderCount) parts.push(i18n.global.t('projects.folderCount', { count: folderCount }))
+    const message = parts.length
+      ? i18n.global.t('projects.deleteContentsMessage', { name: current.name, contents: parts.join(i18n.global.t('projects.countSeparator')) })
+      : i18n.global.t('projects.deleteMessage', { name: current.name })
+    if (!await confirmDialog({
+      title: i18n.global.t('projects.deleteTitle'),
+      message,
+      tone: 'danger',
+      confirmText: i18n.global.t('projects.deleteConfirm'),
+    })) return
 
     await projectStore.deleteProject(current.id)
     if (fileCount + folderCount > 0) fileCacheStore.refresh()

@@ -115,6 +115,22 @@ export const useUiStore = defineStore('ui', () => {
     } catch { /* 静默 */ }
   }
 
+  function resetAccountState() {
+    notifications.value = []
+    liveNotification.value = null
+    _liveSeq = 0
+    // pending 导航信号属于当前账号；登录/登出边界必须一起失效，避免旧页面的
+    // 延迟监听在新账号页面挂载后误消费，或覆盖新账号自己的高光请求。
+    pendingChatSession.value = null
+    pendingFileTarget.value = null
+    pendingChatMessageId.value = null
+    pendingCalendarEvent.value = null
+    pendingNoteId.value = null
+    pendingCalendarDate.value = null
+    pendingProjectHighlight.value = null
+    pendingProjectHighlightMs.value = null
+  }
+
   async function _persistRead(ids: number[] | null) {
     try {
       const { notificationsApi } = await import('@/services/api')
@@ -134,7 +150,7 @@ export const useUiStore = defineStore('ui', () => {
 
   return {
     notifCount, notifications, liveNotification, fetchNotifications, checkLoginBubble,
-    pushNotification, markAllRead, markRead,
+    pushNotification, markAllRead, markRead, resetAccountState,
     openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,

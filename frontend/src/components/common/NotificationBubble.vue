@@ -156,6 +156,9 @@ function dismiss(id: number) {
 
 /* 气泡风与 GuguChat 小窗/播放器一致：玻璃面板 + blur(28) + 20 圆角 */
 .nb-item {
+  --nb-border: rgba(255,255,255,0.65);
+  --nb-highlight-top: rgba(255,255,255,0.9);
+  --nb-highlight-side: rgba(255,255,255,0.5);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -165,7 +168,7 @@ function dismiss(id: number) {
   background: var(--panel-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid rgba(255,255,255,0.65);
+  border: 1px solid var(--nb-border);
   border-radius: 20px;
   box-shadow: var(--glass-shadow-lg);
   pointer-events: auto;
@@ -177,16 +180,15 @@ function dismiss(id: number) {
   content: '';
   position: absolute; inset: 0;
   border-radius: 20px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), inset 1px 0 0 rgba(255,255,255,0.5);
+  box-shadow: inset 0 1px 0 var(--nb-highlight-top), inset 1px 0 0 var(--nb-highlight-side);
   pointer-events: none;
 }
 
 /* 暗色只重映射边缘 token，避免沿用亮色主题的纯白高光；亮色基线保持不变。 */
-:global(html[data-theme='dark'][data-family]) .nb-item {
-  border-color: var(--border-default);
-}
-:global(html[data-theme='dark'][data-family]) .nb-item::after {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), inset 1px 0 0 var(--highlight-muted);
+:global(html[data-theme='dark'][data-family] .nb-item) {
+  --nb-border: var(--border-default);
+  --nb-highlight-top: var(--highlight-soft);
+  --nb-highlight-side: var(--highlight-muted);
 }
 
 /* 标题行：圆点 + 标题，预留右上角关闭按钮的位置 */

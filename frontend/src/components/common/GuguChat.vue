@@ -518,6 +518,10 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 .chat-open-leave-active {
   transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0) !important;
   transform-origin: right bottom;
+  /* Chrome 在变换中的子元素上会提前停止 backdrop-filter 合成；离场根节点保留
+     一层同值材质，确保玻璃效果跟随 opacity 一起淡出，而不是先变成普通半透明。 */
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 .chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.78); }
 
@@ -591,13 +595,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
    整条选择器必须用 :deep() 才能跨组件边界匹配，否则样式全部失效（只剩默认 HTML 样式）。 */
 :deep(.msg) { display: flex; flex-direction: column; min-width: 0; }
 :deep(.msg.user) { align-items: flex-end; }
-:deep(.msg-search-flash) { animation: msg-search-flash 1.8s ease forwards; border-radius: 12px; }
-@keyframes msg-search-flash {
-  0%   { background: var(--gugu-chat-search-flash); }
-  35%  { background: var(--gugu-chat-search-flash); }
-  100% { background: transparent; }
-}
-
 :deep(.msg.ai) { align-items: flex-start; }
 /* 群成员消息（非 owner、非咕咕）：左侧，跟 ai 同一侧但气泡样式区分开，避免跟
    咕咕的回复混淆。 */

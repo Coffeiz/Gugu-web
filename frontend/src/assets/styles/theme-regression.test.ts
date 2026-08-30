@@ -138,12 +138,11 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('通知气泡暗色不继承亮色纯白高光，亮色实体样式保持唯一', () => {
-    const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item")
-    const darkHighlight = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item::after")
-    expect(darkEdge).toContain('border-color: var(--border-default)')
-    expect(darkHighlight).toContain('var(--highlight-soft)')
-    expect(darkHighlight).toContain('var(--highlight-muted)')
-    expect(notificationBubbleVue).toContain('border: 1px solid rgba(255,255,255,0.65)')
+    const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family] .nb-item)")
+    expect(darkEdge).toContain('--nb-border: var(--border-default)')
+    expect(darkEdge).toContain('--nb-highlight-top: var(--highlight-soft)')
+    expect(darkEdge).toContain('--nb-highlight-side: var(--highlight-muted)')
+    expect(notificationBubbleVue).toContain('--nb-highlight-top: rgba(255,255,255,0.9)')
     expect(notificationBubbleVue).not.toMatch(/:global\(html\[data-theme='dark'\]\[data-family\][^)]*\)[^{]*\{[^}]*rgba\(255,255,255/i)
   })
 
@@ -401,5 +400,12 @@ describe('主题 CSS 回归契约', () => {
     const adoptionCss = load('./theme-adoption.css')
     const darkChatBlock = cssBlock(adoptionCss, "html[data-theme='dark'][data-family] .chat-window::after")
     expect(darkChatBlock).toContain('box-shadow: none')
+  })
+
+  it('咕咕聊天窗口离场时保留玻璃材质，避免 blur 先于淡出消失', () => {
+    const leaveBlock = guguChatVue.match(/\.chat-open-leave-active\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(leaveBlock).toContain('backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).toContain('-webkit-backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).toContain('transition: opacity')
   })
 })

@@ -18,6 +18,7 @@ import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useLiveStore } from '@/stores/live'
 import type { LiveEventPayload } from '@/types/live-events'
 import { isMindLandingActive, onMindLandingSettled } from '@/interaction/runtime/canvas'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -113,14 +114,33 @@ export const useMindStore = defineStore('mind', () => {
 
   async function fetchNotes() {
     loading.value = true
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const firstPage = await mindApi.listNotes(NOTE_PAGE_SIZE, 0)
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
       notes.value = firstPage
       hasMore.value = firstPage.length === NOTE_PAGE_SIZE
       loaded.value = true
     } finally {
       loading.value = false
     }
+  }
+
+  function resetAccountState() {
+    notes.value = []
+    canvases.value = []
+    canvasItems.value = []
+    canvasRelations.value = []
+    loaded.value = false
+    canvasesLoaded.value = false
+    activeCanvasId.value = null
+    filterQ.value = ''
+    jumpTarget.value = ''
+    canvasLoadSeq += 1
+    pendingCanvasLoads.clear()
+    invalidatedCanvasLoads.clear()
+    pendingProjectRefCreates.clear()
+    pendingMindRefresh = false
   }
 
   /** 时间轴向左（更早日期）滚动到边缘时追加下一页，已加载的卡片不重建。 */
@@ -174,8 +194,16 @@ export const useMindStore = defineStore('mind', () => {
 
   async function fetchCanvases() {
     canvasLoading.value = true
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
-      canvases.value = await mindApi.listCanvases()
+      const nextCanvases = await mindApi.listCanvases()
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
+      canvases.value = nextCanvases
+      if (activeCanvasId.value != null && !nextCanvases.some(canvas => canvas.id === activeCanvasId.value)) {
+        activeCanvasId.value = null
+        canvasItems.value = []
+        canvasRelations.value = []
+      }
       canvasesLoaded.value = true
     } finally {
       canvasLoading.value = false
@@ -232,6 +260,19 @@ export const useMindStore = defineStore('mind', () => {
       canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
       canvasRelations.value = normalizeCanvasRelations(relations)
       return true
+    } catch (error) {
+      // 画布可能在实时刷新、切换账号或删除竞态中已经失效；这是可恢复的状态，
+      // 不能让 Promise.all 把“画布不存在”升级成未处理异常。
+      const status = (error as { status?: unknown })?.status
+      if (status === 404) {
+        if (activeCanvasId.value === id) {
+          activeCanvasId.value = null
+          canvasItems.value = []
+          canvasRelations.value = []
+        }
+        return false
+      }
+      throw error
     } finally {
       if (pendingCanvasLoads.get(id) === requestSeq) pendingCanvasLoads.delete(id)
     }
@@ -588,7 +629,7 @@ export const useMindStore = defineStore('mind', () => {
   })
 
   return {
-    notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, loadMoreNotes, createNote, updateNote, deleteNote,
+    notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, loadMoreNotes, resetAccountState, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
     addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, addOptimisticCanvasRelation, replaceOptimisticCanvasRelation, rollbackOptimisticCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,

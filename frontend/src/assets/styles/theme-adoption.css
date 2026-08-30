@@ -58,11 +58,12 @@ html[data-theme][data-family] .proj-card {
   color: var(--content-primary);
   background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color) !important;
   border-color: var(--project-card-border) !important;
-  box-shadow: var(--project-card-shadow) !important;
+  /* 阴影由 ProjectCard 自身的静止态/高光动画负责；不能用 !important 压住 keyframes。 */
+  box-shadow: var(--project-card-shadow);
 }
 html[data-theme][data-family] .proj-card:hover {
   border-color: var(--project-card-hover-border) !important;
-  box-shadow: var(--project-card-hover-shadow) !important;
+  box-shadow: var(--project-card-hover-shadow);
 }
 html[data-theme='dark'][data-family] .proj-card .proj-name,
 html[data-theme='dark'][data-family] .proj-card .drop-content {
