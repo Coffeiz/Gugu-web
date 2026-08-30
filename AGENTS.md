@@ -49,6 +49,12 @@
 - 注释、日志、用户文案、文档和 commit message 使用简体中文。
 - Changelog 只记录简短用户可感知变化；详细排查过程按 `docs/devlog/README.md` 约定写入 `docs/devlog/` 下的独立记录。
 
+## 前端提醒组件规范
+
+- 删除、重置、覆盖、停用等需要用户确认的操作，必须使用 `useConfirmDialog` / `confirmDialog` 和统一的 `ConfirmDialog` 组件。
+- 禁止在 UI 源码中直接调用浏览器原生 `alert`、`confirm`、`prompt`；普通成功、失败和状态反馈使用 AppToast 或页面内提示。
+- 新增或修改危险操作时，必须补充取消路径、确认文案 i18n 和原生弹窗扫描回归。
+
 ## Git 提交完整性
 
 - **禁止用 `--force` / `--force-with-lease` 覆盖远端分支历史**。远端历史是追查依据，覆盖后难以回溯。
