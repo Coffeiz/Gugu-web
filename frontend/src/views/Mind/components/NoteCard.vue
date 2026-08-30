@@ -1,6 +1,6 @@
 <template>
   <div ref="cardRef" class="note-card"
-       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, ['tint-' + (note.color || '')]: !!note.color }"
+       :class="{ editing, 'search-highlight': highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, ['tint-' + (note.color || '')]: !!note.color }"
        :style="{ height: cardHeight }"
        @mouseenter="isHovering = true" @mouseleave="isHovering = false">
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
@@ -511,13 +511,6 @@ defineExpose({ rootEl: cardRef })
   color: var(--text-primary); font-family: var(--font-sans);
 }
 .nc-title-input::placeholder { color: var(--text-secondary); opacity: 0.5; font-weight: 400; }
-
-/* 新建高亮：紫灰 tint 淡出（提交滚回最左后让新卡自己说"我在这") */
-.note-card.highlight { animation: nc-flash 1.6s ease-out; }
-@keyframes nc-flash {
-  0% { background-color: rgba(123,127,178,0.2); }
-  100% { background-color: rgba(255,255,255,0.56); }
-}
 
 /* 可选颜色：整卡淡染（便签纸语言），不做左侧色条（那是管理系统语言）。"Caribbean" 配色，
    亮色高饱和度（青绿/蓝/珊瑚橙/黄，见 ColorSwatches.vue 的色点原色），淡染到卡片背景上的

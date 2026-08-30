@@ -199,14 +199,41 @@ export function useChatConversation(options: {
     await nextTick()
   }
 
+  let flashRequest = 0
+  let flashTimer: ReturnType<typeof setTimeout> | null = null
+  let activeFlashElement: HTMLElement | null = null
+
+  function clearFlash() {
+    if (flashTimer) clearTimeout(flashTimer)
+    flashTimer = null
+    activeFlashElement?.classList.remove('search-highlight')
+    activeFlashElement = null
+  }
+
   function _flashChatMessage(dbId: number) {
-    setTimeout(() => {
-      const el = messagesEl.value?.querySelector(`[data-db-id="${dbId}"]`)
-      if (!el) return
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.classList.add('msg-search-flash')
-      setTimeout(() => el.classList.remove('msg-search-flash'), 1800)
-    }, 200)
+    const request = ++flashRequest
+    clearFlash()
+    let attempts = 0
+    const findElement = () => {
+      if (request !== flashRequest) return
+      const message = messagesEl.value?.querySelector<HTMLElement>(`[data-db-id="${dbId}"]`)
+      const bubble = message?.querySelector<HTMLElement>('.msg-bubble')
+      if (!message || !bubble) {
+        if (attempts++ >= 30) return
+        flashTimer = setTimeout(findElement, 50)
+        return
+      }
+      message.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      bubble.classList.add('search-highlight')
+      activeFlashElement = bubble
+      flashTimer = setTimeout(() => {
+        if (request !== flashRequest) return
+        bubble.classList.remove('search-highlight')
+        activeFlashElement = null
+        flashTimer = null
+      }, 1800)
+    }
+    flashTimer = setTimeout(findElement, 50)
   }
 
   // 打开对话框时让默认问候像回复一样「打字机」冒出来（生成版 / 兜底都走这套）。每条问候只播一次。
@@ -306,6 +333,8 @@ export function useChatConversation(options: {
 
   onUnmounted(() => {
     messagesEl.value?.removeEventListener('scroll', onMsgScroll)
+    flashRequest++
+    clearFlash()
   })
 
   // ── SSE 收发（send/stopStreaming/resumeStream），见 useChatStream.ts ──

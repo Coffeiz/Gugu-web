@@ -4,7 +4,6 @@
   /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
   --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
   --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
-  --gugu-chat-search-flash: var(--selection-bg);
   --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
   --gugu-chat-assistant-border: var(--border-subtle);
   --gugu-chat-member-bg: var(--action-soft);

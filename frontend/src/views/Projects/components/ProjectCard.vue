@@ -632,10 +632,4 @@ async function setPriority(n: number) {
   pointer-events: none;
 }
 
-/* 全局搜索命中 → 跳转本页后高亮闪一下定位（class 由 Projects 面板 JS 动态加） */
-.proj-card.search-flash { animation: proj-search-flash 1.8s ease forwards; }
-@keyframes proj-search-flash {
-  0%, 30% { box-shadow: 0 0 0 3px rgba(123,127,178,0.7), 0 8px 22px rgba(80,90,110,0.22); }
-  100%    { box-shadow: 0 2px 8px rgba(80,90,110,0.07); }
-}
 </style>

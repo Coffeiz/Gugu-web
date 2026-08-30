@@ -836,16 +836,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   user-select: none;
 }
 
-/* 顶栏搜索定位到的文件：短暂高亮 */
-.search-flash {
-  animation: search-flash 1.8s ease;
-  border-radius: var(--radius-sm);
-}
-@keyframes search-flash {
-  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
-  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
-}
-
 /* ── 工具栏 ── */
 .files-toolbar {
   display: flex; align-items: center; justify-content: space-between;

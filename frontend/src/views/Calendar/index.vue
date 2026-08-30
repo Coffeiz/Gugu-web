@@ -1091,14 +1091,40 @@ watch(() => uiStore.pendingCalendarDate, (date) => {
 // 从别的页面搜索跳转时，日历页刚挂载、fetchEvents() 还在飞网络请求，侧栏这时可能还没渲染出
 // 目标活动的 data-event-id——固定延时 150ms 一次性查大概率扑空（只跳对了月份/日期，没有高亮闪一下）。
 // 改成轮询，等数据到位、DOM 出现再闪，最多等 2s（10 次 × 200ms）。
-function _flashCalendarEvent(id: string | number, tries = 10) {
-  setTimeout(() => {
-    const el = document.querySelector(`[data-event-id="${id}"]`)
-    if (!el) { if (tries > 0) _flashCalendarEvent(id, tries - 1); return }
+let calendarFlashRequest = 0
+let calendarFlashTimer: ReturnType<typeof setTimeout> | null = null
+let activeCalendarFlashElement: HTMLElement | null = null
+
+function clearCalendarFlash() {
+  if (calendarFlashTimer) clearTimeout(calendarFlashTimer)
+  calendarFlashTimer = null
+  activeCalendarFlashElement?.classList.remove('search-highlight')
+  activeCalendarFlashElement = null
+}
+
+function _flashCalendarEvent(id: string | number) {
+  const request = ++calendarFlashRequest
+  clearCalendarFlash()
+  let attempts = 0
+  const findElement = () => {
+    if (request !== calendarFlashRequest) return
+    const el = document.querySelector<HTMLElement>(`[data-event-id="${id}"]`)
+    if (!el) {
+      if (attempts++ >= 30) return
+      calendarFlashTimer = setTimeout(findElement, 50)
+      return
+    }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    el.classList.add('search-flash')
-    setTimeout(() => el.classList.remove('search-flash'), 1800)
-  }, 200)
+    el.classList.add('search-highlight')
+    activeCalendarFlashElement = el
+    calendarFlashTimer = setTimeout(() => {
+      if (request !== calendarFlashRequest) return
+      el.classList.remove('search-highlight')
+      activeCalendarFlashElement = null
+      calendarFlashTimer = null
+    }, 1800)
+  }
+  calendarFlashTimer = setTimeout(findElement, 50)
 }
 
 // 弹窗加提醒后会变高，可能顶出屏幕底部、保存按钮被切掉。
@@ -1187,6 +1213,8 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   ro?.disconnect()
   if (_midnightTimer) clearTimeout(_midnightTimer)
+  calendarFlashRequest++
+  clearCalendarFlash()
 })
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
@@ -1349,10 +1377,4 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
 
-/* 搜索跳转高亮：跟文件/项目搜索命中一样的外发光，不再是纯色背景闪一下 */
-.search-flash { animation: search-flash 1.8s ease forwards; border-radius: 10px; }
-@keyframes search-flash {
-  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
-  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
-}
 </style>
