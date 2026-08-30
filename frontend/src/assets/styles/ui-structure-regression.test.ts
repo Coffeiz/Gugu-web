@@ -48,8 +48,19 @@ const datePicker = load('../../components/common/DatePicker.vue')
 const adminDatePicker = load('../../components/AdminDatePicker.vue')
 const calendarMorePopup = load('../../views/Calendar/components/CalendarMorePopup.vue')
 const calendarView = load('../../views/Calendar/index.vue')
+const adoptedForms = load('./adoption/forms.css')
+const configField = load('../../views/Admin/Config/components/ConfigField.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('Admin field-input 使用完整实线边框，避免回落到浏览器原生双层描边', () => {
+    const sharedFieldBlock = cssBlock(adoptedForms, '.field-input')
+    expect(sharedFieldBlock).toContain('border: 1px solid var(--input-border);')
+    expect(configField).not.toContain('border: 1px solid rgba(255,255,255,0.1)')
+    expect(adoptedForms).toContain('.admin-main .ctrl-grp input')
+    expect(adoptedForms).toContain('border-radius: var(--input-radius);')
+    expect(adoptedForms).toContain('box-shadow: var(--input-focus-shadow);')
+  })
+
   it('主题组件覆盖和跨 DOM bridge 只有明确的统一入口', () => {
     expect(variables).toContain("@import './components/index.css';")
     expect(variables).toContain("@import './bridges/index.css';")
