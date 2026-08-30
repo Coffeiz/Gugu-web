@@ -51,13 +51,6 @@ function go() {
   background: var(--sidebar-item-hover);
   color: var(--content-primary);
 }
-.nav-item.active {
-  background: var(--sidebar-item-active);
-  color: var(--sidebar-item-active-fg);
-  font-weight: var(--font-weight-bold);
-  border-color: var(--sidebar-item-active-border);
-  box-shadow: var(--sidebar-item-active-shadow);
-}
 .nav-item:focus-visible {
   outline: none;
   box-shadow: var(--control-focus-shadow);

@@ -233,13 +233,6 @@ function handleLogout() {
   color: var(--content-primary);
   background: var(--sidebar-item-hover);
 }
-.nav-item.active {
-  color: var(--sidebar-item-active-fg);
-  background: var(--sidebar-item-active);
-  border-color: var(--sidebar-item-active-border);
-  box-shadow: var(--sidebar-item-active-shadow);
-  font-weight: 600;
-}
 .nav-item.disabled { color: var(--content-muted); cursor: default; }
 .nav-badge {
   margin-left: auto; font-size: 9px; font-weight: 600;

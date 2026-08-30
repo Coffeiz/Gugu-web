@@ -167,6 +167,7 @@ describe('主题 CSS 回归契约', () => {
 
   it('导航选中项直接复用调色板 surface，通知 active paint 不重复', () => {
     expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
+    expect(load('../../components/common/NavItem.vue')).not.toContain('.nav-item.active {')
     expect(componentCss).toContain('--sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised))')
     expect(componentSurfacesCss).not.toContain('--sidebar-item-active-light-bg')
     expect(componentSurfacesCss).not.toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
@@ -176,14 +177,13 @@ describe('主题 CSS 回归契约', () => {
     expect(surfacesCss).not.toMatch(/html\[data-family='mono'\] \.sidebar\s*\{/)
 
     const adminLayoutVue = load('../../layouts/AdminLayout.vue')
-    const adminNavActive = cssBlock(adminLayoutVue, '.nav-item.active')
     expect(adminLayoutVue).toContain('background: var(--sidebar-bg);')
     expect(adminLayoutVue).toContain('border-right: 1px solid var(--sidebar-border);')
-    expect(adminNavActive).toContain('background: var(--sidebar-item-active);')
-    expect(adminNavActive).toContain('border-color: var(--sidebar-item-active-border);')
-    expect(adminNavActive).toContain('box-shadow: var(--sidebar-item-active-shadow);')
-    expect(adminNavActive).not.toContain('border-color: var(--border-strong);')
-    expect(adminNavActive).not.toContain('inset 0 1px 0 var(--border-subtle)')
+    expect(adminLayoutVue).not.toContain('.nav-item.active {')
+    expect(productCss).toContain(':is(.sidebar, .admin-sidebar) .nav-item.active')
+    expect(productCss).toContain('background: var(--sidebar-item-active);')
+    expect(productCss).toContain('border-color: var(--sidebar-item-active-border);')
+    expect(productCss).toContain('box-shadow: var(--sidebar-item-active-shadow);')
   })
 
   it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {

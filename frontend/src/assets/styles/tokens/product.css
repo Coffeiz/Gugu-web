@@ -9,6 +9,14 @@ html[data-theme][data-family] .sidebar {
 }
 html[data-theme][data-family] .sidebar .logo-icon { background: transparent; }
 html[data-theme][data-family] .sidebar .nav-label { color: var(--sidebar-label-fg); }
+/* 公共导航与 Admin 导航共享同一组选中态；两者只在基础几何和容器布局上保持差异。 */
+html[data-theme][data-family] :is(.sidebar, .admin-sidebar) .nav-item.active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
+  font-weight: var(--font-weight-bold);
+}
 html[data-theme][data-family] .sidebar .notif-btn { color: var(--sidebar-item-fg); }
 html[data-theme][data-family] .sidebar .notif-btn:hover { color: var(--content-primary); background: var(--sidebar-item-hover); }
 html[data-theme][data-family] .sidebar .notif-btn.notif-active {
