@@ -32,6 +32,21 @@ async def validate_master_key(db: AsyncSession) -> str:
     return _master_key_status
 
 
+def master_key_status_for_credentials(rows: list[UserProviderCredential]) -> str:
+    """校验当前用户的凭据；没有加密凭据时不返回需要重配状态。"""
+    secured_rows = [row for row in rows if row.encrypted_value is not None]
+    if not secured_rows:
+        return "ready"
+    try:
+        from app.byok.crypto import _master_key
+        _master_key()
+        for row in secured_rows:
+            decrypt_value(row)
+    except Exception:
+        return "needs_reconfigure"
+    return "ready"
+
+
 def credential_view(row: UserProviderCredential) -> dict:
     return {"id": row.id, "provider": row.provider, "api_format": row.api_format,
             "capability": row.capability,

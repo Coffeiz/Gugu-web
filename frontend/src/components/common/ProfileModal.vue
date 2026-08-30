@@ -36,7 +36,7 @@
       <div class="pm-content">
         <div class="pm-content-header">
           <span class="pm-content-title">{{ currentNavLabel }}</span>
-          <button class="popup-close-btn" @click="$emit('close')"><Icon name="action.close" size="sm" tone="inherit" /></button>
+          <CloseButton :title="t('common.actions.close')" @click="$emit('close')" />
         </div>
         <div class="pm-content-body" ref="pmBodyRef">
           <KeepAlive>
@@ -79,6 +79,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import BaseModal from '@/components/common/BaseModal.vue'
+import CloseButton from '@/components/common/CloseButton.vue'
 import AvatarCropper from '@/components/common/AvatarCropper.vue'
 import ProfileInfoPane from './ProfileModal/ProfileInfoPane.vue'
 import ProfileAccountPane from './ProfileModal/ProfileAccountPane.vue'

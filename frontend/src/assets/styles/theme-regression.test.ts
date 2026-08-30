@@ -165,11 +165,11 @@ describe('主题 CSS 回归契约', () => {
     }
   })
 
-  it('亮色导航选中项使用实体亮面，通知 active paint 不重复', () => {
+  it('导航选中项直接复用调色板 surface，通知 active paint 不重复', () => {
     expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
-    expect(componentCss).toContain('--sidebar-item-active-light-bg: color-mix(in srgb,var(--action-primary) 8%,rgba(255,255,255,.94))')
-    expect(componentSurfacesCss).toContain("html[data-theme='light'][data-family]")
-    expect(componentSurfacesCss).toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
+    expect(componentCss).toContain('--sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised))')
+    expect(componentSurfacesCss).not.toContain('--sidebar-item-active-light-bg')
+    expect(componentSurfacesCss).not.toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
   })
 
   it('Mono 导航不再被旧 chrome 边框覆盖，Admin 与前台复用同一组选中 token', () => {

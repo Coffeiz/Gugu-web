@@ -36,13 +36,20 @@ def _canonical_tool_batch_records(messages) -> list[dict]:
             and (record.get("metadata") or {}).get("round_id")]
 
 
-async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
-    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
-    prompt = (
+def _build_title_prompt(user_msg: str, ai_reply: str) -> str:
+    """构造新会话标题提示词，标题语言跟随当前对话语言。"""
+    return (
         "根据下面这段对话，用一句话起一个简短的标题（10字以内，不含引号和标点符号）。"
+        "标题必须使用与用户和咕咕交流相同的语言；如果对话主要使用英文，就用英文输出；"
+        "如果主要使用日文，就用日文输出。不要因为本提示词使用中文而输出中文。"
         "只输出标题本身，不要任何解释。\n"
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
+
+
+async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
+    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
+    prompt = _build_title_prompt(user_msg, ai_reply)
     from agent import providers
     ai = ai or settings.ai
     provider_adapter = providers.adapter_for(ai)

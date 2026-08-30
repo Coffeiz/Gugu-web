@@ -259,14 +259,6 @@
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
-/* Light navigation selection keeps the pre-palette white surface. Dark mode remains palette-aware. */
-html[data-theme='light'][data-family] {
-  --sidebar-item-active: var(--sidebar-item-active-light-bg);
-  --sidebar-item-active-fg: var(--sidebar-item-active-light-fg);
-  --sidebar-item-active-border: var(--sidebar-item-active-light-border);
-  --sidebar-item-active-shadow: var(--sidebar-item-active-light-shadow);
-}
-
 /* Mono light uses its solid neutral card surface and visible neutral edge. This is a token remap,
    not a .fc-card/.folder-card selector, so component state paint cannot race the family theme. */
 html[data-theme='light'][data-family='mono'] {

@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.models import User, UserProviderCredential
 from app.byok.policy import require_byok_enabled
 from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, CredentialVisionProbe
-from app.byok.service import byok_master_key_status, credential_view, decrypt_value, encrypt_value, list_credentials
+from app.byok.service import credential_view, decrypt_value, encrypt_value, list_credentials, master_key_status_for_credentials
 
 router = APIRouter(prefix="/byok", tags=["byok"])
 
@@ -26,7 +26,8 @@ def _gate() -> None:
 @router.get("")
 async def get_credentials(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
-    return {"enabled": True, "status": byok_master_key_status(), "items": [credential_view(row) for row in await list_credentials(db, user.id)]}
+    rows = await list_credentials(db, user.id)
+    return {"enabled": True, "status": master_key_status_for_credentials(rows), "items": [credential_view(row) for row in rows]}
 
 
 @router.post("", status_code=201)

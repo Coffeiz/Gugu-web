@@ -240,6 +240,7 @@ async function remove(item: Item) {
   try {
     await byokApi.remove(item.id)
     items.value = items.value.filter(row => row.id !== item.id)
+    if (items.value.length === 0) needsReconfigure.value = false
     notifyQuotaChanged()
   } catch (e) {
     message.value = e instanceof Error ? e.message : t('profileByokUi.deleteFailed')
