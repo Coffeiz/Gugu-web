@@ -625,7 +625,7 @@ class SearchSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
+                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
                     },
