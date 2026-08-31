@@ -4,6 +4,8 @@
 
 Knowledge 是被动 RAG 资料，不是用户 Memory，也不是可主动调用或执行的 Skill。不要创建或修改 Skill。
 
+所有输出最终都会经过 Knowledge 记录规范（`knowledge-writing`）和统一写入校验；这里负责反思判断，不要绕过来源、作用域、长度、敏感信息和冲突规则。
+
 调用方会提供 `save_mode`：
 
 - `explicit`：用户明确要求记住、保存、加入知识库或以后遵循某条规则。

@@ -2,81 +2,92 @@
   <div v-if="pendingAtt.length || attUploading" class="chat-att-row">
     <div v-for="a in pendingAtt" :key="a.attach_id" class="chat-att-chip">
       <span class="chat-att-name">{{ a.name }}.{{ a.ext }}</span>
-      <button class="chat-att-x" @click="onRemoveAtt(a)" title="移除">×</button>
+        <button class="chat-att-x" @click="onRemoveAtt(a)" :title="t('chat.remove')">×</button>
     </div>
-    <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
+    <span v-if="attUploading" class="chat-att-chip att-up">{{ t('common.status.processing') }}</span>
   </div>
   <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded }">
-    <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" aria-label="命令列表">
-      <button
-        v-for="(item, index) in filteredCommands"
-        :key="item.command"
-        class="chat-command-item"
-        :class="{ active: index === commandIndex }"
-        type="button"
-        role="option"
-        :aria-selected="index === commandIndex"
-        @mousedown.prevent
-        @click="chooseCommand(item)"
-      >
-        <code>{{ item.command }}</code>
-        <span class="chat-command-copy"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-      </button>
-    </div>
-    <button v-if="!recording" class="att-btn" @click="fileInput?.click()" title="添加附件">
+    <Transition name="chat-command-pop">
+      <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" :aria-label="t('chat.commandList')">
+        <button
+          v-for="(item, index) in filteredCommands"
+          :key="item.command"
+          class="chat-command-item"
+          :class="{ active: index === commandIndex }"
+          type="button"
+          role="option"
+          :aria-selected="index === commandIndex"
+          @mousedown.prevent
+          @click="chooseCommand(item)"
+        >
+          <code>{{ item.command }}</code>
+          <span class="chat-command-copy"><strong>{{ t(`chat.commands.${item.command.slice(1)}.label`) }}</strong><small>{{ t(`chat.commands.${item.command.slice(1)}.description`) }}</small></span>
+        </button>
+      </div>
+    </Transition>
+    <ReferenceSuggestMenu
+      :show="referencePicker.open"
+      :anchor="inputRowEl"
+      :offset-x="expanded ? 42 : 8"
+      :owner-z="ownerZ"
+      :query="referencePicker.query"
+      :items="referenceItems"
+      :loading="referenceLoading"
+      :active="referenceActive"
+      @choose="chooseReference"
+    />
+    <button v-if="!recording" class="att-btn" @click="fileInput?.click()" :title="t('chat.addAttachment')" :aria-label="t('chat.addAttachment')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
     </button>
-    <button v-if="!recording" class="att-btn" @click="onStartRecord" title="语音输入">
+    <button v-if="!recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
     </button>
     <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
-    <textarea
-      v-if="!recording"
-      :value="modelValue"
-      @input="onInput"
-      ref="expInputEl"
-      placeholder="问问项目进度、截止日期…"
-      rows="1"
-      v-enter.exact.prevent="() => onSend()"
-      @paste="onPaste"
-      @keydown="onKeydown"
-    />
+    <div v-if="!recording" class="chat-input-editor">
+      <EditorContent v-if="chatEditor" :editor="chatEditor" />
+    </div>
     <div v-else class="rec-bar">
       <span class="rec-dot"></span>
       <span class="rec-time">{{ recordSecs }}″</span>
-      <span class="rec-hint">录音中… 点 ✓ 发送</span>
-      <button class="rec-cancel" @click="onCancelRecord">取消</button>
+      <span class="rec-hint">{{ t('chat.recording') }}</span>
+      <button class="rec-cancel" @click="onCancelRecord">{{ t('chat.cancel') }}</button>
     </div>
-    <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : (streaming ? onStopStreaming() : onSend())">
+    <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : onSendClick()">
       <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
-      <Icon name="action.next" v-else-if="!streaming" :size="expanded ? 14 : 13" />
-      <Icon name="action.stop-fill" v-else  :size="expanded ? 14 : 13" />
+      <Icon name="action.next" v-else-if="!streaming || hasDraft" :size="expanded ? 14 : 13" />
+      <Icon name="action.stop-fill" v-else :size="expanded ? 14 : 13" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { EditorContent, useEditor } from '@tiptap/vue-3'
 import Icon from '@/components/common/Icon.vue'
+import ReferenceSuggestMenu from '@/components/common/ReferenceSuggestMenu.vue'
+import { useReferenceSuggest } from '@/composables/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
+import { mindExtensions, type MindDocNode } from '@/composables/useMindEditor'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
  *
- * expInputEl 是本组件内部的 DOM 引用——父组件仍需要在展开/收起窗口、新建会话、
- * 发送后收起多行输入框时操作它（focus/测宽度重新量高度/清空后收起高度），
- * 通过 defineExpose 暴露 focus()/fitTextarea()/resetHeight()，不重新拿一份引用。
+ * 编辑器根节点是本组件内部的 DOM——父组件仍通过 expose 调用 focus/测高/重置高度，
+ * 不重新拿一份引用，也不让 textarea 与视觉高亮层各自维护一套光标坐标。
  */
-import type { ChatFile } from './chatTypes'
-import { SMALL_W, SIDEBAR_W } from './chatConstants'
+import type { ChatFile, ChatReference } from './chatTypes'
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: string
+  references: ChatReference[]
   pendingAtt: ChatFile[]
   attUploading: boolean
   recording: boolean
   recordSecs: number
   expanded: boolean
+  ownerZ: number
   streaming: boolean
   vw: number
   onRemoveAtt: (a: ChatFile) => void
@@ -89,11 +100,67 @@ const props = defineProps<{
   onStopStreaming: () => void
 }>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:references': [value: ChatReference[]] }>()
+const hasDraft = computed(() => Boolean(props.modelValue.trim() || props.pendingAtt.length))
 const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
 const chatCommands = ref<ChatCommandOption[]>([])
 const inputRowEl = ref<HTMLElement | null>(null)
+const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest()
+const referencePicker = ref({ open: false, query: '', from: 0, to: 0 })
+let lastReferenceQuery: string | null = null
+
+function chatInlineNodes(text: string, references: ChatReference[]): MindDocNode[] {
+  if (!text) return []
+  const refs = references
+    .map(reference => ({ reference, token: `@${reference.label}` }))
+    .filter(entry => entry.token.length > 1)
+  const nodes: MindDocNode[] = []
+  let cursor = 0
+  while (cursor < text.length) {
+    let next = -1
+    let nextRef: (typeof refs)[number] | undefined
+    for (const entry of refs) {
+      const index = text.indexOf(entry.token, cursor)
+      if (index >= 0 && (next < 0 || index < next)) { next = index; nextRef = entry }
+    }
+    if (!nextRef || next < 0) {
+      nodes.push({ type: 'text', text: text.slice(cursor) })
+      break
+    }
+    if (next > cursor) nodes.push({ type: 'text', text: text.slice(cursor, next) })
+    nodes.push({ type: 'mindRef', attrs: { refType: nextRef.reference.type, refId: nextRef.reference.id, label: nextRef.reference.label } })
+    cursor = next + nextRef.token.length
+  }
+  return nodes
+}
+
+function chatTextFromDoc(doc: MindDocNode | null | undefined): string {
+  return (doc?.content ?? []).map(block => (block.content ?? []).map(node => {
+    if (node.type === 'hardBreak') return '\n'
+    if (node.type === 'mindRef') return `@${node.attrs?.label ?? ''}`
+    return node.text ?? ''
+  }).join('')).join('\n')
+}
+
+function referencesFromDoc(doc: MindDocNode | null | undefined): ChatReference[] {
+  const result: ChatReference[] = []
+  for (const block of doc?.content ?? []) for (const node of block.content ?? []) {
+    if (node.type !== 'mindRef') continue
+    const attrs = node.attrs ?? {}
+    const reference = { type: attrs.refType as ChatReference['type'], id: Number(attrs.refId), label: String(attrs.label ?? '') }
+    if (reference.label && !result.some(item => item.type === reference.type && item.id === reference.id)) result.push(reference)
+  }
+  return result
+}
+
+function chatDoc(text: string, references: ChatReference[]): MindDocNode {
+  return {
+    type: 'doc',
+    content: text.split('\n').map(line => ({ type: 'paragraph', content: chatInlineNodes(line, references) })),
+  }
+}
+
 function commandsForValue(value: string) {
   const match = value.match(/^\/([^\s]*)$/)
   if (!match) return []
@@ -108,23 +175,74 @@ function updateCommandMenu(value: string) {
   if (commandIndex.value >= matches.length) commandIndex.value = 0
 }
 
-function onInput(e: Event) {
-  const el = e.target as HTMLTextAreaElement
+function syncEditorState() {
+  const editor = chatEditor.value
+  if (!editor) return
+  const doc = editor.getJSON() as MindDocNode
+  const text = chatTextFromDoc(doc)
   commandIndex.value = 0
-  updateCommandMenu(el.value)
-  emit('update:modelValue', el.value)
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+  updateCommandMenu(text)
+  emit('update:modelValue', text)
+  emit('update:references', referencesFromDoc(doc))
+  syncReferencePicker(editor)
+}
+
+function findReferenceTrigger(editor: any) {
+  const { from } = editor.state.selection
+  const before = editor.state.doc.textBetween(Math.max(0, from - 120), from, '\n', '￼')
+  const match = /(^|[\s])@([^\s@]*)$/.exec(before)
+  if (!match) return null
+  const length = match[2].length + 1
+  return { query: match[2], from: from - length, to: from }
+}
+
+function syncReferencePicker(editor: any) {
+  const trigger = findReferenceTrigger(editor)
+  if (!trigger) {
+    referencePicker.value.open = false
+    lastReferenceQuery = null
+    resetReferences()
+    return
+  }
+  referencePicker.value = {
+    ...referencePicker.value,
+    ...trigger,
+    open: true,
+  }
+  if (lastReferenceQuery !== trigger.query) {
+    lastReferenceQuery = trigger.query
+    searchReferences(trigger.query)
+  }
+}
+
+function chooseReference(item: ChatReference) {
+  const editor = chatEditor.value
+  if (!editor) return
+  const { from, to } = referencePicker.value
+  editor.chain().focus().deleteRange({ from, to })
+    .insertContent({ type: 'mindRef', attrs: { refType: item.type, refId: item.id, label: item.label } })
+    .insertContent(' ')
+    .run()
+  referencePicker.value.open = false
+  lastReferenceQuery = null
+  resetReferences()
 }
 
 function chooseCommand(item: ChatCommandOption) {
   commandMenuVisible.value = false
   commandIndex.value = 0
+  chatEditor.value?.commands.setContent(chatDoc(item.insert, []) as any, { emitUpdate: false })
   emit('update:modelValue', item.insert)
-  requestAnimationFrame(() => expInputEl.value?.focus())
+  requestAnimationFrame(() => chatEditor.value?.commands.focus('end'))
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (referencePicker.value.open && referenceItems.value.length) {
+    if (event.key === 'ArrowDown') { event.preventDefault(); moveReferences(1); return }
+    if (event.key === 'ArrowUp') { event.preventDefault(); moveReferences(-1); return }
+    if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseReference(referenceItems.value[referenceActive.value]); return }
+    if (event.key === 'Escape') { event.preventDefault(); referencePicker.value.open = false; lastReferenceQuery = null; resetReferences(); return }
+  }
   if (!commandMenuVisible.value || !filteredCommands.value.length) {
     if (event.key === 'Escape') commandMenuVisible.value = false
     return
@@ -144,80 +262,87 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-function onOutsidePointerdown(event: PointerEvent) {
-  if (!commandMenuVisible.value) return
-  const target = event.target
-  if (target instanceof Node && inputRowEl.value?.contains(target)) return
-  commandMenuVisible.value = false
+function onSendClick() {
+  // 生成中有草稿时，点击仍应发送并进入队列；没有草稿才是停止当前生成。
+  if (props.streaming && !hasDraft.value) props.onStopStreaming()
+  else props.onSend()
 }
 
-onMounted(() => {
-  document.addEventListener('pointerdown', onOutsidePointerdown, true)
+function onOutsidePointerdown(event: PointerEvent) {
+  if (!commandMenuVisible.value && !referencePicker.value.open) return
+  const target = event.target
+  if (target instanceof Element && target.closest('.reference-picker')) {
+    return
+  }
+  if (target instanceof Node && inputRowEl.value?.contains(target)) return
+  commandMenuVisible.value = false
+  referencePicker.value.open = false
+  lastReferenceQuery = null
+  resetReferences()
+}
+
+const chatEditor = useEditor({
+  extensions: mindExtensions(t('chat.placeholder')),
+  content: chatDoc(props.modelValue, props.references),
+  editorProps: {
+    attributes: { class: 'chat-prosemirror' },
+    handleKeyDown: (_view, event) => {
+      onKeydown(event)
+      if (event.defaultPrevented) return true
+      if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        props.onSend()
+        return true
+      }
+      return false
+    },
+    handlePaste: (_view, event) => {
+      props.onPaste(event)
+      return false
+    },
+  },
+  onUpdate: syncEditorState,
+})
+
+watch(() => [props.modelValue, props.references] as const, ([text, references]) => {
+  const editor = chatEditor.value
+  if (!editor || chatTextFromDoc(editor.getJSON() as MindDocNode) === text) return
+  editor.commands.setContent(chatDoc(text, references) as any, { emitUpdate: false })
+})
+
+function onInputSelection() {
+  if (chatEditor.value?.isFocused) syncReferencePicker(chatEditor.value)
+}
+
+  onMounted(() => {
+    document.addEventListener('pointerdown', onOutsidePointerdown, true)
+  document.addEventListener('selectionchange', onInputSelection)
   void loadChatCommands().then((items) => { chatCommands.value = items }).catch(() => {
     // 命令注册表不可用时不展示过期的本地列表，避免把不存在的命令提示给用户。
     chatCommands.value = []
   })
 })
-onUnmounted(() => document.removeEventListener('pointerdown', onOutsidePointerdown, true))
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onOutsidePointerdown, true)
+  document.removeEventListener('selectionchange', onInputSelection)
+})
 
-const fileInput   = ref<HTMLInputElement | null>(null)
-const expInputEl  = ref<HTMLTextAreaElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
 
-function textareaWidthForMode(isExpanded: boolean) {
-  if (!isExpanded) {
-    // 小窗：左右内边距 13px、两个 16px 附件按钮、28px 发送按钮和三段 8px 间距。
-    return SMALL_W - 26 - 16 - 16 - 28 - 24
-  }
-  const left = Math.max(SIDEBAR_W + 12, props.vw * 0.4 - 12)
-  const mainWidth = props.vw - left - 12 - 210
-  // 大窗：左右内边距 20px、两个 16px 附件按钮、32px 发送按钮和三段 10px 间距。
-  return Math.max(0, mainWidth - 40 - 16 - 16 - 32 - 30)
-}
-
-function fitTextarea(isExpanded = props.expanded) {
-  // 切换时 chat-window 的四条边都在过渡，直接读真实 textarea 只能拿到"当前帧"的宽度。
-  // 克隆到离屏节点按目标宽度量 scrollHeight，点击瞬间就能得到目标模式的正确行数。
-  const el = expInputEl.value
+function fitTextarea(_isExpanded = props.expanded) {
+  // 聊天输入与笔记一样是真正的 inline 编辑器，直接量 ProseMirror 根节点即可；
+  // 引用节点参与排版，不再需要一个视觉高亮层和隐藏 textarea 互相对齐。
+  const el = chatEditor.value?.view.dom as HTMLElement | undefined
   if (!el) return
-  const width = textareaWidthForMode(isExpanded)
-  if (!width) return
-  const style = getComputedStyle(el)
-  const sizer = document.createElement('textarea')
-  sizer.value = el.value
-  sizer.rows = 1
-  sizer.setAttribute('aria-hidden', 'true')
-  Object.assign(sizer.style, {
-    position: 'fixed',
-    visibility: 'hidden',
-    pointerEvents: 'none',
-    left: '-9999px',
-    top: '0',
-    width: `${width}px`,
-    height: 'auto',
-    minHeight: '0',
-    maxHeight: 'none',
-    overflow: 'hidden',
-    boxSizing: style.boxSizing,
-    padding: style.padding,
-    border: style.border,
-    font: style.font,
-    letterSpacing: style.letterSpacing,
-    lineHeight: style.lineHeight,
-    whiteSpace: style.whiteSpace,
-    wordBreak: style.wordBreak,
-    overflowWrap: style.overflowWrap,
-    tabSize: style.tabSize,
-  })
-  document.body.appendChild(sizer)
-  const height = Math.min(sizer.scrollHeight, 120)
-  sizer.remove()
-  el.style.height = `${height}px`
+  void _isExpanded
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 120)}px`
 }
 
 defineExpose({
-  focus: () => expInputEl.value?.focus(),
+  focus: () => chatEditor.value?.commands.focus(),
   fitTextarea,
-  resetHeight: () => { if (expInputEl.value) expInputEl.value.style.height = 'auto' },
+  resetHeight: () => { if (chatEditor.value) chatEditor.value.view.dom.style.height = 'auto' },
 })
 </script>
 
@@ -241,8 +366,8 @@ defineExpose({
   padding: 10px 13px;
   border-top: 1px solid rgba(255,255,255,0.65);
   background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* 命令菜单是本行的绝对定位子层；父级若再建立 backdrop 根，菜单会采样到
+     输入栏的已合成结果，而不是下面的消息内容。chat-main 已负责窗口底层材质。 */
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   flex-shrink: 0;
 }
@@ -257,10 +382,21 @@ defineExpose({
   padding: 5px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-card-solid);
+  background: var(--popup-surface-bg);
   box-shadow: var(--elevation-popup);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+.chat-command-pop-enter-active,
+.chat-command-pop-leave-active {
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard),
+              transform var(--motion-hover-control) var(--motion-ease-standard);
+  transform-origin: left bottom;
+}
+.chat-command-pop-enter-from,
+.chat-command-pop-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(.97);
 }
 /* 命令菜单有圆角，原生滑块轨道必须避开上下边缘，避免伸出弹窗轮廓。 */
 .chat-command-menu::-webkit-scrollbar {
@@ -296,12 +432,6 @@ defineExpose({
 .rec-hint { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rec-cancel { margin-left: auto; flex-shrink: 0; border: none; background: rgba(123,127,178,0.12); color: var(--text-secondary); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; }
 .rec-cancel:hover { background: rgba(123,127,178,0.2); }
-.chat-input-row input {
-  flex: 1; border: none; background: none;
-  font-size: 13px; color: var(--text-primary);
-  outline: none; font-family: var(--font-sans);
-  line-height: 1.5; padding: 2px 0;
-}
 .chat-input-row textarea {
   flex: 1; border: none; background: none;
   font-size: 14px; color: var(--text-primary);
@@ -309,6 +439,25 @@ defineExpose({
   resize: none; line-height: 1.5; max-height: 120px; overflow-y: auto;
   display: block; padding: 4px 0; vertical-align: middle;
 }
+.chat-input-editor { position: relative; flex: 1; min-width: 0; }
+.chat-input-editor :deep(.ProseMirror) {
+  min-height: 24px; max-height: 120px; overflow-y: auto; outline: none;
+  padding: 4px 0; color: var(--text-primary); font: 14px/1.5 var(--font-sans);
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+}
+.chat-input-editor :deep(.ProseMirror p) { margin: 0; }
+.chat-input-editor :deep(.ProseMirror .mind-ref) {
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline;
+  margin: 0 2px; padding: 1px 5px; border: 1px solid var(--action-outline);
+  border-radius: 5px; color: var(--content-primary); background: var(--action-soft);
+  line-height: 1.35; white-space: nowrap;
+  /* 原子节点仍由 ProseMirror 整体选中/删除；这里不能用 user-select:all，
+     否则光标紧贴引用末尾时，鼠标拖拽会被浏览器锁成“选中胶囊/移动光标”，
+     无法继续建立前后文本选区。 */
+  user-select: text;
+}
+.chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; }
+.chat-input-editor :deep(.ProseMirror .mind-ref-label) { overflow: hidden; text-overflow: ellipsis; }
 
 .exp-send-btn { width: 32px; height: 32px; border-radius: 9px; }
 

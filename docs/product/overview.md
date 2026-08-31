@@ -74,7 +74,7 @@
 | 后端与接口 | [后端与 API 参考](../backend/backend.md) |
 | 文件存储 | [文件存储规范](../backend/STORAGE.md) |
 | 本地与生产 | [部署文档](../ops/DEPLOY.md) |
-| 全部资料 | [完整文档导航](../README.md) |
+| 全部资料 | [完整文档导航](../OVERVIEW.md) |
 
 ### 四、主要页面
 

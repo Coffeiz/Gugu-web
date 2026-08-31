@@ -127,7 +127,7 @@ class ConversationsSkill(BaseSkill):
     tools = [
         Tool(
             name="search_conversations", label="搜历史对话",
-            description_short='搜索历史对话；关键字段 query/limit，支持 keyword/queries 兼容别名；省略关键词列最近对话',
+            description_short='搜索历史对话；省略关键词时列出最近对话。',
             description="搜索用户过去的其他对话；可按关键词查找，不传关键词则列最近对话。",
             input_schema={
                 "type": "object",
@@ -149,7 +149,7 @@ class ConversationsSkill(BaseSkill):
         ),
         Tool(
             name="read_conversation", label="读历史对话",
-            description_short='读取历史对话；关键字段 session_id',
+            description_short='读取历史对话。',
             description="读某条历史对话的完整消息（先用 search_conversations 拿到 session_id）。用于把过去那次聊的细节翻出来。",
             input_schema={
                 "type": "object",
@@ -163,7 +163,7 @@ class ConversationsSkill(BaseSkill):
         ),
         Tool(
             name="bind_web_session", label="绑定网页会话",
-            description_short='绑定网页会话；关键字段 session_id',
+            description_short='绑定网页会话。',
             description="仅 owner 私聊可用：把当前 IM 私聊绑定到一个属于自己的 Web 对话，之后 IM 会继续该对话。先用 search_conversations 找到 session_id；群聊不能绑定。",
             input_schema={
                 "type": "object",

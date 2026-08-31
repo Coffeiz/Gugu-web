@@ -1,4 +1,4 @@
-import { nextTick, type Ref } from 'vue'
+import { nextTick, onUnmounted, type Ref } from 'vue'
 import type { Project } from '@/types/project'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { NavSeg, FolderCard as FolderCardMeta } from '@/utils/filesNav'
@@ -69,15 +69,47 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
     }
   }
 
-  function flashFile(id: number) {
-    setTimeout(() => {
-      const element = mainRef.value?.querySelector(`[data-file-id="${id}"]`)
-      if (!element) return
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      element.classList.add('search-flash')
-      setTimeout(() => element.classList.remove('search-flash'), 1800)
-    }, 150)
+  let flashRequest = 0
+  let flashTimer: ReturnType<typeof setTimeout> | null = null
+  let activeFlashElement: HTMLElement | null = null
+
+  function clearFlash() {
+    if (flashTimer) clearTimeout(flashTimer)
+    flashTimer = null
+    activeFlashElement?.classList.remove('search-highlight')
+    activeFlashElement = null
   }
+
+  function flashItem(kind: 'file' | 'folder', id: number) {
+    const request = ++flashRequest
+    clearFlash()
+    let attempts = 0
+    const findElement = () => {
+      if (request !== flashRequest) return
+      const attribute = kind === 'file' ? 'data-file-id' : 'data-folder-id'
+      const element = mainRef.value?.querySelector<HTMLElement>(`[${attribute}="${id}"]`)
+      if (!element) {
+        if (attempts++ >= 30) return
+        flashTimer = setTimeout(findElement, 50)
+        return
+      }
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      element.classList.add('search-highlight')
+      activeFlashElement = element
+      flashTimer = setTimeout(() => {
+        if (request !== flashRequest) return
+        element.classList.remove('search-highlight')
+        activeFlashElement = null
+        flashTimer = null
+      }, 1800)
+    }
+    flashTimer = setTimeout(findElement, 50)
+  }
+
+  onUnmounted(() => {
+    flashRequest++
+    clearFlash()
+  })
 
   async function jumpToTarget(target: NavigationTarget) {
     if (!target) return
@@ -98,9 +130,9 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
 
     saveNav()
     loadContents()
-    if (target.kind === 'file') {
+    if (target.kind === 'file' || target.kind === 'folder') {
       await nextTick()
-      flashFile(target.id)
+      flashItem(target.kind, target.id)
     }
   }
 

@@ -23,7 +23,9 @@ class AgentRequest:
     platform_bot_user_id: Optional[str] = None  # 当前 IM Bot 的平台身份标识，用于 mention 展示
     source: str = "web"           # "web" | "qq" | "openclaw"
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
+    references: list = field(default_factory=list)    # 网页聊天中用户明确选择的业务对象引用
     greeting: Optional[str] = None   # 新会话首条用户消息携带的「已显示默认问候」，落为本会话首条 assistant 消息（仅 web）
+    locale: Optional[str] = None     # 网页当前界面语言；优先于数据库偏好，避免浏览器语言与 Agent 语言分离
     origin: Optional[str] = None   # 发起请求的浏览器标签页 client-id（仅 web，来自 X-Client-Id）：
                                     # 透传给 events.publish，让本标签页跳过自己已经流式渲染过的回声
     quoted_text: Optional[str] = None   # IM 引用/回复的原消息文字（仅 IM）：喂给模型当上下文，

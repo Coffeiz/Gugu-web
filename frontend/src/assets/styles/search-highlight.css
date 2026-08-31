@@ -1,0 +1,14 @@
+/* 全局搜索命中高亮：只绘制卡片外侧泛光，不改变内容表面颜色。 */
+.search-highlight {
+  animation: search-highlight-pulse 1.8s ease forwards;
+}
+
+@keyframes search-highlight-pulse {
+  0%, 60% {
+    box-shadow: 0 0 0 2px var(--action-primary),
+      0 0 14px color-mix(in srgb, var(--action-primary) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--action-primary) 0%, transparent);
+  }
+}

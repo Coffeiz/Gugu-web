@@ -41,9 +41,9 @@ def _xd(stmt, col, exclude: bool):
 
 
 # ── 排除新手引导播种的教程项目（恒生效，不受 exclude_dev 影响）───────────────────
-# 每个新用户注册都会播种一个「活的示例项目」，id 记在 onboarding_state.state.seeded_project_id。
+# 每个新用户注册都会播种一个「活的示例项目」，id 记在 onboarding_state.state.seed.project_id。
 # 它不是用户真实创建的项目，不该计入项目相关的统计指标。
-_seeded_pid = OnboardingState.state["seeded_project_id"].as_integer()
+_seeded_pid = OnboardingState.state["seed"]["project_id"].as_integer()
 _ONBOARD_SQ = select(_seeded_pid).where(_seeded_pid.is_not(None))
 
 

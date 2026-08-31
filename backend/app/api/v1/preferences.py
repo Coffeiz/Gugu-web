@@ -21,6 +21,7 @@ router = APIRouter(prefix="/preferences", tags=["preferences"])
 _DEFAULT_VIEWS = {"projects", "calendar", "files", "mind"}
 _TOOL_INJECTION_MODES = {"description", "full"}
 _LEGACY_TOOL_INJECTION_MODES = {"catalog": "description", "compact_schema": "full", "full_schema": "full"}
+_SUPPORTED_LOCALES = {"zh-CN", "ja-JP", "en-US"}
 _MAX_PERSONALITY_UPLOAD_BYTES = 40_000
 async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
     result = await db.execute(
@@ -38,6 +39,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
     personality_enabled = bool(personality and data.get("personality_preference_enabled", False))
     personality_available = bool(get_settings().agent.personality_preference_enabled)
     return PreferencesResponse(
+        locale=data.get("locale") if data.get("locale") in _SUPPORTED_LOCALES else None,
         lastStages=data.get("last_stages", []),
         stageTemplates=data.get("stage_templates", []),
         replyTone=data.get("reply_tone"),
@@ -143,6 +145,9 @@ async def update_preferences(
         data["last_stages"] = body.lastStages
     if body.stageTemplates is not None:
         data["stage_templates"] = body.stageTemplates
+    if body.locale is not None:
+        if body.locale in _SUPPORTED_LOCALES:
+            data["locale"] = body.locale
     if "replyTone" in body.model_fields_set:
         style_changed = True
         if body.replyTone is None:

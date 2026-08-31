@@ -9,7 +9,7 @@
         {{ project.client }}
       </span>
       <span class="proj-stage" :title="currentStageLabel">
-        <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
+        <span class="ps-label">{{ currentStageLabel || t('mindUi.stage') }}</span>
         <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
       </span>
     </div>
@@ -20,7 +20,7 @@
           <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
         </svg>
         <template v-if="project.status === 'done'">
-          <span class="done-label"><PhCheck :size="9" weight="bold" /> 完成</span>
+          <span class="done-label"><PhCheck :size="9" weight="bold" /> {{ t('mindUi.completed') }}</span>
           <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
         </template>
         <template v-else>
@@ -46,6 +46,7 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { PhCheck } from '@phosphor-icons/vue'
 import SegBar from '@/components/common/SegBar.vue'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
@@ -55,6 +56,7 @@ import './project-card-visual.css'
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
 })
+const { t } = useI18n()
 
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)

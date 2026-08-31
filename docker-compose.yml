@@ -3,7 +3,8 @@
 #
 # 用法：
 #   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
-#   docker compose up -d                    # 默认包含 sandboxd、工具执行和受控 egress
+#   docker compose up -d                    # 默认轻量模式；保留搜索、Worker、Gateway，不启动 Shell 沙盒
+#   docker compose --profile sandbox up -d  # 额外启用 sandboxd 和受控 egress
 #   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
 #
 # 直连 PyPI 官方源慢（部分网络环境常见，见 backend/Dockerfile 里 PIP_INDEX_URL 的注释）？
@@ -68,6 +69,7 @@ services:
   # 受控 egress 代理。沙盒只连接 egress_internal，代理通过 default 网络访问公网；
   # 沙盒容器没有 default/bridge 网络，因此不能绕过代理直连外网。
   egress-proxy:
+    profiles: [sandbox]
     logging: *json-file-logging
     image: ubuntu/squid:latest
     volumes:
@@ -75,6 +77,28 @@ services:
     networks:
       - default
       - egress_internal
+    restart: unless-stopped
+
+  # 开发观测 Collector。Gugu 的 backend/worker/gateway 默认通过 Compose 内网
+  # 上报 LoopScope；数据保存在独立 volume，不混入业务 PostgreSQL。
+  loopscope-collector:
+    logging: *json-file-logging
+    build:
+      context: ./loopscope
+      dockerfile: apps/collector/Dockerfile
+    environment:
+      LOOPSCOPE_HOST: 0.0.0.0
+      LOOPSCOPE_PORT: 4320
+      LOOPSCOPE_DB_PATH: /data/loopscope.db
+    ports:
+      - "127.0.0.1:4320:4320"
+    volumes:
+      - loopscope_data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4320/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   # 只执行一次的数据库初始化/迁移任务。Web 和 Worker 都等它成功后再启动，
@@ -85,6 +109,7 @@ services:
       context: ./backend
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=false
     command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
     env_file:
       - ./backend/.env
@@ -112,6 +137,7 @@ services:
       # 变成一个空 index url——2026-07-14 实测过这个坑，两种写法差着能不能装上依赖。
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=false
     ports:
       - "8000:8000"
     env_file:
@@ -125,6 +151,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -136,6 +164,8 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
+      LOOPSCOPE_ENABLED: "1"
+      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,6 +175,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+      loopscope-collector:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - gugu_data:/data
@@ -159,6 +191,7 @@ services:
       context: ./backend
       args:
         - PIP_INDEX_URL   # 跟 backend 同一个镜像/同一个坑，见上面 backend.build.args 的注释
+        - GUGU_INSTALL_DOCKER_CLI=false
     command: ["python", "-m", "worker"]
     env_file:
       - ./backend/.env
@@ -168,6 +201,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -179,6 +214,8 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
+      LOOPSCOPE_ENABLED: "1"
+      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -188,20 +225,61 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+      loopscope-collector:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - gugu_data:/data
       - sandbox_socket:/run/gugu
 
-  # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
-  # 默认启动；如不需要沙盒，
-  # 设置 GUGU_SANDBOX_ENABLED=false 即可关闭执行能力，仍不会让业务进程接触 Docker。
-  sandboxd:
+  # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
+  gateway:
     logging: *json-file-logging
     build:
       context: ./backend
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=false
+    command: ["python", "-m", "agent.gateway.gateway"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
+      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
+      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
+      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
+      STORAGE__LOCAL_PATH: /data/users
+      LOOPSCOPE_ENABLED: "1"
+      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      loopscope-collector:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - gugu_data:/data
+
+  # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
+  # 只有显式启用 --profile sandbox 才构建/启动；轻量模式不会安装 Docker CLI。
+  sandboxd:
+    profiles: [sandbox]
+    logging: *json-file-logging
+    build:
+      context: ./backend
+      args:
+        - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=true
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
     env_file:
       - ./backend/.env
@@ -237,9 +315,9 @@ services:
       VITE_API_PROXY_TARGET: http://backend:8000
     volumes:
       - ./frontend:/workspace/frontend
-      # 匿名卷盖住容器内的 node_modules，不被上面那条源码挂载覆盖掉——否则宿主机若没有
-      # （或平台不同的）node_modules，容器启动即报模块缺失。
-      - /workspace/node_modules
+      # 源码目录挂载会覆盖镜像内的 frontend/node_modules；依赖卷必须挂在被覆盖的
+      # 子目录上，否则 pnpm dev 启动时找不到 Vite。
+      - /workspace/frontend/node_modules
     depends_on:
       - backend
 
@@ -247,6 +325,7 @@ volumes:
   pgdata:
   gugu_data:
   sandbox_socket:
+  loopscope_data:
 
 networks:
   egress_internal:

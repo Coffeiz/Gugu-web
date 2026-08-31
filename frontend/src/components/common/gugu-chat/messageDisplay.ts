@@ -1,4 +1,5 @@
 import { isPreviewable } from '@/stores/preview'
+import { i18n } from '@/i18n'
 import type { ChatFile } from './chatTypes'
 
 // 图片附件缩略图（与文件库共用 useThumbCache）
@@ -34,7 +35,7 @@ export function voiceBar(n: number) { return _WAVE[(n - 1) % _WAVE.length] + '%'
 
 export function fmtDur(sec?: number) {
   const s = Math.round(sec || 0)
-  if (!s) return '语音'
+  if (!s) return i18n.global.t('chatUi.voice')
   return s < 60 ? s + '″' : Math.floor(s / 60) + "'" + String(s % 60).padStart(2, '0')
 }
 
@@ -52,7 +53,7 @@ export function displayQQFaces(text: string): string {
           if (typeof payload.text === 'string' && payload.text.trim()) return payload.text
         } catch { /* 历史协议串不完整时显示统一占位 */ }
       }
-      return '[QQ表情]'
+      return i18n.global.t('chatUi.qqFace')
     },
   )
 }

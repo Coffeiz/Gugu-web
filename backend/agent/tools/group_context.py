@@ -221,7 +221,7 @@ class GroupContextSkill(BaseSkill):
         Tool(
             name="group_context_search",
             label="搜当前群上下文",
-            description_short='搜索当前群消息；关键字段 query/speaker/limit，speaker 可用名字/别名/platform_user_id',
+            description_short='搜索当前群消息；支持按发言人筛选。',
             description="只搜索当前 QQ 群消息，可按关键词或发言人筛选；不会读取其他群、私聊或网页历史。",
             input_schema={
                 "type": "object",

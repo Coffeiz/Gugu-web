@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Set
-from typing import Tuple
+from typing import AsyncIterator, Tuple
 
 from agent.im.models import PlatformReply
+from agent.interactions.events import ROUND_END
 from agent.models import AgentResponse
 
 _CODE_SPLIT_RE = re.compile(r'(```[\s\S]*?```|`[^`\n]*`)')
@@ -25,6 +26,76 @@ _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
 
+
+async def _close_async_iterator(iterator) -> None:
+    """确保流式 agent 生成器退出，从而释放其内部 AsyncSession。"""
+    close = getattr(iterator, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception:
+        # 发送链路的原始异常不能被清理动作覆盖；诊断由调用方记录。
+        pass
+
+
+async def send_qq_stream_by_round(
+    payload: dict, token_iter: AsyncIterator[tuple[str, object]],
+) -> Tuple[bool, AgentResponse, str]:
+    """QQ 私聊按 round 流式发送：每个 round 结束当前流消息，再开始下一条。"""
+    from agent.gateway import qq
+
+    stream_kwargs = {
+        "channel_id": payload.get("channel_id") or "",
+        "message_id": payload.get("message_id"),
+        "message_format": payload.get("message_format"),
+    }
+    stream = qq.create_private_text_stream(
+        payload.get("platform_user_id") or "", **stream_kwargs
+    )
+    response: AgentResponse | None = None
+    stream_sent = False
+    last_text = ""
+    transport_error: Exception | None = None
+    async for kind, value in token_iter:
+        if kind == "final" and isinstance(value, AgentResponse):
+            response = value
+            continue
+        if transport_error is not None:
+            # 平台流已经失败，但必须继续消费 Agent generator，才能完成
+            # finalize_run、历史落盘和 session baseline gate。
+            continue
+        try:
+            if kind == "token":
+                stream.push(str(value or ""))
+            elif kind == ROUND_END:
+                round_text = _fix_loose_bold(str(value or "")).strip()
+                if round_text:
+                    await stream.finish(round_text)
+                    stream_sent = stream_sent or stream.has_sent()
+                stream = qq.create_private_text_stream(
+                    payload.get("platform_user_id") or "", **stream_kwargs
+                )
+        except Exception as exc:
+            transport_error = exc
+            stream = None
+
+    response = response or AgentResponse()
+    last_text = _fix_loose_bold(response.text or "")
+    if not last_text.strip():
+        last_text = "给你～" if response.files else "嗯~在的，你说～"
+    if transport_error is not None:
+        from app.core.redaction import diag_log
+        diag_log("agent.im.qq_stream_transport", transport_error)
+        return False, response, last_text
+    try:
+        await stream.finish(last_text)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.im.qq_stream_transport", exc)
+        return False, response, last_text
+    stream_sent = stream_sent or stream.has_sent()
+    return stream_sent, response, last_text
 
 async def send_text(payload: dict, text: str) -> bool:
     """构造并发送一条平台无关的文本回复。"""

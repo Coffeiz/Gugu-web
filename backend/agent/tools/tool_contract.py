@@ -7,12 +7,27 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
 MAX_VALIDATION_ISSUES = 5
+_INTEGER_TEXT = re.compile(r"^[+-]?\d+$")
+
+
+def normalize_tool_name(value: Any) -> str | None:
+    """只接受字符串工具名，不把对象、数组等值强制转换成工具名。
+
+    工具名是协议标识，不是业务字段。将错误的 JSON 值转成字符串会把原始
+    参数伪装成一个新工具名，最终产生误导性的“未知工具”错误。
+    """
+    if not isinstance(value, str):
+        return None
+    name = value.strip()
+    return name or None
 
 
 def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -22,7 +37,151 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     if tool_name == "create_event" and "all_day" not in normalized:
         normalized["all_day"] = not bool(normalized.get("time") or normalized.get("end_time"))
         adaptations.append("create_event.all_day_inferred")
+
+    date_fields = {
+        "create_event": ("date",),
+        "list_events": ("from", "to"),
+        "update_event": ("date", "on_date"),
+        "delete_event": ("on_date",),
+        "add_event_reminder": ("on_date",),
+        "list_event_reminders": ("on_date",),
+        "remove_event_reminder": ("on_date",),
+        "create_project": ("start_date", "deadline"),
+        "update_project": ("start_date", "deadline"),
+    }.get(tool_name, ())
+    if date_fields:
+        from app.core.date_input import normalize_date_string
+
+        for field in date_fields:
+            value = normalized.get(field)
+            if isinstance(value, str):
+                try:
+                    canonical = normalize_date_string(value)
+                    if canonical != value:
+                        normalized[field] = canonical
+                        adaptations.append(f"{tool_name}.{field}:normalized_date")
+                except ValueError:
+                    pass  # 交给当前工具 Schema 返回脱敏的格式错误
+
+    if tool_name in {"note_create", "note_update"}:
+        # 旧版笔记调用把纯文本行内节点写成 {"text": "..."}。type 只有
+        # text/reference 两种可能，且存在 text 时只能无歧义地归一成 text；引用
+        # 节点没有 type 时仍然拒绝，避免把业务数据猜成另一种引用。
+        def normalize_note_nodes(value: Any, path: str) -> Any:
+            if isinstance(value, list):
+                return [
+                    normalize_note_nodes(item, f"{path}[{index}]")
+                    for index, item in enumerate(value)
+                ]
+            if not isinstance(value, dict):
+                return value
+
+            result = dict(value)
+            if "text" in result and "type" not in result:
+                result["type"] = "text"
+                adaptations.append(f"{path}.type:inferred_text")
+
+            for key in ("content", "items", "paragraphs"):
+                if key in result:
+                    result[key] = normalize_note_nodes(result[key], f"{path}.{key}")
+            return result
+
+        for field in ("blocks", "append_blocks"):
+            if field in normalized:
+                normalized[field] = normalize_note_nodes(normalized[field], field)
     return normalized, adaptations
+
+
+def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """按工具 Schema 做无歧义的 JSON 类型归一化。
+
+    模型常把 JSON Schema 中的原生标量序列化成字符串；可选数字/布尔字段还可能以
+    空字符串表示“未填写”。这里只处理能从 Schema 唯一确定的数字和布尔字段，不修复
+    数组/对象的形状，也不把必填空值猜成 0/false，避免容错层掩盖真实参数错误。
+    """
+    adaptations: list[str] = []
+
+    def schema_types(field_schema: Any) -> set[str]:
+        if not isinstance(field_schema, dict):
+            return set()
+        field_type = field_schema.get("type")
+        if isinstance(field_type, str):
+            return {field_type}
+        if isinstance(field_type, list):
+            return {item for item in field_type if isinstance(item, str)}
+        return set()
+
+    def normalize_value(value: Any, field_schema: Any, path: str, required: bool) -> Any:
+        types = schema_types(field_schema)
+        if isinstance(value, dict) and isinstance(field_schema, dict) and "object" in types:
+            properties = field_schema.get("properties") or {}
+            if not isinstance(properties, dict):
+                return value
+            result = dict(value)
+            required_fields = set(field_schema.get("required") or ())
+            for key, child_schema in properties.items():
+                if key in result:
+                    child = normalize_value(
+                        result[key], child_schema, f"{path}.{key}" if path else str(key),
+                        key in required_fields,
+                    )
+                    if child is _OMIT:
+                        result.pop(key, None)
+                    else:
+                        result[key] = child
+            return result
+
+        if isinstance(value, list) and isinstance(field_schema, dict) and "array" in types:
+            item_schema = field_schema.get("items")
+            return [
+                normalize_value(item, item_schema, f"{path}[{index}]", True)
+                for index, item in enumerate(value)
+            ]
+
+        if not isinstance(value, str) or not types.intersection({"boolean", "integer", "number"}):
+            return value
+        text = value.strip()
+        if not text:
+            if not required and "null" in types:
+                adaptations.append(f"{path}:empty_to_null")
+                return None
+            if not required:
+                adaptations.append(f"{path}:empty_omitted")
+                return _OMIT
+            return value
+
+        if "boolean" in types:
+            boolean_text = text.lower()
+            if boolean_text in {"true", "false"}:
+                adaptations.append(f"{path}:string_to_boolean")
+                return boolean_text == "true"
+
+        integer_text = text
+        field_name = path.rsplit(".", 1)[-1]
+        if field_name.endswith("_id") and integer_text.startswith("#"):
+            integer_text = integer_text[1:]
+        if "integer" in types and _INTEGER_TEXT.fullmatch(integer_text):
+            adaptations.append(f"{path}:string_to_integer")
+            return int(integer_text)
+        if "number" in types:
+            try:
+                number = float(text)
+            except ValueError:
+                return value
+            if math.isfinite(number):
+                adaptations.append(f"{path}:string_to_number")
+                return number
+        return value
+
+    normalized = normalize_value(instance, schema, "", True)
+    return ({} if normalized is _OMIT else normalized), adaptations
+
+
+class _OmitValue:
+    pass
+
+
+_OMIT = _OmitValue()
 
 
 def build_validator(schema: dict) -> Draft202012Validator:
@@ -182,6 +341,23 @@ def invalid_input_payload(
     return payload
 
 
+def invalid_tool_call_payload(
+    *, path: str = "name", reason: str = "工具名必须是字符串", rule: str = "type"
+) -> dict[str, Any]:
+    """返回工具调用外层协议错误，不回显模型传入的实际值。"""
+    next_action = "请按工具 Schema 重新组织调用，不要把业务参数对象放到 name 字段。"
+    if path == "arguments" and rule == "required":
+        next_action = "请先获取目标工具的完整 Schema，再通过 arguments 传入全部业务参数。"
+    elif path == "arguments":
+        next_action = "请先获取目标工具的完整 Schema，并确保 arguments 是 JSON object。"
+    return {
+        "error": "tool_call_invalid",
+        "issues": [{"path": path, "rule": rule, "message": reason}],
+        "usage_hint": "工具调用协议不正确。工具名必须是字符串，arguments 必须是 JSON object。",
+        "next_action": next_action,
+    }
+
+
 def enrich_tool_error(tool_name: str, result: Any) -> Any:
     """给 handler 的业务错误补统一使用规范，保持原返回类型和业务字段。"""
     def _enrich(payload: dict[str, Any]) -> dict[str, Any]:
@@ -217,5 +393,6 @@ __all__ = [
     "invalid_input_payload",
     "enrich_tool_error",
     "normalize_legacy_input",
+    "normalize_input_by_schema",
     "validate_input",
 ]

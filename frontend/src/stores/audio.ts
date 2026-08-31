@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 const AUDIO_FILE_KEY = 'gugu_audio_file'
 
@@ -34,6 +35,7 @@ export const useAudioStore = defineStore('audio', () => {
     file.value    = f
     loading.value = true
     error.value   = null
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
       const token    = localStorage.getItem('user_token') ?? ''
@@ -41,7 +43,9 @@ export const useAudioStore = defineStore('audio', () => {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      blobUrl.value = URL.createObjectURL(await res.blob())
+      const blob = await res.blob()
+      if (requestEpoch !== getAccountBoundaryEpoch() || file.value?.id !== f.id) return
+      blobUrl.value = URL.createObjectURL(blob)
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {

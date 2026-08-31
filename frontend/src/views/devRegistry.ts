@@ -25,6 +25,6 @@ export const devToolRegistry: DevToolEntry[] = [
     path: '/dev/onboarding',
     label: '新手引导 Demo',
     eyebrow: 'ONBOARDING',
-    description: '触发、重置和重建当前登录用户的新手引导状态。',
+    description: '检查并重建当前登录用户的播种项目与 MP3 分发。',
   },
 ]

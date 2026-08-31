@@ -3,34 +3,34 @@
     <!-- 统计卡片 -->
     <div class="stats-row">
       <StatCard
-        label="年度项目"
+        :label="t('dashboardUi.yearProjects')"
         :value="projectStore.totalCount"
-        subPrefix="本年度"
-        subText="累计项目"
+        :sub-prefix="t('dashboardUi.thisYear')"
+        :sub-text="t('dashboardUi.totalProjects')"
         subClass="up"
         glowColor="rgba(122,184,200,0.12)"
       />
       <StatCard
-        label="进行中"
+        :label="t('dashboardUi.inProgress')"
         :value="projectStore.activeCount"
         subPrefix="↑ 2"
-        subText="较上月"
+        :sub-text="t('dashboardUi.vsLastMonth')"
         subClass="up"
         glowColor="rgba(123,127,178,0.14)"
       />
       <StatCard
-        label="即将到期"
+        :label="t('dashboardUi.dueSoon')"
         :value="projectStore.upcomingCount"
-        subPrefix="7天内"
-        subText="截止项目"
+        :sub-prefix="t('dashboardUi.withinDays', { count: 7 })"
+        :sub-text="t('dashboardUi.dueProjects')"
         subClass="warn"
         glowColor="rgba(176,120,88,0.12)"
       />
       <StatCard
-        label="文件总数"
+        :label="t('dashboardUi.totalFiles')"
         :value="fileCount"
-        subPrefix="本账户"
-        subText="总文件数"
+        :sub-prefix="t('dashboardUi.thisAccount')"
+        :sub-text="t('dashboardUi.totalFiles')"
         subClass="up"
         glowColor="rgba(196,175,200,0.12)"
       />
@@ -55,8 +55,10 @@ import StatCard    from './components/StatCard.vue'
 import ProjectList from './components/ProjectList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
 import FilePanel   from './components/FilePanel.vue'
+import { useI18n } from 'vue-i18n'
 
 const projectStore = useProjectStore()
+const { t } = useI18n()
 // 统一到全局 filesCache store（原来 Dashboard 单独走 services/cache 的第三套缓存）。store 自带
 // 版本门控加载 + SSE + visibilitychange，FilePanel 与这里的文件总数都从它派生，单一数据源。
 const store = useFilesCacheStore()

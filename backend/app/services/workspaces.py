@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 
@@ -28,6 +28,43 @@ async def list_workspaces(db: AsyncSession, user_id) -> list[Workspace]:
         .order_by(Workspace.updated_at.desc(), Workspace.id.desc())
     )
     return list(result.scalars().all())
+
+
+async def list_workspaces_for_management(db: AsyncSession, user_id) -> list[Workspace]:
+    """列出当前用户全部工作区，包含停用项供管理工具使用。"""
+    result = await db.execute(
+        select(Workspace)
+        .where(Workspace.user_id == user_id)
+        .order_by(Workspace.updated_at.desc(), Workspace.id.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def workspace_payload(db: AsyncSession, user_id, row: Workspace) -> dict:
+    """构造工作区工具结果，并在服务层完成关联对象的归属查询。"""
+    count = await db.scalar(
+        select(func.count(ConversationSession.id)).where(
+            ConversationSession.user_id == user_id,
+            ConversationSession.workspace_id == row.id,
+        )
+    )
+    result = {
+        "workspace_id": row.id,
+        "name": row.name,
+        "kind": row.kind,
+        "enabled": row.enabled,
+        "is_default": row.is_default,
+        "bound_session_count": int(count or 0),
+        "project_id": row.project_id,
+        "folder_id": row.folder_id,
+    }
+    if row.project_id is not None:
+        project = await get_owned(db, Project, row.project_id, user_id)
+        result["project_name"] = project.name if project else None
+    if row.folder_id is not None:
+        folder = await get_owned(db, Folder, row.folder_id, user_id)
+        result["folder_name"] = folder.name if folder else None
+    return result
 
 
 async def create_workspace(

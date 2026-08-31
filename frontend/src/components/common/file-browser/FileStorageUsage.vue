@@ -1,6 +1,6 @@
 <template>
   <div v-if="loaded" class="storage-pill" :class="{ 'no-limit': limit === null }"
-    :title="limit ? `已用 ${fmtBytes(used)} / ${fmtBytes(limit)}` : `已用 ${fmtBytes(used)}`">
+    :title="limit ? t('filesViewUi.storageUsedWithLimit', { used: fmtBytes(used), limit: fmtBytes(limit) }) : t('filesViewUi.storageUsed', { used: fmtBytes(used) })">
     <template v-if="limit !== null">
       <div class="storage-bar-bg"><div class="storage-bar-fill" :style="fillStyle"></div></div>
     </template>
@@ -10,7 +10,10 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { fmtBytes } from '@/utils/fileSize'
+
+const { t } = useI18n()
 
 const props = defineProps({
   used: { type: Number, default: 0 },

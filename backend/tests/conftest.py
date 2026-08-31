@@ -18,11 +18,27 @@ from types import SimpleNamespace
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import StaticPool
 from uuid6 import uuid7
+from pathlib import Path
+import re
 
 import app.core.redis as _redis
 import app.db.session as _sess
 from app.db.base import Base
 from app.models import User
+
+
+def pytest_collection_modifyitems(items):
+    """根据测试源码的运行时边界补 marker，保持快速门禁可重复。"""
+    process_pattern = re.compile(r"docker|systemd|pty|process|terminal_stream|subprocess|shell_sandbox", re.I)
+    external_pattern = re.compile(r"redis|postgres|websocket|real[_ -]?llm|third[- ]?party|httpx|oss|searxng", re.I)
+    for item in items:
+        source = Path(str(item.fspath)).read_text(encoding="utf-8")
+        if process_pattern.search(source):
+            item.add_marker("process")
+        if external_pattern.search(source):
+            item.add_marker("external_service")
+        if item.get_closest_marker("process") or item.get_closest_marker("external_service"):
+            item.add_marker("slow")
 
 
 @pytest_asyncio.fixture(autouse=True)

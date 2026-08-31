@@ -2,15 +2,15 @@
   <div class="svc-page">
     <div class="svc-head">
       <div>
-        <h2 class="svc-title">服务状态</h2>
-        <p class="svc-sub">常驻进程心跳与依赖；可一键重启（kill + systemd 自愈）</p>
+        <h2 class="svc-title">{{ t('adminServices.title') }}</h2>
+        <p class="svc-sub">{{ t('adminServices.description') }}</p>
       </div>
       <div class="svc-head-right">
         <span class="svc-deps">
-          <span class="dep" :class="deps.redis ? 'ok' : 'bad'">Redis {{ deps.redis ? '通' : '断' }}</span>
-          <span class="dep" :class="deps.db ? 'ok' : 'bad'">DB {{ deps.db ? '通' : '断' }}</span>
+          <span class="dep" :class="deps.redis ? 'ok' : 'bad'">Redis {{ deps.redis ? t('adminServices.connected') : t('adminServices.disconnected') }}</span>
+          <span class="dep" :class="deps.db ? 'ok' : 'bad'">DB {{ deps.db ? t('adminServices.connected') : t('adminServices.disconnected') }}</span>
         </span>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" :title="t('adminServices.refresh')">
         <Icon name="action.refresh" size="sm" />
         </button>
       </div>
@@ -19,15 +19,15 @@
     <div v-if="err" class="svc-err">{{ err }}</div>
 
     <div v-if="queue.length != null" class="svc-queue">
-      <span class="q-label">IM 队列</span>
-      <span class="q-stat" title="队列里的消息总数（含已缓冲）">
-        <b>{{ queue.length }}</b><i>队列长度</i>
+      <span class="q-label">{{ t('adminServices.queue') }}</span>
+      <span class="q-stat" :title="t('adminServices.queueLength')">
+        <b>{{ queue.length }}</b><i>{{ t('adminServices.queueLength') }}</i>
       </span>
-      <span class="q-stat" :class="{ warn: (queue.lag || 0) > 20 }" title="已进队列、worker 还没取走 —— 真积压，持续 >0 说明 worker 吃不消">
-        <b>{{ queue.lag ?? '—' }}</b><i>积压待取</i>
+      <span class="q-stat" :class="{ warn: (queue.lag || 0) > 20 }" :title="t('adminServices.queued')">
+        <b>{{ queue.lag ?? '—' }}</b><i>{{ t('adminServices.queued') }}</i>
       </span>
-      <span class="q-stat" :class="{ warn: (queue.pending || 0) > 10 }" title="worker 取走了还没 ack —— 在处理中，长期偏高说明有卡住的任务">
-        <b>{{ queue.pending ?? '—' }}</b><i>处理中</i>
+      <span class="q-stat" :class="{ warn: (queue.pending || 0) > 10 }" :title="t('adminServices.processing')">
+        <b>{{ queue.pending ?? '—' }}</b><i>{{ t('adminServices.processing') }}</i>
       </span>
     </div>
 
@@ -40,9 +40,9 @@
         </div>
 
         <div class="svc-meta">
-          <div v-if="s.name === 'web'"><span>运行</span>{{ fmtDur(s.uptime_secs) }}</div>
-          <div v-else-if="s.last_seen_secs != null"><span>心跳</span>{{ s.last_seen_secs }}s 前</div>
-          <div v-if="s.name === 'gateway'"><span>网关</span>{{ s.extra?.count ?? 0 }} 个</div>
+          <div v-if="s.name === 'web'"><span>{{ t('adminServices.running') }}</span>{{ fmtDur(s.uptime_secs) }}</div>
+          <div v-else-if="s.last_seen_secs != null"><span>{{ t('adminServices.heartbeat') }}</span>{{ t('adminServices.secondsAgo', { count: s.last_seen_secs }) }}</div>
+          <div v-if="s.name === 'gateway'"><span>{{ t('adminServices.gateway') }}</span>{{ t('adminServices.count', { count: s.extra?.count ?? 0 }) }}</div>
         </div>
 
         <div v-if="s.name === 'gateway' && s.extra?.gateways?.length" class="svc-gateways">
@@ -52,14 +52,14 @@
         </div>
 
         <div v-if="s.name === 'worker' && s.extra?.jobs?.length" class="svc-jobs">
-          <span class="svc-jobs-count">定时任务 {{ s.extra.jobs.length }} 个</span>
+          <span class="svc-jobs-count">{{ t('adminServices.scheduledJobs') }} {{ t('adminServices.count', { count: s.extra.jobs.length }) }}</span>
         </div>
 
         <div class="svc-card-actions">
           <button v-if="s.restartable" class="svc-restart" :disabled="restarting === s.name" @click="restart(s)">
-            {{ restarting === s.name ? '重启中…' : '重启' }}
+            {{ restarting === s.name ? t('adminServices.restarting') : t('adminServices.restart') }}
           </button>
-          <span v-else class="svc-self">当前进程</span>
+          <span v-else class="svc-self">{{ t('adminServices.currentProcess') }}</span>
         </div>
         <div v-if="msg[s.name]" class="svc-msg" :class="{ bad: !msgOk[s.name] }">{{ msg[s.name] }}</div>
       </div>
@@ -72,8 +72,10 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import { useI18n } from 'vue-i18n'
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 const services = ref<any[]>([])
 const deps = ref({ redis: false, db: false })
 const queue = ref<{ length?: number; lag?: number; pending?: number }>({})
@@ -93,7 +95,7 @@ async function load(manual = false) {
   }
   try {
     const res = await adminStore.authFetch('/api/v1/admin/services')
-    if (!res.ok) throw new Error(`加载失败 (${res.status})`)
+    if (!res.ok) throw new Error(t('adminServices.loadFailed'))
     const data = await res.json()
     services.value = data.services || []
     deps.value = data.deps || { redis: false, db: false }
@@ -103,12 +105,12 @@ async function load(manual = false) {
 }
 
 async function restart(s: any) {
-  if (!await confirmDialog({ title: '重启服务', message: `重启「${s.label}」？将向进程发送 SIGTERM，由 systemd 自动拉起（开发环境无 systemd 不会自愈）。`, tone: 'warning', confirmText: '重启' })) return
+  if (!await confirmDialog({ title: t('adminServices.restartTitle'), message: t('adminServices.restartMessage', { name: s.label }), tone: 'warning', confirmText: t('adminServices.restart') })) return
   restarting.value = s.name
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/services/${s.name}/restart`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
-    msg[s.name] = data.msg || (res.ok ? '已发送' : `失败 (${res.status})`)
+    msg[s.name] = data.msg || (res.ok ? t('adminServices.sent') : t('adminServices.restartFailed', { status: res.status }))
     msgOk[s.name] = !!data.ok
   } catch (e) { msg[s.name] = (e instanceof Error ? e.message : String(e)); msgOk[s.name] = false }
   finally {
@@ -117,7 +119,7 @@ async function restart(s: any) {
   }
 }
 
-function statusText(st: string) { return st === 'online' ? '在线' : st === 'stale' ? '僵死' : '掉线' }
+function statusText(st: string) { return st === 'online' ? t('adminServices.online') : st === 'stale' ? t('adminServices.stale') : t('adminServices.offline') }
 function fmtDur(s: number) {
   if (s == null) return '—'
   if (s < 60) return `${s}s`

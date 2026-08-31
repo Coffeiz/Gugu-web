@@ -1,4 +1,4 @@
-"""Shell Phase 0-2：工作区归属、会话绑定和默认关闭行为。"""
+"""Shell Phase 0-2：工作区归属、会话绑定和默认权限行为。"""
 
 import pytest
 from types import SimpleNamespace
@@ -17,8 +17,10 @@ import app.services.workspaces as workspace_service
 
 
 @pytest.mark.asyncio
-async def test_shell_is_disabled_by_default():
-    assert AgentBehaviorSettings().shell_enabled is False
+async def test_sandbox_shell_is_enabled_by_default_but_system_shell_is_disabled():
+    settings = AgentBehaviorSettings()
+    assert settings.shell_enabled is True
+    assert settings.shell_system_enabled is False
 
 
 @pytest.mark.asyncio

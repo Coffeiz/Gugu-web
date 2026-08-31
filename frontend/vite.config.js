@@ -11,27 +11,22 @@ const APP_VER = (() => {
   try { return execSync('git rev-parse --short HEAD').toString().trim() } catch { return String(Date.now()) }
 })()
 
-// 1.0.1 联调直接编译同级 Runtime 源码。Vite 默认只监视项目根目录，外部
-// /src 改动不会让浏览器失效旧的 /@fs 模块，必须主动监听并整页刷新。
-const RUNTIME_SRC = resolve(__dirname, '../../gugu-interaction-runtime/src')
-const runtimeSourceReload = {
-  name: 'runtime-source-reload',
+const adminEntry = {
+  name: 'admin-entry',
   configureServer(server) {
-    server.watcher.add(RUNTIME_SRC)
-    const reloadRuntime = file => {
-      if (file.startsWith(RUNTIME_SRC)) server.ws.send({ type: 'full-reload', path: '*' })
-    }
-    server.watcher.on('change', reloadRuntime)
-    server.watcher.on('add', reloadRuntime)
-    server.watcher.on('unlink', reloadRuntime)
+    server.middlewares.use((req, _res, next) => {
+      const url = (req.url || '').split('?')[0]
+      const isAdminPage = url === '/admin' || (url.startsWith('/admin/') && !/\.[a-z0-9]+$/i.test(url))
+      if (isAdminPage) req.url = '/admin/index.html'
+      next()
+    })
   },
 }
-
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(APP_VER) },
   plugins: [
     vue(),
-    runtimeSourceReload,
+    adminEntry,
     Components({
       resolvers: [ArcoResolver({ sideEffect: true })],
       dts: 'components.d.ts',   // 生成全局组件类型声明，供 vue-tsc / 编辑器识别（已 gitignore）
@@ -45,13 +40,18 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: resolve(__dirname, 'src') },
-      // Runtime 源码在同级仓库，不能依赖 Node 从该目录向上寻找业务的 node_modules。
-      // 两侧统一到 Gugu-web 的 Vue，避免产生两份响应式运行时。
+      // 临时验证本地 Runtime 的浮层测量修复；验证完成后移除，不进入正式依赖配置。
+      { find: 'gugu-interaction-runtime/vue', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/vue.js') },
+      { find: 'gugu-interaction-runtime', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/index.js') },
+      // 统一到 Gugu-web 的 Vue，避免产生两份响应式运行时。
       { find: 'vue', replacement: resolve(__dirname, 'node_modules/vue/dist/vue.runtime.esm-bundler.js') },
     ],
     dedupe: ['vue'],
   },
   build: {
+    // Lightning CSS 会把部分 backdrop-filter 标准属性错误折叠为仅带前缀声明，
+    // 导致生产 Chrome 的多层玻璃材质退化为半透明。使用 esbuild 压缩 CSS，保留兼容声明。
+    cssMinify: 'esbuild',
     rollupOptions: {
       input: {
         main:  resolve(__dirname, 'index.html'),
@@ -70,6 +70,10 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Dockerfile 等部署文件不属于前端模块，Mutagen 同步时不能触发 Vite HMR。
+    watch: {
+      ignored: ['**/Dockerfile'],
+    },
     // 与 Admin dev server 保持一致，确保 @vite/client 始终拿到具体布尔值。
     forwardConsole: false,
     // 通过自定义域名/内网穿透访问 dev server 时，需把域名加入白名单，否则 Vite 拦截 Host 头

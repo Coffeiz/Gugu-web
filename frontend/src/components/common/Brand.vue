@@ -6,7 +6,7 @@
     </div>
     <div class="brand-content">
       <img v-if="variant === 'auth'" class="brand-wordmark" src="/logo-text2.png" alt="咕咕" />
-      <span v-else class="brand-wordmark-mask" aria-label="咕咕" />
+      <span v-else class="brand-wordmark-mask" aria-hidden="true" />
       <span v-if="subtitle" class="brand-subtitle">{{ subtitle }}</span>
     </div>
   </div>

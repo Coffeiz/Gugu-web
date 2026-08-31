@@ -131,7 +131,7 @@ PRD 文件位于 `docs/product/PRD/` 目录，命名规范：`PRD-{领域}-{编�
 
 ## Devlog 格式
 
-Devlog 文件位于 `docs/devlog.md`，按时间倒序记录。
+Devlog 文件位于 `docs/devlog/`，按 `docs/devlog/README.md` 约定按日期和问题拆分为独立文档。
 
 ### 模板
 
@@ -165,7 +165,7 @@ Devlog 文件位于 `docs/devlog.md`，按时间倒序记录。
 
 - PRD：`PRD-{领域}-{编号}-{标题}.md`
 - 报告：`{类型}-{主题}.md`（类型前缀大写）
-- Devlog：按日期倒序记录在 `devlog.md`
+- Devlog：按日期倒序记录在 `docs/devlog/` 下的独立文档中
 
 ### 状态标记
 

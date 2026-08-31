@@ -161,17 +161,22 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
 
     # 异常标记
     flags = []
+    flag_items = []
     for row in by_intent:
         if row["count"] >= min_n and row["misperc_rate"] and row["misperc_rate"] > rate_hi:
             flags.append(f"intent「{row['intent']}」误判率偏高 {row['misperc_rate']:.0%}（n={row['count']}）")
+            flag_items.append({"kind": "intent", "intent": row["intent"], "rate": row["misperc_rate"], "count": row["count"]})
     if avg_ambiguity is not None and avg_ambiguity > ambig_hi:
         flags.append(f"平均歧义度偏高 {avg_ambiguity}（模型普遍读不准 / 该多澄清）")
+        flag_items.append({"kind": "ambiguity", "value": avg_ambiguity})
     if len(perc) >= 50 and not any(x["intent"] in ("情绪", "陪伴") and x["count"] for x in by_intent):
         flags.append("情绪/陪伴型占比为 0 —— 情绪需求可能被系统性误归类")
+        flag_items.append({"kind": "emotion_zero"})
     if overall_misperc_rate is not None:
         for row in by_model:
             if row["count"] >= min_n and row["misperc_rate"] and row["misperc_rate"] > overall_misperc_rate + 0.1:
                 flags.append(f"模型「{row['model']}」误判率 {row['misperc_rate']:.0%} 明显高于整体 {overall_misperc_rate:.0%}")
+                flag_items.append({"kind": "model", "model": row["model"], "rate": row["misperc_rate"], "overall_rate": overall_misperc_rate})
 
     return {
         "window_hours": hours,
@@ -191,6 +196,7 @@ async def perception_stats(hours: int = 168, limit: int = 20000, min_events: int
         "feedback_distribution": [{"feedback": k, "count": v} for k, v in feedback_count.most_common()],
         "feedback_total": len(fb_events),
         "flags": flags,
+        "flag_items": flag_items,
         "note": f"口径：活跃用户（窗口内 ≥{min_events} 轮）{len(active)} 人；头部指标按用户宏平均（重度用户不主导）",
     }
 
@@ -244,31 +250,3 @@ async def misread_export():
     body = md if md else "# 错读反思记录\n\n暂无——需发生一次「感知误读 + 用户纠正」才会记一条。\n"
     return Response(content=body, media_type="text/markdown; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="misread_reflections.md"'})
-
-
-@router.get("/temperature")
-async def temperature_list(exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
-    """关系温度当前值列表（v1：只读当前快照，无历史曲线——temp.json 每次重算是整份覆盖，
-    见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。
-    exclude_dev=排除开发者账号（is_developer 标记）。"""
-    from agent.memory import store
-
-    stmt = select(User.id, User.username, User.display_name)
-    if exclude_dev:
-        stmt = stmt.where(User.is_developer == False)
-    users = (await db.execute(stmt)).all()
-    rows = []
-    for uid, username, display_name in users:
-        data = await store.read_temperature(uid)
-        if not data:
-            continue
-        rows.append({
-            "user_id": str(uid),
-            "name": display_name or username,
-            "temp": data.get("temp"),
-            "components": data.get("components"),
-            "window_days": data.get("window_days"),
-            "ts": data.get("ts"),
-        })
-    rows.sort(key=lambda r: r["temp"] or 0, reverse=True)
-    return {"total": len(rows), "users": rows}

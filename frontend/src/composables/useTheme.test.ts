@@ -95,14 +95,14 @@ describe('主题令牌状态', () => {
     expect(useTheme().palette.value).toBe('sky')
   })
 
-  it('非法配色回退为 Aero', async () => {
+  it('非法配色回退为 Mist', async () => {
     installMatchMedia()
     localStorage.setItem('gugu-palette', 'unknown')
     const { initializeTheme, useTheme } = await import('./useTheme')
 
     initializeTheme()
 
-    expect(useTheme().palette.value).toBe('aero')
-    expect(document.documentElement.dataset.palette).toBe('aero')
+    expect(useTheme().palette.value).toBe('mist')
+    expect(document.documentElement.dataset.palette).toBe('mist')
   })
 })

@@ -33,7 +33,7 @@
 
     <div v-if="error" class="vv-status vv-error">
       <Icon name="status.warning" :size="32" style="opacity:.5" />
-      <span>视频无法播放（格式不支持）</span>
+      <span>{{ t('viewerUi.videoUnsupported') }}</span>
     </div>
   </div>
 </template>
@@ -41,6 +41,8 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 const props = defineProps({
   src: { type: String, default: null },
 })

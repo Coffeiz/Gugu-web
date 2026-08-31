@@ -1,33 +1,33 @@
 <template>
   <div class="pm-workspaces-pane">
     <div class="pm-section pm-shell-section">
-      <div class="pm-section-label">Shell 权限与环境</div>
-      <p class="pm-workspaces-intro">Shell 设置放在工作区中统一管理。工作区只作为默认目录，重置只影响终端运行态。</p>
-      <div v-if="shellLoading" class="pm-workspaces-empty">正在读取 Shell 状态…</div>
+      <div class="pm-section-label">{{ t('profileWorkspacesUi.shellAccess') }}</div>
+      <p class="pm-workspaces-intro">{{ t('profileWorkspacesUi.shellIntro') }}</p>
+      <div v-if="shellLoading" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.loadingShell') }}</div>
       <template v-else-if="globalEnabled">
         <div class="pm-tool-rows">
-          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell 沙盒</span><span class="pm-field-hint">允许咕咕在当前会话自动选择的用户沙盒中执行受控命令；绑定工作区时工作区只作为默认目录。</span></div><ToggleSwitch :model-value="prefsStore.shellEnabled" aria-label="切换 Shell 沙盒权限" @update:model-value="prefsStore.saveShellEnabled($event)" /></div>
-          <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">系统范围 Shell</span><span class="pm-field-hint">允许访问系统范围；请只在明确需要时开启，危险命令仍需确认。</span></div><ToggleSwitch :model-value="prefsStore.shellSystemEnabled" aria-label="切换系统 Shell 权限" @update:model-value="prefsStore.saveShellSystemEnabled($event)" /></div>
-          <div v-if="dangerousGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">危险 Shell 命令</span><span class="pm-field-hint">包括删除、覆盖、移动目录，修改权限，以及重启或停止服务等高影响命令；每次具体操作仍需确认。</span></div><ToggleSwitch :model-value="prefsStore.shellDangerousEnabled" aria-label="切换危险 Shell 命令权限" @update:model-value="prefsStore.saveShellDangerousEnabled($event)" /></div>
-          <div v-if="autopilotGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell Autopilot</span><span class="pm-field-hint">开启后跳过 Shell 确认门；仍受沙盒、配额、超时和审计限制。仅建议在可信环境使用。</span></div><ToggleSwitch :model-value="prefsStore.shellAutopilotEnabled" aria-label="切换 Shell Autopilot" @update:model-value="prefsStore.saveShellAutopilotEnabled($event)" /></div>
+          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.shellSandbox') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.shellSandboxHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellEnabled" :aria-label="t('profileWorkspacesUi.toggleShellSandbox')" @update:model-value="prefsStore.saveShellEnabled($event)" /></div>
+          <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.systemShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.systemShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellSystemEnabled" :aria-label="t('profileWorkspacesUi.toggleSystemShell')" @update:model-value="prefsStore.saveShellSystemEnabled($event)" /></div>
+          <div v-if="dangerousGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.dangerousShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.dangerousShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellDangerousEnabled" :aria-label="t('profileWorkspacesUi.toggleDangerousShell')" @update:model-value="prefsStore.saveShellDangerousEnabled($event)" /></div>
+          <div v-if="autopilotGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell Autopilot</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.autopilotHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellAutopilotEnabled" :aria-label="t('profileWorkspacesUi.toggleAutopilot')" @update:model-value="prefsStore.saveShellAutopilotEnabled($event)" /></div>
         </div>
         <div class="pm-shell-reset-row">
-          <div class="pm-field-desc"><span class="pm-field-name">重置终端环境</span><span class="pm-field-hint">终止并重建当前用户已有终端的沙盒运行态，保留工作区文件和输出历史。</span></div>
+          <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.resetTerminalEnvironment') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.resetTerminalHint') }}</span></div>
           <div class="pm-shell-actions">
-            <button class="pm-shell-reset" type="button" :disabled="resetting || rebuilding" @click="resetShellEnvironments"><Icon name="action.refresh" size="sm" tone="inherit" />{{ resetting ? '重置中…' : '重置终端' }}</button>
-            <button class="pm-shell-reset" type="button" :disabled="resetting || rebuilding" @click="rebuildShell"><Icon name="action.refresh" size="sm" tone="inherit" />{{ rebuilding ? '重建中…' : '重建沙盒' }}</button>
+            <button class="pm-shell-reset" type="button" :disabled="resetting || rebuilding" @click="resetShellEnvironments"><Icon name="action.refresh" size="sm" tone="inherit" />{{ resetting ? t('profileWorkspacesUi.resetting') : t('profileWorkspacesUi.resetTerminal') }}</button>
+            <button class="pm-shell-reset" type="button" :disabled="resetting || rebuilding" @click="rebuildShell"><Icon name="action.refresh" size="sm" tone="inherit" />{{ rebuilding ? t('profileWorkspacesUi.rebuilding') : t('profileWorkspacesUi.rebuildSandbox') }}</button>
           </div>
         </div>
         <p v-if="shellMessage" class="pm-msg" :class="shellMessageType">{{ shellMessage }}</p>
       </template>
-      <div v-else class="pm-workspaces-empty">管理员尚未开启 Shell</div>
+      <div v-else class="pm-workspaces-empty">{{ t('profileWorkspacesUi.shellDisabled') }}</div>
     </div>
     <div class="pm-sep"></div>
     <div class="pm-section">
-      <div class="pm-section-label">工作区管理</div>
-      <p class="pm-workspaces-intro">管理已创建的工作区。删除工作区只会解除会话绑定，不会删除对应的文件夹或项目。</p>
-      <div v-if="loading" class="pm-workspaces-empty">正在读取工作区…</div>
-      <div v-else-if="items.length === 0" class="pm-workspaces-empty">还没有工作区</div>
+      <div class="pm-section-label">{{ t('profileWorkspacesUi.workspaceManagement') }}</div>
+      <p class="pm-workspaces-intro">{{ t('profileWorkspacesUi.workspaceIntro') }}</p>
+      <div v-if="loading" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.loadingWorkspaces') }}</div>
+      <div v-else-if="items.length === 0" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.noWorkspaces') }}</div>
       <div v-else class="pm-workspace-list">
         <div v-for="item in items" :key="item.id" class="pm-workspace-card">
           <div class="pm-workspace-main">
@@ -35,14 +35,14 @@
               <Icon :name="item.kind === 'project' ? 'admin.folders' : 'admin.folder'" size="sm" tone="inherit" />
               <input v-if="editingId === item.id" v-model="editingName" class="pm-workspace-input" maxlength="200" @keyup.enter="saveName(item)" @keyup.esc="cancelEdit" />
               <span v-else class="pm-workspace-name">{{ item.name }}</span>
-              <span v-if="item.isDefault" class="pm-workspace-badge">默认</span>
+              <span v-if="item.isDefault" class="pm-workspace-badge">{{ t('profileWorkspacesUi.default') }}</span>
             </div>
-            <div class="pm-workspace-meta">{{ item.kind === 'project' ? '项目' : '文件夹' }} · {{ item.boundSessionCount }} 个会话绑定</div>
+            <div class="pm-workspace-meta">{{ item.kind === 'project' ? t('profileWorkspacesUi.project') : t('profileWorkspacesUi.folder') }} · {{ t('profileWorkspacesUi.sessionBindings', { count: item.boundSessionCount }) }}</div>
           </div>
           <div class="pm-workspace-actions">
-            <button v-if="editingId === item.id" class="pm-workspace-action" title="保存名称" :disabled="savingId === item.id" @click="saveName(item)"><Icon name="status.success" size="sm" tone="inherit" /></button>
-            <button v-else class="pm-workspace-action" title="重命名" @click="startEdit(item)"><Icon name="action.edit" size="sm" tone="inherit" /></button>
-            <button class="pm-workspace-action danger" title="删除工作区" :disabled="savingId === item.id" @click="remove(item)"><Icon name="action.delete" size="sm" tone="inherit" /></button>
+            <button v-if="editingId === item.id" class="pm-workspace-action" :title="t('profileWorkspacesUi.saveName')" :disabled="savingId === item.id" @click="saveName(item)"><Icon name="status.success" size="sm" tone="inherit" /></button>
+            <button v-else class="pm-workspace-action" :title="t('sharedUi.rename')" @click="startEdit(item)"><Icon name="action.edit" size="sm" tone="inherit" /></button>
+            <button class="pm-workspace-action danger" :title="t('profileWorkspacesUi.deleteWorkspace')" :disabled="savingId === item.id" @click="remove(item)"><Icon name="action.delete" size="sm" tone="inherit" /></button>
           </div>
         </div>
       </div>
@@ -53,6 +53,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import { agentApi, terminalsApi, workspacesApi } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -81,6 +82,7 @@ const rebuilding = ref(false)
 const shellMessage = ref('')
 const shellMessageType = ref<'ok' | 'err'>('ok')
 const prefsStore = usePreferencesStore()
+const { t } = useI18n()
 const editingId = ref<number | null>(null)
 const editingName = ref('')
 const savingId = ref<number | null>(null)
@@ -96,7 +98,7 @@ async function load() {
     autopilotGlobalEnabled.value = response.autopilotGlobalEnabled === true
     items.value = response.items as WorkspaceItem[]
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '工作区读取失败'
+    error.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.workspaceLoadFailed')
   } finally {
     loading.value = false
     shellLoading.value = false
@@ -105,7 +107,7 @@ async function load() {
 
 async function resetShellEnvironments() {
   if (resetting.value) return
-  const confirmed = await confirmDialog({ title: '重置 Shell 环境', message: '将终止并重建当前用户已有终端的沙盒运行态。工作区文件和输出历史会保留，未持久化的运行态内容会丢失。', tone: 'warning', confirmText: '重置环境' })
+  const confirmed = await confirmDialog({ title: t('profileWorkspacesUi.resetShellTitle'), message: t('profileWorkspacesUi.resetShellMessage'), tone: 'warning', confirmText: t('profileWorkspacesUi.resetEnvironment') })
   if (!confirmed) return
   resetting.value = true
   shellMessage.value = ''
@@ -114,10 +116,10 @@ async function resetShellEnvironments() {
     const results = await Promise.allSettled(response.items.map(item => terminalsApi.reset(item.id)))
     const failed = results.filter(result => result.status === 'rejected').length
     shellMessageType.value = failed > 0 ? 'err' : 'ok'
-    shellMessage.value = failed > 0 ? `${response.items.length - failed} 个终端已重置，${failed} 个终端重置失败` : response.items.length > 0 ? `已重置 ${response.items.length} 个终端` : '当前没有可重置的终端'
+    shellMessage.value = failed > 0 ? t('profileWorkspacesUi.resetSummaryFailed', { success: response.items.length - failed, failed }) : response.items.length > 0 ? t('profileWorkspacesUi.resetSummary', { count: response.items.length }) : t('profileWorkspacesUi.noTerminalsToReset')
   } catch (cause) {
     shellMessageType.value = 'err'
-    shellMessage.value = cause instanceof Error ? cause.message : '终端环境重置失败'
+    shellMessage.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.resetFailed')
   } finally {
     resetting.value = false
   }
@@ -125,17 +127,17 @@ async function resetShellEnvironments() {
 
 async function rebuildShell() {
   if (rebuilding.value) return
-  const confirmed = await confirmDialog({ title: '重建 Shell 沙盒', message: '将清理当前用户所有正在运行的沙盒容器，并在下次使用时重新创建。持久沙盒目录、工作区文件和镜像不会删除。', tone: 'warning', confirmText: '重建沙盒' })
+  const confirmed = await confirmDialog({ title: t('profileWorkspacesUi.rebuildTitle'), message: t('profileWorkspacesUi.rebuildMessage'), tone: 'warning', confirmText: t('profileWorkspacesUi.rebuildSandbox') })
   if (!confirmed) return
   rebuilding.value = true
   shellMessage.value = ''
   try {
     const result = await agentApi.rebuildSandbox()
     shellMessageType.value = 'ok'
-    shellMessage.value = result.reclaimed_containers > 0 ? `已清理 ${result.reclaimed_containers} 个运行中的沙盒容器` : '当前没有运行中的沙盒容器'
+    shellMessage.value = result.reclaimed_containers > 0 ? t('profileWorkspacesUi.reclaimedContainers', { count: result.reclaimed_containers }) : t('profileWorkspacesUi.noRunningContainers')
   } catch (cause) {
     shellMessageType.value = 'err'
-    shellMessage.value = cause instanceof Error ? cause.message : 'Shell 沙盒重建失败'
+    shellMessage.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.rebuildFailed')
   } finally {
     rebuilding.value = false
   }
@@ -160,7 +162,7 @@ async function saveName(item: WorkspaceItem) {
     Object.assign(item, response)
     cancelEdit()
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '工作区重命名失败'
+    error.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.renameFailed')
   } finally {
     savingId.value = null
   }
@@ -168,7 +170,7 @@ async function saveName(item: WorkspaceItem) {
 
 async function remove(item: WorkspaceItem) {
   if (savingId.value !== null) return
-  const confirmed = await confirmDialog({ title: '删除工作区', message: `确认删除工作区“${item.name}”？\n只会解除会话绑定，不会删除文件或项目。`, tone: 'danger', confirmText: '删除工作区' })
+  const confirmed = await confirmDialog({ title: t('profileWorkspacesUi.deleteWorkspace'), message: t('profileWorkspacesUi.deleteMessage', { name: item.name }), tone: 'danger', confirmText: t('profileWorkspacesUi.deleteWorkspace') })
   if (!confirmed) return
   savingId.value = item.id
   try {
@@ -176,7 +178,7 @@ async function remove(item: WorkspaceItem) {
     items.value = items.value.filter(current => current.id !== item.id)
     if (editingId.value === item.id) cancelEdit()
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '工作区删除失败'
+    error.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.deleteFailed')
   } finally {
     savingId.value = null
   }

@@ -1,6 +1,6 @@
 <template>
   <div ref="cardRef" class="note-card"
-       :class="{ editing, highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, ['tint-' + (note.color || '')]: !!note.color }"
+       :class="{ editing, 'search-highlight': highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, ['tint-' + (note.color || '')]: !!note.color }"
        :style="{ height: cardHeight }"
        @mouseenter="isHovering = true" @mouseleave="isHovering = false">
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
@@ -10,7 +10,7 @@
     <template v-if="editing">
       <input
         ref="titleInputRef" @pointerdown.stop
-        v-model="draftTitle" class="nc-title-input" placeholder="标题（可选）"
+        v-model="draftTitle" class="nc-title-input" :placeholder="t('mindUi.optionalTitle')"
         @keydown.enter.prevent="bodyEditorRef?.focus()"
       />
       <!-- pendingFocus 有具体目标（标题/某一行）时不让编辑器自己 autofocus:'end'——它内部的
@@ -23,9 +23,9 @@
                   :float-toolbar="canvasMode" :edit-ready="editReady"
                   @submit="finishEditing" @pointerdown.stop>
         <template #foot-actions>
-          <span v-if="conflict" class="nc-conflict">改动冲突，已刷新</span>
-          <button class="nc-done-btn" @pointerdown.stop @click.stop="finishEditing" title="完成编辑">
-            <PhCheck :size="12" weight="bold" /> 完成
+          <span v-if="conflict" class="nc-conflict">{{ t('mindUi.conflictRefreshed') }}</span>
+          <button class="nc-done-btn" @pointerdown.stop @click.stop="finishEditing" :title="t('mindUi.editDone')">
+            <PhCheck :size="12" weight="bold" /> {{ t('mindUi.editDone') }}
           </button>
         </template>
       </NoteEditor>
@@ -36,25 +36,25 @@
     <template v-else>
       <div v-if="isHeading" class="nc-head">
         <span class="nc-title" @click="startEditAt('title')">{{ title }}</span>
-        <CardAffordances :hovering="isHovering && !editing" actions-placement="inline" :node-id="null">
+        <CardAffordances :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="inline" :node-id="null">
           <template #actions>
           <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
-          <button class="nc-icon" title="编辑" @pointerdown.stop @click.stop="startEditAt(null)">
+          <button class="nc-icon" :title="t('mindUi.edit')" @pointerdown.stop @click.stop="startEditAt(null)">
             <PhPencilSimple :size="12" weight="bold" />
           </button>
-          <button class="nc-icon danger" title="删除" @pointerdown.stop @click.stop="emit('delete')">
+          <button class="nc-icon danger" :title="t('mindUi.delete')" @pointerdown.stop @click.stop="emit('delete')">
             <PhTrash :size="12" weight="bold" />
           </button>
           </template>
         </CardAffordances>
       </div>
-      <CardAffordances v-else :hovering="isHovering && !editing" actions-placement="float" :node-id="null">
+      <CardAffordances v-else :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="float" :node-id="null">
         <template #actions>
         <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
-        <button class="nc-icon" title="编辑" @pointerdown.stop @click.stop="startEditAt(null)">
+        <button class="nc-icon" :title="t('mindUi.edit')" @pointerdown.stop @click.stop="startEditAt(null)">
           <PhPencilSimple :size="12" weight="bold" />
         </button>
-        <button class="nc-icon danger" title="删除" @pointerdown.stop @click.stop="emit('delete')">
+        <button class="nc-icon danger" :title="t('mindUi.delete')" @pointerdown.stop @click.stop="emit('delete')">
           <PhTrash :size="12" weight="bold" />
         </button>
         </template>
@@ -62,7 +62,7 @@
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
            @click="onBodyClick" v-html="previewHtml"></div>
       <button v-if="clamped" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
-        {{ expanded ? '收起' : '展开' }}
+        {{ expanded ? t('mindUi.collapseContent') : t('mindUi.expandContent') }}
       </button>
     </template>
     <!-- 连接点只有画布模式才有，并且保持在 NoteCard 自己的 DOM 子树里，确保拖拽克隆时
@@ -71,7 +71,7 @@
          跟文件/活动/项目引用卡三种画布卡片同样的路数（见 NoteSticker.vue 的说明）。 -->
     <CardAffordances
       v-if="canvasMode"
-      :node-id="note.id" :hovering="isHovering && !editing" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
+      :node-id="note.id" :hovering="isHovering && !editing && !runtimeHoverSuppressed" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
       @connect-drag-start="(e, side) => emit('connect-drag-start', e, side)"
     />
   </div>
@@ -79,6 +79,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { PhCheck, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import { useMindRefActions } from '@/composables/useMindRefActions'
@@ -91,11 +92,12 @@ import NoteEditor from './NoteEditor.vue'
 // 实时刷新或卡片重新挂载时重复做代码高亮；限制容量避免长期编辑造成无界内存增长。
 const PREVIEW_CACHE_LIMIT = 256
 const previewCache = new Map<string, string>()
-function cachedPreviewHtml(md: string): string {
-  const cached = previewCache.get(md)
+function cachedPreviewHtml(md: string, locale: string): string {
+  const cacheKey = `${locale}\u0000${md}`
+  const cached = previewCache.get(cacheKey)
   if (cached !== undefined) return cached
   const html = mdToPreviewHtml(md)
-  previewCache.set(md, html)
+  previewCache.set(cacheKey, html)
   if (previewCache.size > PREVIEW_CACHE_LIMIT) {
     const oldest = previewCache.keys().next().value
     if (oldest !== undefined) previewCache.delete(oldest)
@@ -104,6 +106,7 @@ function cachedPreviewHtml(md: string): string {
 }
 
 const { openMindRef, resolveMindRef } = useMindRefActions()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   note: MindNote
@@ -123,6 +126,7 @@ const props = defineProps<{
   // v-if="canvasMode"。NoteSticker.vue 原样转发 MindCanvas.vue 给它的同名 prop。
   connecting?: boolean
   connectionTargetSide?: 'left' | 'right' | null
+  runtimeHoverSuppressed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -207,7 +211,7 @@ watch(() => props.note.contentMd, () => {
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
-  if (cardRef.value?.contains(t) || t.closest('.ne-picker') || t.closest('.ne-toolbar-floating')) return
+  if (cardRef.value?.contains(t) || t.closest('.reference-picker') || t.closest('.ne-toolbar-floating')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面
@@ -356,7 +360,7 @@ const _split = computed(() => {
   const md = displayContentMd.value
   const lines = md.split('\n')
   const ti = lines.findIndex(l => l.trim())
-  if (ti < 0) return { title: '（空笔记）', titleRaw: '', body: '', isHeading: true }
+  if (ti < 0) return { title: t('mindUi.emptyNote'), titleRaw: '', body: '', isHeading: true }
   const titleLine = lines[ti].trim()
   const isHeading = /^#{1,6}\s+/.test(titleLine)
   if (!isHeading) return { title: '', titleRaw: '', body: md, isHeading: false }
@@ -364,14 +368,14 @@ const _split = computed(() => {
     .replace(/^#{1,6}\s+/, '')
     .replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
   const body = lines.slice(ti + 1).join('\n').replace(/^\n+/, '')
-  return { title: raw || '（无标题）', titleRaw: raw, body, isHeading: true }
+  return { title: raw || t('mindUi.untitled'), titleRaw: raw, body, isHeading: true }
 })
 const title     = computed(() => _split.value.title)
 const isHeading = computed(() => _split.value.isHeading)
 const bodyMd = computed(() => _split.value.body)
 // 只读卡片的 Markdown 预览不是纯字符串拼接：代码块还要做语法高亮。把结果绑定到正文
 // 内容本身，避免父级时间轴更新（例如其它日期新增便签）时为每张卡重复解析一遍。
-const previewHtml = computed(() => bodyMd.value ? cachedPreviewHtml(bodyMd.value) : '')
+const previewHtml = computed(() => bodyMd.value ? cachedPreviewHtml(bodyMd.value, locale.value) : '')
 
 /** 是否溢出 clamp 高度（内容/展开态变了都重测）。scrollHeight 对比要在未展开的 clamp 态量 */
 async function measureClamp() {
@@ -388,7 +392,7 @@ async function refreshReferenceStates() {
   await Promise.all([...refs].map(async refEl => {
     const state = await resolveMindRef(refEl.dataset.refType!, Number(refEl.dataset.refId))
     refEl.classList.toggle('mind-ref-missing', state === 'missing')
-    if (state === 'missing') refEl.title = '关联对象已删除，仅保留快照'
+    if (state === 'missing') refEl.title = t('mindUi.referenceMissing')
   }))
 }
 onMounted(() => { measureClamp(); refreshReferenceStates() })
@@ -508,13 +512,6 @@ defineExpose({ rootEl: cardRef })
   color: var(--text-primary); font-family: var(--font-sans);
 }
 .nc-title-input::placeholder { color: var(--text-secondary); opacity: 0.5; font-weight: 400; }
-
-/* 新建高亮：紫灰 tint 淡出（提交滚回最左后让新卡自己说"我在这") */
-.note-card.highlight { animation: nc-flash 1.6s ease-out; }
-@keyframes nc-flash {
-  0% { background-color: rgba(123,127,178,0.2); }
-  100% { background-color: rgba(255,255,255,0.56); }
-}
 
 /* 可选颜色：整卡淡染（便签纸语言），不做左侧色条（那是管理系统语言）。"Caribbean" 配色，
    亮色高饱和度（青绿/蓝/珊瑚橙/黄，见 ColorSwatches.vue 的色点原色），淡染到卡片背景上的

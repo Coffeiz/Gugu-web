@@ -15,7 +15,7 @@ Tool(
 ```
 
 `description_short` 为 1-100 个 Unicode 字符，建议通常控制在 30-60 字、目标约 50 字。
-它要同时说明“能做什么、什么时候用、最关键的字段或相邻工具关系”；不要塞完整示例、
+它只说明“能做什么、什么时候用、必要的相邻工具关系”；不要在这里重复字段名、类型、必填项或完整示例、
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
 
@@ -49,15 +49,24 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 - [ ] 已添加合法正例、缺字段反例、互斥字段反例和历史兼容测试。
 - [ ] 已运行工具 description 审计、Schema validator 和能力注入回归。
 
+简介模式会在短简介后自动追加一层字段签名，内容来自同一个 `input_schema`：
+
+```text
+- 搜索公网网页：搜索公网网页；字段：query(string)，必填、max_results(integer)
+```
+
+因此 `description_short` 禁止手写“关键字段”“字段：”、参数类型、必填字段、枚举值和范围；这些内容只维护在
+`input_schema`。需要解释清空语义、资源边界或几个字段之间的业务关系时，才在短简介保留一句自然语言说明。
+
 短简介的推荐形状：
 
 ```text
-创建项目；可带 stages/todos，后续用 add_stage/add_todo
-给活动加提醒；关键字段 event_id/lead_minutes/channels
-搜索公网网页；关键字段 query/max_results
+创建项目；后续可用 add_stage/add_todo 补充结构
+给活动加提醒；支持一次设置多个通知渠道
+搜索公网网页；需要实时外部资料时使用
 ```
 
-关键字段只列路由和首次调用最容易遗漏的字段，不代替参数 Schema。简介模式下，模型在当前历史中没有
+短简介不列字段，字段签名不代替完整参数 Schema。简介模式下，模型在当前历史中没有
 该工具的完整 Schema 时，必须先调用 `get_tool_schema`；工具错误回执也会提示重新获取
 当前工具 Schema。所有内置工具都必须显式填写 `description_short`，注册表会拒绝
 缺失或超过 100 个 Unicode 字符的简介，不再静默截断。
@@ -72,6 +81,7 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 - 用 `oneOf` 或 `if/then` 表达 action 对应的条件必填字段；
 - action 只覆盖一个资源边界，不把项目、阶段、待办和删除合成超级工具；
 - 旧字段兼容必须放在版本适配层，handler 内只接收规范化参数。
+- `version`/`client_version` 只属于数据库、服务层和前端同步协议，禁止放入 Agent 工具输入或返回给模型；更新工具应接收业务增量，由服务端读取当前记录并完成原子写入。
 
 推荐形状：
 

@@ -32,6 +32,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import { all, createLowlight } from 'lowlight'
 import CodeBlockView from '@/views/Mind/components/CodeBlockView.vue'
+import { i18n } from '@/i18n'
 
 // 代码块语法高亮：只读预览和编辑态**必须走同一个 lowlight 实例**（同一份语言注册表），
 // 不能预览用完整版 highlight.js、编辑态用 lowlight 的精简集——两边"猜语言"的候选池
@@ -47,6 +48,9 @@ export const MIND_REF_RE = /\[\[([a-z_]+):(\d+)\|([^\]]*)\]\]/
 /** 引用 chip 的类型文案（无障碍 title/下拉分组标题用），跟 NoteEditor.vue 补全下拉的
  *  TYPE_LABEL、顶栏 GlobalSearch.vue 的分组标题是同一套。 */
 export const MIND_REF_TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', conversation: '对话' }
+function mindRefTypeLabel(type: string): string {
+  return String(i18n.global.t(`mindEditorUi.referenceTypes.${type}`, MIND_REF_TYPE_LABEL[type] ?? type))
+}
 
 /** chip 上的类型图标用纯 SVG path（跟 GlobalSearch.vue／NoteEditor.vue 下拉用的
  *  @phosphor-icons/vue 图标是同一批：PhStack/PhFile/PhCalendarBlank/PhChatCircle，bold
@@ -97,7 +101,7 @@ export const MindRef = Node.create({
       'data-ref-type': t,
       'data-ref-id': String(node.attrs.refId),
       class: 'mind-ref',
-      title: MIND_REF_TYPE_LABEL[t] ?? t,
+      title: mindRefTypeLabel(t),
     }),
       [`${SVG_NS} svg`, { viewBox: '0 0 256 256', width: '12', height: '12', fill: 'currentColor', class: 'mind-ref-icon' },
         [`${SVG_NS} path`, { d: MIND_REF_TYPE_ICON_PATH[t] ?? '' }]],
@@ -481,7 +485,7 @@ function inlineToHtml(text: string): string {
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push(marksToHtml(text.slice(last, m.index)))
     out.push(
-      `<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}" title="${esc(MIND_REF_TYPE_LABEL[m[1]] ?? m[1])}">` +
+      `<span class="mind-ref" data-ref-type="${m[1]}" data-ref-id="${m[2]}" title="${esc(mindRefTypeLabel(m[1]))}">` +
       `<svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" class="mind-ref-icon"><path d="${MIND_REF_TYPE_ICON_PATH[m[1]] ?? ''}"/></svg>` +
       `<span class="mind-ref-label">${esc(m[3])}</span></span>`,
     )

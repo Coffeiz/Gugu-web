@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -105,11 +106,82 @@ def payload(raw: str) -> dict[str, Any] | None:
 
 
 def _text_in_blocks(value: Any) -> str:
+    """提取 blocks 中的文本，避免把 JSON 字段顺序误当成内容顺序。"""
     if isinstance(value, dict):
-        return " ".join(_text_in_blocks(item) for item in value.values())
+        if value.get("type") == "text" and isinstance(value.get("text"), str):
+            return value["text"]
+        return " ".join(
+            _text_in_blocks(item)
+            for key, item in value.items()
+            if key not in {"type", "name", "format"}
+        )
     if isinstance(value, list):
         return " ".join(_text_in_blocks(item) for item in value)
-    return str(value) if isinstance(value, str) else ""
+    return value if isinstance(value, str) else ""
+
+
+def aggregate_usage_rows(
+    rows: list[dict[str, int]], anthropic: bool, *, provider_request_count: int | None = None,
+) -> dict[str, Any]:
+    """按连续 run 聚合 usage，并允许传入真实 provider 请求数。
+
+    core 为一个 run 只发送一个最终 ``_usage`` 事件，不能用 usage 事件数量
+    推断 provider 请求数；调用方应统计 ``round_start``。
+    """
+    requests: list[dict[str, int | float]] = []
+    for row in rows:
+        provider_input = int(row.get("input", 0) or 0)
+        if anthropic:
+            provider_input += int(row.get("cache_read", 0) or 0)
+        cache_read = int(row.get("cache_read", 0) or 0)
+        requests.append({
+            "input": int(row.get("input", 0) or 0),
+            "context_input": int(row.get("context_input", 0) or 0),
+            "output": int(row.get("output", 0) or 0),
+            "cache_read": cache_read,
+            "provider_input": provider_input,
+            "cache_ratio": round(cache_read / provider_input, 6) if provider_input else 0,
+        })
+    provider_input_total = sum(int(item["provider_input"]) for item in requests)
+    cache_read_total = sum(int(item["cache_read"]) for item in requests)
+    latest = requests[-1] if requests else {
+        "provider_input": 0, "context_input": 0,
+    }
+    return {
+        "input": sum(int(item["input"]) for item in requests),
+        "context_input": sum(int(item["context_input"]) for item in requests),
+        "output": sum(int(item["output"]) for item in requests),
+        "cache_read": cache_read_total,
+        "provider_input": provider_input_total,
+        "total_tokens": provider_input_total + sum(int(item["output"]) for item in requests),
+        "cache_ratio": round(cache_read_total / provider_input_total, 6) if provider_input_total else 0,
+        "provider_request_count": (
+            int(provider_request_count)
+            if provider_request_count is not None else len(requests)
+        ),
+        "first_provider_input": requests[0]["provider_input"] if requests else 0,
+        "last_provider_input": requests[-1]["provider_input"] if requests else 0,
+        "context_input_latest": latest["context_input"],
+        "provider_input_latest": latest["provider_input"],
+        "provider_requests": requests,
+    }
+
+
+def history_metrics(messages: PromptMessages) -> dict[str, Any]:
+    """只记录连续会话的结构，不把用户正文或工具参数写入测试结果。"""
+    conversation = list(getattr(messages, "conversation", messages))
+    roles = Counter(
+        str(item.get("role") or "unknown")
+        for item in conversation
+        if isinstance(item, dict)
+    )
+    serialized = json.dumps(conversation, ensure_ascii=False, separators=(",", ":"))
+    return {
+        "message_count": len(conversation),
+        "chars": len(serialized),
+        "roles": dict(roles),
+        "canonical_batch_count": len(getattr(messages, "canonical_batch_digests", ())),
+    }
 
 
 def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str, *, description_mode: bool, settings) -> dict[str, Any]:
@@ -136,6 +208,61 @@ def schema_metrics(registry, tool_names: list[str], anthropic: bool, model: str,
         result["catalog_chars"] = len(catalog_text)
         result["catalog_tokens"] = _estimate_tokens(catalog_text, model)
     return result
+
+
+def select_model(settings, selector: str | None):
+    """按预设名称、提供商或模型名选择诊断目标。"""
+    if not selector:
+        return pick_model(settings, None)
+    presets = getattr(settings, "ai_presets", None)
+    items = list(getattr(presets, "items", None) or []) if presets else []
+    needle = selector.strip().lower()
+    matches = [
+        item for item in items
+        if needle in " ".join(
+            str(getattr(item, key, ""))
+            for key in ("name", "provider", "model")
+        ).lower()
+    ]
+    if not matches:
+        raise RuntimeError(f"未找到匹配的模型预设：{selector}")
+    if len(matches) > 1:
+        labels = ", ".join(str(getattr(item, "name", "")) for item in matches)
+        raise RuntimeError(f"模型预设匹配不唯一：{labels}")
+    return matches[0]
+
+
+def sequence_metrics(rows: list[dict[str, Any]], anthropic: bool) -> dict[str, Any]:
+    """按连续 run 汇总真实 provider usage，不把 run 总 input 当上下文长度。"""
+    accurate = sum(bool(row.get("accurate")) for row in rows)
+    usage_rows = [row.get("usage", {}) for row in rows if row.get("usage")]
+    first = usage_rows[0] if usage_rows else {}
+    last = usage_rows[-1] if usage_rows else {}
+    fresh_input_total = sum(int(item.get("input", 0) or 0) for item in usage_rows)
+    cache_read_total = sum(int(item.get("cache_read", 0) or 0) for item in usage_rows)
+    provider_input_total = fresh_input_total + (cache_read_total if anthropic else 0)
+    output_total = sum(int(item.get("output", 0) or 0) for item in usage_rows)
+    return {
+        "measured_rounds": len(rows),
+        "accuracy": accurate,
+        "accuracy_rate": round(accurate / len(rows) * 100, 2) if rows else 0,
+        "schema_errors": sum(bool(row.get("schema_error")) for row in rows),
+        "first_context_input": int(first.get("provider_input_latest", 0) or 0),
+        "last_context_input": int(last.get("provider_input_latest", 0) or 0),
+        "run_input_total": sum(int(item.get("provider_input", 0) or 0) for item in usage_rows),
+        "provider_input_total": provider_input_total,
+        "output_total": output_total,
+        "cache_read_total": cache_read_total,
+        "cache_rate": round(cache_read_total / provider_input_total, 6) if provider_input_total else 0,
+        "provider_request_total": sum(
+            int(item.get("provider_request_count", 0) or 0) for item in usage_rows
+        ),
+        "context_input_monotonic": all(
+            int(usage_rows[index].get("provider_input_latest", 0) or 0)
+            >= int(usage_rows[index - 1].get("provider_input_latest", 0) or 0)
+            for index in range(1, len(usage_rows))
+        ),
+    }
 
 
 def matches_expected(tool_name: str, actual: Any, expected: dict[str, Any]) -> bool:
@@ -223,8 +350,10 @@ async def run_continuous_case(
         )
         calls: list[dict[str, Any]] = []
         usage_rows: list[dict[str, int]] = []
+        provider_usage_rows: list[dict[str, int]] = []
         errors: list[str] = []
         text_parts: list[str] = []
+        provider_request_count = 0
         try:
             async for raw in generation:
                 event = payload(raw)
@@ -232,10 +361,17 @@ async def run_continuous_case(
                     continue
                 if event.get("type") == "tool_call":
                     calls.append({"name": event.get("name"), "input": event.get("input")})
+                elif event.get("type") == "round_start":
+                    provider_request_count += 1
                 elif event.get("type") == "token":
                     text_parts.append(str(event.get("content") or ""))
                 elif event.get("type") == "_usage":
                     usage_rows.append({
+                        key: int(event.get(key) or 0)
+                        for key in ("input", "context_input", "output", "cache_read")
+                    })
+                elif event.get("type") == "_provider_usage":
+                    provider_usage_rows.append({
                         key: int(event.get(key) or 0)
                         for key in ("input", "context_input", "output", "cache_read")
                     })
@@ -249,13 +385,10 @@ async def run_continuous_case(
             "kind": "tool_selection", "expected": tool_name,
             "actual": [call.get("name") for call in calls],
         }
-        usage = usage_rows[-1] if usage_rows else {
-            "input": 0, "context_input": 0, "output": 0, "cache_read": 0,
-        }
-        provider_input = usage["input"] + (usage["cache_read"] if anthropic else 0)
-        usage["provider_input"] = provider_input
-        usage["total_tokens"] = provider_input + usage["output"]
-        usage["cache_ratio"] = round(usage["cache_read"] / provider_input, 6) if provider_input else 0
+        usage = aggregate_usage_rows(
+            provider_usage_rows or usage_rows, anthropic,
+            provider_request_count=len(provider_usage_rows) or provider_request_count,
+        )
         rows.append({
             "turn": turn,
             "accurate": bool(target) and mismatch is None and not errors,
@@ -278,6 +411,7 @@ async def run_continuous_case(
 async def run_continuous_sequence(
     settings, model_cfg, anthropic: bool, cases: list[tuple[str, str, dict[str, Any]]],
     turns: int = 1, *, description_mode: bool = False,
+    tool_names: list[str] | None = None,
 ) -> dict[str, Any]:
     """一个策略只创建一个会话：warmup 后依次输入 case1、case2...。"""
     from agent.core import LLMRunner
@@ -286,7 +420,7 @@ async def run_continuous_sequence(
     if not cases:
         return {"warmup": None, "cases": []}
     system = _test_system("当前 case 指定的工具")
-    tool_names = list(DefaultProfile().tool_names)
+    tool_names = list(tool_names or DefaultProfile().tool_names)
     capability_context = None
     if description_mode:
         from agent.capabilities.injector import build_fixed_adapter_context, catalog_block
@@ -303,14 +437,18 @@ async def run_continuous_sequence(
             "role": "user",
             "content": f"[当前测试目标工具：{tool_name}] {prompt}",
         })
+        history_before = history_metrics(messages)
         generation = runner.run(
             _UID, system if anthropic else None, messages,
             anthropic, model_cfg,
         )
         calls: list[dict[str, Any]] = []
         usage_rows: list[dict[str, int]] = []
+        provider_usage_rows: list[dict[str, int]] = []
         errors: list[str] = []
         text_parts: list[str] = []
+        compactions: list[dict[str, Any]] = []
+        provider_request_count = 0
         try:
             async for raw in generation:
                 event = payload(raw)
@@ -318,6 +456,8 @@ async def run_continuous_sequence(
                     continue
                 if event.get("type") == "tool_call":
                     calls.append({"name": event.get("name"), "input": event.get("input")})
+                elif event.get("type") == "round_start":
+                    provider_request_count += 1
                 elif event.get("type") == "token":
                     text_parts.append(str(event.get("content") or ""))
                 elif event.get("type") == "_usage":
@@ -325,8 +465,18 @@ async def run_continuous_sequence(
                         key: int(event.get(key) or 0)
                         for key in ("input", "context_input", "output", "cache_read")
                     })
+                elif event.get("type") == "_provider_usage":
+                    provider_usage_rows.append({
+                        key: int(event.get(key) or 0)
+                        for key in ("input", "context_input", "output", "cache_read")
+                    })
                 elif event.get("type") == "error":
                     errors.append(str(event.get("detail") or "error")[:120])
+                elif event.get("type") == "_context_compaction":
+                    compactions.append({
+                        "applied": bool(event.get("applied")),
+                        "reason": str(event.get("reason") or "")[:80],
+                    })
         finally:
             await generation.aclose()
         target = next((call for call in calls if call.get("name") == tool_name), None)
@@ -353,15 +503,13 @@ async def run_continuous_sequence(
             "kind": "tool_selection", "expected": tool_name,
             "actual": [call.get("name") for call in calls],
         }
-        usage = usage_rows[-1] if usage_rows else {
-            "input": 0, "context_input": 0, "output": 0, "cache_read": 0,
-        }
-        provider_input = usage["input"] + (usage["cache_read"] if anthropic else 0)
-        usage["provider_input"] = provider_input
-        usage["total_tokens"] = provider_input + usage["output"]
-        usage["cache_ratio"] = round(usage["cache_read"] / provider_input, 6) if provider_input else 0
+        usage = aggregate_usage_rows(
+            provider_usage_rows or usage_rows, anthropic,
+            provider_request_count=len(provider_usage_rows) or provider_request_count,
+        )
         if text_parts:
             messages.append({"role": "assistant", "content": "".join(text_parts)})
+        history_after = history_metrics(messages)
         return {
             "turn": turn,
             "tool": tool_name,
@@ -371,6 +519,9 @@ async def run_continuous_sequence(
             "usage": usage,
             "error": errors or None,
             "schema_error": mismatch,
+            "history_before": history_before,
+            "history_after": history_after,
+            "history_compactions": compactions,
         }
 
     warmup_tool, warmup_prompt, warmup_expected = cases[0]
@@ -449,7 +600,7 @@ async def main_async(args: argparse.Namespace) -> int:
     from agent.profiles import DefaultProfile
 
     settings = get_settings()
-    model_cfg = pick_model(settings, None)
+    model_cfg = select_model(settings, args.preset)
     if not getattr(model_cfg, "api_key", ""):
         raise RuntimeError("当前默认模型没有配置 API key")
     anthropic = use_anthropic_for(model_cfg)
@@ -487,6 +638,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     run_continuous_sequence(
                         settings, model_cfg, anthropic, CASES,
                         description_mode=label == "description",
+                        tool_names=tool_names,
                     ),
                     timeout=args.case_timeout * (len(CASES) + 1),
                 )
@@ -515,31 +667,26 @@ async def main_async(args: argparse.Namespace) -> int:
         release(model_cfg)
     summary = {}
     for label, rows in results.items():
-        summary[label] = {
-            "cases": len(rows),
-            "accurate": sum(bool(row.get("accurate")) for row in rows),
-            "accuracy_rate": round(sum(bool(row.get("accurate")) for row in rows) / len(rows) * 100, 2) if rows else 0,
-            "completed": sum(bool(row.get("usage")) for row in rows),
-            "schema_errors": sum(bool(row.get("schema_error")) for row in rows),
-        }
-        turns = [row for row in rows if row.get("tool") != "sequence"]
-        summary[label].update({
-            "fresh_input_total": sum(int(turn.get("usage", {}).get("input", 0) or 0) for turn in turns),
-            "context_input_total": sum(int(turn.get("usage", {}).get("context_input", 0) or 0) for turn in turns),
-            "output_total": sum(int(turn.get("usage", {}).get("output", 0) or 0) for turn in turns),
-            "cache_read_total": sum(int(turn.get("usage", {}).get("cache_read", 0) or 0) for turn in turns),
-            "continuation_errors": sum(
-                1 for turn in turns if turn.get("error") and any("续轮" in str(error) for error in turn["error"])
-            ),
-        })
-        summary[label]["provider_input_total"] = summary[label]["fresh_input_total"] + (
-            summary[label]["cache_read_total"] if anthropic else 0
+        sequence_summary = sequence_metrics(rows, anthropic)
+        schema_metrics_for_mode = mode_metrics.get(label, {})
+        fixed_tokens_per_request = (
+            int(schema_metrics_for_mode.get("schema_tokens", 0) or 0)
+            + int(schema_metrics_for_mode.get("catalog_tokens", 0) or 0)
         )
-        summary[label]["total_tokens"] = summary[label]["provider_input_total"] + summary[label]["output_total"]
-        summary[label]["cache_ratio"] = round(
-            summary[label]["cache_read_total"] / summary[label]["provider_input_total"], 6
-        ) if summary[label]["provider_input_total"] else 0
-        summary[label].update(mode_metrics.get(label, {}))
+        warmup_requests = 1
+        actual_provider_requests = sequence_summary["provider_request_total"] + warmup_requests
+        summary[label] = {
+            **sequence_summary,
+            "warmup_requests": warmup_requests,
+            "actual_provider_request_total": actual_provider_requests,
+            "fixed_tokens_per_request": fixed_tokens_per_request,
+            "fixed_tokens_logical_total": fixed_tokens_per_request * (len(rows) + 1),
+            "fixed_tokens_actual_total": fixed_tokens_per_request * actual_provider_requests,
+            "schema_tokens_total": mode_metrics.get(label, {}).get("schema_tokens", 0) * (len(rows) + 1),
+            "catalog_tokens_total": mode_metrics.get(label, {}).get("catalog_tokens", 0) * (len(rows) + 1),
+            "total_tokens": sequence_summary["provider_input_total"] + sequence_summary["output_total"],
+            **mode_metrics.get(label, {}),
+        }
     print(json.dumps({"summary": summary}, ensure_ascii=False), flush=True)
     if args.output:
         Path(args.output).write_text(json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -552,6 +699,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="脱敏结果 JSON 路径")
     parser.add_argument("--case-timeout", type=float, default=180, help="连续会话中每个 case 的超时秒数")
     parser.add_argument("--mode", choices=("description", "full", "both"), default="both", help="测试生产注入模式")
+    parser.add_argument("--preset", help="只读选择模型预设，按名称、提供商或模型名匹配")
     args = parser.parse_args()
     if not args.allow_real_llm:
         print("拒绝执行：请显式追加 --allow-real-llm")

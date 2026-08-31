@@ -10,8 +10,10 @@ import json
 from typing import Any
 
 from app.core.mind import validate_note_color
-from app.services.mind_canvas import (
+from app.services.canvas.layout_engine import canvas_layout, parse_canvas_data
+from app.services.canvas.service import (
     add_canvas_item,
+    count_canvas_nodes,
     connect_nodes,
     create_canvas,
     create_canvas_note,
@@ -30,7 +32,7 @@ from app.services.mind_canvas import (
     get_canvas_reference_node,
     get_or_create_reference,
     list_canvas_nodes,
-    list_canvas_relations,
+    list_canvas_relations_for_canvas,
     relation_anchor_from_canvas,
     list_canvases,
     list_existing_canvas_reference_items,
@@ -42,7 +44,7 @@ from app.services.mind_canvas import (
     update_canvas_note,
     update_relation_anchor,
 )
-from app.services.mind_canvas_batch import batch_canvas_operations
+from app.services.canvas.batch import batch_canvas_operations
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
@@ -50,30 +52,67 @@ _MAX_RESULTS = 20
 _MAX_MUTATIONS = 20
 _PLACEABLE_TYPES = ("project", "file", "event")
 _CANVAS_TYPES = ("canvas_note", "project", "file", "event")
-_DEFAULT_ITEM_SIZES = {
-    "canvas_note": (244, 148),
-    "project": (240, 120),
-    "file": (156, 140),
-    "event": (220, 96),
-}
-
-# 画布布局安全约束，供语义锚点和 Agent 排布提示共同使用。
-_SAFE_EDGE_GAP = 150
-_SAFE_CENTER_DISTANCE = 750
-
-
 def _json_object(raw: str | None) -> dict[str, Any]:
-    try:
-        value = json.loads(raw or "{}")
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    return parse_canvas_data(raw)
 
 
 def _limit(value: Any, default: int = 10) -> int:
     if not isinstance(value, int):
         return default
     return max(1, min(value, _MAX_RESULTS))
+
+
+def _relation_anchor_audit(
+    relation: Any,
+    node_by_id: dict[int, dict[str, Any]],
+    canvas: Any,
+) -> dict[str, Any]:
+    """为模型提供基于卡片位置的连接点核对信息。
+
+    related 关系的节点 ID 会在服务层归一，不能把 ID 顺序当成画面方向。
+    这里仅给出几何上的默认建议；已保存的同侧端点仍标记为 custom，保留
+    loop 等有意布局，不在读取阶段擅自改线。
+    """
+    source = node_by_id.get(relation.src_node_id)
+    target = node_by_id.get(relation.dst_node_id)
+    current = relation_anchor_from_canvas(canvas, relation.id)
+    audit: dict[str, Any] = {
+        "relation_id": relation.id,
+        "source_node_id": relation.src_node_id,
+        "target_node_id": relation.dst_node_id,
+        "current": current or {"source_side": None, "target_side": None},
+    }
+    if source is None or target is None:
+        audit["status"] = "incomplete"
+        audit["reason"] = "关系两端没有同时出现在本次快照中"
+        return audit
+
+    def center(node: dict[str, Any]) -> tuple[float, float]:
+        position = node.get("position") or {}
+        size = (node.get("layout") or {}).get("effective_size") or {}
+        return (
+            float(position.get("x", 0)) + float(size.get("w", 0)) / 2,
+            float(position.get("y", 0)) + float(size.get("h", 0)) / 2,
+        )
+
+    source_center = center(source)
+    target_center = center(target)
+    expected = (
+        {"source_side": "right", "target_side": "left"}
+        if target_center[0] >= source_center[0]
+        else {"source_side": "left", "target_side": "right"}
+    )
+    audit["source"] = {"node_id": relation.src_node_id, "center": {"x": source_center[0], "y": source_center[1]}}
+    audit["target"] = {"node_id": relation.dst_node_id, "center": {"x": target_center[0], "y": target_center[1]}}
+    audit["recommended"] = expected
+    if current is None:
+        audit["status"] = "implicit"
+    elif current == expected:
+        audit["status"] = "aligned"
+    else:
+        audit["status"] = "custom"
+        audit["reason"] = "当前端点与按水平位置计算的默认端点不同，可能是有意的回环布局"
+    return audit
 
 
 def _mutation_entries(args: dict, plural_key: str) -> tuple[list[dict[str, Any]], bool, str | None]:
@@ -129,19 +168,13 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
         "node_id": node.id,
         "kind": node.kind,
         "title": node.title,
-        # 画布便签更新走 MindNode 乐观锁；搜索结果必须携带当前版本，禁止调用方猜版本重试。
-        "version": node.version,
         "ref_type": node.ref_type,
         "ref_id": node.ref_id,
         "preview": plain[:240],
     }
     if item is not None:
-        default_w, default_h = _DEFAULT_ITEM_SIZES.get(
-            "canvas_note" if node.kind == "canvas_note" else node.ref_type,
-            _DEFAULT_ITEM_SIZES["event"],
-        )
-        effective_w = item.w if item.w is not None else default_w
-        effective_h = item.h if item.h is not None else default_h
+        default_w, default_h = canvas_layout.default_size(node)
+        effective_w, effective_h = canvas_layout.effective_size(node, item)
         result.update({
             "item_id": item.id,
             "position": {"x": item.x, "y": item.y},
@@ -150,8 +183,8 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
                 "effective_size": {"w": effective_w, "h": effective_h},
                 "default_size": {"w": default_w, "h": default_h},
                 "size_source": "explicit" if item.w is not None or item.h is not None else "default",
-                "recommended_gap": _SAFE_EDGE_GAP,
-                "recommended_center_distance": _SAFE_CENTER_DISTANCE,
+                "recommended_gap": canvas_layout.SAFE_EDGE_GAP,
+                "recommended_center_distance": canvas_layout.SAFE_CENTER_DISTANCE,
             },
             "collapsed": item.collapsed,
             "z": item.z,
@@ -160,6 +193,15 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
         result["content_md"] = node.content_md
         result["content_plain"] = node.content_plain
     return result
+
+
+def _recommended_relation_sides(source: dict[str, Any], target: dict[str, Any]) -> tuple[str, str]:
+    """只按卡片中心的水平位置建议端点，不把节点 ID 当成布局顺序。"""
+    source_x = float((source.get("position") or {}).get("x", 0))
+    target_x = float((target.get("position") or {}).get("x", 0))
+    source_w = float(((source.get("layout") or {}).get("effective_size") or {}).get("w", 0))
+    target_w = float(((target.get("layout") or {}).get("effective_size") or {}).get("w", 0))
+    return ("right", "left") if target_x + target_w / 2 >= source_x + source_w / 2 else ("left", "right")
 
 
 async def _canvas_list(db, user_id, args: dict):
@@ -199,6 +241,8 @@ async def _canvas_get(db, user_id, args: dict):
     include_relations = args.get("include_relations", True) is not False
     include_content = args.get("include_content") is True
     limit = _limit(args.get("limit"), _MAX_RESULTS)
+    offset = args.get("offset", 0)
+    offset = offset if isinstance(offset, int) and offset >= 0 else 0
     result: dict[str, Any] = {
         "canvas": {
             "canvas_id": canvas.id,
@@ -211,14 +255,27 @@ async def _canvas_get(db, user_id, args: dict):
     }
     if not include_nodes:
         return result
-    rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit + 1)
-    visible_rows = rows[:limit]
+    total_nodes = await count_canvas_nodes(db, user_id, canvas.id)
+    visible_rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit, offset=offset)
     result["nodes"] = [_node_summary(node, item, include_content=include_content) for item, node in visible_rows]
-    result["truncated"] = len(rows) > limit
+    has_next_page = offset + len(visible_rows) < total_nodes
+    result["pagination"] = {
+        "offset": offset,
+        "limit": limit,
+        "total": total_nodes,
+        "next_offset": offset + limit if has_next_page else None,
+    }
+    result["truncated"] = has_next_page
     if include_relations:
-        node_ids = [node.id for _, node in visible_rows]
-        if node_ids:
-            relations = await list_canvas_relations(db, user_id, node_ids)
+        relations = await list_canvas_relations_for_canvas(db, user_id, canvas.id)
+        node_by_id = {
+            node.id: _node_summary(node, item, include_content=False)
+            for item, node in visible_rows
+        }
+        result["relation_scope"] = "canvas"
+        result["relation_audit_scope"] = "visible_nodes"
+        result["relation_count"] = len(relations)
+        if relations:
             result["relations"] = [
                 {
                     "relation_id": relation.id,
@@ -230,8 +287,13 @@ async def _canvas_get(db, user_id, args: dict):
                 }
                 for relation in relations
             ]
+            result["relation_audit"] = [
+                _relation_anchor_audit(relation, node_by_id, canvas)
+                for relation in relations
+            ]
         else:
             result["relations"] = []
+            result["relation_audit"] = []
     return result
 
 
@@ -324,57 +386,14 @@ def _finite_number(value: Any) -> bool:
 async def _resolve_canvas_position(db, user_id, canvas: Any, node: Any, position: Any) -> tuple[float, float]:
     """把显式世界坐标或语义锚点转换成 MindCanvasItem 的世界坐标。"""
     position = position if isinstance(position, dict) else {}
-    x, y = position.get("x"), position.get("y")
-    if _finite_number(x) and _finite_number(y):
-        return float(x), float(y)
-    anchor = position.get("anchor", "auto")
-    if anchor not in {"auto", "viewport_center", "viewport_top_left", "viewport_top_right", "viewport_bottom_left", "viewport_bottom_right", "near_node"}:
-        raise ValueError("不支持的画布位置锚点")
-    data = _json_object(canvas.data_json)
-    camera = {key: data.get(key) for key in ("x", "y", "scale")}
-    scale = float(camera["scale"]) if _finite_number(camera.get("scale")) and camera["scale"] > 0 else 1.0
-    camera_x = float(camera["x"]) if _finite_number(camera.get("x")) else 0.0
-    camera_y = float(camera["y"]) if _finite_number(camera.get("y")) else 0.0
-    viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else None
-    width = viewport.get("width") if viewport else None
-    height = viewport.get("height") if viewport else None
-    if anchor.startswith("viewport_"):
-        if not (_finite_number(width) and _finite_number(height)):
-            raise ValueError("画布尚未保存视口尺寸，暂时不能按当前视野定位")
-        world_w, world_h = float(width) / scale, float(height) / scale
-        world_x, world_y = -camera_x / scale, -camera_y / scale
-        if anchor.endswith("center"):
-            world_x += world_w / 2 - 110
-            world_y += world_h / 2 - 60
-        elif anchor.endswith("top_right"):
-            world_x += world_w - 240
-            world_y += 24
-        elif anchor.endswith("bottom_left"):
-            world_x += 24
-            world_y += world_h - 144
-        elif anchor.endswith("bottom_right"):
-            world_x += world_w - 240
-            world_y += world_h - 144
-        else:
-            world_x += 24
-            world_y += 24
-        return world_x + float(position.get("offset_x", 0) or 0), world_y + float(position.get("offset_y", 0) or 0)
-    if anchor == "near_node":
+    near_item = None
+    if position.get("anchor") == "near_node":
         near_node_id = position.get("near_node_id")
         if not isinstance(near_node_id, int):
             raise ValueError("near_node 锚点必须提供 near_node_id")
         near_item = await get_canvas_near_item(db, user_id, canvas.id, near_node_id)
-        if near_item is None:
-            raise ValueError("找不到要靠近的画布节点")
-        near_w = near_item.w or 220
-        return float(near_item.x + near_w + _SAFE_EDGE_GAP + (position.get("offset_x", 0) or 0)), float(near_item.y + (position.get("offset_y", 0) or 0))
-    items = await get_canvas_last_item(db, user_id, canvas.id)
-    if items is None:
-        # 空画布：camera 是屏幕偏移量，world = -camera/scale + margin
-        world_x = -camera_x / scale + 40
-        world_y = -camera_y / scale + 40
-        return world_x, world_y
-    return float(items.x + (items.w or 220) + _SAFE_EDGE_GAP), float(items.y)
+    last_item = await get_canvas_last_item(db, user_id, canvas.id) if position.get("anchor", "auto") == "auto" else None
+    return canvas_layout.resolve_position(position, _json_object(canvas.data_json), last_item=last_item, near_item=near_item)
 
 
 async def _canvas_create(db, user_id, args: dict):
@@ -571,10 +590,11 @@ async def _canvas_update_note(db, user_id, args: dict):
     results = []
     try:
         for entry in entries:
-            node_id, version = entry.get("node_id"), entry.get("version")
-            if not isinstance(node_id, int) or not isinstance(version, int):
-                raise ValueError("更新画布便签必须提供 node_id 和 version")
-            if await get_canvas_note(db, user_id, node_id) is None:
+            node_id = entry.get("node_id")
+            if not isinstance(node_id, int):
+                raise ValueError("更新画布便签必须提供 node_id")
+            current = await get_canvas_note(db, user_id, node_id)
+            if current is None:
                 raise ValueError("找不到这条画布便签")
             fields = {}
             if "title" in entry:
@@ -589,9 +609,9 @@ async def _canvas_update_note(db, user_id, args: dict):
                 fields["color"] = validate_note_color(entry["color"])
             if not fields:
                 raise ValueError("至少提供一个要修改的字段")
-            node = await update_canvas_note(db, user_id, node_id, version, fields, commit=False)
+            node = await update_canvas_note(db, user_id, node_id, current.version, fields, commit=False)
             if node is False:
-                raise ValueError("画布便签已被其他端修改，请先重新读取后再更新")
+                raise ValueError("画布便签刚被修改，请稍后重试")
             results.append({"node": _node_summary(node), "updated": True})
     except (TypeError, ValueError) as exc:
         return {"error": str(exc)}
@@ -605,15 +625,13 @@ async def _canvas_delete_note(db, user_id, args: dict):
         return {"error": error}
     checked = []
     for entry in entries:
-        node_id, version = entry.get("node_id"), entry.get("version")
-        if not isinstance(node_id, int) or not isinstance(version, int):
-            return {"error": "删除画布便签必须提供 node_id 和 version"}
+        node_id = entry.get("node_id")
+        if not isinstance(node_id, int):
+            return {"error": "删除画布便签必须提供 node_id"}
         node = await get_canvas_note(db, user_id, node_id)
         if node is None:
             return {"error": "找不到这条画布便签"}
-        if node.version != version:
-            return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
-        checked.append((node_id, version, node))
+        checked.append((node_id, node.version, node))
     if batched:
         message = f"将删除 {len(checked)} 条画布便签，并从画布移除其视图项"
     else:
@@ -625,7 +643,7 @@ async def _canvas_delete_note(db, user_id, args: dict):
     try:
         for node_id, version, _ in checked:
             if not await delete_canvas_note(db, user_id, node_id, version, commit=False):
-                raise ValueError("画布便签已被其他端修改，请先重新读取后再删除")
+                raise ValueError("画布便签刚被修改，请稍后重试")
             results.append({"deleted_node_id": node_id, "can_restore": True})
     except (TypeError, ValueError) as exc:
         return {"error": str(exc)}
@@ -641,17 +659,38 @@ async def _canvas_connect(db, user_id, args: dict):
     if source_id == target_id:
         return {"error": "节点不能连向自己"}
     source_side, target_side = args.get("source_side"), args.get("target_side")
+    allow_custom_anchor = args.get("allow_custom_anchor") is True
     if (source_side is None) != (target_side is None):
         return {"error": "source_side 和 target_side 必须同时提供"}
     if ((source_side is not None and source_side not in {"left", "right"})
             or (target_side is not None and target_side not in {"left", "right"})):
         return {"error": "连接点只能是 left 或 right"}
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    geometry_sides = None
+    source_item = await get_canvas_item_by_node(db, user_id, canvas_id, source_id)
+    target_item = await get_canvas_item_by_node(db, user_id, canvas_id, target_id)
+    source_node = await get_canvas_node(db, user_id, source_id, deleted=False)
+    target_node = await get_canvas_node(db, user_id, target_id, deleted=False)
+    if source_item is not None and target_item is not None and source_node is not None and target_node is not None:
+        geometry_sides = _recommended_relation_sides(
+            _node_summary(source_node, source_item),
+            _node_summary(target_node, target_item),
+        )
+    if source_side is not None and geometry_sides is not None:
+        explicit_sides = (source_side, target_side)
+        if explicit_sides != geometry_sides and not allow_custom_anchor:
+            return {
+                "error": "普通连接的端点与卡片左右位置不一致，请省略 source_side/target_side；"
+                "只有明确的回环或自定义布局才可传 allow_custom_anchor=true"
+            }
     relation, error = await connect_nodes(
         db, user_id, canvas_id, source_id, target_id, args.get("type") or "related", commit=False,
     )
     if error:
         return {"error": error}
-    anchor = relation_anchor_from_canvas(await get_owned_canvas(db, user_id, canvas_id), relation.id)
+    anchor = relation_anchor_from_canvas(canvas, relation.id)
+    before_anchor = anchor
+    anchor_source = "existing" if anchor is not None else None
     if source_side is not None:
         # related 关系可能按节点 id 归一，端点必须跟返回的 source/target 字段保持一致。
         if source_id == relation.src_node_id:
@@ -659,7 +698,29 @@ async def _canvas_connect(db, user_id, args: dict):
         else:
             normalized = (target_side, source_side)
         anchor = await update_relation_anchor(db, user_id, canvas_id, relation, *normalized, commit=False)
-    return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True, **(anchor or {})}
+        anchor_source = "explicit"
+    elif geometry_sides is not None:
+        normalized = geometry_sides if source_id == relation.src_node_id else (geometry_sides[1], geometry_sides[0])
+        anchor = await update_relation_anchor(db, user_id, canvas_id, relation, *normalized, commit=False)
+        anchor_source = "geometry"
+    return {
+        "relation_id": relation.id,
+        "source_node_id": relation.src_node_id,
+        "target_node_id": relation.dst_node_id,
+        "type": relation.rel_type,
+        "created_or_reused": True,
+        "changed": before_anchor != anchor,
+        "anchor_source": anchor_source,
+        "verification": {
+            "checked_node_ids": [source_id, target_id],
+            "checked_relation_id": relation.id,
+            "geometry_recommendation": (
+                {"source_side": geometry_sides[0], "target_side": geometry_sides[1]}
+                if geometry_sides is not None else None
+            ),
+        },
+        **(anchor or {}),
+    }
 
 
 async def _canvas_update_anchor(db, user_id, args: dict):
@@ -669,7 +730,7 @@ async def _canvas_update_anchor(db, user_id, args: dict):
         return {"error": "需要提供 canvas_id 和 relation_id"}
     if source_side not in {"left", "right"} or target_side not in {"left", "right"}:
         return {"error": "source_side 和 target_side 只能是 left 或 right"}
-    relation = await get_canvas_relation(db, user_id, relation_id)
+    relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
     if relation is None:
         return {"error": "关联不存在"}
     anchor = await update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, commit=False)
@@ -680,13 +741,16 @@ async def _canvas_update_anchor(db, user_id, args: dict):
 
 async def _canvas_disconnect(db, user_id, args: dict):
     from agent.security import confirm
+    canvas_id = args.get("canvas_id")
+    if not isinstance(canvas_id, int):
+        return {"error": "需要提供 canvas_id"}
     relation_ids = args.get("relation_ids")
     if relation_ids is not None:
         if not isinstance(relation_ids, list) or not relation_ids or len(relation_ids) > 50:
             return {"error": "relation_ids 必须是 1-50 个关联 id"}
         relations = []
         for relation_id in relation_ids:
-            relation = await get_canvas_relation(db, user_id, relation_id)
+            relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
             if relation is None:
                 return {"error": f"关联 {relation_id} 不存在"}
             relations.append(relation)
@@ -695,19 +759,19 @@ async def _canvas_disconnect(db, user_id, args: dict):
         if blocked is not None:
             return blocked
         for relation in relations:
-            await disconnect_node_relation(db, user_id, relation.id, commit=False)
+            await disconnect_node_relation(db, user_id, relation.id, canvas_id=canvas_id, commit=False)
         await db.commit()
         return {"success": True, "deleted_count": len(relations), "deleted_relation_ids": [r.id for r in relations]}
     relation_id = args.get("relation_id")
     if not isinstance(relation_id, int):
         return {"error": "需要提供 relation_id"}
-    relation = await get_canvas_relation(db, user_id, relation_id)
+    relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
     if relation is None:
         return {"error": "关联不存在"}
     blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
     if blocked is not None:
         return blocked
-    await disconnect_node_relation(db, user_id, relation_id, commit=False)
+    await disconnect_node_relation(db, user_id, relation_id, canvas_id=canvas_id, commit=False)
     return {"deleted_relation_id": relation_id}
 
 
@@ -768,8 +832,14 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_get", label="读取思维画布",
-            description_short='读取画布节点、连接和 viewport；关键字段 canvas_id',
-            description="读取画布节点、连接和最后查看的 camera/viewport；排布时参考节点实际尺寸。",
+            description_short='读取画布节点、连接和 viewport。',
+            description=(
+                "只读读取画布节点、连接和最后查看的 camera/viewport；排布或检查连线时必须参考节点实际尺寸、"
+                "position 和 relation_audit。relation_audit 按两端卡片中心坐标给出 recommended 端点，"
+                "custom 只表示当前端点与默认建议不同，不代表可以直接修改；不要仅凭节点 ID 顺序判断左右。"
+                "节点结果支持 limit/offset 分页；pagination.total/next_offset 表示是否还有节点。"
+                "relations 返回全画布关系，relation_audit_scope=visible_nodes 表示当前页之外的关系端点会标记为 incomplete。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -778,6 +848,7 @@ class MindCanvasSkill(BaseSkill):
                     "include_relations": {"type": "boolean"},
                     "include_content": {"type": "boolean"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "offset": {"type": "integer", "minimum": 0},
                 },
                 "required": ["canvas_id"],
             },
@@ -825,7 +896,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_create", label="创建思维画布",
-            description_short='创建思维画布；关键字段 title/project_id',
+            description_short='创建思维画布。',
             description="按用户明确要求创建一张当前用户自己的思维画布；不能替用户猜测标题或项目。",
             input_schema={
                 "type": "object",
@@ -896,7 +967,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_node", label="调整画布节点",
-            description_short='调整画布节点位置/层级；关键字段 item_id/updates',
+            description_short='调整画布节点位置和层级。',
             description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项传 item_id，批量传 updates；不支持修改 w/h。",
             input_schema={
                 "type": "object",
@@ -913,7 +984,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_remove_node", label="移除画布节点",
-            description_short='移除画布节点视图；关键字段 item_id/item_ids',
+            description_short='移除画布节点视图。',
             description="从指定画布移除一个或多个节点视图，最多 20 个；不会删除项目、文件、活动或画布便签正文。单项调用使用 item_id，批量调用使用 item_ids 数组。",
             input_schema={
                 "type": "object",
@@ -925,12 +996,12 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_note", label="修改画布便签",
-            description_short='修改画布便签；关键字段 node_id/version',
-            description="按 node_id 和 version 修改一个或多个画布专属便签，最多 20 个；不能修改普通时间流 note。单项调用使用 node_id/version，批量调用使用 updates 数组。",
+            description_short='修改画布便签。',
+            description="对一个或多个画布专属便签做字段增量更新，最多 20 个；不能修改普通时间流 note。单项使用 node_id，批量使用 updates。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "integer"}, "version": {"type": "integer"},
+                    "node_id": {"type": "integer"},
                     "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
@@ -943,10 +1014,10 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_delete_note", label="删除画布便签",
             description_short='删除画布便签；执行前需确认',
-            description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项调用使用 node_id/version，批量调用使用 notes 数组。",
+            description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项使用 node_id，批量使用 notes。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer"}, "version": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
                 "required": [],
             },
             handler=_canvas_delete_note,
@@ -955,8 +1026,13 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_connect", label="连接画布节点",
-            description_short='连接同画布节点；可指定 source_side/target_side',
-            description="连接同一画布中的节点；默认 related 且幂等，可指定两端连接点。",
+            description_short='连接同画布节点；按卡片位置选择连接点',
+            description=(
+                "连接同一画布中的节点；默认 related 且幂等。普通连接不要传 source_side/target_side，"
+                "由服务端按两端卡片中心的实际水平位置自动计算并保存，避免模型按节点 ID 或旧快照误判。"
+                "只有用户明确要求回环、同侧端点或修正指定端点时才传这两个字段，并同时传 allow_custom_anchor=true；"
+                "同一个卡片的同一 left/right 端口允许连接多个不同节点；不要为了避免多线而擅自换到另一侧。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -964,6 +1040,7 @@ class MindCanvasSkill(BaseSkill):
                     "target_node_id": {"type": "integer"}, "type": {"type": "string", "enum": ["related"]},
                     "source_side": {"type": "string", "enum": ["left", "right"]},
                     "target_side": {"type": "string", "enum": ["left", "right"]},
+                    "allow_custom_anchor": {"type": "boolean"},
                 },
                 "required": ["canvas_id", "source_node_id", "target_node_id"],
             },
@@ -972,7 +1049,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_anchor", label="调整画布连接点",
-            description_short='修改连接两端；关键字段 relation_id/source_side/target_side',
+            description_short='修改连接两端。',
             description="修改指定画布关系两端使用的连接点。source_side/target_side 分别对应读取结果中的 source_node_id/target_node_id；只改变画布视图，不改变关系语义。",
             input_schema={
                 "type": "object",
@@ -988,12 +1065,12 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_disconnect", label="断开画布连接",
-            description_short='断开画布连接；关键字段 relation_id/relation_ids',
+            description_short='断开画布连接。',
             description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
-                "properties": {"relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
-                "required": [],
+                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": ["canvas_id"],
             },
             handler=_canvas_disconnect,
             mutates=True,
@@ -1012,7 +1089,7 @@ class MindCanvasSkill(BaseSkill):
                         "properties": {
                             "kind": {"type": "string", "enum": ["create_note", "add_node", "update_item", "remove_item", "delete_note", "connect"]},
                             "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)}, "ref_id": {"type": "integer"},
-                            "node_id": {"type": "integer"}, "version": {"type": "integer"},
+                            "node_id": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
                             "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},

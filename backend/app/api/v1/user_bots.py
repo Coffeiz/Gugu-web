@@ -46,6 +46,7 @@ def _out(b: UserBot) -> dict:
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
         "group_message_format": b.group_message_format or "compat",
         "private_message_format": b.private_message_format or "smart",
+        "private_streaming_enabled": bool(b.private_streaming_enabled),
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -141,6 +142,7 @@ class BotUpdate(BaseModel):
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
     private_message_format: str | None = None
+    private_streaming_enabled: bool | None = None
 
 
 @router.put("/{bot_id}")
@@ -193,12 +195,31 @@ async def update_my_bot(
             if value not in {"compat", "smart", "markdown"}:
                 raise HTTPException(400, "无效的 QQ 消息格式")
             setattr(bot, field, value)
+    if body.private_streaming_enabled is not None:
+        bot.private_streaming_enabled = body.private_streaming_enabled
     await db.commit()
     await db.refresh(bot)
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_gateway()
     return _out(bot)
+
+
+@router.delete("/{bot_id}/qq-binding", status_code=204)
+async def unbind_qq_identity(
+    bot_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """解绑 QQ owner 身份，但保留 Bot 凭据和连接。"""
+    bot = await get_owned(db, UserBot, bot_id, current_user.id)
+    if not bot or bot.platform != "qq":
+        raise HTTPException(404, "机器人不存在")
+    bot.owner_platform_user_id = None
+    bot.owner_bound_at = None
+    await db.commit()
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
 
 
 @router.delete("/{bot_id}", status_code=204)

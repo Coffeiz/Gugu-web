@@ -3,11 +3,35 @@ import { ref, computed } from 'vue'
 import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
 import type { components } from '@/types/api'
+import { getLocale } from '@/i18n'
+import { clearGreeting } from '@/composables/useGreeting'
+import { beginAccountBoundary } from '@/utils/accountBoundary'
+import { useUiStore } from './ui'
+import { useLiveStore } from './live'
+import { useFilesCacheStore } from './filesCache'
+import { useProjectStore } from './projects'
+import { useMindStore } from './mind'
+import { onboardingGuideState } from '@/composables/useOnboardingGuide'
+import { onboardingProjectId, onboardingSeedState } from '@/composables/useOnboardingSeed'
 
 type UserResponse = components['schemas']['UserResponse']
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
+
+function resetAccountState() {
+  beginAccountBoundary()
+  clearGreeting()
+  useAudioStore().stop()
+  useUiStore().resetAccountState()
+  useLiveStore().resetAccountState()
+  useFilesCacheStore().resetAccountState()
+  useProjectStore().resetAccountState()
+  useMindStore().resetAccountState()
+  onboardingProjectId.value = null
+  onboardingSeedState.value = null
+  onboardingGuideState.value = null
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
@@ -36,10 +60,12 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password }),
+      credentials: 'include',
+      body: JSON.stringify({ username, email, password, locale: getLocale() }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))
+    resetAccountState()
     _saveToken(body.accessToken)
     _setUser(body.user)
   }
@@ -48,10 +74,12 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ username, password }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '登录失败'))
+    resetAccountState()
     _saveToken(body.accessToken)
     _setUser(body.user)
   }
@@ -60,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       const res = await fetch(`${BASE_URL}/auth/me`, {
+        credentials: 'include',
         headers: { Authorization: `Bearer ${token.value}` },
       })
       // 只有明确的 401 才代表 token 失效。后端短暂 5xx、锁等待或网络中断
@@ -96,7 +125,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    void fetch(`${BASE_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
     useAudioStore().stop()
+    resetAccountState()
     token.value = ''
     user.value  = null
     localStorage.removeItem(TOKEN_KEY)

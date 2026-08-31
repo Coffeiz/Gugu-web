@@ -2,17 +2,17 @@
   <div class="terminals-page">
     <section class="terminals-panel glass-card design-section">
       <div v-if="error && !selected" class="terminal-page-error" role="alert">{{ error }}</div>
-      <div v-if="!enabled" class="terminal-empty">Shell 当前不可用</div>
+      <div v-if="!enabled" class="terminal-empty">{{ t('terminals.unavailable') }}</div>
       <div v-else class="terminal-layout">
         <aside class="terminal-list semantic-group">
           <button v-for="item in terminals" :key="item.id" class="terminal-item" :class="{ active: item.id === selectedId }" @click="select(item.id)">
             <span class="terminal-item-icon"><Icon name="admin.terminal" :size="15" /></span>
-            <span class="terminal-item-copy"><b>{{ item.name }}</b><small>{{ item.source === 'agent' ? '咕咕' : '用户' }} · {{ statusLabel(item.status) }}</small></span>
+            <span class="terminal-item-copy"><b>{{ item.name }}</b><small>{{ item.source === 'agent' ? t('terminals.agentSource') : t('terminals.userSource') }} · {{ statusLabel(item.status) }}</small></span>
             <span class="terminal-status" :class="item.status"></span>
           </button>
           <button class="terminal-add-card" :disabled="!enabled" @click="createTerminal">
             <Icon name="action.add" :size="20" style="opacity:0.5" />
-            <span class="terminal-add-card-text">添加终端</span>
+            <span class="terminal-add-card-text">{{ t('terminals.add') }}</span>
           </button>
         </aside>
         <main class="terminal-main" :class="{ 'is-empty': !selected }">
@@ -20,14 +20,14 @@
             <div class="terminal-title">
               <input v-if="renaming" v-model="renameValue" class="terminal-rename" maxlength="200" @keydown.enter="saveRename" @keydown.esc="cancelRename" />
               <h2 v-else>{{ selected.name }}</h2>
-              <span>{{ selected.mode === 'agent-events' ? '咕咕执行记录' : `${selected.shellMode} · ${selected.networkProfile}` }} · {{ selected.outputChars }} 字符</span>
-              <small v-if="selected.sessionId || selected.runId" class="terminal-associations">会话 {{ selected.sessionId ?? '—' }} · Run {{ selected.runId ?? '—' }}</small>
+              <span>{{ selected.mode === 'agent-events' ? t('terminals.agentEvents') : `${selected.shellMode} · ${selected.networkProfile}` }} · {{ selected.outputChars }} {{ t('terminalUi.characters') }}</span>
+              <small v-if="selected.sessionId || selected.runId" class="terminal-associations">{{ t('terminals.session') }} {{ selected.sessionId ?? '—' }} · Run {{ selected.runId ?? '—' }}</small>
             </div>
             <div class="terminal-actions">
-              <ActionButton v-if="renaming" variant="secondary" fit @click="saveRename">保存</ActionButton>
-              <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">取消</ActionButton>
-              <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />重命名</ActionButton>
-              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.play" :size="14" />开启</ActionButton><ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />重置环境</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
+              <ActionButton v-if="renaming" variant="secondary" fit @click="saveRename">{{ t('terminals.save') }}</ActionButton>
+              <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">{{ t('terminals.cancel') }}</ActionButton>
+              <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />{{ t('terminals.rename') }}</ActionButton>
+              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />{{ t('terminals.stop') }}</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.play" :size="14" />{{ t('terminals.start') }}</ActionButton><ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />{{ t('terminals.reset') }}</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />{{ t('terminals.delete') }}</ActionButton>
             </div>
           </div>
           <KeepAlive>
@@ -42,24 +42,24 @@
             />
           </KeepAlive>
           <div v-if="selected && selected.mode !== 'interactive-pty'" ref="outputRef" class="terminal-output">
-            <div v-if="error" class="terminal-output-error" role="alert">[错误] {{ error }}</div>
+            <div v-if="error" class="terminal-output-error" role="alert">[{{ t('terminalUi.errorLabel') }}] {{ error }}</div>
             <div v-for="event in events" :key="event.localId ?? event.sequence" class="terminal-event" :class="{ 'is-pending': event.state === 'running', 'is-failed': event.state === 'failed' }">
               <div v-if="event.type === 'command'" class="terminal-command"><span>$</span> {{ event.command }}</div>
-              <div v-else class="terminal-command terminal-status-event">终端状态已更新</div>
+              <div v-else class="terminal-command terminal-status-event">{{ t('terminals.statusUpdated') }}</div>
               <pre v-if="event.stdout">{{ event.stdout }}</pre>
               <pre v-if="event.stderr" class="stderr">{{ event.stderr }}</pre>
-              <small v-if="event.state === 'running'" class="terminal-event-state">执行中… <button v-if="event.runId" class="terminal-cancel" type="button" @click="cancelEvent(event)">停止</button></small>
-              <small v-else-if="event.state === 'cancelled'" class="terminal-event-state">已取消 · {{ formatTime(event.occurredAt) }}</small>
-              <small v-else-if="event.state === 'failed'" class="terminal-event-state">执行失败 · {{ formatTime(event.occurredAt) }}</small>
-              <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? '已完成' : '执行失败' }} · {{ formatTime(event.occurredAt) }}</span><span v-if="event.exitCode !== null" class="terminal-exit-code">退出码 {{ event.exitCode }}</span></small>
-              <small v-else>状态更新 · {{ formatTime(event.occurredAt) }}</small>
+              <small v-if="event.state === 'running'" class="terminal-event-state">{{ t('terminals.running') }} <button v-if="event.runId" class="terminal-cancel" type="button" @click="cancelEvent(event)">{{ t('terminals.stop') }}</button></small>
+              <small v-else-if="event.state === 'cancelled'" class="terminal-event-state">{{ t('terminals.cancelled') }} · {{ formatTime(event.occurredAt) }}</small>
+              <small v-else-if="event.state === 'failed'" class="terminal-event-state">{{ t('terminals.failed') }} · {{ formatTime(event.occurredAt) }}</small>
+              <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? t('terminals.completed') : t('terminals.failed') }} · {{ formatTime(event.occurredAt) }}</span><span v-if="event.exitCode !== null" class="terminal-exit-code">{{ event.exitCode }}</span></small>
+              <small v-else>{{ t('terminals.stateUpdated') }} · {{ formatTime(event.occurredAt) }}</small>
             </div>
-            <div v-if="!events.length && !error" class="terminal-output-empty">等待终端输出</div>
+            <div v-if="!events.length && !error" class="terminal-output-empty">{{ t('terminals.waitingOutput') }}</div>
           </div>
-          <div v-else-if="!selected" class="terminal-empty">选择一个终端开始查看</div>
+          <div v-else-if="!selected" class="terminal-empty">{{ t('terminals.select') }}</div>
           <form v-if="selected && selected.mode === 'agent-events' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
-            <input ref="commandInput" v-model="command" placeholder="输入受控 Shell 命令" autocomplete="off" />
-            <ActionButton fit type="submit" :disabled="!command.trim()"><Icon name="action.send" :size="14" />执行</ActionButton>
+            <input ref="commandInput" v-model="command" :placeholder="t('terminals.commandPlaceholder')" autocomplete="off" />
+            <ActionButton fit type="submit" :disabled="!command.trim()"><Icon name="action.send" :size="14" />{{ t('terminals.execute') }}</ActionButton>
           </form>
         </main>
       </div>
@@ -77,6 +77,8 @@ import { replaceOrAppendTerminalEvent, type TerminalEventView } from './terminal
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
+import { useI18n } from 'vue-i18n'
+import router from '@/router'
 
 const terminals = ref<TerminalItem[]>([])
 const selectedId = ref<string | null>(null)
@@ -93,6 +95,7 @@ let streamGeneration = 0
 let eventsAbortController: AbortController | null = null
 const route = useRoute()
 const live = useLiveStore()
+const { t, locale } = useI18n()
 
 const selected = computed(() => terminals.value.find(item => item.id === selectedId.value) ?? null)
 
@@ -112,11 +115,21 @@ async function load(options: { autoOpen?: boolean } = {}) {
         if (index >= 0) terminals.value[index] = reopened
         bumpPtyRevision(current.id)
       } catch (cause) {
-        error.value = cause instanceof Error ? cause.message : '终端自动开启失败'
+        error.value = cause instanceof Error ? cause.message : t('terminalUi.autoStartError')
       }
     }
     if (selectedId.value) await loadEvents(selectedId.value, true)
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端读取失败' }
+  } catch (cause) {
+    const status = (cause as { status?: number }).status
+    if (status === 401 || status === 403) {
+      enabled.value = false
+      terminals.value = []
+      selectedId.value = null
+      await router.replace('/projects')
+      return
+    }
+    error.value = cause instanceof Error ? cause.message : t('terminalUi.readError')
+  }
 }
 
 async function loadEvents(id: string, reset = false, controller?: AbortController) {
@@ -142,7 +155,7 @@ async function loadEvents(id: string, reset = false, controller?: AbortControlle
     await loadEvents(id, false, activeController)
   } catch (cause) {
     if (activeController.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return
-    if (generation === streamGeneration && id === selectedId.value) error.value = cause instanceof Error ? cause.message : '终端事件读取失败'
+    if (generation === streamGeneration && id === selectedId.value) error.value = cause instanceof Error ? cause.message : t('terminalUi.eventsError')
   }
 }
 
@@ -212,7 +225,7 @@ async function saveRename() {
     const index = terminals.value.findIndex(value => value.id === item.id)
     if (index >= 0) terminals.value[index] = item
     cancelRename()
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端重命名失败' }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.renameError') }
 }
 async function submitCommand() {
   if (!selected.value || !command.value.trim() || selected.value.status === 'terminated' || selected.value.status === 'exited') return
@@ -239,8 +252,8 @@ async function submitCommand() {
     // 否则会清空输出列表并让终端内容短暂闪空。
   } catch (cause) {
     const pendingIndex = events.value.findIndex(item => item.localId === pending.localId)
-    if (pendingIndex >= 0) events.value[pendingIndex] = { ...events.value[pendingIndex], state: 'failed', stderr: '命令提交失败' }
-    error.value = cause instanceof Error ? cause.message : '命令执行失败'
+    if (pendingIndex >= 0) events.value[pendingIndex] = { ...events.value[pendingIndex], state: 'failed', stderr: t('terminals.commandSubmitFailed') }
+    error.value = cause instanceof Error ? cause.message : t('terminals.commandFailed')
     if (!command.value) command.value = submittedCommand
   }
   finally {
@@ -254,11 +267,11 @@ async function cancelEvent(event: TerminalEventView) {
   try {
     await terminalsApi.cancel(selected.value.id, event.runId)
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '命令取消失败'
+    error.value = cause instanceof Error ? cause.message : t('terminalUi.cancelError')
   }
 }
 async function createTerminal() {
-  try { const item = await terminalsApi.create({ name: `终端 ${terminals.value.length + 1}`, mode: 'interactive-pty' }); terminals.value.unshift(item); select(item.id) } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端创建失败' }
+  try { const item = await terminalsApi.create({ name: t('terminalUi.defaultName', { number: terminals.value.length + 1 }), mode: 'interactive-pty' }); terminals.value.unshift(item); select(item.id) } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminalUi.createError') }
 }
 async function terminate() { if (selected.value) { await terminalsApi.terminate(selected.value.id); await load() } }
 async function reopenTerminal() {
@@ -270,16 +283,16 @@ async function reopenTerminal() {
     // 同一 xterm 实例复用时显式重启连接；后端会重新创建 PTY 并发送 ready。
     bumpPtyRevision(item.id)
     updateTerminalStatus(item.id, 'running')
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端开启失败' }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.startError') }
 }
 async function resetSelected() {
   if (!selected.value) return
   const target = selected.value
   if (!await confirmDialog({
-    title: '重置终端环境',
-    message: `重建终端“${target.name}”的沙盒环境？容器内未持久化内容将丢失，但 /workspace 文件和输出历史会保留。`,
+    title: t('terminals.resetTitle'),
+    message: t('terminals.resetMessage', { name: target.name }),
     tone: 'danger',
-    confirmText: '重置环境',
+    confirmText: t('terminals.reset'),
   })) return
   error.value = ''
   try {
@@ -287,24 +300,24 @@ async function resetSelected() {
     const index = terminals.value.findIndex(value => value.id === item.id)
     if (index >= 0) terminals.value[index] = item
     bumpPtyRevision(item.id)
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端环境重置失败' }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.resetError') }
 }
 async function deleteSelected() {
   if (!selected.value) return
   const target = selected.value
   if (!await confirmDialog({
-    title: '删除终端',
-    message: `永久删除终端“${target.name}”及其输出？此操作不可恢复。`,
+    title: t('terminals.deleteTitle'),
+    message: t('terminals.deleteMessage', { name: target.name }),
     tone: 'danger',
-    confirmText: '删除终端',
+    confirmText: t('terminals.delete'),
   })) return
   try {
     await terminalsApi.delete(target.id)
     await load()
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端删除失败' }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminals.deleteError') }
 }
-function statusLabel(status: string) { return ({ idle: '空闲', running: '运行中', waiting_confirm: '等待确认', exited: '已退出', failed: '异常', terminated: '已停止' } as Record<string, string>)[status] ?? status }
-function formatTime(value: string) { return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+function statusLabel(status: string) { return t(`terminals.statuses.${status}`, status) }
+function formatTime(value: string) { return new Date(value).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
 let closingCurrentTerminal = false
 function closeCurrentTerminal() {
   const current = selected.value
@@ -380,7 +393,7 @@ onUnmounted(() => {
 .terminal-add-card:disabled { cursor:not-allowed; opacity:.5; }
 .terminal-add-card-text { font-size:12px; font-weight:600; }
 .terminal-associations { color:var(--content-tertiary); font-size:10px; }
-.terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow), inset 0 1px 0 var(--design-section-highlight); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
+.terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
 .terminal-list.semantic-group { padding:var(--space-lg); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; }
 .terminal-actions :deep(.app-action-button) { min-height:var(--control-height-sm); padding:0 var(--space-sm); border-color:transparent; background:transparent; color:var(--content-secondary); box-shadow:none; transform:none; }
 .terminal-actions :deep(.app-action-button:hover:not(:disabled)) { border-color:transparent; background:var(--surface-soft); color:var(--content-primary); box-shadow:none; transform:none; }

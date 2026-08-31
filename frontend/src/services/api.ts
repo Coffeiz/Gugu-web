@@ -3,6 +3,7 @@
  * 所有请求统一走这里，自动附加 user Bearer token
  */
 import type { components } from '@/types/api'
+import { getLocale, i18n, type SupportedLocale } from '@/i18n'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -11,6 +12,18 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 export function getToken(): string {
   return localStorage.getItem('user_token') ?? ''
+}
+
+export function getCookieValue(name: string): string {
+  if (typeof document === 'undefined') return ''
+  const prefix = `${encodeURIComponent(name)}=`
+  const item = document.cookie.split('; ').find(value => value.startsWith(prefix))
+  return item ? decodeURIComponent(item.slice(prefix.length)) : ''
+}
+
+export function getCsrfHeaders(cookieName = 'gugu_user_csrf_token'): Record<string, string> {
+  const token = getCookieValue(cookieName)
+  return token ? { 'X-CSRF-Token': token } : {}
 }
 
 // 本标签页的 client-id：每次写操作作为 X-Client-Id 头发给后端，后端把它塞进 SSE 事件的 origin。
@@ -26,10 +39,13 @@ export const CLIENT_ID: string =
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
                                 signal?: AbortSignal): Promise<T> {
   const token = getToken()
-  const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
+  const headers: Record<string, string> = {
+    'X-Client-Id': CLIENT_ID,
+    ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? {} : getCsrfHeaders()),
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const opts: RequestInit = { method, headers, signal }
+  const opts: RequestInit = { method, headers, signal, credentials: 'include' }
   if (body !== null) {
     if (isForm) {
       opts.body = body
@@ -46,16 +62,20 @@ async function request<T = any>(method: string, path: string, body: any = null, 
     if (res.status === 401) {
       localStorage.removeItem('user_token')
       window.location.href = '/login'
-      throw new Error('请重新登录')
+      throw new Error(i18n.global.t('errors.loginRequired'))
     }
     const err = await res.json().catch(() => ({}))
     const d = err.detail
-    const msg = !d ? `HTTP ${res.status}`
+    const msg = !d ? i18n.global.t('errors.http', { status: res.status })
       : typeof d === 'string' ? d
       : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
-      : `HTTP ${res.status}`
-    const apiErr = new Error(msg) as Error & { status?: number }
+      : i18n.global.t('errors.http', { status: res.status })
+    const apiErr = new Error(msg) as Error & { status?: number; code?: string; params?: Record<string, unknown> }
     apiErr.status = res.status
+    if (d && typeof d === 'object' && !Array.isArray(d)) {
+      if (typeof (d as any).code === 'string') apiErr.code = (d as any).code
+      if ((d as any).params && typeof (d as any).params === 'object') apiErr.params = (d as any).params
+    }
     throw apiErr
   }
 
@@ -74,9 +94,12 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${BASE_URL}${path}`)
+    xhr.withCredentials = true
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
+    const csrf = getCsrfHeaders()
+    if (csrf['X-CSRF-Token']) xhr.setRequestHeader('X-CSRF-Token', csrf['X-CSRF-Token'])
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total)
     }
@@ -86,15 +109,15 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
       } else {
         try {
           const d = JSON.parse(xhr.responseText).detail
-          const msg = !d ? `HTTP ${xhr.status}`
+          const msg = !d ? i18n.global.t('errors.http', { status: xhr.status })
             : typeof d === 'string' ? d
             : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
-            : `HTTP ${xhr.status}`
+            : i18n.global.t('errors.http', { status: xhr.status })
           reject(new Error(msg))
-        } catch { reject(new Error(`HTTP ${xhr.status}`)) }
+        } catch { reject(new Error(i18n.global.t('errors.http', { status: xhr.status }))) }
       }
     }
-    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
     xhr.send(form)
   })
 }
@@ -109,9 +132,9 @@ export function uploadDirectWithProgress(url: string, file: File, onProgress: (p
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve()
-      else reject(new Error(`OSS 直传失败: HTTP ${xhr.status}`))
+      else reject(new Error(i18n.global.t('errors.http', { status: xhr.status })))
     }
-    xhr.onerror = () => reject(new Error('网络错误'))
+    xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
     xhr.send(file)
   })
 }
@@ -182,8 +205,10 @@ export const filesApi = {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/batch-download`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...getCsrfHeaders(),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ ids, folderIds }),
@@ -209,7 +234,8 @@ export const filesApi = {
   download: async (id: number, filename: string) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/download`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const blob = await res.blob()
@@ -348,6 +374,7 @@ export interface MindCanvasItem {
 }
 export interface MindRelation {
   id: number
+  canvasId: number | null
   srcNodeId: number
   dstNodeId: number
   relType: 'related'
@@ -393,9 +420,9 @@ export const mindApi = {
     post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data),
   removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
   listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
-  createRelation: (srcNodeId: number, dstNodeId: number, allowParallel = false) =>
-    post<MindRelation>('/mind/relations', { srcNodeId, dstNodeId, allowParallel }),
-  deleteRelation: (id: number) => del(`/mind/relations/${id}`),
+  createRelation: (canvasId: number, srcNodeId: number, dstNodeId: number, allowParallel = false) =>
+    post<MindRelation>('/mind/relations', { canvasId, srcNodeId, dstNodeId, allowParallel }),
+  deleteRelation: (canvasId: number, id: number) => del(`/mind/canvases/${canvasId}/relations/${id}`),
   createRefNode: (refType: 'project' | 'file' | 'event', refId: number) =>
     post<MindNote>('/mind/nodes/ref', { refType, refId }),
 }
@@ -479,6 +506,15 @@ export const workspacesApi = {
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
   bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
+}
+
+export type TerminalAccessStatus = Awaited<ReturnType<typeof workspacesApi.status>>
+
+/** 终端入口与后端 page_access 保持同一套 Shell 能力判定。 */
+export function canAccessTerminals(status: TerminalAccessStatus): boolean {
+  return status.globalEnabled && (
+    status.userEnabled || (status.systemGlobalEnabled && status.userSystemEnabled)
+  )
 }
 
 export type TerminalItem = {
@@ -575,7 +611,7 @@ export const agentApi = {
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
-  greeting:        ()                  => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
+  greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
   cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
@@ -598,12 +634,10 @@ export const agentApi = {
 
 export const onboardingApi = {
   getState:  ()             => get('/onboarding/state'),
-  claim:     (key: string)  => post(`/onboarding/claim/${key}`),
-  // demo（作用于当前用户自己）
-  devPools:  ()             => get('/onboarding/dev/pools'),
-  devFire:   (key: string)  => post(`/onboarding/dev/fire/${key}`),
-  devReset:  ()             => post('/onboarding/dev/reset'),
+  updateState: (patch: Record<string, unknown>) => request('PATCH', '/onboarding/state', patch),
+  reopen:     ()             => post('/onboarding/state/reopen'),
   devReseed: ()             => post('/onboarding/dev/reseed'),
+  devResetGuide: ()         => post('/onboarding/dev/reset-guide'),
 }
 
 export const trackApi = {
@@ -637,6 +671,7 @@ export const userBotsApi = {
   create: (body: any)            => request('POST',   '/me/bots', body),
   update: (id: number, body: any) => request('PUT',    `/me/bots/${id}`, body),
   remove: (id: number)           => request('DELETE', `/me/bots/${id}`),
+  unbindQqIdentity: (id: number) => request('DELETE', `/me/bots/${id}/qq-binding`),
   createQqBindingCode: (id: number) => request('POST', `/me/bots/${id}/qq-binding-code`),
 }
 

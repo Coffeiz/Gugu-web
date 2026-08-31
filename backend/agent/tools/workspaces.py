@@ -6,54 +6,22 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
-
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
-from app.models import ConversationSession, Folder, Project, Workspace
 from app.services.workspaces import (
     create_workspace,
     delete_workspace,
     get_workspace,
+    list_workspaces_for_management,
     update_workspace,
+    workspace_payload,
 )
-
-
-async def _workspace_payload(db, user_id, row: Workspace) -> dict:
-    """构造稳定的、带命名空间字段的工具结果。"""
-    count = await db.scalar(
-        select(func.count(ConversationSession.id)).where(
-            ConversationSession.user_id == user_id,
-            ConversationSession.workspace_id == row.id,
-        )
-    )
-    result = {
-        "workspace_id": row.id,
-        "name": row.name,
-        "kind": row.kind,
-        "enabled": row.enabled,
-        "is_default": row.is_default,
-        "bound_session_count": int(count or 0),
-        "project_id": row.project_id,
-        "folder_id": row.folder_id,
-    }
-    if row.project_id is not None:
-        project = await db.scalar(select(Project).where(Project.id == row.project_id, Project.user_id == user_id))
-        result["project_name"] = project.name if project else None
-    if row.folder_id is not None:
-        folder = await db.scalar(select(Folder).where(Folder.id == row.folder_id, Folder.user_id == user_id))
-        result["folder_name"] = folder.name if folder else None
-    return result
 
 
 async def _list_workspaces(db, user_id, args: dict):
     """列出当前用户的全部工作区（包括停用项，便于完整 CRUD 管理）。"""
-    result = await db.execute(
-        select(Workspace).where(Workspace.user_id == user_id).order_by(
-            Workspace.updated_at.desc(), Workspace.id.desc()
-        )
-    )
-    return [await _workspace_payload(db, user_id, row) for row in result.scalars().all()]
+    rows = await list_workspaces_for_management(db, user_id)
+    return [await workspace_payload(db, user_id, row) for row in rows]
 
 
 async def _get_workspace(db, user_id, args: dict):
@@ -61,7 +29,7 @@ async def _get_workspace(db, user_id, args: dict):
     row = await get_workspace(db, user_id, workspace_id)
     if row is None:
         return {"error": "工作区不存在；workspace_id 不是 project_id 或 folder_id"}
-    return await _workspace_payload(db, user_id, row)
+    return await workspace_payload(db, user_id, row)
 
 
 async def _create_workspace(db, user_id, args: dict):
@@ -81,7 +49,7 @@ async def _create_workspace(db, user_id, args: dict):
         )
     except ValueError as exc:
         return {"error": str(exc)}
-    return {"success": True, "workspace": await _workspace_payload(db, user_id, row)}
+    return {"success": True, "workspace": await workspace_payload(db, user_id, row)}
 
 
 async def _update_workspace(db, user_id, args: dict):
@@ -94,7 +62,7 @@ async def _update_workspace(db, user_id, args: dict):
         )
     except (LookupError, ValueError) as exc:
         return {"error": str(exc)}
-    return {"success": True, "workspace": await _workspace_payload(db, user_id, row)}
+    return {"success": True, "workspace": await workspace_payload(db, user_id, row)}
 
 
 async def _delete_workspace(db, user_id, args: dict):
@@ -125,7 +93,7 @@ class WorkspacesSkill(BaseSkill):
         ),
         Tool(
             name="get_workspace", label="查看工作区",
-            description_short="查看工作区详情；关键字段 workspace_id",
+            description_short="查看工作区详情。",
             description="查看一个工作区及其项目/文件夹绑定；workspace_id 不能当作 project_id 使用。",
             input_schema={
                 "type": "object", "properties": {
@@ -155,7 +123,7 @@ class WorkspacesSkill(BaseSkill):
         ),
         Tool(
             name="update_workspace", label="更新工作区",
-            description_short="更新工作区；关键字段 workspace_id/name/enabled",
+            description_short="更新工作区。",
             description="修改工作区名称或启用状态，不改变项目/文件夹绑定。",
             input_schema={
                 "type": "object", "properties": {
@@ -167,7 +135,7 @@ class WorkspacesSkill(BaseSkill):
         ),
         Tool(
             name="delete_workspace", label="删除工作区",
-            description_short="删除工作区；关键字段 workspace_id，执行前确认",
+            description_short="删除工作区，执行前确认。",
             description="删除工作区声明并解除会话绑定，不删除项目、文件夹或文件；执行前需确认。",
             input_schema={
                 "type": "object", "properties": {

@@ -57,6 +57,29 @@ async def test_credentials_are_isolated_by_user(db, user_a, user_b, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_master_key_status_is_scoped_to_user_and_empty_users_are_ready(db, user_a, user_b, monkeypatch):
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("a"))
+    db.add(UserProviderCredential(
+        user_id=user_b.id,
+        provider="test-provider",
+        capability="llm",
+        encrypted_value="not-a-valid-envelope",
+        nonce="nonce",
+        encrypted_data_key="wrapped-key",
+    ))
+    await db.commit()
+
+    assert service.master_key_status_for_credentials(await service.list_credentials(db, user_a.id)) == "ready"
+    assert service.master_key_status_for_credentials(await service.list_credentials(db, user_b.id)) == "needs_reconfigure"
+
+
+def test_master_key_status_does_not_require_key_without_credentials(monkeypatch):
+    monkeypatch.delenv("CREDENTIALS_MASTER_KEY", raising=False)
+    assert service.master_key_status_for_credentials([]) == "ready"
+
+
+@pytest.mark.asyncio
 async def test_decrypt_failure_does_not_fall_back_to_platform_config(db, user_a, monkeypatch):
     row = SimpleNamespace(
         provider="user-provider", api_format="openai", base_url="", model="user-model",

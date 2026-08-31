@@ -198,6 +198,8 @@ async def load_style_prefs(db, user_id) -> dict:
     data = prefs.data
     from app.services.personality_preferences import read_personality_file, preference_revision
     result = {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}
+    if data.get("locale") in {"zh-CN", "ja-JP", "en-US"}:
+        result["locale"] = data["locale"]
     personality = read_personality_file(user_id) if data.get("personality_preference_enabled", False) else None
     if personality:
         result["personality_preference"] = personality

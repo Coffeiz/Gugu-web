@@ -10,7 +10,7 @@
         :aria-live="currentToast.kind === 'error' ? 'assertive' : 'polite'"
       >
         <span class="app-toast__message">{{ currentToast.message }}</span>
-        <button class="app-toast__close" type="button" title="关闭提示" aria-label="关闭提示" @click="dismissAppToast">
+      <button class="app-toast__close" type="button" :title="t('common.actions.close')" :aria-label="t('common.actions.close')" @click="dismissAppToast">
           <Icon name="action.close" :size="14" />
         </button>
       </div>
@@ -21,8 +21,10 @@
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
 import { useAppToast } from '@/composables/useAppToast'
+import { useI18n } from 'vue-i18n'
 
 const { currentToast, dismissAppToast } = useAppToast()
+const { t } = useI18n()
 </script>
 
 <style scoped>

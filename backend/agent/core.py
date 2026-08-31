@@ -14,6 +14,7 @@ import json
 import logging
 import random
 import re as _re_mod
+from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
@@ -22,7 +23,9 @@ from agent import loop_drivers
 from agent.tools import registry
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
+from app.core.tz import now_utc
 from agent.interactions.stream_events import encode_event
+from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_name
 
 _log = logging.getLogger("agent.core")
 
@@ -156,6 +159,10 @@ MAX_VERIFY = 5
 # 最后一轮核实允许模型在完成最后一次查询后输出收束文本。
 MAX_VERIFY_LLM_ROUNDS = MAX_VERIFY + 1
 _TOOL_BUDGET_EXHAUSTED = "工具调用额度已用完。请不要再调用工具，直接根据已经获得的结果回复用户。"
+_TOOL_BUDGET_STOP_PROMPT = (
+    "用户选择不继续执行超出工具额度的请求。请不要再调用工具，"
+    "直接根据已经获得的结果，清楚说明已完成内容和未执行内容。"
+)
 
 
 def _goal_mode_enabled(session: Any) -> bool:
@@ -174,6 +181,16 @@ def _unlimited_mode_enabled(session: Any) -> bool:
     context = getattr(session, "session_context", None)
     if not isinstance(context, dict):
         return False
+    until = context.get("tool_budget_unlimited_until")
+    if isinstance(until, str):
+        try:
+            expires_at = datetime.fromisoformat(until.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at > now_utc():
+                return True
+        except ValueError:
+            pass
     # 兼容旧版本把 /unlimited 错写进 goal_mode 的状态，但只在没有目标正文时视为旧无限模式。
     return bool(context.get("unlimited_mode") or (context.get("goal_mode") and not context.get("goal_text")))
 
@@ -883,7 +900,7 @@ class LLMRunner:
                 import anthropic
                 busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
                 detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError' if not busy else 'chatUi.networkError'}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
@@ -927,13 +944,23 @@ class LLMRunner:
                          f"format={driver.api_format}", e)
                 _log.error("LLM 调用中途出错：%s", type(e).__name__)
                 detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError'}, ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
             total_out += result.usage_out
             total_cache += result.cache_tokens
             run_context_usage = max(run_context_usage, _provider_context_usage(driver, result))
+            # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
+            # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
+            yield stream_event(
+                "_provider_usage",
+                round_id=round_id,
+                input=int(result.usage_in or 0),
+                context_input=int(_provider_context_usage(driver, result) or 0),
+                output=int(result.usage_out or 0),
+                cache_read=int(result.cache_tokens or 0),
+            )
 
             _requires_tools = result.requires_tools
             if _requires_tools is None:
@@ -970,15 +997,98 @@ class LLMRunner:
                     remaining_tool_calls is not None
                     and len(result.tool_calls) > remaining_tool_calls
                 )
+                tool_budget_stop_requested = False
+                if tool_budget_exceeded:
+                    # 先暂停整批待执行请求，再询问用户。不能先把超额调用写成
+                    # skipped 的工具结果，否则用户点击继续后模型会误以为请求已经失败，
+                    # 直接输出最终报告。
+                    _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
+                    from app.services.interactions import create_tool_budget_prompt
+                    interaction = await create_tool_budget_prompt(user_id=user_id, session_id=session_id)
+                    if interaction is None:
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
+                        return
+                    prompt, options = interaction
+                    yield stream_event(
+                        "interaction_required",
+                        round_id=round_id,
+                        prompt_id=prompt.id,
+                        kind=prompt.kind,
+                        title=prompt.title,
+                        body=prompt.body,
+                        options=options,
+                        expires_at=prompt.expires_at.isoformat(),
+                        force_display=True,
+                    )
+                    from app.services.interactions import wait_for_resolution
+                    answer = await wait_for_resolution(
+                        user_id=user_id,
+                        prompt_id=prompt.id,
+                        heartbeat=lambda: genstream.touch(session_id),
+                        cancel_check=lambda: _im_cancelled(session_id),
+                    )
+                    if (
+                        isinstance(answer, dict)
+                        and answer.get("status") == "cancelled"
+                        and answer.get("option_id") != "cancel"
+                    ):
+                        yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                        return
+                    if answer is None:
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
+                        return
+                    if answer.get("option_id") == "continue":
+                        # 继续执行同一批原始 tool call，不重新交给模型判断是否总结。
+                        unlimited_mode = True
+                        remaining_tool_calls = None
+                        tool_budget_exceeded = False
+                    else:
+                        # 拒绝时阻止这整批尚未执行的请求，并让模型在无工具模式下
+                        # 基于已取得的结果生成说明，而不是静默结束。
+                        tool_budget_stop_requested = True
+                        remaining_tool_calls = 0
+                        tool_budget_exceeded = False
+                        driver.update_tools(ctx, [])
                 for call_index, tc in enumerate(result.tool_calls):
                     adapter_target = None
-                    if tc.name == "call_tool" and isinstance(tc.input, dict):
-                        adapter_target = str(tc.input.get("name") or "").strip() or None
-                    effective_tool_name = adapter_target or tc.name
+                    protocol_error = None
+                    raw_call_name = getattr(tc, "name", None)
+                    if not isinstance(raw_call_name, str):
+                        protocol_error = invalid_tool_call_payload()
+                    elif raw_call_name == "call_tool" and isinstance(tc.input, dict):
+                        raw_target_name = tc.input.get("name")
+                        if raw_target_name is not None and normalize_tool_name(raw_target_name) is None:
+                            protocol_error = invalid_tool_call_payload(
+                                reason="call_tool.name 必须是字符串"
+                            )
+                        else:
+                            adapter_target = normalize_tool_name(raw_target_name)
+                            if adapter_target:
+                                # 固定 Adapter 为了兼容旧模型允许扁平参数，但不能把只有
+                                # name 的调用静默降级成目标工具的空对象，否则错误会伪装成
+                                # 业务 Schema 缺字段，也会诱发模型重复发送同一个空调用。
+                                has_arguments = "arguments" in tc.input
+                                has_flattened_arguments = any(key != "name" for key in tc.input)
+                                if not has_arguments and not has_flattened_arguments:
+                                    protocol_error = invalid_tool_call_payload(
+                                        path="arguments",
+                                        rule="required",
+                                        reason="call_tool.arguments 是必填字段",
+                                    )
+                                elif has_arguments and not isinstance(tc.input.get("arguments"), dict):
+                                    protocol_error = invalid_tool_call_payload(
+                                        path="arguments",
+                                        reason="call_tool.arguments 必须是 JSON object",
+                                    )
+                    effective_tool_name = adapter_target or (
+                        raw_call_name if isinstance(raw_call_name, str) else "invalid_tool_call"
+                    )
                     label = self._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label
-                    if remaining_tool_calls is not None and call_index >= remaining_tool_calls:
+                    if tool_budget_stop_requested or (
+                        remaining_tool_calls is not None and call_index >= remaining_tool_calls
+                    ):
                         # 仍然为 provider 的每个 tool call 补一个结果，避免留下孤儿 tool_call；
                         # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
@@ -991,6 +1101,21 @@ class LLMRunner:
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
                     tool_calls_used += 1
+                    if protocol_error is not None:
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                        yield stream_event(
+                            "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, input={}, verify=verify_mode,
+                            status="invalid",
+                        )
+                        protocol_result = json.dumps(protocol_error, ensure_ascii=False)
+                        yield stream_event(
+                            "tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, verify=verify_mode,
+                            status="error", result=protocol_result,
+                        )
+                        dispatched.append((tc, protocol_result))
+                        continue
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
                         # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
@@ -1154,7 +1279,14 @@ class LLMRunner:
                 from agent.context.assembly import NewMessageBatch
                 from agent.context.canonical_tool_history import canonical_tool_round
 
-                provider_round = driver.build_tool_round(result, dispatched)
+                # 工具结果里的图片块只能发给明确支持视觉输入的本轮模型。不能只看
+                # 工具本身是否成功，否则 GLM 等文本模型会收到 image_url 并被 provider
+                # 以 400 拒绝，导致工具结果已经返回却无法继续对话。
+                from agent import providers
+                allow_tool_images = bool(providers.capability_snapshot(ai).get("vision", False))
+                provider_round = driver.build_tool_round(
+                    result, dispatched, allow_images=allow_tool_images,
+                )
                 batch = NewMessageBatch.from_canonical_messages(
                     canonical_tool_round(result, dispatched),
                     provider_messages=provider_round,
@@ -1281,49 +1413,12 @@ class LLMRunner:
                             yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
-                if tool_budget_exceeded:
-                    _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
-                    from app.services.interactions import create_tool_budget_prompt
-                    interaction = await create_tool_budget_prompt(user_id=user_id, session_id=session_id)
-                    if interaction is not None:
-                        prompt, options = interaction
-                        yield stream_event(
-                            "interaction_required",
-                            round_id=round_id,
-                            prompt_id=prompt.id,
-                            kind=prompt.kind,
-                            title=prompt.title,
-                            body=prompt.body,
-                            options=options,
-                            expires_at=prompt.expires_at.isoformat(),
-                            force_display=True,
-                        )
-                        from app.services.interactions import wait_for_resolution
-                        answer = await wait_for_resolution(
-                            user_id=user_id,
-                            prompt_id=prompt.id,
-                            heartbeat=lambda: genstream.touch(session_id),
-                            cancel_check=lambda: _im_cancelled(session_id),
-                        )
-                        if isinstance(answer, dict) and answer.get("status") == "cancelled":
-                            yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
-                            return
-                        if answer is None:
-                            yield f"data: {json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
-                            return
-                        if answer.get("option_id") == "continue":
-                            # 继续只解除当前 run 的工具上限；session 中的持久状态由
-                            # interaction service 根据动作上下文维护，二者都必须生效。
-                            unlimited_mode = True
-                            yield stream_event(
-                                "_new_round",
-                                round_id=round_id,
-                                next_round=round_number + 1,
-                            )
-                            continue
-                    else:
-                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
-                    return
+                if tool_budget_stop_requested:
+                    messages.append_batch(driver.build_followup(
+                        result, _TOOL_BUDGET_STOP_PROMPT,
+                    ))
+                    yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                    continue
                 # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
                 # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
                 if did_mutate and verify_count < MAX_VERIFY:

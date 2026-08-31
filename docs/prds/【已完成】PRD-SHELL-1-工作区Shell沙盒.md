@@ -402,7 +402,7 @@ shell_allowed = settings.agent.shell_enabled and is_local_admin(request)
 
 要求：
 
-- `shell_enabled` 默认值为 `false`；
+- `shell_enabled` 默认值为 `true`，允许使用受沙盒隔离的 Shell 工具；
 - Admin 关闭后立即停止新调用；
 - 工具注册和 dispatch 都必须检查开关；
 - 关闭时用户页面不显示 Shell 相关设置；
@@ -714,7 +714,7 @@ backend/tests/test_workspace_binding.py
 
 ### Phase 0：权限与契约冻结
 
-- [x] 增加 Admin `shell_enabled` 总开关，默认 `false`（配置模型、Admin 行为配置页已接入）。
+- [x] 增加 Admin `shell_enabled` 总开关，默认 `true`（配置模型、Admin 行为配置页已接入）；system 范围仍默认关闭。
 - [x] 明确工具不可见条件：Admin 总开关关闭或用户 Shell 开关关闭时不注册；system 选项单独按权限隐藏。
 - [x] 开关变更后立即刷新配置，不依赖重启（复用现有 override 热更新）。
 - [x] 冻结两种模式：默认 `sandbox`，独立高权限 `system` 默认关闭且不等同于 root 提权。
@@ -867,7 +867,7 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 
 ### 13.1 本机执行器验收
 
-- 默认配置下不存在可调用的 Shell 工具。
+- 默认配置下后台 Shell 总开关为开启，但仍需用户开关和 Docker 沙盒运行时就绪后才可调用；system 范围、危险命令和 Autopilot 仍不可用。
 - Admin 关闭开关后，旧请求也会被 dispatch 拒绝。
 - Admin 和用户 Shell 权限满足时，sandbox 工具即可注册并执行；workspace 只决定默认 cwd。
 - sandbox 只能在沙盒根目录或当前 workspace 挂载目录内工作，不会回退到任意宿主机目录。

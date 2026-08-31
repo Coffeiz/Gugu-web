@@ -13,6 +13,7 @@ import hashlib
 from agent import skills as _skills
 from agent.security.logsafe import fingerprint
 from agent.tools.base import BaseSkill, Tool
+from agent.tools.tool_contract import normalize_tool_name
 
 
 async def _get_tool_schema(db, user_id, args: dict):
@@ -142,7 +143,7 @@ async def _call_tool(db, user_id, args: dict):
     主循环会在这里之前执行一次自己的 UI/确认编排；直接 dispatch 时保留同一套
     registry、权限与 Schema 校验，避免 Adapter 形成第二套执行器。
     """
-    name = str(args.get("name") or "").strip()
+    name = normalize_tool_name(args.get("name"))
     arguments = args.get("arguments")
     if not name:
         return {"error": "缺少业务工具名"}
@@ -214,7 +215,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="create_skill",
             label="创建咕咕技能",
-            description_short='创建用户自定义技能；保存可复用做法，关键字段 name/description_short/body/related_tools',
+            description_short='创建用户自定义技能并保存可复用做法。',
             description=(
                 "创建可复用的 Prompt Skill；不是项目，也不是调用已有技能。需要 name、description_short、body、related_tools；不能注册工具或扩大权限。"
             ),

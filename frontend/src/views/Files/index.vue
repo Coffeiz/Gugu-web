@@ -7,7 +7,7 @@
     :show-selection="currentType !== 'root'"
     :show-view-toggle="currentType !== 'trash'"
     :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder'"
-    :show-new-workspace-button="currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
+    :show-new-workspace-button="preferencesStore.shellEnabled && currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
     :workspace-exists="Boolean(currentWorkspace)"
     :show-sort="currentType !== 'root'"
     :view-mode="viewMode"
@@ -30,16 +30,16 @@
 
     <template #breadcrumb>
       <div class="breadcrumb-nav">
-        <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
+        <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" :title="t('files.back')">
           <Icon name="action.back" :size="14" />
         </button>
-        <button class="nav-hist-btn" :disabled="!canGoForward" @click="goForward" title="前进">
+        <button class="nav-hist-btn" :disabled="!canGoForward" @click="goForward" :title="t('files.forward')">
           <Icon name="action.next" :size="14" />
         </button>
       </div>
       <FileBrowserBreadcrumb>
         <button class="bc-item" :class="{ active: navPath.length === 0 }" @click="navigateTo(-1)">
-          <span class="bc-label">全部文件</span>
+          <span class="bc-label">{{ t('files.all') }}</span>
         </button>
         <template v-for="(seg, i) in navPath" :key="i">
           <svg class="bc-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -53,14 +53,14 @@
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
-            <span class="bc-label">{{ seg.name }}</span>
+            <span class="bc-label">{{ navSegmentLabel(seg) }}</span>
           </RuntimeBreadcrumbTarget>
           <button v-else class="bc-item"
             :class="{ active: i === navPath.length - 1 }"
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
-            <span class="bc-label">{{ seg.name }}</span>
+            <span class="bc-label">{{ navSegmentLabel(seg) }}</span>
           </button>
         </template>
       </FileBrowserBreadcrumb>
@@ -158,6 +158,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { TrashFolderMeta } from '@/services/api'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
 import FileStorageUsage from '@/components/common/file-browser/FileStorageUsage.vue'
@@ -175,8 +176,8 @@ import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
+import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore, isPreviewable, isAudioExt } from '@/stores/preview'
-import { fireHint } from '@/composables/useOnboarding'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/useThumbCache'
@@ -200,9 +201,11 @@ import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLib
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
 import { workspacesApi } from '@/services/api'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
+import { projectStatusLabelKey } from '@/utils/projectStages'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import Icon from '@/components/common/Icon.vue'
 import { runtime } from '@/interaction/runtime'
@@ -214,6 +217,7 @@ import {
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 
 const projectStore = useProjectStore()
+const preferencesStore = usePreferencesStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const cbStore      = useClipboardStore()
@@ -221,6 +225,17 @@ const fileActions = useFileActions()
 
 // ── 存储用量 ──
 const { storageInfo, fetchStorage } = useFileStorageUsage()
+const { t } = useI18n()
+
+function navSegmentLabel(segment: NavSeg): string {
+  if (segment.type === 'personal') return t('filesUi.personalFiles')
+  if (segment.type === 'projects') return t('filesUi.projectFiles')
+  if (segment.type === 'trash') return t('filesUi.trash')
+  if (segment.type === 'status') return t(projectStatusLabelKey(segment.status ?? ''))
+  if (segment.type === 'year') return t('filesUi.year', { year: segment.year })
+  if (segment.type === 'month') return t('filesUi.month', { month: parseInt(String(segment.month)) })
+  return segment.name
+}
 
 // ── 视图状态 ──
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
@@ -270,21 +285,21 @@ async function createWorkspace() {
     const existing = currentWorkspace.value
     if (existing) {
       if (!await confirmDialog({
-        title: '删除文件夹工作区',
-        message: `确认删除文件夹「${folder.name}」的工作区？\n不会删除文件夹或其中的文件。`,
+        title: t('files.deleteWorkspaceTitle'),
+        message: t('files.deleteWorkspaceMessage', { name: folder.name }),
         tone: 'danger',
-        confirmText: '删除工作区',
+        confirmText: t('files.deleteWorkspace'),
       })) return
       await workspacesApi.delete(existing.id)
       workspaceFolders.value = workspaceFolders.value.filter(item => item.id !== existing.id)
-      uiStore.pushNotification({ title: '工作区', content: `已删除文件夹「${folder.name}」的工作区`, bubble: true, persist: false })
+      uiStore.pushNotification({ title: t('files.workspace'), content: t('files.workspaceDeleted', { name: folder.name }), bubble: true, persist: false })
       return
     }
     await workspacesApi.create({ name: folder.name, kind: 'folder', folderId: folder.folderId })
     await refreshWorkspaceFolders()
-    uiStore.pushNotification({ title: '工作区', content: `已创建工作区「${folder.name}」`, bubble: true, persist: false })
+    uiStore.pushNotification({ title: t('files.workspace'), content: t('files.workspaceCreated', { name: folder.name }), bubble: true, persist: false })
   } catch {
-    uiStore.pushNotification({ title: '工作区', content: '创建工作区失败，请稍后重试', bubble: true, persist: false })
+    uiStore.pushNotification({ title: t('files.workspace'), content: t('files.workspaceCreateFailed'), bubble: true, persist: false })
   }
 }
 
@@ -362,7 +377,6 @@ const sortedContents = useFileLibrarySorting({ contents, currentType, sortKey, s
 // tiny 已由 v-lazy-src 视口门控（更大 rootMargin 先于 card），不再全量预热——避免屏幕外缩略图挤占并发队列
 
 onMounted(async () => {
-  fireHint('file_lib')   // 新手引导：第一次进文件库
   fetchStorage()
   refreshWorkspaceFolders()
   // 顶栏搜索点了文件/文件夹：优先定位到目标目录，不走 restoreNav
@@ -462,7 +476,6 @@ const { uploadingItems, handleFileInput, onDragEnter, onDragLeave, handleDrop, i
 // ── 预览 ──
 const previewStore = usePreviewStore()
 const openPreview = (f: FileMeta) => {
-  if (isAudioExt(f.ext)) fireHint('music')   // 新手引导：第一次打开音乐文件（🎵😌 彩蛋）
   previewStore.open(f, sortedContents.value.files)
 }
 
@@ -730,7 +743,7 @@ async function ctxDownload() {
     const f = sortedContents.value.files.find(f => f.id === ids[0])
     if (f) await fileActions.downloadFile(f)
   } else {
-    const dirName = currentSeg.value?.name ?? '文件'
+    const dirName = currentSeg.value?.name ?? t('files.file')
     await fileActions.batchDownload(ids, [], `${dirName}.zip`)
   }
 }
@@ -755,6 +768,10 @@ async function ctxDelete() {
   if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
     ? [...selectedIds.value] : [(ctx.value.target as FileMeta).id]
+  if (!await confirmFileDeletion(ids.length > 1 ? 'selected' : 'file', {
+    count: ids.length,
+    name: ctx.value.target && 'displayName' in ctx.value.target ? ctx.value.target.displayName : undefined,
+  })) return
   // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，n  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
   const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
   await optimisticMutation({
@@ -824,16 +841,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   display: flex; flex-direction: column; gap: 14px;
   height: 100%; position: relative;
   user-select: none;
-}
-
-/* 顶栏搜索定位到的文件：短暂高亮 */
-.search-flash {
-  animation: search-flash 1.8s ease;
-  border-radius: var(--radius-sm);
-}
-@keyframes search-flash {
-  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
-  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
 }
 
 /* ── 工具栏 ── */

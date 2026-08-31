@@ -2,60 +2,60 @@
   <div class="quota-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">配额管理</h2>
-        <p class="page-desc">设置全局默认用量上限，或为单个用户覆盖配额</p>
+        <h2 class="page-title">{{ t('adminQuota.title') }}</h2>
+        <p class="page-desc">{{ t('adminQuota.description') }}</p>
       </div>
     </div>
 
     <!-- 全局默认配额 -->
     <div class="section-wrap">
       <div class="section-head">
-        <span class="section-label">全局默认</span>
-        <span class="section-desc">适用于未单独设置配额的所有用户</span>
+        <span class="section-label">{{ t('adminQuota.global') }}</span>
+        <span class="section-desc">{{ t('adminQuota.globalHint') }}</span>
       </div>
 
       <div class="global-card">
         <div class="quota-fields">
           <div class="quota-field">
-            <label class="qf-label">6 小时 Token 上限
-              <span class="qf-hint">滑动窗口，防突发</span>
+            <label class="qf-label">{{ t('adminQuota.token6h') }}
+              <span class="qf-hint">{{ t('adminQuota.burstHint') }}</span>
             </label>
             <div class="qf-input-row">
-              <input v-model.number="globalDraft.token6h" class="qf-input" type="number" min="0" placeholder="不限制" />
+              <input v-model.number="globalDraft.token6h" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.unlimited')" />
               <span class="qf-unit">tokens</span>
             </div>
             <div class="qf-presets">
-              <button class="preset-chip" @click="globalDraft.token6h = null">不限制</button>
-              <button class="preset-chip" @click="globalDraft.token6h = 50000">5 万</button>
-              <button class="preset-chip" @click="globalDraft.token6h = 100000">10 万</button>
-              <button class="preset-chip" @click="globalDraft.token6h = 300000">30 万</button>
+              <button class="preset-chip" @click="globalDraft.token6h = null">{{ t('adminQuota.unlimited') }}</button>
+              <button class="preset-chip" @click="globalDraft.token6h = 50000">50k</button>
+              <button class="preset-chip" @click="globalDraft.token6h = 100000">100k</button>
+              <button class="preset-chip" @click="globalDraft.token6h = 300000">300k</button>
             </div>
           </div>
 
           <div class="quota-field">
-            <label class="qf-label">每周 Token 上限
-              <span class="qf-hint">周一重置</span>
+            <label class="qf-label">{{ t('adminQuota.tokenWeek') }}
+              <span class="qf-hint">{{ t('adminQuota.mondayReset') }}</span>
             </label>
             <div class="qf-input-row">
-              <input v-model.number="globalDraft.tokenWeek" class="qf-input" type="number" min="0" placeholder="不限制" />
+              <input v-model.number="globalDraft.tokenWeek" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.unlimited')" />
               <span class="qf-unit">tokens</span>
             </div>
             <div class="qf-presets">
-              <button class="preset-chip" @click="globalDraft.tokenWeek = null">不限制</button>
-              <button class="preset-chip" @click="globalDraft.tokenWeek = 200000">20 万</button>
-              <button class="preset-chip" @click="globalDraft.tokenWeek = 500000">50 万</button>
-              <button class="preset-chip" @click="globalDraft.tokenWeek = 1000000">100 万</button>
+              <button class="preset-chip" @click="globalDraft.tokenWeek = null">{{ t('adminQuota.unlimited') }}</button>
+              <button class="preset-chip" @click="globalDraft.tokenWeek = 200000">200k</button>
+              <button class="preset-chip" @click="globalDraft.tokenWeek = 500000">500k</button>
+              <button class="preset-chip" @click="globalDraft.tokenWeek = 1000000">1M</button>
             </div>
           </div>
 
           <div class="quota-field">
-            <label class="qf-label">存储空间上限</label>
+            <label class="qf-label">{{ t('adminQuota.storage') }}</label>
             <div class="qf-input-row">
-              <input v-model.number="globalDraft.storageGB" class="qf-input" type="number" min="0" placeholder="不限制" />
+              <input v-model.number="globalDraft.storageGB" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.unlimited')" />
               <span class="qf-unit">GB</span>
             </div>
             <div class="qf-presets">
-              <button class="preset-chip" @click="globalDraft.storageGB = null">不限制</button>
+              <button class="preset-chip" @click="globalDraft.storageGB = null">{{ t('adminQuota.unlimited') }}</button>
               <button class="preset-chip" @click="globalDraft.storageGB = 5">5 GB</button>
               <button class="preset-chip" @click="globalDraft.storageGB = 20">20 GB</button>
               <button class="preset-chip" @click="globalDraft.storageGB = 50">50 GB</button>
@@ -64,16 +64,16 @@
           </div>
 
           <div class="quota-field">
-            <label class="qf-label">每日联网搜索次数上限</label>
+            <label class="qf-label">{{ t('adminQuota.searchDaily') }}</label>
             <div class="qf-input-row">
-              <input v-model.number="globalDraft.searchDaily" class="qf-input" type="number" min="0" placeholder="不限制" />
-              <span class="qf-unit">次/天</span>
+              <input v-model.number="globalDraft.searchDaily" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.unlimited')" />
+              <span class="qf-unit">{{ t('adminQuota.dayReset') }}</span>
             </div>
             <div class="qf-presets">
-              <button class="preset-chip" @click="globalDraft.searchDaily = null">不限制</button>
-              <button class="preset-chip" @click="globalDraft.searchDaily = 10">10 次</button>
-              <button class="preset-chip" @click="globalDraft.searchDaily = 30">30 次</button>
-              <button class="preset-chip" @click="globalDraft.searchDaily = 100">100 次</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = null">{{ t('adminQuota.unlimited') }}</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = 10">10</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = 30">30</button>
+              <button class="preset-chip" @click="globalDraft.searchDaily = 100">100</button>
             </div>
           </div>
         </div>
@@ -82,11 +82,11 @@
           <span class="save-hint" v-if="globalSaved">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>
-            已保存
+            {{ t('adminQuota.saved') }}
           </span>
           <span v-else />
           <button class="btn-save" :class="{ loading: globalSaving }" :disabled="globalSaving" @click="saveGlobal">
-            {{ globalSaving ? '保存中…' : '保存全局配额' }}
+            {{ globalSaving ? t('adminQuota.saving') : t('adminQuota.saveGlobal') }}
           </button>
         </div>
       </div>
@@ -95,23 +95,23 @@
     <!-- 用户配额覆盖 -->
     <div class="section-wrap">
       <div class="section-head">
-        <span class="section-label">用户覆盖</span>
-        <span class="section-desc">单独设置配额的用户，优先级高于全局默认</span>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="loadUsers(true)" title="刷新">
+        <span class="section-label">{{ t('adminQuota.userOverrides') }}</span>
+        <span class="section-desc">{{ t('adminQuota.userOverridesHint') }}</span>
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="loadUsers(true)" :title="t('adminQuota.refresh')">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
 
       <div class="users-card">
-        <div v-if="loading" class="state-empty">加载中…</div>
+        <div v-if="loading" class="state-empty">{{ t('adminQuota.loading') }}</div>
         <div v-else-if="!overrideUsers.length" class="state-empty">
-          暂无用户单独设置配额
+          {{ t('adminQuota.emptyOverrides') }}
         </div>
         <template v-else>
           <div class="ut-head">
-            <span class="col-user">用户</span>
-            <span class="col-token">本周用量 / 限额</span>
-            <span class="col-storage">存储已用 / 上限</span>
+            <span class="col-user">{{ t('adminQuota.user') }}</span>
+            <span class="col-token">{{ t('adminQuota.weekUsage') }}</span>
+            <span class="col-storage">{{ t('adminQuota.storageUsage') }}</span>
             <span class="col-action"></span>
           </div>
           <div v-for="u in overrideUsers" :key="u.id" class="ut-row">
@@ -143,8 +143,8 @@
               </span>
             </span>
             <span class="col-action">
-              <button class="action-btn" @click="openEdit(u)">编辑</button>
-              <button class="action-btn danger" @click="clearQuota(u)">清除</button>
+              <button class="action-btn" @click="openEdit(u)">{{ t('adminQuota.edit') }}</button>
+              <button class="action-btn danger" @click="clearQuota(u)">{{ t('adminQuota.clear') }}</button>
             </span>
           </div>
         </template>
@@ -152,19 +152,19 @@
 
       <!-- 所有用户 -->
       <div class="section-head" style="margin-top:20px">
-        <span class="section-label">所有用户</span>
-        <span class="section-desc">点击编辑为任意用户单独设置配额</span>
-        <input v-model="search" class="search-input" placeholder="搜索…" @input="onSearch" />
+        <span class="section-label">{{ t('adminQuota.allUsers') }}</span>
+        <span class="section-desc">{{ t('adminQuota.allUsersHint') }}</span>
+        <input v-model="search" class="search-input" :placeholder="t('adminQuota.search')" @input="onSearch" />
       </div>
       <div class="users-card">
-        <div v-if="loading" class="state-empty">加载中…</div>
-        <div v-else-if="!allUsers.length" class="state-empty">暂无用户</div>
+        <div v-if="loading" class="state-empty">{{ t('adminQuota.loading') }}</div>
+        <div v-else-if="!allUsers.length" class="state-empty">{{ t('adminQuota.emptyUsers') }}</div>
         <template v-else>
           <div class="ut-head">
-            <span class="col-user">用户</span>
-            <span class="col-token">Token 用量（本月）</span>
-            <span class="col-storage">存储用量</span>
-            <span class="col-status">配额状态</span>
+            <span class="col-user">{{ t('adminQuota.user') }}</span>
+            <span class="col-token">{{ t('adminQuota.monthUsage') }}</span>
+            <span class="col-storage">{{ t('adminQuota.storageUsage') }}</span>
+            <span class="col-status">{{ t('adminQuota.status') }}</span>
             <span class="col-action"></span>
           </div>
           <div v-for="u in allUsers" :key="u.id" class="ut-row">
@@ -183,11 +183,11 @@
             </span>
             <span class="col-status">
               <span class="quota-badge" :class="(u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? 'custom' : 'default'">
-                {{ (u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? '自定义' : '全局默认' }}
+                {{ (u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? t('adminQuota.custom') : t('adminQuota.globalDefault') }}
               </span>
             </span>
             <span class="col-action">
-              <button class="action-btn" @click="openEdit(u)">编辑配额</button>
+              <button class="action-btn" @click="openEdit(u)">{{ t('adminQuota.editQuota') }}</button>
             </span>
           </div>
         </template>
@@ -198,48 +198,48 @@
     <Teleport to="body">
       <div v-if="editTarget" class="modal-mask" @mousedown.self="maskMousedownSelf = true" @mouseup.self="maskMousedownSelf && (editTarget = null); maskMousedownSelf = false">
         <div class="modal-box">
-          <p class="modal-title">编辑配额</p>
+          <p class="modal-title">{{ t('adminQuota.editTitle') }}</p>
           <p class="modal-subtitle">{{ editTarget.display_name || editTarget.username }}</p>
 
           <div class="quota-fields quota-fields--single" style="margin-top:18px">
             <div class="quota-field">
-              <label class="qf-label">6 小时 Token 上限
-                <span class="qf-hint">滑动窗口，防突发</span>
+              <label class="qf-label">{{ t('adminQuota.token6h') }}
+                <span class="qf-hint">{{ t('adminQuota.burstHint') }}</span>
               </label>
               <div class="qf-input-row">
-                <input v-model.number="editForm.token6h" class="qf-input" type="number" min="0" placeholder="不限制（跟随全局）" />
+                <input v-model.number="editForm.token6h" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
                 <span class="qf-unit">tokens</span>
               </div>
               <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.token6h = null">不限制</button>
-                <button class="preset-chip" @click="editForm.token6h = 50000">5 万</button>
-                <button class="preset-chip" @click="editForm.token6h = 100000">10 万</button>
-                <button class="preset-chip" @click="editForm.token6h = 300000">30 万</button>
+                <button class="preset-chip" @click="editForm.token6h = null">{{ t('adminQuota.unlimited') }}</button>
+                <button class="preset-chip" @click="editForm.token6h = 50000">{{ t('adminQuota.tokensWan', { count: 5 }) }}</button>
+                <button class="preset-chip" @click="editForm.token6h = 100000">{{ t('adminQuota.tokensWan', { count: 10 }) }}</button>
+                <button class="preset-chip" @click="editForm.token6h = 300000">{{ t('adminQuota.tokensWan', { count: 30 }) }}</button>
               </div>
             </div>
             <div class="quota-field">
-              <label class="qf-label">每周 Token 上限
-                <span class="qf-hint">周一重置</span>
+              <label class="qf-label">{{ t('adminQuota.tokenWeek') }}
+                <span class="qf-hint">{{ t('adminQuota.mondayReset') }}</span>
               </label>
               <div class="qf-input-row">
-                <input v-model.number="editForm.tokenWeek" class="qf-input" type="number" min="0" placeholder="不限制（跟随全局）" />
+                <input v-model.number="editForm.tokenWeek" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
                 <span class="qf-unit">tokens</span>
               </div>
               <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.tokenWeek = null">不限制</button>
-                <button class="preset-chip" @click="editForm.tokenWeek = 200000">20 万</button>
-                <button class="preset-chip" @click="editForm.tokenWeek = 500000">50 万</button>
-                <button class="preset-chip" @click="editForm.tokenWeek = 1000000">100 万</button>
+                <button class="preset-chip" @click="editForm.tokenWeek = null">{{ t('adminQuota.unlimited') }}</button>
+                <button class="preset-chip" @click="editForm.tokenWeek = 200000">{{ t('adminQuota.tokensWan', { count: 20 }) }}</button>
+                <button class="preset-chip" @click="editForm.tokenWeek = 500000">{{ t('adminQuota.tokensWan', { count: 50 }) }}</button>
+                <button class="preset-chip" @click="editForm.tokenWeek = 1000000">{{ t('adminQuota.tokensWan', { count: 100 }) }}</button>
               </div>
             </div>
             <div class="quota-field">
-              <label class="qf-label">存储空间上限</label>
+              <label class="qf-label">{{ t('adminQuota.storage') }}</label>
               <div class="qf-input-row">
-                <input v-model.number="editForm.storageGB" class="qf-input" type="number" min="0" placeholder="不限制（跟随全局）" />
+                <input v-model.number="editForm.storageGB" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
                 <span class="qf-unit">GB</span>
               </div>
               <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.storageGB = null">不限制</button>
+                <button class="preset-chip" @click="editForm.storageGB = null">{{ t('adminQuota.unlimited') }}</button>
                 <button class="preset-chip" @click="editForm.storageGB = 5">5 GB</button>
                 <button class="preset-chip" @click="editForm.storageGB = 20">20 GB</button>
                 <button class="preset-chip" @click="editForm.storageGB = 50">50 GB</button>
@@ -247,26 +247,26 @@
               </div>
             </div>
             <div class="quota-field">
-              <label class="qf-label">每日联网搜索上限
-                <span class="qf-hint">每天 0 点 UTC 重置</span>
+              <label class="qf-label">{{ t('adminQuota.searchDaily') }}
+                <span class="qf-hint">{{ t('adminQuota.dayReset') }}</span>
               </label>
               <div class="qf-input-row">
-                <input v-model.number="editForm.searchDaily" class="qf-input" type="number" min="0" placeholder="不限制（跟随全局）" />
-                <span class="qf-unit">次</span>
+                <input v-model.number="editForm.searchDaily" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
+                <span class="qf-unit">{{ t('adminQuota.timesUnit') }}</span>
               </div>
               <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.searchDaily = null">不限制</button>
-                <button class="preset-chip" @click="editForm.searchDaily = 10">10 次</button>
-                <button class="preset-chip" @click="editForm.searchDaily = 30">30 次</button>
-                <button class="preset-chip" @click="editForm.searchDaily = 100">100 次</button>
+                <button class="preset-chip" @click="editForm.searchDaily = null">{{ t('adminQuota.unlimited') }}</button>
+                <button class="preset-chip" @click="editForm.searchDaily = 10">{{ t('adminQuota.times', { count: 10 }) }}</button>
+                <button class="preset-chip" @click="editForm.searchDaily = 30">{{ t('adminQuota.times', { count: 30 }) }}</button>
+                <button class="preset-chip" @click="editForm.searchDaily = 100">{{ t('adminQuota.times', { count: 100 }) }}</button>
               </div>
             </div>
           </div>
 
           <div class="modal-actions">
-            <button class="btn-cancel" @click="editTarget = null">取消</button>
+            <button class="btn-cancel" @click="editTarget = null">{{ t('adminQuota.cancel') }}</button>
             <button class="btn-confirm" @click="saveEdit" :disabled="editSaving">
-              {{ editSaving ? '保存中…' : '保存' }}
+              {{ editSaving ? t('adminQuota.saving') : t('adminQuota.confirm') }}
             </button>
           </div>
         </div>
@@ -278,10 +278,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/stores/config'
 import { useQuotaAdmin } from './useQuotaAdmin'
 
 const adminStore  = useAdminStore()
+const { t } = useI18n()
 const configStore = useConfigStore()
 const quotaAdmin = useQuotaAdmin(adminStore, configStore)
 const { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, maskMousedownSelf, editForm, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle } = quotaAdmin
@@ -499,16 +501,8 @@ PHASE7_QUOTA_OLD_END */
 .qf-input-row { display: flex; align-items: center; gap: 8px; }
 .qf-input {
   flex: 1; height: 34px; padding: 0 12px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.8); font-size: 13px; outline: none;
-  transition: border-color 0.15s;
-  appearance: none; -moz-appearance: textfield;
+  font-size: 13px; outline: none;
 }
-.qf-input::-webkit-outer-spin-button,
-.qf-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.qf-input:focus { border-color: rgba(255,255,255,0.25); }
-.qf-input::placeholder { color: rgba(255,255,255,0.2); }
 .qf-unit { font-size: 12px; color: rgba(255,255,255,0.3); white-space: nowrap; }
 .qf-presets { display: flex; gap: 6px; flex-wrap: wrap; }
 .preset-chip {
@@ -610,13 +604,8 @@ PHASE7_QUOTA_OLD_END */
 
 .search-input {
   height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.7); outline: none; width: 160px;
-  transition: border-color 0.15s;
+  outline: none; width: 160px;
 }
-.search-input:focus { border-color: rgba(255,255,255,0.22); }
-.search-input::placeholder { color: rgba(255,255,255,0.22); }
 
 /* 弹窗 */
 .modal-mask {

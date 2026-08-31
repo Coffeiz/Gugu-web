@@ -393,7 +393,7 @@ class WebSkill(BaseSkill):
         Tool(
             name="http_get",
             label="联网取数 / 读网页",
-            description_short='读取公网 URL 正文；关键字段 url/urls',
+            description_short='读取公网 URL 正文。',
             description="读取公网 URL；HTML/PDF 提取正文，可并行多个 URL，不跟随重定向。",
             input_schema={
                 "type": "object",
@@ -418,7 +418,7 @@ class WebSkill(BaseSkill):
         Tool(
             name="web_download",
             label="下载到文件库",
-            description_short='下载公网文件到文件库；关键字段 url/name；space 默认 personal，folder_id 优先于 space/project_id',
+            description_short='下载公网文件到文件库；默认保存到个人文件库。',
             description="按用户提供的公网 URL 下载或导入文件；不用于读取网页或发送已有文件。",
             input_schema={
                 "type": "object",

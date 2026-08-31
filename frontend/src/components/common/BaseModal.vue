@@ -1,21 +1,22 @@
 <template>
-  <!-- 遮罩与卡片是平级 fixed 节点（不 Teleport：fixed 同属 root stacking context，
-       z 可与 body 下的预览窗等直接比较） -->
-  <!-- 遮罩：固定低带（OVERLAY_Z），在一切浮动窗口之下——blur 只糊页面，糊不到预览器/聊天窗 -->
-  <Transition name="bm-ov" appear>
-    <div v-if="show" class="bm-overlay" :style="{ zIndex: OVERLAY_Z }" @click="$emit('close')" />
-  </Transition>
-  <!-- 卡片：进窗口带，点击置顶（与预览窗/聊天窗自由叠放）。
-       :duration 定时收尾——进场根节点自身没有任何过渡属性（见下方过渡注释），
-       不给固定时长的话 Vue 监听不到 transitionend、会立刻摘掉 enter-active，
-       玻璃 ramp 就跑不完。 -->
-  <Transition name="bm" appear :duration="{ enter: MODAL_ENTER_MS, leave: MODAL_LEAVE_MS }">
-    <div v-if="show" class="bm-center" :style="{ zIndex: myZ }">
-      <div class="bm-card" :style="cardStyle" @mousedown.capture="raise">
-        <slot />
+  <!-- 默认保持现有平级 fixed 节点；需要穿出页面内层叠上下文的嵌套弹窗可传 teleportTo。 -->
+  <Teleport to="body" :disabled="!props.teleportTo">
+    <!-- 遮罩：固定低带（OVERLAY_Z），在一切浮动窗口之下——blur 只糊页面，糊不到预览器/聊天窗 -->
+    <Transition name="bm-ov" appear>
+      <div v-if="show" class="bm-overlay" :style="{ zIndex: overlayZ }" @click="$emit('close')" />
+    </Transition>
+    <!-- 卡片：进窗口带，点击置顶（与预览窗/聊天窗自由叠放）。
+         :duration 定时收尾——进场根节点自身没有任何过渡属性（见下方过渡注释），
+         不给固定时长的话 Vue 监听不到 transitionend、会立刻摘掉 enter-active，
+         玻璃 ramp 就跑不完。 -->
+    <Transition name="bm" appear :duration="{ enter: MODAL_ENTER_MS, leave: MODAL_LEAVE_MS }">
+      <div v-if="show" class="bm-center" :style="{ zIndex: myZ }">
+        <div class="bm-card" :style="cardStyle" @mousedown.capture="raise">
+          <slot />
+        </div>
       </div>
-    </div>
-  </Transition>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -34,6 +35,7 @@ const props = defineProps({
   // :deep(.bm-card) 选择器实测完全不命中该元素（不是被覆盖，是根本没匹配上）。
   background: { type: String, default: '' },
   blur:       { type: String, default: '' },   // 同理，不传走 CSS 默认 var(--glass-blur)
+  teleportTo: { type: String, default: '' },
 })
 
 const emit = defineEmits(['close'])
@@ -52,6 +54,8 @@ const cardStyle = computed(() => ({
 
 // 窗口层级：打开领新 z、mousedown 置顶；ESC 统一走 windowz（只关最顶层）
 const myZ = ref(0)
+// 嵌套弹窗必须压过宿主窗口的内容；同 z 下遮罩先渲染、卡片后渲染，卡片仍在遮罩之上。
+const overlayZ = computed(() => props.teleportTo ? myZ.value : OVERLAY_Z)
 function raise() {
   myZ.value = nextZ()
   raisePopoversAbove(myZ.value)

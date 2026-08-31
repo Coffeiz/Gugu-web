@@ -1,52 +1,28 @@
-"""新手引导 · 静态文案池（取自 docs/agent/proposals/新手引导-实现方案.md）。
-
-全部静态 + 随机：**绝不过 LLM**。改文案只动这里。`pick()` 随机取一条。
-对应章节见 docs/agent/proposals/新手引导-实现方案.md §5。
-"""
+"""新用户首次注册时的播种项目内容。"""
 import random
 
-# ── 01 欢迎（注册后延迟弹的第一句） ──────────────────────────────
-WELCOME = [
-    "来得刚刚好～我刚准备好。",
-    "来啦～希望这里以后能慢慢变成你喜欢的样子。",
-    "今天开始，这里就是你的空间啦。先一起看看？",
-    "终于见面啦～以后我们会经常在这里见面。",
-    "终于见面啦～ 👋以后我们会经常在这里见面。不过第一次，我先带你看看。",
-    "终于见面啦～ 👋我把这里稍微收拾了一下。",
-    "终于见面啦～ 😊不用急着学会所有东西，边用边认识就好。",
-]
-
-# ── 02 引导进项目（欢迎后弹，配合高亮引导项目卡） ────────────────
-GUIDE = [
-    "我先留了一点东西给你。点开看看？",
-    "以后很多东西都会放在这里。先认识一下它吧。",
-    "这里以后会越来越热闹。不过第一天，只有一点点东西 😊",
-    "这里有我们的第一份记录。",
-    "这里以后会越来越丰富。今天，就先从这一点点开始。",
-]
-
-# ── 03 引导项目命名（无 emoji，随机三选一） ──────────────────────
+# ── 播种项目名称（随机三选一） ───────────────────────────────────
 PROJECT_NAMES = [
     "从这里开始",
     "第一份记录",
     "初次见面",
 ]
 
-# ── 04 三个阶段（结构固定为 3 段；每段标签可随机；无 emoji，只留文字） ──────
+# ── 三个阶段（结构固定为 3 段；每段标签可随机） ───────────────────
 STAGE_LABEL_POOLS = [
     ["🌱 这里还有一点空", "🌱 目前还空空的"],
     ["🌿 慢慢有样子了", "🌿 开始丰富起来了", "🌿 有点像样了"],
     ["💬 找我聊聊吧"],
 ]
 
-# ── 05 各阶段待办（固定文本：07 情境引导按文本对应这些待办） ──────
+# ── 各阶段待办 ─────────────────────────────────────────────────────
 STAGE_TODOS = [
     ["随便逛逛", "建个项目试试"],
     ["去日历看看", "去文件库看看"],
     ["我就在右下角 😊", "加个 QQ 好友吧（飞书也行📪）"],
 ]
 
-# ── 06 文件（正文是 markdown，预览时排版好看：标题 + 引用块 + 落款） ──
+# ── 示例文件（正文是 markdown） ───────────────────────────────────
 # 欢迎文件（标题 + 正文，二选一）
 WELCOME_FILES = [
     {"title": "给未来的自己",
@@ -85,30 +61,42 @@ SCRATCH_FILE_BODIES = [
     ),
 ]
 
-# ── 07 情境引导（每个 hint key 的气泡文案；可多条随机） ──────────
-HINTS = {
-    # 标记（前端识别、不显示）：[[p]]=停顿 1s；[[slow]]…[[/slow]]=段内逐字慢速冒出
-    "file_lib":      ["这里会慢慢放满你的东西。不过[[slow]]...[[/slow]]我先偷偷放了个小礼物，看看能不能被发现"],
-    "music":         ["🎵😌"],
-    "calendar":      ["重要的事在这里一览无余"],   # 初次打开日历（不是在日历里打开项目）
-    "stage_switch":  ["😊 熟悉一点了吗？"],   # 切换/推进阶段后
-    "todo_roam":     ["😊 熟悉一点了吗？", "嗯，就是这样。剩下的慢慢认识就好。"],   # 已不触发，保留
-    "todo_newproj":  ["好啦～以后想到什么都可以建一个项目。"],   # 手动新建第一个项目后
-    "im_bind":       ["以后直接找我就好啦 😊"],
-    "schedules":     ["还没有定时任务[[p]]\n你可以让咕咕在指定时间帮你做事，比如提醒、汇总信息、自动检查数据"],   # 第一次进定时任务页
+# 播种项目不是界面文案，不能由前端当前语言临时替换；注册时按用户界面语言落库。
+SEED_CONTENT = {
+    "zh-CN": {
+        "project_names": PROJECT_NAMES,
+        "stage_labels": STAGE_LABEL_POOLS,
+        "stage_todos": STAGE_TODOS,
+        "welcome_files": WELCOME_FILES,
+        "scratch_title": SCRATCH_FILE_TITLE,
+        "scratch_bodies": SCRATCH_FILE_BODIES,
+        "calendar_title": "和咕咕的第一天",
+    },
+    "ja-JP": {
+        "project_names": ["ここから始める", "最初の記録", "はじめまして"],
+        "stage_labels": [["🌱 まだ空っぽ", "🌱 まだ何もない"], ["🌿 少しずつ形に", "🌿 だんだん豊かに", "🌿 いい感じになってきた"], ["💬 話しかけてね"]],
+        "stage_todos": [["少し見て回る", "プロジェクトを作ってみる"], ["カレンダーを見る", "ファイル庫を見る"], ["右下にいるよ 😊", "QQで友だちになる（FeishuでもOK📪）"]],
+        "welcome_files": [{"title": "未来の自分へ", "body": "# 未来の自分へ\n\n> いつかここが、\n> 思いつきや予定、\n> たくさんの会話でいっぱいになりますように。\n\n今日はこのページから始めよう 🌱\n\n---\n\n*—— グーグー*\n"}, {"title": "最初の記録", "body": "# 最初の記録\n\n> 誰にでも最初の記録があります。\n> 今日のこのページは、私たちのもの。\n\nここは少しずつ、思いつきや予定、会話でいっぱいになります 😊\n\n---\n\n*—— グーグー*\n"}],
+        "scratch_title": "削除しても大丈夫",
+        "scratch_bodies": ["# 削除しても大丈夫\n\nこれはサンプルファイルです 😊\n\n残しても、書き換えても、削除しても大丈夫。\n", "# 削除しても大丈夫\n\n気軽に試してみてね。削除しても怒らないよ 😊\n"],
+        "calendar_title": "グーグーとの最初の日",
+    },
+    "en-US": {
+        "project_names": ["Start here", "First record", "Nice to meet you"],
+        "stage_labels": [["🌱 Still open", "🌱 Nothing here yet"], ["🌿 Taking shape", "🌿 Starting to grow", "🌿 Looking good"], ["💬 Come chat with me"]],
+        "stage_todos": [["Take a look around", "Try creating a project"], ["Check the calendar", "Check the file library"], ["I’m in the bottom-right 😊", "Add me on QQ (Feishu works too 📪)"]],
+        "welcome_files": [{"title": "To my future self", "body": "# To my future self\n\n> May this space one day be filled\n> with ideas, plans,\n> and many conversations.\n\nFor today, let’s start with this page 🌱\n\n---\n\n*—— Gugu*\n"}, {"title": "First record", "body": "# First record\n\n> Everyone has a first record.\n> This page belongs to us.\n\nLittle by little, this space will fill with ideas, plans, and chats 😊\n\n---\n\n*—— Gugu*\n"}],
+        "scratch_title": "You can delete me",
+        "scratch_bodies": ["# You can delete me\n\nI’m just a sample file 😊\n\nKeep, edit, or delete me—anything is fine.\n", "# You can delete me\n\nFeel free to experiment. I won’t mind if you delete me 😊\n"],
+        "calendar_title": "Our first day together",
+    },
 }
 
-# ── 08 回头看（Phase 3；{project_name} 用实际播种的项目名回填） ────
-LOOKBACK = [
-    "还记得『{project_name}』吗？[[p:1500]]\n那时候这里只有两个文件，现在已经越来越热闹啦。",
-]
 
+def seed_content(locale: str | None):
+    """返回播种项目及其附属文件的本地化内容，未知语言回退中文。"""
+    return SEED_CONTENT.get(locale or "zh-CN", SEED_CONTENT["zh-CN"])
 
 def pick(seq):
     """从非空序列随机取一条；空 → None。"""
     return random.choice(seq) if seq else None
-
-
-def pick_hint(key: str):
-    """取某情境 hint 的随机文案；未知 key → None。"""
-    return pick(HINTS.get(key) or [])

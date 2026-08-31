@@ -23,19 +23,19 @@
       <div class="ne-toolbar" ref="toolbarRef" v-if="editor"
            :class="{ 'ne-toolbar-floating': floatToolbar, pending: floatToolbar && !editReady }">
         <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
-                @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" title="待办">
+                @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" :title="t('mindEditorUi.task')">
           <PhCheckSquare :size="13" weight="bold" />
         </button>
         <button class="ne-tool" :class="{ on: isFocused && editor.isActive('bulletList') }"
-                @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" title="列表">
+                @mousedown.prevent="editor.chain().focus().toggleBulletList().run()" :title="t('mindEditorUi.bulletList')">
           <PhListBullets :size="13" weight="bold" />
         </button>
         <!-- 有序列表跟无序列表放一起，都是"列表"，不该埋进「插入」的二级菜单里 -->
         <button class="ne-tool" :class="{ on: isFocused && editor.isActive('orderedList') }"
-                @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" title="有序列表">
+                @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" :title="t('mindEditorUi.orderedList')">
           <PhListNumbers :size="13" weight="bold" />
         </button>
-        <button class="ne-tool" @mousedown.prevent="openReferencePicker" title="引用项目、文件或活动">
+        <button class="ne-tool" @mousedown.prevent="openReferencePicker" :title="t('mindEditorUi.reference')">
           <PhAt :size="13" weight="bold" />
         </button>
         <!-- 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。不是弹层——Aa 按钮
@@ -47,34 +47,34 @@
           <div class="ne-drawer-items">
             <template v-if="!linkInputOpen">
               <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
-                      @mousedown.prevent="editor.chain().focus().toggleBold().run()" title="加粗">
+                      @mousedown.prevent="editor.chain().focus().toggleBold().run()" :title="t('mindEditorUi.bold')">
                 <PhTextB :size="13" weight="bold" />
               </button>
               <button class="ne-style-item" :class="{ on: editor.isActive('italic') }"
-                      @mousedown.prevent="editor.chain().focus().toggleItalic().run()" title="斜体">
+                      @mousedown.prevent="editor.chain().focus().toggleItalic().run()" :title="t('mindEditorUi.italic')">
                 <PhTextItalic :size="13" weight="bold" />
               </button>
               <button class="ne-style-item" :class="{ on: editor.isActive('strike') }"
-                      @mousedown.prevent="editor.chain().focus().toggleStrike().run()" title="删除线">
+                      @mousedown.prevent="editor.chain().focus().toggleStrike().run()" :title="t('mindEditorUi.strike')">
                 <PhTextStrikethrough :size="13" weight="bold" />
               </button>
               <button class="ne-style-item" :class="{ on: editor.isActive('code') }"
-                      @mousedown.prevent="editor.chain().focus().toggleCode().run()" title="行内代码">
+                      @mousedown.prevent="editor.chain().focus().toggleCode().run()" :title="t('mindEditorUi.inlineCode')">
                 <PhCode :size="13" weight="bold" />
               </button>
               <button class="ne-style-item" :class="{ on: editor.isActive('link') }"
-                      @mousedown.prevent="onLinkClick" title="链接">
+                      @mousedown.prevent="onLinkClick" :title="t('mindEditorUi.link')">
                 <PhLink :size="13" weight="bold" />
               </button>
             </template>
             <div v-else class="ne-link-input" @mousedown.stop>
-              <input ref="linkInputRef" v-model="linkUrl" placeholder="链接地址"
+              <input ref="linkInputRef" v-model="linkUrl" :placeholder="t('mindEditorUi.linkAddress')"
                      @keydown.enter.prevent="confirmLink" @keydown.escape.prevent="cancelLink" />
-              <button class="ne-link-ok" @mousedown.prevent="confirmLink">确定</button>
+              <button class="ne-link-ok" @mousedown.prevent="confirmLink">{{ t('mindEditorUi.confirm') }}</button>
             </div>
           </div>
           <button class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
-                  @mousedown.prevent="toggleStylesMenu" title="文字样式">
+                  @mousedown.prevent="toggleStylesMenu" :title="t('mindEditorUi.textStyle')">
             <PhTextAa :size="13" weight="bold" />
           </button>
         </div>
@@ -83,18 +83,18 @@
              代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
         <div class="ne-drawer" :class="{ open: insertOpen }">
           <div class="ne-drawer-items">
-            <button class="ne-style-item" @mousedown.prevent="insertCodeBlock" title="代码块">
+            <button class="ne-style-item" @mousedown.prevent="insertCodeBlock" :title="t('mindEditorUi.codeBlock')">
               <PhCodeBlock :size="13" weight="bold" />
             </button>
-            <button class="ne-style-item" @mousedown.prevent="insertBlockquote" title="引用块">
+            <button class="ne-style-item" @mousedown.prevent="insertBlockquote" :title="t('mindEditorUi.blockquote')">
               <PhQuotes :size="13" weight="bold" />
             </button>
-            <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" title="分割线">
+            <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" :title="t('mindEditorUi.divider')">
               <PhMinus :size="13" weight="bold" />
             </button>
           </div>
           <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
-                  @mousedown.prevent="toggleInsertMenu" title="插入">
+                  @mousedown.prevent="toggleInsertMenu" :title="t('mindEditorUi.insert')">
             <PhPlus :size="13" weight="bold" />
           </button>
         </div>
@@ -102,47 +102,34 @@
       </div>
     </Teleport>
 
-    <!-- `@` 引用补全下拉：跟随光标定位。Teleport 到 body + fixed 定位——便签卡是
-         overflow:hidden 的容器，下拉贴着卡片底部时会被提前裁掉一截，脱出去按视口坐标
-         定位就不受卡片裁切影响了。样式跟顶栏 GlobalSearch.vue 的结果面板同一套语言
-         （图标+文字、按类型分组），不同类型分开一段，一眼能看出是项目/文件/活动/对话。 -->
-    <PopupMenu :show="picker.open" :position="{ x: picker.x, y: picker.y }" popup-class="ne-picker-host">
-      <div class="ne-picker">
-        <div v-if="loading" class="ne-pick-empty">搜索中…</div>
-        <div v-else-if="!items.length" class="ne-pick-empty">没找到「{{ picker.query }}」</div>
-        <template v-for="g in groupedItems" :key="g.type">
-          <div class="ne-pick-group-label">
-            <component :is="TYPE_ICON[g.type]" :size="11" weight="bold" />
-            {{ TYPE_LABEL[g.type] }}
-          </div>
-          <button v-for="e in g.entries" :key="g.type + e.it.id"
-                  class="ne-pick-item" :class="{ on: e.idx === active }"
-                  @mousedown.prevent="choose(e.it)">
-            <component :is="TYPE_ICON[g.type]" class="ne-pick-icon" :size="14" weight="bold" />
-            <span class="ne-pick-label">{{ e.it.label }}</span>
-            <span v-if="e.it.subtitle" class="ne-pick-sub">{{ e.it.subtitle }}</span>
-          </button>
-        </template>
-      </div>
-    </PopupMenu>
+    <ReferenceSuggestMenu
+      :show="picker.open"
+      :position="{ left: picker.anchorLeft, top: picker.anchorTop, bottom: picker.anchorBottom }"
+      :query="picker.query"
+      :items="items"
+      :loading="loading"
+      :active="active"
+      @choose="choose"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
   PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
   PhMinus, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
-  PhStack, PhFile, PhCalendarBlank, PhChatCircle,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
 import { useMindRefActions } from '@/composables/useMindRefActions'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import ReferenceSuggestMenu from '@/components/common/ReferenceSuggestMenu.vue'
 import type { MindRefSuggestItem } from '@/services/api'
 
 const { openMindRef } = useMindRefActions()
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -198,27 +185,9 @@ function updateFloatToolbarPos() {
 onMounted(() => { if (props.floatToolbar) updateFloatToolbarPos() })
 onBeforeUnmount(() => { if (floatRaf) cancelAnimationFrame(floatRaf) })
 
-const TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', conversation: '对话' }
-// 跟顶栏 GlobalSearch.vue 的 TYPE_ICON 同一套图标（项目=PhStack、文件=PhFile、
-// 活动=PhCalendarBlank、对话=PhChatCircle），下拉长得像同一个系统里的东西。
-const TYPE_ICON: Record<MindRefSuggestItem['type'], typeof PhStack> = { project: PhStack, file: PhFile, event: PhCalendarBlank, conversation: PhChatCircle }
-
 const { items, loading, active, search, reset, move } = useMindObjectPicker()
-const picker = reactive({ open: false, query: '', from: 0, to: 0, x: 0, y: 0 })
-
-// 按类型分组展示（不同类型分开一段，跟 GlobalSearch 的结果面板一样）；items 本身已经是
-// 后端按 project→file→event→conversation 顺序拼好的，同类型天然连续，这里只是分段渲染，
-// entries 里带上 flat 下标 idx，方便跟 active（键盘上下选中）对上号。
-const groupedItems = computed(() => {
-  const groups: { type: MindRefSuggestItem['type']; entries: { it: MindRefSuggestItem; idx: number }[] }[] = []
-  const byType = new Map<string, (typeof groups)[number]>()
-  items.value.forEach((it, idx) => {
-    let g = byType.get(it.type)
-    if (!g) { g = { type: it.type, entries: [] }; byType.set(it.type, g); groups.push(g) }
-    g.entries.push({ it, idx })
-  })
-  return groups
-})
+const picker = reactive({ open: false, query: '', from: 0, to: 0, anchorLeft: 0, anchorTop: 0, anchorBottom: 0 })
+let lastPickerQuery: string | null = null
 
 /** 光标前找 `@关键词`。防误触两条：`@` 前必须是行首或空白（挡住邮箱地址）；
  *  关键词不含空白/再一个 @（对象名带空格的场景靠前缀就能搜到，比误触发划算）。 */
@@ -235,6 +204,7 @@ function findTrigger(ed: any): { query: string; from: number; to: number } | nul
 function closePicker() {
   picker.open = false
   picker.query = ''
+  lastPickerQuery = null
   emptyStreak = 0
   reset()
 }
@@ -246,12 +216,17 @@ function syncPicker(ed: any) {
   picker.query = t.query
   picker.from = t.from
   picker.to = t.to
-  // 下拉 Teleport 到了 body（脱出便签卡的 overflow:hidden 裁切），直接用 coordsAtPos
-  // 给的视口坐标定位，不用再减容器偏移。
+  const box = ed.view.dom.closest('.note-editor')?.getBoundingClientRect()
   const caret = ed.view.coordsAtPos(t.from)
-  picker.x = caret.left
-  picker.y = caret.bottom + 4
-  search(t.query)
+  if (box) {
+    picker.anchorLeft = caret.left
+    picker.anchorTop = caret.top
+    picker.anchorBottom = caret.bottom
+  }
+  if (lastPickerQuery !== t.query) {
+    lastPickerQuery = t.query
+    search(t.query)
+  }
 }
 
 // 连续无结果自动关面板（防误触兜底：色值、随手打的 @xx 等），继续打字不再骚扰
@@ -493,7 +468,7 @@ onBeforeUnmount(() => {
   padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
 /* 浮动态（画布便签）：脱出卡片本身悬在下方（或翻到上方，见 .flipped），不再是卡片纸面
-   的一部分，得自己长一副独立的浮层皮——跟 .ne-picker（`@` 补全下拉）同一套玻璃质感语言，
+   的一部分，得自己长一副独立的浮层皮——跟公共引用补全菜单同一套玻璃质感语言，
    两者本来就经常同时出现在屏幕上（点了 @ 工具栏按钮，下拉紧跟着弹出来），视觉上得是
    "同一家子"的东西。left/top 由 updateFloatToolbarPos 逐帧直接写 DOM style（不经这份
    scoped CSS 的任何声明），这里只兜 position:fixed 的定位模式和横向居中用的 transform——
@@ -535,39 +510,6 @@ onBeforeUnmount(() => {
 /* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
 .ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }
 .note-editor.compact .ne-body { min-height: 48px; }
-
-/* `@` 补全下拉 */
-.ne-picker {
-  /* 固定宽度而不是 min/max-width：内容自适应宽度会让"搜索中…"这行短文字跟结果列表撑出
-     的宽度不一样，切换态时弹窗宽度跟着跳一下。固定死就没有这个问题。 */
-  width: 280px; padding: 4px; border-radius: 10px;
-  background: rgba(255,255,255,0.96);
-  border: 1px solid rgba(255,255,255,0.9);
-  box-shadow: 0 8px 26px rgba(60,70,100,0.18);
-  backdrop-filter: blur(10px);
-}
-:global(.popup-menu-host.ne-picker-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-.ne-pick-empty { padding: 8px 10px; font-size: 12px; color: var(--text-secondary); }
-/* 分组标题 + 图标行，跟顶栏 GlobalSearch.vue 的 .gs-group-label/.gs-item 同一套视觉语言 */
-.ne-pick-group-label {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 11px; font-weight: 600; color: var(--text-secondary);
-  padding: 7px 8px 4px;
-}
-.ne-pick-item {
-  display: flex; align-items: center; gap: 7px; width: 100%;
-  padding: 6px 8px; border: none; border-radius: 7px;
-  background: transparent; cursor: pointer; text-align: left;
-  font-family: var(--font-sans);
-}
-.ne-pick-item:hover, .ne-pick-item.on { background: rgba(123,127,178,0.12); }
-.ne-pick-icon { flex-shrink: 0; color: var(--color-primary); }
-/* label 先按最多 56% 宽度截断（flex-shrink:0 不给挤没），剩下空间才轮到 sub——sub 没设
-   min-width:0 的话，flex 子项默认 min-width:auto（不小于内容本身宽度），overflow/ellipsis
-   根本没机会生效，长小字就会把弹窗顶出去。跟顶栏 GlobalSearch.vue 的 .gs-item-title/
-   .gs-item-sub 是同一个道理。 */
-.ne-pick-label { flex-shrink: 0; max-width: 56%; font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ne-pick-sub { min-width: 0; margin-left: auto; font-size: 10.5px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 「样式」「插入」抽屉：不是弹层——items 在 DOM 里排在 Aa/+ 按钮前面，收起时 0 宽不占
    位置，按钮就停在原地；展开时 items 从 0 宽长开、天然把按钮"挤"到右边，按钮自己就是

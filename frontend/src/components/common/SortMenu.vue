@@ -1,10 +1,11 @@
 <script setup lang="ts" generic="T">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import ContextMenu from '@/components/ContextMenu.vue'
 import Icon from '@/components/common/Icon.vue'
 import type { SortOption } from '@/composables/useSortedList'
+import { useI18n } from 'vue-i18n'
 
-defineProps({
+const props = defineProps({
   options: { type: Array as () => SortOption<T>[], required: true },
   sortKey: { type: String, required: true },
   sortDir: { type: String as () => 'asc' | 'desc', required: true },
@@ -15,6 +16,15 @@ defineProps({
 const emit = defineEmits<{
   select: [key: string]
 }>()
+const { t } = useI18n()
+
+// 排序选项由文件库和项目文件面板共用；文案在此统一按 key 从 locale 读取，
+// 避免宿主在初始化时传入旧语言的 label，导致语言切换后按钮和弹窗不一致。
+const localizedOptions = computed(() => props.options.map(option => ({
+  ...option,
+  label: t(`filesViewUi.${option.key === 'stage' ? 'projectStage' : option.key === 'createdAt' ? 'date' : option.key}`),
+})))
+const sortLabel = computed(() => localizedOptions.value.find(option => option.key === props.sortKey)?.label ?? '')
 
 const sortBtnRef   = ref<HTMLElement | null>(null)
 const sortMenuOpen = ref(false)
@@ -44,9 +54,10 @@ defineExpose({ closeMenu })
       class="sort-btn"
       type="button"
       @click.stop="openMenu"
+      :title="t('filesViewUi.sort')"
     >
       <Icon :name="icon" v-if="icon" size="sm" tone="inherit" />
-      {{ options.find(o => o.key === sortKey)?.label ?? '' }}
+      {{ sortLabel }}
       <svg
         class="sort-dir-icon"
         :class="{ desc: sortDir === 'desc' }"
@@ -59,7 +70,7 @@ defineExpose({ closeMenu })
     <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
     <ContextMenu :show="sortMenuOpen" :anchor="sortBtnRef" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
       <button
-        v-for="opt in options"
+        v-for="opt in localizedOptions"
         :key="opt.key"
         class="ctx-item popup-menu-item sort-menu-item"
         :class="{ active: opt.key === sortKey }"

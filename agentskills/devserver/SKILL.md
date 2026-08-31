@@ -35,14 +35,14 @@ nohup npx vite --host 0.0.0.0 --port 4319 > /tmp/loopscope-dev.log 2>&1 &
 ```
 访问：`http://192.168.110.51:4319/`
 
-## Runtime 构建
+## Runtime 依赖
 
-Runtime 通过 `file:` 本地依赖被 Gugu-web 引用。切换 runtime 分支后需重新构建：
+Gugu-web 通过 npm 依赖使用已发布的 `gugu-interaction-runtime`，版本由
+`frontend/package.json` 和仓库锁文件共同锁定。升级 Runtime 后更新依赖并重新安装：
 ```bash
-cd gugu-interaction-runtime
-npm run build:lib
+cd ~/文档/Workspace/Gugu-web
+corepack pnpm --dir frontend update gugu-interaction-runtime
 ```
-产物在 `dist-lib/`，Gugu-web 通过符号链接自动引用。
 
 ## 后端测试
 

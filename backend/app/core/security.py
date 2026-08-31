@@ -3,7 +3,10 @@ from app.core.tz import now_utc
 from uuid import UUID
 
 import bcrypt as _bcrypt
-from fastapi import Depends, Header, HTTPException
+import secrets
+
+from fastapi import Depends, Header, HTTPException, Request
+from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +14,76 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.session import get_db
 
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
+
+USER_ACCESS_COOKIE = "gugu_user_access_token"
+USER_CSRF_COOKIE = "gugu_user_csrf_token"
+ADMIN_ACCESS_COOKIE = "gugu_admin_access_token"
+ADMIN_CSRF_COOKIE = "gugu_admin_csrf_token"
+CSRF_HEADER = "X-CSRF-Token"
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _cookie_secure(request: Request) -> bool:
+    """仅在 HTTPS 请求上设置 Secure，兼容当前 HTTP devserver。"""
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip() == "https"
+
+
+def set_auth_cookies(
+    response: Response,
+    token: str,
+    access_cookie: str,
+    csrf_cookie: str,
+    request: Request,
+) -> None:
+    csrf_token = secrets.token_urlsafe(32)
+    max_age = get_settings().access_token_expire_minutes * 60
+    secure = _cookie_secure(request)
+    response.set_cookie(
+        access_cookie,
+        token,
+        max_age=max_age,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        csrf_cookie,
+        csrf_token,
+        max_age=max_age,
+        httponly=False,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_auth_cookies(response: Response, access_cookie: str, csrf_cookie: str) -> None:
+    response.delete_cookie(access_cookie, path="/")
+    response.delete_cookie(csrf_cookie, path="/")
+
+
+def request_auth_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+    *,
+    access_cookie: str,
+    csrf_cookie: str,
+) -> str:
+    """优先取 Bearer；浏览器无 Bearer 时取 Cookie 并校验写请求 CSRF。"""
+    if credentials and credentials.credentials:
+        return credentials.credentials
+
+    token = request.cookies.get(access_cookie)
+    if not token:
+        raise HTTPException(status_code=401, detail="未提供认证凭据")
+    if request.method.upper() not in _SAFE_METHODS:
+        csrf_value = request.cookies.get(csrf_cookie)
+        csrf_header = request.headers.get(CSRF_HEADER)
+        if not csrf_value or not csrf_header or not secrets.compare_digest(csrf_value, csrf_header):
+            raise HTTPException(status_code=403, detail="CSRF 校验失败")
+    return token
 
 
 def account_is_active(user) -> bool:
@@ -82,12 +154,14 @@ def get_client_id(x_client_id: str | None = Header(default=None)) -> str | None:
 
 
 async def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> UUID:
     """解析 JWT 并在建立长连接前检查账户状态，不持有请求级 DB session。"""
     settings = get_settings()
     try:
-        payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=["HS256"])
+        token = request_auth_token(request, credentials, access_cookie=USER_ACCESS_COOKIE, csrf_cookie=USER_CSRF_COOKIE)
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "user":
             raise ValueError
         user_id = UUID(payload["sub"])
@@ -113,14 +187,16 @@ def decode_user_token(token: str) -> UUID:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ):
     from app.models import User
 
     settings = get_settings()
     try:
-        payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=["HS256"])
+        token = request_auth_token(request, credentials, access_cookie=USER_ACCESS_COOKIE, csrf_cookie=USER_CSRF_COOKIE)
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "user":
             raise ValueError("not a user token")
         user_id = UUID(payload["sub"])

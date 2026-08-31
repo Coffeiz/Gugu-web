@@ -75,7 +75,7 @@
 
 ## 4. 验证与上线
 
-旧版 Phase 0 通过 `backend/tests/test_llm15_phase0.py` 验证现有风格偏好在 Web、QQ、飞书和微信来源下经过同一组装入口。切换文件事实源后，需要补充文件归属、上传/编辑、默认回退和跨渠道静态前缀测试。
+旧版 Phase 0 通过 `backend/tests/test_preferences_context_contract.py` 验证现有风格偏好在 Web、QQ、飞书和微信来源下经过同一组装入口。切换文件事实源后，需要补充文件归属、上传/编辑、默认回退和跨渠道静态前缀测试。
 
 Phase 1 以后应继续验证 API 归属、长度边界、开关恢复、revision 变化、缓存前缀稳定性，以及安全规则和工具权限不受偏好影响。发布时先使用后台总开关灰度，回滚只关闭生效开关，不删除已保存偏好。
 
@@ -98,7 +98,7 @@ Phase 1 以后应继续验证 API 归属、长度边界、开关恢复、revisio
 - [x] `LLM15-000` 盘点现有用户偏好、基础人格 Prompt 和各渠道注入入口；验收：文档记录 `UserPreferences`、`build_split()`、Web/QQ/飞书/微信调用链，并确认无独立渠道人格事实源。
 - [x] `LLM15-001` 确定人格偏好的字段、默认值和字符上限；验收：完成旧版数据库字段方案记录。
 - [x] `LLM15-003` 将人格正文事实源切换为用户隐藏目录 `.agent/prompt/persona.md`；验收：不产生普通 `File` 记录，不进入文件库、搜索和 RAG。
-- [x] `LLM15-002` 增加跨渠道注入顺序回归样例；验收：`backend/tests/test_llm15_phase0.py` 验证四类来源使用相同静态前缀、风格块位置稳定且不进入动态尾部。
+- [x] `LLM15-002` 增加跨渠道注入顺序回归样例；验收：`backend/tests/test_preferences_context_contract.py` 验证四类来源使用相同静态前缀、风格块位置稳定且不进入动态尾部。
 
 ### Phase 1：后端
 
@@ -114,5 +114,5 @@ Phase 1 以后应继续验证 API 归属、长度边界、开关恢复、revisio
 
 ### Phase 3：验证与清理
 
-- [x] `LLM15-030` 完成 Web、私聊、群聊和缓存边界回归；验收：`backend/tests/test_llm15_phase3.py` 验证偏好不改变工具权限、确认门、历史包装和动态尾缀。
+- [x] `LLM15-030` 完成 Web、私聊、群聊和缓存边界回归；验收：`backend/tests/test_preferences_cache_contract.py` 验证偏好不改变工具权限、确认门、历史包装和动态尾缀。
 - [x] `LLM15-031` 清理 `data_json` 人格兼容字段、重复渠道级人格拼接逻辑并更新文档；验收：运行链路只剩隐藏文件读取和 `build_split()` 统一组装入口，旧 JSON 辅助函数已删除。

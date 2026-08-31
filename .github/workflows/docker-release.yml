@@ -1,0 +1,254 @@
+name: Docker release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/docker-release.yml'
+      - 'backend/**'
+      - 'frontend/**'
+      - 'docker-compose.prod.yml'
+      - 'backend/Dockerfile.prod'
+      - 'frontend/Dockerfile.prod'
+      - 'deploy/**'
+      - 'scripts/release/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-web
+  DOCKER_BUILDKIT: '1'
+
+jobs:
+  compose-validate:
+    name: Validate production Compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate Compose interpolation
+        env:
+          GUGU_BACKEND_IMAGE: ghcr.io/coffeiz/gugu-web-backend:ci
+          GUGU_FRONTEND_IMAGE: ghcr.io/coffeiz/gugu-web-frontend:ci
+          GUGU_DB_PASSWORD: ci-only-database-password
+          GUGU_ADMIN_PASSWORD: ci-only-admin-password
+        run: |
+          touch backend/.env
+          docker compose -f docker-compose.prod.yml config --quiet
+
+      - name: Validate update manifest schema
+        run: node scripts/release/validate-update-manifest.mjs --schema deploy/update-manifest.schema.json
+
+  docker-build:
+    name: Build production images
+    needs: compose-validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile.prod
+          platforms: linux/amd64
+          push: false
+          tags: gugu-web-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile.prod
+          platforms: linux/amd64
+          push: false
+          tags: gugu-web-frontend:ci
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  publish:
+    name: Publish GHCR release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [compose-validate, docker-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate release tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
+            echo '::error::版本 tag 必须符合 v<major>.<minor>.<patch>'; exit 1;
+          }
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        id: backend-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile.prod
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}-backend:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_REPOSITORY }}-backend:${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          provenance: mode=max
+          sbom: true
+
+      - name: Build and push frontend image
+        id: frontend-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile.prod
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}-frontend:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_REPOSITORY }}-frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          provenance: mode=max
+          sbom: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign immutable image references
+        env:
+          BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
+        run: |
+          cosign sign --yes "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
+          cosign sign --yes "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
+
+      - name: Scan published images
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_REPOSITORY }}-backend@${{ steps.backend-image.outputs.digest }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_REPOSITORY }}-frontend@${{ steps.frontend-image.outputs.digest }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Generate update manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p release
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          manifest = {
+              'schema_version': 1,
+              'version': version,
+              'channel': 'stable',
+              'minimum_version': '0.22.0',
+              'backend_image': f"ghcr.io/coffeiz/gugu-web-backend@{os.environ['BACKEND_DIGEST']}",
+              'frontend_image': f"ghcr.io/coffeiz/gugu-web-frontend@{os.environ['FRONTEND_DIGEST']}",
+              'architectures': ['linux/amd64'],
+              'database_migration': True,
+              'release_notes_url': f"https://github.com/Coffeiz/Gugu-web/releases/tag/{version}",
+              'rollback_supported': True,
+              'git_sha': os.environ['GIT_SHA'],
+              'published_at': datetime.now(timezone.utc).isoformat(),
+          }
+          Path('release/update-manifest.json').write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + '\n'
+          )
+          PY
+
+      - name: Validate generated update manifest
+        run: node scripts/release/validate-update-manifest.mjs release/update-manifest.json
+
+      - name: Sign update manifest
+        run: |
+          cosign sign-blob --yes \
+            --bundle release/update-manifest.json.bundle \
+            release/update-manifest.json
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            release/update-manifest.json \
+            release/update-manifest.json.bundle \
+            --title "$TAG" \
+            --generate-notes
+
+      - name: Write release summary
+        env:
+          TAG: ${{ steps.version.outputs.version }}
+          BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
+        run: |
+          {
+            echo '### Docker 发布完成'
+            echo "- 版本：$TAG"
+            echo "- backend digest：$BACKEND_DIGEST"
+            echo "- frontend digest：$FRONTEND_DIGEST"
+            echo '- 架构：linux/amd64'
+            echo '- manifest：GitHub Release 资产'
+          } >> "$GITHUB_STEP_SUMMARY"

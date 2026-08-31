@@ -4,7 +4,7 @@
       <div v-if="show" class="modal-mask" :style="{ zIndex: myZ }" @click.self="$emit('close')">
         <div class="modal-card">
           <div class="modal-header">
-            <span class="modal-title">提交反馈</span>
+            <span class="modal-title">{{ t('feedback.title') }}</span>
             <button class="modal-close" @click="$emit('close')">✕</button>
           </div>
 
@@ -35,15 +35,15 @@
             <div v-if="error" class="error-msg">{{ error }}</div>
 
             <button class="submit-btn" :disabled="submitting || !content.trim()" @click="submit">
-              {{ submitting ? '提交中…' : '提交反馈' }}
+              {{ submitting ? t('feedback.submitting') : t('feedback.submit') }}
             </button>
           </template>
 
           <!-- 成功态 -->
           <div v-else class="done-state">
             <div class="done-icon">✓</div>
-            <div class="done-text">感谢你的反馈！</div>
-            <div class="done-sub">我们会认真看的 🙂</div>
+            <div class="done-text">{{ t('feedback.success') }}</div>
+            <div class="done-sub">{{ t('feedback.successHint') }}</div>
           </div>
         </div>
       </div>
@@ -55,9 +55,11 @@
 import { ref, computed, watch } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import { nextZ } from '@/composables/windowz'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ show: Boolean })
 defineEmits(['close'])
+const { t } = useI18n()
 
 // 打断式弹窗:打开时领新 z,盖当前最顶窗口
 const myZ = ref(0)
@@ -75,15 +77,15 @@ async function apiFeedback(category: string, content: string) {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.detail || '提交失败')
+    throw new Error(data.detail || t('feedback.submitFailed'))
   }
 }
 
-const categories = [
+const categories = computed(() => [
   { value: 'bug',        icon: 'status.warning-octagon', label: 'Bug' },
-  { value: 'suggestion', icon: 'status.info',            label: '建议' },
-  { value: 'other',      icon: 'communication.chat',     label: '其他' },
-]
+  { value: 'suggestion', icon: 'status.info',            label: t('feedback.suggestion') },
+  { value: 'other',      icon: 'communication.chat',     label: t('feedback.other') },
+])
 
 const category  = ref('suggestion')
 const content   = ref('')
@@ -92,9 +94,9 @@ const error     = ref('')
 const done      = ref(false)
 
 const placeholder = computed(() => {
-  if (category.value === 'bug')        return '描述一下问题是什么、怎么复现的…'
-  if (category.value === 'suggestion') return '说说你的想法或期望的功能…'
-  return '随便聊聊…'
+  if (category.value === 'bug')        return t('feedback.bugPlaceholder')
+  if (category.value === 'suggestion') return t('feedback.suggestionPlaceholder')
+  return t('feedback.otherPlaceholder')
 })
 
 watch(() => props.show, (v) => {
@@ -108,7 +110,7 @@ async function submit() {
     await apiFeedback(category.value, content.value.trim())
     done.value = true
   } catch (e) {
-    error.value = (e instanceof Error ? e.message : '') || '提交失败，请稍后再试'
+    error.value = (e instanceof Error ? e.message : '') || t('feedback.submitFailed')
   } finally {
     submitting.value = false
   }

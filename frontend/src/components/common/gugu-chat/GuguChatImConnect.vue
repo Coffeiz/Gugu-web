@@ -4,30 +4,30 @@
       <button class="im-plat-head" :class="{ open: imOpen[p.key] }" @click="onTogglePlatform(p.key)">
         <svg class="im-plat-chev" :class="{ open: imOpen[p.key] }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
         <span class="im-plat-name">{{ p.label }}</span>
-        <span class="im-plat-badge" :class="{ on: botsOf(p.key).length }">{{ botsOf(p.key).length ? '已接入' : '未接入' }}</span>
+        <span class="im-plat-badge" :class="{ on: botsOf(p.key).length }">{{ botsOf(p.key).length ? t('chatUi.connected') : t('chatUi.notConnected') }}</span>
       </button>
       <div v-show="imOpen[p.key]" class="im-plat-body">
         <template v-if="botsOf(p.key).length">
           <div v-for="s in imSessionsOf(p.key)" :key="s.id"
             class="exp-session-item" :class="{ active: s.id === sessionId }" @click="onLoadSession(s.id)">
-            <span v-if="s.chatType === 'group'" class="exp-session-tag" title="群聊">群</span>
+            <span v-if="s.chatType === 'group'" class="exp-session-tag" :title="t('chatUi.groupChat')">{{ t('chatUi.group') }}</span>
             <div class="exp-session-copy">
               <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
               <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
             </div>
-            <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除"><Icon name="action.delete" :size="12" /></button>
+            <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" :title="t('common.actions.delete')"><Icon name="action.delete" :size="12" /></button>
           </div>
-          <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">暂无对话</div>
+          <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">{{ t('chatUi.noSessions') }}</div>
         </template>
         <template v-else>
           <div v-if="connect && connect.platform === p.key" class="im-qr-box">
             <canvas :ref="onSetConnectCanvas" class="im-qr-canvas"></canvas>
             <div class="im-qr-hint">{{ connectHint }}</div>
-            <button class="im-qr-cancel" @click="onCancelImConnect">取消</button>
+            <button class="im-qr-cancel" @click="onCancelImConnect">{{ t('common.actions.cancel') }}</button>
           </div>
           <template v-else>
             <button class="im-connect-btn" :disabled="connecting === p.key" @click="onStartImConnect(p.key)">
-              {{ connecting === p.key ? '生成中…' : '扫码连接' }}
+              {{ connecting === p.key ? t('chatUi.generatingQr') : t('chatUi.scanConnect') }}
             </button>
             <div v-if="connectErr && connecting !== p.key" class="im-qr-err">{{ connectErr }}</div>
           </template>
@@ -39,9 +39,11 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
+const { t } = useI18n()
 
 interface ImPlatformOption { key: ImPlatformKey; label: string }
 interface ImConnectState { platform: string; id: string | number }

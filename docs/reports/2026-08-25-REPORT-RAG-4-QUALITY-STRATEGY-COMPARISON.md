@@ -1,0 +1,47 @@
+# RAG-4 质量策略对照记录（2026-08-25）
+
+## 范围
+
+本记录对应 `PRD-RAG-4` Phase 5/6。线上真实数据的只读复测结果沿用
+[`2026-08-25-TEST-RAG-QUALITY-FULL-RETEST.md`](./2026-08-25-TEST-RAG-QUALITY-FULL-RETEST.md)；本次补齐
+自动化策略对照输出和统一诊断字段，不把没有人工标注的数据伪装成 Precision/Recall。
+
+| 对照策略 | 用途 | 线上是否采用 |
+|---|---|---|
+| 不过滤 | 观察候选全集和噪声上限 | 否，仅离线诊断 |
+| 原始分 | 检查 BM25/向量分数尺度 | 否，不能跨来源比较 |
+| `normalized_score` | 观察来源内相对分数 | 否，不作为全局硬阈值 |
+| `confidence` | 统一融合、质量过滤和预算入口 | 是 |
+
+## 实现与验证
+
+- `backend/scripts/diagnostics/rag_quality_retest.py` 现在同时输出四种策略的脱敏候选、
+  各策略保留数和 `confidence` 过滤统计。
+- TypeScript RAG worker 是当前评分事实来源：归一化、RRF、query match、source quality、
+  硬下限和优先阈值均集中在 worker，并带 `scoring_version`；Python 只接收诊断结果。
+- `UnifiedRecallService` 统一执行 scope、评分、去重、多样性和预算；来源 adapter
+  不再维护自己的过滤阈值或排序分支。
+- 无 embedding、向量缓存缺失或向量服务失败时保留 BM25 路径，继续经过同一套去重、
+  confidence 和预算规则。
+- 质量日志只记录候选/命中/过滤计数、阈值、版本、缓存状态和 fingerprint，不记录查询
+  正文、记忆正文、附件名或用户标识。
+
+## 自动化结果
+
+本地 RAG 评分、Retriever、注入、模型结构、混合检索、词法回退和新鲜度回归：
+
+```text
+28 passed
+```
+
+其中新增覆盖：
+
+1. 四种策略的离线输出结构；
+2. `confidence` 低分拒绝、优先阈值、版本和统计字段；
+3. 无 embedding 的 BM25 回退仍走统一结果流水线；
+4. 多来源去重、父文档/来源上限和多样性统计不泄漏正文。
+
+## 结论
+
+原始分和 `normalized_score` 继续保留为诊断信息，不再被调用方用作质量门槛。
+线上只使用 `confidence-v1`，下一次阈值或权重校准必须升级评分版本并重新生成对照报告。

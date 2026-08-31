@@ -223,7 +223,7 @@ GET  /api/v1/auth/quota           查配额（精力系统）
 GET  /api/v1/auth/avatar/{user_id}
 ```
 
-**管理员认证**（`admin_auth.py`，公开路由）：`POST /admin/auth/login`、`GET /admin/auth/me`。默认账号 `admin / admin123`（上线前必须修改）。
+**管理员认证**（`admin_auth.py`，公开路由）：`POST /admin/auth/login`、`GET /admin/auth/me`。用户名和密码必须通过配置显式提供。
 
 **项目**（`projects.py`）
 ```

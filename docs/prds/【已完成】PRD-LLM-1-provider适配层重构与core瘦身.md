@@ -147,7 +147,7 @@ Context 里的说明），合并前后各跑了一遍——合并前是"钉死�
 - [x] `tests/test_history_persist_filter.py`
 - [x] `tests/test_runner_collect.py`
 - [x] `tests/test_confirm_gate.py`
-- [x] `tests/test_p2b_io_retry.py`
+- [x] `tests/test_io_retry_contract.py`
 - [x] 全量 `cd backend && PYTHONPATH=. .venv/bin/pytest`——Phase 1 完成时 285 passed，加上 Phase 2 的特征测试后 **296 passed**，Phase 2 合并主循环后原样重跑仍 **296 passed**，零失败。（本地 `.venv` 是独立 python3.14 环境，跟 devserver 的 python3.12 venv 不共享；未设 `pythonpath` 配置项，需要显式 `PYTHONPATH=.` 才能 import 到 `app`/`agent` 顶层包，留给下次跑测试的人省得重新踩这个坑。）
 
 ### 代码层面自检（非自动化测试，人工核对）

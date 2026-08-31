@@ -25,6 +25,7 @@
       :highlight="false"
       :conflict="conflict"
       :canvas-mode="true"
+      :runtime-hover-suppressed="isHoverSuppressed"
       :scale="scale"
       :connecting="connecting"
       :connection-target-side="connectionTargetSide"
@@ -95,7 +96,10 @@ const pointerHover = ref(false)
 const interactionHover = computed(() =>
   pointerHover.value && !editing.value && !props.item.node.deletedAt,
 )
-function onPointerEnter() { pointerHover.value = true }
+function onPointerEnter() {
+  if (isHoverSuppressed.value) return
+  pointerHover.value = true
+}
 function onPointerLeave() { pointerHover.value = false }
 watch(interactionHover, hovering => emit('hover', props.item, hovering), { immediate: true })
 
@@ -163,7 +167,7 @@ async function onColor(color: string | null) {
 // 点便签本体进编辑态、点标题/正文里的待办/引用/展开按钮等都是 NoteCard 自己处理
 // （见其 onBodyClick/startEditAt），这里的拖拽只处理"按住越过阈值"的真正拖拽；
 // NoteCard 内部所有可交互元素都挂了 @pointerdown.stop，不会被这层拖拽阈值判定抢走。
-const { onPointerDown } = useMindRuntimeObject({
+const { isHoverSuppressed, onPointerDown } = useMindRuntimeObject({
   objectId: () => mindCanvasObjectId(props.item),
   element: noteCardEl,
 })

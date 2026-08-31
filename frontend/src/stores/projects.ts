@@ -8,6 +8,7 @@ import {
 } from '@/utils/projectStages'
 import { DEFAULT_PROJECT_COLOR } from '@/utils/projectColors'
 import type { components } from '@/types/api'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 type EventResponse = components['schemas']['EventResponse']
 
@@ -94,8 +95,11 @@ export const useProjectStore = defineStore('projects', () => {
   async function fetchProjects() {
     loading.value = true
     error.value   = null
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
-      projects.value = (await projectsApi.list()).map(mapProjectResponse)
+      const nextProjects = (await projectsApi.list()).map(mapProjectResponse)
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
+      projects.value = nextProjects
       projects.value.forEach(rememberConfirmed)
       projectsLoaded.value = true
     } catch (e) {
@@ -121,8 +125,6 @@ export const useProjectStore = defineStore('projects', () => {
     const created = mapProjectResponse(await projectsApi.create(payload))
     projects.value.unshift(created)
     rememberConfirmed(created)
-    // 新手引导：手动新建第一个项目后弹一句（claim-once 保证只第一次）
-    import('@/composables/useOnboarding').then(m => m.fireHint('todo_newproj')).catch(() => {})
     return created
   }
 
@@ -143,8 +145,11 @@ export const useProjectStore = defineStore('projects', () => {
     // 还是 false）才让弹层显示加载态。配合页面挂载即预取，用户点开归档按钮时数据大概率已经在，
     // 不会再看到那下加载闪烁（见 views/Projects/index.vue onMounted）。
     archivedLoading.value = true
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
-      archivedProjects.value = (await projectsApi.list(true)).map(mapProjectResponse)
+      const nextProjects = (await projectsApi.list(true)).map(mapProjectResponse)
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
+      archivedProjects.value = nextProjects
       archivedLoaded.value = true
     } catch (e) {
       error.value = errMsg(e)
@@ -324,13 +329,29 @@ export const useProjectStore = defineStore('projects', () => {
   // 近期节点日历事件缓存（在 store 里，SPA 导航不重置）
   const upcomingCalEvents = ref<EventResponse[]>([])
   async function fetchUpcomingCalEvents() {
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const today = new Date()
       const y = today.getFullYear(), m = today.getMonth() + 1
       const thisMonth = await eventsApi.list(y, m)
       const nextMonth = await eventsApi.list(m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1)
-      upcomingCalEvents.value = [...thisMonth, ...nextMonth]
+      if (requestEpoch === getAccountBoundaryEpoch()) upcomingCalEvents.value = [...thisMonth, ...nextMonth]
     } catch { /* ignore */ }
+  }
+
+  function resetAccountState() {
+    delayedProjectUpdates.forEach(({ timer }) => { if (timer) clearTimeout(timer) })
+    delayedProjectUpdates.clear()
+    projectWrites.clear()
+    projectWriteRevisions.clear()
+    confirmedProjects.clear()
+    projects.value = []
+    archivedProjects.value = []
+    upcomingCalEvents.value = []
+    projectsLoaded.value = false
+    archivedLoaded.value = false
+    modalProjectId.value = null
+    error.value = null
   }
 
   // 实时：咕咕/IM 改了项目或日历事件 → 只要主列表加载过，即使为空也刷新。
@@ -362,7 +383,7 @@ export const useProjectStore = defineStore('projects', () => {
     activeCount, totalCount, upcomingCount, urgentProjects,
     fetchProjects, addProject, deleteProject, archiveProject, moveProject,
     setStage, updateStages, saveTodos, updateProject, updateProjectDebounced,
-    modalProject, openModal, closeModal,
+    modalProject, openModal, closeModal, resetAccountState,
     upcomingCalEvents, fetchUpcomingCalEvents,
     archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,
   }

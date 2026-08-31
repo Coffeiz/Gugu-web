@@ -2,7 +2,7 @@
   <BaseModal :show="open" width="480px" background="var(--panel-bg)" @close="cancel">
     <div class="ucd">
       <div class="ucd-header">
-        <h2>{{ conflicts.length }} 个文件已存在同名</h2>
+        <h2>{{ t('viewerUi.conflictTitle', { count: conflicts.length }) }}</h2>
         <button class="close-btn" @click="cancel">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <path d="M3 3l10 10M13 3L3 13"/>
@@ -11,10 +11,10 @@
       </div>
 
       <div class="ucd-bulk">
-        <span class="ucd-bulk-label">全部：</span>
-        <button class="ucd-bulk-btn" @click="applyAll('overwrite')">覆盖</button>
-        <button class="ucd-bulk-btn" @click="applyAll('keep_both')">保留两者</button>
-        <button class="ucd-bulk-btn" @click="applyAll('skip')">跳过</button>
+        <span class="ucd-bulk-label">{{ t('viewerUi.all') }}：</span>
+        <button class="ucd-bulk-btn" @click="applyAll('overwrite')">{{ t('viewerUi.overwrite') }}</button>
+        <button class="ucd-bulk-btn" @click="applyAll('keep_both')">{{ t('viewerUi.keepBoth') }}</button>
+        <button class="ucd-bulk-btn" @click="applyAll('skip')">{{ t('viewerUi.skip') }}</button>
       </div>
 
       <div class="ucd-list">
@@ -22,21 +22,21 @@
           <span class="ucd-name" :title="c.filename">{{ c.filename }}</span>
           <div class="ucd-choices">
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'overwrite' }">
-              <input type="radio" :name="c.filename" value="overwrite" v-model="choices[c.filename]" />覆盖
+              <input type="radio" :name="c.filename" value="overwrite" v-model="choices[c.filename]" />{{ t('viewerUi.overwrite') }}
             </label>
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'keep_both' }">
-              <input type="radio" :name="c.filename" value="keep_both" v-model="choices[c.filename]" />保留两者
+              <input type="radio" :name="c.filename" value="keep_both" v-model="choices[c.filename]" />{{ t('viewerUi.keepBoth') }}
             </label>
             <label class="ucd-radio" :class="{ active: choices[c.filename] === 'skip' }">
-              <input type="radio" :name="c.filename" value="skip" v-model="choices[c.filename]" />跳过
+              <input type="radio" :name="c.filename" value="skip" v-model="choices[c.filename]" />{{ t('viewerUi.skip') }}
             </label>
           </div>
         </div>
       </div>
 
       <div class="ucd-footer">
-        <button class="btn-cancel" @click="cancel">全部取消上传</button>
-        <button class="btn-confirm" @click="confirm">确认</button>
+        <button class="btn-cancel" @click="cancel">{{ t('viewerUi.cancelUpload') }}</button>
+        <button class="btn-confirm" @click="confirm">{{ t('common.actions.confirm') }}</button>
       </div>
     </div>
   </BaseModal>
@@ -45,6 +45,9 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 export interface ConflictItem {
   filename: string
@@ -100,35 +103,35 @@ defineExpose({ show })
 .ucd-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 24px 14px;
-  border-bottom: 1px solid rgba(0,0,0,0.07);
+  border-bottom: 1px solid var(--panel-divider);
   flex-shrink: 0;
 }
 .ucd-header h2 { font-size: 15px; font-weight: 700; }
 
 .close-btn {
   width: 28px; height: 28px; border-radius: 8px;
-  background: rgba(0,0,0,0.05); border: none;
+  background: var(--control-bg); border: none;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; color: var(--text-secondary);
   transition: background 0.15s;
 }
-.close-btn:hover { background: rgba(0,0,0,0.1); }
+.close-btn:hover { background: var(--control-bg-hover); }
 
 .ucd-bulk {
   display: flex; align-items: center; gap: 6px;
   padding: 12px 24px; flex-shrink: 0;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid var(--panel-divider);
 }
 .ucd-bulk-label { font-size: 11px; color: var(--text-secondary); margin-right: 2px; }
 .ucd-bulk-btn {
   padding: 4px 10px; border-radius: 20px;
-  border: 1px solid rgba(0,0,0,0.1);
-  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
   font-size: 11px; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans);
   transition: all 0.15s;
 }
-.ucd-bulk-btn:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); border-color: rgba(123,127,178,0.3); }
+.ucd-bulk-btn:hover { background: var(--action-soft-hover); color: var(--action-primary); border-color: var(--action-outline); }
 
 .ucd-list {
   flex: 1; overflow-y: auto;
@@ -137,8 +140,8 @@ defineExpose({ show })
 .ucd-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 8px 10px; border-radius: 10px;
-  background: rgba(255,255,255,0.7);
-  border: 1px solid rgba(255,255,255,0.88);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
 }
 .ucd-name {
   flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--text-primary);
@@ -153,24 +156,24 @@ defineExpose({ show })
   border: 1px solid transparent;
   transition: all 0.12s;
 }
-.ucd-radio input { width: 11px; height: 11px; accent-color: #7b7fb2; }
-.ucd-radio.active { background: rgba(123,127,178,0.1); color: var(--color-primary); border-color: rgba(123,127,178,0.25); }
+.ucd-radio input { width: 11px; height: 11px; accent-color: var(--action-primary); }
+.ucd-radio.active { background: var(--action-soft); color: var(--action-primary); border-color: var(--action-outline); }
 
 .ucd-footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 14px 24px;
-  border-top: 1px solid rgba(0,0,0,0.07);
+  border-top: 1px solid var(--panel-divider);
   flex-shrink: 0;
 }
 .btn-cancel {
   padding: 8px 18px; border-radius: var(--radius-sm);
-  border: 1px solid rgba(0,0,0,0.1);
-  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
   font-size: 13px; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans);
   transition: all 0.15s;
 }
-.btn-cancel:hover { background: rgba(255,255,255,0.88); color: var(--text-primary); }
+.btn-cancel:hover { background: var(--control-bg-hover); color: var(--content-primary); }
 .btn-confirm {
   padding: 8px 22px; border-radius: var(--radius-sm);
   background: var(--action-primary-bg);

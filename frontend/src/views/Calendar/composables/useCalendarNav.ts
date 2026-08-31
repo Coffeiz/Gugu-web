@@ -8,21 +8,26 @@ interface CalendarNavOptions {
   todayIso: Ref<string>
   weekRef: Ref<Date>
   weekDays: ComputedRef<CalendarWeekLabel[]>
+  locale: Ref<string>
 }
 
-export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays }: CalendarNavOptions) {
+export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays, locale }: CalendarNavOptions) {
   const viewMode = ref<'month' | 'week'>('month')
   const pickerOpen = ref(false)
   const pickerYear = ref(new Date().getFullYear())
   const pickerAnchorRef = ref<HTMLElement | null>(null)
   const pickerStyle = ref<Record<string, string | number>>({})
 
+  function formatDate(date: Date, options: Intl.DateTimeFormatOptions) {
+    return new Intl.DateTimeFormat(locale.value, options).format(date)
+  }
+
   const periodLabel = computed(() => {
     if (viewMode.value === 'week') {
       const days = weekDays.value
-      return new Date(days[0].iso + 'T00:00:00').getFullYear() + '年 ' + days[0].md + ' - ' + days[6].md
+      return `${formatDate(new Date(days[0].iso + 'T00:00:00'), { year: 'numeric', month: 'short', day: 'numeric' })} – ${formatDate(new Date(days[6].iso + 'T00:00:00'), { month: 'short', day: 'numeric' })}`
     }
-    return cursor.value.getFullYear() + '年 ' + (cursor.value.getMonth() + 1) + '月'
+    return formatDate(cursor.value, { year: 'numeric', month: 'long' })
   })
 
   function prev() {

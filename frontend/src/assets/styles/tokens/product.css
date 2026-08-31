@@ -9,6 +9,14 @@ html[data-theme][data-family] .sidebar {
 }
 html[data-theme][data-family] .sidebar .logo-icon { background: transparent; }
 html[data-theme][data-family] .sidebar .nav-label { color: var(--sidebar-label-fg); }
+/* 公共导航与 Admin 导航共享同一组选中态；两者只在基础几何和容器布局上保持差异。 */
+html[data-theme][data-family] :is(.sidebar, .admin-sidebar) .nav-item.active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
+  font-weight: var(--font-weight-bold);
+}
 html[data-theme][data-family] .sidebar .notif-btn { color: var(--sidebar-item-fg); }
 html[data-theme][data-family] .sidebar .notif-btn:hover { color: var(--content-primary); background: var(--sidebar-item-hover); }
 html[data-theme][data-family] .sidebar .notif-btn.notif-active {
@@ -44,6 +52,12 @@ html[data-theme][data-family] .files-toolbar {
   --gb-highlight-strong: transparent;
   --gb-highlight-side: transparent;
 }
+html[data-theme][data-family] .terminal-main-head.glass-card {
+  /* 终端顶部位于已有终端外框内，只保留底部分隔线，避免卡片阴影形成第二层边界。 */
+  --glass-card-shadow: none;
+  --glass-card-shadow-hover: none;
+  box-shadow: none;
+}
 html[data-theme][data-family] .topbar .topbar-title h1 { font-size: var(--topbar-title-size); }
 html[data-theme][data-family] .topbar .topbar-title p {
   color: var(--content-secondary);
@@ -69,32 +83,6 @@ html[data-theme][data-family] .file-card-btn { color: var(--content-secondary); 
 html[data-theme][data-family] .file-card-btn:hover { color: var(--content-primary); background: var(--surface-card-solid); }
 html[data-theme][data-family] .file-card-btn.del:hover { color: var(--status-danger); }
 
-/* Real ProjectCard is the reference implementation: preserve project color, sheen and exact motion. */
-html[data-theme][data-family] .proj-card {
-  background: var(--surface-card-solid);
-  border-color: var(--project-card-border);
-  border-radius: var(--project-card-radius);
-  corner-shape: squircle;
-  box-shadow: var(--project-card-shadow);
-  transition: var(--project-card-motion);
-}
-html[data-theme][data-family] .proj-card.hover-card-fx:hover {
-  transform: translateY(-2px);
-  border-color: var(--project-card-hover-border);
-  box-shadow: var(--project-card-hover-shadow);
-}
-html[data-theme][data-family] .proj-card.hover-card-fx:active:not(:has(:active)) {
-  transform: translateY(1px);
-  opacity: .93;
-}
-html[data-theme][data-family] .proj-card::before {
-  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color);
-}
-html[data-theme][data-family] .proj-card::after {
-  background: var(--project-card-sheen-hover);
-  box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
-}
-
 /* ── GuguChat ───────────────────────────────────────────────────
    窗口根节点只负责边框、圆角和阴影；聊天主体继续沿用组件自己的背景与 blur，避免根节点
    和 chat-main 同时铺材质导致整窗变成另一层面板。 */
@@ -106,10 +94,7 @@ html[data-theme][data-family] .chat-window {
 }
 html[data-theme][data-family] .chat-window::after {
   border-radius: var(--gugu-chat-radius);
-  box-shadow:
-    inset 0 1px 0 var(--gugu-chat-highlight),
-    inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-highlight) 55%,transparent),
-    inset 0 -1px 0 color-mix(in srgb,var(--gugu-chat-highlight) 30%,transparent);
+  box-shadow: none;
 }
 html[data-theme][data-family] .chat-window .chat-main { background: var(--gugu-chat-main-bg); }
 html[data-theme][data-family] .chat-window .chat-header { border-bottom-color: var(--gugu-chat-header-border); }
@@ -120,7 +105,7 @@ html[data-theme][data-family] .chat-window .exp-sidebar {
 html[data-theme][data-family] .chat-window .chat-input-row {
   border-top-color: var(--gugu-chat-header-border);
   background: var(--gugu-chat-composer-bg);
-  box-shadow: inset 0 1px 0 color-mix(in srgb,var(--border-highlight) 70%,transparent);
+  box-shadow: none;
 }
 html[data-theme][data-family] .chat-window .chat-drop-overlay {
   color: var(--action-primary);

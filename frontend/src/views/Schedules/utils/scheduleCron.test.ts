@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { buildCron, cronLabel, parseCron } from './scheduleCron'
+import { setLocale } from '@/i18n'
+
+beforeEach(() => setLocale('zh-CN'))
 
 describe('scheduleCron', () => {
   it('生成并解析间隔任务', () => {

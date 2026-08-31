@@ -1,5 +1,5 @@
 # 生产 Compose：只消费已经构建好的镜像，不挂载源码，不运行 Vite/Uvicorn reload。
-# 默认入口：http://localhost:9595；默认包含 sandboxd、工具执行和受控 egress
+# 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用
 # 使用前设置 GUGU_BACKEND_IMAGE、GUGU_FRONTEND_IMAGE、GUGU_DB_PASSWORD。
 
 x-json-file-logging: &json-file-logging
@@ -49,6 +49,7 @@ services:
     restart: unless-stopped
 
   egress-proxy:
+    profiles: [sandbox]
     logging: *json-file-logging
     image: ubuntu/squid:latest
     volumes:
@@ -95,6 +96,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -134,6 +137,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -158,9 +163,42 @@ services:
       - sandbox_socket:/run/gugu
     restart: unless-stopped
 
-  sandboxd:
+  # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
+  gateway:
     logging: *json-file-logging
-    # 工具执行随 backend/worker 镜像提供；sandboxd 是默认开启的可选沙盒执行层。
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    command: ["python", "-m", "agent.gateway.gateway"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
+      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
+      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
+      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+    restart: unless-stopped
+
+  sandboxd:
+    profiles: [sandbox]
+    logging: *json-file-logging
+    # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
     env_file:

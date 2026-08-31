@@ -10,7 +10,11 @@ html[data-theme][data-family] .md-preview .np-code-lang,
 html[data-theme][data-family] .ne-body .ProseMirror .ne-codeblock-lang { border-bottom-color: var(--border-subtle); }
 html[data-theme][data-family] .md-preview .np-hr,
 html[data-theme][data-family] .ne-body .ProseMirror hr { background: var(--border-default); }
-html[data-theme][data-family] .mind-ref { color: var(--selection-fg); background: var(--selection-bg); }
+html[data-theme][data-family] .mind-ref {
+  color: var(--content-primary);
+  background: var(--action-soft);
+  border: 1px solid var(--action-outline);
+}
 html[data-theme][data-family] .mind-ref:hover { background: var(--action-soft-hover); }
 html[data-theme][data-family] .mind-ref.mind-ref-missing,
 html[data-theme][data-family] .mind-ref.mind-ref-missing:hover { color: var(--content-secondary); background: var(--surface-soft); }

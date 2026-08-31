@@ -4,7 +4,7 @@
 > 创建：2026-08-25
 > 所属层：LLM / Context Assembly / Provider Adapter
 > 关联 PRD：[[PRD-LLM-3-provider供应商适配层整体整理.md]]、[[PRD-LLM-8-Prompt-Caching优化.md]]、[[PRD-LLM-9-工具与Skill注册制及按需注入.md]]
-> 最新缓存关联报告：[[../../reports/TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN-20260826.md]]
+> 最新缓存关联报告：[[../../reports/2026-08-26-TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN.md]]
 
 ## 0.1 当前实现状态
 

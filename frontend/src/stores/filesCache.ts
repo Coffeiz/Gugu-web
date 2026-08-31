@@ -4,6 +4,7 @@ import { filesApi, foldersApi, CLIENT_ID } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { components } from '@/types/api'
 import type { LiveEventPayload } from '@/types/live-events'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 // 文件/文件夹领域类型：核心字段绑定 OpenAPI 生成的响应体（filesApi.all / foldersApi.all 的返回）。
 // 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
@@ -66,8 +67,10 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   async function load() {
     if (loading.value) return
     loading.value = true
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const [files, folders, ver] = await Promise.all([filesApi.all(), foldersApi.all(), filesApi.version()])
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
       allFiles.value   = files
       allFolders.value = folders
       loaded.value     = true
@@ -81,12 +84,22 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   async function refresh() {
+    const requestEpoch = getAccountBoundaryEpoch()
     try {
       const [files, folders, ver] = await Promise.all([filesApi.all(), foldersApi.all(), filesApi.version()])
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
       allFiles.value   = files
       allFolders.value = folders
       _lastVersion = ver?.version ?? null
     } catch { /* 静默失败 */ }
+  }
+
+  function resetAccountState() {
+    allFiles.value = []
+    allFolders.value = []
+    loaded.value = false
+    loading.value = false
+    _lastVersion = null
   }
 
   async function _checkVersion() {
@@ -212,7 +225,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
 
   return {
     allFiles, allFolders, loaded, loading,
-    load, refresh,
+    load, refresh, resetAccountState,
     getPersonalRootFiles, getProjectRootFiles, getFolderFiles,
     getPersonalRootFolders, getProjectRootFolders, getSubFolders,
     addFile, removeFile, removeFiles, updateFile, getFile,

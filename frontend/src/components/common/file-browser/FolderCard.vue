@@ -108,6 +108,8 @@ defineProps({
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
+/* 展示态继续截断长文件夹名；重命名时放开裁切，让共享 input focus glow 不被名称行吃掉。 */
+.fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
 .fd-count { font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
 .fd-hover-actions {
   position: absolute; top: 8px; right: 8px; z-index: 3;

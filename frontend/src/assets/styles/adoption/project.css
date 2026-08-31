@@ -126,7 +126,7 @@ html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-
    follows one theme contract instead of carrying light-only white/black alpha fills.
    仅暗色生效：亮色下这些控件有自己的 scoped 设计（透明文字按钮/白底勾选框/
    浅紫 stage-num），option token 全量替换会把亮色样式变成灰暗块。 */
-html[data-theme='dark'][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-btn, .np-todo-add-btn, .add-stage-btn) {
+html[data-theme='dark'][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-btn, .np-todo-add-btn) {
   color: var(--option-fg);
   background: var(--option-bg);
   border-color: var(--option-border);
@@ -137,7 +137,7 @@ html[data-theme='dark'][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-bt
     border-color var(--motion-hover-control) var(--motion-ease-standard),
     box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-html[data-theme='dark'][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-btn, .np-todo-add-btn, .add-stage-btn):hover:not(:disabled) {
+html[data-theme='dark'][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-btn, .np-todo-add-btn):hover:not(:disabled) {
   color: var(--option-fg-hover);
   background: var(--option-bg-hover);
   border-color: var(--option-border-hover);

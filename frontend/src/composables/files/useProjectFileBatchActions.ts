@@ -4,6 +4,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { useClipboardStore } from '@/stores/clipboard'
 import type { useFileActions } from './useFileActions'
 import { useFileBatchCore } from './useFileBatchCore'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 export interface ProjectFileBatchActionOptions {
   fileActions: ReturnType<typeof useFileActions>
@@ -41,6 +42,7 @@ export function useProjectFileBatchActions(options: ProjectFileBatchActionOption
   async function deleteSelected() {
     const { fileIds, folderIds } = core.resolveSelection()
     if (!fileIds.length && !folderIds.length) return
+    if (!await confirmFileDeletion('selected', { count: fileIds.length + folderIds.length })) return
 
     options.clearSelection()
     try {

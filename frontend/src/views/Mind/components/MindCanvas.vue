@@ -284,9 +284,6 @@ function onRuntimeVisual(event: RuntimeEvent) {
     if (nodeId != null) {
       landingPositions.delete(nodeId)
       landingNodeIds.delete(nodeId)
-      const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
-        .some(element => element.matches(':hover'))
-      if (hovered) hoveredNodeId.value = nodeId
     }
     return
   }

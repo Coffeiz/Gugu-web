@@ -2,34 +2,34 @@
   <div class="debug-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">Debug 日志</h2>
-        <p class="page-desc">实时 tail 三个日志文件 · {{ liveCount }} 条</p>
+        <h2 class="page-title">{{ t('adminLogs.debugTitle') }}</h2>
+        <p class="page-desc">{{ t('adminLogs.debugDescription', { count: liveCount }) }}</p>
       </div>
     </div>
 
     <div class="toolbar">
       <AdminSelect v-model="filterSource" :options="sourceOptions" style="width:140px" />
       <AdminSelect v-model="filterLevel"  :options="levelOptions"  style="width:130px" />
-      <input v-model="filterText" class="debug-search" placeholder="搜索关键词（如 trace=xxxx 串起全链路）" />
-      <button class="icon-btn" :class="{ active: autoScroll }" @click="autoScroll = !autoScroll" title="自动滚动">
+      <input v-model="filterText" class="debug-search" :placeholder="t('adminLogs.searchPlaceholder')" />
+      <button class="icon-btn" :class="{ active: autoScroll }" @click="autoScroll = !autoScroll" :title="t('adminLogs.autoScroll')" :aria-label="t('adminLogs.autoScroll')">
         <Icon name="action.scroll-down" size="sm" />
       </button>
-      <button class="icon-btn" @click="clearLines" title="清空显示">
+      <button class="icon-btn" @click="clearLines" :title="t('adminLogs.clear')" :aria-label="t('adminLogs.clear')">
         <Icon name="action.clear" size="sm" />
       </button>
       <span class="live-dot" :class="{ connected }"></span>
-      <span class="toolbar-count">{{ connected ? '实时' : '断开' }}</span>
+      <span class="toolbar-count">{{ connected ? t('adminLogs.live') : t('adminLogs.disconnected') }}</span>
     </div>
 
     <div class="log-table-wrap" ref="tableWrap">
       <div class="log-table">
         <div class="lt-head">
-          <span class="col-src">来源</span>
-          <span class="col-time">时间</span>
-          <span class="col-msg">日志</span>
+          <span class="col-src">{{ t('adminLogs.source') }}</span>
+          <span class="col-time">{{ t('adminLogs.time') }}</span>
+          <span class="col-msg">{{ t('adminLogs.log') }}</span>
         </div>
 
-        <div v-if="!filtered.length" class="lt-empty">暂无日志</div>
+        <div v-if="!filtered.length" class="lt-empty">{{ t('adminLogs.empty') }}</div>
 
         <template v-else>
           <div
@@ -54,9 +54,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import Icon from '@/components/common/Icon.vue'
+const { t } = useI18n()
 
 const adminStore = useAdminStore()
 
@@ -73,13 +75,13 @@ let   streamRunning = true
 let   uid          = 0
 
 const sourceOptions = [
-  { label: '全部来源',   value: '' },
+  { label: t('adminLogs.allSources'),   value: '' },
   { label: 'web',        value: 'web' },
   { label: 'worker',     value: 'worker' },
   { label: 'gateway', value: 'gateway' },
 ]
 const levelOptions = [
-  { label: '全部级别', value: '' },
+  { label: t('adminLogs.allLevels'), value: '' },
   { label: 'ERROR',   value: 'error' },
   { label: 'WARNING', value: 'warning' },
   { label: 'INFO',    value: 'info' },
@@ -218,12 +220,10 @@ onUnmounted(() => {
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); }
 .debug-search {
   width: 280px; height: 30px; padding: 0 11px;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px;
-  font-family: var(--font-mono, monospace); outline: none; transition: border-color 0.15s;
+  border-radius: 8px; font-size: 12px;
+  font-family: var(--font-mono, monospace); outline: none;
 }
-.debug-search::placeholder { color: rgba(255,255,255,0.28); font-family: var(--font-sans); }
-.debug-search:focus { border-color: rgba(123,127,178,0.6); }
+.debug-search::placeholder { font-family: var(--font-sans); }
 
 /* .icon-btn 基础用 Admin 全局样式（AdminApp.vue）；本页保留 active 变体（实时开关） */
 .icon-btn.active { background: rgba(100,200,160,0.12); border-color: rgba(100,200,160,0.3); color: rgba(100,200,160,0.9); }

@@ -710,6 +710,26 @@ export interface paths {
         patch: operations["update_event_api_v1_events__eid__patch"];
         trace?: never;
     };
+    "/api/v1/live/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Live Events
+         * @description 订阅当前用户的资源事件和全局通知，不创建或持有数据库连接。
+         */
+        get: operations["stream_live_events_api_v1_live_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clients": {
         parameters: {
             query?: never;
@@ -1718,6 +1738,26 @@ export interface paths {
         patch: operations["update_preferences_api_v1_preferences_patch"];
         trace?: never;
     };
+    "/api/v1/preferences/personality/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Personality
+         * @description 上传 Markdown 人格文件；文件只写入用户隐藏人格目录。
+         */
+        post: operations["upload_personality_api_v1_preferences_personality_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -1799,6 +1839,165 @@ export interface paths {
         get: operations["current_workspace_api_v1_workspaces_session__session_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Terminals */
+        get: operations["get_terminals_api_v1_terminals_get"];
+        put?: never;
+        /** Add Terminal */
+        post: operations["add_terminal_api_v1_terminals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Terminal Metrics */
+        get: operations["get_terminal_metrics_api_v1_terminals_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Terminal Detail */
+        get: operations["get_terminal_detail_api_v1_terminals__terminal_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Terminal View */
+        delete: operations["delete_terminal_view_api_v1_terminals__terminal_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Terminal Route */
+        patch: operations["rename_terminal_route_api_v1_terminals__terminal_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Terminal Events */
+        get: operations["stream_terminal_events_api_v1_terminals__terminal_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Terminal Input */
+        post: operations["terminal_input_api_v1_terminals__terminal_id__input_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}/cancel/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Terminal Command */
+        post: operations["cancel_terminal_command_api_v1_terminals__terminal_id__cancel__request_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Terminate Terminal View */
+        post: operations["terminate_terminal_view_api_v1_terminals__terminal_id__terminate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen Terminal View */
+        post: operations["reopen_terminal_view_api_v1_terminals__terminal_id__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/terminals/{terminal_id}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Terminal View
+         * @description 重建当前终端的 PTY/沙盒运行态，不删除工作区文件或输出历史。
+         */
+        post: operations["reset_terminal_view_api_v1_terminals__terminal_id__reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2096,86 +2295,6 @@ export interface paths {
         get: operations["get_onboarding_state_api_v1_onboarding_state_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/claim/{key}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Claim Onboarding
-         * @description key ∈ {welcome, guide, lookback, hint:<name>}。首次返回文案 + 标记已读，之后 null。
-         */
-        post: operations["claim_onboarding_api_v1_onboarding_claim__key__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/dev/pools": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Dev Pools
-         * @description 各文案池预览（demo 面板展示）。
-         */
-        get: operations["dev_pools_api_v1_onboarding_dev_pools_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/dev/fire/{key}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Fire
-         * @description 取某块随机文案但不标记已读（不重注册、不重置即可反复预览）。
-         */
-        post: operations["dev_fire_api_v1_onboarding_dev_fire__key__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/onboarding/dev/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dev Reset
-         * @description 清零自己的已读标记（保留 seeded），气泡可重新自然触发。
-         */
-        post: operations["dev_reset_api_v1_onboarding_dev_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3240,7 +3359,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/perception/temperature": {
+    "/api/v1/admin/audit-log/security-events": {
         parameters: {
             query?: never;
             header?: never;
@@ -3248,12 +3367,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Temperature List
-         * @description 关系温度当前值列表（v1：只读当前快照，无历史曲线——temp.json 每次重算是整份覆盖，
-         *     见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。
-         *     exclude_dev=排除开发者账号（is_developer 标记）。
+         * List Security Events
+         * @description 管理员全局安全事件视图；仅返回脱敏字段，不接受正文或来源明文筛选。
          */
-        get: operations["temperature_list_api_v1_admin_perception_temperature_get"];
+        get: operations["list_security_events_api_v1_admin_audit_log_security_events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3305,6 +3422,80 @@ export interface paths {
         };
         /** List Users */
         get: operations["list_users_api_v1_admin_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/risk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Risk Users
+         * @description 返回可见窗口内触发事件或仍处于冻结状态的用户聚合。
+         *
+         *     ``window_minutes`` 是展示窗口；5 分钟阈值只用于风险动作判定，不能让事件在
+         *     展示层过期后看起来像从未发生过。
+         */
+        get: operations["list_risk_users_api_v1_admin_users_risk_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/suspend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suspend User */
+        post: operations["suspend_user_api_v1_admin_users__user_id__suspend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/unsuspend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unsuspend User */
+        post: operations["unsuspend_user_api_v1_admin_users__user_id__unsuspend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/security-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List User Security Events */
+        get: operations["list_user_security_events_api_v1_admin_users__user_id__security_events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3851,6 +4042,119 @@ export interface paths {
         patch: operations["update_skill_api_v1_skills__slug__patch"];
         trace?: never;
     };
+    "/api/v1/byok": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Credentials */
+        get: operations["get_credentials_api_v1_byok_get"];
+        put?: never;
+        /** Create Credential */
+        post: operations["create_credential_api_v1_byok_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/byok/models-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Models
+         * @description 用当前表单或已保存凭据读取 Provider 模型列表，不保存配置。
+         */
+        post: operations["preview_models_api_v1_byok_models_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/byok/vision-probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Vision
+         * @description 检测用户模型的单项多模态能力，不修改配置。
+         */
+        post: operations["probe_vision_api_v1_byok_vision_probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/byok/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Credential */
+        delete: operations["delete_credential_api_v1_byok__credential_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Credential */
+        patch: operations["patch_credential_api_v1_byok__credential_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/byok/test-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Credential Preview */
+        post: operations["test_credential_preview_api_v1_byok_test_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/byok/{credential_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Credential
+         * @description 校验凭据，并对模型类配置执行一次无副作用的连通性请求。
+         */
+        post: operations["test_credential_api_v1_byok__credential_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -3932,6 +4236,11 @@ export interface components {
             on_conflict: string;
             /** Overwrite File Id */
             overwrite_file_id?: number | null;
+        };
+        /** Body_upload_personality_api_v1_preferences_personality_upload_post */
+        Body_upload_personality_api_v1_preferences_personality_upload_post: {
+            /** File */
+            file: string;
         };
         /** BotIn */
         BotIn: {
@@ -4132,6 +4441,167 @@ export interface components {
         ConflictCheckRequest: {
             /** Items */
             items: components["schemas"]["ConflictCheckItem"][];
+        };
+        /** CredentialCreate */
+        CredentialCreate: {
+            /** Provider */
+            provider: string;
+            /**
+             * Api Format
+             * @default
+             */
+            api_format: string;
+            /**
+             * Capability
+             * @enum {string}
+             */
+            capability: "llm" | "deep_research" | "similar_image_search" | "speech_to_text";
+            /**
+             * Value
+             * @default
+             */
+            value: string;
+            /**
+             * Base Url
+             * @default
+             */
+            base_url: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Context Tokens */
+            context_tokens?: number | null;
+            /** Thinking */
+            thinking?: ("disabled" | "adaptive") | null;
+            /** Reasoning Effort */
+            reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
+            /**
+             * Vision
+             * @default false
+             */
+            vision: boolean;
+            /**
+             * Vision Video
+             * @default false
+             */
+            vision_video: boolean;
+            /**
+             * Vision Audio
+             * @default false
+             */
+            vision_audio: boolean;
+            /**
+             * Vision Detail
+             * @default auto
+             * @enum {string}
+             */
+            vision_detail: "auto" | "low" | "high" | "original";
+        };
+        /** CredentialModelsPreview */
+        CredentialModelsPreview: {
+            /** Provider */
+            provider: string;
+            /**
+             * Api Format
+             * @default
+             */
+            api_format: string;
+            /**
+             * Base Url
+             * @default
+             */
+            base_url: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Api Key
+             * @default
+             */
+            api_key: string;
+            /** Credential Id */
+            credential_id?: number | null;
+        };
+        /** CredentialPatch */
+        CredentialPatch: {
+            /** Provider */
+            provider?: string | null;
+            /** Value */
+            value?: string | null;
+            /** Api Format */
+            api_format?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Context Tokens */
+            context_tokens?: number | null;
+            /** Thinking */
+            thinking?: ("disabled" | "adaptive") | null;
+            /** Reasoning Effort */
+            reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
+            /** Vision */
+            vision?: boolean | null;
+            /** Vision Video */
+            vision_video?: boolean | null;
+            /** Vision Audio */
+            vision_audio?: boolean | null;
+            /** Vision Detail */
+            vision_detail?: ("auto" | "low" | "high" | "original") | null;
+            /** Enabled */
+            enabled?: boolean | null;
+        };
+        /** CredentialTestPreview */
+        CredentialTestPreview: {
+            /** Provider */
+            provider: string;
+            /**
+             * Capability
+             * @enum {string}
+             */
+            capability: "deep_research" | "similar_image_search";
+            /** Value */
+            value: string;
+        };
+        /** CredentialVisionProbe */
+        CredentialVisionProbe: {
+            /** Provider */
+            provider: string;
+            /**
+             * Api Format
+             * @default
+             */
+            api_format: string;
+            /**
+             * Base Url
+             * @default
+             */
+            base_url: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Api Key
+             * @default
+             */
+            api_key: string;
+            /** Credential Id */
+            credential_id?: number | null;
+            /**
+             * Dim
+             * @enum {string}
+             */
+            dim: "image" | "video" | "audio";
         };
         /** DbTestParams */
         DbTestParams: {
@@ -4813,6 +5283,8 @@ export interface components {
         };
         /** PreferencesResponse */
         PreferencesResponse: {
+            /** Locale */
+            locale?: ("zh-CN" | "ja-JP" | "en-US") | null;
             /**
              * Laststages
              * @default []
@@ -4829,16 +5301,6 @@ export interface components {
             replyTone?: string | null;
             /** Replylength */
             replyLength?: string | null;
-            /** Personalitypreference */
-            personalityPreference?: string | null;
-            /** Personalitypreferenceenabled */
-            personalityPreferenceEnabled: boolean;
-            /** Personalitypreferencerevision */
-            personalityPreferenceRevision: number;
-            /** Personalitypreferenceupdatedat */
-            personalityPreferenceUpdatedAt?: string | null;
-            /** Personalitypreferenceavailable */
-            personalityPreferenceAvailable: boolean;
             /**
              * Pmstagesexpanded
              * @default false
@@ -4879,9 +5341,35 @@ export interface components {
              * @default false
              */
             showToolInteractions: boolean;
+            /**
+             * Toolinjectionmode
+             * @default description
+             */
+            toolInjectionMode: string;
+            /** Personalitypreference */
+            personalityPreference?: string | null;
+            /**
+             * Personalitypreferenceenabled
+             * @default false
+             */
+            personalityPreferenceEnabled: boolean;
+            /**
+             * Personalitypreferencerevision
+             * @default 0
+             */
+            personalityPreferenceRevision: number;
+            /** Personalitypreferenceupdatedat */
+            personalityPreferenceUpdatedAt?: string | null;
+            /**
+             * Personalitypreferenceavailable
+             * @default true
+             */
+            personalityPreferenceAvailable: boolean;
         };
         /** PreferencesUpdate */
         PreferencesUpdate: {
+            /** Locale */
+            locale?: ("zh-CN" | "ja-JP" | "en-US") | null;
             /** Laststages */
             lastStages?: string[] | null;
             /** Stagetemplates */
@@ -4892,10 +5380,6 @@ export interface components {
             replyTone?: string | null;
             /** Replylength */
             replyLength?: string | null;
-            /** Personalitypreference */
-            personalityPreference?: string | null;
-            /** Personalitypreferenceenabled */
-            personalityPreferenceEnabled?: boolean | null;
             /** Pmstagesexpanded */
             pmStagesExpanded?: boolean | null;
             /** Calendarweekstart */
@@ -4912,6 +5396,12 @@ export interface components {
             shellAutopilotEnabled?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
+            /** Toolinjectionmode */
+            toolInjectionMode?: string | null;
+            /** Personalitypreference */
+            personalityPreference?: string | null;
+            /** Personalitypreferenceenabled */
+            personalityPreferenceEnabled?: boolean | null;
         };
         /** PresetCreate */
         PresetCreate: {
@@ -5379,6 +5869,24 @@ export interface components {
             /** Pool Mode */
             pool_mode?: string | null;
         };
+        /** SuspendRequest */
+        SuspendRequest: {
+            /**
+             * Duration Seconds
+             * @default 1800
+             */
+            duration_seconds: number;
+            /**
+             * Reason
+             * @default repeated_ownership_denied
+             */
+            reason: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+        };
         /** TaskCreate */
         TaskCreate: {
             /** Name */
@@ -5417,6 +5925,60 @@ export interface components {
             channels?: string[] | null;
             /** Enabled */
             enabled?: boolean | null;
+        };
+        /** TerminalCreate */
+        TerminalCreate: {
+            /**
+             * Name
+             * @default 终端
+             */
+            name: string;
+            /** Sessionid */
+            sessionId?: number | null;
+            /** Workspaceid */
+            workspaceId?: number | null;
+            /**
+             * Mode
+             * @default interactive-pty
+             */
+            mode: string;
+        };
+        /** TerminalInput */
+        TerminalInput: {
+            /** Command */
+            command: string;
+            /**
+             * Cwd
+             * @default .
+             */
+            cwd: string;
+            /**
+             * Timeout
+             * @default 30
+             */
+            timeout: number;
+            /**
+             * Maxoutputchars
+             * @default 12000
+             */
+            maxOutputChars: number;
+            /**
+             * Network
+             * @default none
+             */
+            network: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+            /** Confirmtoken */
+            confirmToken?: string | null;
+        };
+        /** TerminalUpdate */
+        TerminalUpdate: {
+            /** Name */
+            name: string;
         };
         /** TestConnectionRequest */
         TestConnectionRequest: {
@@ -5531,6 +6093,8 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+            /** Locale */
+            locale?: ("zh-CN" | "ja-JP" | "en-US") | null;
         };
         /** UserResponse */
         UserResponse: {
@@ -7310,6 +7874,26 @@ export interface operations {
             };
         };
     };
+    stream_live_events_api_v1_live_stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     list_clients_api_v1_clients_get: {
         parameters: {
             query?: never;
@@ -8145,7 +8729,9 @@ export interface operations {
     };
     get_greeting_api_v1_agent_greeting_get: {
         parameters: {
-            query?: never;
+            query?: {
+                locale?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -8159,6 +8745,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9165,6 +9760,39 @@ export interface operations {
             };
         };
     };
+    upload_personality_api_v1_preferences_personality_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_personality_api_v1_preferences_personality_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferencesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_workspaces_api_v1_workspaces_get: {
         parameters: {
             query?: never;
@@ -9353,6 +9981,369 @@ export interface operations {
             header?: never;
             path: {
                 session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_terminals_api_v1_terminals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    add_terminal_api_v1_terminals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_terminal_metrics_api_v1_terminals_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_terminal_detail_api_v1_terminals__terminal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_terminal_view_api_v1_terminals__terminal_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_terminal_route_api_v1_terminals__terminal_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_terminal_events_api_v1_terminals__terminal_id__events_get: {
+        parameters: {
+            query?: {
+                after?: number;
+            };
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    terminal_input_api_v1_terminals__terminal_id__input_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_terminal_command_api_v1_terminals__terminal_id__cancel__request_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    terminate_terminal_view_api_v1_terminals__terminal_id__terminate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reopen_terminal_view_api_v1_terminals__terminal_id__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_terminal_view_api_v1_terminals__terminal_id__reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminal_id: string;
             };
             cookie?: never;
         };
@@ -9905,108 +10896,6 @@ export interface operations {
         };
     };
     get_onboarding_state_api_v1_onboarding_state_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    claim_onboarding_api_v1_onboarding_claim__key__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_pools_api_v1_onboarding_dev_pools_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    dev_fire_api_v1_onboarding_dev_fire__key__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_reset_api_v1_onboarding_dev_reset_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -10906,6 +11795,7 @@ export interface operations {
             query?: {
                 month?: string | null;
                 model?: string | null;
+                timezone?: string | null;
             };
             header?: never;
             path?: never;
@@ -11686,10 +12576,15 @@ export interface operations {
             };
         };
     };
-    temperature_list_api_v1_admin_perception_temperature_get: {
+    list_security_events_api_v1_admin_audit_log_security_events_get: {
         parameters: {
             query?: {
-                exclude_dev?: boolean;
+                event_type?: string | null;
+                action?: string | null;
+                resource_type?: string | null;
+                user_id?: string | null;
+                since_minutes?: number;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -11787,6 +12682,136 @@ export interface operations {
             };
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_risk_users_api_v1_admin_users_risk_get: {
+        parameters: {
+            query?: {
+                window_minutes?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suspend_user_api_v1_admin_users__user_id__suspend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuspendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unsuspend_user_api_v1_admin_users__user_id__unsuspend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_user_security_events_api_v1_admin_users__user_id__security_events_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -12060,6 +13085,7 @@ export interface operations {
         parameters: {
             query?: {
                 exclude_dev?: boolean;
+                timezone?: string | null;
             };
             header?: never;
             path?: never;
@@ -12092,6 +13118,7 @@ export interface operations {
             query?: {
                 days?: number;
                 exclude_dev?: boolean;
+                timezone?: string | null;
             };
             header?: never;
             path?: never;
@@ -12698,6 +13725,253 @@ export interface operations {
                 "application/json": components["schemas"]["UserSkillPatch"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_credentials_api_v1_byok_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_credential_api_v1_byok_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_models_api_v1_byok_models_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialModelsPreview"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    probe_vision_api_v1_byok_vision_probe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialVisionProbe"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_credential_api_v1_byok__credential_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_credential_api_v1_byok__credential_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_credential_preview_api_v1_byok_test_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialTestPreview"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_credential_api_v1_byok__credential_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

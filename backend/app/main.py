@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.security import ADMIN_ACCESS_COOKIE, ADMIN_CSRF_COOKIE, request_auth_token
 from app.core.logging import setup_logging, flush_log_queue
 from app.api.v1 import config as config_router
 from app.api.v1 import admin_auth, sandbox_admin
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 setup_logging()
 
 settings = get_settings()
-bearer = HTTPBearer()
+bearer = HTTPBearer(auto_error=False)
 
 
 _THUMB_TTL_DAYS = 30
@@ -281,9 +282,10 @@ async def _security_headers(request: Request, call_next):
         reset_request_context(context_token)
 
 
-def require_admin(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+def require_admin(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     try:
-        payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=["HS256"])
+        token = request_auth_token(request, credentials, access_cookie=ADMIN_ACCESS_COOKIE, csrf_cookie=ADMIN_CSRF_COOKIE)
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") not in ("superadmin", "admin"):
             raise HTTPException(status_code=403, detail="权限不足")
         # 审计归因：把真实管理员用户名落到 request.state，供 write_log 读取（否则多管理员时恒记字面量 "admin"）

@@ -72,6 +72,25 @@ async def consume_qq_binding_code(
     if not platform_user_id or len(normalized) != 6 or not normalized.isdigit():
         return False
 
+    # QQ 可能重复投递同一条 C2C 消息。第一次消费成功后验证码会被删除，
+    # 重试不能再显示“无效或已过期”；同一 Bot、同一 QQ 身份的重复绑定应保持幂等。
+    import app.db.session as db_session
+    if db_session._engine is None:
+        db_session._build_engine()
+    async with db_session._SessionLocal() as db:
+        already_bound = (
+            await db.execute(
+                select(UserBot).where(
+                    UserBot.id == bot_id,
+                    UserBot.user_id == owner_user_id,
+                    UserBot.platform == "qq",
+                    UserBot.owner_platform_user_id == platform_user_id,
+                )
+            )
+        ).scalars().first()
+    if already_bound:
+        return True
+
     redis = R.get_redis()
     raw = await redis.get(_qq_binding_key(bot_id))
     try:
@@ -96,7 +115,6 @@ async def consume_qq_binding_code(
     result = await redis.get(_qq_binding_key(bot_id))
     if not result:
         return False
-    import app.db.session as db_session
     if db_session._engine is None:
         db_session._build_engine()
     async with db_session._SessionLocal() as db:
@@ -119,6 +137,41 @@ async def consume_qq_binding_code(
         return False
     await redis.delete(_qq_binding_key(bot_id), attempts_key)
     return True
+
+
+async def bind_qq_owner_if_unbound(
+    bot_id: int,
+    owner_user_id: UUID,
+    platform_user_id: str,
+) -> bool:
+    """首次收到 QQ 私聊时绑定当前 QQ 用户为该 Bot 的 owner。
+
+    QQ 扫码授权只返回 Bot 凭据，不会返回发起私聊用户的 openid；因此首次
+    C2C 消息需要补齐 owner 身份。使用带 ``IS NULL`` 的原子更新，避免并发
+    首次消息把 owner 绑定到不同用户。
+    """
+    if not platform_user_id:
+        return False
+    import app.db.session as db_session
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    async with db_session._SessionLocal() as db:
+        result = await db.execute(
+            update(UserBot)
+            .where(
+                UserBot.id == bot_id,
+                UserBot.user_id == owner_user_id,
+                UserBot.platform == "qq",
+                UserBot.owner_platform_user_id.is_(None),
+            )
+            .values(
+                owner_platform_user_id=platform_user_id,
+                owner_bound_at=now_utc(),
+            )
+        )
+        await db.commit()
+    return result.rowcount == 1
 
 
 class QQGroupAccess:

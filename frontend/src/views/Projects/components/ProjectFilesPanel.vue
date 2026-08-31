@@ -18,7 +18,7 @@
                   <svg width="36" height="36" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 30V16M15 22l7-7 7 7"/><path d="M8 36h28"/>
                   </svg>
-                  <span class="drop-hint">松开以上传文件</span>
+                  <span class="drop-hint">{{ t('filesUi.confirmUpload') }}</span>
                 </div>
               </div>
             </Transition>
@@ -31,7 +31,7 @@
               <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
                 <RuntimeFolderCard v-for="folder in sortedCurrentFolders" :key="folder.id"
-                  :card-props="{ displayName: folder.name, countLabel: `${pmFolderCount(folder.id)} 个文件`, accentColor, selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
+                  :card-props="{ displayName: folder.name, countLabel: t('filesUi.itemCount', { count: pmFolderCount(folder.id) }), accentColor, selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'folder', folder.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
@@ -47,15 +47,15 @@
                     </svg>
                   </template>
                   <template #actions>
-                    <button class="file-card-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
+                    <button class="file-card-btn" :title="renamingFolderId === folder.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
                       @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
                       <Icon name="status.success" v-if="renamingFolderId === folder.id" :size="10" />
                       <Icon name="action.edit" v-else :size="10" />
                     </button>
-                    <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)">
+                    <button class="file-card-btn" :title="t('filesViewUi.downloadZip')" @click.stop="downloadFolderZip(folder)">
                       <Icon name="action.download" :size="10" />
                     </button>
-                    <button class="file-card-btn del" title="删除" @click.stop="deleteFolderCard(folder)">
+                    <button class="file-card-btn del" :title="t('common.actions.delete')" @click.stop="deleteFolderCard(folder)">
                       <Icon name="action.delete" :size="10" />
                     </button>
                   </template>
@@ -106,13 +106,13 @@
                   <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</template>
 
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
-                    <button class="file-card-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
+                    <button class="file-card-btn" :title="renamingFileId === file.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
                       @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
                       <Icon name="status.success" v-if="renamingFileId === file.id" :size="10" />
                       <Icon name="action.edit" v-else :size="10" />
                     </button>
-                    <button class="file-card-btn" title="下载" @click.stop="downloadFile(file)"><Icon name="action.download" :size="10" /></button>
-                    <button class="file-card-btn del" title="删除" @click.stop="deleteFile(file)"><Icon name="action.delete" :size="10" /></button>
+                    <button class="file-card-btn" :title="t('common.actions.download')" @click.stop="downloadFile(file)"><Icon name="action.download" :size="10" /></button>
+                    <button class="file-card-btn del" :title="t('common.actions.delete')" @click.stop="deleteFile(file)"><Icon name="action.delete" :size="10" /></button>
                   </div>
                 </RuntimeFileCard>
                 <!-- 幽灵上传卡片：单文件 / 文件夹（拖入文件夹时汇总一张） -->
@@ -132,10 +132,10 @@
             <template v-else>
               <FileBrowserList class-name="file-list-view" :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <div class="list-head">
-                  <span class="lh-sortable" :class="{ active: pmSortKey === 'name' }" @click.stop="onPmSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-                  <span class="lh-sortable" :class="{ active: pmSortKey === 'stage' }" @click.stop="onPmSortSelect('stage')">阶段<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-                  <span class="lh-sortable" :class="{ active: pmSortKey === 'size' }" @click.stop="onPmSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-                  <span class="lh-sortable" :class="{ active: pmSortKey === 'createdAt' }" @click.stop="onPmSortSelect('createdAt')">日期<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+                  <span class="lh-sortable" :class="{ active: pmSortKey === 'name' }" @click.stop="onPmSortSelect('name')">{{ t('files.name') }}<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+                  <span class="lh-sortable" :class="{ active: pmSortKey === 'stage' }" @click.stop="onPmSortSelect('stage')">{{ t('files.stage') }}<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+                  <span class="lh-sortable" :class="{ active: pmSortKey === 'size' }" @click.stop="onPmSortSelect('size')">{{ t('files.size') }}<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+                  <span class="lh-sortable" :class="{ active: pmSortKey === 'createdAt' }" @click.stop="onPmSortSelect('createdAt')">{{ t('files.createdAt') }}<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
                   <span></span>
                 </div>
                 <!-- 文件夹行（当前层） -->
@@ -165,7 +165,7 @@
                     </span>
                   </span>
                   <span class="lr-text">—</span>
-                  <span class="lr-text">{{ pmFolderCount(folder.id) }} 项</span>
+                  <span class="lr-text">{{ t('filesViewUi.items', { count: pmFolderCount(folder.id) }) }}</span>
                   <span class="lr-text">—</span>
                   <span class="lr-actions">
                     <Transition name="sel-cb">
@@ -174,13 +174,13 @@
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
-                      <button class="file-list-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
+                      <button class="file-list-btn" :title="renamingFolderId === folder.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
                         @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
                         <Icon name="status.success" v-if="renamingFolderId === folder.id" :size="11" />
                         <Icon name="action.edit" v-else :size="11" />
                       </button>
-                      <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><Icon name="action.download" :size="11" /></button>
-                      <button class="file-list-btn del" title="删除" @click.stop="deleteFolderCard(folder)"><Icon name="action.delete" :size="11" /></button>
+                      <button class="file-list-btn" :title="t('filesViewUi.downloadZip')" @click.stop="downloadFolderZip(folder)"><Icon name="action.download" :size="11" /></button>
+                      <button class="file-list-btn del" :title="t('common.actions.delete')" @click.stop="deleteFolderCard(folder)"><Icon name="action.delete" :size="11" /></button>
                     </template>
                   </span>
                 </RuntimeListRow>
@@ -220,13 +220,13 @@
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
-                      <button class="file-list-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
+                      <button class="file-list-btn" :title="renamingFileId === file.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
                         @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
                         <Icon name="status.success" v-if="renamingFileId === file.id" :size="11" />
                         <Icon name="action.edit" v-else :size="11" />
                       </button>
-                      <button class="file-list-btn" title="下载" @click.stop="downloadFile(file)"><Icon name="action.download" :size="11" /></button>
-                      <button class="file-list-btn del" title="删除" @click.stop="deleteFile(file)"><Icon name="action.delete" :size="11" /></button>
+                      <button class="file-list-btn" :title="t('common.actions.download')" @click.stop="downloadFile(file)"><Icon name="action.download" :size="11" /></button>
+                      <button class="file-list-btn del" :title="t('common.actions.delete')" @click.stop="deleteFile(file)"><Icon name="action.delete" :size="11" /></button>
                     </template>
                   </span>
                 </RuntimeListRow>
@@ -275,6 +275,7 @@
 
 <script setup lang="ts">
 import { type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
@@ -290,6 +291,7 @@ import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.v
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
+const { t } = useI18n()
 const {
   fileViewMode, pmInSelectionMode,
   pmIsDragging, pmSelectionRect, bindPmGridEl, onPmGridMouseDown, onPmContentClick, openPmCtx,

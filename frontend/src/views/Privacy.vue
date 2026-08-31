@@ -9,9 +9,9 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 18l-6-6 6-6"/>
           </svg>
-          返回
+          {{ t('privacyUi.back') }}
         </router-link>
-        <div class="header-brand">咕咕 · 隐私政策</div>
+        <div class="header-brand">{{ t('privacyUi.title') }}</div>
       </div>
       <div class="privacy-body md-content" v-html="html" />
     </div>
@@ -22,7 +22,9 @@
 import { onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import { sanitizeHtml } from '@/utils/markdown'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 
 const md = `# 隐私政策
 

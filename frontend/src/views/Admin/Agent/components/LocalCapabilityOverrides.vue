@@ -6,33 +6,30 @@
         :key="cap.key"
         class="capability-override"
         :model-value="model.capability_overrides?.[cap.key] === true"
-        :aria-label="cap.label"
+        :aria-label="t(cap.labelKey)"
         @update:model-value="onToggle(cap.key, $event)"
-      >{{ cap.label }}</Checkbox>
+      >{{ t(cap.labelKey) }}</Checkbox>
     </div>
 
-    <button type="button" class="capability-probe" :disabled="disabled || loading" @click="$emit('probe')">
-      {{ loading ? '检测中…' : '检测本地能力' }}
-    </button>
-
     <div v-if="hasResults" class="capability-results" aria-live="polite">
-      <span class="capability-results-title">检测结果</span>
+      <span class="capability-results-title">{{ t('localCapabilityUi.results') }}</span>
       <span
         v-for="cap in LOCAL_CAPABILITIES"
         :key="cap.key"
         class="capability-result"
         :class="resultClass(cap.key)"
       >
-        {{ cap.label }}：{{ resultLabel(cap.key) }}
+        {{ t(cap.labelKey) }}：{{ resultLabel(cap.key) }}
       </span>
     </div>
-    <div v-if="checkedAt" class="modal-hint">最近检测：{{ checkedAt }}</div>
+    <div v-if="checkedAt" class="modal-hint">{{ t('localCapabilityUi.lastChecked', { time: checkedAt }) }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
 import Checkbox from '@/components/common/Checkbox.vue'
+import { useI18n } from 'vue-i18n'
 
 interface CapabilityResult {
   status?: string
@@ -45,24 +42,19 @@ interface CapabilityModel {
 }
 
 const LOCAL_CAPABILITIES = [
-  { key: 'tools', label: '工具调用', resultKey: 'tools' },
-  { key: 'structured_json', label: 'JSON 输出', resultKey: 'json_object' },
-  { key: 'structured_schema', label: 'JSON Schema', resultKey: 'json_schema' },
-  { key: 'thinking', label: '思考/推理', resultKey: 'reasoning' },
+  { key: 'tools', labelKey: 'localCapabilityUi.tools', resultKey: 'tools' },
+  { key: 'structured_json', labelKey: 'localCapabilityUi.jsonOutput', resultKey: 'json_object' },
+  { key: 'structured_schema', labelKey: 'localCapabilityUi.jsonSchema', resultKey: 'json_schema' },
+  { key: 'thinking', labelKey: 'localCapabilityUi.reasoning', resultKey: 'reasoning' },
 ] as const
+const { t } = useI18n()
 
 const props = defineProps({
   model: { type: Object as PropType<CapabilityModel>, required: true },
-  disabled: { type: Boolean, default: false },
-  loading: { type: Boolean, default: false },
   checkedAt: { type: String, default: '' },
   results: { type: Object as PropType<Record<string, CapabilityResult>>, default: () => ({}) },
 })
-
-const emit = defineEmits<{
-  toggle: [key: string, enabled: boolean]
-  probe: []
-}>()
+const emit = defineEmits<{ toggle: [key: string, enabled: boolean] }>()
 
 const hasResults = computed(() => Object.keys(props.results).length > 0)
 
@@ -73,11 +65,11 @@ function resultFor(key: string) {
 
 function resultLabel(key: string) {
   const result = resultFor(key)
-  if (!result) return '未检测'
-  if (result.status === '支持') return '支持'
-  if (result.status === '需服务端配置') return '不支持'
-  if (result.status === '未检测') return '未检测'
-  return result.status || '未知'
+  if (!result) return t('localCapabilityUi.notTested')
+  if (result.status === '支持') return t('localCapabilityUi.supported')
+  if (result.status === '需服务端配置') return t('localCapabilityUi.notSupported')
+  if (result.status === '未检测') return t('localCapabilityUi.notTested')
+  return result.status || t('localCapabilityUi.unknown')
 }
 
 function resultClass(key: string) {
@@ -97,13 +89,16 @@ function onToggle(key: string, enabled: boolean) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  width: 100%;
+  box-sizing: border-box;
   gap: 9px;
 }
 
 .capability-overrides {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, max-content));
-  gap: 8px 18px;
+  width: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .capability-override {
@@ -111,47 +106,12 @@ function onToggle(key: string, enabled: boolean) {
   align-items: center;
   gap: 7px;
   min-height: 20px;
+  min-width: 0;
   color: var(--text-primary, rgba(255, 255, 255, 0.78));
   font-size: 12px;
   line-height: 20px;
   cursor: pointer;
   white-space: nowrap;
-}
-
-.capability-probe {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  padding: 5px 11px;
-  border: 1px solid var(--action-outline, color-mix(in srgb, var(--action-primary, #7b7fb2) 34%, transparent));
-  border-radius: var(--radius-sm, 7px);
-  background: var(--action-soft, color-mix(in srgb, var(--action-primary, #7b7fb2) 9%, transparent));
-  color: var(--action-primary, #7b7fb2);
-  font: inherit;
-  font-size: 11px;
-  line-height: 16px;
-  cursor: pointer;
-  transition:
-    background var(--motion-hover-micro, 120ms) var(--motion-ease-standard, ease),
-    border-color var(--motion-hover-micro, 120ms) var(--motion-ease-standard, ease),
-    color var(--motion-hover-micro, 120ms) var(--motion-ease-standard, ease),
-    transform var(--button-press-duration, 120ms) var(--button-press-easing, ease);
-}
-
-.capability-probe:hover:not(:disabled) {
-  border-color: var(--border-hover, var(--action-primary-hover, #8e92c8));
-  background: var(--action-soft-hover, color-mix(in srgb, var(--action-primary, #7b7fb2) 15%, transparent));
-  color: var(--action-primary-hover, #8e92c8);
-}
-
-.capability-probe:active:not(:disabled) {
-  transform: var(--button-press-transform, translateY(1px) scale(.985));
-}
-
-.capability-probe:disabled {
-  opacity: var(--content-disabled-opacity, .5);
-  cursor: default;
 }
 
 .capability-results {

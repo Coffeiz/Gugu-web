@@ -11,16 +11,17 @@
     </div>
     <div class="toolbar-right">
       <SegmentedControl class="view-toggle" :active-index="viewMode === 'month' ? 0 : 1" style="--pill-radius: 7px">
-        <button :class="{ on: viewMode === 'month' }" @click="$emit('set-view', 'month')">月</button>
-        <button :class="{ on: viewMode === 'week' }" @click="$emit('set-view', 'week')">周</button>
+        <button :class="{ on: viewMode === 'month' }" @click="$emit('set-view', 'month')">{{ t('calendar.month') }}</button>
+        <button :class="{ on: viewMode === 'week' }" @click="$emit('set-view', 'week')">{{ t('calendar.week') }}</button>
       </SegmentedControl>
-      <button class="today-btn" @click="$emit('today')">今天</button>
+      <button class="today-btn" @click="$emit('today')">{{ t('calendar.today') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import GlassBg from '@/components/common/GlassBg.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -35,6 +36,7 @@ defineEmits<{
 }>()
 
 const periodButton = ref<HTMLElement | null>(null)
+const { t } = useI18n()
 </script>
 
 <style>

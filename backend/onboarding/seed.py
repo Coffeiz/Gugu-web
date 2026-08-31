@@ -61,9 +61,9 @@ async def _put_surprise_mp3(db, user_id) -> File | None:
     return f
 
 
-def _build_stages() -> tuple[list, str]:
+def _build_stages(seed_content: dict) -> tuple[list, str]:
     stages = []
-    for i, (labels, todos) in enumerate(zip(content.STAGE_LABEL_POOLS, content.STAGE_TODOS)):
+    for i, (labels, todos) in enumerate(zip(seed_content["stage_labels"], seed_content["stage_todos"])):
         stages.append({
             "key": f"s{i}",
             "label": content.pick(labels),
@@ -73,18 +73,19 @@ def _build_stages() -> tuple[list, str]:
     return stages, stages[0]["key"]
 
 
-async def seed_for_user(db: AsyncSession, user) -> None:
+async def seed_for_user(db: AsyncSession, user, *, locale: str | None = None) -> None:
     """注册成功后调用（best-effort：失败不影响注册）。幂等。"""
     user_id = user.id
     try:
         st = await state.get_state(db, user_id)
-        if st.get("seeded"):
+        if st["seed"].get("seeded"):
             return
 
         # 1) 引导项目：日期＝初次登陆日 → 截止日 +3 天
         today = date.today()
-        name = content.pick(content.PROJECT_NAMES)
-        stages, current = _build_stages()
+        seed = content.seed_content(locale)
+        name = content.pick(seed["project_names"])
+        stages, current = _build_stages(seed)
         proj = Project(user_id=user_id, name=name, status="active", current_stage=current,
                        start_date=today.isoformat(),
                        deadline=(today + timedelta(days=3)).isoformat())
@@ -93,16 +94,16 @@ async def seed_for_user(db: AsyncSession, user) -> None:
         await db.flush()   # 拿 proj.id
 
         # 1b) 日历活动：初次登陆当天「和咕咕的第一天」（挂到引导项目）
-        db.add(CalendarEvent(user_id=user_id, title="和咕咕的第一天",
+        db.add(CalendarEvent(user_id=user_id, title=seed["calendar_title"],
                              date=today.isoformat(), type="event", project_id=proj.id))
 
         # 2) 两个文件（归属引导项目）
-        wf = content.pick(content.WELCOME_FILES)
+        wf = content.pick(seed["welcome_files"])
         await _put_text_file(db, user_id, project_id=proj.id,
                              display_name=wf["title"], body=wf["body"])
         await _put_text_file(db, user_id, project_id=proj.id,
-                             display_name=content.SCRATCH_FILE_TITLE,
-                             body=content.pick(content.SCRATCH_FILE_BODIES))
+                             display_name=seed["scratch_title"],
+                             body=content.pick(seed["scratch_bodies"]))
 
         # 3) 个人空间 mp3「小惊喜」
         await _put_surprise_mp3(db, user_id)
@@ -110,9 +111,10 @@ async def seed_for_user(db: AsyncSession, user) -> None:
         await db.commit()
 
         # 4) 回填状态
-        await state.update_state(db, user_id, {
-            "seeded": True, "seeded_project_id": proj.id, "seeded_project_name": name,
+        await state.update_seed_state(db, user_id, {
+            "seeded": True, "project_id": proj.id, "project_name": name,
         })
+        await state.reset_guide_state(db, user_id)
         logger.info("onboarding: 已为用户 %s 播种引导项目 %s（%s）", user_id, proj.id, name)
     except Exception as e:
         logger.exception("onboarding: 播种失败（不影响注册）: %s", e)

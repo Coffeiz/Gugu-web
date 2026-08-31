@@ -10,7 +10,7 @@
         <span v-if="dim.hint && variant === 'admin'" class="multimodal-capabilities-hint">{{ dim.hint }}</span>
       </div>
       <button type="button" :class="variant === 'admin' ? 'pca-btn pca-btn--sm' : 'pm-style-chip'" :disabled="probing !== null && probing !== dim.key" @click="$emit('probe', dim.key)">
-        {{ probing === dim.key ? '检测中…' : '检测' }}
+        {{ probing === dim.key ? probingLabel : probeLabel }}
       </button>
       <ToggleSwitch :model-value="Boolean(model[dim.field || (dim.key === 'image' ? 'vision' : `vision_${dim.key}`)])" :aria-label="`切换${dim.label}`" @update:model-value="model[dim.field || (dim.key === 'image' ? 'vision' : `vision_${dim.key}`)] = $event" />
     </div>
@@ -27,6 +27,8 @@ withDefaults(defineProps<{
   title?: string
   hint?: string
   probing?: string | null
+  probeLabel: string
+  probingLabel: string
   variant?: 'compact' | 'admin'
 }>(), { title: '', hint: '', probing: null, variant: 'compact' })
 defineEmits<{ (event: 'probe', key: string): void }>()

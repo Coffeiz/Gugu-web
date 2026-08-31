@@ -12,6 +12,7 @@ export interface ChatMessage {
   text: string
   html?: string | null
   files?: ChatFile[]
+  references?: ChatReference[]
   quotedText?: string
   time: string
   streaming?: boolean
@@ -63,6 +64,13 @@ export interface ChatFile {
   _thumbUrl?: string
   img_width?: number
   img_height?: number
+}
+
+/** 用户在聊天输入中选中的业务对象引用。 */
+export interface ChatReference {
+  type: 'project' | 'file' | 'event' | 'conversation'
+  id: number
+  label: string
 }
 
 export interface ChatSession {
