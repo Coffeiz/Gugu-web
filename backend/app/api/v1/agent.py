@@ -335,10 +335,12 @@ async def chat(
 async def resume_stream(
     session_id: int,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
     """续看进行中的生成（刷新后重连）。无进行中的生成则立即返回 idle done。"""
-    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
     return StreamingResponse(

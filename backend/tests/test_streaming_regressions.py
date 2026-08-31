@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from pathlib import Path
+from inspect import signature
 
 import pytest
 
@@ -55,6 +56,17 @@ def test_collect_and_stream_share_im_preparation_rules():
     )
     assert runner._proactive_lead_for(group_req, [SimpleNamespace(role="assistant", content="lead")]) == "lead"
     assert runner._proactive_lead_for(private_req, [SimpleNamespace(role="assistant", content="lead")]) == ""
+
+
+def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
+    from app.api.v1.agent import resume_stream
+    from app.api.v1.terminals import stream_terminal_events
+
+    assert "db" not in signature(resume_stream).parameters
+    assert "db" not in signature(stream_terminal_events).parameters
+
+    session_source = Path(__file__).parents[1].joinpath("app/db/session.py").read_text(encoding="utf-8")
+    assert "await asyncio.shield(session.close())" in session_source
 
 
 @pytest.mark.asyncio

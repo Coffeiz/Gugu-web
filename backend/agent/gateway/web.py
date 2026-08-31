@@ -294,7 +294,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
-        transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
+        async with _sess._SessionLocal() as voice_db:
+            transcript = await _voice.transcribe(
+                _transcribe_media, settings, db=voice_db, user_id=user_id,
+            )
         if transcript is None:        # 未配置语音模型
             block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
             async with _sess._SessionLocal() as db2:

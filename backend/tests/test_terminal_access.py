@@ -268,8 +268,9 @@ async def test_terminal_sse_replays_closed_terminal_until_end_marker(db, user_a,
         exit_code=0, ok=True, source=TerminalSource.USER.value,
     )
     await terminate_terminal(db, terminal)
+    await db.commit()
 
-    response = await stream_terminal_events(terminal.id, after=0, user=user_a, db=db)
+    response = await stream_terminal_events(terminal.id, after=0, user=user_a)
     chunks = [chunk async for chunk in response.body_iterator]
     body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
 

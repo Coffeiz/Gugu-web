@@ -292,20 +292,31 @@ async def _wait_for_account_suspend(user_id):
 
 
 @router.get("/{terminal_id}/events")
-async def stream_terminal_events(terminal_id: str, after: int = Query(default=0, ge=0), user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    row = _require(await get_terminal(db, user.id, terminal_id))
-    access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.VIEW)
+async def stream_terminal_events(terminal_id: str, after: int = Query(default=0, ge=0), user: User = Depends(get_current_user)):
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as auth_db:
+        row = _require(await get_terminal(auth_db, user.id, terminal_id))
+        access = await authorize_operation(
+            auth_db, user.id, owner_id=row.owner_id, session_id=row.session_id,
+            operation=TerminalOperation.VIEW,
+        )
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
 
     async def generate():
         cursor = after
         for _ in range(30):
-            events = await terminal_events(db, row, cursor)
+            async with db_session._SessionLocal() as stream_db:
+                current = await get_terminal(stream_db, user.id, terminal_id)
+                if current is None:
+                    break
+                events = await terminal_events(stream_db, current, cursor)
+                closed = current.closed_at
+                last_sequence = current.last_sequence
             for event in events:
                 cursor = event.sequence
                 yield f"data: {json.dumps({'event': serialize_event(event)}, ensure_ascii=False)}\n\n"
-            if row.closed_at and cursor >= row.last_sequence:
+            if closed and cursor >= last_sequence:
                 break
             await asyncio.sleep(0.5)
         yield "event: end\ndata: {}\n\n"
