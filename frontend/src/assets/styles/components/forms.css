@@ -1,0 +1,31 @@
+/* 跨页面复用的基础表单控件结构样式；主题状态由 adoption/forms.css 提供。 */
+.title-edit-input {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 7px;
+  outline: none;
+  padding: 2px 8px; margin: -3px -9px;
+  font-weight: 700; line-height: 1.2;
+  font-family: var(--font-sans); color: var(--text-primary);
+  box-shadow: var(--input-hover-shadow);
+  caret-color: var(--action-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.title-edit-input:focus {
+  border-color: var(--input-border-hover);
+  box-shadow: var(--input-focus-shadow);
+}
+
+.form-input {
+  width: 100%; padding: 8px 12px; border-radius: 9px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  font-size: 13px; font-family: var(--font-sans);
+  color: var(--text-primary); outline: none;
+  box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input:focus {
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+  background: var(--input-bg-focus);
+}

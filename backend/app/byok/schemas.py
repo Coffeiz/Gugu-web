@@ -10,6 +10,10 @@ class CredentialCreate(BaseModel):
     value: str = Field("", max_length=20000)
     base_url: str = Field("", max_length=500)
     model: str = Field("", max_length=200)
+    max_tokens: int | None = None
+    context_tokens: int | None = None
+    thinking: Literal["disabled", "adaptive"] | None = None
+    reasoning_effort: Literal["", "low", "medium", "high", "max"] | None = None
     vision: bool = False
     vision_video: bool = False
     vision_audio: bool = False
@@ -22,6 +26,10 @@ class CredentialPatch(BaseModel):
     api_format: str | None = Field(None, max_length=32)
     base_url: str | None = Field(None, max_length=500)
     model: str | None = Field(None, max_length=200)
+    max_tokens: int | None = None
+    context_tokens: int | None = None
+    thinking: Literal["disabled", "adaptive"] | None = None
+    reasoning_effort: Literal["", "low", "medium", "high", "max"] | None = None
     vision: bool | None = None
     vision_video: bool | None = None
     vision_audio: bool | None = None

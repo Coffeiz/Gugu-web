@@ -33,7 +33,7 @@
     <span v-else class="exp-session-title" :title="title">{{ title }}</span>
     <button
       class="exp-session-rename-btn"
-      :title="editing ? '确认' : '重命名'"
+      :title="editing ? t('common.actions.confirm') : t('sharedUi.rename')"
       @mousedown.prevent
       @click.stop="editing ? commit() : startEdit()"
     >
@@ -45,6 +45,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 /**
  * 会话标题内联编辑，两种模式：
@@ -58,6 +59,7 @@ const props = defineProps<{
   /** 顶部标题栏模式：单击标题进入编辑，不显示重命名按钮 */
   header?: boolean
 }>()
+const { t } = useI18n()
 
 const editing = ref(false)
 const draft = ref('')

@@ -1,7 +1,7 @@
 <template>
   <div class="glass-card project-panel">
     <div class="section-header">
-      <span class="section-title">当前项目</span>
+      <span class="section-title">{{ t('dashboardUi.currentProjects') }}</span>
     </div>
 
     <div class="project-list">
@@ -47,7 +47,7 @@
               </span>
               <span
                 class="proj-status" :class="['s-' + p.status, { 'status-advanceable': p.status !== 'done' }]"
-                :title="p.status === 'pending' ? '点击移至进行中' : p.status === 'active' ? '点击标记完成' : ''"
+                :title="p.status === 'pending' ? t('dashboardUi.moveToActive') : p.status === 'active' ? t('dashboardUi.markDone') : ''"
                 @click.stop="advance(p)"
               >
                 <i class="status-dot"></i>{{ statusLabel(p.status) }}
@@ -70,18 +70,19 @@
 import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import SegBar from '@/components/common/SegBar.vue'
+import { useI18n } from 'vue-i18n'
 
 const projectStore = useProjectStore()
+const { t } = useI18n()
 
 function openProject(p: any) { projectStore.openModal(p) }
 
-const statusLabels: Record<string, string> = { pending: '待开始', active: '进行中', done: '已完成' }
-function statusLabel(s: string) { return statusLabels[s] ?? s }
+function statusLabel(s: string) { return ({ pending: t('dashboardUi.pending'), active: t('dashboardUi.inProgress'), done: t('dashboardUi.completed') } as Record<string, string>)[s] ?? s }
 
 // ── 排序：进行中 > 待开始 > 已完成，组内按优先级↓→开始日↑→截止日↑→创建日↑ ──
 const STATUS_ORDER = { active: 0, pending: 1, done: 2 }
 const PRIO_MAP: Record<string, number>     = { high: 3, medium: 2, low: 1 }
-const PRIO_LABELS: Record<number, string>  = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_LABELS = computed<Record<number, string>>(() => ({ 1: t('dashboardUi.lowPriority'), 2: t('dashboardUi.mediumPriority'), 3: t('dashboardUi.highPriority') }))
 const PRIO_KEYS    = [null, 'low', 'medium', 'high']
 
 function prioVal(p: any) { return p.priority ? (PRIO_MAP[p.priority] ?? 0) : 0 }

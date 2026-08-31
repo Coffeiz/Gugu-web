@@ -1,0 +1,59 @@
+/* 通用弹层的结构与交互样式。Teleport 根节点的外层定位和主题代理仍归 bridges。 */
+.popup-menu {
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--popup-background);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
+  border: 1px solid var(--popup-border);
+  border-radius: 10px;
+  box-shadow: var(--popup-shadow);
+  padding: 4px;
+  user-select: none;
+}
+.menu-pop-enter-active,
+.menu-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
+.menu-pop-enter-from,
+.menu-pop-leave-to { opacity: 0; transform: scale(0.95); }
+.popup-close-btn {
+  width: 22px; height: 22px; border-radius: 6px; border: none; padding: 0;
+  background: none; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.popup-close-btn:hover { background: var(--popup-item-bg-hover); color: var(--popup-item-fg); }
+.popup-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 10px; border: none; background: none;
+  border-radius: 7px; font-size: 13px; font-family: var(--font-sans);
+  color: var(--popup-item-fg); cursor: pointer; text-align: left; white-space: nowrap;
+  transition: background 0.12s;
+}
+.popup-menu-item:hover:not(:disabled) { background: var(--popup-item-bg-hover); }
+.popup-menu-item:disabled { opacity: 0.4; cursor: default; }
+.popup-menu-item.active { color: var(--popup-item-fg-active); font-weight: 600; }
+.popup-menu-item.danger { color: var(--popup-item-danger); }
+.popup-menu-item.danger:hover:not(:disabled) { background: var(--popup-item-danger-bg-hover); }
+.popup-menu-sep { height: 1px; background: var(--popup-divider); margin: 3px 6px; }
+.popup-menu-shortcut { margin-left: auto; font-size: 11px; color: var(--popup-item-fg-muted); opacity: .7; }
+
+/* 暗色弹窗（Admin 用）— 对齐 .popup-menu 结构，暗色配色 */
+.popup-menu-dark {
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--popup-surface-bg);
+  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
+  border: 1px solid var(--popup-surface-border);
+  border-radius: 10px;
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+  padding: 4px;
+  user-select: none;
+}
+.popup-menu-dark .popup-menu-item { color: var(--popup-item-fg); font-family: var(--font-sans); }
+.popup-menu-dark .popup-menu-item:hover:not(:disabled) { background: var(--popup-item-bg-hover); color: var(--popup-item-fg); }
+.popup-menu-dark .popup-menu-item:disabled { opacity: 0.35; }
+.popup-menu-dark .popup-menu-item.active { color: var(--popup-item-fg-active); font-weight: 600; }
+.popup-menu-dark .popup-menu-item.danger { color: var(--popup-item-danger); }
+.popup-menu-dark .popup-menu-item.danger:hover:not(:disabled) { background: var(--popup-item-danger-bg-hover); }
+.popup-menu-dark .popup-menu-sep { background: var(--popup-divider); margin: 3px 6px; height: 1px; }
+.popup-menu-dark .popup-close-btn { color: var(--popup-item-fg-muted); }
+.popup-menu-dark .popup-close-btn:hover { background: var(--popup-item-bg-hover); color: var(--popup-item-fg); }
+.popup-menu-dark .popup-menu-shortcut { color: var(--popup-item-fg-muted); }

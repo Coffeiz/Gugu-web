@@ -13,6 +13,11 @@
  */
 import type { ProjectStage, ProjectTodo, ProjectStatus } from '@/types/project'
 
+/** 项目状态对应的翻译键，状态值本身仍用于接口和拖拽逻辑。 */
+export function projectStatusLabelKey(status: string): string {
+  return ({ pending: 'projects.notStarted', active: 'projects.inProgress', done: 'projects.done' } as Record<string, string>)[status] ?? status
+}
+
 export interface ProjectState {
   stages: ProjectStage[]
   currentStage: string | null

@@ -2,43 +2,44 @@
      好让新建活动和全局编辑弹窗共用同一份字段和提醒逻辑。
      外壳（浮层定位 / 居中弹窗、标题栏、保存删除按钮）留在各自的调用方，这里只管字段本身。 -->
 <template>
-  <input v-model="event.name" class="popup-input" placeholder="活动名称"
+  <input v-model="event.name" class="popup-input" :placeholder="t('calendar.eventName')"
          v-enter="() => emit('save')" @keydown.esc="emit('close')" :autofocus="autofocus" />
   <div class="date-row">
-    <DatePicker class="date-row-picker" v-model="event.date" placeholder="选择日期" />
+    <DatePicker class="date-row-picker" v-model="event.date" :placeholder="t('sharedUi.chooseDate')" />
     <Checkbox v-model="event.allDay" class="allday-toggle" @update:model-value="onToggleAllDay(event)">
-      全天
+      {{ t('calendar.allDay') }}
     </Checkbox>
   </div>
   <div class="time-box" v-if="!event.allDay">
     <TimeInput v-model="event.time" :boxed="false" />
     <span class="time-dash">—</span>
     <TimeInput v-model="event.endTime" :boxed="false" />
-    <span v-if="isNextDay(event.time, event.endTime)" class="nextday-tag">次日</span>
+    <span v-if="isNextDay(event.time, event.endTime)" class="nextday-tag">{{ t('calendar.nextDay') }}</span>
   </div>
-  <textarea v-model="event.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
+  <textarea v-model="event.description" class="popup-textarea" :placeholder="t('calendar.descriptionOptional')" rows="2"></textarea>
   <div class="reminder-section" v-if="!isPastDate(event.date)">
-    <div class="reminder-label"><Icon name="admin.bell" :size="11" /> 提醒</div>
+    <div class="reminder-label"><Icon name="admin.bell" :size="11" /> {{ t('calendar.reminder') }}</div>
     <div v-for="(r, i) in form.reminders.value" :key="i" class="reminder-item">
       <select v-model.number="r.leadMin" class="lead-select">
         <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
       </select>
-      <button class="reminder-del" @click="form.removeReminderAt(i)" title="移除"><Icon name="action.close" :size="10" /></button>
+      <button class="reminder-del" @click="form.removeReminderAt(i)" :title="t('common.actions.remove')"><Icon name="action.close" :size="10" /></button>
     </div>
-    <button class="reminder-add-toggle" @click="form.addReminder">＋ 添加提醒</button>
+    <button class="reminder-add-toggle" @click="form.addReminder">＋ {{ t('calendar.addReminder') }}</button>
     <div class="chan-block" v-if="form.reminders.value.length">
-      <div class="reminder-label">渠道</div>
+      <div class="reminder-label">{{ t('calendar.channel') }}</div>
       <div class="chan-chips">
         <button class="chan-chip" :class="{ on: form.reminderChannels.value.includes('web') }" @click="form.toggleReminderChannel('web')">web</button>
         <button v-for="ch in form.imChannels.value" :key="ch" class="chan-chip" :class="{ on: form.reminderChannels.value.includes(ch) }" @click="form.toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
       </div>
-      <button class="reminder-test-bar" @click="emit('test-reminder')"><Icon name="action.send" :size="11" /> 测试发送</button>
+      <button class="reminder-test-bar" @click="emit('test-reminder')"><Icon name="action.send" :size="11" /> {{ t('common.actions.testSend') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
 import Checkbox from '@/components/common/Checkbox.vue'
 import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
@@ -54,6 +55,7 @@ defineProps<{
   isPastDate: (d: string | null | undefined) => boolean
 }>()
 const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-reminder'): void }>()
+const { t } = useI18n()
 </script>
 
 <style scoped>
@@ -93,7 +95,9 @@ const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-remi
 .lead-select:focus {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
+  /* 保留 hover 内描边，再叠加 focus 光晕，避免点击时从 hover 直接替换成 focus，
+     导致光晕只有失焦淡出、聚焦没有淡入。 */
+  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
 }
 .time-box {
   position: relative; display: flex; align-items: center; justify-content: center; gap: 4px;

@@ -8,75 +8,75 @@
         </svg>
       </div>
       <div class="card-title-block">
-        <h3>权限开放</h3>
-        <p>控制用户可使用的 Agent 能力与个性化配置入口。</p>
+        <h3>{{ t('agent.permissions') }}</h3>
+        <p>{{ t('agent.permissionDescription') }}</p>
       </div>
     </div>
 
     <div class="permission-groups">
       <section class="permission-group">
-        <h4>模型与个性化</h4>
+        <h4>{{ t('agent.modelAndPersonalization') }}</h4>
         <div class="permission-list">
           <div class="permission-item">
             <div class="permission-label">
-              <span>用户 BYOK</span>
-              <span class="permission-desc">允许用户使用自己的模型 API Key，凭据由服务端加密保存。</span>
+              <span>{{ t('agent.userByok') }}</span>
+              <span class="permission-desc">{{ t('agent.userByokHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="byok.enabled === true" aria-label="开放用户 BYOK" @update:model-value="setByokEnabled" />
+            <ToggleSwitch :model-value="byok.enabled === true" :aria-label="t('agent.userByok')" @update:model-value="setByokEnabled" />
           </div>
 
           <div class="permission-item">
             <div class="permission-label">
-              <span>人格偏好</span>
-              <span class="permission-desc">允许用户在个人设置中填写人格偏好，最多 10000 字，并在下一轮对话生效。</span>
+              <span>{{ t('agent.personality') }}</span>
+              <span class="permission-desc">{{ t('agent.personalityHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.personality_preference_enabled !== false" aria-label="开放用户人格偏好" @update:model-value="setPersonalityEnabled" />
+            <ToggleSwitch :model-value="agent.personality_preference_enabled !== false" :aria-label="t('agent.personality')" @update:model-value="setPersonalityEnabled" />
           </div>
         </div>
       </section>
 
       <section class="permission-group">
-        <h4>Shell 能力</h4>
+        <h4>{{ t('agent.shell') }}</h4>
         <div class="permission-list">
           <div class="permission-item">
             <div class="permission-label">
-              <span>Shell 工具</span>
-              <span class="permission-desc">开启后才允许用户使用 Shell；默认执行后端是 Docker 沙盒。</span>
+              <span>{{ t('agent.shell') }}</span>
+              <span class="permission-desc">{{ t('agent.shellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_enabled === true" aria-label="开放 Shell 工具" @update:model-value="setAgentFlag('shell_enabled', $event)" />
+            <ToggleSwitch :model-value="agent.shell_enabled === true" :aria-label="t('agent.shell')" @update:model-value="setAgentFlag('shell_enabled', $event)" />
           </div>
 
           <div class="permission-item">
             <div class="permission-label">
-              <span>Shell Autopilot</span>
-              <span class="permission-desc">允许用户开启 Autopilot，跳过 Shell 确认门；沙盒与审计仍然生效。</span>
+              <span>{{ t('agent.autopilot') }}</span>
+              <span class="permission-desc">{{ t('agent.autopilotHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_autopilot_enabled === true" :disabled="agent.shell_enabled !== true" aria-label="开放 Shell Autopilot" @update:model-value="setAgentFlag('shell_autopilot_enabled', $event)" />
+            <ToggleSwitch :model-value="agent.shell_autopilot_enabled === true" :disabled="agent.shell_enabled !== true" :aria-label="t('agent.autopilot')" @update:model-value="setAgentFlag('shell_autopilot_enabled', $event)" />
           </div>
 
           <div class="permission-item">
             <div class="permission-label">
-              <span>系统范围 Shell</span>
-              <span class="permission-desc">允许访问系统范围，风险最高；建议仅本地管理员使用。</span>
+              <span>{{ t('agent.systemShell') }}</span>
+              <span class="permission-desc">{{ t('agent.systemShellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_system_enabled === true" :disabled="agent.shell_enabled !== true" aria-label="开放系统范围 Shell" @update:model-value="setAgentFlag('shell_system_enabled', $event)" />
+            <ToggleSwitch :model-value="agent.shell_system_enabled === true" :disabled="agent.shell_enabled !== true" :aria-label="t('agent.systemShell')" @update:model-value="setAgentFlag('shell_system_enabled', $event)" />
           </div>
 
           <div class="permission-item">
             <div class="permission-label">
-              <span>危险 Shell 命令</span>
-              <span class="permission-desc">包括删除、覆盖、移动目录、修改权限和服务启停等高影响命令，仍需逐次确认。</span>
+              <span>{{ t('agent.dangerousShell') }}</span>
+              <span class="permission-desc">{{ t('agent.dangerousShellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_dangerous_enabled === true" :disabled="agent.shell_enabled !== true" aria-label="开放危险 Shell 命令" @update:model-value="setAgentFlag('shell_dangerous_enabled', $event)" />
+            <ToggleSwitch :model-value="agent.shell_dangerous_enabled === true" :disabled="agent.shell_enabled !== true" :aria-label="t('agent.dangerousShell')" @update:model-value="setAgentFlag('shell_dangerous_enabled', $event)" />
           </div>
         </div>
       </section>
     </div>
 
     <div class="card-actions">
-      <span class="save-hint" :class="{ error: !!error }">{{ error || (saved ? '权限设置已保存' : '') }}</span>
-      <button type="button" class="btn-ghost" @click="$emit('reset')">撤销修改</button>
-      <button type="button" class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? '保存中…' : '保存' }}</button>
+      <span class="save-hint" :class="{ error: !!error }">{{ error || (saved ? t('agent.saved') : '') }}</span>
+      <button type="button" class="btn-ghost" @click="$emit('reset')">{{ t('agent.resetChanges') }}</button>
+      <button type="button" class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? t('agent.saving') : t('agent.save') }}</button>
     </div>
   </section>
 </template>
@@ -84,6 +84,9 @@
 <script setup lang="ts">
 import type { PropType } from 'vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   agent: { type: Object as PropType<Record<string, any>>, required: true },

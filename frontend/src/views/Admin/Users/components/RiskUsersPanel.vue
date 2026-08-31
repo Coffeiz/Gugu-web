@@ -1,14 +1,14 @@
 <template>
   <section class="risk-panel">
     <div class="risk-toolbar">
-      <span class="risk-summary">近 {{ windowMinutes }} 小时触发过，策略按 5 分钟窗口计算</span>
-      <button class="icon-btn" :class="{ spinning: loading }" title="刷新风险用户" @click="load">
+      <span class="risk-summary">{{ t('adminExtraUi.riskSummary', { hours: windowMinutes }) }}</span>
+      <button class="icon-btn" :class="{ spinning: loading }" :title="t('adminExtraUi.refreshRisk')" @click="load">
         <Icon name="action.refresh" size="sm" />
       </button>
     </div>
 
-    <div v-if="loading && !items.length" class="state-empty">加载中…</div>
-    <div v-else-if="!items.length" class="state-empty">暂无风险用户</div>
+    <div v-if="loading && !items.length" class="state-empty">{{ t('adminExtraUi.loading') }}</div>
+    <div v-else-if="!items.length" class="state-empty">{{ t('adminExtraUi.noRisk') }}</div>
     <div v-else class="risk-list">
       <article v-for="user in items" :key="user.id" class="risk-row">
         <div class="risk-identity">
@@ -19,18 +19,18 @@
           </span>
         </div>
         <span class="risk-status" :class="user.account_status">
-          {{ user.account_status === 'suspended' ? '临时冻结' : user.risk_action === 'throttled' ? '已限流' : '近期触发' }}
+          {{ user.account_status === 'suspended' ? t('adminExtraUi.suspended') : user.risk_action === 'throttled' ? t('adminExtraUi.throttled') : t('adminExtraUi.recent') }}
         </span>
-        <span class="risk-count">{{ user.recent_event_count }} 次</span>
+        <span class="risk-count">{{ t('adminExtraUi.count', { count: user.recent_event_count }) }}</span>
         <span class="risk-time">{{ formatDate(user.last_event_at) }}</span>
         <div class="risk-actions">
-          <button class="action-btn" @click="toggleEvents(user)">{{ expanded === user.id ? '收起事件' : '查看事件' }}</button>
-          <button v-if="user.account_status === 'suspended' || !user.is_active" class="action-btn" @click="unsuspend(user)">解封</button>
-          <button v-else class="action-btn danger" @click="suspendTarget = user">冻结</button>
+          <button class="action-btn" @click="toggleEvents(user)">{{ expanded === user.id ? t('adminExtraUi.collapseEvents') : t('adminExtraUi.viewEvents') }}</button>
+          <button v-if="user.account_status === 'suspended' || !user.is_active" class="action-btn" @click="unsuspend(user)">{{ t('adminExtraUi.unsuspend') }}</button>
+          <button v-else class="action-btn danger" @click="suspendTarget = user">{{ t('adminExtraUi.suspend') }}</button>
         </div>
         <div v-if="expanded === user.id" class="event-detail">
-          <div v-if="eventLoading" class="event-muted">加载中…</div>
-          <div v-else-if="!events.length" class="event-muted">暂无事件详情</div>
+          <div v-if="eventLoading" class="event-muted">{{ t('adminExtraUi.loading') }}</div>
+          <div v-else-if="!events.length" class="event-muted">{{ t('adminExtraUi.noEvents') }}</div>
           <div v-for="event in events" :key="event.id" class="event-item">
             <span>{{ event.event_type }}</span>
             <code>{{ event.resource_fingerprint.slice(0, 16) }}</code>
@@ -43,11 +43,11 @@
     <Teleport to="body">
       <div v-if="suspendTarget" class="confirm-mask" @click.self="suspendTarget = null">
         <div class="confirm-box">
-          <h3>确认冻结用户？</h3>
-          <p>冻结后该用户将暂时无法访问服务，默认冻结 30 分钟。</p>
+          <h3>{{ t('adminExtraUi.confirmSuspend') }}</h3>
+          <p>{{ t('adminExtraUi.suspendHint') }}</p>
           <div class="confirm-actions">
-            <button class="btn-cancel" @click="suspendTarget = null">取消</button>
-            <button class="btn-confirm" :disabled="saving" @click="suspend">{{ saving ? '处理中…' : '确认冻结' }}</button>
+            <button class="btn-cancel" @click="suspendTarget = null">{{ t('adminExtraUi.cancel') }}</button>
+            <button class="btn-confirm" :disabled="saving" @click="suspend">{{ saving ? t('adminExtraUi.processing') : t('adminExtraUi.confirm') }}</button>
           </div>
         </div>
       </div>
@@ -59,8 +59,10 @@
 import { onMounted, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
+import { useI18n } from 'vue-i18n'
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 const items = ref<any[]>([])
 const events = ref<any[]>([])
 const loading = ref(false)

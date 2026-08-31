@@ -483,7 +483,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="list_projects",
             label="查询项目列表",
-            description_short="查询项目；关键字段 status/archived",
+            description_short="查询项目；支持按状态和归档状态筛选。",
             description="查询项目列表，可按状态筛选；默认不含归档项目，返回阶段进度和截止日期。",
             input_schema={
                 "type": "object",
@@ -502,8 +502,8 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_project",
             label="更新项目",
-            description_short="修改项目；关键字段 project_id/project；priority=high/medium/low/none，none 清除优先级",
-            description="修改项目的状态、截止日期、开始日期、客户名称、优先级。",
+            description_short="修改项目；可调整优先级，none 清除优先级。",
+            description="修改项目的状态、截止日期、开始日期、客户名称、优先级；start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -525,7 +525,7 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short="创建项目；可带 stages/todos，后续用 add_stage/add_todo",
-            description="创建项目，必须填写开始日期和截止日期，可一次设置颜色、优先级、阶段和待办。",
+            description="创建项目，必须填写开始日期和截止日期（日期字符串，系统统一归一为 YYYY-MM-DD），可一次设置颜色、优先级、阶段和待办。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -555,7 +555,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_stage",
             label="更新阶段",
-            description_short='切换阶段或待办；关键字段 project/stage/todo，done 省略时默认完成',
+            description_short='切换阶段或待办；省略 done 时默认完成。',
             description="切换项目当前阶段，或勾选/取消某个阶段下的待办事项。",
             input_schema={
                 "type": "object",
@@ -580,7 +580,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="set_color", label="设置项目颜色",
-            description_short='设置项目颜色；关键字段 project_id/project',
+            description_short='设置项目颜色。',
             description="设置项目的颜色，只能是预设色板中的渐变色字符串之一。",
             input_schema={
                 "type": "object",
@@ -597,7 +597,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="archive_project",
             label="归档项目",
-            description_short='归档项目；关键字段 project_id/project，archived=true 归档、false 取消归档，省略默认 true',
+            description_short='归档或取消归档项目，省略时默认归档。',
             description="归档或取消归档项目（可逆，不会删除数据）。",
             input_schema={
                 "type": "object",
@@ -614,7 +614,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="delete_project",
             label="删除项目",
-            description_short='删除项目；关键字段 project_id/project',
+            description_short='删除项目。',
             description="永久删除一个或多个项目（连带项目文件，不可恢复）。单项传 project_id/project，批量传 project_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
@@ -633,7 +633,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="get_project", label="项目详情",
-            description_short="读取项目结构；关键字段 project_id/project",
+            description_short="读取项目结构。",
             description="获取单个项目的完整结构：状态、日期、客户、当前阶段，以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。管理阶段或待办前先用它看清结构。",
             input_schema={
                 "type": "object",
@@ -647,7 +647,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="add_stage", label="新增阶段",
-            description_short="新增阶段；关键字段 project/project_id/name",
+            description_short="新增阶段。",
             description="给项目新增一个阶段（追加到末尾，或用 position 指定插入位置）。注意：这是给项目加阶段，不是新建项目。",
             input_schema={
                 "type": "object",
@@ -664,7 +664,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="remove_stage", label="删除阶段",
-            description_short='删除阶段；关键字段 project_id/project',
+            description_short='删除阶段。',
             description="删除项目的某个阶段（按阶段名称或 key）。连带该阶段的待办一并移除。",
             input_schema={
                 "type": "object",
@@ -680,7 +680,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="rename_stage", label="重命名阶段",
-            description_short='重命名阶段；关键字段 project_id/project',
+            description_short='重命名阶段。',
             description="重命名项目的某个阶段。",
             input_schema={
                 "type": "object",
@@ -697,7 +697,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="add_todo", label="新增待办",
-            description_short="新增待办；关键字段 project/stage/texts",
+            description_short="新增待办。",
             description="给项目某阶段新增一条或多条待办（用 texts 数组一次加多条，可用于批量建待办模板）。",
             input_schema={
                 "type": "object",
@@ -714,7 +714,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="remove_todo", label="删除待办",
-            description_short='删除待办；关键字段 project_id/project',
+            description_short='删除待办。',
             description="删除项目某阶段下的一条待办（按文本或 id 匹配）。",
             input_schema={
                 "type": "object",
@@ -731,7 +731,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="set_stages", label="整体设置阶段",
-            description_short="整体重排阶段；关键字段 project/stages",
+            description_short="整体重排阶段。",
             description="一次性声明项目的完整阶段列表，可增删、改名和重排；只改一个阶段用专用工具。",
             input_schema={
                 "type": "object",
@@ -756,7 +756,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="update_todo", label="修改待办",
-            description_short='修改待办；action 必填：complete 配 done，rename 配 text，move 配 to_stage；定位 project/todo',
+            description_short='修改待办；支持完成、重命名和移动。',
             description="改一条待办的文本或完成状态，并可选移动到另一个阶段（to_stage）。按文本（部分匹配）或 id 定位，可用 stage 限定查找范围。",
             input_schema={
                 "type": "object",

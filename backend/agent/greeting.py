@@ -36,6 +36,12 @@ _PROMPT = (
     "直接输出招呼本身，不要任何解释或引号。"
 )
 
+_LOCALE_INSTRUCTIONS = {
+    "zh-CN": "请使用简体中文直接输出问候，不要夹带其他语言。",
+    "ja-JP": "挨拶は自然な日本語で直接出力してください。中国語を混ぜないでください。",
+    "en-US": "Output the greeting directly in natural English. Do not mix in Chinese or Japanese.",
+}
+
 
 async def _last_seen_part(db: AsyncSession, user_id) -> str:
     """「上次和你说话是多久前」——用最近一条对话消息的时间算。喂给模型定问候口吻
@@ -139,10 +145,11 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     return ("\n近期上下文（仅供你自然带一句，别照念）：\n" + "\n\n".join(parts) + "\n\n") if parts else "\n"
 
 
-async def generate(db: AsyncSession, user_id, settings) -> str:
+async def generate(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
     """生成一句问候；失败 / 空 → ''（前端兜底）。"""
     try:
-        prompt = _PROMPT.format(ctx=await _recent_context(db, user_id))
+        language_instruction = _LOCALE_INSTRUCTIONS.get(locale, _LOCALE_INSTRUCTIONS["zh-CN"])
+        prompt = _PROMPT.format(ctx=await _recent_context(db, user_id)) + "\n" + language_instruction
         from agent import providers
         from agent.llm.llm_select import use_anthropic_for
         ai = settings.ai

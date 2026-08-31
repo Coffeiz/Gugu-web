@@ -19,7 +19,7 @@ from agent.im.owner_session import (
     bind_session_by_id,
     resolve_session as resolve_owner_session,
 )
-from agent.im.permissions import resolve_access
+from agent.im.permissions import resolve_access, resolve_group_policy
 from app.services.conversation_retention import trim_session_messages
 from agent.im.session import (
     SessionRoute,
@@ -93,6 +93,31 @@ class OwnerAgentLoop:
         if on_round is not None:
             kwargs["on_round"] = on_round
         return await run_collect(request, **kwargs)
+
+    def run_stream(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
+        from agent.runner import run_stream
+        if on_interaction is None and on_tool_event is None:
+            # 保持旧的测试/扩展实现兼容：未使用交互回调时不强行传新关键字。
+            return run_stream(request)
+        kwargs = {}
+        if on_interaction is not None:
+            kwargs["on_interaction"] = on_interaction
+        if on_tool_event is not None:
+            kwargs["on_tool_event"] = on_tool_event
+        # 旧的外部 Loop 替身/扩展可能还没有其中一个回调；只对明确的
+        # 关键字不兼容回退，不能吞掉生成器内部的 TypeError。
+        while kwargs:
+            try:
+                return run_stream(request, **kwargs)
+            except TypeError as exc:
+                unsupported = next(
+                    (name for name in ("on_interaction", "on_tool_event") if name in str(exc)),
+                    None,
+                )
+                if unsupported is None:
+                    raise
+                kwargs.pop(unsupported, None)
+        return run_stream(request)
 
 class MemberAgentLoop(OwnerAgentLoop):
     """member/unknown 的轻量入口，权限和上下文由 request policy 收紧。"""
@@ -676,6 +701,14 @@ async def dispatch_im_message(payload: dict):
     from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_text
 
+    # Gateway 入口已经会拦截关闭状态的群消息，但开关变化与 Redis 队列消费
+    # 之间可能存在时间差；worker 再检查一次，避免旧消息误进入权限校验并向
+    # 用户显示“群聊身份没有使用该工具的权限”。
+    if payload.get("platform") == "qq" and payload.get("chat_type") == "group":
+        group_settings = await resolve_group_policy(str(payload.get("channel_id") or ""))
+        if not group_settings[0]:
+            return None
+
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
         # 系统表情可能只有 emoji_refs，没有 QQ 原始附件；两者都要经过媒体入口，
@@ -842,6 +875,13 @@ async def dispatch_im_message(payload: dict):
     sent_round_indices: set[int] = set()
     immediate_round_index = 0
     immediate_round_blocked = False
+    qq_private_streaming = False
+    if platform == "qq" and payload.get("chat_type") == "c2c":
+        from agent.im.message_format import resolve_private_streaming_enabled
+        qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
+        # 流消息结束前 QQ 不稳定展示 Inline Keyboard；有交互时改走 collect。
+        if qq_private_streaming and show_tool_interactions:
+            qq_private_streaming = False
     async def _show_tool_event(event: dict) -> None:
         """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
         if not show_tool_interactions:
@@ -874,6 +914,8 @@ async def dispatch_im_message(payload: dict):
         # ask_user 会让 Runner 等待用户选择；typing 不能持续到下一条消息，
         # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
         await stop_im_typing(activity)
+        if platform == "qq" and qq_private_streaming:
+            return
         try:
             await _send_interaction_prompts(payload, [interaction])
         except Exception as exc:
@@ -885,16 +927,49 @@ async def dispatch_im_message(payload: dict):
         if prompt_id is not None:
             shown_interaction_ids.add(int(prompt_id))
 
-    # IM 统一按 round 收集并逐条发送。平台流式卡片只能原地替换同一条消息，
-    # 无法表达多个 round 的边界；这里统一走 collect，避免不同渠道出现合并/拆分差异。
+    # 飞书使用 CardKit 原地更新同一张卡片；其他平台继续按 round 收集后逐条发送。
+    stream_sent = False
     try:
-        resp = await agent_loop.run_collect(
-            req,
-            on_interaction=_show_im_interaction,
-            on_tool_event=_show_tool_event,
-            on_round=_show_round,
-        )
-        reply_text = ""
+        if platform == "feishu":
+            from agent.gateway import feishu
+            receive_id = payload.get("chat_id") or payload.get("platform_user_id")
+            token_iter = agent_loop.run_stream(
+                req,
+                on_interaction=_show_im_interaction,
+                on_tool_event=_show_tool_event,
+            )
+            stream_sent, resp = await feishu.send_text_stream(
+                str(receive_id or ""), token_iter,
+                channel_id=payload.get("channel_id"),
+            )
+            if resp is None:
+                # 没有可用飞书凭据时，流式网关不会消费生成器；继续走统一收集出口，
+                # 避免消息已入历史却没有任何回复。
+                resp = await agent_loop.run_collect(
+                    req,
+                    on_interaction=_show_im_interaction,
+                    on_tool_event=_show_tool_event,
+                    on_round=_show_round,
+                )
+            reply_text = ""
+        elif qq_private_streaming:
+            from agent.im.replies import send_qq_stream_by_round
+            token_iter = agent_loop.run_stream(
+                req,
+                on_interaction=_show_im_interaction,
+                on_tool_event=_show_tool_event,
+            )
+            stream_sent, resp, reply_text = await send_qq_stream_by_round(
+                payload, token_iter
+            )
+        else:
+            resp = await agent_loop.run_collect(
+                req,
+                on_interaction=_show_im_interaction,
+                on_tool_event=_show_tool_event,
+                on_round=_show_round,
+            )
+            reply_text = ""
     except BaseException:
         trace.finish_run("error")
         raise
@@ -962,11 +1037,22 @@ async def dispatch_im_message(payload: dict):
         if pending_interactions:
             await _send_interaction_prompts(payload, pending_interactions)
 
-    # 非流式 IM（当前统一 round 出口）所有平台都走同一发送器；飞书不再
-    # 因为旧的流式卡片分支而跳过正文。
-    reply_text = await send_agent_response(
-        payload, resp, already_sent_rounds=sent_round_indices
-    )
+    if platform in {"feishu", "qq"} and stream_sent:
+        # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
+        if resp.files:
+            from agent.im.files import send_files
+            file_result = await send_files(payload, resp.files)
+            reply_text = resp.text or "给你～"
+            if file_result.failed:
+                trace.finish_run("error")
+                await finalize_im_response(platform, puid, False, "")
+                return resp
+        else:
+            reply_text = resp.text or ""
+    else:
+        reply_text = await send_agent_response(
+            payload, resp, already_sent_rounds=sent_round_indices
+        )
 
     if reply_text is None:
         # 生成成功不等于平台送达；避免把 QQ 400 等发送失败记录成成功回复。

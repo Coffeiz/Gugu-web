@@ -85,33 +85,60 @@ useRuntimeAction(action => {
   if (!projectStore.projects.some(project => project.id === projectId)) return
   void projectStore.moveProject(projectId, move.toSurfaceId)
 })
-onUnmounted(stopOwnershipSubscription)
+let projectFlashRequest = 0
+let projectFlashTimer: ReturnType<typeof setTimeout> | null = null
+let activeProjectFlashElement: HTMLElement | null = null
+
+function clearProjectFlash() {
+  if (projectFlashTimer) clearTimeout(projectFlashTimer)
+  projectFlashTimer = null
+  if (activeProjectFlashElement) {
+    activeProjectFlashElement.classList.remove('search-highlight')
+    activeProjectFlashElement.style.animationDuration = ''
+  }
+  activeProjectFlashElement = null
+}
+
+onUnmounted(() => {
+  stopOwnershipSubscription()
+  projectFlashRequest++
+  clearProjectFlash()
+})
 
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
 watch(() => uiStore.pendingProjectHighlight, (id) => {
   if (id == null) return
-  const ms  = uiStore.pendingProjectHighlightMs || 1800        // 缺省 1.8s；新手引导设 5000
-  const cls = uiStore.pendingProjectHighlightBreath ? 'onboard-flash' : 'search-flash'  // 引导用「呼吸」动画
+  const ms  = uiStore.pendingProjectHighlightMs || 1800
   uiStore.pendingProjectHighlight = null
   uiStore.pendingProjectHighlightMs = null
-  uiStore.pendingProjectHighlightBreath = false
-  _flashProject(id, ms, cls)
+  _flashProject(id, ms, 'search-highlight')
 }, { immediate: true })
 
-function _flashProject(id, ms = 1800, cls = 'search-flash') {
-  let tries = 0
-  const tick = () => {
+function _flashProject(id, ms = 1800, cls = 'search-highlight') {
+  const request = ++projectFlashRequest
+  clearProjectFlash()
+  let attempts = 0
+  const findElement = () => {
+    if (request !== projectFlashRequest) return
     const el = document.querySelector<HTMLElement>(`[data-project-id="${id}"]`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.style.animationDuration = ms + 'ms'   // 覆盖 CSS 默认时长，让高亮整体持续 ms
-      el.classList.add(cls)
-      setTimeout(() => { el.classList.remove(cls); el.style.animationDuration = '' }, ms)
-    } else if (tries++ < 20) {
-      setTimeout(tick, 100)   // 项目卡还没渲染（刚跳转/数据加载中），等一会重试，最多 ~2s
+    if (!el) {
+      if (attempts++ >= 30) return
+      projectFlashTimer = setTimeout(findElement, 50)
+      return
     }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.style.animationDuration = ms + 'ms'
+    el.classList.add(cls)
+    activeProjectFlashElement = el
+    projectFlashTimer = setTimeout(() => {
+      if (request !== projectFlashRequest) return
+      el.classList.remove(cls)
+      el.style.animationDuration = ''
+      activeProjectFlashElement = null
+      projectFlashTimer = null
+    }, ms)
   }
-  setTimeout(tick, 100)
+  projectFlashTimer = setTimeout(findElement, 50)
 }
 
 const nonDoneColumns = computed(() =>

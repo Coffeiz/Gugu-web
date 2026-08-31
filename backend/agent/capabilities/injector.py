@@ -154,7 +154,8 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
     lines = [
         "## 当前可用能力索引",
         "这里只是稳定的能力名称、用途和紧凑字段签名，不是完整工具 Schema，也不是已经发生的工具调用记录；"
-        "固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具。"
+        "固定 Adapter 模式下使用 `call_tool({name: 工具名, arguments: 业务参数对象})` 调用业务工具；"
+        "禁止只传 name，也不要把目标工具参数省略成空对象。"
         "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
         "字段签名只展示类型、必填状态和一层结构，嵌套细节及枚举值必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
         "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"

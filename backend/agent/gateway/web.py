@@ -36,13 +36,20 @@ def _canonical_tool_batch_records(messages) -> list[dict]:
             and (record.get("metadata") or {}).get("round_id")]
 
 
-async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
-    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
-    prompt = (
+def _build_title_prompt(user_msg: str, ai_reply: str) -> str:
+    """构造新会话标题提示词，标题语言跟随当前对话语言。"""
+    return (
         "根据下面这段对话，用一句话起一个简短的标题（10字以内，不含引号和标点符号）。"
+        "标题必须使用与用户和咕咕交流相同的语言；如果对话主要使用英文，就用英文输出；"
+        "如果主要使用日文，就用日文输出。不要因为本提示词使用中文而输出中文。"
         "只输出标题本身，不要任何解释。\n"
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
+
+
+async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
+    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
+    prompt = _build_title_prompt(user_msg, ai_reply)
     from agent import providers
     ai = ai or settings.ai
     provider_adapter = providers.adapter_for(ai)
@@ -161,13 +168,17 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                                            content=req.greeting.strip()))
                 await db.flush()
 
+        style_prefs = await loaders.load_style_prefs(db, user_id)
+        current_locale = req.locale or style_prefs.get("locale", "zh-CN")
+        if req.locale:
+            style_prefs = {**style_prefs, "locale": req.locale}
+
         async def _load_snapshot():
             user_tz = await loaders.load_user_tz(db, user_id)
             projects = await loaders.load_projects(db, user_id)
             events = await loaders.load_events(db, user_id, tz=user_tz)
             notes = await loaders.load_recent_notes(db, user_id)
             files_overview = await loaders.load_files_overview(db, user_id)
-            style_prefs = await loaders.load_style_prefs(db, user_id)
             memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
             im_channels = await loaders.load_im_channels(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(
@@ -182,9 +193,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                                       "profile": profile.prompt_file},
                     "user_tz": user_tz, "im_channels": im_channels, "im_memory": {},
                     "memory_summary_hash": session_snapshot.memory_summary_hash(memory),
+                    "locale": current_locale,
                     }
 
-        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
+        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot, locale=current_locale)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
 
@@ -204,8 +216,13 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, req.attachments, req.message, model_cfg=model_cfg)
+        from agent.context.references import build_reference_context
+        reference_text = await build_reference_context(db, user_id, req.references)
+        if reference_text:
+            aug_text = f"{reference_text}\n\n{aug_text}" if aug_text else reference_text
         user_message = ConversationMessage(session_id=session.id, role="user", content=req.message,
-                                           files=attach_cards or None)
+                                           files=attach_cards or None,
+                                           references_json=req.references or None)
         db.add(user_message)
         await db.flush()
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3）：只 claim
@@ -659,9 +676,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     except BaseException as e:
         generation_failed = True
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
-        msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
+        is_network_error = _is_network_error(e)
+        msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
-        await genstream.publish(session_id, {"type": "error", "message": msg})
+        await genstream.publish(session_id, {
+            "type": "error",
+            "message": msg,
+            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+        })
     finally:
         # LoopScope 正常由 genstream 的 done/error 事件收尾；事件发布前异常、
         # Redis 发布失败或后台任务被提前终止时，仍需提交一个终态，避免该 run

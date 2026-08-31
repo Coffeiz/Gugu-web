@@ -16,7 +16,7 @@
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 16V6M8 10l4-4 4 4"/><path d="M5 19h14"/>
         </svg>
-        <span>松开以添加附件</span>
+        <span>{{ t('chat.dropAttachment') }}</span>
       </div>
     </Transition>
 
@@ -34,28 +34,28 @@
             :title="currentSessionTitle"
             :on-rename="(t) => onRenameSession(sessionId!, t)"
           />
-          <span v-if="currentSessionGoalStatus" class="chat-goal-indicator" :class="`is-${currentSessionGoalStatus}`" :title="currentSessionGoalStatus === 'paused' ? '目标任务已暂停' : '目标任务进行中'">
+          <span v-if="currentSessionGoalStatus" class="chat-goal-indicator" :class="`is-${currentSessionGoalStatus}`" :title="currentSessionGoalStatus === 'paused' ? t('chat.goalPaused') : t('chat.goalRunning')">
             <i :class="currentSessionGoalStatus === 'paused' ? 'ri-pause-circle-line' : 'ri-focus-3-line'" aria-hidden="true" />
-            {{ currentSessionGoalStatus === 'paused' ? '目标已暂停' : '目标进行中' }}
+            {{ currentSessionGoalStatus === 'paused' ? t('chat.goalPausedShort') : t('chat.goalRunningShort') }}
           </span>
         </template>
-        <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
+        <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : t('chatUi.gugu') }}</span>
         <span v-if="currentSessionWorkspaceName" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
           · {{ currentSessionWorkspaceName }}
         </span>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
-          <em class="status-dot" />{{ presenceText }}
+          <span class="status-dot" aria-hidden="true" /><span class="popup-status-label">{{ presenceText }}</span>
         </span>
         <div class="btn-group">
-          <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" title="展开">
+          <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" :title="t('chat.expand')" :aria-label="t('chat.expand')">
             <Icon name="action.expand" :size="13" />
           </button>
-          <button v-if="expanded" class="exp-icon-btn" @click="onExitExpanded" title="收起">
+          <button v-if="expanded" class="exp-icon-btn" @click="onExitExpanded" :title="t('chat.collapse')" :aria-label="t('chat.collapse')">
             <Icon name="action.collapse" :size="14" />
           </button>
-          <button class="popup-close-btn" @click="onClose">
+          <button class="popup-close-btn" @click="onClose" :title="t('common.actions.close')" :aria-label="t('common.actions.close')">
             <Icon name="action.close" :size="13" />
           </button>
         </div>
@@ -69,13 +69,15 @@
         :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
-        @interaction-select="onInteractionSelect"
+        @interaction-select="onInteractionSelect" @reference-click="onReferenceClick"
       />
 
       <!-- 输入框 -->
       <GuguChatComposer
         ref="composerRef"
         v-model="inputTextModel"
+        :owner-z="props.ownerZ"
+        :references="props.references" @update:references="emit('update:references', $event)"
         :pending-att="pendingAtt" :att-uploading="attUploading"
         :recording="recording" :record-secs="recordSecs"
         :expanded="expanded" :streaming="streaming" :vw="vw"
@@ -90,6 +92,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 /**
  * 聊天窗口外壳：窗口 DOM、标题栏、展开/收起按钮、消息列表与输入框的挂载点。
@@ -104,11 +107,12 @@ import Icon from '@/components/common/Icon.vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
-import type { ChatMessage, ChatFile } from './chatTypes'
+import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
 
 const props = defineProps<{
   // 窗口展示
   windowStyle: Record<string, string | number>
+  ownerZ: number
   expanded: boolean
   resizing: boolean
   streaming: boolean
@@ -131,6 +135,7 @@ const props = defineProps<{
   sessionSettling: boolean
   // 输入框
   inputText: string
+  references: ChatReference[]
   pendingAtt: ChatFile[]
   attUploading: boolean
   recording: boolean
@@ -151,6 +156,7 @@ const props = defineProps<{
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
+  onReferenceClick: (reference: ChatReference) => void
   onPromptConnect: () => void
   onRenameSession: (id: number, title: string) => void
   onEnterExpanded: () => void
@@ -162,8 +168,9 @@ const props = defineProps<{
   onDragLeave: (e: DragEvent) => void
   onDrop: (e: DragEvent) => void
 }>()
+const { t } = useI18n()
 
-const emit = defineEmits<{ 'update:inputText': [value: string] }>()
+const emit = defineEmits<{ 'update:inputText': [value: string]; 'update:references': [value: ChatReference[]] }>()
 
 // inputText 是 props（只读），用 computed 包装成可写的 v-model 桥，把输入变化
 // 通过 emit('update:inputText') 回传给父组件（父组件持有真正的 inputText 状态）。
@@ -208,8 +215,8 @@ defineExpose({
   background: var(--panel-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  transform: translateZ(0);
-  will-change: backdrop-filter;   /* 提示浏览器单独准备合成层，容器随窗口变尺寸时少一点现算的突兀感 */
+  /* 不在这里创建独立合成层：命令菜单的 backdrop-filter 需要采样 chat-main 内的消息内容。
+     transform/合成层会把消息和菜单隔离，菜单只剩半透明底色而不会真正模糊。 */
 }
 
 /* 只有用户主动大/小窗切换才做几何缓动；普通 viewport resize 直接同步 layout。 */
@@ -285,8 +292,9 @@ defineExpose({
 }
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }
-.popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; }
-.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); transition: background .15s, box-shadow .15s; }
+.popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; line-height: 1; }
+.status-dot { display: block; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); transition: background .15s, box-shadow .15s; }
+.popup-status-label { display: inline-flex; align-items: center; line-height: 1; }
 /* 离线：克制的暗示——灰点、弱化文字、可点；只在 hover 才微微亮起（点用暖色 + 细光环），平时不抢眼 */
 .popup-status.is-offline { color: var(--text-secondary); cursor: pointer; opacity: .85; transition: color .15s, opacity .15s; }
 .popup-status.is-offline .status-dot { background: var(--text-secondary); }

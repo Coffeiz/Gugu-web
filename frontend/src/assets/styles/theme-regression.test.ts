@@ -30,7 +30,6 @@ const surfacesCss = load('./adoption/surfaces.css')
 const datePickerCss = load('./adoption/date-picker.css')
 const publicPagesCss = load('./adoption/public-pages.css')
 const adoptionIndexCss = load('./adoption/index.css')
-const overlayCss = load('./overlay-theme-bridge.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
 const themeAdoptionCss = load('./theme-adoption.css')
 const productCss = load('./tokens/product.css')
@@ -41,11 +40,14 @@ const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
 const fileSelectionToolbarVue = load('../../components/common/FileSelectionToolbar.vue')
 const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
+const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+const eventFormPanelVue = load('../../components/events/EventFormPanel.vue')
+const imageViewerVue = load('../../components/common/viewers/ImageViewer.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
-const paletteFiles = ['aero', 'mono', 'rose', 'sky', 'sage'].map(name => ({
+const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sky', 'sky'], ['sage', 'sage']].map(([file, name]) => ({
   name,
-  css: load(`./tokens/palettes/${name}.css`) + load('./tokens/palettes/color-base.css'),
+  css: load(`./tokens/palettes/${file}.css`) + load('./tokens/palettes/color-base.css'),
 }))
 const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
@@ -131,19 +133,21 @@ describe('主题 CSS 回归契约', () => {
     expect(materialCompositionCss).toContain('var(--palette-page-start)')
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
-    expect(materialCompositionCss).toContain(":not([data-palette='mono'])")
+    expect(materialCompositionCss).toContain(":not([data-palette='cafe'])")
     expect(materialCompositionCss).not.toMatch(/--theme-(shadow|blur|radius)\s*:/)
     expect(load('./tokens/themes/mono-light.css')).toContain("--theme-border-strong: rgba(42,35,49,.15)")
     expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
   })
 
-  it('通知气泡暗色不继承亮色纯白高光，亮色实体样式保持唯一', () => {
-    const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item")
-    const darkHighlight = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item::after")
-    expect(darkEdge).toContain('border-color: var(--border-default)')
-    expect(darkHighlight).toContain('var(--highlight-soft)')
-    expect(darkHighlight).toContain('var(--highlight-muted)')
-    expect(notificationBubbleVue).toContain('border: 1px solid rgba(255,255,255,0.65)')
+  it('通知气泡使用统一浮层材质，暗色不继承亮色纯白高光', () => {
+    expect(notificationBubbleVue).toContain('background: var(--popup-surface-bg);')
+    expect(notificationBubbleVue).toContain('box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);')
+    expect(notificationBubbleVue).not.toContain('background: var(--panel-bg);')
+    const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family] .nb-item)")
+    expect(darkEdge).toContain('--nb-border: var(--border-default)')
+    expect(darkEdge).toContain('--nb-highlight-top: var(--highlight-soft)')
+    expect(darkEdge).toContain('--nb-highlight-side: var(--highlight-muted)')
+    expect(notificationBubbleVue).toContain('--nb-highlight-top: rgba(255,255,255,0.9)')
     expect(notificationBubbleVue).not.toMatch(/:global\(html\[data-theme='dark'\]\[data-family\][^)]*\)[^{]*\{[^}]*rgba\(255,255,255/i)
   })
 
@@ -159,6 +163,21 @@ describe('主题 CSS 回归契约', () => {
     expect(runtimeCss).not.toContain('.proj-card::before')
   })
 
+  it('项目卡最终 paint 只由组件负责，主题层不重复接管根卡片', () => {
+    const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+    expect(projectCardVue).toContain('border: 1px solid var(--project-card-border)')
+    expect(projectCardVue).toContain('box-shadow: var(--project-card-shadow)')
+    expect(themeAdoptionCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
+    expect(productCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
+  })
+
+  it('todo popup 由通用容器负责 surface，业务组件负责内容主题', () => {
+    expect(load('../../components/common/PopupMenu.vue')).toContain('background: var(--popup-surface-bg)')
+    expect(load('../../components/common/PopupMenu.vue')).toContain('border: 1px solid var(--popup-surface-border)')
+    expect(themeAdoptionCss).not.toContain('.todo-pop-popup')
+    expect(projectCardVue).toContain('html[data-theme][data-family] .todo-pop-popup')
+  })
+
   it('亮色调色板将导航选中面统一为实体亮面', () => {
     for (const paletteCss of lightPaletteCss) {
       const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)(?:\n| )\}/)?.[1] ?? ''
@@ -166,25 +185,25 @@ describe('主题 CSS 回归契约', () => {
     }
   })
 
-  it('亮色导航选中项使用实体亮面，通知 active paint 不重复', () => {
+  it('导航选中项直接复用调色板 surface，通知 active paint 不重复', () => {
     expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
-    expect(componentCss).toContain('--sidebar-item-active-light-bg: rgba(255,255,255,.94)')
-    expect(componentSurfacesCss).toContain("html[data-theme='light'][data-family]")
-    expect(componentSurfacesCss).toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
+    expect(load('../../components/common/NavItem.vue')).not.toContain('.nav-item.active {')
+    expect(componentCss).toContain('--sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised))')
+    expect(componentSurfacesCss).not.toContain('--sidebar-item-active-light-bg')
+    expect(componentSurfacesCss).not.toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
   })
 
   it('Mono 导航不再被旧 chrome 边框覆盖，Admin 与前台复用同一组选中 token', () => {
     expect(surfacesCss).not.toMatch(/html\[data-family='mono'\] \.sidebar\s*\{/)
 
     const adminLayoutVue = load('../../layouts/AdminLayout.vue')
-    const adminNavActive = cssBlock(adminLayoutVue, '.nav-item.active')
     expect(adminLayoutVue).toContain('background: var(--sidebar-bg);')
     expect(adminLayoutVue).toContain('border-right: 1px solid var(--sidebar-border);')
-    expect(adminNavActive).toContain('background: var(--sidebar-item-active);')
-    expect(adminNavActive).toContain('border-color: var(--sidebar-item-active-border);')
-    expect(adminNavActive).toContain('box-shadow: var(--sidebar-item-active-shadow);')
-    expect(adminNavActive).not.toContain('border-color: var(--border-strong);')
-    expect(adminNavActive).not.toContain('inset 0 1px 0 var(--border-subtle)')
+    expect(adminLayoutVue).not.toContain('.nav-item.active {')
+    expect(productCss).toContain(':is(.sidebar, .admin-sidebar) .nav-item.active')
+    expect(productCss).toContain('background: var(--sidebar-item-active);')
+    expect(productCss).toContain('border-color: var(--sidebar-item-active-border);')
+    expect(productCss).toContain('box-shadow: var(--sidebar-item-active-shadow);')
   })
 
   it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
@@ -226,11 +245,12 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('ImageViewer 暗色只重映射 toolbar 局部 token，不复制实体 paint', () => {
-    const darkBlock = cssBlock(overlayCss, "html[data-theme='dark'][data-family] .iv-wrap")
+    const darkBlock = cssBlock(imageViewerVue, "html[data-theme='dark'][data-family] .iv-wrap")
     expect(darkBlock).toContain('--iv-toolbar-bg:')
     expect(darkBlock).toContain('--iv-toolbar-border: var(--border-strong)')
     expect(darkBlock).toContain('--iv-toolbar-filter: var(--popup-surface-blur)')
-    expect(overlayCss).not.toContain("html[data-theme='dark'][data-family] .iv-toolbar")
+    expect(imageViewerVue).not.toContain("html[data-theme='dark'][data-family] .iv-toolbar")
+    expect(eventFormPanelVue).toContain('html[data-theme][data-family] .event-form-body')
   })
 
   it('文件工具栏只有一套尺寸和前景契约', () => {
@@ -336,7 +356,7 @@ describe('主题 CSS 回归契约', () => {
     expect(playButton).not.toMatch(/linear-gradient|rgba?\(/i)
   })
 
-  it('登录、注册、隐私页面只通过暗色 bridge 接管 paint，亮色 scoped 样式不被覆盖', () => {
+  it('登录、注册、隐私页面只通过主题层接管 paint，亮色 scoped 样式不被覆盖', () => {
     expect(adoptionIndexCss).toContain("@import './public-pages.css';")
     expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page)")
     expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] .auth-page .field input")
@@ -344,14 +364,16 @@ describe('主题 CSS 回归契约', () => {
 
     const selectors = cssSelectors(publicPagesCss)
     expect(selectors.length).toBeGreaterThan(0)
-    expect(selectors.every(selector => selector.startsWith("html[data-theme='dark'][data-family]"))).toBe(true)
+    expect(selectors.every(selector =>
+      selector.startsWith("html[data-theme='dark'][data-family]") || selector.startsWith('.admin-login')
+    )).toBe(true)
     expect(publicPagesCss).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
   })
 
   it('页面 Mono 配色与便签 Amber 色卡保持独立', () => {
     const monoCss = load('./tokens/palettes/mono.css')
-    expect(monoCss).toContain('--theme-action-primary: #746b78')
-    expect(monoCss).toContain('--theme-action-primary: #c0b5c4')
+    expect(monoCss).toContain('--theme-action-primary: #715653')
+    expect(monoCss).toContain('--theme-action-primary: #be9d98')
     expect(monoCss).not.toContain('#ffc05f')
     expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("label: 'Amber', token: '--note-paper-amber'")
   })
@@ -399,5 +421,12 @@ describe('主题 CSS 回归契约', () => {
     const adoptionCss = load('./theme-adoption.css')
     const darkChatBlock = cssBlock(adoptionCss, "html[data-theme='dark'][data-family] .chat-window::after")
     expect(darkChatBlock).toContain('box-shadow: none')
+  })
+
+  it('咕咕聊天窗口离场时保留玻璃材质，避免 blur 先于淡出消失', () => {
+    const leaveBlock = guguChatVue.match(/\.chat-open-leave-active\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(leaveBlock).toContain('backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).toContain('-webkit-backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).toContain('transition: opacity')
   })
 })

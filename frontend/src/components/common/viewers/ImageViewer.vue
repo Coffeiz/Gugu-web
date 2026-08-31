@@ -19,16 +19,16 @@
     />
     <div v-if="error" class="iv-status">
       <Icon name="file.image" :size="32" style="opacity:.5" />
-      <span>图片加载失败</span>
+      <span>{{ t('viewerUi.imageLoadFailed') }}</span>
     </div>
 
     <!-- 缩放工具栏 -->
     <div v-if="!error" class="iv-toolbar" @mousedown.stop @dblclick.stop>
-      <button class="iv-tb-btn" title="缩小" @click="zoomOut">
+      <button class="iv-tb-btn" :title="t('viewerUi.zoomOut')" @click="zoomOut">
         <Icon name="action.subtract" :size="12" />
       </button>
-      <span class="iv-tb-pct" @click="reset" title="重置缩放">{{ pct }}%</span>
-      <button class="iv-tb-btn" title="放大" @click="zoomIn">
+      <span class="iv-tb-pct" @click="reset" :title="t('viewerUi.resetZoom')">{{ pct }}%</span>
+      <button class="iv-tb-btn" :title="t('viewerUi.zoomIn')" @click="zoomIn">
         <Icon name="action.add" :size="12" />
       </button>
     </div>
@@ -38,6 +38,8 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 const PADDING = 32
 
 const props = defineProps({
@@ -132,7 +134,7 @@ defineExpose({ scale, tx, ty })
 
 <style scoped>
 .iv-wrap {
-  /* 亮色默认值保持原设计；暗色只在 overlay-theme-bridge.css 重映射这些变量。
+  /* 亮色默认值保持原设计；暗色在本组件末尾重映射这些变量。
      toolbar 本身始终只有下面一套属性声明，不再维护亮/暗两份组件 CSS。 */
   --iv-toolbar-bg: rgba(255, 255, 255, 0.68);
   --iv-toolbar-filter: blur(18px);
@@ -219,4 +221,18 @@ defineExpose({ scale, tx, ty })
   padding: 0 2px; transition: color 0.15s;
 }
 .iv-tb-pct:hover { color: var(--iv-toolbar-pct-hover-fg); }
+</style>
+
+<style>
+/* 工具栏变量只在 ImageViewer 内消费，暗色映射也归还组件。 */
+html[data-theme='dark'][data-family] .iv-wrap {
+  --iv-toolbar-bg: color-mix(in srgb, var(--surface-floating) 90%, transparent);
+  --iv-toolbar-filter: var(--popup-surface-blur);
+  --iv-toolbar-border: var(--border-strong);
+  --iv-toolbar-shadow: var(--elevation-popup), inset 0 1px 0 var(--modal-card-highlight);
+  --iv-toolbar-fg: var(--content-secondary);
+  --iv-toolbar-hover-bg: var(--option-bg-hover);
+  --iv-toolbar-hover-fg: var(--action-primary);
+  --iv-toolbar-pct-hover-fg: var(--content-primary);
+}
 </style>

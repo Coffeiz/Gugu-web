@@ -1,10 +1,12 @@
 import { computed, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { showAppError } from '@/composables/useAppToast'
+import { i18n } from '@/i18n'
 
 export interface StateLabelRow { key: string; default: string; custom: string }
 
 export function useStateLabels() {
+  const t = i18n.global.t
   const adminStore = useAdminStore()
   const stateLabels = reactive<{ special: StateLabelRow[]; tools: StateLabelRow[] }>({ special: [], tools: [] })
   const labelsLoading = ref(false)
@@ -21,12 +23,12 @@ export function useStateLabels() {
     labelsLoading.value = true
     try {
       const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels')
-      if (!res.ok) throw new Error(`加载失败（${res.status}）`)
+      if (!res.ok) throw new Error(t('adminAgentUi.loadFailedStatus', { status: res.status }))
       const data = await res.json()
       stateLabels.special = (data.special || []).map((row: StateLabelRow) => ({ ...row }))
       stateLabels.tools = (data.tools || []).map((row: StateLabelRow) => ({ ...row }))
     } catch {
-      showAppError('加载失败，请重试')
+      showAppError(t('adminAgentUi.loadRetry'))
     } finally {
       labelsLoading.value = false
     }
@@ -44,11 +46,11 @@ export function useStateLabels() {
       const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overrides }),
       })
-      if (!res.ok) throw new Error('保存失败')
+      if (!res.ok) throw new Error(t('adminAgentUi.saveFailed'))
       labelsSaved.value = true
       setTimeout(() => { labelsSaved.value = false }, 2000)
     } catch {
-      showAppError('保存失败，请重试')
+      showAppError(t('adminAgentUi.saveRetry'))
     } finally {
       labelsSaving.value = false
     }

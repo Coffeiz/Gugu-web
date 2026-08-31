@@ -427,9 +427,17 @@ def test_batch_messages_are_persisted_as_new_history():
     ]
 
 
-def test_single_history_cache_keeps_only_latest_anchor():
+def test_single_history_cache_keeps_cross_run_baseline_and_latest_anchor():
     messages = PromptMessages(
         [
+            {"role": "system", "content": [{
+                "type": "text", "text": "固定 system",
+                "cache_control": {"type": "ephemeral"},
+            }]},
+            {"role": "system", "content": [{
+                "type": "text", "text": "固定 snapshot",
+                "cache_control": {"type": "ephemeral"},
+            }]},
             {"role": "user", "content": "旧锚点"},
             {"role": "assistant", "content": "回复"},
             {"role": "user", "content": "最新锚点"},
@@ -437,9 +445,10 @@ def test_single_history_cache_keeps_only_latest_anchor():
     )
     cached = _with_single_history_cache(messages)
 
-    assert "cache_control" not in cached[0]["content"][0]
-    assert "cache_control" not in cached[1]["content"][0]
+    assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert cached[4]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in cached[-1]["content"]
 
 

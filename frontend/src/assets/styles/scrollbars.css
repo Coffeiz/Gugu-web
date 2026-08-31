@@ -27,6 +27,9 @@ html[data-theme][data-family] *::-webkit-scrollbar,
 html[data-theme][data-family] *::-webkit-scrollbar-track {
   background: transparent;
 }
+html[data-theme][data-family] *::-webkit-scrollbar-track {
+  margin-block: var(--scrollbar-safe-inset);
+}
 html[data-theme][data-family] *::-webkit-scrollbar {
   width: calc(var(--scrollbar-size-default) + 2px);
   height: calc(var(--scrollbar-size-default) + 2px);

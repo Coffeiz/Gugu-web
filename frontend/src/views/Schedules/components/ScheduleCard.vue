@@ -2,16 +2,16 @@
   <div class="task-card" :class="{ off: !task.enabled }">
     <div class="tc-top">
       <span class="tc-name">{{ task.name }}</span>
-      <ToggleSwitch size="sm" :model-value="task.enabled" :aria-label="task.enabled ? '停用定时任务' : '启用定时任务'" @update:model-value="$emit('toggle', task)" />
+      <ToggleSwitch size="sm" :model-value="task.enabled" :aria-label="task.enabled ? t('schedules.disable') : t('schedules.enable')" @update:model-value="$emit('toggle', task)" />
     </div>
     <div class="tc-when">{{ cronLabel(task.cron) }} · {{ channelLabel(task.channels) }}</div>
     <div v-if="task.payload" class="tc-payload">{{ task.payload }}</div>
     <div class="tc-foot">
-      <span class="tc-last">{{ task.last_run_at ? '上次 ' + fmtTime(task.last_run_at) : '未运行' }}</span>
+      <span class="tc-last">{{ task.last_run_at ? t('schedules.previousRun', { time: fmtTime(task.last_run_at) }) : t('schedules.neverRun') }}</span>
       <span class="tc-acts">
-        <button class="link" :disabled="busy" @click="$emit('run', task)">试运行</button>
-        <button class="link" @click="$emit('edit', task)">编辑</button>
-        <button class="link danger" @click="$emit('remove', task)">删除</button>
+        <button class="link" :disabled="busy" @click="$emit('run', task)">{{ t('schedules.testRun') }}</button>
+        <button class="link" @click="$emit('edit', task)">{{ t('schedules.edit') }}</button>
+        <button class="link danger" @click="$emit('remove', task)">{{ t('schedules.delete') }}</button>
       </span>
     </div>
   </div>
@@ -20,6 +20,7 @@
 <script setup lang="ts">
 import { cronLabel } from '../utils/scheduleCron'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import { useI18n } from 'vue-i18n'
 
 defineProps({
   task: { type: Object, required: true },
@@ -29,16 +30,17 @@ defineProps({
 defineEmits<{
   (event: 'toggle' | 'run' | 'edit' | 'remove', task: Record<string, any>): void
 }>()
+const { t, locale } = useI18n()
 
 function channelLabel(channels: any) {
-  const map = { web: '通知', chat: '通知', feishu: '飞书', qq: 'QQ', wechat: '微信', im: '飞书/QQ/微信' }
+  const map = { web: t('schedules.webNotice'), chat: t('schedules.webNotice'), feishu: t('schedules.feishu'), qq: t('schedules.qq'), wechat: t('schedules.wechat'), im: `${t('schedules.feishu')}/${t('schedules.qq')}/${t('schedules.wechat')}` }
   return (channels || []).map((channel: string) => map[channel as keyof typeof map] || channel).join(' + ') || '—'
 }
 
 function fmtTime(iso: string) {
   try {
     const date = new Date(iso)
-    return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    return new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
   } catch {
     return ''
   }

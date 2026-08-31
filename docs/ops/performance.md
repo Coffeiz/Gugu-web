@@ -82,9 +82,9 @@
 
 | 领域 | 证据 | 结论 |
 |---|---|---|
-| Provider prompt cache | `docs/reports/TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN-20260825.md`、`docs/reports/TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN-20260826.md` | MiniMax 连续对话缓存稳定性较好；DeepSeek 受前缀边界和 provider 行为影响，不能直接类比 |
+| Provider prompt cache | `docs/reports/2026-08-25-TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN.md`、`docs/reports/2026-08-26-TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN.md` | MiniMax 连续对话缓存稳定性较好；DeepSeek 受前缀边界和 provider 行为影响，不能直接类比 |
 | Tool Schema | `docs/reports/schema-probes/` 及其 A/B 报告 | 简介/全量差异应同时看 schema token、总 input、cache ratio 和工具参数准确率 |
-| RAG lexical | `docs/reports/TEST-RAG-PHASE5-RUST-TANTIVY评估-2026-08-24.md` | sidecar 核心检索显著快于基线，但报告明确不等于生产端到端 P95 |
+| RAG lexical | `docs/reports/2026-08-24-TEST-RAG-PHASE5-RUST-TANTIVY-EVALUATION.md` | sidecar 核心检索显著快于基线，但报告明确不等于生产端到端 P95 |
 | 文件缩略图 | 本文 §十二、§十三及对应前端实现 | WebP、懒加载、预解码和并发限制共同解决大图下载与滚动峰值 |
 
 ## 当前待优化与观测缺口

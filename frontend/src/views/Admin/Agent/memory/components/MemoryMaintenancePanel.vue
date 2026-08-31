@@ -5,39 +5,39 @@
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 1 2 4.5M4 10V6M4 10H8"/></svg>
       </div>
       <div class="card-title-block">
-        <h3>记忆维护</h3>
-        <p>批量复核所有用户的记忆，一次做五件事：① 删除不符合当前标准的旧条目 ② 把应归入用户画像的条目搬进 profile ③ 把阶段性事件迁去 memory ④ 整理旧 daily 格式 ⑤ 清理已迁移的遗留文件。先预览、确认没问题再真执行。</p>
+        <h3>{{ t('memoryMaintenanceUi.title') }}</h3>
+        <p>{{ t('memoryMaintenanceUi.description') }}</p>
       </div>
     </div>
     <div class="behavior-grid">
       <div class="behavior-item full-row">
-        <div class="behavior-label"><span>生成预览</span><span class="behavior-desc">后台只读分析，不会直接写入数据</span></div>
+        <div class="behavior-label"><span>{{ t('memoryMaintenanceUi.preview') }}</span><span class="behavior-desc">{{ t('memoryMaintenanceUi.previewHint') }}</span></div>
         <div class="action-row">
           <span v-if="mem.msg" class="action-message" :class="{ error: mem.error }" :title="mem.msg">{{ mem.msg }}</span>
-          <button type="button" class="btn-ghost" :disabled="mem.running" @click="startPreview">{{ mem.running ? `预览中… ${mem.done}/${mem.total}` : '生成预览' }}</button>
+          <button type="button" class="btn-ghost" :disabled="mem.running" @click="startPreview">{{ mem.running ? `${t('memoryMaintenanceUi.previewing')} ${mem.done}/${mem.total}` : t('memoryMaintenanceUi.preview') }}</button>
         </div>
       </div>
       <div v-if="mem.status === 'done'" class="behavior-item full-row result-block memory-subpanel">
         <div class="result-head">
-          <span class="behavior-desc">{{ userCount === 0 ? '预览完成：没有需要处理的内容' : `预览完成：${userCount} 个用户，共删 ${totalRemoved} 条 / 搬 ${totalMoved} 条去画像 / 迁 ${totalProfileEvents} 条画像事件到 memory / 迁 ${totalDaily} 条 daily / 清 ${totalLegacy} 个遗留文件` }}</span>
-          <button v-if="userCount > 0" type="button" class="btn-ghost detail-btn" @click="mem.expanded = !mem.expanded">{{ mem.expanded ? '收起明细' : '查看明细' }}</button>
+          <span class="behavior-desc">{{ userCount === 0 ? t('memoryMaintenanceUi.completedEmpty') : t('memoryMaintenanceUi.completed', { users: userCount, removed: totalRemoved, moved: totalMoved, events: totalProfileEvents, daily: totalDaily, legacy: totalLegacy }) }}</span>
+          <button v-if="userCount > 0" type="button" class="btn-ghost detail-btn" @click="mem.expanded = !mem.expanded">{{ mem.expanded ? t('memoryMaintenanceUi.collapseDetails') : t('memoryMaintenanceUi.details') }}</button>
         </div>
         <div v-if="mem.expanded && userCount > 0" class="mem-cleanup-detail">
           <div v-for="(item, uid) in mem.plan" :key="uid">
             <template v-if="item.removed_texts?.length || item.moved_texts?.length || item.profile_event_texts?.length || item.daily_texts?.length || item.legacy_files?.length">
-              <div class="mem-cleanup-uid">{{ uid }}（{{ item.total }} 条）</div>
-              <div v-for="(text, i) in item.removed_texts" :key="`r${i}`" class="mem-cleanup-text">· [删] {{ text }}</div>
-              <div v-for="(text, i) in item.moved_texts" :key="`m${i}`" class="mem-cleanup-text moved">· [搬去画像] {{ text }}</div>
-              <div v-for="(text, i) in item.profile_event_texts" :key="`pe${i}`" class="mem-cleanup-text profile-event">· [画像事件迁 memory] {{ text }}</div>
-              <div v-for="(text, i) in item.daily_texts" :key="`d${i}`" class="mem-cleanup-text daily">· [迁 daily] {{ text }}</div>
-              <div v-for="(file, i) in item.legacy_files" :key="`l${i}`" class="mem-cleanup-text legacy">· [清遗留文件] {{ file }}</div>
+              <div class="mem-cleanup-uid">{{ uid }}（{{ t('memoryMaintenanceUi.itemCount', { count: item.total }) }}）</div>
+              <div v-for="(text, i) in item.removed_texts" :key="`r${i}`" class="mem-cleanup-text">· [{{ t('memoryMaintenanceUi.removedTag') }}] {{ text }}</div>
+              <div v-for="(text, i) in item.moved_texts" :key="`m${i}`" class="mem-cleanup-text moved">· [{{ t('memoryMaintenanceUi.movedTag') }}] {{ text }}</div>
+              <div v-for="(text, i) in item.profile_event_texts" :key="`pe${i}`" class="mem-cleanup-text profile-event">· [{{ t('memoryMaintenanceUi.profileEventTag') }}] {{ text }}</div>
+              <div v-for="(text, i) in item.daily_texts" :key="`d${i}`" class="mem-cleanup-text daily">· [{{ t('memoryMaintenanceUi.dailyTag') }}] {{ text }}</div>
+              <div v-for="(file, i) in item.legacy_files" :key="`l${i}`" class="mem-cleanup-text legacy">· [{{ t('memoryMaintenanceUi.legacyTag') }}] {{ file }}</div>
             </template>
             <div v-else-if="item.error" class="mem-cleanup-uid error">{{ uid }}：{{ item.error }}</div>
           </div>
         </div>
         <div class="result-actions">
           <span v-if="applyMsg" class="action-message" :class="{ error: mem.applyError }">{{ applyMsg }}</span>
-          <button v-if="userCount > 0" type="button" class="btn-primary" :disabled="mem.applying" @click="apply">{{ mem.applying ? '执行中…' : '确认执行' }}</button>
+          <button v-if="userCount > 0" type="button" class="btn-primary" :disabled="mem.applying" @click="apply">{{ mem.applying ? t('memoryMaintenanceUi.executing') : t('memoryMaintenanceUi.confirmExecute') }}</button>
         </div>
       </div>
     </div>
@@ -46,23 +46,23 @@
   <section class="config-card">
     <div class="card-head">
       <div class="card-icon" style="--ic:var(--selection-bg);--stroke:var(--action-primary)"><Icon name="communication.team" size="sm" /></div>
-      <div class="card-title-block"><h3>IM 群组与成员记忆</h3><p>调用维护模型生成只读汇总预览，不展示用户、群组或成员标识。</p></div>
+      <div class="card-title-block"><h3>{{ t('memoryMaintenanceUi.imTitle') }}</h3><p>{{ t('memoryMaintenanceUi.imDescription') }}</p></div>
     </div>
     <div v-if="imScopes.error" class="save-hint error">{{ imScopes.error }}</div>
     <div v-if="imScopes.message" class="save-hint">{{ imScopes.message }}</div>
     <div class="behavior-grid">
       <div class="behavior-item full-row">
-        <div class="behavior-label"><span>生成维护预览</span><span class="behavior-desc">只读分析，后台运行</span></div>
-        <div class="action-row"><span v-if="imPreview.message" class="behavior-desc">{{ imPreview.message }}</span><button type="button" class="btn-ghost" :disabled="imPreview.running" @click="startImPreview">{{ imPreview.running ? `预览中… ${imPreview.done}/${imPreview.total}` : '生成预览' }}</button></div>
+        <div class="behavior-label"><span>{{ t('memoryMaintenanceUi.preview') }}</span><span class="behavior-desc">{{ t('memoryMaintenanceUi.readOnly') }}</span></div>
+        <div class="action-row"><span v-if="imPreview.message" class="behavior-desc">{{ imPreview.message }}</span><button type="button" class="btn-ghost" :disabled="imPreview.running" @click="startImPreview">{{ imPreview.running ? `${t('memoryMaintenanceUi.previewing')} ${imPreview.done}/${imPreview.total}` : t('memoryMaintenanceUi.preview') }}</button></div>
       </div>
     </div>
     <div v-if="imPreview.hasRun && !imPreview.running">
       <div class="memory-subpanel im-memory-result">
       <div class="im-memory-summary-grid">
-        <div><strong>{{ imScopes.summary.total_scopes }}</strong><span>作用域</span></div><div><strong>{{ imScopes.summary.groups }}</strong><span>群组</span></div><div><strong>{{ imScopes.summary.members }}</strong><span>成员</span></div><div><strong>{{ imScopes.summary.total_entries }}</strong><span>记忆条目</span></div><div><strong>{{ imPreview.needsReview }}</strong><span>模型建议整理</span></div><div><strong>{{ imScopes.summary.needs_maintenance }}</strong><span>需整理作用域</span></div><div><strong>{{ imScopes.summary.failed_jobs }}</strong><span>失败任务</span></div>
+        <div><strong>{{ imScopes.summary.total_scopes }}</strong><span>{{ t('memoryMaintenanceUi.scopes') }}</span></div><div><strong>{{ imScopes.summary.groups }}</strong><span>{{ t('memoryMaintenanceUi.groups') }}</span></div><div><strong>{{ imScopes.summary.members }}</strong><span>{{ t('memoryMaintenanceUi.members') }}</span></div><div><strong>{{ imScopes.summary.total_entries }}</strong><span>{{ t('memoryMaintenanceUi.entries') }}</span></div><div><strong>{{ imPreview.needsReview }}</strong><span>{{ t('memoryMaintenanceUi.suggested') }}</span></div><div><strong>{{ imScopes.summary.needs_maintenance }}</strong><span>{{ t('memoryMaintenanceUi.needsMaintenance') }}</span></div><div><strong>{{ imScopes.summary.failed_jobs }}</strong><span>{{ t('memoryMaintenanceUi.failedJobs') }}</span></div>
       </div>
-      <div v-if="imScopes.summary.platforms.length" class="im-memory-platforms"><span v-for="platform in imScopes.summary.platforms" :key="platform.platform" class="im-memory-platform">{{ platform.platform }}：{{ platform.scopes }} 个作用域 / {{ platform.entries }} 条记忆</span></div>
-      <div class="im-memory-maintenance-actions"><span class="behavior-desc">只会整理尚未反思的新消息，不会删除已有记忆。</span><button type="button" class="btn-primary memory-action-button" :disabled="imScopes.applying || !imPreview.planReady" @click="applyIm">{{ imScopes.applying ? '执行中…' : '确认整理全部待处理内容' }}</button></div>
+      <div v-if="imScopes.summary.platforms.length" class="im-memory-platforms"><span v-for="platform in imScopes.summary.platforms" :key="platform.platform" class="im-memory-platform">{{ t('memoryMaintenanceUi.platformSummary', { platform: platform.platform, scopes: platform.scopes, entries: platform.entries }) }}</span></div>
+      <div class="im-memory-maintenance-actions"><span class="behavior-desc">{{ t('memoryMaintenanceUi.maintenanceHint') }}</span><button type="button" class="btn-primary memory-action-button" :disabled="imScopes.applying || !imPreview.planReady" @click="applyIm">{{ imScopes.applying ? t('memoryMaintenanceUi.executing') : t('memoryMaintenanceUi.confirmAll') }}</button></div>
       <div v-if="imPreview.message" class="im-memory-progress">{{ imPreview.message }}</div>
       </div>
     </div>
@@ -70,12 +70,14 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import Icon from '@/components/common/Icon.vue'
 import { useMemoryMaintenance } from '../useMemoryMaintenance'
 import { useImMemoryMaintenance } from '../useImMemoryMaintenance'
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 const memory = useMemoryMaintenance(adminStore)
 const { state: mem, userCount, totalRemoved, totalMoved, totalProfileEvents, totalDaily, totalLegacy, applyMsg, startPreview, apply } = memory
 const imMemory = useImMemoryMaintenance(adminStore)

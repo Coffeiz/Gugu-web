@@ -3,14 +3,14 @@
     <div class="panel glass-card">
       <div class="section-header">
         <ActionButton fit @click="openCreate">
-          <Icon name="admin.alarm" :size="14" />新建任务
+          <Icon name="admin.alarm" :size="14" />{{ t('schedules.create') }}
         </ActionButton>
       </div>
       <div v-if="!loading && !tasks.length" class="empty-state">
         <Icon name="admin.alarm" :size="32" />
-        <strong>还没有定时任务</strong>
-        <span>把需要定期执行的事情交给咕咕，按时提醒你。</span>
-        <ActionButton fit @click="openCreate">创建第一个定时任务</ActionButton>
+        <strong>{{ t('schedules.emptyTitle') }}</strong>
+        <span>{{ t('schedules.emptyHint') }}</span>
+        <ActionButton fit @click="openCreate">{{ t('schedules.createFirst') }}</ActionButton>
       </div>
       <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
         <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
@@ -25,23 +25,24 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import { errorMessage } from '@/composables/useAppToast'
-import { fireHint } from '@/composables/useOnboarding'
 import { useAuthStore } from '@/stores/auth'
 import ScheduleCard from './components/ScheduleCard.vue'
 import ScheduleFormModal from './components/ScheduleFormModal.vue'
 import { useScheduledTasks } from './composables/useScheduledTasks'
 
 const authStore = useAuthStore()
+const { t } = useI18n()
 const imChannels = computed(() => authStore.user?.imChannels ?? [])
 const { tasks, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
 const showModal = ref(false)
 const editing = ref<any | null>(null)
 const formErr = ref('')
 
-onMounted(() => { fireHint('schedules'); void load() })
+onMounted(() => { void load() })
 
 function openCreate() {
   editing.value = null
@@ -61,7 +62,7 @@ async function submit(data: Record<string, any>) {
     await save(editing.value?.id ?? null, data)
     showModal.value = false
   } catch (error) {
-    formErr.value = error instanceof Error ? error.message : `保存失败：${errorMessage(error)}`
+    formErr.value = error instanceof Error ? error.message : t('schedules.saveFailed', { message: errorMessage(error) })
   }
 }
 </script>

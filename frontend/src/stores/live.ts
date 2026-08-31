@@ -141,7 +141,19 @@ export const useLiveStore = defineStore('live', () => {
     if (abort) { abort.abort(); abort = null }
   }
 
-  return { rev, connected, resourceEvent, bump, connect, disconnect }
+  function resetAccountState() {
+    disconnect()
+    Object.keys(rev).forEach(resource => { rev[resource] = 0 })
+    resourceEvent.value = null
+    seenEventIds.clear()
+    lastCanonicalRevision.clear()
+    _catchUpTimers.forEach(clearTimeout)
+    _catchUpTimers = []
+    retry = 0
+    everConnected = false
+  }
+
+  return { rev, connected, resourceEvent, bump, connect, disconnect, resetAccountState }
 })
 
 function _sleep(ms: number) {

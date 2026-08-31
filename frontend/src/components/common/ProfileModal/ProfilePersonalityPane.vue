@@ -1,28 +1,28 @@
 <template>
   <div class="pm-section personality-preference">
-    <div class="pm-section-label">人格偏好</div>
-    <div v-if="!prefsStore.personalityPreferenceAvailable" class="personality-locked">用户人格偏好当前未开放，已保存内容不会被删除。</div>
+    <div class="pm-section-label">{{ t('personalityUi.title') }}</div>
+    <div v-if="!prefsStore.personalityPreferenceAvailable" class="personality-locked">{{ t('personalityUi.locked') }}</div>
     <template v-else>
       <div class="personality-heading">
         <div class="pm-field-desc">
           <span class="pm-field-name">persona.md</span>
-          <span class="pm-field-hint">上传或编辑你的 Markdown 人格文件，文件保存在用户目录的隐藏人格目录中。</span>
+          <span class="pm-field-hint">{{ t('personalityUi.hint') }}</span>
         </div>
         <div class="personality-toggle">
-          <ToggleSwitch :model-value="enabled" :disabled="saving || !hasContent" aria-label="启用人格偏好" @update:model-value="onToggle" />
-          <span class="personality-enabled-label">{{ enabled ? '已启用' : '未启用' }}</span>
+          <ToggleSwitch :model-value="enabled" :disabled="saving || !hasContent" :aria-label="t('personalityUi.enable')" @update:model-value="onToggle" />
+          <span class="personality-enabled-label">{{ enabled ? t('personalityUi.enabled') : t('personalityUi.disabled') }}</span>
         </div>
       </div>
       <div class="personality-file-card">
         <div class="personality-file-icon">MD</div>
         <div class="personality-file-info">
           <div class="personality-file-name">persona.md</div>
-          <div class="personality-file-meta">{{ hasContent ? `${characterCount} 个字符` : '尚未创建' }} · 不会出现在文件库</div>
+          <div class="personality-file-meta">{{ hasContent ? t('personalityUi.characters', { count: characterCount }) : t('personalityUi.notCreated') }} · {{ t('personalityUi.hidden') }}</div>
         </div>
         <div class="personality-file-actions">
           <input ref="fileInput" class="personality-file-input" type="file" accept=".md,text/markdown" @change="onFileSelected" />
-          <button type="button" class="pm-text-button" :disabled="saving" @click="fileInput?.click()">上传</button>
-          <button type="button" class="pm-text-button" :disabled="saving" @click="openEditor">编辑</button>
+          <button type="button" class="pm-text-button" :disabled="saving" @click="fileInput?.click()">{{ t('personalityUi.upload') }}</button>
+          <button type="button" class="pm-text-button" :disabled="saving" @click="openEditor">{{ t('personalityUi.edit') }}</button>
         </div>
       </div>
       <div v-if="error || status" class="personality-status" :class="{ error: !!error }">{{ error || status }}</div>
@@ -32,11 +32,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 
 const prefsStore = usePreferencesStore()
+const { t } = useI18n()
 const previewStore = usePreviewStore()
 const enabled = ref(false)
 const saving = ref(false)
@@ -59,7 +61,7 @@ function openEditor() {
 
 async function saveDocument(content: string) {
   await prefsStore.savePersonalityPreference(content, enabled.value)
-  status.value = '已保存，下一轮对话生效'
+  status.value = t('personalityUi.saved')
   error.value = ''
 }
 
@@ -71,10 +73,10 @@ async function onFileSelected(event: Event) {
   saving.value = true; status.value = ''; error.value = ''
   try {
     await prefsStore.uploadPersonalityFile(file)
-    status.value = '已上传，可继续编辑'
+    status.value = t('personalityUi.uploaded')
     openEditor()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '上传失败，请稍后重试'
+    error.value = err instanceof Error ? err.message : t('personalityUi.uploadFailed')
   } finally { saving.value = false }
 }
 

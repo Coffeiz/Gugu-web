@@ -119,7 +119,7 @@
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showAddForm" class="add-event-popup shared-event-popup" ref="addFormRef" :style="addFormStyle">
-        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" title="添加活动" autofocus
+        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" autofocus
                         @save="saveEvent" @close="showAddForm = false"
                         @test-reminder="testReminderChannels(newEvent.name)" />
       </div>
@@ -133,6 +133,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
@@ -140,7 +141,6 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useEventModalStore } from '@/stores/eventModal'
 import { CLIENT_ID, eventsApi } from '@/services/api'
 import { useHolidays } from '@/composables/useHolidays'
-import { fireHint } from '@/composables/useOnboarding'
 import { showAppError } from '@/composables/useAppToast'
 import { defaultTimeRange } from '@/composables/useEventEditForm'
 import CalendarToolbar from './components/CalendarToolbar.vue'
@@ -151,6 +151,8 @@ import CalendarContextMenu from './components/CalendarContextMenu.vue'
 import EventFormPanel from '@/components/events/EventFormPanel.vue'
 import MonthGrid from './components/MonthGrid.vue'
 import WeekTimeline from './components/WeekTimeline.vue'
+
+const { t, tm, locale } = useI18n()
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
@@ -512,7 +514,9 @@ const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
 const morePopupAnchor = ref<HTMLElement | null>(null)
+let morePopupOpenTimer: ReturnType<typeof setTimeout> | null = null
 function closeMorePopup() {
+  if (morePopupOpenTimer) { clearTimeout(morePopupOpenTimer); morePopupOpenTimer = null }
   morePopup.value.open = false
   morePopupAnchor.value = null
 }
@@ -606,7 +610,7 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
     return
   }
   const d     = new Date(iso + 'T00:00:00')
-  const label = `${d.getMonth()+1}月${d.getDate()}日`
+  const label = new Intl.DateTimeFormat(locale.value, { month: 'long', day: 'numeric' }).format(d)
   const w     = 230
   const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect()
   const estH  = 48 + items.length * 30   // 估算弹窗高度
@@ -620,8 +624,17 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
     ? { position: 'fixed', bottom: (window.innerHeight - rect.top + gap) + 'px', left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'bottom' }
     : { position: 'fixed', top: (rect.bottom + gap) + 'px',                      left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'top' }
 
-  morePopup.value = { open: true, items, dateLabel: label, style }
-  morePopupAnchor.value = anchor
+  if (morePopup.value.open) {
+    morePopup.value = { open: false, items, dateLabel: label, style }
+    morePopupAnchor.value = anchor
+    morePopupOpenTimer = setTimeout(() => {
+      if (morePopupAnchor.value === anchor) morePopup.value.open = true
+      morePopupOpenTimer = null
+    }, 140)
+  } else {
+    morePopup.value = { open: true, items, dateLabel: label, style }
+    morePopupAnchor.value = anchor
+  }
 }
 
 function onMoreProject(item: CalItem) {
@@ -638,9 +651,10 @@ function onMoreDragItem(payload: { item: CalItem; event: MouseEvent }) {
   startMoreItemDrag(payload.item, payload.event)
 }
 
-const weekdays = computed(() => prefsStore.calendarWeekStart === 'sunday'
-  ? ['日', '一', '二', '三', '四', '五', '六']
-  : ['一', '二', '三', '四', '五', '六', '日'])
+const weekdays = computed(() => {
+  const labels = tm('sharedUi.weekdays') as string[]
+  return prefsStore.calendarWeekStart === 'sunday' ? labels : [...labels.slice(1), labels[0]]
+})
 
 function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -730,7 +744,6 @@ function weekBars(week: { iso: string }[]): CalItem[] {
 // ───────────────── 周视图（时间轴）─────────────────
 const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
-const _CN_DOW   = ['日','一','二','三','四','五','六']
 
 const weekDays = computed<WeekViewDay[]>(() => {
   const weekStart = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
@@ -741,7 +754,7 @@ const weekDays = computed<WeekViewDay[]>(() => {
   for (let i = 0; i < 7; i++) {
     const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i)
     const iso = toIso(d)
-    out.push({ iso, dateNum: d.getDate(), cn: _CN_DOW[d.getDay()],
+    out.push({ iso, dateNum: d.getDate(), cn: new Intl.DateTimeFormat(locale.value, { weekday: 'narrow' }).format(d),
                md: (d.getMonth()+1) + '/' + d.getDate(),
                isToday: iso === todayIso.value,
                isWeekend: d.getDay() === 0 || d.getDay() === 6 })
@@ -752,7 +765,7 @@ const weekDays = computed<WeekViewDay[]>(() => {
 const {
   viewMode, periodLabel, prev, next, goToday, setView,
   pickerOpen, pickerYear, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth,
-} = useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays })
+} = useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays, locale })
 
 const { upcomingList, refresh: refreshUpcoming } = useCalendarUpcoming()
 
@@ -1023,8 +1036,9 @@ function _evDragUp(e: MouseEvent) {
 const selectedDateLabel = computed(() => {
   if (!selectedDate.value) return ''
   const d = new Date(selectedDate.value + 'T00:00:00')
-  const cn = ['日','一','二','三','四','五','六']
-  return (d.getMonth()+1) + '月' + d.getDate() + '日 · 周' + cn[d.getDay()]
+  const dateLabel = new Intl.DateTimeFormat(locale.value, { month: 'long', day: 'numeric' }).format(d)
+  const weekday = new Intl.DateTimeFormat(locale.value, { weekday: 'short' }).format(d)
+  return `${dateLabel} · ${locale.value === 'zh-CN' ? '周' : ''}${weekday}`
 })
 
 const selectedEvents = computed<CalItem[]>(() => {
@@ -1077,14 +1091,40 @@ watch(() => uiStore.pendingCalendarDate, (date) => {
 // 从别的页面搜索跳转时，日历页刚挂载、fetchEvents() 还在飞网络请求，侧栏这时可能还没渲染出
 // 目标活动的 data-event-id——固定延时 150ms 一次性查大概率扑空（只跳对了月份/日期，没有高亮闪一下）。
 // 改成轮询，等数据到位、DOM 出现再闪，最多等 2s（10 次 × 200ms）。
-function _flashCalendarEvent(id: string | number, tries = 10) {
-  setTimeout(() => {
-    const el = document.querySelector(`[data-event-id="${id}"]`)
-    if (!el) { if (tries > 0) _flashCalendarEvent(id, tries - 1); return }
+let calendarFlashRequest = 0
+let calendarFlashTimer: ReturnType<typeof setTimeout> | null = null
+let activeCalendarFlashElement: HTMLElement | null = null
+
+function clearCalendarFlash() {
+  if (calendarFlashTimer) clearTimeout(calendarFlashTimer)
+  calendarFlashTimer = null
+  activeCalendarFlashElement?.classList.remove('search-highlight')
+  activeCalendarFlashElement = null
+}
+
+function _flashCalendarEvent(id: string | number) {
+  const request = ++calendarFlashRequest
+  clearCalendarFlash()
+  let attempts = 0
+  const findElement = () => {
+    if (request !== calendarFlashRequest) return
+    const el = document.querySelector<HTMLElement>(`[data-event-id="${id}"]`)
+    if (!el) {
+      if (attempts++ >= 30) return
+      calendarFlashTimer = setTimeout(findElement, 50)
+      return
+    }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    el.classList.add('search-flash')
-    setTimeout(() => el.classList.remove('search-flash'), 1800)
-  }, 200)
+    el.classList.add('search-highlight')
+    activeCalendarFlashElement = el
+    calendarFlashTimer = setTimeout(() => {
+      if (request !== calendarFlashRequest) return
+      el.classList.remove('search-highlight')
+      activeCalendarFlashElement = null
+      calendarFlashTimer = null
+    }, 1800)
+  }
+  calendarFlashTimer = setTimeout(findElement, 50)
 }
 
 // 弹窗加提醒后会变高，可能顶出屏幕底部、保存按钮被切掉。
@@ -1161,7 +1201,6 @@ function handleClickOutside(e: MouseEvent) {
 }
 
 onMounted(() => {
-  fireHint('calendar')   // 新手引导：第一次打开日历
   document.addEventListener('click', handleClickOutside, true)
   fetchEvents()
   fetchNextMonthEvents()
@@ -1174,6 +1213,8 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   ro?.disconnect()
   if (_midnightTimer) clearTimeout(_midnightTimer)
+  calendarFlashRequest++
+  clearCalendarFlash()
 })
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
@@ -1336,10 +1377,4 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
 
-/* 搜索跳转高亮：跟文件/项目搜索命中一样的外发光，不再是纯色背景闪一下 */
-.search-flash { animation: search-flash 1.8s ease forwards; border-radius: 10px; }
-@keyframes search-flash {
-  0%, 60%  { box-shadow: 0 0 0 2px var(--color-primary), 0 0 14px rgba(123,127,178,0.55); }
-  100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
-}
 </style>

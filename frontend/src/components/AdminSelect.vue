@@ -91,7 +91,7 @@ onBeforeUnmount(() => {
 .asel-popup--model-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  row-gap: 1px;
   padding: var(--popup-surface-padding);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--popup-surface-radius);

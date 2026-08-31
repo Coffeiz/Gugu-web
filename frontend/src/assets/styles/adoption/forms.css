@@ -1,62 +1,35 @@
-/* Shared form paint adoption.
-   Components keep their own size/layout; all theme-sensitive field paint comes from --input-*.
-   This intentionally targets the established form classes rather than every input element so
-   search/composer/range/checkbox controls can keep their specialised contracts. */
+/* Shared form paint adoption. Components keep layout; theme-sensitive paint comes from tokens.
+   Number inputs keep their page-owned geometry; this rule only removes native steppers. */
+html[data-theme][data-family] input[type='number']::-webkit-inner-spin-button,
+html[data-theme][data-family] input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
 html[data-theme][data-family] :is(
-  .form-input,
-  .title-edit-input,
-  .rename-input-inline,
-  .header-name-input,
-  .field-input,
-  .stage-input,
-  .tpl-name-input,
-  .np-todo-input,
+  .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
+  .field-input, .stage-input, .tpl-name-input, .np-todo-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ) {
   color: var(--input-fg);
   background: var(--input-bg);
-  border-color: var(--input-border);
+  border: 1px solid var(--input-border);
   caret-color: var(--action-primary);
   box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
-  transition:
-    background-color var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
-    color var(--motion-hover-control) var(--motion-ease-standard);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-
-/* .drp-input 已从这些列表移除：DateSpanPicker.vue scoped 直接消费 --input-*（与
-   DatePicker/TimeInput 同一契约）。它是 div 不触发 :focus，adoption 的 :hover
-   特异度又高于 scoped 的 .open 态，留着会覆盖展开态描边。 */
-
 html[data-theme][data-family] :is(
-  .form-input,
-  .title-edit-input,
-  .rename-input-inline,
-  .header-name-input,
-  .field-input,
-  .stage-input,
-  .tpl-name-input,
-  .np-todo-input,
+  .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
+  .field-input, .stage-input, .tpl-name-input, .np-todo-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ):hover:not(:disabled) {
   background: var(--input-bg-hover);
   border-color: var(--input-border-hover);
   box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
 }
-
-/* focus 规则必须与 hover 规则同特异度并靠源顺序取胜（都带 :not(:disabled)）；
-   否则输入框聚焦后鼠标悬停时 hover 规则压掉 focus 描边，表现为
-   "悬停时选中描边消失"。 */
 html[data-theme][data-family] :is(
-  .form-input,
-  .title-edit-input,
-  .rename-input-inline,
-  .header-name-input,
-  .field-input,
-  .stage-input,
-  .tpl-name-input,
-  .np-todo-input,
+  .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
+  .field-input, .stage-input, .tpl-name-input, .np-todo-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ):focus:not(:disabled) {
   outline: none;
@@ -65,40 +38,65 @@ html[data-theme][data-family] :is(
   border-color: var(--input-border-focus);
   box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
 }
-
-/* 外发光由 rename-sizer 的伪元素独立过渡，输入框本身只保留内侧高光，
-   避免 inset 与外部 box-shadow 之间发生不可插值的离散切换。 */
-html[data-theme][data-family] .rename-input-inline:focus:not(:disabled) {
-  box-shadow: var(--input-hover-shadow);
-}
-
 html[data-theme][data-family] :is(
-  .form-input,
-  .title-edit-input,
-  .rename-input-inline,
-  .header-name-input,
-  .field-input,
-  .stage-input,
-  .tpl-name-input,
-  .np-todo-input,
+  .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
+  .field-input, .stage-input, .tpl-name-input, .np-todo-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
-)::placeholder {
-  color: var(--input-placeholder);
-  opacity: .82;
+)::placeholder { color: var(--input-placeholder); opacity: .82; }
+
+/* Admin 历史表单统一使用同一套背景与边框；不额外绘制内高光或外部阴影。 */
+html[data-theme][data-family] .admin-main :is(
+  .behavior-input, .conc-input, .modal-input, .field-input, .text-input, .debug-search,
+  .filter-input, .filter-select, .search-input, .sa-input, .egress-input,
+  .qf-input, .label-input, .labels-filter, .prompt-textarea, .ctrl-grp input,
+  .quota-editor input
+) {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--input-fg);
+  box-shadow: none;
+  caret-color: var(--action-primary);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .admin-main :is(
+  .behavior-input, .conc-input, .modal-input, .field-input, .text-input, .debug-search,
+  .filter-input, .filter-select, .search-input, .sa-input, .egress-input,
+  .qf-input, .label-input, .labels-filter, .prompt-textarea, .ctrl-grp input,
+  .quota-editor input
+):hover:not(:disabled) {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+  box-shadow: none;
+}
+html[data-theme][data-family] .admin-main :is(
+  .behavior-input, .conc-input, .modal-input, .field-input, .text-input, .debug-search,
+  .filter-input, .filter-select, .search-input, .sa-input, .egress-input,
+  .qf-input, .label-input, .labels-filter, .prompt-textarea, .ctrl-grp input,
+  .quota-editor input
+):focus:not(:disabled) {
+  outline: none;
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .admin-main :is(
+  .behavior-input, .conc-input, .modal-input, .field-input, .text-input, .debug-search,
+  .filter-input, .filter-select, .search-input, .sa-input, .egress-input,
+  .qf-input, .label-input, .labels-filter, .prompt-textarea, .ctrl-grp input,
+  .quota-editor input
+)::placeholder { color: var(--input-placeholder); opacity: .82; }
+
+/* 感知诊断阈值框是紧凑控件，保留输入框契约的圆角。 */
+html[data-theme][data-family] .admin-main .ctrl-grp input {
+  border-radius: var(--input-radius);
 }
 
-/* Native selects/textareas inside modal forms use the same paint contract without changing their
-   geometry. Explicit opt-out controls can keep their own component background by class. */
 html[data-theme][data-family] .bm-card select:not(.theme-native-control),
 html[data-theme][data-family] .bm-card textarea:not(.theme-native-control) {
   color: var(--input-fg);
   background-color: var(--input-bg);
   border-color: var(--input-border);
-  transition:
-    background-color var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
-    color var(--motion-hover-control) var(--motion-ease-standard);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] .bm-card select:not(.theme-native-control):hover,
 html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):hover {

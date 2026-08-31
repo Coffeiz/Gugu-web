@@ -1,14 +1,14 @@
 <template>
-  <BaseModal :show="true" width="620px" background="var(--panel-bg)" @close="emit('close')">
+  <BaseModal :show="show" width="620px" background="var(--panel-bg)" @close="emit('close')">
     <div class="skill-form">
       <div class="form-head">
-        <div><h2>{{ skill ? '编辑技能' : '新建技能' }}</h2><p>定义做事方法，不会新增或绕过工具权限。</p></div>
+        <div><h2>{{ skill ? t('skills.editTitle') : t('skills.create') }}</h2><p>{{ t('skills.formHint') }}</p></div>
         <CloseButton @click="emit('close')" />
       </div>
-      <label>名称<input v-model="form.name" maxlength="120" placeholder="例如：晨间简报" /></label>
-      <label class="description-field"><span class="field-label"><span>简介（短描述）</span><small>{{ form.description_short.length }}/100 字符，用于技能目录和匹配提示</small></span><textarea ref="descriptionRef" v-model="form.description_short" class="short-description" maxlength="100" rows="2" placeholder="什么时候使用这个技能？" @input="resizeDescription" /></label>
-      <label>技能正文<textarea ref="bodyRef" v-model="form.body" class="skill-body" maxlength="20000" rows="8" placeholder="写下咕咕应遵循的步骤和输出格式，不要写可执行代码。" @input="resizeBody" /></label>
-      <div class="form-label tool-label"><span><b>可关联工具</b><em>仅表示建议使用，实际权限仍由工具注册表决定</em></span><button type="button" class="tool-toggle" @click="toolsExpanded = !toolsExpanded">{{ toolsExpanded ? '收起' : '展开' }}</button></div>
+      <label>{{ t('skills.name') }}<input v-model="form.name" maxlength="120" :placeholder="t('skills.namePlaceholder')" /></label>
+      <label class="description-field"><span class="field-label"><span>{{ t('skills.description') }}</span><small>{{ t('skills.descriptionCount', { count: form.description_short.length }) }}</small></span><textarea ref="descriptionRef" v-model="form.description_short" class="short-description" maxlength="100" rows="2" :placeholder="t('skills.descriptionPlaceholder')" @input="resizeDescription" /></label>
+      <label>{{ t('skills.body') }}<textarea ref="bodyRef" v-model="form.body" class="skill-body" maxlength="20000" rows="8" :placeholder="t('skills.bodyPlaceholder')" @input="resizeBody" /></label>
+      <div class="form-label tool-label"><span><b>{{ t('skills.related') }}</b><em>{{ t('skills.relatedHint') }}</em></span><button type="button" class="tool-toggle" @click="toolsExpanded = !toolsExpanded">{{ toolsExpanded ? t('skills.collapse') : t('skills.expand') }}</button></div>
       <div v-if="toolsExpanded" class="tool-grid">
         <div v-for="tool in tools" :key="tool.name" class="tool-option" @click="toggleTool(tool.name, !form.related_tools.includes(tool.name))">
           <span class="tool-copy"><b>{{ tool.name }}</b><small>{{ tool.description_short }}</small></span>
@@ -16,13 +16,14 @@
         </div>
       </div>
       <p v-if="error || props.externalError" class="form-error">{{ error || props.externalError }}</p>
-      <div class="form-actions"><Checkbox v-model="form.enabled" class="enabled-row">启用</Checkbox><span class="form-action-spacer" /><ActionButton variant="secondary" @click="emit('close')">取消</ActionButton><ActionButton :disabled="busy" @click="submit">{{ busy ? '保存中…' : '保存' }}</ActionButton></div>
+      <div class="form-actions"><Checkbox v-model="form.enabled" class="enabled-row">{{ t('skills.enableOption') }}</Checkbox><span class="form-action-spacer" /><ActionButton variant="secondary" @click="emit('close')">{{ t('common.actions.cancel') }}</ActionButton><ActionButton :disabled="busy" @click="submit">{{ busy ? t('common.status.saving') : t('common.actions.save') }}</ActionButton></div>
     </div>
   </BaseModal>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Checkbox from '@/components/common/Checkbox.vue'
@@ -30,8 +31,9 @@ import CloseButton from '@/components/common/CloseButton.vue'
 import Icon from '@/components/common/Icon.vue'
 import type { SkillToolItem, UserSkillItem, UserSkillWrite } from '@/services/api'
 
-const props = defineProps<{ skill: UserSkillItem | null; tools: SkillToolItem[]; busy?: boolean; externalError?: string }>()
+const props = defineProps<{ show: boolean; skill: UserSkillItem | null; tools: SkillToolItem[]; busy?: boolean; externalError?: string }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'save', data: UserSkillWrite): void }>()
+const { t } = useI18n()
 const error = ref('')
 const toolsExpanded = ref(false)
 const descriptionRef = ref<HTMLTextAreaElement | null>(null)
@@ -46,7 +48,7 @@ const form = reactive({
 function submit() {
   error.value = ''
   if (!form.name.trim() || !form.description_short.trim() || !form.body.trim()) {
-    error.value = '请填写名称、简介和正文'
+    error.value = t('skills.fillRequired')
     return
   }
   const slug = form.slug || `user-skill-${Date.now().toString(36)}`

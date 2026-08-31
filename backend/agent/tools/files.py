@@ -1406,7 +1406,7 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description_short='查询文件；关键字段 space/project_id/folder_id/query，支持 q/queries 兼容别名，mode=OR/AND',
+            description_short='查询文件；支持按空间、项目、文件夹和关键词筛选。',
             description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
             input_schema={
                 "type": "object",
@@ -1427,7 +1427,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description_short='读取文件内容；关键字段 file_id/file',
+            description_short='读取文件内容。',
             description="读取文本、文档、表格、图片、音频或视频；返回与问题相关的内容摘要。",
             input_schema={
                 "type": "object",
@@ -1441,7 +1441,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description_short='修改文本文件；关键字段 file_id/file/edits，mode=replace_all/append 用 content，find_replace 用 find/replace',
+            description_short='修改文本文件；支持替换、追加和查找替换。',
             description="修改文本文件；支持整体替换、追加和查找替换，多个文件用 edits 批量处理。",
             input_schema={
                 "type": "object",
@@ -1520,7 +1520,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="create_document", label="生成文档",
-            description_short='创建文档；关键字段 name/format/content',
+            description_short='创建文档。',
             description="创建文件；文本直接写入，docx/pdf 用 HTML，xlsx 用 CSV，返回 file_id。",
             input_schema={
                 "type": "object",
@@ -1543,7 +1543,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_file", label="重命名文件",
-            description_short='重命名文件；关键字段 file_id/file，format 可选改后缀',
+            description_short='重命名文件；可选修改扩展名。',
             description="重命名文件，可单个或批量修改名称及后缀，不改变位置。",
             input_schema={
                 "type": "object",
@@ -1597,7 +1597,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="copy_file", label="复制文件",
-            description_short='复制文件；关键字段 file_id/file',
+            description_short='复制文件。',
             description="复制一份文件到目标位置（target.folder 填文件夹名；不填则在原位复制一份）。",
             input_schema={
                 "type": "object",
@@ -1628,7 +1628,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="create_folder", label="新建文件夹",
-            description_short='新建文件夹；关键字段 name/parent_id/project_id',
+            description_short='新建文件夹。',
             description="新建文件夹，可指定所属项目与父文件夹（支持嵌套）。",
             input_schema={
                 "type": "object",
@@ -1644,7 +1644,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_file", label="删除文件",
-            description_short='删除文件到回收站；关键字段 file_id/file_ids',
+            description_short='删除文件到回收站。',
             description="删除一个或多个文件（移入回收站，30 天内可还原，非永久删除）。单项传 file_id/file，批量传 file_ids。",
             input_schema={
                 "type": "object",
@@ -1660,7 +1660,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
-            description_short='查询文件夹路径；关键字段 project_id/parent_id',
+            description_short='查询文件夹路径。',
             description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
@@ -1674,7 +1674,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_folder", label="重命名文件夹",
-            description_short='重命名文件夹；关键字段 project_id/folder_id/name；按名字查找跨项目同名文件夹时必须传 project_id，避免误操作',
+            description_short='重命名文件夹；跨项目存在同名文件夹时按项目范围定位。',
             description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。同名文件夹存在于多个项目时必须传 project_id 避免误操作。",
             input_schema={
                 "type": "object",
@@ -1691,7 +1691,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description_short='删除文件夹；关键字段 project_id/folder_id/name；按名字查找跨项目同名文件夹时必须传 project_id，避免误操作',
+            description_short='删除文件夹；跨项目存在同名文件夹时按项目范围定位。',
             description="删除一个或多个文件夹。单项用 name/folder_id，批量传 folder_ids。文件夹及其内容会整体移入回收站，30 天内可恢复。",
             input_schema={
                 "type": "object",
@@ -1707,7 +1707,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
-            description_short='发送文件或图片；关键字段 file/file_id/url',
+            description_short='发送文件或图片。',
             description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用，查位置请用文件链接。",
             input_schema={
                 "type": "object",
@@ -1745,7 +1745,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
-            description_short='保存聊天附件；source 必填：latest/attach_id/attach_ids，后两者配同名字段；可带 project_id/folder_id',
+            description_short='保存聊天附件到文件库。',
             description="保存对话附件到文件库；多个附件用 attach_ids，可指定项目或文件夹。",
             input_schema={
                 "type": "object",

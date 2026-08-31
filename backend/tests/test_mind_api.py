@@ -103,6 +103,21 @@ async def test_timeline_orders_by_captured_at_not_created_at(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_timeline_orders_same_day_by_creation_order(db, user_a):
+    first = await _new_note(
+        db, user_a, content="先记录", captured_at=datetime(2026, 8, 23, 10, tzinfo=timezone.utc)
+    )
+    await _new_note(
+        db, user_a, content="后记录", captured_at=datetime(2026, 8, 23, 8, tzinfo=timezone.utc)
+    )
+
+    rows = await list_notes(limit=50, offset=0, current_user=user_a, db=db)
+
+    assert [r.content_md for r in rows] == ["后记录", "先记录"]
+    assert first.created_at < rows[0].created_at
+
+
+@pytest.mark.asyncio
 async def test_timeline_hides_soft_deleted_and_other_users_notes(db, user_a, user_b):
     keep = await _new_note(db, user_a, content="我的")
     gone = await _new_note(db, user_a, content="待删")
@@ -414,17 +429,37 @@ async def test_canvas_relations_only_list_visible_nodes_and_are_idempotent(db, u
     await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), current_user=user_a, db=db)
     await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=b.id), current_user=user_a, db=db)
 
-    one = await create_relation(MindRelationCreate(src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db)
-    same = await create_relation(MindRelationCreate(src_node_id=b.id, dst_node_id=a.id), current_user=user_a, db=db)
+    one = await create_relation(MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db)
+    same = await create_relation(MindRelationCreate(canvas_id=canvas.id, src_node_id=b.id, dst_node_id=a.id), current_user=user_a, db=db)
     parallel = await create_relation(
-        MindRelationCreate(src_node_id=a.id, dst_node_id=b.id, allow_parallel=True),
+        MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id, allow_parallel=True),
         current_user=user_a, db=db,
     )
-    await create_relation(MindRelationCreate(src_node_id=a.id, dst_node_id=outside.id), current_user=user_a, db=db)
+    with pytest.raises(HTTPException, match="两个节点都必须已经放在同一张画布上"):
+        await create_relation(MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=outside.id), current_user=user_a, db=db)
     assert one.id == same.id
 
     relations = await list_canvas_relations(canvas.id, current_user=user_a, db=db)
     assert [relation.id for relation in relations] == [one.id, parallel.id]
+
+
+@pytest.mark.asyncio
+async def test_canvas_relations_are_isolated_between_canvases(db, user_a):
+    first_canvas = await create_canvas(MindCanvasCreate(title="第一张"), current_user=user_a, db=db)
+    second_canvas = await create_canvas(MindCanvasCreate(title="第二张"), current_user=user_a, db=db)
+    first = await _new_note(db, user_a, content="A")
+    second = await _new_note(db, user_a, content="B")
+    for canvas in (first_canvas, second_canvas):
+        await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=first.id), current_user=user_a, db=db)
+        await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=second.id), current_user=user_a, db=db)
+
+    relation = await create_relation(
+        MindRelationCreate(canvas_id=first_canvas.id, src_node_id=first.id, dst_node_id=second.id),
+        current_user=user_a,
+        db=db,
+    )
+    assert [item.id for item in await list_canvas_relations(first_canvas.id, current_user=user_a, db=db)] == [relation.id]
+    assert await list_canvas_relations(second_canvas.id, current_user=user_a, db=db) == []
 
 
 @pytest.mark.asyncio

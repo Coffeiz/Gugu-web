@@ -2,6 +2,7 @@ import { ref, type Ref } from 'vue'
 import type { FolderCard as FolderCardMeta, NavSeg } from '@/utils/filesNav'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useFileActions } from '@/composables/files/useFileActions'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 interface FolderActionsOptions {
   currentType: Readonly<Ref<string>>
@@ -61,6 +62,7 @@ export function useFileLibraryFolderActions(options: FolderActionsOptions) {
 
   async function deleteFolder(folder: FolderCardMeta) {
     if (folder.folderId == null) return
+    if (!await confirmFileDeletion('folder', { name: folder.displayName ?? '文件夹' })) return
     pruneHistoryForFolders([folder.folderId])
     cacheStore.removeFolder(folder.folderId)
     loadContents()

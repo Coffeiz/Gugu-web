@@ -2,48 +2,48 @@
   <div class="analytics-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">数据总览</h2>
-        <p class="page-desc">生意好不好：活跃、漏斗、留存（怎么用的看「使用分析」）</p>
+        <h2 class="page-title">{{ t('adminAnalytics.title') }}</h2>
+        <p class="page-desc">{{ t('adminAnalytics.description') }}</p>
       </div>
       <div class="header-right">
-        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
+        <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('adminAnalytics.excludeDevelopers')" @update:model-value="excludeDev = $event; load()">{{ t('adminAnalytics.excludeDevelopers') }}</Checkbox>
         <AdminSegmentTabs
           :model-value="String(rangeDays)"
           :tabs="ranges"
           size="compact"
           class="data-header-control"
-          aria-label="数据时间范围"
+          :aria-label="t('adminAnalytics.range')"
           @update:model-value="setRange"
         />
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" :title="t('adminAnalytics.refresh')">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
 
-    <div v-if="loading && !data" class="state-msg">加载中…</div>
+    <div v-if="loading && !data" class="state-msg">{{ t('adminAnalytics.loading') }}</div>
     <div v-else-if="err" class="state-msg err">{{ err }}</div>
 
     <template v-else-if="data">
 
       <!-- ── 活跃用户曲线（北极星）── -->
       <template v-if="vis">
-        <div class="section-label">活跃用户（近 {{ rangeDays }} 天，网页登录/前端操作/网页与 IM 对话）</div>
+        <div class="section-label">{{ t('adminAnalytics.activeUsers', { days: rangeDays }) }}</div>
         <div class="charts-grid one">
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="admin.pulse" size="xs" class="ct-icon ic-blue-raw" />
-                日活跃用户
+                {{ t('adminAnalytics.dailyActive') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">今日</span>
+                  <span class="cs-lbl">{{ t('adminAnalytics.today') }}</span>
                   <span class="cs-val">{{ vis.active_users[vis.active_users.length - 1] ?? 0 }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">日均</span>
+                  <span class="cs-lbl">{{ t('adminAnalytics.dailyAverage') }}</span>
                   <span class="cs-val">{{ dailyAvg(vis.active_users) }}</span>
                 </span>
                 <span class="cs-sep">·</span>
@@ -61,7 +61,7 @@
       </template>
 
       <!-- ── 漏斗 ── -->
-      <div class="section-label">用户旅程漏斗</div>
+      <div class="section-label">{{ t('adminAnalytics.journeyFunnel') }}</div>
       <div class="funnel-strip">
         <template v-for="(step, i) in funnelSteps" :key="step.key">
           <div class="funnel-box">
@@ -85,8 +85,8 @@
         </div>
         <div class="funnel-box">
           <div class="f-num">{{ pct(data.funnel.retention_7d ?? 0) }}<span style="font-size:16px;font-weight:500">%</span></div>
-          <div class="f-lbl">7 日留存</div>
-          <div class="f-rate">{{ data.funnel.retained_7d ?? 0 }} / {{ data.funnel.cohort_7d ?? 0 }} 人</div>
+          <div class="f-lbl">{{ t('adminAnalytics.retention7') }}</div>
+          <div class="f-rate">{{ data.funnel.retained_7d ?? 0 }} / {{ data.funnel.cohort_7d ?? 0 }} {{ t('adminAnalytics.people') }}</div>
         </div>
         <div class="funnel-arr">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -96,36 +96,36 @@
         </div>
         <div class="funnel-box">
           <div class="f-num">{{ pct(data.funnel.retention_30d ?? 0) }}<span style="font-size:16px;font-weight:500">%</span></div>
-          <div class="f-lbl">30 日留存</div>
-          <div class="f-rate">{{ data.funnel.retained_30d ?? 0 }} / {{ data.funnel.cohort_30d ?? 0 }} 人</div>
+          <div class="f-lbl">{{ t('adminAnalytics.retention30') }}</div>
+          <div class="f-rate">{{ data.funnel.retained_30d ?? 0 }} / {{ data.funnel.cohort_30d ?? 0 }} {{ t('adminAnalytics.people') }}</div>
         </div>
       </div>
 
       <!-- ── 留存数值指标 ── -->
-      <div class="section-label">项目留存<span class="sl-hint">重复创建 = 真的在用；一周后仍在推进 = 项目黏性</span></div>
+      <div class="section-label">{{ t('adminAnalytics.projectRetention') }}<span class="sl-hint">{{ t('adminAnalytics.retentionHint') }}</span></div>
       <div class="cards-grid col3">
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
-          <div class="card-val">{{ rm.created_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">创建过项目</div>
+          <div class="card-val">{{ rm.created_project_users ?? 0 }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.createdProjects') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-teal"><Icon name="file.folder-add" size="md" /></div>
-          <div class="card-val">{{ rm.second_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">创建过第 2 个项目</div>
+          <div class="card-val">{{ rm.second_project_users ?? 0 }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.secondProject') }}</div>
           <div class="card-sub" v-if="rm.created_project_users">
-            占比 {{ pct(rm.second_project_users / rm.created_project_users) }}%
+            {{ t('adminAnalytics.share') }} {{ pct(rm.second_project_users / rm.created_project_users) }}%
           </div>
         </div>
         <div class="card">
           <div class="card-icon ic-amber"><Icon name="status.loading" size="md" /></div>
-          <div class="card-val">{{ rm.week_active_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">注册满一周仍有进行中项目</div>
+          <div class="card-val">{{ rm.week_active_project_users ?? 0 }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.activeAfterWeek') }}</div>
         </div>
       </div>
 
       <!-- ── 咕咕行为漏斗 ── -->
-      <div class="section-label">咕咕行为漏斗</div>
+      <div class="section-label">{{ t('adminAnalytics.guguFunnel') }}</div>
       <div class="funnel-strip">
         <template v-for="(step, i) in chatFunnelSteps" :key="step.key">
           <div class="funnel-box">
@@ -141,77 +141,77 @@
           </div>
         </template>
         <div class="funnel-extra">
-          大窗展开 <strong>{{ chatFunnel?.chat_expanded ?? 0 }}</strong> 人
+          {{ t('adminAnalytics.expandedWindow') }} <strong>{{ chatFunnel?.chat_expanded ?? 0 }}</strong> {{ t('adminAnalytics.people') }}
         </div>
       </div>
 
       <!-- ── 对话 ── -->
-      <div class="section-label">对话</div>
+      <div class="section-label">{{ t('adminAnalytics.conversations') }}</div>
       <div class="cards-grid col3">
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
-          <div class="card-lbl">总量</div>
+          <div class="card-lbl">{{ t('adminAnalytics.total') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.computer" size="md" /></div>
           <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
-          <div class="card-lbl">网页对话</div>
+          <div class="card-lbl">{{ t('adminAnalytics.webConversation') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.computer" size="md" /></div>
           <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
-          <div class="card-lbl">IM 对话</div>
+          <div class="card-lbl">{{ t('adminAnalytics.imConversation') }}</div>
         </div>
       </div>
 
       <!-- ── 概览卡片 ── -->
-      <div class="section-label">用户 · 项目</div>
+      <div class="section-label">{{ t('adminAnalytics.usersProjects') }}</div>
       <div class="cards-grid">
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
           <div class="card-val">{{ data.users.total.toLocaleString() }}</div>
-          <div class="card-lbl">注册用户</div>
+          <div class="card-lbl">{{ t('adminAnalytics.registeredUsers') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="user.settings" size="md" /></div>
-          <div class="card-val">{{ data.users.new_30d }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">新增（30 天）</div>
-          <div class="card-sub">7 天内 +{{ data.users.new_7d }} 人</div>
+          <div class="card-val">{{ data.users.new_30d }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.new30') }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.new7', { count: data.users.new_7d }) }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
-          <div class="card-val">{{ data.users.wau }}<span class="card-unit"> 人</span></div>
-          <div class="card-lbl">周活跃（WAU）</div>
-          <div class="card-sub">30 天活跃 {{ data.users.active_30d }} 人</div>
+          <div class="card-val">{{ data.users.wau }}<span class="card-unit"> {{ t('adminAnalytics.people') }}</span></div>
+          <div class="card-lbl">{{ t('adminAnalytics.weeklyActive') }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.active30', { count: data.users.active_30d }) }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ pct(data.im_bots.adoption_rate) }}<span class="card-unit">%</span></div>
-          <div class="card-lbl">IM 接入率</div>
-          <div class="card-sub">{{ data.im_bots.users_with_bot }} 人已接入</div>
+          <div class="card-lbl">{{ t('adminAnalytics.imAdoption') }}</div>
+          <div class="card-sub">{{ t('adminAnalytics.connectedUsers', { count: data.im_bots.users_with_bot }) }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
           <div class="card-val">{{ data.projects.total.toLocaleString() }}</div>
-          <div class="card-lbl">项目总量</div>
+          <div class="card-lbl">{{ t('adminAnalytics.projectsTotal') }}</div>
         </div>
         <div class="card">
           <div class="card-icon ic-muted"><Icon name="admin.time" size="md" /></div>
           <div class="card-val">{{ data.projects.pending }}</div>
-          <div class="card-lbl">待开始</div>
+          <div class="card-lbl">{{ t('adminAnalytics.pending') }}</div>
         </div>
         <div class="card card-active">
           <div class="card-icon ic-amber"><Icon name="status.loading" size="md" /></div>
           <div class="card-val">{{ data.projects.active }}</div>
-          <div class="card-lbl">进行中</div>
+          <div class="card-lbl">{{ t('adminAnalytics.active') }}</div>
         </div>
         <div class="card card-done">
           <div class="card-icon ic-teal"><Icon name="status.check-circle" size="md" /></div>
           <div class="card-val">{{ data.projects.done }}</div>
-          <div class="card-lbl">已完成</div>
+          <div class="card-lbl">{{ t('adminAnalytics.done') }}</div>
           <div class="card-sub" v-if="data.projects.total">
-            完成率 {{ pct(data.projects.done / data.projects.total) }}%
+            {{ t('adminAnalytics.completionRate') }} {{ pct(data.projects.done / data.projects.total) }}%
           </div>
         </div>
       </div>
@@ -228,6 +228,7 @@ import {
   LineElement, Tooltip, Filler
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
+import { useI18n } from 'vue-i18n'
 import Checkbox from '@/components/common/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { browserTz } from '@/utils/dateAttribution'
@@ -239,6 +240,7 @@ import {
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
 
 const admin = useAdminStore()
+const { t } = useI18n()
 const data = ref<any>(null)
 const trends = ref<any>(null)   // 始终保存 60 天原始数据
 const chatFunnel = ref<any>(null)
@@ -247,11 +249,11 @@ const refreshing = ref(false)
 const err = ref('')
 const rangeDays = ref(30)
 
-const ranges = [
-  { key: '7',  label: '7 天' },
-  { key: '30', label: '30 天' },
-  { key: '60', label: '60 天' },
-]
+const ranges = computed(() => [
+  { key: '7',  label: `7 ${t('adminAnalytics.days')}` },
+  { key: '30', label: `30 ${t('adminAnalytics.days')}` },
+  { key: '60', label: `60 ${t('adminAnalytics.days')}` },
+])
 
 const rm = computed(() => data.value?.retention_metrics ?? {})
 
@@ -260,18 +262,18 @@ const funnelSteps = computed(() => {
   if (!data.value) return []
   const f = data.value.funnel
   return [
-    { key: 'registered',        label: '注册',       value: f.registered },
-    { key: 'created_project',   label: '创建项目',   value: f.created_project },
-    { key: 'completed_project', label: '完成项目',   value: f.completed_project },
+    { key: 'registered',        label: t('adminAnalytics.registration'),       value: f.registered },
+    { key: 'created_project',   label: t('adminAnalytics.createdProject'),   value: f.created_project },
+    { key: 'completed_project', label: t('adminAnalytics.completedProject'), value: f.completed_project },
   ]
 })
 
 const chatFunnelSteps = computed(() => {
   const f = chatFunnel.value ?? {}
   return [
-    { key: 'opened', label: '打开咕咕', value: f.chat_opened ?? 0 },
-    { key: 'msg1',   label: '发消息',   value: f.chat_msg_1  ?? 0 },
-    { key: 'msg3',   label: '≥ 3 轮',   value: f.chat_msg_3  ?? 0 },
+    { key: 'opened', label: t('adminAnalytics.openedGugu'), value: f.chat_opened ?? 0 },
+    { key: 'msg1',   label: t('adminAnalytics.sentMessage'),   value: f.chat_msg_1  ?? 0 },
+    { key: 'msg3',   label: t('adminAnalytics.threeRounds'),   value: f.chat_msg_3  ?? 0 },
   ]
 })
 

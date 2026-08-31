@@ -178,6 +178,18 @@ def test_knowledge_reflection_limits_candidates_and_validates_operations():
     assert candidate_request({"knowledge_candidate": {"should_reflect": "true", "query": "规则"}}) == (False, "")
 
 
+def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
+    from agent.knowledge.capture import normalize_capture
+
+    values = normalize_capture(
+        "工具结论", "外部资料整理后的结论", source_type="web",
+        confidence="confirmed", capture_mode="tool_result",
+    )
+    assert values["confidence"] == "probable"
+    with pytest.raises(ValueError, match="content.*1000"):
+        normalize_capture("过长", "x" * 1001)
+
+
 @pytest.mark.asyncio
 async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automatic(
     monkeypatch, knowledge_storage):

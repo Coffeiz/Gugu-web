@@ -8,38 +8,38 @@
 
       <form @submit.prevent="handleRegister" novalidate>
         <div class="field">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" placeholder="3-20 个字符"
+          <label>{{ t('auth.username') }}</label>
+          <input v-model="form.username" type="text" :placeholder="t('auth.usernameRule')"
             autocomplete="username" :disabled="loading" />
         </div>
         <div class="field">
-          <label>邮箱</label>
+          <label>{{ t('auth.email') }}</label>
           <input v-model="form.email" type="email" placeholder="your@email.com"
             autocomplete="email" :disabled="loading" />
         </div>
         <div class="field">
-          <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="至少 8 位"
+          <label>{{ t('auth.password') }}</label>
+          <input v-model="form.password" type="password" :placeholder="t('auth.passwordRule')"
             autocomplete="new-password" :disabled="loading" />
         </div>
         <Checkbox v-model="acknowledged" class="ack-row">
-          <span class="ack-label">测试阶段数据随时可能清空，我已知晓并会自行备份</span>
+          <span class="ack-label">{{ t('auth.acknowledged') }}</span>
         </Checkbox>
 
         <div v-if="error" class="error-msg">{{ error }}</div>
 
         <button type="submit" class="btn-primary" :disabled="loading || !acknowledged">
-          {{ loading ? '注册中…' : '注册' }}
+          {{ loading ? t('auth.registering') : t('auth.register') }}
         </button>
       </form>
 
       <div class="card-footer">
-        已有账号？
-        <router-link to="/login">立即登录</router-link>
+        {{ t('auth.hasAccount') }}
+        <router-link to="/login">{{ t('auth.loginNow') }}</router-link>
       </div>
       <div class="card-policy">
-        注册即表示你已阅读并同意
-        <router-link to="/privacy">隐私政策</router-link>
+        {{ t('auth.readAndAgree') }}
+        <router-link to="/privacy">{{ t('auth.privacy') }}</router-link>
       </div>
     </div>
   </div>
@@ -51,6 +51,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Checkbox from '@/components/common/Checkbox.vue'
 import AuthBrand from '@/components/common/AuthBrand.vue'
+import { useI18n } from 'vue-i18n'
 
 const router  = useRouter()
 const auth    = useAuthStore()
@@ -58,23 +59,24 @@ const form    = reactive({ username: '', email: '', password: '' })
 const loading      = ref(false)
 const error        = ref('')
 const acknowledged = ref(false)
+const { t } = useI18n()
 
 async function handleRegister() {
   if (!form.username || !form.email || !form.password) {
-    error.value = '请填写全部信息'; return
+    error.value = t('auth.fillAll'); return
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-    error.value = '邮箱格式不正确'; return
+    error.value = t('auth.invalidEmail'); return
   }
   if (form.password.length < 8) {
-    error.value = '密码至少 8 位'; return
+    error.value = t('auth.passwordTooShort'); return
   }
   loading.value = true; error.value = ''
   try {
     await auth.register(form.username, form.email, form.password)
     router.push('/')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '操作失败'
+    error.value = e instanceof Error ? e.message : t('auth.operationFailed')
   } finally {
     loading.value = false
   }

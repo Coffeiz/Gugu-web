@@ -485,6 +485,27 @@ async def _post_snapshot(snapshot: dict[str, Any]) -> None:
 def _finish_run(run: _ScopeRun, status: str) -> None:
     if run.ended_at is not None:
         return
+    if status == "success" and not any(
+        span.kind == "output" and span.name == "Final response"
+        for span in run.spans
+    ):
+        final_text = run.output_text
+        if not final_text:
+            for span in reversed(run.spans):
+                if span.kind != "llm" or not isinstance(span.output, dict):
+                    continue
+                draft = span.output.get("draft")
+                if isinstance(draft, str) and draft:
+                    final_text = draft
+                    break
+        if final_text:
+            final = run.span(
+                "output",
+                "Final response",
+                {"source": "trace.finish_run", "fallback": True},
+                token_impact={"output_tokens_estimate": _estimate_tokens(final_text)},
+            )
+            final.finish({"text": final_text})
     run.status = status
     run.ended_at = _now()
     snapshot = copy.deepcopy(run.snapshot())

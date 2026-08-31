@@ -2,49 +2,49 @@
   <div class="analytics-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">使用分析</h2>
-        <p class="page-desc">用户怎么用：趋势、会话深度、活跃维度、工具与模型</p>
+        <h2 class="page-title">{{ t('adminAnalyticsUi.title') }}</h2>
+        <p class="page-desc">{{ t('adminAnalyticsUi.description') }}</p>
       </div>
       <div class="header-right">
-        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
+        <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('adminAnalyticsUi.excludeDevelopers')" @update:model-value="excludeDev = $event; load()">{{ t('adminAnalyticsUi.excludeDevelopers') }}</Checkbox>
         <AdminSegmentTabs
           :model-value="String(rangeDays)"
           :tabs="ranges"
           size="compact"
           class="data-header-control"
-          aria-label="使用分析时间范围"
+          :aria-label="t('adminAnalyticsUi.range')"
           @update:model-value="setRange"
         />
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" :title="t('adminAnalyticsUi.refresh')">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
 
-    <div v-if="loading && !trends" class="state-msg">加载中…</div>
+    <div v-if="loading && !trends" class="state-msg">{{ t('adminAnalyticsUi.loading') }}</div>
     <div v-else-if="err" class="state-msg err">{{ err }}</div>
 
     <template v-else-if="trends">
 
       <!-- ── 趋势曲线 ── -->
       <template v-if="vis">
-        <div class="section-label">趋势（近 {{ rangeDays }} 天）</div>
+        <div class="section-label">{{ t('adminAnalyticsUi.trend', { days: rangeDays }) }}</div>
         <div class="charts-grid">
 
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="file.folder-add" size="xs" class="ct-icon ic-teal-raw"/>
-                新建项目
+                {{ t('adminAnalyticsUi.newProjects') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">近{{ rangeDays }}天</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.recentDays', { days: rangeDays }) }}</span>
                   <span class="cs-val">{{ sumArr(vis.project_creations) }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">日均</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.dailyAverage') }}</span>
                   <span class="cs-val">{{ dailyAvg(vis.project_creations) }}</span>
                 </span>
               </div>
@@ -58,16 +58,16 @@
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="status.check-circle" size="xs" class="ct-icon ic-teal-raw"/>
-                项目完成
+                {{ t('adminAnalyticsUi.projectDone') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">累计完成</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.completedTotal') }}</span>
                   <span class="cs-val">{{ summary?.projects?.done ?? 0 }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">近{{ rangeDays }}天</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.recentDays', { days: rangeDays }) }}</span>
                   <span class="cs-val">{{ sumArr(vis.project_completions) }}</span>
                 </span>
               </div>
@@ -81,21 +81,21 @@
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="admin.robot" size="xs" class="ct-icon ic-blue-raw"/>
-                Agent 调用
+                {{ t('adminAnalyticsUi.agentCalls') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">总计</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.total') }}</span>
                   <span class="cs-val">{{ (summary?.agent?.total_calls ?? 0).toLocaleString() }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">日均</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.dailyAverage') }}</span>
                   <span class="cs-val">{{ dailyAvg(vis.agent_calls) }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">今日</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.today') }}</span>
                   <span class="cs-val">{{ summary?.agent?.today_calls ?? 0 }}</span>
                 </span>
               </div>
@@ -109,21 +109,21 @@
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="admin.pulse" size="xs" class="ct-icon ic-amber-raw"/>
-                Token 消耗
+                {{ t('adminAnalyticsUi.tokenUsage') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">总计</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.total') }}</span>
                   <span class="cs-val">{{ fmtTok((summary?.agent?.tokens_in ?? 0) + (summary?.agent?.tokens_out ?? 0)) }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">日均</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.dailyAverage') }}</span>
                   <span class="cs-val">{{ fmtTok(Math.round(sumArr(vis.agent_tokens) / rangeDays)) }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">今日</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.today') }}</span>
                   <span class="cs-val">{{ fmtTok((summary?.agent?.today_tokens_in ?? 0) + (summary?.agent?.today_tokens_out ?? 0)) }}</span>
                 </span>
               </div>
@@ -137,16 +137,16 @@
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="user.settings" size="xs" class="ct-icon ic-teal-raw" />
-                用户注册
+                {{ t('adminAnalyticsUi.registrations') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">总量</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.totalVolume') }}</span>
                   <span class="cs-val">{{ (summary?.users?.total ?? 0).toLocaleString() }}</span>
                 </span>
                 <span class="cs-sep">·</span>
                 <span class="cs-item">
-                  <span class="cs-lbl">近{{ rangeDays }}天</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.recentDays', { days: rangeDays }) }}</span>
                   <span class="cs-val">+{{ sumArr(vis.user_registrations) }}</span>
                 </span>
               </div>
@@ -161,12 +161,12 @@
             <div class="chart-header">
               <div class="chart-title">
                 <Icon name="communication.chat" size="xs" class="ct-icon ic-blue-raw" />
-                会话深度分布
+                {{ t('adminAnalyticsUi.sessionDepth') }}
               </div>
               <div class="chart-stats">
                 <span class="cs-item">
-                  <span class="cs-lbl">口径</span>
-                  <span class="cs-val" style="font-weight:500;font-size:11px">每用户最深会话 · 按轮数分档</span>
+                  <span class="cs-lbl">{{ t('adminAnalyticsUi.metric') }}</span>
+                  <span class="cs-val" style="font-weight:500;font-size:11px">{{ t('adminAnalyticsUi.depthMetric') }}</span>
                 </span>
               </div>
             </div>
@@ -179,20 +179,20 @@
       </template>
 
       <!-- ── 活跃维度 ── -->
-      <div class="section-label">周活跃维度<span class="sl-hint">近 7 天「操作过」的去重用户（纯浏览未埋点、不含）</span></div>
+      <div class="section-label">{{ t('adminAnalyticsUi.activeDimensions') }}<span class="sl-hint">{{ t('adminAnalyticsUi.activeHint') }}</span></div>
       <div class="cards-grid col5">
         <div class="card" v-for="d in dimensions" :key="d.key">
           <div class="card-icon ic-blue"><Icon :name="dimIcon(d.key)" size="md" /></div>
-          <div class="card-val">{{ d.users }}<span class="card-unit"> 人</span></div>
+          <div class="card-val">{{ d.users }}<span class="card-unit"> {{ t('adminAnalyticsUi.person') }}</span></div>
           <div class="card-lbl">{{ d.label }}</div>
         </div>
       </div>
 
       <!-- ── 工具调用分布 ── -->
       <div class="section-label section-label-row" v-if="toolDist.length">
-        <span>工具调用 Top 10</span>
+        <span>{{ t('adminAnalyticsUi.toolTop') }}</span>
         <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
-          {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
+          {{ toolExpanded ? t('adminAnalyticsUi.collapse') : t('adminAnalyticsUi.viewAll', { count: toolDist.length }) }}
           <Icon name="action.down" size="xs" :class="{ open: toolExpanded }" />
         </button>
       </div>
@@ -208,16 +208,16 @@
 
       <!-- ── 模型分布 ── -->
       <template v-if="usage?.by_model?.length">
-        <div class="section-label">模型分布</div>
+        <div class="section-label">{{ t('adminAnalyticsUi.modelDistribution') }}</div>
         <div class="model-section">
           <div class="model-donut-wrap">
             <Doughnut :data="donutChart" :options="donutOpts" />
           </div>
           <div class="model-table">
             <div class="model-head">
-              <span>模型</span>
-              <span class="col-r">调用</span>
-              <span class="col-r">Token</span>
+              <span>{{ t('adminAnalyticsUi.model') }}</span>
+              <span class="col-r">{{ t('adminAnalyticsUi.calls') }}</span>
+              <span class="col-r">{{ t('adminAnalyticsUi.tokens') }}</span>
             </div>
             <div v-for="(m, i) in usage.by_model" :key="m.model" class="model-row">
               <span class="m-name">
@@ -238,6 +238,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Line, Bar, Doughnut } from 'vue-chartjs'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
@@ -255,6 +256,7 @@ import {
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Filler)
 
 const admin = useAdminStore()
+const { t } = useI18n()
 const summary = ref<any>(null)
 const trends = ref<any>(null)
 const usage = ref<any>(null)
@@ -268,9 +270,9 @@ const err = ref('')
 const rangeDays = ref(30)
 
 const ranges = [
-  { key: '7',  label: '7 天' },
-  { key: '30', label: '30 天' },
-  { key: '60', label: '60 天' },
+  { key: '7',  label: t('adminAnalyticsUi.recentDays', { days: 7 }) },
+  { key: '30', label: t('adminAnalyticsUi.recentDays', { days: 30 }) },
+  { key: '60', label: t('adminAnalyticsUi.recentDays', { days: 60 }) },
 ]
 
 const visibleTools = computed(() =>
@@ -320,7 +322,7 @@ const donutChart = computed(() => {
 const depthChart = computed(() => {
   const buckets = depth.value?.buckets ?? []
   return {
-    labels: buckets.map((b: any) => b.label + ' 轮'),
+    labels: buckets.map((b: any) => t('adminAnalyticsUi.rounds', { value: b.label })),
     datasets: [{
       data: buckets.map((b: any) => b.users),
       backgroundColor: 'rgba(123,127,178,0.55)',
@@ -386,7 +388,7 @@ async function load() {
     dims.value = dimRes.ok ? await dimRes.json() : null
     toolDist.value = tdRes.ok ? await tdRes.json() : []
   } catch (e: any) {
-    err.value = '加载失败：' + e.message
+    err.value = t('adminAnalyticsUi.loadFailed', { message: e.message })
   } finally {
     loading.value = false
   }

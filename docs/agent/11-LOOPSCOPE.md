@@ -211,8 +211,8 @@ Provider 能力至少分为：
 LoopScope 只负责观测，不维护上下文工程或工具 Schema 的完成度结论。权威内容归位如下：
 
 - 上下文组成、Canonical Assembly、稳定前缀/动态尾部、压缩、baseline 和缓存边界：见 [04-CONTEXT-ENGINEERING.md](./04-CONTEXT-ENGINEERING.md)。
-- 工具 Schema 的简介/全量模式、注入成本、准确率和 A/B 结果：见 [PRD-LLM-16](../prds/【已完成】PRD-LLM-16-工具SCHEMA语义显式化与注入优化.md) 与 [工具 Schema 优化实施报告](../reports/OPT-LLM-16-工具SCHEMA基线.md)。
-- MiniMax、GLM 与 DeepSeek 的实际缓存率、稳定阶段和 Provider 差异：见 [2026-08-26 20 轮缓存测试报告](../reports/TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN-20260826.md)。
+- 工具 Schema 的简介/全量模式、注入成本、准确率和 A/B 结果：见 [PRD-LLM-16](../prds/【已完成】PRD-LLM-16-工具SCHEMA语义显式化与注入优化.md) 与 [工具 Schema 优化实施报告](../reports/2026-08-29-OPT-LLM-16-TOOL-SCHEMA-BASELINE.md)。
+- MiniMax、GLM 与 DeepSeek 的实际缓存率、稳定阶段和 Provider 差异：见 [2026-08-26 20 轮缓存测试报告](../reports/2026-08-26-TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN.md)。
 
 LoopScope 中对应的观测入口是 Context Provenance、Token Usage、Cache Diagnostics 和 Prefix Diff；它们用于验证上述文档描述的实现是否在实际 Provider 输入中成立。
 

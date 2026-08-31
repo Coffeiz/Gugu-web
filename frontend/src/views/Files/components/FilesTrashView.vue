@@ -1,38 +1,38 @@
 <template>
   <div v-if="trashFolders.length > 0 || contents.files.length > 0" class="file-list trash-list">
     <div class="list-head">
-      <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-      <span>类型</span>
-      <span class="lh-sortable" :class="{ active: sortKey === 'createdAt' }" @click="onSortSelect('createdAt')">删除时间<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
-      <span>剩余</span>
-      <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">大小<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+      <span class="lh-sortable" :class="{ active: sortKey === 'name' }" @click="onSortSelect('name')">{{ t('filesViewUi.name') }}<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+      <span>{{ t('filesViewUi.type') }}</span>
+      <span class="lh-sortable" :class="{ active: sortKey === 'createdAt' }" @click="onSortSelect('createdAt')">{{ t('filesViewUi.deletedAt') }}<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
+      <span>{{ t('filesViewUi.remaining') }}</span>
+      <span class="lh-sortable" :class="{ active: sortKey === 'size' }" @click="onSortSelect('size')">{{ t('filesViewUi.size') }}<svg class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
       <span></span>
     </div>
     <template v-for="folder in sortedTrashFolders" :key="`trash-folder-${folder.id}`">
       <div class="list-row trash-folder-row" :data-trash-folder-id="`trash:${folder.id}`" :class="{ expanded: expandedTrashFolders.has(folder.id), selected: selectedTrashFolderIds.has(folder.id), 'pre-selected': previewFolderKeys.has(`trash:${folder.id}`) }" @click.stop="handleTrashFolderClick(folder, $event)">
         <span class="lr-name-cell">
-          <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? '收起内容' : '查看内容'" @click.stop="toggleTrashFolder(folder)">
+          <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? t('filesViewUi.collapse') : t('filesViewUi.view')" @click.stop="toggleTrashFolder(folder)">
             <FlipChevron :open="expandedTrashFolders.has(folder.id)" :size="8" />
           </button>
           <Icon :name="expandedTrashFolders.has(folder.id) ? 'file.folder-open' : 'file.folder'" class="lr-folder-icon" :size="16" />
           <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
         </span>
-        <span class="lr-type-cell"><span class="lr-type-text">文件夹</span></span>
+        <span class="lr-type-cell"><span class="lr-type-text">{{ t('filesViewUi.folder') }}</span></span>
         <span class="lr-text">{{ formatDate(folder.deletedAt) }}</span>
-        <span class="lr-text" :class="{ 'days-warn': daysLeft(folder.deletedAt) <= 3 }">{{ daysLeft(folder.deletedAt) }} 天</span>
-        <span class="lr-text">{{ folder.fileCount }} 个文件</span>
+        <span class="lr-text" :class="{ 'days-warn': daysLeft(folder.deletedAt) <= 3 }">{{ t('filesViewUi.days', { count: daysLeft(folder.deletedAt) }) }}</span>
+        <span class="lr-text">{{ t('filesViewUi.fileCount', { count: folder.fileCount }) }}</span>
         <span class="lr-actions">
           <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedTrashFolderIds.has(folder.id) }"><svg v-if="selectedTrashFolderIds.has(folder.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
           <template v-if="!inSelectionMode">
-            <button class="file-list-btn trash-restore-btn" title="恢复文件夹及其内容" @click.stop="restoreTrashFolder(folder)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>恢复</button>
-            <button class="file-list-btn del" title="永久删除文件夹及其内容" @click.stop="hardDeleteTrashFolder(folder)"><Icon name="action.delete" :size="11" /></button>
+            <button class="file-list-btn trash-restore-btn" :title="t('filesViewUi.restoreFolder')" @click.stop="restoreTrashFolder(folder)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>{{ t('filesViewUi.restore') }}</button>
+            <button class="file-list-btn del" :title="t('filesViewUi.permanentDeleteFolder')" @click.stop="hardDeleteTrashFolder(folder)"><Icon name="action.delete" :size="11" /></button>
           </template>
         </span>
       </div>
       <div class="trash-folder-contents" :data-layout-open="expandedTrashFolders.has(folder.id) ? 'true' : 'false'">
         <div class="trash-folder-contents-inner">
-          <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">空文件夹</div>
-          <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><Icon name="file.folder" :size="14" /><span>{{ child.name }}</span><small>{{ child.fileCount }} 个文件</small></div>
+          <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">{{ t('filesViewUi.emptyFolder') }}</div>
+          <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><Icon name="file.folder" :size="14" /><span>{{ child.name }}</span><small>{{ t('filesViewUi.fileCount', { count: child.fileCount }) }}</small></div>
           <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file"><component :is="fileListIcon(file.ext)" :size="14" :style="{ color: fileIconColor(file.ext) }" /><span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span></div>
         </div>
       </div>
@@ -41,23 +41,25 @@
       <span class="lr-name-cell"><component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" :style="{ color: fileIconColor(f.ext) }" /><span class="lr-filename" :title="f.displayName">{{ f.displayName }}</span></span>
       <span class="lr-type-cell"><span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span></span>
       <span class="lr-text">{{ f.deletedAt ? formatDate(f.deletedAt) : '—' }}</span>
-      <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
+      <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ t('filesViewUi.days', { count: daysLeft(f.deletedAt) }) }}</span>
       <span class="lr-text">{{ f.size }}</span>
       <span class="lr-actions">
         <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }"><svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
-        <template v-if="!inSelectionMode"><button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>恢复</button><button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)"><Icon name="action.delete" :size="11" /></button></template>
+        <template v-if="!inSelectionMode"><button class="file-list-btn trash-restore-btn" :title="t('filesViewUi.restore')" @click.stop="restoreFile(f)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>{{ t('filesViewUi.restore') }}</button><button class="file-list-btn del" :title="t('filesViewUi.permanentDelete')" @click.stop="hardDeleteFile(f)"><Icon name="action.delete" :size="11" /></button></template>
       </span>
     </div>
   </div>
-  <FileBrowserEmptyState v-else-if="!loading" variant="trash" text="回收站为空" />
+  <FileBrowserEmptyState v-else-if="!loading" variant="trash" :text="t('filesViewUi.emptyTrash')" />
 </template>
 
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
 import FlipChevron from '@/components/common/FlipChevron.vue'
 import type { PropType } from 'vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
+const { t } = useI18n()
 const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents, sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds, previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder, restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile, hardDeleteFile, fileListIcon, fileIconColor, formatDate, daysLeft, loading } = props.context
 </script>
 

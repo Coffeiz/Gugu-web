@@ -17,6 +17,7 @@ import { installEnterDirective } from '@/directives/enter'
 import { initializeTheme } from '@/composables/useTheme'
 import { initializeButtonFeedback } from '@/composables/useButtonFeedback'
 import { installOverlayScrollbars } from '@/utils/overlayScrollbars'
+import { i18n } from '@/i18n'
 
 initializeTheme()
 initializeButtonFeedback()
@@ -25,6 +26,7 @@ setupInteractionRuntime()
 const app = createApp(App)
 
 app.use(createPinia())
+app.use(i18n)
 app.use(router)
 app.use(ArcoVue)
 installEnterDirective(app)

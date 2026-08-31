@@ -43,6 +43,8 @@ def build_request(
 
 def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[dict[str, Any]]:
     """验证并裁剪模型输出；非法操作整体丢弃，避免写入越界字段。"""
+    from agent.knowledge.capture import normalize_capture
+
     if not isinstance(raw, dict) or not isinstance(raw.get("operations"), list):
         return []
     result = []
@@ -56,9 +58,9 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
         item: dict[str, Any] = {
             "action": action,
             "target_id": str(value.get("target_id") or "").strip(),
-            "title": str(value.get("title") or "").strip()[:80],
-            "topic": str(value.get("topic") or "").strip()[:40],
-            "content": str(value.get("content") or "").strip()[:1000],
+            "title": str(value.get("title") or "").strip(),
+            "topic": str(value.get("topic") or "").strip(),
+            "content": str(value.get("content") or "").strip(),
             "certainty": certainty,
             "reason": str(value.get("reason") or "").strip()[:200],
         }
@@ -66,8 +68,20 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
             item["certainty"] = "probable"
         if save_mode != "explicit":
             item["certainty"] = "probable"
-        if action != "ignore" and (not item["title"] or not item["content"]):
-            continue
+        if action != "ignore":
+            try:
+                normalized = normalize_capture(
+                    item["title"], item["content"], topic=item["topic"],
+                    source_type="user" if save_mode == "explicit" else "conversation",
+                    source_ref="conversation:reflection",
+                    source_label="用户明确保存" if save_mode == "explicit" else "对话反思",
+                    confidence=item["certainty"], capture_mode=save_mode,
+                )
+            except ValueError:
+                continue
+            item["title"], item["topic"], item["content"] = (
+                normalized["title"], normalized["topic"], normalized["content"]
+            )
         result.append(item)
     return result
 
@@ -95,8 +109,8 @@ async def reflect_if_candidate(
 ) -> int:
     """候选命中后执行一次 Knowledge RAG + 专用反思，并写入主数据。"""
     from agent.rag.service import search_knowledge
-    from agent.knowledge.models import KnowledgeEntry, KnowledgeScope
-    from agent.knowledge.store import KnowledgeStore, source_from_input
+    from agent.knowledge.capture import build_entry
+    from agent.knowledge.store import KnowledgeStore
     from agent.context.branch import ContextBranch
     from agent.context.branch_types import BranchInput, BranchPolicy
 
@@ -134,17 +148,13 @@ async def reflect_if_candidate(
             continue
         source_type = "user" if save_mode == "explicit" else "conversation"
         source_ref = f"conversation:{session_id}" if session_id else "conversation:reflection"
-        source = source_from_input(
-            source_type, source_ref,
-            "用户明确保存" if save_mode == "explicit" else "对话反思",
-        )
-        entry = KnowledgeEntry.create(
-            title=operation["title"], content=operation["content"],
-            topic=operation["topic"],
-            scope=KnowledgeScope(owner_user_id=str(user_id)),
-            source=source,
-            confidence=operation["certainty"],
-        )
+        entry = build_entry(user_id, {
+            "title": operation["title"], "content": operation["content"],
+            "topic": operation["topic"], "source_type": source_type,
+            "source_ref": source_ref,
+            "source_label": "用户明确保存" if save_mode == "explicit" else "对话反思",
+            "confidence": operation["certainty"],
+        })
         if operation["action"] == "conflict":
             entry.parent_id = operation["target_id"] or None
             entry.id = f"knowledge-{__import__('uuid').uuid4().hex}"

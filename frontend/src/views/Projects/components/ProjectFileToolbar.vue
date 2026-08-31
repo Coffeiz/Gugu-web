@@ -1,6 +1,6 @@
 <template>
   <button class="col-toggle-btn" @click="togglePmStages"
-    :title="stagesExpanded ? '恢复文件区' : '展开阶段区'">
+    :title="stagesExpanded ? t('projects.restoreFileArea') : t('projects.expandStageArea')">
     <Icon :name="stagesExpanded ? 'action.chevron-back' : 'action.chevron-next'" :size="13" />
   </button>
 
@@ -41,10 +41,12 @@
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import FileBrowserToolbar from '@/components/common/file-browser/FileBrowserToolbar.vue'
 import ProjectFileBreadcrumb from '@/views/Projects/components/ProjectFileBreadcrumb.vue'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
+const { t } = useI18n()
 const {
   stagesExpanded, togglePmStages, pmCanGoBack, pmGoBack, pmCanGoForward, pmGoForward,
   pmNavigateTo, folderStack, pmCbStore, pmCtxPaste, pmInSelectionMode,

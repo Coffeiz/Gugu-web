@@ -13,21 +13,21 @@
       <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
       <div class="fpw-actions">
         <template v-if="isText">
-          <button class="fpw-btn" title="缩小字号" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
+          <button class="fpw-btn" :title="t('sharedUi.decreaseFontSize')" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
           <span class="fpw-font-size">{{ textFontSize }}</span>
-          <button class="fpw-btn" title="放大字号" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><Icon name="action.add" :size="12" /></button>
+          <button class="fpw-btn" :title="t('sharedUi.increaseFontSize')" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><Icon name="action.add" :size="12" /></button>
         </template>
-        <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" title="文件信息" @click.stop="openInfo">
+        <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" :title="t('files.info')" @click.stop="openInfo">
           <Icon name="status.info" :size="13" />
         </button>
-        <button class="fpw-btn" title="下载" @click.stop="handleDownload">
+        <button class="fpw-btn" :title="t('sharedUi.download')" @click.stop="handleDownload">
           <Icon name="action.download" :size="13" />
         </button>
-        <button class="fpw-btn" :title="maximized ? '还原' : '最大化'" @click.stop="toggleMaximize">
+        <button class="fpw-btn" :title="maximized ? t('sharedUi.restore') : t('sharedUi.maximize')" @click.stop="toggleMaximize">
           <Icon name="action.expand" v-if="!maximized" :size="13" />
           <Icon name="action.collapse" v-else :size="13" />
         </button>
-        <button class="fpw-btn fpw-close" title="关闭" @click.stop="previewStore.closeWindow(win.id)">
+        <button class="fpw-btn fpw-close" :title="t('sharedUi.close')" @click.stop="previewStore.closeWindow(win.id)">
           <Icon name="action.close" :size="13" />
         </button>
       </div>
@@ -41,7 +41,7 @@
       <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
-        <span>加载中…</span>
+        <span>{{ t('viewerUi.loading') }}</span>
       </div>
       <div v-if="!loading && error" class="fpw-status fpw-error">
         <Icon name="status.warning" :size="28" style="opacity:.5" />
@@ -65,10 +65,10 @@
       </Transition>
       <!-- 同目录图片左右切换 -->
       <template v-if="canNav">
-        <button class="fpw-nav fpw-nav-prev" title="上一张" @click.stop="goPrev">
+        <button class="fpw-nav fpw-nav-prev" :title="t('sharedUi.previous')" @click.stop="goPrev">
           <Icon name="action.back" :size="18" />
         </button>
-        <button class="fpw-nav fpw-nav-next" title="下一张" @click.stop="goNext">
+        <button class="fpw-nav fpw-nav-next" :title="t('sharedUi.next')" @click.stop="goNext">
           <Icon name="action.next" :size="18" />
         </button>
       </template>
@@ -95,42 +95,42 @@
         @mousedown.stop
       >
         <div class="fpw-info-title" @mousedown.prevent="startInfoDrag">
-          <span>文件信息</span>
+          <span>{{ t('files.info') }}</span>
           <button class="fpw-btn fpw-close" @click.stop="showInfo = false">
             <Icon name="action.close" :size="13" />
           </button>
         </div>
         <div class="fpw-info-body">
           <div class="fpw-info-row">
-            <span class="fpw-info-label">文件名</span>
+            <span class="fpw-info-label">{{ t('files.name') }}</span>
             <span class="fpw-info-val">{{ win.file.displayName }}.{{ win.file.ext?.toLowerCase() }}</span>
           </div>
           <div class="fpw-info-row">
-            <span class="fpw-info-label">格式</span>
+            <span class="fpw-info-label">{{ t('files.format') }}</span>
             <span class="fpw-info-val">{{ win.file.ext?.toUpperCase() }}</span>
           </div>
           <div v-if="contentSize" class="fpw-info-row">
-            <span class="fpw-info-label">分辨率</span>
+            <span class="fpw-info-label">{{ t('sharedUi.resolution') }}</span>
             <span class="fpw-info-val">{{ contentSize }}</span>
           </div>
           <div class="fpw-info-row">
-            <span class="fpw-info-label">大小</span>
+            <span class="fpw-info-label">{{ t('files.size') }}</span>
             <span class="fpw-info-val">{{ win.file.size }}</span>
           </div>
           <div class="fpw-info-row">
-            <span class="fpw-info-label">创建时间</span>
+            <span class="fpw-info-label">{{ t('files.createdAt') }}</span>
             <span class="fpw-info-val">{{ win.file.createdAt }}</span>
           </div>
           <div v-if="win.file.projectName" class="fpw-info-row">
-            <span class="fpw-info-label">所属项目</span>
+            <span class="fpw-info-label">{{ t('files.project') }}</span>
             <span class="fpw-info-val">{{ win.file.projectName }}</span>
           </div>
           <div v-if="win.file.folderName" class="fpw-info-row">
-            <span class="fpw-info-label">所在文件夹</span>
+            <span class="fpw-info-label">{{ t('files.folderLocation') }}</span>
             <span class="fpw-info-val">{{ win.file.folderName }}</span>
           </div>
           <div v-if="win.file.stageName" class="fpw-info-row">
-            <span class="fpw-info-label">阶段</span>
+            <span class="fpw-info-label">{{ t('files.stage') }}</span>
             <span class="fpw-info-val">{{ win.file.stageName }}</span>
           </div>
           <div v-if="win.file.mimeType" class="fpw-info-row">
@@ -145,6 +145,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import type { PreviewWindow } from '@/stores/preview'
 import type { FileMeta } from '@/stores/filesCache'
@@ -159,6 +160,7 @@ import { registerEsc, registerArrowNav } from '@/composables/windowz'
 
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
+const { t } = useI18n()
 const previewStore = usePreviewStore()
 
 // ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）

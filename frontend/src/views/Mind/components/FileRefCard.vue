@@ -22,10 +22,10 @@
         @load="cardBlobReadyIds.add(file.id)"
         @error="($event.target as HTMLElement).style.display = 'none'" />
     </template>
-    <template #meta>{{ file.projectName || '未分类' }} · {{ file.size }}</template>
-    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <template #meta>{{ file.projectName || t('filesUi.unlinked') }} · {{ file.size }}</template>
+    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
-      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+      <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
     </CardAffordances>
   </FileCard>
@@ -47,7 +47,7 @@
     :style="cardStyle"
     :data-node-id="item.nodeId"
     ext=""
-    :display-name="item.node.title || '未命名文件'"
+    :display-name="item.node.title || t('mindUi.unnamedFile')"
     :has-thumb="false"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
@@ -55,10 +55,10 @@
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
-    <template #meta>加载中…</template>
-    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <template #meta>{{ t('common.status.loading') }}</template>
+    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
-      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+      <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
     </CardAffordances>
   </FileCard>
@@ -75,7 +75,7 @@
     :style="cardStyle"
     :data-node-id="item.nodeId"
     :ext="item.node.refSnapshot?.ext ?? ''"
-    :display-name="item.node.title || '未命名文件'"
+    :display-name="item.node.title || t('mindUi.unnamedFile')"
     :has-thumb="false"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
@@ -83,10 +83,10 @@
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
-    <template #meta>已删除，仅保留快照</template>
-    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <template #meta>{{ t('filesUi.deletedSnapshot') }}</template>
+    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
-      <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
+      <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
     </CardAffordances>
   </FileCard>
@@ -94,6 +94,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
@@ -103,6 +104,7 @@ import { isImageExt } from '@/utils/fileTypes'
 import { itemSize } from '@/composables/useMindCanvas'
 import CardAffordances from '@/components/common/CardAffordances.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+const { t } = useI18n()
 import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
@@ -123,7 +125,11 @@ const emit = defineEmits<{
 // CardAffordances 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有 file/
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
-function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
+function onEnter() {
+  if (isHoverSuppressed.value) return
+  isHovering.value = true
+  emit('hover', props.item, true)
+}
 function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
 
 const filesCache = useFilesCacheStore()
@@ -170,7 +176,7 @@ function observeCard() {
 watch(file, () => nextTick(observeCard), { immediate: true })
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
-const { onPointerDown } = useMindRuntimeObject({
+const { isHoverSuppressed, onPointerDown } = useMindRuntimeObject({
   objectId: () => mindCanvasObjectId(props.item),
   element: () => fileCardRef.value?.rootEl ?? null,
 })

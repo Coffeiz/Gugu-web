@@ -152,7 +152,7 @@ DB__PASSWORD=gugu
 # JWT 密钥（生产务必改）— 生成随机值：python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 SECRET_KEY=换成上面命令生成的随机长串
 
-# 后台管理员账号（不填默认 admin/admin123，生产务必改；改后重启后端生效）
+# 后台管理员账号（必须显式配置；改后重启后端生效）
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=换成强密码
 
@@ -234,7 +234,7 @@ cd backend
 ### 3.8 Admin 初始化
 
 - Admin 后台：`http://localhost:5173/admin/login`
-- 默认账号 **admin / admin123**——改用户名/密码在 `.env` 设 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（⚠️ 上线前必改，改后重启后端）
+- Admin 没有公开默认密码；在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 后重启后端，再登录后台。
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
 
 ### 3.9 SearXNG 自建搜索（Compose 默认内置）
@@ -334,13 +334,12 @@ Redis 采用相同规则：默认连接 Compose 内部的 `redis:6379`，可用
 如果使用内部 Redis，设置 `GUGU_REDIS_PASSWORD` 后 Compose 会同时给内部 Redis
 启用密码认证；不设置则保持开发默认的无密码内网连接。
 
-构建镜像示例（在仓库根目录执行；前端通过 named context 提供同级 Runtime 依赖）：
+构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
   -t ghcr.io/coffeiz/gugu-web-backend:版本号 .
-docker build --build-context runtime=../gugu-interaction-runtime \
-  -f frontend/Dockerfile.prod \
+docker build -f frontend/Dockerfile.prod \
   -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
 docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
@@ -654,10 +653,10 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 ### 4.6 Admin 安全
 
-- **改默认管理员账号**（默认 `admin / admin123`）——在 `backend/.env` 设：
+- **设置管理员账号**——在 `backend/.env` 显式设置：
   ```
   ADMIN_USERNAME=你的新用户名      # 不填默认 admin
-  ADMIN_PASSWORD=你的新密码        # 不填默认 admin123
+  ADMIN_PASSWORD=你的强随机密码
   ```
   > 管理员账号是**配置驱动**的（不存数据库）：登录时按 `.env` 里的 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 校验。改完**重启后端**（`systemctl restart gugu-backend`）生效，用新用户名+新密码登录 `/admin/login`。
 - `SECRET_KEY` 用强随机值（`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`）。
@@ -827,6 +826,23 @@ sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 ## 7. 更新线上代码
 
 > **大白话**：本项目不强制用 git 部署，更新代码的方式很朴素——把改好的文件传上服务器（scp/rsync/zip 都行），然后跑几条命令让新代码生效：装可能新增的依赖包、跑数据库迁移（如果改了数据库表结构）、重启对应的进程。**最容易漏的一步是数据库迁移**——只传代码不迁移，新加的字段在数据库里根本不存在，一写入就报错。
+
+### 7.0.1 Docker Compose 生产镜像更新
+
+生产 Docker 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建并推送到 GHCR，GitHub Release 附带 `update-manifest.json` 和签名 bundle。更新前先下载这两个资产，再使用仓库内的安全入口：
+
+```bash
+scripts/release/compose-update.sh \
+  --manifest /path/to/update-manifest.json \
+  --bundle /path/to/update-manifest.json.bundle \
+  --confirm
+```
+
+脚本会验证 manifest、Release 签名和 backend/frontend 镜像签名，备份 `backend/.env` 与数据库，拉取 manifest 指定的不可变 digest，并重建业务容器。它不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会删除 `pgdata`、`gugu_data`、`gugu_config` 或 `sandbox_socket` 卷。
+
+普通更新不带 `--profile sandbox`，因此不会因为更新业务镜像而拉取 egress proxy 或其他沙盒专用镜像。若当前已有 `sandboxd` 在运行，脚本只会同步使用中的业务镜像，不会自动改变沙盒开关。
+
+更新脚本依赖环境中已有的 `GUGU_DB_PASSWORD` 和 `GUGU_ADMIN_PASSWORD`，不会从仓库文件或命令参数打印这些凭据。`COSIGN_IDENTITY_REGEXP` 和 `COSIGN_OIDC_ISSUER` 可用于企业部署时收紧签名发布者范围。
 
 ```bash
 # scp/rsync 传新代码后：

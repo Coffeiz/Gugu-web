@@ -22,7 +22,7 @@
             :key="n"
             class="star-btn"
             :class="{ active: prioValue >= n }"
-            :title="PRIO_LABELS[n]"
+            :title="t(PRIO_LABELS[n])"
             @click="setPriority(n)"
           >
             <svg width="11" height="11" viewBox="0 0 16 16">
@@ -53,7 +53,7 @@
           @mousedown.stop
           @pointerdown.stop
         >
-          <span class="ps-label">{{ currentStageLabel || '阶段' }}</span>
+          <span class="ps-label">{{ currentStageLabel || t('projects.phase') }}</span>
           <span v-if="curTodoTotal" class="ps-count">{{ curDoneCount }}/{{ curTodoTotal }}</span>
           <svg class="ps-caret" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
         </span>
@@ -66,7 +66,7 @@
             <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
           </svg>
           <template v-if="project.status === 'done'">
-            <span class="done-label"><Icon name="status.success" :size="9" /> 完成</span>
+            <span class="done-label"><Icon name="status.success" :size="9" /> {{ t('projects.done') }}</span>
             <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
           </template>
           <template v-else>
@@ -102,11 +102,11 @@
           <template v-if="fileUploading">
             <svg v-if="fileUploadDone" width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span>{{ fileUploadDone ? '已上传' : `${fileUploadPct}%` }}</span>
+            <span>{{ fileUploadDone ? t('projects.uploadDone') : `${fileUploadPct}%` }}</span>
           </template>
           <template v-else>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="nameColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span>放入项目</span>
+            <span>{{ t('projects.uploadToProject') }}</span>
           </template>
         </div>
       </div>
@@ -128,50 +128,50 @@
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
   <PopupMenu ref="stagePopRef" :show="stagePopOpen" :style="stagePopStyle" popup-class="todo-pop-popup">
       <div class="tp-header">
-        <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
+        <span class="tp-title">{{ currentStageLabel || t('projects.currentPhase') }}</span>
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
-        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><Icon name="action.close" :size="11" /></button>
+        <button class="popup-close-btn" @click="closeStagePop" :title="t('common.actions.close')"><Icon name="action.close" :size="11" /></button>
       </div>
       <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
-        <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
+        <div v-for="(todo, i) in currentTodos" :key="todo.id" class="tp-item"
              :class="{ 'tp-ghost': tpDrag === i }"
-             :draggable="editingTp !== t.id"
+             :draggable="editingTp !== todo.id"
              @dragstart="tpDragStart(i)"
              @dragend="tpDragEnd"
              @dragover.prevent="tpDragOver(i, $event)">
-          <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
-            <Icon name="status.success" v-if="t.done" :size="9" />
+          <button class="tp-check" :class="{ checked: todo.done }" @click="toggleTodo(todo)">
+            <Icon name="status.success" v-if="todo.done" :size="9" />
           </button>
           <input
-            v-if="editingTp === t.id"
+            v-if="editingTp === todo.id"
             class="tp-input"
-            :data-tpid="t.id"
-            v-model="t.text"
-            :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-            placeholder="待办事项"
+            :data-tpid="todo.id"
+            v-model="todo.text"
+            :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+            :placeholder="t('projects.todoPlaceholder')"
             @blur="editingTp = null; persistTodos()"
             v-enter="() => (editingTp = null, persistTodos())"
             @keydown.esc="editingTp = null"
-            @keydown.backspace="!t.text && removeTodo(t.id)"
+            @keydown.backspace="!todo.text && removeTodo(todo.id)"
           />
-          <span v-else class="tp-name" :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
-                @click="startEditTp(t.id)">{{ t.text || '待办事项' }}</span>
-          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><Icon name="action.close" :size="8" /></button>
+          <span v-else class="tp-name" :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
+                @click="startEditTp(todo.id)">{{ todo.text || t('projects.todoPlaceholder') }}</span>
+          <button class="tp-del" @click="removeTodo(todo.id)" :title="t('common.actions.delete')"><Icon name="action.close" :size="8" /></button>
         </div>
       </TransitionGroup>
-      <div v-else class="tp-empty">还没有待办</div>
-      <button class="tp-add" @click="addTodo">＋ 添加待办</button>
+      <div v-else class="tp-empty">{{ t('projects.noTodos') }}</div>
+      <button class="tp-add" @click="addTodo">＋ {{ t('projects.addTodo') }}</button>
   </PopupMenu>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, nextTick, useAttrs, watch, onUnmounted, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime } from '@/interaction/runtime'
-import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import Icon from '@/components/common/Icon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -183,6 +183,7 @@ import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 defineOptions({ inheritAttrs: false })
 
 const attrs = useAttrs()
+const { t } = useI18n()
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
 })
@@ -333,7 +334,6 @@ function toggleTodo(t: ProjectTodo) {
   const target = t.done ? firstIncompleteStageIdx(stages) : -1
   if (target > idx) {
     persistTodos(stages[target].key)
-    fireHint('stage_switch')   // 新手引导：第一次推进阶段
   } else {
     persistTodos()
   }
@@ -358,8 +358,8 @@ onUnmounted(closeStagePop)
 
 // ── 推进状态列 ────────────────────────────────────────────
 const STATUS_NEXT: Record<string, string>  = { pending: 'active', active: 'done' }
-const STATUS_LABEL: Record<string, string> = { pending: '移至进行中', active: '标记完成' }
-const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ?? '')
+const STATUS_LABEL: Record<string, string> = { pending: 'projects.moveToActive', active: 'projects.markDone' }
+const advanceLabel = computed(() => STATUS_LABEL[props.project.status] ? t(STATUS_LABEL[props.project.status]) : '')
 
 async function advance() {
   const next = STATUS_NEXT[props.project.status]
@@ -369,7 +369,7 @@ async function advance() {
 // ── 星级优先级 ────────────────────────────────────────────
 // 1=低, 2=中, 3=高；null=无
 const PRIO_MAP: Record<string, number>    = { low: 1, medium: 2, high: 3 }
-const PRIO_LABELS: Record<number, string> = { 1: '低优先级', 2: '中优先级', 3: '高优先级' }
+const PRIO_LABELS: Record<number, string> = { 1: 'projects.low', 2: 'projects.medium', 3: 'projects.high' }
 const PRIO_KEYS   = [null, 'low', 'medium', 'high']
 
 const prioValue = computed(() => props.project.priority ? (PRIO_MAP[props.project.priority] ?? 0) : 0)
@@ -452,23 +452,23 @@ async function setPriority(n: number) {
 <style scoped>
 .proj-card {
   position: relative; display: flex; flex-shrink: 0;
-  border: 1px solid rgba(255,255,255,0.72);
+  color: var(--content-primary);
+  border: 1px solid var(--project-card-border);
   border-radius: var(--radius-md);
   corner-shape: squircle;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
-  background: var(--surface-card-solid);
+  box-shadow: var(--project-card-shadow);
+  background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
      这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡。
      transform/box-shadow 的时长要跟 .hover-card-fx 保持同一个数（见 global.css），不然这份
      本地声明会赢过全局那份、悄悄用着自己的时长——画布上项目卡跟便签/活动贴纸并排悬停时
      能看出抬起速度不一样，就是这里曾经各写各的 0.3s/0.25s 导致的。 */
-  transition: transform var(--motion-hover-card) cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow var(--motion-hover-card) ease, background var(--motion-hover-card) ease-out;
+  transition: var(--project-card-motion);
   user-select: none;
 }
 .proj-card.file-drag-over {
-  box-shadow: 0 0 0 2px rgba(123,127,178,0.6), 0 6px 18px rgba(80,90,110,0.13);
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--action-primary) 60%,transparent), var(--project-card-hover-shadow);
   transform: translateY(-2px);
 }
 .drop-overlay {
@@ -486,37 +486,10 @@ async function setPriority(n: number) {
 }
 .drop-overlay-enter-active, .drop-overlay-leave-active { transition: opacity 0.15s; }
 .drop-overlay-enter-from, .drop-overlay-leave-to { opacity: 0; }
-/* 常驻玻璃微光 + 顶部高光描边（静态底层） */
-.proj-card::before {
-  content: '';
-  position: absolute; inset: 0;
-  border-radius: inherit;
-  corner-shape: squircle;
-  background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
-  pointer-events: none;
-  z-index: 0;
-  transition: opacity 0.25s ease-out;
-}
-.proj-card.is-grabbed:not([data-runtime-phase="landing"])::before,
-.proj-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
-.proj-card[data-runtime-phase="landing"]::before { opacity: 1; }
-/* 悬停增强高光：linear-gradient 不能做 transition 插值，改用 opacity 淡入淡出 */
-.proj-card::after {
-  content: '';
-  position: absolute; inset: 0;
-  border-radius: inherit;
-  corner-shape: squircle;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片(squircle)不重合 → 双层圆角 */
-  background: linear-gradient(to bottom, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 45%, transparent 100%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,1);
-  opacity: 0;
-  transition: opacity var(--motion-hover-card) ease;
-  pointer-events: none;
-}
 /* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
-   这里补文件卡同款阴影和项目卡专属的 hover 高光。内部控件按住时不能覆盖根卡的
+   这里补文件卡同款阴影。内部控件按住时不能覆盖根卡的
    hover transform，否则卡片会从 translateY(-2px) 突然回到 0，看起来像被按下。 */
-.proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
-.proj-card:hover::after { opacity: 1; }
+.proj-card:hover { border-color: var(--project-card-hover-border); box-shadow: var(--project-card-hover-shadow); }
 
 .card-body { position: relative; z-index: 1; flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
@@ -659,17 +632,30 @@ async function setPriority(n: number) {
   pointer-events: none;
 }
 
-/* 全局搜索命中 → 跳转本页后高亮闪一下定位（class 由 Projects 面板 JS 动态加） */
-.proj-card.search-flash { animation: proj-search-flash 1.8s ease forwards; }
-@keyframes proj-search-flash {
-  0%, 30% { box-shadow: 0 0 0 3px rgba(123,127,178,0.7), 0 8px 22px rgba(80,90,110,0.22); }
-  100%    { box-shadow: 0 2px 8px rgba(80,90,110,0.07); }
+</style>
+
+<style>
+/* Teleport 到 body 的阶段待办内容主题映射，跟随弹窗业务组件归属。 */
+html[data-theme][data-family] .todo-pop-popup .tp-title,
+html[data-theme][data-family] .todo-pop-popup .tp-name,
+html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .todo-pop-popup .tp-count,
+html[data-theme][data-family] .todo-pop-popup .tp-empty { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .todo-pop-popup .tp-check {
+  color: var(--content-on-accent); background: var(--control-bg); border-color: var(--action-outline);
 }
-/* 新手引导高亮：一次「呼吸」——光晕由弱渐强再渐弱（时长由 JS 动态设为 5s） */
-.proj-card.onboard-flash { animation: proj-onboard-breath 5s ease-in-out forwards; }
-@keyframes proj-onboard-breath {
-  0%   { box-shadow: 0 0 0 0 rgba(123,127,178,0), 0 2px 8px rgba(80,90,110,0.07); }
-  50%  { box-shadow: 0 0 0 5px rgba(123,127,178,0.45), 0 8px 26px rgba(123,127,178,0.28); }
-  100% { box-shadow: 0 0 0 0 rgba(123,127,178,0), 0 2px 8px rgba(80,90,110,0.07); }
+html[data-theme][data-family] .todo-pop-popup .tp-check.checked {
+  background: var(--action-primary-bg); border-color: var(--action-primary);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-del { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop-popup .tp-del:hover {
+  color: var(--status-danger); background: var(--status-danger-bg);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-add {
+  color: var(--content-secondary); background: transparent; border-color: var(--border-subtle);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-add:hover {
+  color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline);
 }
 </style>

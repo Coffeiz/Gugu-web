@@ -4,7 +4,6 @@
   /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
   --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
   --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
-  --gugu-chat-search-flash: var(--selection-bg);
   --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
   --gugu-chat-assistant-border: var(--border-subtle);
   --gugu-chat-member-bg: var(--action-soft);
@@ -30,6 +29,15 @@
   --panel-glass-shadow: inset -1px 0 0 var(--panel-glass-side-highlight);
   --panel-glass-blur: blur(24px);
   --panel-content-bg: var(--surface-panel);
+  /* 完整面板的统一层次背景：顶部保持浮层清透，底部混入 scrim 增加承托感。 */
+  --panel-bg-bottom: color-mix(in srgb, var(--surface-base) 72%, var(--surface-scrim));
+  --panel-bg: linear-gradient(
+    to top,
+    var(--panel-bg-bottom),
+    color-mix(in srgb, var(--panel-bg-bottom) 58%, var(--modal-card-bg)) 32%,
+    var(--modal-card-bg) 68%,
+    var(--modal-card-bg) 100%
+  ), var(--surface-base);
   /* Content dividers are not glass edges. Aero light's border tokens are deliberately white, so
      keep inner separators on the old neutral ink line and restore the dark mapping below. */
   --panel-divider: color-mix(in srgb,var(--content-primary) 6%,transparent);
@@ -253,16 +261,11 @@
   --runtime-drag-glass-border: var(--border-strong);
   --runtime-drag-glass-filter: blur(12px) saturate(1.15);
   --runtime-drag-glass-shadow: 0 22px 50px color-mix(in srgb,var(--content-primary) 18%,transparent);
+  /* 咕咕卡片抓取层：保留旧版卡片底色与 Runtime 通用玻璃的两层观感。 */
+  --gugu-card-drag-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);
+  --gugu-card-drag-thumb-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);
 
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
-}
-
-/* Light navigation selection keeps the pre-palette white surface. Dark mode remains palette-aware. */
-html[data-theme='light'][data-family] {
-  --sidebar-item-active: var(--sidebar-item-active-light-bg);
-  --sidebar-item-active-fg: var(--sidebar-item-active-light-fg);
-  --sidebar-item-active-border: var(--sidebar-item-active-light-border);
-  --sidebar-item-active-shadow: var(--sidebar-item-active-light-shadow);
 }
 
 /* Mono light uses its solid neutral card surface and visible neutral edge. This is a token remap,

@@ -1,10 +1,12 @@
 """PRD-LLM-2 Phase 1-3 的轻量协议回归。"""
 
 import asyncio
+from datetime import datetime, timedelta
 
 from agent.interactions.events import INTERACTION_REQUIRED, ROUND_START
 from agent.interactions.stream_events import decode_event, encode_event
 from app.models import ConversationMessage, ConversationSession
+from app.core.tz import now_utc
 from app.services.interactions import (
     _hash_token,
     consume_action,
@@ -183,7 +185,9 @@ async def test_tool_budget_prompt_enables_unlimited_without_goal_loop(db, user_a
         db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-budget"
     )
     await db.refresh(session)
-    assert session.session_context == {"unlimited_mode": True}
+    assert "unlimited_mode" not in (session.session_context or {})
+    expires_at = session.session_context["tool_budget_unlimited_until"]
+    assert now_utc() + timedelta(minutes=29) < datetime.fromisoformat(expires_at)
 
 
 async def test_confirmation_button_returns_token_for_resumed_destructive_tool(db, user_a):

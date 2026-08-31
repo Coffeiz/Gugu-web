@@ -2,10 +2,10 @@
   <div class="feedback-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">用户反馈</h2>
-        <p class="page-desc">来自用户的 Bug 报告、功能建议和其他反馈</p>
+        <h2 class="page-title">{{ t('adminFeedback.title') }}</h2>
+        <p class="page-desc">{{ t('adminFeedback.description') }}</p>
       </div>
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" title="刷新">
+      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :title="t('adminFeedback.refresh')" :aria-label="t('adminFeedback.refresh')">
         <Icon name="action.refresh" size="sm" />
       </button>
     </div>
@@ -13,14 +13,14 @@
     <AdminSegmentTabs
       :model-value="filter"
       :tabs="categoryTabs"
-      aria-label="反馈分类"
+      :aria-label="t('adminFeedback.category')"
       class="feedback-tabs"
       @update:model-value="changeFilter"
     />
 
     <div class="feedback-list">
-      <div v-if="loading && !items.length" class="empty-hint">加载中…</div>
-      <div v-else-if="!items.length" class="empty-hint">暂无反馈</div>
+      <div v-if="loading && !items.length" class="empty-hint">{{ t('adminFeedback.loading') }}</div>
+      <div v-else-if="!items.length" class="empty-hint">{{ t('adminFeedback.empty') }}</div>
       <div v-for="item in items" :key="item.id" class="feedback-item">
         <div class="item-meta">
           <span class="cat-badge" :class="item.category">{{ categoryLabel(item.category) }}</span>
@@ -32,24 +32,26 @@
     </div>
 
     <div v-if="total > pageSize" class="pagination">
-      <button class="page-btn" :disabled="page === 1" @click="page--; load()">上一页</button>
+      <button class="page-btn" :disabled="page === 1" @click="page--; load()">{{ t('adminFeedback.previous') }}</button>
       <span class="page-info">{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
-      <button class="page-btn" :disabled="page >= Math.ceil(total / pageSize)" @click="page++; load()">下一页</button>
+      <button class="page-btn" :disabled="page >= Math.ceil(total / pageSize)" @click="page++; load()">{{ t('adminFeedback.next') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
+const { t } = useI18n()
 
-const categoryTabs = [
-  { key: '', label: '全部' },
+const categoryTabs = computed(() => [
+  { key: '', label: t('adminFeedback.all') },
   { key: 'bug', label: 'Bug' },
-  { key: 'suggestion', label: '建议' },
-  { key: 'other', label: '其他' },
-]
+  { key: 'suggestion', label: t('adminFeedback.suggestion') },
+  { key: 'other', label: t('adminFeedback.other') },
+])
 
 const items    = ref<any[]>([])
 const total    = ref(0)
@@ -66,7 +68,7 @@ function changeFilter(value: string) {
 }
 
 function categoryLabel(cat: string) {
-  return { bug: 'Bug', suggestion: '建议', other: '其他' }[cat] ?? cat
+  return { bug: 'Bug', suggestion: t('adminFeedback.suggestion'), other: t('adminFeedback.other') }[cat] ?? cat
 }
 
 function adminToken() {

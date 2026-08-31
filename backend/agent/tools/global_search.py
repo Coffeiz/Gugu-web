@@ -44,7 +44,7 @@ class GlobalSearchSkill(BaseSkill):
     tools = [
         Tool(
             name="global_search", label="站内全局搜索",
-            description_short='跨项目、文件、日程和笔记搜索；关键字段 query/q',
+            description_short='跨项目、文件、日程和笔记搜索。',
             description="跨项目、文件、日程、客户、对话和便签按关键词搜索；明确范围时用专用工具。",
             input_schema={
                 "type": "object",

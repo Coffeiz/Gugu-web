@@ -1,5 +1,5 @@
 """时间流思维节点的查询与写入边界。"""
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.core.mind import (
     create_mind_note,
@@ -25,7 +25,11 @@ async def list_notes(db, user_id, *, limit=50, offset=0):
             MindNode.kind == "note",
             MindNode.deleted_at.is_(None),
         )
-        .order_by(MindNode.captured_at.desc(), MindNode.id.desc())
+        .order_by(
+            func.date(MindNode.captured_at).desc(),
+            MindNode.created_at.desc(),
+            MindNode.id.desc(),
+        )
         .limit(limit)
         .offset(offset)
     )).scalars().all()

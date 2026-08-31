@@ -8,7 +8,7 @@
       <span v-if="startDate || endDate">
         <span>{{ fmt(startDate) }}</span>
         <span class="drp-sep"> — </span>
-        <span :class="{ 'drp-end-placeholder': !endDate }">{{ endDate ? fmt(endDate) : '截止日期' }}</span>
+        <span :class="{ 'drp-end-placeholder': !endDate }">{{ endDate ? fmt(endDate) : t('calendar.endDate') }}</span>
       </span>
       <span v-else>{{ placeholder }}</span>
     </div>
@@ -21,7 +21,7 @@
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
             </button>
             <button class="drp-period" @click.stop="enterYearMode">
-              {{ cursor.getFullYear() }}年{{ cursor.getMonth() + 1 }}月
+              {{ periodLabel(cursor) }}
               <svg class="drp-period-caret" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
             </button>
             <button class="drp-nav" @click.stop="nextMonth">
@@ -57,13 +57,13 @@
           <template v-else>
             <!-- 选择阶段提示 -->
             <div class="drp-hint">
-              <span :class="{ active: phase === 'start' }">开始日期</span>
+              <span :class="{ active: phase === 'start' }">{{ t('calendar.startDate') }}</span>
               <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 6h8M7 3l3 3-3 3"/></svg>
-              <span :class="{ active: phase === 'end' }">截止日期</span>
+              <span :class="{ active: phase === 'end' }">{{ t('calendar.endDate') }}</span>
             </div>
 
             <div class="drp-weekrow">
-              <span v-for="w in '一二三四五六日'" :key="w" class="drp-wh">{{ w }}</span>
+              <span v-for="w in weekDays" :key="w" class="drp-wh">{{ w }}</span>
             </div>
 
             <div class="drp-grid"
@@ -89,8 +89,8 @@
             </div>
 
             <div class="drp-footer">
-              <button class="drp-clear" @click.stop="clear">清除</button>
-              <button class="drp-today" @click.stop="cursor = new Date(today.getFullYear(), today.getMonth(), 1)">今天</button>
+              <button class="drp-clear" @click.stop="clear">{{ t('sharedUi.clear') }}</button>
+              <button class="drp-today" @click.stop="cursor = new Date(today.getFullYear(), today.getMonth(), 1)">{{ t('sharedUi.today') }}</button>
             </div>
           </template>
     </PopupMenu>
@@ -99,6 +99,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t, tm, locale } = useI18n()
+const weekDays = computed(() => tm('sharedUi.weekdays') as string[])
 import { nextZ } from '@/composables/windowz'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 
@@ -126,6 +130,13 @@ const cursor = ref(
     ? new Date(props.startDate + 'T00:00:00')
     : new Date(today.getFullYear(), today.getMonth(), 1)
 )
+
+function periodLabel(date: Date) {
+  if (locale.value === 'en-US') {
+    return new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'long' }).format(date)
+  }
+  return `${date.getFullYear()}${t('calendar.year')}${date.getMonth() + 1}${t('calendar.month')}`
+}
 const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
 function toIso(d: Date) {

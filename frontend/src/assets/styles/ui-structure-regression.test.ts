@@ -19,6 +19,10 @@ const projectModal = load('../../views/Projects/components/ProjectModal.vue')
 const floatPreview = load('../../components/common/FloatPreviewWindow.vue')
 const popovers = load('./adoption/popovers.css')
 const themeRefinements = load('./theme-refinements.css')
+const variables = load('./variables.css')
+const componentEntry = load('./components/index.css')
+const calendarComponentCss = load('./components/calendar.css')
+const bridgeEntry = load('./bridges/index.css')
 const appSidebar = load('../../components/common/AppSidebar.vue')
 const chatSidebar = load('../../components/common/gugu-chat/GuguChatSidebar.vue')
 const chatIm = load('../../components/common/gugu-chat/GuguChatImConnect.vue')
@@ -28,6 +32,7 @@ const doneGroup = load('../../views/Projects/components/done/DoneGroup.vue')
 const archivedProjects = load('../../views/Projects/components/ArchivedProjectsModal.vue')
 const uploadModal = load('../../views/Files/UploadModal.vue')
 const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
+const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
 const trashView = load('../../views/Files/components/FilesTrashView.vue')
@@ -35,6 +40,10 @@ const popupMenu = load('../../components/common/PopupMenu.vue')
 const profileImPane = load('../../components/common/ProfileModal/ProfileImPane.vue')
 const canvasToolbar = load('../../views/Mind/components/CanvasToolbar.vue')
 const noteEditor = load('../../views/Mind/components/NoteEditor.vue')
+const noteCard = load('../../views/Mind/components/NoteCard.vue')
+const captureBar = load('../../views/Mind/components/CaptureBar.vue')
+const referenceSuggestMenu = load('../../components/common/ReferenceSuggestMenu.vue')
+const chatComposer = load('../../components/common/gugu-chat/GuguChatComposer.vue')
 const eventEditModal = load('../../components/events/EventEditModal.vue')
 const contextMenu = load('../../components/ContextMenu.vue')
 const dateSpanPicker = load('../../components/common/DateSpanPicker.vue')
@@ -44,8 +53,93 @@ const datePicker = load('../../components/common/DatePicker.vue')
 const adminDatePicker = load('../../components/AdminDatePicker.vue')
 const calendarMorePopup = load('../../views/Calendar/components/CalendarMorePopup.vue')
 const calendarView = load('../../views/Calendar/index.vue')
+const adoptedForms = load('./adoption/forms.css')
+const configField = load('../../views/Admin/Config/components/ConfigField.vue')
+const eventFormFields = load('../../components/events/EventFormFields.vue')
+const terminalsView = load('../../views/Terminals/index.vue')
+const terminalsRouter = load('../../router/index.ts')
+const terminalPty = load('../../views/Terminals/components/InteractivePtyTerminal.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('画布列表使用与项目抽屉一致的 Runtime 布局契约', () => {
+    expect(canvasDrawerContent).toContain('data-layout-collection="mind:drawer:canvases"')
+    expect(canvasDrawerContent).toContain('data-layout-role="card"')
+    expect(canvasDrawerContent).toContain('runtime.getMotionProfile()?.flip')
+    expect(canvasSidebar).not.toContain('.canvas-item {')
+  })
+
+  it('Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连', () => {
+    expect(terminalsRouter).toContain("if (to.name !== 'Terminals') return")
+    expect(terminalsRouter).toContain('canAccessTerminals(status)')
+    expect(terminalsView).toContain('if (status === 401 || status === 403)')
+    expect(terminalPty).toContain('event.code === 4401 || event.code === 4403')
+  })
+
+  it('Shell 未启用时不显示文件库工作区按钮', () => {
+    expect(filesView).toContain(':show-new-workspace-button="preferencesStore.shellEnabled && currentType === \'folder\'')
+    expect(filesView).toContain("import { usePreferencesStore } from '@/stores/preferences'")
+  })
+
+  it('项目阶段待办循环不遮蔽 i18n 翻译函数', () => {
+    expect(projectCard).not.toContain('v-for="(t, i) in currentTodos"')
+    expect(projectCard).toContain('v-for="(todo, i) in currentTodos"')
+    expect(projectCard).toContain(':placeholder="t(\'projects.todoPlaceholder\')"')
+  })
+
+  it('Admin field-input 使用完整实线边框，避免回落到浏览器原生双层描边', () => {
+    const sharedFieldBlock = cssBlock(adoptedForms, '.field-input')
+    expect(sharedFieldBlock).toContain('border: 1px solid var(--input-border);')
+    expect(configField).not.toContain('border: 1px solid rgba(255,255,255,0.1)')
+    expect(adoptedForms).toContain('.admin-main .ctrl-grp input')
+    expect(adoptedForms).toContain('border-radius: var(--input-radius);')
+    expect(adoptedForms).toContain('box-shadow: var(--input-focus-shadow);')
+  })
+
+  it('日历活动输入框聚焦时保留 hover 光晕，确保 focus 光晕有淡入动画', () => {
+    expect(eventFormFields).toContain('box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);')
+  })
+
+  it('主题组件覆盖和跨 DOM bridge 保持明确的统一入口', () => {
+    expect(variables).toContain("@import './components/index.css';")
+    expect(variables).toContain("@import './bridges/index.css';")
+    expect(variables).not.toContain("@import './theme-adoption.css';")
+    expect(variables).not.toContain("@import './calendar-theme-bridge.css';")
+    expect(variables).not.toContain("@import './component-theme-refinements.css';")
+    expect(componentEntry).toContain("@import '../theme-adoption.css';")
+    expect(componentEntry).toContain("@import '../component-theme-refinements.css';")
+    expect(componentEntry).toContain("@import './calendar.css';")
+    expect(componentEntry).toContain("@import './files.css';")
+    expect(componentEntry).toContain("@import './popups.css';")
+    expect(componentEntry).toContain("@import './forms.css';")
+    expect(componentEntry).toContain("@import '../file-toolbar-theme-refinements.css';")
+    expect(bridgeEntry).toContain("@import '../calendar-theme-bridge.css';")
+    expect(bridgeEntry).toContain("@import '../file-drop-theme-refinements.css';")
+    expect(calendarComponentCss).toContain('.cap-capsule {')
+    expect(calendarComponentCss).toContain('.cal-chip::after {')
+    expect(calendarComponentCss).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./global.css')).not.toContain('.cap-capsule {')
+    expect(load('./global.css')).not.toContain('.cal-chip::after {')
+    expect(load('./global.css')).not.toContain('.fc-card, .folder-card {')
+    expect(load('./global.css')).not.toContain('.popup-menu {')
+    expect(load('./global.css')).not.toContain('.form-input {')
+    expect(calendarComponentCss).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./components/files.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./components/popups.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./components/forms.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+  })
+
+  it('非 Runtime 主题层不接管 Runtime 的 motion 属性', () => {
+    const themeLayers = [
+      load('./theme-refinements.css'),
+      load('./theme-adoption.css'),
+      load('./component-theme-refinements.css'),
+      load('./calendar-theme-bridge.css'),
+      load('./file-toolbar-theme-refinements.css'),
+      load('./file-drop-theme-refinements.css'),
+    ].join('\n')
+    expect(themeLayers).not.toMatch(/data-runtime-(?:proxy-content|phase|hover-suppressed)[\s\S]{0,240}?(?:transform|transition|opacity)\s*:[^;{}]*!important/)
+  })
+
   it('轻量弹层统一经过 PopupMenu，业务组件不再持有独立 Teleport 动画', () => {
     expect(popupMenu).toContain('<Teleport to="body">')
     expect(popupMenu).toContain('<Transition name="menu-pop"')
@@ -55,9 +149,39 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(profileImPane).toContain('PopupMenu')
     expect(profileImPane).toContain('popup-class="pm-help-popup-host"')
     expect(canvasToolbar).toContain('popup-class="note-picker-host"')
-    expect(noteEditor).toContain('popup-class="ne-picker-host"')
+    expect(noteEditor).toContain('<ReferenceSuggestMenu')
     expect(canvasToolbar).not.toContain('<Transition name="note-picker"')
-    expect(noteEditor).not.toContain('<Teleport to="body">\n      <div v-if="picker.open"')
+    expect(noteEditor).not.toContain('PopupMenu')
+  })
+
+  it('引用补全不脱离输入行布局，避免展开态菜单使用过期 fixed 坐标', () => {
+    expect(referenceSuggestMenu).toContain('class="reference-picker"')
+    expect(referenceSuggestMenu).not.toContain('PopupMenu')
+    expect(referenceSuggestMenu).toContain('background: var(--popup-surface-bg)')
+    expect(referenceSuggestMenu).toContain('backdrop-filter: var(--popup-surface-blur)')
+    expect(referenceSuggestMenu).toContain('@mousedown.prevent="$emit(\'choose\', entry.item)"')
+    expect(referenceSuggestMenu).not.toContain('@click="$emit(\'choose\', entry.item)"')
+    expect(load('./theme-adoption.css')).toContain('.chat-reference {')
+    expect(load('./theme-adoption.css')).toContain('color: var(--content-primary);')
+    expect(load('../../components/common/gugu-chat/markdown.ts')).toContain('class="mind-ref chat-reference"')
+    expect(load('../../components/common/gugu-chat/markdown.ts')).toContain('class="mind-ref-icon"')
+    expect(load('../../components/common/gugu-chat/markdown.ts')).not.toContain('class="mind-ref-label">@${safeLabel}')
+    expect(chatComposer).toContain('<ReferenceSuggestMenu')
+    expect(chatComposer).toContain(':anchor="inputRowEl"')
+    expect(chatComposer).toContain(':offset-x="expanded ? 42 : 8"')
+    expect(noteEditor).toContain('const box = ed.view.dom.closest(\'.note-editor\')?.getBoundingClientRect()')
+    expect(noteEditor).toContain('picker.anchorLeft = caret.left')
+    expect(referenceSuggestMenu).toContain('scheduleReposition()')
+    expect(noteEditor).toContain('const caret = ed.view.coordsAtPos(t.from)')
+    expect(noteCard).toContain("t.closest('.reference-picker')")
+    expect(noteCard).toContain("document.addEventListener('mousedown', onDocDown, true)")
+    expect(captureBar).toContain("t.closest?.('.reference-picker')")
+    expect(captureBar).not.toContain("t.closest?.('.ne-picker')")
+  })
+
+  it('聊天引用允许跨引用边界拖拽选中文本', () => {
+    expect(chatComposer).toContain('user-select: text;')
+    expect(chatComposer).not.toContain('user-select: all;')
   })
 
   it('弹层关闭入口共用单一离场生命周期，防止重复动画与内容塌缩', () => {
@@ -95,7 +219,9 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
     // 日期弹层及其年份子弹层必须各自只有一个 PopupMenu 根，不能再套重复 surface。
     expect(datePicker).toContain('<PopupMenu :show="open"')
-    expect(datePicker).toContain('popup-class="dp-popup-host"')
+    expect(datePicker).toContain(':style="{ ...popupStyle, padding: 0 }"')
+    expect(datePicker).not.toContain(':transparent="true"')
+    expect(datePicker).not.toContain('popup-class="dp-popup-host"')
     expect(datePicker).not.toContain('popup-menu-dark')
     expect(adminDatePicker).toContain('<PopupMenu :show="show"')
     expect(adminDatePicker).toContain('popup-class="adp-popup-host"')

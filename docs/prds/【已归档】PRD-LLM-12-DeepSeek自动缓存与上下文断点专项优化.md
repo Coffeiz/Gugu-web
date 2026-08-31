@@ -5,7 +5,7 @@
 > 所属层：LLM / DeepSeek Provider / Prompt Cache
 > 前置 PRD：[[PRD-LLM-11-Canonical Context、History 与 Provider Adapter 分层重构.md]]
 > 关联 PRD：[[PRD-LLM-8-Prompt-Caching优化.md]]、[[PRD-LLM-3-provider供应商适配层整体整理.md]]
-> 关联报告：[[../../reports/TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN-20260825.md]]
+> 关联报告：[[../../reports/2026-08-25-TEST-CACHE-DEEPSEEK-MINIMAX-M3-20RUN.md]]
 
 ## 0. 一句话目标
 

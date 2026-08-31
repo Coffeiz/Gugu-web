@@ -1,5 +1,8 @@
 import { marked, type Tokens } from 'marked'
 import hljs from 'highlight.js'
+import { i18n } from '@/i18n'
+import { MIND_REF_TYPE_ICON_PATH } from '@/composables/useMindEditor'
+import type { ChatReference } from './chatTypes'
 
 marked.use({
   breaks: true, gfm: true,
@@ -13,7 +16,7 @@ marked.use({
       const highlighted = hljs.highlight(text, { language }).value
       const label = lang || 'code'
       // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
-      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
+      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">${i18n.global.t('chatUi.copy')}</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
     }
     // 搜索结果图片经常来自有防盗链策略的站点。禁止携带聊天页面 Referer，避免图片
     // 在模型回复里只显示 alt 文本；其余 URL 仍交给聊天 HTML 的 DOMPurify 白名单清洗。
@@ -79,6 +82,35 @@ function prepareMarkdown(text: string) {
 }
 
 export function renderMd(text: string) { return text ? marked.parse(prepareMarkdown(text)) as string : '' }
+
+function renderChatReference(reference: ChatReference, safeLabel: string) {
+  const iconPath = MIND_REF_TYPE_ICON_PATH[reference.type] ?? ''
+  return `<span class="mind-ref chat-reference" data-mind-ref="" data-ref-type="${reference.type}" data-ref-id="${reference.id}">` +
+    `<svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" class="mind-ref-icon"><path d="${iconPath}"/></svg>` +
+    `<span class="mind-ref-label">${safeLabel}</span></span>`
+}
+
+/** 聊天中的 @ 引用直接复用笔记 mind-ref 的结构、图标和样式契约。 */
+export function renderChatMd(text: string, references: ChatReference[] = []) {
+  let html = renderMd(text)
+  for (const reference of references) {
+    const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+    html = html.replace(new RegExp(`@${label}`, 'g'), renderChatReference(reference, safeLabel))
+  }
+  return html
+}
+
+/** 用户消息保持纯文本排版，仅把已选中的 @ 对象替换成可点击引用标签。 */
+export function renderChatText(text: string, references: ChatReference[] = []) {
+  let html = text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char)).replace(/\n/g, '<br>')
+  for (const reference of references) {
+    const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+    html = html.replace(new RegExp(`@${label}`, 'g'), renderChatReference(reference, safeLabel))
+  }
+  return html
+}
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析

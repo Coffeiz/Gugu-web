@@ -13,7 +13,7 @@
          （见 onColumnsPointerDown 及以下三个函数）——原生 overflow-x:auto 只吃触控板横扫/
          滚动条，鼠标点了拖并不会自己动，这段手感需要自己接。 -->
     <div ref="scrollRef" class="rec-hscroll scroll-surface scroll-surface--hidden" @wheel="onWheel" @scroll="onScroll" @pointerdown="onColumnsPointerDown">
-      <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
+      <div v-if="store.loading && !store.loaded" class="rec-loading">{{ t('common.status.loading') }}</div>
       <NoteTimeline
         v-else
         ref="timelineRef"
@@ -37,6 +37,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
@@ -50,6 +51,7 @@ import DateIndex from './components/DateIndex.vue'
 import NoteTimeline from './components/NoteTimeline.vue'
 
 const store     = useMindStore()
+const { t } = useI18n()
 const liveStore = useLiveStore()
 const uiStore   = useUiStore()
 const timelineRef = ref<InstanceType<typeof NoteTimeline> | null>(null)
@@ -787,12 +789,12 @@ watch(() => store.jumpTarget, (date) => {
   const nearest = nearestExistingDate(date)
   if (nearest) jumpTo(nearest)
   if (date === todayIso.value) {
-    showAppNotice('今天还没有记录，写一条试试～')
+    showAppNotice(t('mind.noToday'))
     captureRef.value?.expand()
   } else if (nearest) {
     showAppNotice(`${fmtMD(date)}没有记录，已定位到最近的 ${fmtMD(nearest)}`)
   } else {
-    showAppNotice('还没有任何记录')
+    showAppNotice(t('mind.noRecords'))
   }
 }, { flush: 'sync' })
 
@@ -803,7 +805,7 @@ watch(() => uiStore.pendingNoteId, async (id) => {
   uiStore.pendingNoteId = null
   if (!store.loaded) await store.fetchNotes()
   const note = store.notes.find(n => n.id === id)
-  if (!note) { showAppNotice('没找到这条便签，可能已被删除'); return }
+  if (!note) { showAppNotice(t('mind.noteMissing')); return }
   store.jumpTarget = note.capturedAt.slice(0, 10)
   highlightId.value = id
   if (highlightTimer) clearTimeout(highlightTimer)
@@ -905,13 +907,13 @@ async function onCreated(md: string, capturedAt?: string) {
   try {
     created = await store.createNote({ contentMd: md, capturedAt })
   } catch {
-    showAppError('记录失败，请重试')
+    showAppError(t('mind.recordFailed'))
     return
   }
   if (capturedAt && localDayKey(parseUtc(capturedAt)) !== _today()) {
     // 补录落进左边较远的日期列，眼前不会有任何动静——不给反馈用户会以为没保存
     const [, m, d] = localDayKey(parseUtc(capturedAt)).split('-')
-    showAppNotice(`已记到 ${+m} 月 ${+d} 日`)
+      showAppNotice(t('mind.recordedAt', { month: +m, day: +d }))
     return
   }
   highlightId.value = created.id
@@ -927,9 +929,9 @@ async function onSave(note: MindNote, md: string) {
       // 乐观锁撞车：别覆盖别人的改动，拉最新回来让用户重看
       timelineRef.value?.flagConflict()
       await store.fetchNotes()
-      showAppNotice('这条便签已被其他端修改，已刷新为最新内容')
+      showAppNotice(t('mind.updatedElsewhere'))
     } else {
-      showAppError('保存失败，请重试')
+      showAppError(t('mind.saveFailed'))
     }
   }
 }
@@ -945,7 +947,7 @@ async function onColor(note: MindNote, color: string | null) {
   try {
     await store.updateNote(note.id, { color, version: note.version })
   } catch {
-    showAppError('颜色保存失败，请重试')
+    showAppError(t('mind.colorSaveFailed'))
   }
 }
 
@@ -953,7 +955,7 @@ async function onDelete(note: MindNote) {
   try {
     await store.deleteNote(note.id)
   } catch {
-    showAppError('删除失败，请重试')
+    showAppError(t('mind.deleteFailed'))
   }
 }
 </script>

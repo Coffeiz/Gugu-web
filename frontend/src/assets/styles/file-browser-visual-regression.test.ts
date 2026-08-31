@@ -33,6 +33,7 @@ const uploadGhost = load('../../components/common/file-browser/FileUploadGhostCa
 const boxSelection = load('../../composables/useBoxSelection.ts')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
 const runtimeSetup = load('../../interaction/runtime/setup.ts')
+const mindRuntimeObject = load('../../views/Mind/composables/useMindRuntimeObject.ts')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
@@ -157,6 +158,48 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(block).toContain('background-color: var(--surface-card-solid) !important;')
     expect(block).toContain('border-color: var(--border-strong) !important;')
     expect(runtimeAdoption).not.toContain("html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {\n")
+  })
+
+  it('亮色咕咕卡片 grabbing 恢复卡片底色层和缩略图独立层', () => {
+    expect(componentSurfaces).toContain('--gugu-card-drag-bg: color-mix(in srgb,var(--surface-floating) 50%,transparent);')
+    const selector = "html[data-theme='light'][data-family] :is(.proj-card, .drawer-project-card, .pr-card, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])"
+    expect(runtimeAdoption).toContain(selector)
+    expect(cssBlock(runtimeAdoption, selector)).toContain('background: var(--gugu-card-drag-bg) !important;')
+    expect(runtimeAdoption).toContain('.fc-thumb-area')
+    expect(runtimeAdoption).toContain('.fc-thumb-full.fc-loaded')
+  })
+
+  it('亮色 Mono 画布卡片 grabbing 复用 Mono 描边，landing 不会被锁死', () => {
+    const selector = "html[data-theme='light'][data-family='mono'] :is(.mind-project-card, .drawer-project-card, .proj-card, .pr-card, .note-card, .entity-sticker, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])"
+    expect(runtimeAdoption).toContain(selector)
+    const block = cssBlock(runtimeAdoption, selector)
+    expect(block).toContain('border-color: var(--border-strong) !important;')
+    expect(runtimeAdoption).not.toContain("html[data-theme='light'][data-family='mono'] :is(.mind-project-card, .drawer-project-card, .proj-card, .pr-card, .note-card, .entity-sticker, .fc-card, .folder-card)[data-runtime-proxy-content='true'] {")
+  })
+
+  it('Mono 画布项目卡 landing 使用实色项目卡材质并移除抓取玻璃', () => {
+    const selector = "html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true'][data-runtime-phase='landing']"
+    expect(runtimeAdoption).toContain(selector)
+    const block = cssBlock(runtimeAdoption, selector)
+    expect(block).toContain('background: var(--surface-card-solid) !important;')
+    expect(block).toContain('border-color: var(--project-card-border) !important;')
+    expect(block).toContain('backdrop-filter: none !important;')
+  })
+
+  it('画布跨 Surface landing 保留目标内容交叉淡化，不关闭 target morph', () => {
+    const start = runtimeSetup.indexOf('const registerMindObjectType')
+    const end = runtimeSetup.indexOf('registerMindObjectType(MIND_CANVAS_OBJECT_TYPE)')
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    expect(runtimeSetup.slice(start, end)).not.toContain('disableTargetVisualMorph')
+  })
+
+  it('画布 landing 在指针下揭示时只抑制一次 hover，离开后恢复', () => {
+    expect(runtimeAdoption).toContain(".mind-project-card[data-runtime-hover-suppressed='true']:hover")
+    expect(runtimeAdoption).toContain('transform: none;')
+    expect(runtimeAdoption).toContain('box-shadow: var(--project-card-shadow);')
+    expect(mindRuntimeObject).toContain('suppressHoverUntilLeave(element)')
+    expect(mindRuntimeObject).toContain("element.addEventListener('pointerleave', onLeave, { once: true })")
   })
 
   it('项目名输入框不再有 project 专属透明底，统一复用共享 input contract', () => {

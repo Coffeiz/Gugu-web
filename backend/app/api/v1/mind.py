@@ -1,7 +1,7 @@
 """思维面板 API（P1：记录/便签；P2：画布）。
 
 记录是按 `captured_at` 排的时间流；画布只保存全局便签/对象节点的摆放状态，
-不拥有也不删除节点本体。关系当前只有无类型的 `related`（见实现方案）。
+不拥有也不删除节点本体；画布关系按 `canvas_id` 隔离。关系当前只有无类型的 `related`。
 
 两条不变量走 `app/core/mind.py`，路由里不要自己手写：
 - 更新便签用 `update_node_atomic`（原子 UPDATE + rowcount），不是「先读再比再写」；
@@ -25,7 +25,7 @@ from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
-from app.services.mind_canvas import (
+from app.services.canvas.service import (
     add_canvas_item as add_canvas_item_service,
     bring_canvas_item_to_front as bring_canvas_item_to_front_service,
     create_canvas_note as create_canvas_note_service,
@@ -38,7 +38,7 @@ from app.services.mind_canvas import (
     get_canvas_relation,
     get_or_create_reference as get_or_create_reference_service,
     list_canvas_items as list_canvas_items_service,
-    list_canvas_relations as list_canvas_relations_service,
+    list_canvas_relations_for_canvas,
     list_canvases as list_canvas_service,
     remove_canvas_item as remove_canvas_item_service,
     disconnect_node_relation,
@@ -54,7 +54,7 @@ from app.services.mind import (
     update_note as update_note_service,
 )
 from app.models import (
-    CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem,
+    CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem, Project,
     MindMap, MindNode, MindRelation, User,
 )
 from app.schemas import (
@@ -199,7 +199,15 @@ async def ref_suggest(
     """
     q = (q or "").strip()
     if not q:
-        return []
+        # `@` 刚触发时展示用户最近使用/更新的对象，用户继续输入后再切换为搜索结果。
+        recent: list[MindRefSuggestItem] = []
+        projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id).order_by(Project.updated_at.desc()).limit(limit))).all()
+        files = (await db.scalars(select(File).where(File.user_id == current_user.id, File.deleted_at.is_(None)).order_by(File.updated_at.desc()).limit(limit))).all()
+        events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id).order_by(CalendarEvent.date.desc()).limit(limit))).all()
+        recent.extend(MindRefSuggestItem(type="project", id=x.id, label=x.name, subtitle=x.client) for x in projects)
+        recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
+        recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
+        return recent[:limit * len(_REF_TYPES)]
     result = await run_global_search(db, current_user.id, q, per_type=limit, types=_REF_TYPES)
     items: list[MindRefSuggestItem] = []
     for g in result["groups"]:
@@ -246,7 +254,7 @@ def _canvas_resp(canvas: MindMap) -> MindCanvasResponse:
 
 def _relation_resp(rel: MindRelation) -> MindRelationResponse:
     return MindRelationResponse(
-        id=rel.id, src_node_id=rel.src_node_id, dst_node_id=rel.dst_node_id,
+        id=rel.id, canvas_id=rel.canvas_id, src_node_id=rel.src_node_id, dst_node_id=rel.dst_node_id,
         rel_type=rel.rel_type, origin=rel.origin, status=rel.status,
         created_at=rel.created_at, updated_at=rel.updated_at,
     )
@@ -529,8 +537,7 @@ async def list_canvas_relations(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    node_ids = [node.id for _, node in await list_canvas_items_service(db, current_user.id, cid)]
-    rows = await list_canvas_relations_service(db, current_user.id, node_ids)
+    rows = await list_canvas_relations_for_canvas(db, current_user.id, cid)
     return [_relation_resp(rel) for rel in rows]
 
 
@@ -542,9 +549,10 @@ async def create_relation(
 ):
     relation, error = await create_relation_service(
         db, current_user.id, body.src_node_id, body.dst_node_id,
+        canvas_id=body.canvas_id,
         allow_parallel=body.allow_parallel,
     )
-    if error == "节点不存在":
+    if error in {"节点不存在", "画布不存在"}:
         raise HTTPException(404, error)
     if error:
         raise HTTPException(422, error)
@@ -561,11 +569,28 @@ async def delete_relation(
     db: AsyncSession = Depends(get_db),
 ):
     relation = await get_canvas_relation(db, current_user.id, rid)
-    if relation is None:
+    if relation is None or relation.canvas_id is not None:
         raise HTTPException(404, "关联不存在")
     await disconnect_node_relation(db, current_user.id, rid)
     await db.commit()
     await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid})
+
+
+@router.delete("/canvases/{cid}/relations/{rid}", status_code=204)
+async def delete_canvas_relation(
+    cid: int,
+    rid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """只删除指定画布上的关系，避免误操作其它画布的同节点关系。"""
+    await _get_canvas(db, cid, current_user.id)
+    relation = await get_canvas_relation(db, current_user.id, rid, cid)
+    if relation is None:
+        raise HTTPException(404, "画布关联不存在")
+    await disconnect_node_relation(db, current_user.id, rid, canvas_id=cid)
+    await db.commit()
+    await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid, "canvas_id": cid})
 
 
 @router.post("/nodes/ref", response_model=MindNodeResponse, status_code=201)

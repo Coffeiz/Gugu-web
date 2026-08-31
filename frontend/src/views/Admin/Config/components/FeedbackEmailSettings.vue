@@ -5,17 +5,17 @@
         <Icon name="admin.mail" size="md" />
       </div>
       <div class="card-title-block">
-        <h3>用户反馈邮件</h3>
-        <p>收到 Bug、建议或其他反馈时，发送提醒到支持邮箱</p>
+        <h3>{{ t('configUi.feedbackTitle') }}</h3>
+        <p>{{ t('configUi.feedbackHint') }}</p>
       </div>
       <div class="toggle-group compact-toggle">
-        <button class="toggle-btn" :class="{ active: enabled }" @click="$emit('update:enabled', true)">开启</button>
-        <button class="toggle-btn" :class="{ active: !enabled }" @click="$emit('update:enabled', false)">关闭</button>
+        <button class="toggle-btn" :class="{ active: enabled }" @click="$emit('update:enabled', true)">{{ t('configUi.enabled') }}</button>
+        <button class="toggle-btn" :class="{ active: !enabled }" @click="$emit('update:enabled', false)">{{ t('configUi.disabled') }}</button>
       </div>
     </div>
 
     <div class="field">
-      <span class="field-label">支持邮箱</span>
+      <span class="field-label">{{ t('configUi.supportEmail') }}</span>
       <input
         class="field-input"
         :value="email"
@@ -23,12 +23,14 @@
         placeholder="support@example.com"
         @input="$emit('update:email', ($event.target as HTMLInputElement).value)"
       />
-      <span class="field-hint">需要先配置上方邮件系统的 SMTP 服务器；关闭后反馈仍会保存。</span>
+      <span class="field-hint">{{ t('configUi.smtpRequired') }}</span>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 defineProps<{
   enabled: boolean
   email: string

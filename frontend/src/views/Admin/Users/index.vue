@@ -2,8 +2,8 @@
   <div class="users-page">
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">用户管理</h2>
-        <p class="page-desc">注册用户列表与账号操作</p>
+        <h2 class="page-title">{{ t('adminUsers.title') }}</h2>
+        <p class="page-desc">{{ t('adminUsers.description') }}</p>
       </div>
     </div>
 
@@ -12,8 +12,8 @@
     </Transition>
 
     <div class="user-tabs" role="tablist">
-      <button class="user-tab" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">全部用户</button>
-      <button class="user-tab" :class="{ active: activeTab === 'risk' }" @click="activeTab = 'risk'">风险用户</button>
+      <button class="user-tab" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">{{ t('adminUsers.all') }}</button>
+      <button class="user-tab" :class="{ active: activeTab === 'risk' }" @click="activeTab = 'risk'">{{ t('adminUsers.risk') }}</button>
     </div>
 
     <RiskUsersPanel v-if="activeTab === 'risk'" />
@@ -22,28 +22,28 @@
       <input
         v-model="search"
         class="search-input"
-        placeholder="搜索用户名或邮箱…"
+        :placeholder="t('adminUsers.search')"
         @input="onSearch"
       />
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
+      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminUsers.refresh')">
         <Icon name="action.refresh" size="sm" />
       </button>
-      <span class="toolbar-count" v-if="!loading">{{ items.length }} 位用户</span>
+      <span class="toolbar-count" v-if="!loading">{{ t('adminUsers.userCount', { count: items.length }) }}</span>
     </div>
 
     <div v-if="activeTab === 'all'" class="table-wrap">
-      <div v-if="loading && !items.length" class="state-empty">加载中…</div>
-      <div v-else-if="!items.length" class="state-empty">暂无用户</div>
+      <div v-if="loading && !items.length" class="state-empty">{{ t('adminUsers.loading') }}</div>
+      <div v-else-if="!items.length" class="state-empty">{{ t('adminUsers.empty') }}</div>
 
       <template v-else>
         <div class="user-table">
           <div class="ut-head">
-            <span class="col-user">用户</span>
-            <span class="col-email">邮箱</span>
-            <span class="col-reg">注册时间</span>
-            <span class="col-usage">Token 用量（本周）</span>
-            <span class="col-storage">存储用量</span>
-            <span class="col-status">状态</span>
+            <span class="col-user">{{ t('adminUsers.user') }}</span>
+            <span class="col-email">{{ t('adminUsers.email') }}</span>
+            <span class="col-reg">{{ t('adminUsers.registeredAt') }}</span>
+            <span class="col-usage">{{ t('adminUsers.tokenUsage') }}</span>
+            <span class="col-storage">{{ t('adminUsers.storageUsage') }}</span>
+            <span class="col-status">{{ t('adminUsers.status') }}</span>
             <span class="col-action"></span>
           </div>
 
@@ -54,7 +54,7 @@
               </span>
               <span class="user-info">
                 <span class="display-name">{{ u.display_name || u.username }}
-                  <span class="dev-badge" v-if="u.is_developer" title="开发者（数据面板可一键排除）">DEV</span>
+                  <span class="dev-badge" v-if="u.is_developer" :title="t('adminUsers.developer')">{{ t('adminUsers.dev') }}</span>
                 </span>
                 <span class="username" v-if="u.display_name">@{{ u.username }}</span>
               </span>
@@ -85,18 +85,18 @@
             </span>
             <span class="col-status">
               <span class="status-tag" :class="u.is_active ? 'active' : 'banned'">
-                {{ u.is_active ? '正常' : '封禁' }}
+                {{ u.is_active ? t('adminUsers.normal') : t('adminUsers.banned') }}
               </span>
             </span>
             <span class="col-action">
               <button class="action-btn" :class="{ dev: u.is_developer }" @click="toggleDev(u)"
-                :title="u.is_developer ? '取消开发者标记' : '标记为开发者（数据面板可一键排除）'">
-                {{ u.is_developer ? '取消DEV' : 'DEV' }}
+                :title="u.is_developer ? t('adminUsers.unmarkDeveloper') : t('adminUsers.markDeveloper')">
+                {{ u.is_developer ? t('adminUsers.unmarkDeveloper') : t('adminUsers.dev') }}
               </button>
-              <button class="action-btn" @click="toggleBan(u)" :title="u.is_active ? '封禁' : '解封'">
-                {{ u.is_active ? '封禁' : '解封' }}
+              <button class="action-btn" @click="toggleBan(u)" :title="u.is_active ? t('adminUsers.banned') : t('adminUsers.unban')">
+                {{ u.is_active ? t('adminUsers.banned') : t('adminUsers.unban') }}
               </button>
-              <button class="action-btn danger" @click="confirmDelete(u)" title="删除">删除</button>
+              <button class="action-btn danger" @click="confirmDelete(u)" :title="t('adminUsers.delete')">{{ t('adminUsers.delete') }}</button>
             </span>
           </div>
         </div>
@@ -119,15 +119,14 @@
     <Teleport to="body">
       <div v-if="deleteTarget" class="confirm-mask" @click.self="deleteTarget = null">
         <div class="confirm-box">
-          <p class="confirm-title">确认删除用户？</p>
+          <p class="confirm-title">{{ t('adminUsers.confirmDelete') }}</p>
           <p class="confirm-desc">
-            将删除 <strong>{{ deleteTarget.display_name || deleteTarget.username }}</strong>
-            的账号及所有数据，此操作不可恢复。
+            {{ t('adminUsers.deleteDescription', { name: deleteTarget.display_name || deleteTarget.username }) }}
           </p>
           <div class="confirm-actions">
-            <button class="btn-cancel" @click="deleteTarget = null">取消</button>
+            <button class="btn-cancel" @click="deleteTarget = null">{{ t('adminUsers.cancel') }}</button>
             <button class="btn-confirm-del" @click="doDelete" :disabled="deleting">
-              {{ deleting ? '删除中…' : '确认删除' }}
+              {{ deleting ? t('adminUsers.deleting') : t('adminUsers.confirm') }}
             </button>
           </div>
         </div>
@@ -140,10 +139,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { useI18n } from 'vue-i18n'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import RiskUsersPanel from './components/RiskUsersPanel.vue'
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 
 const items       = ref<any[]>([])
 const loading     = ref(false)
@@ -226,8 +227,8 @@ async function doDelete() {
     deleteTarget.value = null
     // 确认隐私政策「注销后从存储中永久删除」真执行了：展示清除的存储对象数
     flash.value = removed === -1
-      ? `已删除 ${uname}（存储清理失败，请查日志手动清）`
-      : `已删除 ${uname}，清除 ${removed ?? 0} 个存储对象`
+      ? t('adminUsers.deleteStorageFailed', { name: uname })
+      : t('adminUsers.deleteSuccess', { name: uname, count: removed ?? 0 })
     setTimeout(() => { flash.value = '' }, 4000)
   } finally {
     deleting.value = false
@@ -303,13 +304,8 @@ onMounted(load)
 }
 .search-input {
   height: 34px; padding: 0 12px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.75); font-size: 13px; outline: none;
-  width: 220px; transition: border-color 0.15s;
+  font-size: 13px; outline: none; width: 220px;
 }
-.search-input:focus { border-color: rgba(255,255,255,0.25); }
-.search-input::placeholder { color: rgba(255,255,255,0.25); }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
 
 /* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */

@@ -2,7 +2,7 @@
   <div class="tv-wrap">
     <div v-if="loading" class="tv-status">
       <div class="tv-spinner" />
-      <span>加载中…</span>
+      <span>{{ t('viewerUi.loading') }}</span>
     </div>
     <div v-else-if="error" class="tv-status tv-error">
       <Icon name="status.warning" :size="28" style="opacity:.5" />
@@ -27,12 +27,12 @@
           v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument"
           @ready="onCmReady"
         />
-        <div v-else class="tv-editor-loading">准备 Markdown 语法高亮…</div>
+        <div v-else class="tv-editor-loading">{{ t('viewerUi.markdownHighlighting') }}</div>
       </div>
       <div class="tv-edit-bar">
         <span v-if="saveError" class="tv-edit-error">{{ saveError }}</span>
-        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">取消</button>
-        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? '保存中…' : '保存' }}</button>
+        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">{{ t('viewerUi.cancel') }}</button>
+        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? t('viewerUi.saving') : t('viewerUi.save') }}</button>
       </div>
     </template>
     <template v-else-if="editing">
@@ -42,15 +42,15 @@
       ></textarea>
       <div class="tv-edit-bar">
         <span v-if="saveError" class="tv-edit-error">{{ saveError }}</span>
-        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">取消</button>
-        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? '保存中…' : '保存' }}</button>
+        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">{{ t('viewerUi.cancel') }}</button>
+        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? t('viewerUi.saving') : t('viewerUi.save') }}</button>
       </div>
     </template>
     <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
-      <button v-if="editable" class="tv-edit-toggle" title="编辑" @click="startEdit">
+      <button v-if="editable" class="tv-edit-toggle" :title="t('viewerUi.edit')" @click="startEdit">
         <Icon name="action.edit" :size="13" />
       </button>
-      <div v-if="truncated" class="tv-notice">仅显示前 500 KB</div>
+      <div v-if="truncated" class="tv-notice">{{ t('viewerUi.truncated') }}</div>
       <!-- Markdown 渲染 -->
       <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
       <!-- 纯文本（txt；代码类扩展名走上面的 CodeMirror，不会落到这里） -->
@@ -69,6 +69,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBeforeUnmount, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
@@ -77,6 +78,8 @@ import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { resolveRelativeFileLink } from '@/utils/fileLinks'
+
+const { t } = useI18n()
 
 // CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
 // 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/

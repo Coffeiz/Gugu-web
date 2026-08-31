@@ -11,7 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, or_, and_
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -71,6 +71,10 @@ async def latest_bubble(
             _visible(current_user),
             SiteNotification.bubble == True,
             or_(SiteNotification.bubble_expire_at.is_(None), SiteNotification.bubble_expire_at > now),
+            ~exists().where(
+                NotificationRead.user_id == uid,
+                NotificationRead.notification_id == SiteNotification.id,
+            ),
         )
         .order_by(SiteNotification.created_at.desc())
         .limit(1)

@@ -5,7 +5,7 @@
       v-model="q"
       :active="open"
       clearable
-      placeholder="搜索项目、文件、日程、客户…"
+      :placeholder="t('common.searchPlaceholder')"
       @focus="onFocus"
       @input="onInput"
       @compositionstart="composing = true"
@@ -17,25 +17,27 @@
     <Teleport to="body">
       <transition name="gs-pop">
         <div v-if="open && q.trim()" ref="panelEl" class="gs-panel" :style="panelStyle">
-          <div v-if="loading" class="gs-hint">
-            <Icon name="status.loading" class="gs-spin" size="md" tone="inherit" /> 搜索中…
-          </div>
-          <div v-else-if="total === 0" class="gs-hint">没找到「{{ q.trim() }}」相关内容</div>
-          <template v-else>
-            <div v-for="g in groups" :key="g.type" class="gs-group">
-              <div class="gs-group-label">{{ g.label }}</div>
-              <button
-                v-for="it in g.items"
-                :key="g.type + '-' + it.id"
-                class="gs-item"
-                @click="go(g.type, it)"
-              >
-                <Icon :name="TYPE_ICON[g.type]" class="gs-item-icon" size="md" tone="inherit" />
-                <span class="gs-item-title">{{ it.title }}</span>
-                <span v-if="it.subtitle" class="gs-item-sub">{{ it.subtitle }}</span>
-              </button>
+          <div class="gs-scroll">
+            <div v-if="loading" class="gs-hint">
+              <Icon name="status.loading" class="gs-spin" size="md" tone="inherit" /> {{ t('common.searching') }}
             </div>
-          </template>
+            <div v-else-if="total === 0" class="gs-hint">{{ t('common.searchNoResults', { query: q.trim() }) }}</div>
+            <template v-else>
+              <div v-for="g in groups" :key="g.type" class="gs-group">
+                <div class="gs-group-label">{{ g.label }}</div>
+                <button
+                  v-for="it in g.items"
+                  :key="g.type + '-' + it.id"
+                  class="gs-item"
+                  @click="go(g.type, it)"
+                >
+                  <Icon :name="TYPE_ICON[g.type]" class="gs-item-icon" size="md" tone="inherit" />
+                  <span class="gs-item-title">{{ it.title }}</span>
+                  <span v-if="it.subtitle" class="gs-item-sub">{{ it.subtitle }}</span>
+                </button>
+              </div>
+            </template>
+          </div>
         </div>
       </transition>
     </Teleport>
@@ -52,6 +54,7 @@ import SearchInput from './SearchInput.vue'
 import { searchApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
+import { useI18n } from 'vue-i18n'
 
 // 类型图标与侧边栏导航保持一致，具体图标由语义注册表统一解析。
 const TYPE_ICON = {
@@ -67,6 +70,7 @@ const TYPE_ICON = {
 const router       = useRouter()
 const projectStore = useProjectStore()
 const uiStore      = useUiStore()
+const { t } = useI18n()
 
 interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number }
 interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note'; label: string; items: SearchItem[] }
@@ -210,8 +214,10 @@ onBeforeUnmount(() => {
 /* ── 结果面板：与「添加/编辑活动」弹窗(.add-event-popup)、右键菜单(.popup-menu)同款白底毛玻璃；
    Teleport 到 body 后用 fixed 定位(position/top/left/width 由内联样式给) ── */
 .gs-panel {
+  box-sizing: border-box;
   max-height: 62vh;
-  overflow-y: auto;
+  overflow: hidden;
+  overscroll-behavior: contain;
   padding: 6px;
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.75);
@@ -221,6 +227,7 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: var(--popup-blur);
   /* z-index 由 :style 动态 */
 }
+.gs-scroll { max-height: calc(62vh - 12px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 
 .gs-hint {
   display: flex;

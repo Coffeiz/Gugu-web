@@ -24,14 +24,14 @@
         type="button"
         class="conn-dot conn-dot-left"
         :class="{ 'conn-dot-active': targetSide === 'left' }"
-        title="拖出连线建立关联"
+        :title="connectTitle"
         @pointerdown.stop="event => emit('connectDragStart', event, 'left')"
       />
       <button
         type="button"
         class="conn-dot conn-dot-right"
         :class="{ 'conn-dot-active': targetSide === 'right' }"
-        title="拖出连线建立关联"
+        :title="connectTitle"
         @pointerdown.stop="event => emit('connectDragStart', event, 'right')"
       />
     </span>
@@ -42,6 +42,7 @@
 
 <script setup lang="ts">
 import { computed, toRefs, type PropType } from 'vue'
+import { i18n } from '@/i18n'
 
 const props = defineProps({
   hovering: { type: Boolean, default: false },
@@ -57,6 +58,7 @@ const props = defineProps({
 const emit = defineEmits<{
   (event: 'connectDragStart', pointerEvent: PointerEvent, side: 'left' | 'right'): void
 }>()
+const connectTitle = computed(() => i18n.global.t('sharedUi.connectTitle'))
 
 const state = computed(() => {
   if (props.dragging) return 'dragging'

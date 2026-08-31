@@ -12,7 +12,16 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import get_settings
 from app.core.ratelimit import rate_limit
 from app.core.redis import get_redis
-from app.core.security import hash_password, verify_password, create_user_token, get_current_user
+from app.core.security import (
+    USER_ACCESS_COOKIE,
+    USER_CSRF_COOKIE,
+    clear_auth_cookies,
+    create_user_token,
+    get_current_user,
+    hash_password,
+    set_auth_cookies,
+    verify_password,
+)
 from app.core.tz import now_utc, iso_utc
 from app.db.session import get_db
 from app.models import User, AgentUsage, FrontendEvent
@@ -23,7 +32,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(body: UserRegister, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(body: UserRegister, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "register", 20, 3600)   # 同 IP 每小时最多 20 次注册尝试
     existing = await db.execute(
         select(User).where(
@@ -47,16 +56,18 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
 
     # 新手引导播种（独立子系统，best-effort：内部已吞异常，不影响注册）
     from onboarding.seed import seed_for_user
-    await seed_for_user(db, user)
+    await seed_for_user(db, user, locale=body.locale)
 
+    token = create_user_token(user.id)
+    set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return TokenResponse(
-        access_token=create_user_token(user.id),
+        access_token=token,
         user=UserResponse.from_user(user),
     )
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(body: UserLogin, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "login", 10, 300, extra=body.username)   # 同 IP+用户名 5 分钟最多 10 次
     # 登录标识既可以是用户名也可以是邮箱——两个字段都有唯一约束，不会互相碰撞匹配到别人。
     result = await db.execute(
@@ -75,10 +86,18 @@ async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(ge
     db.add(FrontendEvent(user_id=user.id, event="web_login"))
     await db.commit()
 
+    token = create_user_token(user.id)
+    set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return TokenResponse(
-        access_token=create_user_token(user.id),
+        access_token=token,
         user=UserResponse.from_user(user),
     )
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
+    return {"ok": True}
 
 
 # ── 密码找回 ────────────────────────────────────────────────────────────────
@@ -276,27 +295,29 @@ async def get_quota(
     async def _used(since: datetime) -> int:
         r = await db.execute(
             select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
-            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since))
+            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False)))
         )
         return r.scalar() or 0
 
-    # 6h 固定窗口 + 周窗口：**与 quota.is_exhausted（硬拦）共用同一套 CST 口径**——
-    # 否则 UI 按 UTC 窗口显示「精力已恢复」、后端按 CST 窗口仍判耗尽 → 出现「明明恢复了还被拦」的矛盾。
+    # 6h 用户窗口 + 周窗口：与 quota.is_exhausted（硬拦）共用同一套口径。
     from agent import quota as _quota
-    window_start = _quota.six_h_window_start(now)
-    reset_6h_at = window_start + timedelta(hours=6)   # 下次重置（精力清零）时刻
-    used_6h = await _used(window_start)
+    stored_window_start = current_user.quota_window_started_at
+    window_active = stored_window_start is not None and now < stored_window_start + timedelta(hours=6)
+    window_start = stored_window_start if window_active else None
+    reset_6h_at = window_start + timedelta(hours=6) if window_start else None
+    used_6h = await _used(window_start) if window_start else 0
 
     week_start = _quota._week_start(now)
     used_weekly = await _used(week_start)
 
-    limit_6h     = current_user.token_limit_6h     or settings.quota.default_token_limit_6h
-    limit_weekly = current_user.token_limit_weekly  or settings.quota.default_token_limit_weekly
+    has_byok = await _quota.has_active_byok_llm(db, current_user.id, settings)
+    limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
+    limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
 
     return {
         "used_6h":      used_6h,
         "limit_6h":     limit_6h,
-        "reset_6h_at":  iso_utc(reset_6h_at),   # 下次精力重置时刻
+        "reset_6h_at":  iso_utc(reset_6h_at) if reset_6h_at else None,   # 当前窗口结束时刻
         "used_weekly":  used_weekly,
         "limit_weekly": limit_weekly,
     }

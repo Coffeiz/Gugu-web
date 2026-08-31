@@ -5,21 +5,21 @@
         <Icon name="user.security" size="md" />
       </div>
       <div class="card-title-block">
-        <h3>安全告警</h3>
-        <p>重复越权访问触发限流或冻结时发送脱敏邮箱通知</p>
+        <h3>{{ t('configUi.securityTitle') }}</h3>
+        <p>{{ t('configUi.securityHint') }}</p>
       </div>
       <div class="toggle-group compact-toggle">
-        <button class="toggle-btn" :class="{ active: model.alert_email_enabled }" @click="update({ alert_email_enabled: true })">开启</button>
-        <button class="toggle-btn" :class="{ active: !model.alert_email_enabled }" @click="update({ alert_email_enabled: false })">关闭</button>
+        <button class="toggle-btn" :class="{ active: model.alert_email_enabled }" @click="update({ alert_email_enabled: true })">{{ t('configUi.enabled') }}</button>
+        <button class="toggle-btn" :class="{ active: !model.alert_email_enabled }" @click="update({ alert_email_enabled: false })">{{ t('configUi.disabled') }}</button>
       </div>
     </div>
 
     <div class="field-grid">
       <div class="field span2">
-        <span class="field-label">告警目标邮箱</span>
-        <input v-model="recipientText" class="field-input" placeholder="security@example.com，多个邮箱用逗号分隔" />
+        <span class="field-label">{{ t('configUi.alertEmail') }}</span>
+        <input v-model="recipientText" class="field-input" :placeholder="t('configUi.alertEmailPlaceholder')" />
         <span class="field-hint" :class="{ error: invalidRecipients.length }">
-          {{ invalidRecipients.length ? `邮箱格式无效：${invalidRecipients.join('、')}` : '只发送事件类型、动作和聚合次数，不包含资源、IP、Token 或正文' }}
+          {{ invalidRecipients.length ? t('configUi.invalidEmail', { emails: invalidRecipients.join('、') }) : t('configUi.privacyHint') }}
         </span>
       </div>
     </div>
@@ -28,6 +28,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 interface SecuritySettings {
   alert_email_enabled: boolean
@@ -35,6 +36,7 @@ interface SecuritySettings {
 }
 
 const props = defineProps<{ modelValue: SecuritySettings }>()
+const { t } = useI18n()
 const emit = defineEmits<{ (event: 'update:modelValue', value: SecuritySettings): void }>()
 const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 

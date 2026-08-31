@@ -127,6 +127,7 @@ export const useConfigStore = defineStore('config', () => {
       max_results: 5,
       global_search_backend: 'ilike',
       ts_sidecar_index_ttl_seconds: 30 * 24 * 3600,
+      similar_image_provider: 'baidu_qianfan',
       similar_image_enabled: false,
       baidu_qianfan_api_key: '',
       similar_image_default_count: 15,
@@ -148,7 +149,7 @@ export const useConfigStore = defineStore('config', () => {
       alert_email_recipients: [] as string[],
     },
     byok: {
-      enabled: false,
+      enabled: true,
     },
   })
 

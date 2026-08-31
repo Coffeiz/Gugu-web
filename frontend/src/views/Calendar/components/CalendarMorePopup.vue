@@ -7,7 +7,7 @@
                :style="{ background: item.calendarType === 'project' ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: item.calendarType === 'project' && item.status === 'done' ? 'pointer' : (item.calendarType ? 'grab' : 'default') }"
                @click.stop="item.calendarType === 'project' ? $emit('open-project', item) : (item.calendarType === 'event' && $emit('edit-event', { item, event: $event }))"
                @mousedown.stop="item.calendarType && $emit('drag-item', { item, event: $event })">
-            <span class="overflow-tag" :class="{ 'overflow-tag-ev': item.calendarType !== 'project' }">{{ item.calendarType === 'project' ? '项目' : '活动' }}</span>
+            <span class="overflow-tag" :class="{ 'overflow-tag-ev': item.calendarType !== 'project' }">{{ item.calendarType === 'project' ? t('calendar.project') : t('calendar.event') }}</span>
             <span v-if="item.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + item.status"></span>
             <span class="overflow-name">{{ item.name }}</span>
           </div>
@@ -17,6 +17,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import { capBg, darkenHex } from '../utils/calendarColors'
 import type { CalendarRenderItem } from '../domain/calendarTypes'
@@ -35,6 +36,7 @@ defineEmits<{
 }>()
 
 const popup = ref<InstanceType<typeof PopupMenu> | null>(null)
+const { t } = useI18n()
 defineExpose({ contains: (target: Node) => !!popup.value?.contains(target) })
 </script>
 

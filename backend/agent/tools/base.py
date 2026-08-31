@@ -20,6 +20,7 @@ from agent.tools.tool_contract import (
     enrich_tool_error,
     invalid_input_payload,
     normalize_legacy_input,
+    normalize_input_by_schema,
     validate_input,
 )
 
@@ -132,41 +133,6 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
         opsmetrics.record_tool(name, ok, _ms)
     except Exception:
         pass
-
-# 这些 id 键对应的模型都是 int 主键，LLM 传成字符串会让 asyncpg 抛错。统一在 dispatch 入口转 int。
-# 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
-_INT_ID_KEYS = ("project_id", "file_id", "folder_id", "parent_id",
-                "event_id", "client_id", "stage_id", "todo_id", "session_id", "node_id",
-                "canvas_id", "item_id", "relation_id", "ref_id", "workspace_id")
-
-
-def _to_int_id(v):
-    """把形如 "91" / "#91" 的字符串 id 转 int；非纯数字或非字符串原样返回。"""
-    if isinstance(v, str):
-        s = v.strip().lstrip("#")
-        if s.isdigit():
-            return int(s)
-    return v
-
-
-def _coerce_int_ids(args) -> None:
-    """就地归一工具参数里的整型 id 和常见的结果数量。"""
-    if not isinstance(args, dict):
-        return
-    for k in _INT_ID_KEYS:
-        if k in args:
-            args[k] = _to_int_id(args[k])
-    # IM 模型有时会把 JSON Schema 中的 integer 参数序列化成数字字符串。
-    # 在 schema 校验前做无损归一，避免把可执行的调用误判成输入错误；非数字字符串保持原样，
-    # 仍由对应 schema 给出明确的 type 错误。
-    if "max_results" in args:
-        args["max_results"] = _to_int_id(args["max_results"])
-    tgt = args.get("target")
-    if isinstance(tgt, dict):
-        for k in ("project_id", "folder_id"):
-            if k in tgt:
-                tgt[k] = _to_int_id(tgt[k])
-
 
 async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     """IM 慢工具进度声明（见 docs/agent/proposals/IM慢工具进度声明-设计.md）：工具即将真正执行
@@ -407,7 +373,7 @@ class SkillRegistry:
             public_args.pop("session_id", None)
             args = public_args
 
-        # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再保留现有 ID 弱归一，最后按
+        # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再按工具 Schema 做安全归一化，最后按
         # Tool.input_schema 做本地实例校验。任何失败都在进度声明/DB/handler/confirm 之前返回，
         # 防止“参数根本不能执行，却先对用户说我去做了”或 mutation handler 带错参运行。
         if not isinstance(args, dict):
@@ -422,15 +388,11 @@ class SkillRegistry:
         # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
         args, _legacy_adaptations = normalize_legacy_input(name, args)
 
-        # 整型主键 id 归一：LLM 常把 id 当字符串传（"91"）。除 User 外所有模型都是 int 主键，
-        # int4 列拿到字符串会让 asyncpg 直接抛 DataError（db.get(Project,"91") 崩，而非返回 None）。
-        # 在 schema 校验前只转这批既有白名单 id；其它类型不做猜测式 coercion。
-        _coerce_int_ids(args)
-
         # 正常工具会在 registry.add() 时缓存 validator；测试工具和少量运行时扩展可能直接
         # 注入 registry，仍需在 dispatch 边界补建，避免校验器为空导致整轮 Agent 崩溃。
         if tool._input_validator is None:
             tool._input_validator = build_validator(tool.input_schema)
+        args, _type_adaptations = normalize_input_by_schema(tool.input_schema, args)
         issues = validate_input(tool._input_validator, args)
         if issues:
             payload = invalid_input_payload(name, issues, schema=tool.input_schema)

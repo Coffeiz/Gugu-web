@@ -156,8 +156,8 @@ importers:
         specifier: ^3.4.11
         version: 3.4.14
       gugu-interaction-runtime:
-        specifier: file:../../gugu-interaction-runtime
-        version: file:../gugu-interaction-runtime(vue@3.5.41(typescript@5.6.3))
+        specifier: ^3.0.3
+        version: 3.0.3(vue@3.5.41(typescript@5.6.3))
       highlight.js:
         specifier: ^11.11.1
         version: 11.12.0
@@ -188,6 +188,9 @@ importers:
       vue-codemirror:
         specifier: ^6.1.1
         version: 6.1.1(codemirror@6.0.2)(vue@3.5.41(typescript@5.6.3))
+      vue-i18n:
+        specifier: ^11.4.10
+        version: 11.4.10(vue@3.5.41(typescript@5.6.3))
       vue-router:
         specifier: ^4.3.0
         version: 4.6.4(vue@3.5.41(typescript@5.6.3))
@@ -980,6 +983,22 @@ packages:
 
   '@iconify/utils@3.1.4':
     resolution: {integrity: sha512-b1S7B1k9ohZ+iNTi2ATxbRYG9fTrJmUT0rc46bvVnNxqNRGW7dyo/vRREwyniI5IRN2RSJHDcm+s3BjWrSAjHw==}
+
+  '@intlify/core-base@11.4.10':
+    resolution: {integrity: sha512-+yJ74JRWVJokdgG9zYNMyTSzeNV3O9T4vVxk8PvLFHmI+R/BYA//cITh7vhRK37hWLZ4/kTcKcUz1dlWOpypIg==}
+    engines: {node: '>= 22'}
+
+  '@intlify/devtools-types@11.4.10':
+    resolution: {integrity: sha512-xZxzZsAuu6/0zoLRVQWdpXWe5Kjl0LnWpjlQA3r9u9FbLYMhapqt7IwkgQyn0Tm2GUNAqhj9eZiUmYOrB024BQ==}
+    engines: {node: '>= 22'}
+
+  '@intlify/message-compiler@11.4.10':
+    resolution: {integrity: sha512-oUB/scz2EJENXDiUJ7JjZffOrH8UIZ1BuZeHvonbi5fWLavLt04aivuk2OIByOZA0tsci1bkeeQRmwhb5M8Imw==}
+    engines: {node: '>= 22'}
+
+  '@intlify/shared@11.4.10':
+    resolution: {integrity: sha512-FeImVdPeoSHTm3NBFFZHv0eRP9gQ3F4lj2puDBX5Kw7iiM1uJW6JTf39ian0K/17pbXCI3ef5i9RVsRrALqI6Q==}
+    engines: {node: '>= 22'}
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -2416,8 +2435,8 @@ packages:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
     engines: {node: '>= 0.4'}
 
-  gugu-interaction-runtime@file:../gugu-interaction-runtime:
-    resolution: {directory: ../gugu-interaction-runtime, type: directory}
+  gugu-interaction-runtime@3.0.3:
+    resolution: {integrity: sha512-H/h30FlqFndniAIV1udtk6lABIhy0qvLEeVkSJCtMd1hno7O8P+rK7HUT7vbV97kF0q6aJ51+Cpe8Z7nk3FK3w}
     peerDependencies:
       vue: ^3.5.0
 
@@ -3288,6 +3307,12 @@ packages:
       '@vue/composition-api':
         optional: true
 
+  vue-i18n@11.4.10:
+    resolution: {integrity: sha512-Lp+BjOxqzOY87DS6Z8KrQrpiTr9IN/Lt4kZEilwyXG2Wrx+AcU6IVsAW92HNXtVcn1HFFPV6ty41p9e/qDpyvg==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      vue: ^3.0.0
+
   vue-router@4.6.4:
     resolution: {integrity: sha512-Hz9q5sa33Yhduglwz6g9skT8OBPii+4bFn88w6J+J4MfEo4KRRpmiNG/hHHkdbRFlLBOqxN8y8gf2Fb0MTUgVg==}
     peerDependencies:
@@ -3896,6 +3921,24 @@ snapshots:
       '@antfu/install-pkg': 1.1.0
       '@iconify/types': 2.0.0
       import-meta-resolve: 4.2.0
+
+  '@intlify/core-base@11.4.10':
+    dependencies:
+      '@intlify/devtools-types': 11.4.10
+      '@intlify/message-compiler': 11.4.10
+      '@intlify/shared': 11.4.10
+
+  '@intlify/devtools-types@11.4.10':
+    dependencies:
+      '@intlify/core-base': 11.4.10
+      '@intlify/shared': 11.4.10
+
+  '@intlify/message-compiler@11.4.10':
+    dependencies:
+      '@intlify/shared': 11.4.10
+      source-map-js: 1.2.1
+
+  '@intlify/shared@11.4.10': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
@@ -5347,7 +5390,7 @@ snapshots:
 
   gopd@1.2.0: {}
 
-  gugu-interaction-runtime@file:../gugu-interaction-runtime(vue@3.5.41(typescript@5.6.3)):
+  gugu-interaction-runtime@3.0.3(vue@3.5.41(typescript@5.6.3)):
     dependencies:
       vue: 3.5.41(typescript@5.6.3)
 
@@ -6185,6 +6228,14 @@ snapshots:
 
   vue-demi@0.14.10(vue@3.5.41(typescript@5.6.3)):
     dependencies:
+      vue: 3.5.41(typescript@5.6.3)
+
+  vue-i18n@11.4.10(vue@3.5.41(typescript@5.6.3)):
+    dependencies:
+      '@intlify/core-base': 11.4.10
+      '@intlify/devtools-types': 11.4.10
+      '@intlify/shared': 11.4.10
+      '@vue/devtools-api': 6.6.4
       vue: 3.5.41(typescript@5.6.3)
 
   vue-router@4.6.4(vue@3.5.41(typescript@5.6.3)):

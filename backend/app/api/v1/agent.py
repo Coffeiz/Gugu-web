@@ -4,9 +4,9 @@
 adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 web adapter →
 包成 StreamingResponse；以及对话会话的纯 CRUD 端点。
 """
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, or_, select
@@ -36,8 +36,10 @@ _MAX_ATTACH_BYTES = 10 * 1024 * 1024   # 单个聊天附件上限 10MB
 
 class ChatRequest(BaseModel):
     message: str
+    locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     session_id: Optional[int] = None
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
+    references: Optional[list[dict]] = None   # 用户通过 @ 补全选中的业务对象
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
     interaction_prompt_id: Optional[int] = None
     interaction_token: Optional[str] = None
@@ -314,7 +316,9 @@ async def chat(
         session_id=body.session_id,
         source="web",
         attachments=body.attachments or [],
+        references=body.references or [],
         greeting=body.greeting,
+        locale=body.locale,
         origin=request.headers.get("X-Client-Id"),
         interaction_prompt_id=body.interaction_prompt_id,
         interaction_token=body.interaction_token,
@@ -448,11 +452,12 @@ async def get_commands(current_user: User = Depends(get_current_user)):
 async def get_greeting(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    locale: str = Query(default="zh-CN", pattern="^(zh-CN|ja-JP|en-US)$"),
 ):
     """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
     from app.core.config import get_settings
     from agent import greeting
-    text = await greeting.generate(db, current_user.id, get_settings())
+    text = await greeting.generate(db, current_user.id, get_settings(), locale=locale)
     return {"text": text}
 
 
@@ -576,6 +581,7 @@ async def get_session_messages(
              "timelineOrder": m.id * 1000,
              "content": render_content(m.content),
              "files": m.files or [],
+             "references": m.references_json or [],
              "quotedText": m.quoted_text,
              "platformUserId": m.platform_user_id,
              "platformUserName": m.platform_user_name,

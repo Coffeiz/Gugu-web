@@ -3,6 +3,7 @@ import type { FileMeta } from '@/stores/filesCache'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { optimisticMutation } from '@/utils/optimisticMutation'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 interface FileActionsOptions {
   cacheStore: ReturnType<typeof useFilesCacheStore>
@@ -25,6 +26,7 @@ export function useFileLibraryFileActions(options: FileActionsOptions) {
   }
 
   async function deleteSingleFile(file: FileMeta) {
+    if (!await confirmFileDeletion('file', { name: file.displayName })) return
     const backup = cacheStore.getFile(file.id)
     await optimisticMutation({
       apply: () => {

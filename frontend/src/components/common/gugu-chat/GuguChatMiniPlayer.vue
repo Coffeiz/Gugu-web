@@ -6,11 +6,11 @@
         <span class="mp-name">{{ fileName }}</span>
         <div class="btn-group">
           <button class="mp-btn mp-btn--pin" :class="{ 'mp-btn--pinned': pinned }"
-                  @click="$emit('update:pinned', !pinned)" :title="pinned ? '取消固定' : '固定'">
+                  @click="$emit('update:pinned', !pinned)" :title="pinned ? t('chatUi.unpin') : t('chatUi.pin')">
             <Icon name="canvas.pin" v-if="pinned" :size="14" />
             <Icon name="canvas.pin"Slash v-else :size="14" />
           </button>
-          <button class="mp-btn mp-btn--close popup-close-btn" @click="onStop" title="关闭">
+          <button class="mp-btn mp-btn--close popup-close-btn" @click="onStop" :title="t('common.actions.close')">
             <Icon name="action.close" :size="13" />
           </button>
         </div>
@@ -44,6 +44,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 /**
  * 迷你播放器卡片：纯展示 + 交互转发。真正的 <audio> 元素和播放机制仍在
@@ -72,6 +73,7 @@ defineProps<{
   onToggleMute: () => void
   onSetVolume: (e: Event) => void
 }>()
+const { t } = useI18n()
 
 defineEmits<{ 'update:pinned': [value: boolean] }>()
 

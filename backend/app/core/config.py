@@ -83,9 +83,9 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(4000, description="最大输出 token 数")
+    max_tokens: int = Field(8000, description="最大输出 token 数")
     temperature: float = Field(0.7, description="发散度 0~2")
-    context_tokens: int = Field(120000, description="历史上下文 token 预算")
+    context_tokens: int = Field(128000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
@@ -160,9 +160,9 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 4000
+    max_tokens: int = 8000
     temperature: float = 0.7
-    context_tokens: int = 120000
+    context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     vision: bool = False
@@ -189,8 +189,8 @@ class AIPresets(BaseModel):
 
 
 class AgentBehaviorSettings(BaseModel):
-    # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
-    shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
+    # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
+    shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")
     shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
     shell_dangerous_enabled: bool = Field(False, description="是否允许危险 Shell 命令进入确认流程（默认关闭）")
     shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")
@@ -247,7 +247,8 @@ class SearchSettings(BaseModel):
         description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
     )
     ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
-    similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
+    similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
+    similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
     similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")
     similar_image_timeout_seconds: int = Field(20, ge=5, le=60, description="相似图搜索请求超时秒数")
@@ -263,7 +264,7 @@ class StateLabelSettings(BaseModel):
 
 class BYOKSettings(BaseModel):
     """用户自带凭据开关；主密钥只允许由运行环境注入。"""
-    enabled: bool = Field(False, description="是否开放用户 BYOK（托管服务由后台权益控制）")
+    enabled: bool = Field(True, description="是否开放用户 BYOK（默认开启；托管服务可由后台关闭）")
     master_key: str = Field("", repr=False, description="BYOK 主密钥（仅从 CREDENTIALS_MASTER_KEY 注入，不写入响应）")
 
 
@@ -337,7 +338,7 @@ class AppSettings(BaseSettings):
     secret_key: str = Field("change-me-in-production", description="JWT 签名密钥")
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")
     admin_username: str = Field("admin", description="后台管理员用户名（env ADMIN_USERNAME）")
-    admin_password: str = Field("admin123", description="后台管理员密码（env ADMIN_PASSWORD）")
+    admin_password: str = Field("", description="后台管理员密码（env ADMIN_PASSWORD，必须显式配置）")
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)

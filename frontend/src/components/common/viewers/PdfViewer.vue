@@ -4,11 +4,11 @@
       v-if="blobUrl"
       :src="pdfSrc"
       class="pv-iframe"
-      title="PDF 预览"
+      :title="t('viewerUi.pdfPreview')"
     />
     <div v-else class="pv-status">
       <div class="pv-spinner" />
-      <span>加载中…</span>
+      <span>{{ t('viewerUi.loading') }}</span>
     </div>
   </div>
 </template>
@@ -21,6 +21,9 @@
  * 性能一般，故换回 iframe；历史实现见 git 记录。
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   blobUrl: { type: String, default: null },

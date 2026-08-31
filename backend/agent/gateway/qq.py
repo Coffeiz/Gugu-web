@@ -331,7 +331,17 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     text = _normalize_qq_faces(raw_text)
     msg_id = data.get("id") or ""
     if chat_type == "c2c":
-        binding_match = re.fullmatch(r"(?:绑定|bind)\s*([0-9]{6})", text, flags=re.IGNORECASE)
+        # QQ 扫码连接只返回 Bot 凭据，不返回当前私聊用户的 openid。
+        # 首次私聊作为 owner 身份来源，后续群聊权限再复用这个绑定结果。
+        from app.services.im_identity import bind_qq_owner_if_unbound
+
+        try:
+            await bind_qq_owner_if_unbound(int(channel_id), UUID(str(owner)), sender_id)
+        except Exception as exc:
+            diag_log("agent.gateway.qq.auto_owner_binding", exc)
+        # 验证码本身已足够定位绑定任务，不要求用户输入某种语言的命令词。
+        # 保留旧格式兼容，新的交互只需直接发送 6 位数字。
+        binding_match = re.fullmatch(r"(?:绑定\s*|bind\s*)?([0-9]{6})", text, flags=re.IGNORECASE)
         if binding_match:
             from app.services.im_identity import consume_qq_binding_code
 
@@ -794,6 +804,140 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
     diag_log_raw("agent.gateway.qq._qq_request",
                   f"{method} {path} status={status} body={data}")
     raise QQAPIError(method, path, status, data)
+
+
+class QQPrivateTextStream:
+    """QQ C2C `stream_messages` 的全文替换发送器。
+
+    push() 只累计文本并安排节流刷新；HTTP 请求在一个串行链中执行，后续帧在
+    真正出队时读取首帧返回的 stream_msg_id，避免并发请求缺少关联 ID。
+    """
+
+    def __init__(self, channel_id: str, openid: str, *, message_id: str | None,
+                 message_format: str | None):
+        self.channel_id = channel_id
+        self.openid = openid
+        self.message_id = message_id
+        self.content_type = "markdown" if message_format == "markdown" else "text"
+        self.msg_seq: int | None = None
+        self.full_text = ""
+        self.last_sent_text = ""
+        self.stream_msg_id: str | None = None
+        self.frame_index = 0
+        self.sent_frame_count = 0
+        self.finished = False
+        self.error: Exception | None = None
+        self._timer: asyncio.Task | None = None
+        self._chain: asyncio.Task | None = None
+
+    def push(self, delta: str) -> None:
+        if not delta or self.finished or self.error:
+            return
+        self.full_text += delta
+        if self._timer is None:
+            self._timer = asyncio.create_task(self._delayed_flush())
+
+    async def _delayed_flush(self) -> None:
+        try:
+            await asyncio.sleep(0.5)
+            # finish() 会取消这个节流任务，但不能连带取消已经开始的 HTTP
+            # 刷新链；否则收尾时的 DONE 帧可能永远发不出去，客户端会一直显示生成中。
+            await asyncio.shield(self._flush())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.error = exc
+        finally:
+            self._timer = None
+
+    async def _flush(self, input_state: int = 1) -> None:
+        if self.error is not None:
+            raise self.error
+        if not self.full_text or (input_state != 10 and self.full_text == self.last_sent_text):
+            return
+        previous = self._chain
+
+        async def send_one() -> None:
+            if previous is not None:
+                await previous
+            if self.msg_seq is None:
+                self.msg_seq = await _next_stream_seq(self.channel_id)
+            body = {
+                "input_mode": "replace",
+                "input_state": input_state,
+                "content_type": self.content_type,
+                "content_raw": sanitize_im_links(self.full_text),
+                "msg_seq": self.msg_seq,
+                "index": self.frame_index,
+            }
+            self.frame_index += 1
+            if self.message_id:
+                body.update({"msg_id": self.message_id, "event_id": self.message_id})
+            if self.stream_msg_id:
+                body["stream_msg_id"] = self.stream_msg_id
+            attempts = 0
+            while True:
+                try:
+                    result = await _qq_request(
+                        self.channel_id,
+                        "POST",
+                        f"/v2/users/{self.openid}/stream_messages",
+                        json_body=body,
+                    )
+                    self.sent_frame_count += 1
+                    if not self.stream_msg_id and isinstance(result, dict):
+                        candidate = result.get("stream_msg_id") or result.get("id")
+                        if isinstance(candidate, str) and candidate:
+                            self.stream_msg_id = candidate
+                    self.last_sent_text = self.full_text
+                    return
+                except Exception as exc:
+                    rate_limited = isinstance(exc, QQAPIError) and (
+                        exc.status == 429 or "50002" in str(exc.body)
+                    )
+                    if not rate_limited or attempts >= 2:
+                        raise
+                    await asyncio.sleep(1.0 * (2 ** attempts))
+                    attempts += 1
+
+        task = asyncio.create_task(send_one())
+        self._chain = task
+        try:
+            await task
+        except Exception as exc:
+            self.error = exc
+            raise
+
+    async def finish(self, final_text: str) -> None:
+        self.finished = True
+        if self._timer is not None:
+            self._timer.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._timer
+            self._timer = None
+        self.full_text = final_text or self.full_text
+        if not self.full_text.strip():
+            return
+        await self._flush(1)
+        if self._chain is not None:
+            await self._chain
+        await self._flush(10)
+        if self._chain is not None:
+            await self._chain
+
+    def has_sent(self) -> bool:
+        return self.sent_frame_count > 0
+
+
+def create_private_text_stream(openid: str, *, channel_id: str, message_id: str | None = None,
+                               message_format: str | None = None) -> QQPrivateTextStream:
+    return QQPrivateTextStream(
+        channel_id,
+        openid,
+        message_id=message_id,
+        message_format=message_format,
+    )
+
 
 
 def _markdown_blocked(exc: Exception) -> bool:

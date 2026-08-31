@@ -150,7 +150,10 @@ async def finalize_run(
                     display_timeline=display_timeline or None,
                 ))
 
-        cap_in, cap_out = await quota.cap_usage(db, user_id, settings, tokens_in, tokens_out)
+        is_byok = bool(getattr(model_cfg, "is_byok", False))
+        cap_in, cap_out = (0, 0) if is_byok else await quota.cap_usage(
+            db, user_id, settings, tokens_in, tokens_out,
+        )
         if cap_in or cap_out:
             db.add(AgentUsage(
                 user_id=user_id,
@@ -161,6 +164,7 @@ async def finalize_run(
                 cache_write=cache_write,
                 model=model_cfg.model,
                 provider=model_cfg.provider,
+                is_byok=is_byok,
                 tools_used=tools_used or None,
             ))
         await db.commit()

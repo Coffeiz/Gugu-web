@@ -35,7 +35,7 @@ help:        ## 显示帮助
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
 	@echo "生产：make install 后 make start | stop | restart | status 管理 Python/FastAPI、IM、sandboxd；TS RAG 由 Python 按需复用固定制品"
 	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
-	@echo "Compose：make compose-up；make compose-up SANDBOX_ACL=1 同时初始化 ACL 并开启 sandbox profile"
+	@echo "Compose：make compose-up（轻量模式）；make compose-up SANDBOX_ACL=1 同时初始化 ACL 并开启 sandbox profile"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
 	@echo "venv 路径：$(VENV_BIN)（自动检测）"
 
@@ -151,7 +151,7 @@ sandbox-acl-prepare: ## 按 SANDBOX_ACL 选择是否在启动前应用 ACL（默
 		echo "ERROR: SANDBOX_ACL 只能是 0 或 1"; exit 1; \
 	fi
 
-compose-up: ## 启动 Compose；SANDBOX_ACL=1 时先初始化 ACL 并启用 sandbox profile
+compose-up: ## 启动 Compose 轻量模式；SANDBOX_ACL=1 时先初始化 ACL 并启用 sandbox profile
 	@$(MAKE) sandbox-acl-prepare
 	@if [ "$(SANDBOX_ACL)" = "1" ]; then \
 		docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \

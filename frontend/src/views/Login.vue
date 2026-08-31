@@ -8,37 +8,37 @@
 
       <form @submit.prevent="handleLogin">
         <div class="field">
-          <label>用户名 / 邮箱</label>
-          <input v-model="form.username" type="text" placeholder="输入用户名或邮箱"
+          <label>{{ t('auth.usernameOrEmail') }}</label>
+          <input v-model="form.username" type="text" :placeholder="t('auth.usernamePlaceholder')"
             autocomplete="username" :disabled="loading" />
         </div>
         <div class="field">
-          <label>密码</label>
+          <label>{{ t('auth.password') }}</label>
           <input v-model="form.password" type="password" placeholder="••••••••"
             autocomplete="current-password" :disabled="loading" />
         </div>
 
         <div class="forgot-row">
-          <router-link to="/forgot-password">忘记密码？</router-link>
+          <router-link to="/forgot-password">{{ t('auth.forgotPassword') }}</router-link>
         </div>
 
         <div v-if="error" class="error-msg">{{ error }}</div>
 
         <button type="submit" class="btn-primary" :disabled="loading">
-          <span>{{ loading ? '登录中…' : '登录' }}</span>
+          <span>{{ loading ? t('auth.loggingIn') : t('auth.login') }}</span>
         </button>
       </form>
 
       <div class="card-footer">
-        没有账号？
-        <router-link to="/register">立即注册</router-link>
+        {{ t('auth.noAccount') }}
+        <router-link to="/register">{{ t('auth.registerNow') }}</router-link>
       </div>
     </div>
 
     <div class="page-footer">
       <span>Create with agents and love</span>
       <span class="footer-sep">·</span>
-      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">苏ICP备2026042185号</a>
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">{{ t('auth.icp') }}</a>
     </div>
   </div>
 </template>
@@ -48,21 +48,23 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/AuthBrand.vue'
+import { useI18n } from 'vue-i18n'
 
 const router   = useRouter()
 const auth     = useAuthStore()
 const form     = reactive({ username: '', password: '' })
 const loading  = ref(false)
 const error    = ref('')
+const { t } = useI18n()
 
 async function handleLogin() {
-  if (!form.username || !form.password) { error.value = '请填写用户名/邮箱和密码'; return }
+  if (!form.username || !form.password) { error.value = t('auth.fillCredentials'); return }
   loading.value = true; error.value = ''
   try {
     await auth.login(form.username, form.password)
     router.push((router.currentRoute.value.query.redirect as string) ?? '/')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '操作失败'
+    error.value = e instanceof Error ? e.message : t('auth.operationFailed')
   } finally {
     loading.value = false
   }

@@ -94,6 +94,28 @@ async def test_finish_run_closes_non_web_scope_run(monkeypatch):
     assert run.status == "success"
     assert run.ended_at is not None
     assert run.output_text == "测试回复"
+    final = next(item for item in run.spans if item.name == "Final response")
+    assert final.output == {"text": "测试回复"}
+    await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_finish_run_restores_final_response_from_last_llm_draft(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-final-draft", trace_id="trace-final-draft", session_key="gugu:web:388",
+        external_session_id="388", source="web", started_at=_now(),
+    )
+    llm = run.span("llm", "LLM round 1")
+    llm.finish({"draft": "最终回复", "tool_calls": []})
+
+    async def no_op_post(_snapshot):
+        return None
+    monkeypatch.setattr(trace_state, "_post_snapshot", no_op_post)
+    trace_state._finish_run(run, "success")
+
+    final = next(item for item in run.spans if item.name == "Final response")
+    assert final.output == {"text": "最终回复"}
     await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
 
 

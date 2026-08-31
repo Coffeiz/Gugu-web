@@ -7,10 +7,10 @@
       <AuthBrand />
 
       <template v-if="!sent">
-        <p class="hint">输入你注册时填写的邮箱，我们会给你发一封重置密码的邮件。</p>
+        <p class="hint">{{ t('auth.forgotHint') }}</p>
         <form @submit.prevent="handleSubmit" novalidate>
           <div class="field">
-            <label>邮箱</label>
+            <label>{{ t('auth.email') }}</label>
             <input v-model="email" type="email" placeholder="your@email.com"
               autocomplete="email" :disabled="loading" />
           </div>
@@ -18,7 +18,7 @@
           <div v-if="error" class="error-msg">{{ error }}</div>
 
           <button type="submit" class="btn-primary" :disabled="loading">
-            {{ loading ? '发送中…' : '发送重置邮件' }}
+            {{ loading ? t('auth.sendingReset') : t('auth.sendReset') }}
           </button>
         </form>
       </template>
@@ -32,13 +32,13 @@
             </svg>
           </div>
           <p class="done-text">{{ message }}</p>
-          <p class="done-sub">链接 30 分钟内有效。没收到的话检查垃圾箱，或稍后重试。</p>
+          <p class="done-sub">{{ t('auth.resetLinkHint') }}</p>
         </div>
       </template>
 
       <div class="card-footer">
-        想起来了？
-        <router-link to="/login">返回登录</router-link>
+        {{ t('auth.remember') }}
+        <router-link to="/login">{{ t('auth.backToLogin') }}</router-link>
       </div>
     </div>
   </div>
@@ -47,6 +47,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import AuthBrand from '@/components/common/AuthBrand.vue'
+import { useI18n } from 'vue-i18n'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const email   = ref('')
@@ -54,10 +55,11 @@ const loading = ref(false)
 const error   = ref('')
 const sent    = ref(false)
 const message = ref('')
+const { t } = useI18n()
 
 async function handleSubmit() {
   if (!email.value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
-    error.value = '请输入有效的邮箱地址'; return
+    error.value = t('auth.validEmail'); return
   }
   loading.value = true; error.value = ''
   try {
@@ -67,11 +69,11 @@ async function handleSubmit() {
       body: JSON.stringify({ email: email.value.trim() }),
     })
     const body = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(body?.detail || '发送失败，请稍后重试')
-    message.value = body.message || '若该邮箱已注册，重置链接已发送，请查收邮箱。'
+    if (!res.ok) throw new Error(body?.detail || t('errors.requestFailed'))
+    message.value = body.message || t('auth.resetSent')
     sent.value = true
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '操作失败'
+    error.value = e instanceof Error ? e.message : t('auth.operationFailed')
   } finally {
     loading.value = false
   }

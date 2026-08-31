@@ -12,13 +12,13 @@
               <span class="fp-name" :title="file.displayName">{{ file.displayName }}</span>
             </div>
             <div class="fp-header-actions">
-              <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" title="文件信息" @click="openInfo">
+              <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" :title="t('files.info')" @click="openInfo">
                 <Icon name="status.info" :size="16" />
               </button>
-              <button class="fp-action-btn" title="下载" @click="handleDownload">
+              <button class="fp-action-btn" :title="t('common.actions.download')" @click="handleDownload">
                 <Icon name="action.download" :size="16" />
               </button>
-              <button class="fp-action-btn fp-close-btn" title="关闭 (Esc)" @click="$emit('close')">
+              <button class="fp-action-btn fp-close-btn" :title="`${t('common.actions.close')} (Esc)`" @click="$emit('close')">
                 <Icon name="action.close" :size="16" />
               </button>
             </div>
@@ -28,7 +28,7 @@
           <div class="fp-body">
             <div v-if="loading" class="fp-status">
               <div class="fp-spinner"></div>
-              <span>{{ converting ? '正在转换文档…' : '加载中…' }}</span>
+              <span>{{ converting ? t('files.converting') : t('files.loading') }}</span>
             </div>
             <div v-else-if="error" class="fp-status fp-error">
               <Icon name="status.warning" :size="32" style="opacity:.5" />
@@ -53,38 +53,38 @@
         @mousedown.stop
       >
         <div class="fp-info-title" @mousedown.prevent="startInfoDrag">
-          <span>文件信息</span>
+          <span>{{ t('files.info') }}</span>
           <button class="fp-action-btn fp-close-btn" @click="showInfo = false">
             <Icon name="action.close" :size="15" />
           </button>
         </div>
         <div class="fp-info-body">
           <div class="fp-info-row">
-            <span class="fp-info-label">文件名</span>
+            <span class="fp-info-label">{{ t('files.name') }}</span>
             <span class="fp-info-val">{{ file.displayName }}.{{ file.ext?.toLowerCase() }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">格式</span>
+            <span class="fp-info-label">{{ t('files.format') }}</span>
             <span class="fp-info-val">{{ file.ext?.toUpperCase() }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">大小</span>
+            <span class="fp-info-label">{{ t('files.size') }}</span>
             <span class="fp-info-val">{{ file.size }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">创建时间</span>
+            <span class="fp-info-label">{{ t('files.createdAt') }}</span>
             <span class="fp-info-val">{{ file.createdAt }}</span>
           </div>
           <div v-if="file.projectName" class="fp-info-row">
-            <span class="fp-info-label">所属项目</span>
+            <span class="fp-info-label">{{ t('files.project') }}</span>
             <span class="fp-info-val">{{ file.projectName }}</span>
           </div>
           <div v-if="file.folderName" class="fp-info-row">
-            <span class="fp-info-label">所在文件夹</span>
+            <span class="fp-info-label">{{ t('files.folderLocation') }}</span>
             <span class="fp-info-val">{{ file.folderName }}</span>
           </div>
           <div v-if="file.stageName" class="fp-info-row">
-            <span class="fp-info-label">阶段</span>
+            <span class="fp-info-label">{{ t('files.stage') }}</span>
             <span class="fp-info-val">{{ file.stageName }}</span>
           </div>
           <div v-if="file.mimeType" class="fp-info-row">
@@ -110,11 +110,13 @@ import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/windowz'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   show: Boolean,
   file: { type: Object as PropType<Partial<FileMeta>>, default: undefined },
 })
+const { t } = useI18n()
 const emit = defineEmits(['close'])
 
 const blobUrl    = ref<string | null>(null)
@@ -190,7 +192,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       blobUrl.value = URL.createObjectURL(blob)
     }
   } catch (e) {
-    error.value = '无法加载文件：' + (e instanceof Error ? e.message : e)
+    error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })
   } finally {
     loading.value    = false
     converting.value = false
@@ -311,7 +313,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(20, 22, 30, 0.32);
+  background: var(--surface-scrim);
   /* 保持独立合成层：opacity 过渡结束后不丢层，避免层析构时的整页重绘 */
   will-change: opacity;
 }
@@ -323,11 +325,10 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   top: 0;
   bottom: 0;
   width: 60vw;
-  background: rgba(242, 243, 248, 0.98);
-  border-left: 1px solid rgba(255, 255, 255, 0.7);
+  background: var(--modal-card-bg);
+  border-left: 1px solid var(--modal-card-border);
   border-radius: 20px 0 0 20px;
-  box-shadow: -8px 0 48px rgba(20, 25, 60, 0.18),
-              inset 1px 0 0 rgba(255, 255, 255, 0.9);
+  box-shadow: var(--modal-card-shadow), inset 1px 0 0 var(--modal-card-highlight);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -340,8 +341,8 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px 13px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  background: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid var(--panel-divider);
+  background: var(--surface-glass);
   flex-shrink: 0;
 }
 .fp-title {
@@ -378,15 +379,15 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   cursor: pointer; transition: background 0.15s, color 0.15s;
 }
 .fp-action-btn svg { display: block; }
-.fp-action-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
-.fp-close-btn:hover { background: rgba(200, 90, 90, 0.1); color: rgba(200, 90, 90, 0.9); }
+.fp-action-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
+.fp-close-btn:hover { background: var(--status-danger-bg); color: var(--status-danger); }
 
 /* ── 内容区 ── */
 .fp-body {
   flex: 1;
   overflow: hidden;
   position: relative;
-  background: rgba(230, 232, 240, 0.5);
+  background: var(--surface-base);
 }
 .fp-iframe {
   width: 100%; height: 100%; border: none; display: block;
@@ -399,11 +400,11 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   align-items: center; justify-content: center;
   gap: 12px; color: var(--text-secondary); font-size: 13px;
 }
-.fp-error { color: rgba(180, 80, 80, 0.8); }
+.fp-error { color: var(--status-danger); }
 .fp-spinner {
   width: 28px; height: 28px; border-radius: 50%;
-  border: 2px solid rgba(123, 127, 178, 0.2);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border: 2px solid var(--action-soft);
+  border-top-color: var(--action-primary);
   animation: fp-spin 0.7s linear infinite;
 }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
@@ -430,7 +431,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-leave-to   .fp-panel { transform: translateX(100%); }
 
 /* ── info 按钮激活态 ── */
-.fp-action-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }
+.fp-action-btn.active { background: var(--action-soft); color: var(--action-primary); }
 
 /* ── 文件信息弹窗 ── */
 .fp-info-win {
@@ -438,11 +439,11 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   width: 220px;
   border-radius: 12px;
   overflow: hidden;
-  background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.7);
-  box-shadow: 0 8px 32px rgba(20,25,60,0.18), 0 2px 8px rgba(0,0,0,0.07);
+  background: var(--popup-surface-bg);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+  border: 1px solid var(--popup-surface-border);
+  box-shadow: var(--popup-surface-shadow);
   user-select: none;
   /* z-index 由 :style 动态(myZ+1,信息窗在面板之上) */
 }
@@ -451,8 +452,8 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   align-items: center;
   justify-content: space-between;
   padding: 9px 10px 9px 14px;
-  background: rgba(255,255,255,0.55);
-  border-bottom: 1px solid rgba(0,0,0,0.07);
+  background: var(--surface-glass);
+  border-bottom: 1px solid var(--panel-divider);
   cursor: grab;
   font-size: 12px;
   font-weight: 600;

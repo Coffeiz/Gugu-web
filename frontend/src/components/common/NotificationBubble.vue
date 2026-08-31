@@ -5,10 +5,10 @@
         v-for="item in visible"
         :key="item.id"
         class="nb-item"
-        :class="{ 'nb-bare': !item.title, 'nb-gugu': item.gugu }"
+        :class="{ 'nb-bare': !item.title }"
         :style="{ transformOrigin: uiStore.chatNotifyOrigin }"
       >
-        <button class="nb-close" @click="dismiss(item.id)" title="关闭">
+        <button class="nb-close" @click="dismiss(item.id)" :title="t('common.actions.close')">
           <Icon name="action.close" :size="13" />
         </button>
         <div v-if="item.title" class="nb-head">
@@ -27,13 +27,15 @@
 import Icon from '@/components/common/Icon.vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import { useI18n } from 'vue-i18n'
 
 interface BubbleItem {
-  id: number; notifId: number | null; title: string; content: string; gugu: boolean
+  id: number; notifId: number | null; title: string; content: string
   tTitle: string; tContent: string; phase: string; typing: boolean
 }
 
 const uiStore = useUiStore()
+const { t } = useI18n()
 const visible = ref<BubbleItem[]>([])
 let _vk = 0                 // 气泡本地 key（与后端 id 解耦）
 
@@ -47,23 +49,16 @@ const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
 const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
 const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
 
-// 新手引导气泡（item.gugu）打完字后自动消失，其余通知气泡仍手动关（见下方大注释——那次撤回
-// 自动消失是针对「普通通知」总被没看完就顶掉的问题；引导气泡文案短、节奏快，走完一套引导流程
-// 后旧提示继续占屏反而挡地方，单独给它恢复自动消失，不影响普通通知）。
-const GUGU_AUTO_DISMISS_MS = 5000
-const _dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()   // item.id → 自动关闭计时器
-
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
-// 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
+// 气泡关闭只动本组件 visible，同时将对应通知标记为已读，避免重新登录时再次补弹。
 // 普通通知不自动消失，只能靠用户点 ✕ 关（是否显示过只弹一次由 uiStore._markBubbleSeen 独立
-// 保证，与关闭方式无关）——新气泡到来时旧气泡照常堆叠在上方，都留着等用户处理。引导气泡
-// （item.gugu，见 useOnboarding.ts）例外：打完字后 GUGU_AUTO_DISMISS_MS 自动关，见 stop()。
+// 保证，与关闭方式无关）——新气泡到来时旧气泡照常堆叠在上方，都留着等用户处理。
 watch(() => uiStore.liveNotification, (n) => {
   if (!n) return
   // 新气泡插到队首（视觉上在底部、贴近球），把旧的顶上去；reactive 让打字机改属性能驱动视图
   const item = reactive({
-    id: ++_vk, notifId: n.id ?? null, title: n.title || '', content: n.content || '', gugu: !!n.gugu,
+    id: ++_vk, notifId: n.id ?? null, title: n.title || '', content: n.content || '',
     tTitle: '', tContent: '', phase: 'title', typing: true,
   })
   visible.value = [item, ...visible.value]
@@ -84,13 +79,11 @@ function startTyping(item: BubbleItem) {
   item.phase = fullTitle ? 'title' : 'body'
   let ti = 0
   const run = (ms: number, tick: () => void) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
-  // 打完字后停在原地，不自动消失，只能点 ✕ 关（见上方 watch 的说明）——除了引导气泡（item.gugu），
-  // 那类单独定时自动关（见 GUGU_AUTO_DISMISS_MS）。
+  // 打完字后停在原地，只能点 ✕ 关闭。
   const stop = () => {
     if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
     item.typing = false
     if (_typingId === item.id) _typingId = null
-    if (item.gugu) _dismissTimers.set(item.id, setTimeout(() => dismiss(item.id), GUGU_AUTO_DISMISS_MS))
   }
 
   let typeBody: () => void
@@ -140,9 +133,6 @@ function startTyping(item: BubbleItem) {
 function dismiss(id: number) {
   // 关掉的正是当前在打字的那条 → 停表，别让计时器空转
   if (_typingId === id && _typeTimer) { clearInterval(_typeTimer); _typeTimer = null; _typingId = null }
-  // 手动关闭 / 自动消失计时器触发都走这里 → 清掉待触发的自动关闭计时器，避免手动关完再被计时器空调一次
-  const t = _dismissTimers.get(id)
-  if (t) { clearTimeout(t); _dismissTimers.delete(id) }
   const item = visible.value.find(n => n.id === id)
   if (item?.notifId != null) uiStore.markRead(item.notifId)
   visible.value = visible.value.filter(n => n.id !== id)
@@ -166,18 +156,21 @@ function dismiss(id: number) {
 
 /* 气泡风与 GuguChat 小窗/播放器一致：玻璃面板 + blur(28) + 20 圆角 */
 .nb-item {
+  --nb-border: rgba(255,255,255,0.65);
+  --nb-highlight-top: rgba(255,255,255,0.9);
+  --nb-highlight-side: rgba(255,255,255,0.5);
   display: flex;
   flex-direction: column;
   gap: 4px;
   box-sizing: border-box;
   width: 360px;          /* 固定宽度，与 GuguChat 小窗/播放器同宽、右对齐成一列 */
   padding: 13px 15px 15px;   /* 左右对称，内容区占满整宽 */
-  background: var(--panel-bg);
+  background: var(--popup-surface-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid rgba(255,255,255,0.65);
+  border: 1px solid var(--nb-border);
   border-radius: 20px;
-  box-shadow: var(--glass-shadow-lg);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   pointer-events: auto;
   position: relative;
   overflow: hidden;
@@ -187,16 +180,15 @@ function dismiss(id: number) {
   content: '';
   position: absolute; inset: 0;
   border-radius: 20px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), inset 1px 0 0 rgba(255,255,255,0.5);
+  box-shadow: inset 0 1px 0 var(--nb-highlight-top), inset 1px 0 0 var(--nb-highlight-side);
   pointer-events: none;
 }
 
 /* 暗色只重映射边缘 token，避免沿用亮色主题的纯白高光；亮色基线保持不变。 */
-:global(html[data-theme='dark'][data-family]) .nb-item {
-  border-color: var(--border-default);
-}
-:global(html[data-theme='dark'][data-family]) .nb-item::after {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), inset 1px 0 0 var(--highlight-muted);
+:global(html[data-theme='dark'][data-family] .nb-item) {
+  --nb-border: var(--border-default);
+  --nb-highlight-top: var(--highlight-soft);
+  --nb-highlight-side: var(--highlight-muted);
 }
 
 /* 标题行：圆点 + 标题，预留右上角关闭按钮的位置 */

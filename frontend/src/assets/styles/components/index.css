@@ -1,0 +1,10 @@
+/* 主题组件覆盖唯一入口。
+ * theme-refinements.css 属于语义变量映射，由 variables.css 在本入口前加载；这里仅编排
+ * 组件最终 paint contract 和迁移期 adoption 规则，保持既有顺序以避免视觉行为变化。 */
+@import '../theme-adoption.css';
+@import '../component-theme-refinements.css';
+@import './calendar.css';
+@import './files.css';
+@import './popups.css';
+@import './forms.css';
+@import '../file-toolbar-theme-refinements.css';

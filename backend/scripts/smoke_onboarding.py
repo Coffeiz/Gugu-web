@@ -1,4 +1,4 @@
-"""新手引导冒烟测试：建临时用户 → 播种 → 幂等 → claim-once → seeded 闸 → 清理。
+"""新用户播种冒烟测试：建临时用户 → 播种 → 幂等 → 清理。
 
 跑：在 backend/ 下 `.venv/bin/python scripts/smoke_onboarding.py`
 不污染数据：用临时用户，结束删除（级联清掉项目/文件/事件/状态）。
@@ -56,21 +56,21 @@ async def main():
     s._build_engine()
     async with s._SessionLocal() as db:
         u = await _mk_user(db, "new")     # 走引导的新用户
-        u2 = await _mk_user(db, "old")    # 老用户（不播种）
         await db.commit()
-        uid, uid2 = u.id, u2.id
+        uid = u.id
         try:
             print("== 内容池 ==")
-            check("项目名无 emoji", not any(has_emoji(n) for n in content.PROJECT_NAMES))
-            check("阶段 3 段且带 emoji", len(content.STAGE_LABEL_POOLS) == 3
-                  and has_emoji(content.STAGE_LABEL_POOLS[0][0]))
-            check("附属文件 2 选 1", len(content.SCRATCH_FILE_BODIES) == 2)
+            for locale in ("zh-CN", "ja-JP", "en-US"):
+                data = content.seed_content(locale)
+                check(f"{locale} 播种内容完整", len(data["project_names"]) == 3
+                      and len(data["stage_labels"]) == 3 and len(data["stage_todos"]) == 3
+                      and len(data["welcome_files"]) == 2)
 
             print("== 播种 ==")
             await seed.seed_for_user(db, u)
             st = await state.get_state(db, uid)
-            pid = st["seeded_project_id"]
-            check("seeded=True", st["seeded"] is True)
+            pid = st["seed"]["project_id"]
+            check("seeded=True", st["seed"]["seeded"] is True)
             check("有 seeded_project_id", bool(pid))
             p = await db.get(Project, pid)
             check("项目存在且名在池里", p is not None and p.name in content.PROJECT_NAMES)
@@ -79,27 +79,14 @@ async def main():
             check("引导项目 2 个文件", await _count(db, File, project_id=pid) == 2)
             check("个人空间根目录 mp3(assets 有曲目时)",
                   await _count(db, File, user_id=uid, space="personal", ext="mp3") >= 1)
-            check("日历活动「和咕咕的第一天」", await _count(db, CalendarEvent, project_id=pid) >= 1)
+            check("日历活动已播种", await _count(db, CalendarEvent, project_id=pid) >= 1)
 
             print("== 幂等 ==")
             await seed.seed_for_user(db, u)
             check("再播种不重建(仍 1 个项目)", await _count(db, Project, user_id=uid) == 1)
 
-            print("== claim-once ==")
-            check("welcome 首次有文案", bool(await state.claim(db, uid, "welcome")))
-            check("welcome 再 claim → None", await state.claim(db, uid, "welcome") is None)
-            check("hint 首次有文案", bool(await state.claim(db, uid, "hint:file_lib")))
-            check("hint 再 claim → None", await state.claim(db, uid, "hint:file_lib") is None)
-            pk = await state.peek(db, uid, "guide")
-            check("peek 不标记(之后 claim 仍有)", bool(pk) and bool(await state.claim(db, uid, "guide")))
-            lb = await state.claim(db, uid, "lookback")
-            check("lookback 回填项目名", bool(lb) and st["seeded_project_name"] in lb)
-
-            print("== seeded 闸（老用户不受影响）==")
-            check("未 seeded → claim welcome None", await state.claim(db, uid2, "welcome") is None)
-            check("未 seeded → claim hint None", await state.claim(db, uid2, "hint:calendar") is None)
         finally:
-            for x in (uid, uid2):
+            for x in (uid,):
                 await db.execute(delete(OnboardingState).where(OnboardingState.user_id == x))
                 await db.execute(delete(File).where(File.user_id == x))
                 await db.execute(delete(CalendarEvent).where(CalendarEvent.user_id == x))

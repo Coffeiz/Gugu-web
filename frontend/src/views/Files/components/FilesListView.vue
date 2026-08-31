@@ -64,17 +64,20 @@ import FileUploadButton from '@/components/common/file-browser/FileUploadButton.
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
 import RuntimeFolderListRow from '@/views/Files/components/RuntimeFolderListRow.vue'
 import RuntimeFileListRow from '@/views/Files/components/RuntimeFileListRow.vue'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
+const { t } = useI18n()
 
-const headers = [
-  { key: 'name', label: '名称' },
-  { key: 'type', label: '类型' },
-  { key: 'stage', label: '项目 / 阶段' },
-  { key: 'size', label: '大小' },
-  { key: 'createdAt', label: '日期' },
+const headers = computed(() => [
+  { key: 'name', label: t('filesViewUi.name') },
+  { key: 'type', label: t('filesViewUi.type') },
+  { key: 'stage', label: t('filesViewUi.projectStage') },
+  { key: 'size', label: t('filesViewUi.size') },
+  { key: 'createdAt', label: t('filesViewUi.date') },
   { key: '', label: '' },
-]
+])
 
 const {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx,

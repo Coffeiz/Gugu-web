@@ -10,8 +10,6 @@ RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 # 依赖单独一层：workspace 元数据和 manifest 没变时改代码不用重装。
 COPY Gugu-web/package.json Gugu-web/pnpm-lock.yaml Gugu-web/pnpm-workspace.yaml Gugu-web/.npmrc ./
 COPY Gugu-web/frontend/package.json ./frontend/package.json
-COPY Gugu-web/frontend/scripts/ ./frontend/scripts/
-COPY gugu-interaction-runtime/ ./gugu-interaction-runtime/
 RUN pnpm install --filter gugu-web --frozen-lockfile
 
 COPY Gugu-web/frontend/ ./frontend/

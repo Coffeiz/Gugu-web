@@ -3,13 +3,9 @@
 @import './theme-refinements.css';
 @import './scrollbars.css';
 @import './design-overrides.css';
-@import './theme-adoption.css';
+@import './components/index.css';
 @import './design-theme-fixes.css';
-@import './calendar-theme-bridge.css';
-@import './overlay-theme-bridge.css';
-@import './component-theme-refinements.css';
-@import './file-toolbar-theme-refinements.css';
-@import './file-drop-theme-refinements.css';
+@import './bridges/index.css';
 @import './adoption/index.css';
 
 :root {

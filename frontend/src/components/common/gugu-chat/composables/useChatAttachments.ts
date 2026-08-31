@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { agentApi } from '@/services/api'
 import type { ChatFile } from '../chatTypes'
 import { IMG_EXTS } from '../messageDisplay'
+import { i18n } from '@/i18n'
 
 /**
  * 附件（选择/拖拽/粘贴/暂存上传）+ 语音录制的唯一状态所有权。
@@ -29,7 +30,7 @@ export function useChatAttachments(options: {
           if (IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
           pendingAtt.value.push(meta)
         } catch (err: any) {
-          options.onError('附件上传失败 😵 ' + (err && err.message || ''))
+          options.onError(i18n.global.t('chatUi.attachmentUploadFailed') + (err && err.message ? ` ${err.message}` : ''))
         }
       }
     } finally { attUploading.value = false }
@@ -96,9 +97,9 @@ export function useChatAttachments(options: {
     if (recording.value) return
     // getUserMedia 只在安全环境（HTTPS / localhost）可用——http 访问时 navigator.mediaDevices 直接是 undefined、连权限都不弹
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      options.onError('录音需要 HTTPS 或 localhost 安全环境 🎤 当前是 http 访问（如局域网 IP），浏览器不给开麦克风。线上 https 域名可以用～'); return
+      options.onError(i18n.global.t('chatUi.recordingSecureContext')); return
     }
-    if (!window.MediaRecorder) { options.onError('这个浏览器不支持录音 🎤'); return }
+    if (!window.MediaRecorder) { options.onError(i18n.global.t('chatUi.recordingUnsupported')); return }
     try {
       _recStream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mime = _pickRecMime()
@@ -112,7 +113,7 @@ export function useChatAttachments(options: {
       _recTimer = setInterval(() => { recordSecs.value++; if (recordSecs.value >= 60) stopRecord() }, 1000)
     } catch (e: any) {
       _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
-      options.onError('没法录音 🎤 ' + (e?.name === 'NotAllowedError' ? '麦克风权限被拒了，去浏览器设置允许一下' : (e?.message || '')))
+      options.onError(i18n.global.t(e?.name === 'NotAllowedError' ? 'chatUi.microphoneDenied' : 'chatUi.recordingFailed') + (e?.name === 'NotAllowedError' || !e?.message ? '' : ` ${e.message}`))
     }
   }
   function stopRecord()   { if (recording.value && _recorder) { _recCancelled = false; _recorder.stop() } }   // 结束并发送

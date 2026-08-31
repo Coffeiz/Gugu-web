@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 type ProjectFileActions = ReturnType<typeof useFileActions>
 type FilesCache = ReturnType<typeof useFilesCacheStore>
@@ -42,6 +43,7 @@ export function useProjectFileMutations(options: ProjectFileMutationsOptions) {
   }
 
   async function deleteFile(file: FileMeta) {
+    if (!await confirmFileDeletion('file', { name: file.displayName })) return
     await fileActions.deleteFile(file.id)
     fileCacheStore.removeFile(file.id)
   }
@@ -72,6 +74,7 @@ export function useProjectFileMutations(options: ProjectFileMutationsOptions) {
   }
 
   async function deleteFolder(folder: FolderMeta) {
+    if (!await confirmFileDeletion('folder', { name: folder.name })) return
     pruneFolderHistory([folder.id])
     await fileActions.deleteFolder(folder.id)
     fileCacheStore.removeFolder(folder.id)

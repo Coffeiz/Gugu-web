@@ -46,7 +46,7 @@ class IMSkill(BaseSkill):
     tools = [
         Tool(
             name="react", label="表情回应",
-            description_short='给飞书消息添加一次表情回应；关键字段 mood',
+            description_short='给飞书消息添加一次表情回应。',
             description="仅飞书 IM 可用；给用户消息添加一次合适的表情回应。",
             input_schema={
                 "type": "object",

@@ -1,6 +1,7 @@
 :root {
   /* Surfaces */
   --surface-page: var(--theme-page);
+  --surface-auth-page: var(--theme-auth-page, var(--theme-page));
   --surface-canvas: var(--theme-page);
   /* 所有侧栏统一在主题底色上增加轻微高光，保持不同页面的侧栏亮度一致。 */
   --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 90%, #fff 10%);
@@ -139,4 +140,10 @@
   --layer-modal: 200;
   --layer-drag: 300;
   --layer-chat: 400;
+}
+
+/* 暗色导航只保留很轻的提亮，避免 10% 白色混入把侧栏抬成灰亮面板；同时继续
+   让主题底色影响导航，保持它与页面背景的层次关系。 */
+:root[data-theme='dark'] {
+  --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 96%, #fff 4%);
 }

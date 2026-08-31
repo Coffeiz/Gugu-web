@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "file": "backend/tests/test_shell_sandbox.py",
+      "owner": "backend/terminal-runtime",
+      "reason": "平台不支持软链接或硬链接时动态跳过",
+      "replacement": "平台支持时执行完整沙箱边界；保留同领域路径测试",
+      "expiresOn": "2026-09-30"
+    },
+    {
+      "file": "frontend/e2e/file-drag-runtime.spec.ts",
+      "owner": "frontend/e2e",
+      "reason": "测试账号没有可拖拽文件卡",
+      "replacement": "接入独立文件 fixture 后恢复稳定 E2E",
+      "expiresOn": "2026-09-30"
+    },
+    {
+      "file": "frontend/e2e/filesystem-phases.spec.ts",
+      "owner": "frontend/e2e",
+      "reason": "测试账号目录、文件或回收站数据不足",
+      "replacement": "使用独立测试账号或 mock 数据",
+      "expiresOn": "2026-09-30"
+    }
+  ]
+}

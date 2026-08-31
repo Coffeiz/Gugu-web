@@ -7,13 +7,13 @@
         <!-- 悬浮操作按钮：文件多选模式下让位给 .pm-selection-bar（同在右下角，多选栏内容多时会重叠，
              且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
         <div v-if="!pmInSelectionMode" class="float-actions">
-          <button class="save-float-btn" @click="closeProjectModal" title="保存并关闭">
+          <button class="save-float-btn" @click="closeProjectModal" :title="`${t('common.actions.save')}并${t('common.actions.close')}`">
             <Icon name="status.success" :size="14" />
           </button>
-          <button class="archive-float-btn" @click="handleArchive" title="归档此项目（可逆，随时可在「已归档」里恢复）">
+          <button class="archive-float-btn" @click="handleArchive" :title="t('projects.archived')">
             <Icon name="action.archive" :size="14" />
           </button>
-          <button class="del-float-btn" @click="handleDelete" title="删除此项目">
+          <button class="del-float-btn" @click="handleDelete" :title="t('common.actions.delete')">
             <Icon name="action.delete" :size="14" />
           </button>
         </div>
@@ -29,7 +29,7 @@
               <input
                 v-model="localName"
                 class="header-name-input"
-                placeholder="项目名称"
+                :placeholder="t('projects.projectName')"
                 @blur="saveName"
                 v-enter="(e) => (e.target as HTMLElement).blur()"
                 @keydown.esc="cancelName"
@@ -97,6 +97,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, toRef, onUnmounted, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import {
@@ -112,7 +113,6 @@ import { projectsApi } from '@/services/api'
 import { thumbLoadedIds } from '@/composables/useThumbCache'
 import { isImageExt as isPmImageExt, fileIconColor } from '@/utils/fileTypes'
 import { useSorting } from '@/composables/useSorting'
-import { fireHint } from '@/composables/useOnboarding'
 import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
 import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
@@ -144,8 +144,10 @@ import { useProjectFileSorting } from '@/composables/files/useProjectFileSorting
 import { useProjectFileRename } from '@/composables/files/useProjectFileRename'
 import { useProjectFileProjectSync } from '@/composables/files/useProjectFileProjectSync'
 import { useProjectModalLayout } from '@/composables/projects/useProjectModalLayout'
+import { projectStatusLabelKey } from '@/utils/projectStages'
 
 const props = defineProps({ project: { type: Object as PropType<Project | null>, default: null } })
+const { t } = useI18n()
 const emit = defineEmits(['close'])
 const sortMenuRef = ref<{ closeMenu: () => void } | null>(null)
 function closeProjectModal() {
@@ -500,7 +502,6 @@ const colorPresets = [...PROJECT_COLOR_PRESETS]
 function setStage(key: string, idx: number) {
   const transition = projectStages.transitionStage(key)
   if (!transition) return
-  if (transition.oldIndex !== transition.newIndex) fireHint('stage_switch')
   if (props.project) projectStore.setStage(props.project.id, key, transition.progress)
 }
 

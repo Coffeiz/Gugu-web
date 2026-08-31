@@ -10,14 +10,14 @@
     <template #header><div class="cd-head">
       <Transition name="cd-expanded">
         <div v-if="headerVisible" class="cd-expanded-nav">
-          <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
-          <button class="cd-toggle cd-return" title="收起" :disabled="drawerAnimating" @click="togglePanel(panel)"><Icon name="action.next" :size="18" /></button>
+          <span class="cd-title">{{ panel === 'canvases' ? t('mindUi.canvas') : t('mindUi.projects') }}</span>
+          <button class="cd-toggle cd-return" :title="t('mindUi.collapse')" :disabled="drawerAnimating" @click="togglePanel(panel)"><Icon name="action.next" :size="18" /></button>
         </div>
       </Transition>
       <Transition name="cd-compact">
         <div v-if="!expanded" class="cd-compact-nav">
-        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
-        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
+        <button class="cd-toggle" :title="t('mindUi.canvasList')" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
+        <button class="cd-toggle" :title="t('mindUi.projectMaterials')" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
         </div>
       </Transition>
     </div></template>
@@ -32,7 +32,7 @@
     >
         <section class="cd-content-panel canvas-panel" :class="contentPanelClass('canvases')" :aria-hidden="visiblePanel !== 'canvases'">
           <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
-            <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" />
+            <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @delete-many="onDeleteMany" />
           </DrawerTrack>
         </section>
     </DrawerViewport>
@@ -45,7 +45,7 @@
     >
        <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
-           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" :no-focus-ring="true" @pointerdown.stop />
+           <SearchInput v-model="projectQuery" class="project-search" :placeholder="t('mindUi.filterProjects')" :no-focus-ring="true" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
@@ -77,7 +77,7 @@
                   </div>
                 </section>
               </div>
-              <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
+              <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">{{ t('mindUi.noMatchingProjects') }}</div>
            </template>
             </DrawerTrack>
          </div>
@@ -88,6 +88,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -120,10 +121,12 @@ const props = defineProps({
     required: true,
   },
 })
+const { t } = useI18n()
 const emit = defineEmits<{
   (e: 'create'): void
   (e: 'open', id: number): void
   (e: 'delete', id: number): void
+  (e: 'deleteMany', ids: number[]): void
   (e: 'addProject', id: number): void
 }>()
 
@@ -145,9 +148,9 @@ const filteredProjects = computed(() => {
   return query ? available.filter(project => `${project.name} ${project.client || ''}`.toLowerCase().includes(query)) : available
 })
 const projectGroups = computed(() => [
-  { status: 'active', label: '进行中', items: filteredProjects.value.filter(project => project.status === 'active') },
-  { status: 'pending', label: '待开始', items: filteredProjects.value.filter(project => project.status === 'pending') },
-  { status: 'done', label: '已完成', items: filteredProjects.value.filter(project => project.status === 'done') },
+  { status: 'active', label: t('mindUi.stages.active'), items: filteredProjects.value.filter(project => project.status === 'active') },
+  { status: 'pending', label: t('mindUi.stages.pending'), items: filteredProjects.value.filter(project => project.status === 'pending') },
+  { status: 'done', label: t('mindUi.stages.done'), items: filteredProjects.value.filter(project => project.status === 'done') },
 ])
 // 三个状态分组标题常驻显示，不因为某个状态一时没有项目就整块消失/出现——这块 UI 结构本身
 // 稳定下来后，也顺带绕开了"分组从无到有/从有到无"这种结构性增删的过渡时机问题（比如卡片
@@ -287,6 +290,9 @@ function onOpen(id: number) {
 function onDelete(canvas: MindCanvas) {
   emit('delete', canvas.id)
 }
+function onDeleteMany(ids: number[]) {
+  emit('deleteMany', ids)
+}
 
 onMounted(() => {
   syncDrawerSurfaceElements()
@@ -334,19 +340,6 @@ onMounted(() => {
 .canvas-list { width: 190px; }
 .project-list { display: flex; flex-direction: column; width: 284px; height: 100%; min-height: 0; gap: 0; }
 .project-list-scroll { flex: 1 1 auto; max-height: none; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: auto; }
-
-.canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
-.canvas-create-card:hover { background: rgba(123,127,178,.07); border-color: rgba(123,127,178,.4); color: var(--color-primary); }
-.ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-item:hover { background: rgba(255,255,255,.55); }
-.canvas-item.active { background: rgba(255,255,255,.86); color: var(--color-primary); font-weight: 700; box-shadow: 0 1px 3px rgba(60,70,100,.08); }
-.rename-sizer { flex: 1; min-width: 0; }
-.ci-actions { display: flex; flex-shrink: 0; gap: 2px; opacity: 0; transition: opacity .15s; }
-.canvas-item:hover .ci-actions, .canvas-item:has(.rename-input-inline) .ci-actions { opacity: 1; }
-.ci-btn { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
-.ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
-.ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
 
 .project-search {
   flex: 0 0 38px;

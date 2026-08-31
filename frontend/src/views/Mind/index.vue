@@ -7,11 +7,11 @@
       <SegmentedControl class="mind-tabs" :active-index="isCanvas ? 1 : 0" style="--pill-radius: 999px">
         <RouterLink to="/mind/notes" class="mind-tab" :class="{ on: isNotes }">
           <PhNotePencil :size="16" weight="bold" />
-          笔记
+          {{ t('mind.notes') }}
         </RouterLink>
         <RouterLink to="/mind/canvases" class="mind-tab" :class="{ on: isCanvas }">
           <PhGraph :size="16" weight="bold" />
-          画布
+          {{ t('mind.canvases') }}
         </RouterLink>
       </SegmentedControl>
       <div class="mind-bar-side right">
@@ -23,12 +23,12 @@
             :max="todayIso"
             :allowed-dates="store.timeline.map(g => g.date)"
             :show-clear="false"
-            title="选择日期跳转"
+            :title="t('mind.chooseDate')"
           />
           <div class="mind-filter">
             <PhMagnifyingGlass :size="13" weight="bold" class="mf-icon" />
-            <input v-model="store.filterQ" type="text" placeholder="筛选笔记…" />
-            <button v-if="store.filterQ" class="mf-clear" title="清除" @click="store.filterQ = ''">
+            <input v-model="store.filterQ" type="text" :placeholder="t('mind.filter')" />
+            <button v-if="store.filterQ" class="mf-clear" :title="t('mind.clear')" @click="store.filterQ = ''">
               <PhX :size="11" weight="bold" />
             </button>
           </div>
@@ -50,12 +50,14 @@ import { useMindStore } from '@/stores/mind'
 import { localDayKey } from '@/utils/dateAttribution'
 import DatePicker from '@/components/common/DatePicker.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const store = useMindStore()
 const isNotes = computed(() => route.path.startsWith('/mind/notes'))
 const isCanvas = computed(() => route.path.startsWith('/mind/canvases'))
 const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不是 UTC）
+const { t } = useI18n()
 
 // /mind 是侧栏唯一入口；把当前子视图记下来，下一次从侧栏回来时由路由重定向恢复它。
 watch(() => route.path, (path) => {

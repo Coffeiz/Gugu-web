@@ -10,7 +10,7 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| Phase 0：语义盘点与契约基线 | ✅ 已完成 | 已固化高风险工具清单、错误分类和 A/B 评测口径，见 `docs/reports/OPT-LLM-16-工具SCHEMA基线.md` |
+| Phase 0：语义盘点与契约基线 | ✅ 已完成 | 已固化高风险工具清单、错误分类和 A/B 评测口径，见 `docs/reports/2026-08-29-OPT-LLM-16-TOOL-SCHEMA-BASELINE.md` |
 | Phase 1：Schema 语义规范 | ✅ 已完成 | 已增加来源互斥、条件必填、action 分支和 validator 回归测试 |
 | Phase 2：工具契约改造 | ✅ 已完成 | 已落地日历全天、附件来源、文件来源/目标和提醒定位约束，并保留旧调用兼容 |
 | Phase 3：注入器与错误恢复 | ✅ 已完成 | 保持轻量注入，按需获取当前完整 Schema |
@@ -309,7 +309,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 | 缓存读取 | `853,120` | `1,509,248` |
 | 缓存率 | `98.34%` | `99.38%` |
 
-两组测试不是同一轮请求的逐请求对照，数字用于说明成本与准确率取舍，不作为所有模型和业务场景的绝对排名。当前默认简介模式，全量模式作为准确性优先和排障开关。完整测试口径、失败 case 和原始报告见 [工具 Schema 优化实施报告](../reports/OPT-LLM-16-工具SCHEMA基线.md)。
+两组测试不是同一轮请求的逐请求对照，数字用于说明成本与准确率取舍，不作为所有模型和业务场景的绝对排名。当前默认简介模式，全量模式作为准确性优先和排障开关。完整测试口径、失败 case 和原始报告见 [工具 Schema 优化实施报告](../reports/2026-08-29-OPT-LLM-16-TOOL-SCHEMA-BASELINE.md)。
 
 ### 5.4 灰度与回滚
 
@@ -409,7 +409,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 - [x] 逐项审查可选字段：保留项仅属于独立业务状态、会改变工具行为、不能安全默认或低风险分页/筛选便利参数；兼容别名和重复默认说明已移出 Schema，确认门与跨项目定位保留为必要语义。
 - [x] 将日期、时间和其他格式约束写入 `pattern` 或结构条件，必要时配极短说明；日期使用 `YYYY-MM-DD` pattern，时间使用严格 24 小时制 pattern，全天使用显式 `all_day`，文件/空间/动作使用条件 Schema。
 - [x] 增加一致性测试，验证每个注册工具的源码 `input_schema` 与规范化结果完全一致，且 `to_openai()`/`to_anthropic()` 不再改变 Schema 内容；当前 101 个工具 `noncanonical=0`。
-- [x] 为迁移后的工具补齐合法正例、缺字段反例、互斥字段反例、嵌套数组/对象反例和历史兼容测试；覆盖 `test_tool_schema_phase1.py`、`test_tool_schema_validation.py` 及 legacy input 兼容断言。
+- [x] 为迁移后的工具补齐合法正例、缺字段反例、互斥字段反例、嵌套数组/对象反例和历史兼容测试；覆盖 `test_tool_schema_security_contract.py`、`test_tool_schema_validation.py` 及 legacy input 兼容断言。
 - [x] 使用 devserver 对全部工具执行 Schema 注册、能力注入、按需获取和 dispatch 回归；确认工具数量、Schema digest 和错误 trace 无异常变化。
 - [x] 将 `_compact_schema` 降级为迁移期 lint；provider 输出直接复制源码 Schema，不再依赖运行时 Schema 转换，禁止新增工具依赖运行时 Schema 转换。
 - [x] 更新工具编写 README、报告和变更记录，记录迁移前后 Schema 字符数、token、准确率和未迁移工具清单。

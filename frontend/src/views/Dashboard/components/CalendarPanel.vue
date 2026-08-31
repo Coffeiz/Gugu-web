@@ -4,7 +4,7 @@
     <div class="cal-header">
       <button class="cal-nav" @click="prevMonth">‹</button>
       <div class="cal-month-btn" @click="togglePicker" ref="pickerAnchorRef">
-        <span>{{ year }}年 {{ month + 1 }}月</span>
+        <span>{{ t('dashboardCalendarUi.month', { year, month: month + 1 }) }}</span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }">
           <path d="M2 3.5l3 3 3-3"/>
@@ -28,7 +28,7 @@
         @click="selectDay(d)"
       >
         <span class="day-num">{{ d.date }}</span>
-        <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? '休' : '班' }}</span>
+        <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? t('dashboardCalendarUi.holiday') : t('dashboardCalendarUi.workday') }}</span>
         <span v-if="!d.other && (d.hasEvent || d.isDeadline)" class="day-dots">
           <i v-if="d.hasEvent" class="dot-ev" :class="{ 'on-today': d.isToday }"></i>
           <i v-if="d.isDeadline" class="dot-dl" :class="{ 'on-today': d.isToday }"></i>
@@ -38,13 +38,13 @@
 
     <!-- 近期节点 -->
     <div class="upcoming">
-      <div class="upcoming-title">近期节点</div>
-      <div v-if="visibleEvents.length === 0" class="upcoming-empty">未来 15 天暂无节点</div>
+      <div class="upcoming-title">{{ t('dashboardCalendarUi.upcoming') }}</div>
+      <div v-if="visibleEvents.length === 0" class="upcoming-empty">{{ t('dashboardCalendarUi.empty') }}</div>
       <div class="event-row cap-row" :class="{ 'ev-proj-row': e.isProject, 'ev-act-row': !e.isProject }" v-for="e in visibleEvents" :key="e.id">
         <div class="cap-capsule"
              :style="{ '--cap-bg': capBg(e.color, e.progress ?? 0), borderColor: hexAlpha(e.color, 0.3), cursor: 'pointer' }"
              @click="e.isProject ? openProject(e) : openEditForm(e, $event)">
-          <span class="cap-tag" :class="e.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="e.isProject ? { color: darkenHex(e.color) } : {}">{{ e.isProject ? '项目' : '活动' }}</span>
+          <span class="cap-tag" :class="e.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="e.isProject ? { color: darkenHex(e.color) } : {}">{{ e.isProject ? t('dashboardCalendarUi.project') : t('dashboardCalendarUi.event') }}</span>
           <span v-if="e.isProject" class="cap-sdot" :class="'cap-s-' + e.status"></span>
           <span class="cap-name" :style="{ color: darkenHex(e.color) }">{{ e.name }}</span>
           <span class="cap-days" :class="{ urgent: e.daysLeft <= 3 }">{{ e.daysLabel }}</span>
@@ -57,14 +57,14 @@
   <Teleport to="body">
     <Transition name="dash-form-pop">
       <div v-if="showEditForm && editingEvent" class="dash-edit-popup" ref="editFormRef" :style="editFormStyle">
-        <div class="dash-popup-title">编辑活动</div>
-        <input v-model="editingEvent.name" class="dash-popup-input" placeholder="活动名称"
+        <div class="dash-popup-title">{{ t('dashboardCalendarUi.edit') }}</div>
+        <input v-model="editingEvent.name" class="dash-popup-input" :placeholder="t('dashboardCalendarUi.name')"
           v-enter="saveEditForm" @keydown.esc="showEditForm = false" autofocus />
-        <DatePicker v-model="editingEvent.date" placeholder="选择日期" />
-        <textarea v-model="editingEvent.description" class="dash-popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
+        <DatePicker v-model="editingEvent.date" :placeholder="t('dashboardCalendarUi.date')" />
+        <textarea v-model="editingEvent.description" class="dash-popup-textarea" :placeholder="t('dashboardCalendarUi.description')" rows="2"></textarea>
         <div class="dash-popup-actions">
-          <button class="dash-popup-cancel" @click="showEditForm = false">取消</button>
-          <button class="dash-popup-save" @click="saveEditForm" :disabled="!editingEvent.name">保存</button>
+          <button class="dash-popup-cancel" @click="showEditForm = false">{{ t('dashboardCalendarUi.cancel') }}</button>
+          <button class="dash-popup-save" @click="saveEditForm" :disabled="!editingEvent.name">{{ t('dashboardCalendarUi.save') }}</button>
         </div>
       </div>
     </Transition>
@@ -90,7 +90,7 @@
             class="picker-month"
             :class="{ active: m - 1 === month && pickerYear === year }"
             @click.stop="selectYearMonth(pickerYear, m - 1)"
-          >{{ m }}月</button>
+          >{{ t('calendarUi.monthShort', { month: m }) }}</button>
         </div>
       </div>
     </Transition>
@@ -99,6 +99,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { eventsApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
@@ -111,6 +112,7 @@ import { projectProgress } from '@/utils/projectProgress'
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const today    = new Date()
 const year     = ref(today.getFullYear())

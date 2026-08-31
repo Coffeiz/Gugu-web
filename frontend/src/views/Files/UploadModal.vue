@@ -2,7 +2,7 @@
   <BaseModal :show="show" width="520px" background="var(--file-dialog-modal-bg)" @close="handleClose">
       <div class="modal">
         <div class="modal-header">
-          <h2>上传文件</h2>
+          <h2>{{ t('filesUi.uploadTitle') }}</h2>
           <CloseButton @click="handleClose" />
         </div>
 
@@ -25,10 +25,10 @@
                 <path d="M6 28h24"/>
               </svg>
               <span class="dz-title">
-                拖入文件，或
-                <span class="dz-link" @click.stop="fileInputRef?.click()">点击选择</span>
+                {{ t('filesUi.dropOr') }}
+                <span class="dz-link" @click.stop="fileInputRef?.click()">{{ t('filesUi.choose') }}</span>
               </span>
-              <span class="dz-sub">支持 PSD · PDF · ZIP · PNG 等任意格式</span>
+              <span class="dz-sub">{{ t('filesUi.supported') }}</span>
             </template>
 
             <template v-else>
@@ -37,7 +37,7 @@
                   <span class="file-ext">{{ f.name.split('.').pop().toUpperCase().slice(0, 4) }}</span>
                   <span class="file-name" :title="pendingPaths[i]">{{ pendingPaths[i] }}</span>
                   <span class="file-size">{{ fmtSize(f.size) }}</span>
-                  <button class="file-remove" @click="removeFile(i)" title="移除">
+                  <button class="file-remove" @click="removeFile(i)" :title="t('filesUi.remove')">
                     <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                       <path d="M2 2l8 8M10 2L2 10"/>
                     </svg>
@@ -48,7 +48,7 @@
                 <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                   <path d="M6 1v10M1 6h10"/>
                 </svg>
-                继续添加文件
+                {{ t('filesUi.addMore') }}
               </button>
             </template>
           </div>
@@ -69,15 +69,15 @@
 
           <div class="field project-field" v-if="!lockedProjectId">
             <label>
-              放入项目
-              <span class="label-hint">选填</span>
+              {{ t('filesUi.putInProject') }}
+              <span class="label-hint">{{ t('filesUi.optional') }}</span>
             </label>
 
             <div class="proj-list scroll-surface scroll-surface--compact">
-              <button class="select-btn" :class="{ active: selectedId === null }" @click="selectedId = null">不关联</button>
+              <button class="select-btn" :class="{ active: selectedId === null }" @click="selectedId = null">{{ t('filesUi.unlinked') }}</button>
 
               <template v-if="pendingProjects.length">
-                <div class="status-label"><span class="status-dot status-pending"></span>待开始</div>
+                <div class="status-label"><span class="status-dot status-pending"></span>{{ t('filesUi.pending') }}</div>
                 <div class="proj-group-chips">
                   <button v-for="p in pendingProjects" :key="p.id" class="select-btn" :class="{ active: selectedId === p.id }" @click="selectedId = p.id">
                     <span class="p-dot" :style="{ background: extractColor(p.color) }"></span>{{ p.name }}
@@ -86,7 +86,7 @@
               </template>
 
               <template v-if="activeProjects.length">
-                <div class="status-label"><span class="status-dot status-active"></span>进行中</div>
+                <div class="status-label"><span class="status-dot status-active"></span>{{ t('filesUi.active') }}</div>
                 <div class="proj-group-chips">
                   <button v-for="p in activeProjects" :key="p.id" class="select-btn" :class="{ active: selectedId === p.id }" @click="selectedId = p.id">
                     <span class="p-dot" :style="{ background: extractColor(p.color) }"></span>{{ p.name }}
@@ -99,7 +99,7 @@
                   <svg class="toggle-chev" :class="{ open: doneExpanded }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <path d="M2 3.5l3 3 3-3"/>
                   </svg>
-                  <span class="status-dot status-done"></span>已完成
+                  <span class="status-dot status-done"></span>{{ t('filesUi.done') }}
                   <span class="status-cnt">{{ doneProjects.length }}</span>
                 </button>
                 <div v-show="doneExpanded" class="done-tree">
@@ -136,7 +136,7 @@
                       <svg class="year-chev" :class="{ open: openYears.has('__undated') }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                         <path d="M2 3.5l3 3 3-3"/>
                       </svg>
-                      <span class="year-label undated">未设置日期</span>
+                      <span class="year-label undated">{{ t('filesUi.undated') }}</span>
                       <span class="status-cnt">{{ undatedDone.length }}</span>
                     </button>
                     <div v-show="openYears.has('__undated')" class="month-chips undated-chips">
@@ -148,11 +148,11 @@
                 </div>
               </template>
 
-              <span v-if="projects.length === 0" class="no-proj-hint">暂无项目，将以未分类形式上传</span>
+              <span v-if="projects.length === 0" class="no-proj-hint">{{ t('filesUi.noProjects') }}</span>
             </div>
           </div>
           <div class="field locked-hint" v-else>
-            <label>上传位置</label>
+            <label>{{ t('filesUi.uploadLocation') }}</label>
             <span class="locked-tag">
               <span class="p-dot" :style="{ background: lockedColor }"></span>
               {{ lockedProjectName }}
@@ -161,11 +161,11 @@
 
           <div class="field" v-if="effectiveProjectId && lockedFolderId === null">
             <label>
-              放入文件夹
-              <span class="label-hint">选填</span>
+              {{ t('filesUi.putInFolder') }}
+              <span class="label-hint">{{ t('filesUi.optional') }}</span>
             </label>
             <div v-if="projectFolders.length" class="proj-group-chips">
-              <button class="select-btn" :class="{ active: selectedFolderId === null }" @click="selectedFolderId = null">项目根目录</button>
+              <button class="select-btn" :class="{ active: selectedFolderId === null }" @click="selectedFolderId = null">{{ t('filesUi.root') }}</button>
               <button v-for="f in projectFolders" :key="f.id" class="select-btn" :class="{ active: selectedFolderId === f.id }" @click="selectedFolderId = f.id">
                 <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
                   <path d="M1 3.5a1 1 0 011-1h2l1 1.5h5a1 1 0 011 1V9a1 1 0 01-1 1H2a1 1 0 01-1-1V3.5z"/>
@@ -173,34 +173,34 @@
                 {{ f.name }}
               </button>
             </div>
-            <span v-else class="no-proj-hint">暂无文件夹，文件将放在项目根目录</span>
+            <span v-else class="no-proj-hint">{{ t('filesUi.noFolders') }}</span>
           </div>
           <div class="field locked-hint" v-else-if="lockedFolderId !== null">
-            <label>文件夹</label>
+            <label>{{ t('filesUi.currentFolder') }}</label>
             <span class="locked-tag">
               <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
                 <path d="M1 3.5a1 1 0 011-1h2l1 1.5h5a1 1 0 011 1V9a1 1 0 01-1 1H2a1 1 0 01-1-1V3.5z"/>
               </svg>
-              {{ projectFolders.find(f => f.id === lockedFolderId)?.name ?? '当前文件夹' }}
+              {{ projectFolders.find(f => f.id === lockedFolderId)?.name ?? t('filesUi.currentFolder') }}
             </span>
           </div>
 
           <div class="field" v-if="effectiveProjectId && currentProjectStages.length">
             <label>
-              阶段标签
-              <span class="label-hint">选填</span>
+              {{ t('filesUi.stage') }}
+              <span class="label-hint">{{ t('filesUi.optional') }}</span>
             </label>
             <div class="proj-group-chips">
-              <button class="select-btn" :class="{ active: selectedStage === '' }" @click="selectedStage = ''">不标记</button>
+              <button class="select-btn" :class="{ active: selectedStage === '' }" @click="selectedStage = ''">{{ t('filesUi.unmarked') }}</button>
               <button v-for="s in currentProjectStages" :key="s.key" class="select-btn stage-tag-btn" :class="{ active: selectedStage === s.label }" @click="selectedStage = s.label">{{ s.label }}</button>
             </div>
           </div>
         </div>
 
         <div v-if="!uploading" class="modal-footer">
-          <button class="btn-cancel" @click="handleClose">取消</button>
+          <button class="btn-cancel" @click="handleClose">{{ t('filesUi.cancel') }}</button>
           <button class="btn-upload" :disabled="pendingFiles.length === 0 || uploading" @click="handleUpload">
-            {{ uploading ? `上传中… (${uploadedCount}/${pendingFiles.length})` : '确认上传' }}
+            {{ uploading ? `${t('filesUi.uploading')} (${uploadedCount}/${pendingFiles.length})` : t('filesUi.confirmUpload') }}
           </button>
         </div>
       </div>
@@ -213,6 +213,9 @@ import { ref, computed, watch, type PropType } from 'vue'
 import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
 import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/useFileUpload'
 import BaseModal from '@/components/common/BaseModal.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   show:              Boolean,

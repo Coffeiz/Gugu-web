@@ -7,7 +7,7 @@ import json
 
 from sqlalchemy import select
 
-from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, Project
+from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from agent.tools.mind_canvas import (
     _canvas_add_node,
     _canvas_create,
@@ -83,7 +83,7 @@ async def test_search_canvas_excludes_timeline_note_and_returns_canvas_note(db, 
     assert result["count"] == 1
     assert result["matches"][0]["node_id"] == canvas_note.id
     assert result["matches"][0]["kind"] == "canvas_note"
-    assert result["matches"][0]["version"] == canvas_note.version
+    assert "version" not in result["matches"][0]
 
 
 async def test_search_placeable_nodes_returns_owned_project_file_event_only(db, user_a, user_b):
@@ -204,17 +204,16 @@ async def test_update_and_remove_canvas_item_only_change_view(db, user_a):
     assert await db.get(MindNode, node.id) is not None
 
 
-async def test_update_canvas_note_uses_version_and_rejects_timeline_note(db, user_a):
+async def test_update_canvas_note_reads_current_version_and_rejects_timeline_note(db, user_a):
     canvas = await _canvas(db, user_a)
     canvas_note = await _node(db, user_a, kind="canvas_note", title="旧标题", content="旧正文")
-    old_version = canvas_note.version
     result = await _canvas_update_note(db, user_a.id, {
-        "node_id": canvas_note.id, "version": old_version,
+        "node_id": canvas_note.id,
         "title": "新标题", "content": "新正文", "color": "blue",
     })
     assert result["updated"] is True
     assert result["node"]["title"] == "新标题"
-    assert result["node"]["version"] == old_version + 1
+    assert "version" not in result["node"]
     timeline_note = await _node(db, user_a, kind="note", title="时间流")
     rejected = await _canvas_update_note(db, user_a.id, {"node_id": timeline_note.id, "version": 1, "title": "不应修改"})
     assert "画布便签" in rejected["error"]
@@ -234,6 +233,34 @@ async def test_connect_is_idempotent_and_requires_same_canvas(db, user_a):
     })
     assert created["relation_id"] == reused["relation_id"]
     assert reused["created_or_reused"] is True
+    assert created["source_side"] == "right"
+    assert created["target_side"] == "left"
+    assert created["anchor_source"] == "geometry"
+    assert created["verification"]["checked_relation_id"] == created["relation_id"]
+
+
+async def test_removing_canvas_item_detaches_relation_without_deleting_global_relation(db, user_a):
+    canvas = await _canvas(db, user_a)
+    first = await _node(db, user_a, kind="ref", title="抽屉节点一", ref_type="project", ref_id=101)
+    second = await _node(db, user_a, kind="ref", title="抽屉节点二", ref_type="project", ref_id=102)
+    first_item = await _item(db, user_a, canvas, first)
+    await _item(db, user_a, canvas, second, x=200)
+    relation = await _canvas_connect(db, user_a.id, {
+        "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id,
+    })
+
+    removed = await _canvas_remove_node(db, user_a.id, {
+        "canvas_id": canvas.id, "item_id": first_item.id,
+    })
+    assert removed["node_preserved"] is True
+    assert (await _canvas_get(db, user_a.id, {"canvas_id": canvas.id}))["relations"] == []
+
+    restored = await _canvas_add_node(db, user_a.id, {
+        "canvas_id": canvas.id, "node_id": first.id, "position": {"x": 10, "y": 20},
+    })
+    assert restored["created"] is True
+    assert (await _canvas_get(db, user_a.id, {"canvas_id": canvas.id}))["relations"] == []
+    assert await db.get(MindRelation, relation["relation_id"]) is not None
 
 
 async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a):
@@ -260,6 +287,11 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     assert first_node["layout"]["recommended_center_distance"] == 750
     assert canvas_view["relations"][0]["source_side"] == "right"
     assert canvas_view["relations"][0]["target_side"] == "left"
+    audit = canvas_view["relation_audit"][0]
+    assert audit["recommended"] == {"source_side": "right", "target_side": "left"}
+    assert audit["status"] == "aligned"
+    assert audit["source"]["center"] == {"x": 132.0, "y": 94.0}
+    assert audit["target"]["center"] == {"x": 322.0, "y": 94.0}
 
     updated = await _canvas_update_anchor(db, user_a.id, {
         "canvas_id": canvas.id,
@@ -270,6 +302,28 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     assert updated["updated"] is True
     assert updated["source_side"] == "left"
     assert updated["target_side"] == "right"
+
+    custom_view = await _canvas_get(db, user_a.id, {"canvas_id": canvas.id})
+    assert custom_view["relation_audit"][0]["status"] == "custom"
+    assert "可能是有意的回环布局" in custom_view["relation_audit"][0]["reason"]
+
+    rejected = await _canvas_connect(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "source_node_id": first.id,
+        "target_node_id": second.id,
+        "source_side": "left",
+        "target_side": "right",
+    })
+    assert "省略 source_side/target_side" in rejected["error"]
+
+    repaired = await _canvas_connect(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "source_node_id": first.id,
+        "target_node_id": second.id,
+    })
+    assert repaired["anchor_source"] == "geometry"
+    assert repaired["source_side"] == "right"
+    assert repaired["target_side"] == "left"
 
 
 async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a):
@@ -285,12 +339,12 @@ async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a
     await _item(db, user_a, canvas, first, x=100)
     await _item(db, user_a, canvas, second, x=300)
     relation = await _canvas_connect(db, user_a.id, {"canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id})
-    blocked_relation = await _canvas_disconnect(db, user_a.id, {"relation_id": relation["relation_id"]})
+    blocked_relation = await _canvas_disconnect(db, user_a.id, {"canvas_id": canvas.id, "relation_id": relation["relation_id"]})
     assert json.loads(blocked_relation)["needs_confirm"] is True
 
     relation_token = json.loads(blocked_relation)["confirm_token"]
     deleted_relation = await _canvas_disconnect(db, user_a.id, {
-        "relation_id": relation["relation_id"], "confirm": True, "confirm_token": relation_token,
+        "canvas_id": canvas.id, "relation_id": relation["relation_id"], "confirm": True, "confirm_token": relation_token,
     })
     assert deleted_relation["deleted_relation_id"] == relation["relation_id"]
 
@@ -329,9 +383,9 @@ async def test_canvas_mutations_reject_self_cross_user_and_stale_versions(db, us
     })
     assert updated["updated"] is True
     stale = await _canvas_update_note(db, user_a.id, {
-        "node_id": note.id, "version": version, "content": "旧版本覆盖",
+        "node_id": note.id, "content": "再次增量修改",
     })
-    assert "其他端修改" in stale["error"]
+    assert stale["updated"] is True
 
 
 async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db, user_a):
@@ -448,12 +502,12 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     notes = await db.scalars(select(MindNode).where(MindNode.id.in_(note_ids)))
     versions = [note.version for note in notes]
     blocked = await _canvas_delete_note(db, user_a.id, {
-        "notes": [{"node_id": node_id, "version": version} for node_id, version in zip(note_ids, versions)],
+            "notes": [{"node_id": node_id} for node_id in note_ids],
     })
     blocked_payload = json.loads(blocked)
     assert blocked_payload["needs_confirm"] is True
     deleted = await _canvas_delete_note(db, user_a.id, {
-        "notes": [{"node_id": node_id, "version": version} for node_id, version in zip(note_ids, versions)],
+            "notes": [{"node_id": node_id} for node_id in note_ids],
         "confirm": True,
         "confirm_token": blocked_payload["confirm_token"],
     })
@@ -494,7 +548,7 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     delete_request = {
         "canvas_id": canvas_id,
         "request_id": "batch-crud-delete-001",
-        "operations": [{"kind": "delete_note", "node_id": batch_node["node_id"], "version": batch_node["version"]}],
+            "operations": [{"kind": "delete_note", "node_id": batch_node["node_id"]}],
     }
     blocked_batch = await _canvas_batch(db, user_id, delete_request)
     blocked_batch_payload = json.loads(blocked_batch)
@@ -541,8 +595,8 @@ async def test_empty_canvas_auto_placement_with_scale(db, user_a):
     assert pos["y"] == -760.0
 
 
-async def test_get_canvas_limit_1_hides_dangling_relations(db, user_a):
-    """limit=1 时不应返回指向未返回节点的 relation。"""
+async def test_get_canvas_limit_1_keeps_full_relations_and_marks_incomplete_audit(db, user_a):
+    """节点分页仍返回全画布关系，并明确标记当前页之外的审计端点。"""
     data = {"x": 0, "y": 0, "scale": 1.0, "viewport": {"width": 1200, "height": 800}}
     canvas = await _canvas(db, user_a, data=data)
     # 创建两个便签并连接
@@ -573,10 +627,17 @@ async def test_get_canvas_limit_1_hides_dangling_relations(db, user_a):
     })
     assert len(result["nodes"]) == 1
     assert result["truncated"] is True
+    assert result["pagination"] == {"offset": 0, "limit": 1, "total": 2, "next_offset": 1}
+    assert result["relation_count"] == 1
+    assert result["relation_scope"] == "canvas"
     returned_ids = {n["node_id"] for n in result["nodes"]}
-    # relations 不应包含指向未返回节点的连接
-    for rel in result.get("relations", []):
-        assert rel["source_node_id"] in returned_ids, \
-            f"relation source {rel['source_node_id']} not in returned nodes"
-        assert rel["target_node_id"] in returned_ids, \
-            f"relation target {rel['target_node_id']} not in returned nodes"
+    assert len(result["relations"]) == 1
+    assert result["relation_audit"][0]["status"] == "incomplete"
+    assert result["relation_audit_scope"] == "visible_nodes"
+
+    second_page = await _canvas_get(db, user_a.id, {
+        "canvas_id": canvas.id, "limit": 1, "offset": 1,
+    })
+    assert len(second_page["nodes"]) == 1
+    assert second_page["pagination"]["next_offset"] is None
+    assert second_page["relation_audit"][0]["status"] == "incomplete"

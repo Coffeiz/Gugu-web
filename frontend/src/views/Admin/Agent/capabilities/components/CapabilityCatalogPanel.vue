@@ -2,35 +2,37 @@
   <section class="config-card capability-catalog-card">
     <div class="capability-catalog-head">
       <div>
-        <h3 class="capability-catalog-title">能力目录</h3>
-        <p class="capability-catalog-desc">来自 Tool / Skill Registry 的只读目录；完整 Schema 和正文只在 Agent 请求中按需注入。</p>
+        <h3 class="capability-catalog-title">{{ t('capabilityUi.title') }}</h3>
+        <p class="capability-catalog-desc">{{ t('capabilityUi.description') }}</p>
       </div>
       <button type="button" class="capability-refresh-btn" :disabled="loading" @click="refresh">
-        {{ loading ? '刷新中…' : '刷新目录' }}
+        {{ loading ? t('capabilityUi.refreshing') : t('capabilityUi.refresh') }}
       </button>
     </div>
     <div v-if="error" class="llm-msg llm-msg--error">{{ error }}</div>
-    <div v-else-if="loading && !catalog" class="presets-loading">加载中…</div>
+    <div v-else-if="loading && !catalog" class="presets-loading">{{ t('capabilityUi.loading') }}</div>
     <template v-else-if="catalog">
       <div class="capability-catalog-summary">
-        <span>工具 {{ catalog.tools.length }}</span>
-        <span>Skill {{ catalog.skills.length }}</span>
+        <span>{{ t('capabilityUi.tools') }} {{ catalog.tools.length }}</span>
+        <span>{{ t('capabilityUi.skills') }} {{ catalog.skills.length }}</span>
         <span v-if="catalog.diagnostics.length" class="capability-catalog-warning">
-          诊断 {{ catalog.diagnostics.length }} 项
+          {{ t('capabilityUi.diagnostics') }} {{ catalog.diagnostics.length }}
         </span>
       </div>
-      <CapabilityGroup title="工具" :items="catalog.tools" tool-items />
-      <CapabilityGroup title="Skill" :items="catalog.skills" />
+      <CapabilityGroup :title="t('capabilityUi.tool')" :items="catalog.tools" tool-items />
+      <CapabilityGroup :title="t('capabilityUi.skill')" :items="catalog.skills" />
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import CapabilityGroup from './CapabilityGroup.vue'
 import { useCapabilityCatalog } from '../useCapabilityCatalog'
 
 const { catalog, loading, error, refresh } = useCapabilityCatalog()
+const { t } = useI18n()
 onMounted(() => { void refresh() })
 </script>
 

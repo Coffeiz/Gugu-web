@@ -1,3 +1,5 @@
+import { i18n } from '@/i18n'
+
 export type RepeatMode = 'interval' | 'daily' | 'weekday' | 'weekend' | 'custom'
 
 export interface ParsedCron {
@@ -91,14 +93,15 @@ export function parseCron(cron: string): ParsedCron {
 }
 
 export function cronLabel(cron: string): string {
+  const t = i18n.global.t
   const parsed = parseCron(cron)
   if (parsed.mode === 'custom') return `${parsed.startDate} ${parsed.time}`
-  if (parsed.mode === 'interval') return `每 ${parsed.intervalMinutes} 分钟`
+  if (parsed.mode === 'interval') return t('schedules.everyMinutes', { minutes: parsed.intervalMinutes })
 
   const labels: Record<Exclude<RepeatMode, 'interval' | 'custom'>, string> = {
-    daily: '每天',
-    weekday: '工作日',
-    weekend: '周末',
+    daily: t('schedules.daily'),
+    weekday: t('schedules.weekday'),
+    weekend: t('schedules.weekend'),
   }
-  return `${labels[parsed.mode] ?? '每天'} ${parsed.time}`
+  return `${labels[parsed.mode] ?? t('schedules.daily')} ${parsed.time}`
 }

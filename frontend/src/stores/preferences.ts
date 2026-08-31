@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { preferencesApi } from '@/services/api'
+import { isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
 
 export const usePreferencesStore = defineStore('preferences', () => {
   // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
@@ -22,6 +23,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const personalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
   const personalityPreferenceRevision = ref(0)
+  const locale = ref<SupportedLocale | null>(null)
   const loaded            = ref(false)
 
   async function fetch() {
@@ -45,9 +47,17 @@ export const usePreferencesStore = defineStore('preferences', () => {
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
       personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+      locale.value = isSupportedLocale(data.locale) ? data.locale : null
+      if (locale.value) setLocale(locale.value, true)
       localStorage.setItem('gugu-default-view', defaultView.value)
       loaded.value = true
     } catch {}
+  }
+
+  async function saveLocale(value: SupportedLocale) {
+    setLocale(value, true)
+    locale.value = value
+    try { await preferencesApi.update({ locale: value }) } catch {}
   }
 
   async function savePmStagesExpanded(v: boolean) {
@@ -144,7 +154,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision,
-    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, locale,
+    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

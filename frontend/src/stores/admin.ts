@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getCsrfHeaders } from '@/services/api'
 
 export const useAdminStore = defineStore('admin', () => {
   const token = ref(localStorage.getItem('admin_token') || '')
@@ -11,6 +12,7 @@ export const useAdminStore = defineStore('admin', () => {
     const res = await fetch('/api/v1/admin/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ username, password }),
     })
     if (!res.ok) {
@@ -24,6 +26,11 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   function logout() {
+    void fetch('/api/v1/admin/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: getCsrfHeaders('gugu_admin_csrf_token'),
+    }).catch(() => {})
     token.value = ''
     adminUser.value = null
     localStorage.removeItem('admin_token')
@@ -33,9 +40,11 @@ export const useAdminStore = defineStore('admin', () => {
   async function authFetch(url: string, options: RequestInit = {}) {
     return fetch(url, {
       ...options,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token.value}`,
+        ...getCsrfHeaders('gugu_admin_csrf_token'),
+        ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
         ...(options.headers || {}),
       },
     })

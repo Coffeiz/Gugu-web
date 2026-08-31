@@ -6,38 +6,38 @@
         @mousedown.stop
       >
         <div class="fp-info-title" @mousedown.prevent="startDrag">
-          <span>文件信息</span>
+          <span>{{ t('files.info') }}</span>
           <button class="fp-action-btn fp-close-btn" @click="$emit('close')">
             <Icon name="action.close" :size="15" />
           </button>
         </div>
         <div class="fp-info-body">
           <div class="fp-info-row">
-            <span class="fp-info-label">文件名</span>
+            <span class="fp-info-label">{{ t('files.name') }}</span>
             <span class="fp-info-val">{{ file.displayName }}.{{ file.ext?.toLowerCase() }}</span>
           </div>
           <div class="fp-info-row">
-            <span class="fp-info-label">格式</span>
+            <span class="fp-info-label">{{ t('files.format') }}</span>
             <span class="fp-info-val">{{ file.ext?.toUpperCase() }}</span>
           </div>
           <div v-if="file.size" class="fp-info-row">
-            <span class="fp-info-label">大小</span>
+            <span class="fp-info-label">{{ t('files.size') }}</span>
             <span class="fp-info-val">{{ file.size }}</span>
           </div>
           <div v-if="file.createdAt" class="fp-info-row">
-            <span class="fp-info-label">创建时间</span>
+            <span class="fp-info-label">{{ t('files.createdAt') }}</span>
             <span class="fp-info-val">{{ file.createdAt }}</span>
           </div>
           <div v-if="file.projectName" class="fp-info-row">
-            <span class="fp-info-label">所属项目</span>
+            <span class="fp-info-label">{{ t('files.project') }}</span>
             <span class="fp-info-val">{{ file.projectName }}</span>
           </div>
           <div v-if="file.folderName" class="fp-info-row">
-            <span class="fp-info-label">所在文件夹</span>
+            <span class="fp-info-label">{{ t('files.folderLocation') }}</span>
             <span class="fp-info-val">{{ file.folderName }}</span>
           </div>
           <div v-if="file.stageName" class="fp-info-row">
-            <span class="fp-info-label">阶段</span>
+            <span class="fp-info-label">{{ t('files.stage') }}</span>
             <span class="fp-info-val">{{ file.stageName }}</span>
           </div>
           <div v-if="file.mimeType" class="fp-info-row">
@@ -51,6 +51,8 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { nextZ } from '@/composables/windowz'
 import Icon from '@/components/common/Icon.vue'

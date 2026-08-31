@@ -15,16 +15,16 @@
             <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
           </svg>
         </div>
-        <span class="brand-name">咕咕</span>
+        <span class="brand-name">{{ t('notFound.brand') }}</span>
       </div>
 
       <div class="nf-code">404</div>
-      <div class="nf-title">咕？这页面飞走了</div>
-      <p class="nf-desc">你要找的页面不存在，或者已经被咕咕叼走了。<br>检查下网址，或者回首页重新出发。</p>
+      <div class="nf-title">{{ t('notFound.title') }}</div>
+      <p class="nf-desc">{{ t('notFound.description') }}<br>{{ t('notFound.descriptionHint') }}</p>
 
       <div class="nf-actions">
-        <button class="btn-primary" @click="goHome">回到首页</button>
-        <button class="btn-ghost" @click="goBack">返回上一页</button>
+        <button class="btn-primary" @click="goHome">{{ t('notFound.home') }}</button>
+        <button class="btn-ghost" @click="goBack">{{ t('notFound.back') }}</button>
       </div>
     </div>
   </div>
@@ -32,8 +32,10 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
+const { t } = useI18n()
 const goHome = () => router.push('/')
 const goBack = () => (window.history.length > 1 ? router.back() : router.push('/'))
 </script>

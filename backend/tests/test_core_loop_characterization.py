@@ -543,7 +543,39 @@ async def test_tool_budget_prompt_resumes_same_run_after_continue(monkeypatch, d
 
     assert ev["interaction_required"] == 1
     assert ev["_new_round"] >= 1
+    assert len(dispatched) == MAX_TOOL_CALLS + 1
     assert "继续完成" in text
+    assert errors == []
+
+
+async def test_tool_budget_prompt_blocks_pending_batch_after_cancel(monkeypatch, dispatched):
+    """拒绝许可时，当前待执行批次全部阻止，并让模型说明未执行内容。"""
+    class Prompt:
+        id = 904
+        kind = "choice"
+        title = "步骤较多，要继续吗？"
+        body = "本轮已达到普通工具调用次数。"
+        expires_at = SimpleNamespace(isoformat=lambda: "2026-08-26T00:00:00+08:00")
+
+    async def fake_create_prompt(*, user_id, session_id):
+        return Prompt(), [{"id": "cancel", "label": "先停在这里", "token": "token"}]
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return {"status": "cancelled", "option_id": "cancel"}
+
+    monkeypatch.setattr("app.services.interactions.create_tool_budget_prompt", fake_create_prompt)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+    patch_anthropic(monkeypatch, [
+        msg([TU("get_project", str(i), {}) for i in range(MAX_TOOL_CALLS + 1)]),
+        msg([TX("已根据现有结果整理，剩余请求未执行")]),
+    ])
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "执行任务"}], AI, session_id=1)
+    )
+
+    assert ev["interaction_required"] == 1
+    assert len(dispatched) == 0
+    assert "剩余请求未执行" in text
     assert errors == []
 
 

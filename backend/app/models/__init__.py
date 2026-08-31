@@ -45,6 +45,7 @@ class User(Base):
     token_limit_weekly:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    quota_window_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
     is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
     timezone:             Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)   # IANA 时区（如 Asia/Shanghai）；前端首登探测写入，日期归属/展示按它换算（见 docs/backend/时区与时钟迁移方案.md）
@@ -135,6 +136,10 @@ class UserProviderCredential(Base):
     key_version: Mapped[int] = mapped_column(Integer, default=1)
     base_url: Mapped[str] = mapped_column(String(500), default="")
     model: Mapped[str] = mapped_column(String(200), default="")
+    max_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    thinking: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    reasoning_effort: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     vision: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -456,17 +461,19 @@ class MindCanvasItem(Base):
 
 
 class MindRelation(Base):
-    """全局关系层：节点↔节点的有向边。
+    """画布关系层：节点↔节点的边，关系归属于具体画布。
 
     P1/P2 只写默认的 `related`；P4 才开放 supports / derived_from / verifies 等少量高价值类型。
     `related` 是无向的，服务层按 id 归一。默认创建仍按节点对幂等，避免重复连线、咕咕重复
     建议堆边；画布明确请求平行边时允许同一节点对存多条，以表达从两端分别绕出的 loop。
-    端点属于画布视图状态，仍存 data_json，不落进这张全局语义表。见 core.mind.upsert_relation。
+    节点本身仍是全局节点，但画布边通过 ``canvas_id`` 隔离；连接点属于对应画布的视图状态。
+    canvas_id 为空仅兼容非画布旧关系，画布查询不会返回这类关系。
     """
     __tablename__ = "mind_relations"
 
     id:          Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:     Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    canvas_id:   Mapped[Optional[int]] = mapped_column(ForeignKey("mind_maps.id", ondelete="CASCADE"), nullable=True, index=True)
     src_node_id: Mapped[int]  = mapped_column(ForeignKey("mind_nodes.id", ondelete="CASCADE"), index=True)
     dst_node_id: Mapped[int]  = mapped_column(ForeignKey("mind_nodes.id", ondelete="CASCADE"), index=True)
 
@@ -484,7 +491,15 @@ class MindRelation(Base):
 
     __table_args__ = (
         # 默认边（edge_key=''）保留幂等/并发保护；平行边各自带独立 key。
-        UniqueConstraint("user_id", "src_node_id", "dst_node_id", "rel_type", "edge_key", name="uq_mind_relation"),
+        UniqueConstraint("user_id", "canvas_id", "src_node_id", "dst_node_id", "rel_type", "edge_key", name="uq_mind_relation"),
+        # PostgreSQL/SQLite 对 NULL 不参与普通唯一约束；保留旧的非画布关系幂等性。
+        Index(
+            "uq_mind_relation_legacy",
+            "user_id", "src_node_id", "dst_node_id", "rel_type", "edge_key",
+            unique=True,
+            postgresql_where=canvas_id.is_(None),
+            sqlite_where=canvas_id.is_(None),
+        ),
         CheckConstraint("src_node_id <> dst_node_id", name="ck_mind_relation_no_self"),
     )
 
@@ -627,6 +642,8 @@ class ConversationMessage(Base):
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
     # 表格等）原样摊平显示，见 devlog 2026-07-10。
     quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
+    # 网页聊天中用户明确选择的业务对象引用；正文仍只存可读文本，供刷新后恢复可点击胶囊。
+    references_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
@@ -911,6 +928,7 @@ class AgentUsage(Base):
     cache_write: Mapped[int]          = mapped_column(Integer, default=0)
     model:      Mapped[str]           = mapped_column(String(100))
     provider:   Mapped[str]           = mapped_column(String(50))
+    is_byok:    Mapped[bool]           = mapped_column(Boolean, default=False, nullable=False, index=True)
     tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
 
@@ -960,6 +978,8 @@ class UserBot(Base):
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
     private_message_format: Mapped[str] = mapped_column(String(16), default="smart")
+    # QQ C2C 私聊是否使用官方 stream_messages；群聊永远不走该接口。
+    private_streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)

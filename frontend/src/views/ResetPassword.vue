@@ -13,40 +13,40 @@
               <path d="M20 6 9 17l-5-5"/>
             </svg>
           </div>
-          <p class="done-text">密码已重置，请用新密码登录。</p>
+          <p class="done-text">{{ t('authReset.resetDone') }}</p>
         </div>
-        <button class="btn-primary" @click="goLogin">前往登录</button>
+        <button class="btn-primary" @click="goLogin">{{ t('authReset.goLogin') }}</button>
       </template>
 
       <template v-else-if="!token">
-        <div class="error-msg">链接无效或缺少参数，请重新申请重置邮件。</div>
+        <div class="error-msg">{{ t('authReset.invalidLink') }}</div>
         <div class="card-footer" style="margin-top:14px">
-          <router-link to="/forgot-password">重新申请</router-link>
+          <router-link to="/forgot-password">{{ t('authReset.requestAgain') }}</router-link>
         </div>
       </template>
 
       <template v-else>
         <form @submit.prevent="handleSubmit" novalidate>
           <div class="field">
-            <label>新密码</label>
-            <input v-model="pw" type="password" placeholder="至少 8 位"
+            <label>{{ t('authReset.newPassword') }}</label>
+            <input v-model="pw" type="password" :placeholder="t('authReset.passwordRule')"
               autocomplete="new-password" :disabled="loading" />
           </div>
           <div class="field">
-            <label>确认新密码</label>
-            <input v-model="pw2" type="password" placeholder="再输入一次"
+            <label>{{ t('authReset.confirmPassword') }}</label>
+            <input v-model="pw2" type="password" :placeholder="t('authReset.enterAgain')"
               autocomplete="new-password" :disabled="loading" />
           </div>
 
           <div v-if="error" class="error-msg">{{ error }}</div>
 
           <button type="submit" class="btn-primary" :disabled="loading">
-            {{ loading ? '提交中…' : '重置密码' }}
+            {{ loading ? t('authReset.submitting') : t('authReset.resetPassword') }}
           </button>
         </form>
 
         <div class="card-footer">
-          <router-link to="/login">返回登录</router-link>
+          <router-link to="/login">{{ t('authReset.backToLogin') }}</router-link>
         </div>
       </template>
     </div>
@@ -56,11 +56,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AuthBrand from '@/components/common/AuthBrand.vue'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const route   = useRoute()
 const router  = useRouter()
+const { t } = useI18n()
 const token   = ref(route.query.token || '')
 const pw      = ref('')
 const pw2     = ref('')
@@ -69,8 +71,8 @@ const error   = ref('')
 const done    = ref(false)
 
 async function handleSubmit() {
-  if (pw.value.length < 8) { error.value = '密码至少 8 位'; return }
-  if (pw.value !== pw2.value) { error.value = '两次输入的密码不一致'; return }
+  if (pw.value.length < 8) { error.value = t('authReset.passwordTooShort'); return }
+  if (pw.value !== pw2.value) { error.value = t('authReset.passwordMismatch'); return }
   loading.value = true; error.value = ''
   try {
     const res = await fetch(`${BASE_URL}/auth/reset-password`, {
@@ -79,10 +81,10 @@ async function handleSubmit() {
       body: JSON.stringify({ token: token.value, newPassword: pw.value }),
     })
     const body = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(body?.detail || '重置失败，请重试')
+    if (!res.ok) throw new Error(body?.detail || t('authReset.resetFailed'))
     done.value = true
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '操作失败'
+    error.value = e instanceof Error ? e.message : t('authReset.operationFailed')
   } finally {
     loading.value = false
   }

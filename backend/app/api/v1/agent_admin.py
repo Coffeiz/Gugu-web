@@ -583,7 +583,7 @@ _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens", "temp
                  "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
                  "vision_detail", "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
-_AI_DEFAULTS = {"max_tokens": 4000, "temperature": 0.7, "context_tokens": 120000,
+_AI_DEFAULTS = {"max_tokens": 8000, "temperature": 0.7, "context_tokens": 128000,
                 "thinking": "disabled", "reasoning_effort": "", "vision": False,
                 "vision_detail": "auto", "vision_video": False, "vision_audio": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
@@ -602,9 +602,9 @@ class PresetCreate(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 4000
+    max_tokens: int = 8000
     temperature: float = 0.7
-    context_tokens: int = 120000
+    context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""
     vision: bool = False

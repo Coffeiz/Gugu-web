@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from agent import providers
 from agent.loop_drivers import OllamaDriver
 from app.api.v1 import agent_admin
+from helpers.agent_provider import probe_capabilities
 
 
 class _Response:
@@ -193,10 +194,7 @@ async def test_capability_fingerprint_changes_when_model_changes(monkeypatch):
     }]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
     monkeypatch.setattr(agent_admin, "_write_override", lambda value: None)
-    async def fake_probe(item):
-        return _probe_result()
-
-    monkeypatch.setattr(agent_admin, "_probe_local_capabilities", fake_probe)
+    monkeypatch.setattr(agent_admin, "_probe_local_capabilities", probe_capabilities)
 
     first = await agent_admin.probe_llm_capabilities("local-1")
     override["ai_presets"]["items"][0]["model"] = "model-b"
@@ -245,10 +243,3 @@ async def test_vision_probe_persists_definitive_capabilities(monkeypatch):
     assert item["vision_video"] is False
     assert item["vision_audio"] is False
     assert override["ai"]["vision"] is True
-
-
-def _probe_result():
-    return {
-        key: {"status": "支持", "detail": "HTTP 200"}
-        for key in ("chat", "stream", "tools", "json_object", "json_schema")
-    } | {"reasoning": {"status": "未检测", "detail": "人工确认"}}

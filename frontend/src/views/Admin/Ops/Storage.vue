@@ -2,36 +2,36 @@
   <div class="ops-page">
     <div class="ops-head">
       <div>
-        <h2 class="ops-title">存储监控</h2>
-        <p class="ops-sub">分类别存储占用趋势——数据由定时任务每天落一条快照，不是实时统计（PRD-STORAGE-2）</p>
+        <h2 class="ops-title">{{ t('adminStorageUi.title') }}</h2>
+        <p class="ops-sub">{{ t('adminStorageUi.description') }}</p>
       </div>
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
+      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" :title="t('adminStorageUi.refresh')">
         <Icon name="action.refresh" size="sm" />
       </button>
     </div>
 
     <div v-if="err" class="ops-err">{{ err }}</div>
-    <div v-else-if="loading && !liveLoaded" class="ops-empty">加载中…</div>
+    <div v-else-if="loading && !liveLoaded" class="ops-empty">{{ t('adminStorageUi.loading') }}</div>
 
     <template v-else>
       <!-- 概览卡片：SQL 类实时查（不依赖快照），视频缓存用最新一次清理快照，
            磁盘剩余（仅 Local 后端） -->
       <div class="ops-cards">
         <div v-for="cat in CATEGORIES" :key="cat.key" class="ops-card">
-          <div class="oc-label">{{ cat.label }}</div>
+          <div class="oc-label">{{ t(`adminStorageUi.${cat.labelKey}`) }}</div>
           <div class="oc-value">{{ cardMB(cat.key) }}<i>MB</i></div>
-          <div class="oc-hint">{{ cardCount(cat.key) }} 个对象{{ cat.key === 'video_cache' ? '（上次清理后）' : '' }}</div>
+          <div class="oc-hint">{{ t('adminStorageUi.objects', { count: cardCount(cat.key) }) }}{{ cat.key === 'video_cache' ? t('adminStorageUi.afterCleanup') : '' }}</div>
         </div>
         <div v-if="disk" class="ops-card" :class="{ warn: diskUsedPct >= 85 }">
-          <div class="oc-label">磁盘剩余（Local 存储）</div>
+          <div class="oc-label">{{ t('adminStorageUi.localDisk') }}</div>
           <div class="oc-value">{{ fmtGB(disk.free_bytes) }}<i>GB</i></div>
-          <div class="oc-hint">已用 {{ diskUsedPct }}%（共 {{ fmtGB(disk.total_bytes) }}GB）</div>
+          <div class="oc-hint">{{ t('adminStorageUi.used', { percent: diskUsedPct, size: fmtGB(disk.total_bytes) }) }}</div>
         </div>
       </div>
 
       <div class="ops-section">
-        <div class="sec-title">占用趋势（近 30 天，按类别分开画线）</div>
-        <div v-if="!hasTrend" class="ops-empty">还没有历史快照——上面的概览卡片是实时数字，这条趋势线要等定时任务跑过至少一次之后才有（草稿/已发送附件、用户文件库次日 1:15 落一次，视频转码缓存 1:00）。</div>
+        <div class="sec-title">{{ t('adminStorageUi.trend') }}</div>
+        <div v-if="!hasTrend" class="ops-empty">{{ t('adminStorageUi.noHistory') }}</div>
         <div v-else class="chart-wrap">
           <AdminLineChart :labels="labels" :datasets="storageDatasets" unit="MB" />
         </div>
@@ -42,6 +42,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import { buildStorageTrend, formatSnapshotDate, type StorageSnapshot } from './storageChart'
@@ -49,15 +50,16 @@ import { buildStorageTrend, formatSnapshotDate, type StorageSnapshot } from './s
 interface Totals { object_count: number; total_bytes: number }
 
 const CATEGORIES = [
-  { key: 'user_files', label: '用户文件库', color: 'rgba(123,127,178,1)' },
-  { key: 'chat_staging_draft', label: '聊天附件·草稿', color: 'rgba(201,148,58,1)' },
-  { key: 'chat_staging_attached', label: '聊天附件·已发送', color: 'rgba(90,158,136,1)' },
-  { key: 'video_cache', label: '视频转码缓存', color: 'rgba(180,100,100,1)' },
+  { key: 'user_files', labelKey: 'userFiles', color: 'rgba(123,127,178,1)' },
+  { key: 'chat_staging_draft', labelKey: 'draftAttachments', color: 'rgba(201,148,58,1)' },
+  { key: 'chat_staging_attached', labelKey: 'sentAttachments', color: 'rgba(90,158,136,1)' },
+  { key: 'video_cache', labelKey: 'videoCache', color: 'rgba(180,100,100,1)' },
 ] as const
 
 interface DiskUsage { total_bytes: number; used_bytes: number; free_bytes: number }
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
 const byCategory = ref<Record<string, StorageSnapshot[]>>({})
 const liveTotals = ref<Record<string, Totals>>({})
 const disk = ref<DiskUsage | null>(null)
@@ -100,7 +102,7 @@ const trend = computed(() => buildStorageTrend(byCategory.value, CATEGORIES))
 const labels = computed(() => trend.value.dates.map(formatSnapshotDate))
 
 const storageDatasets = computed(() => CATEGORIES.map((cat, index) => ({
-  label: cat.label,
+  label: t(`adminStorageUi.${cat.labelKey}`),
   values: trend.value.datasets[index].values,
   color: cat.color,
 })))

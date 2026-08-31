@@ -343,17 +343,17 @@ const themeChoices = [
 ] as const
 function applyTheme(choice: typeof themeChoices[number]) { setFamily(choice.family); setTheme(choice.mode) }
 const paletteChoices: Array<{ value: ThemePalette; label: string; note: string; swatches: Array<{ label: string; color: string }> }> = [
-  { value: 'aero', label: 'Aero', note: '原 Aero 柔和紫调', swatches: [
+  { value: 'mist', label: 'Mist', note: '轻盈通透的柔和雾色', swatches: [
     { label: 'Primary', color: '#7b7fb2' }, { label: 'Surface', color: '#eef0f6' }, { label: 'Success', color: '#5a9e88' }, { label: 'Danger', color: '#c85a5a' },
   ] },
-  { value: 'mono', label: 'Mono', note: '暖灰棕紫中性色', swatches: [
+  { value: 'cafe', label: 'Cafe', note: '温暖咖啡棕色系', swatches: [
     { label: 'Primary', color: '#746b78' }, { label: 'Surface', color: '#f7f5f8' }, { label: 'Success', color: '#5e8877' }, { label: 'Danger', color: '#a65d60' },
   ] },
   { value: 'rose', label: 'Rose', note: '低饱和玫瑰邻近色', swatches: [
     { label: 'Primary', color: '#c98f98' }, { label: 'Surface', color: '#f7eff0' }, { label: 'Success', color: '#89a58e' }, { label: 'Danger', color: '#bd7c82' },
   ] },
   { value: 'sky', label: 'Sky', note: '低饱和天空邻近色', swatches: [
-    { label: 'Primary', color: '#83a9c2' }, { label: 'Surface', color: '#edf4f7' }, { label: 'Success', color: '#84a598' }, { label: 'Danger', color: '#b98087' },
+    { label: 'Primary', color: '#839fc2' }, { label: 'Surface', color: '#edf4f7' }, { label: 'Success', color: '#84a598' }, { label: 'Danger', color: '#b98087' },
   ] },
   { value: 'sage', label: 'Sage', note: '低饱和鼠尾草邻近色', swatches: [
     { label: 'Primary', color: '#84ab9e' }, { label: 'Surface', color: '#edf5f2' }, { label: 'Success', color: '#789d8c' }, { label: 'Danger', color: '#b98186' },

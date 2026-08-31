@@ -19,10 +19,12 @@ FROM python:3.12-slim
 # --mount=type=cache 让 apt 下载缓存跨构建持久化（不进最终镜像层，只是构建时的缓存卷）——
 # ffmpeg 在 Debian trixie 下会拉一整条音视频编解码库依赖链（100+ 包），每次 Dockerfile 这行
 # 之前有改动都要重新全量下载，缓存后只需下一次。
+ARG GUGU_INSTALL_DOCKER_CLI=false
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker.io nodejs
+        poppler-utils fonts-noto-cjk ffmpeg curl build-essential nodejs \
+        $(if [ "${GUGU_INSTALL_DOCKER_CLI}" = "true" ]; then echo docker.io; fi)
 
 WORKDIR /app
 

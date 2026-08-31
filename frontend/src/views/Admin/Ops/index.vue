@@ -2,14 +2,14 @@
   <div class="ops-page">
     <div class="ops-head">
       <div>
-        <h2 class="ops-title">运维监控</h2>
-        <p class="ops-sub">工具调用可靠性口径：失败率 / 延迟 / 安全事件（与「数据分析」的产品指标分开）</p>
+        <h2 class="ops-title">{{ t('adminOps.title') }}</h2>
+        <p class="ops-sub">{{ t('adminOps.description') }}</p>
       </div>
       <div class="ops-head-right">
         <div class="ops-range">
-          <button v-for="d in RANGES" :key="d.v" class="range-btn" :class="{ active: days === d.v }" @click="days = d.v; load()">{{ d.label }}</button>
+          <button v-for="d in ranges" :key="d.v" class="range-btn" :class="{ active: days === d.v }" @click="days = d.v; load()">{{ d.label }}</button>
         </div>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" :title="t('adminOps.refresh')">
       <Icon name="action.refresh" size="sm" />
         </button>
       </div>
@@ -22,35 +22,35 @@
       <Icon v-if="secTotal > 0" name="admin.alarm-warning" size="md" />
       <Icon v-else name="user.security" size="md" />
       <span v-if="secTotal > 0" class="sec-txt">
-        检测到 <b>{{ secTotal }}</b> 起安全事件，请排查：
-        <span v-if="sec['ownership.denied']" class="sec-chip">越权访问被拦 {{ sec['ownership.denied'] }}</span>
-        <span v-if="sec['confirm-gate.bypassed']" class="sec-chip crit">确认门被绕 {{ sec['confirm-gate.bypassed'] }}</span>
+        {{ t('adminOps.securityDetected', { count: secTotal }) }}
+        <span v-if="sec['ownership.denied']" class="sec-chip">{{ t('adminOps.ownershipBlocked', { count: sec['ownership.denied'] }) }}</span>
+        <span v-if="sec['confirm-gate.bypassed']" class="sec-chip crit">{{ t('adminOps.confirmBypassed', { count: sec['confirm-gate.bypassed'] }) }}</span>
       </span>
-      <span v-else class="sec-txt">无安全事件（越权拦截 / 确认门绕过均为 0）</span>
+      <span v-else class="sec-txt">{{ t('adminOps.noSecurity') }}</span>
     </div>
 
     <!-- 概览卡片 -->
     <div class="ops-cards">
       <div class="ops-card">
-        <div class="oc-label">工具调用总量</div>
+        <div class="oc-label">{{ t('adminOps.totalCalls') }}</div>
         <div class="oc-value">{{ summary.total_calls ?? 0 }}</div>
       </div>
       <div class="ops-card" :class="{ warn: failRatePct >= 5 }">
-        <div class="oc-label">全局失败率</div>
+        <div class="oc-label">{{ t('adminOps.failureRate') }}</div>
         <div class="oc-value">{{ failRatePct }}<i>%</i></div>
-        <div class="oc-hint">{{ summary.total_fails ?? 0 }} 次失败</div>
+        <div class="oc-hint">{{ t('adminOps.failures', { count: summary.total_fails ?? 0 }) }}</div>
       </div>
       <div class="ops-card" :class="{ warn: (summary.p99_ms ?? 0) >= 10000 }">
-        <div class="oc-label">P99 延迟</div>
+        <div class="oc-label">{{ t('adminOps.p99') }}</div>
         <div class="oc-value">{{ p99Text }}</div>
-        <div class="oc-hint">99% 调用快于此</div>
+        <div class="oc-hint">{{ t('adminOps.p99Hint') }}</div>
       </div>
     </div>
 
     <!-- 延迟分布 -->
     <div class="ops-section">
-      <div class="sec-title">延迟分布</div>
-      <div v-if="latMax === 0" class="ops-empty">暂无调用数据</div>
+      <div class="sec-title">{{ t('adminOps.latency') }}</div>
+      <div v-if="latMax === 0" class="ops-empty">{{ t('adminOps.noCalls') }}</div>
       <div v-else class="lat-bars">
         <div v-for="(cnt, bucket) in summary.latency_buckets" :key="bucket" class="lat-row">
           <span class="lat-label">{{ bucketLabel(bucket) }}</span>
@@ -62,11 +62,11 @@
 
     <!-- 每工具明细 -->
     <div class="ops-section">
-      <div class="sec-title">工具明细（按失败数、调用量排序）</div>
-      <div v-if="!summary.tools?.length" class="ops-empty">暂无调用数据</div>
+      <div class="sec-title">{{ t('adminOps.details') }}<span class="sl-hint">（{{ t('adminOps.detailsHint') }}）</span></div>
+      <div v-if="!summary.tools?.length" class="ops-empty">{{ t('adminOps.noCalls') }}</div>
       <table v-else class="ops-table">
         <thead>
-          <tr><th>工具</th><th class="num">调用量</th><th class="num">失败</th><th class="num">失败率</th><th class="num">平均耗时</th></tr>
+          <tr><th>{{ t('adminOps.tool') }}</th><th class="num">{{ t('adminOps.calls') }}</th><th class="num">{{ t('adminOps.failed') }}</th><th class="num">{{ t('adminOps.failureRate') }}</th><th class="num">{{ t('adminOps.avgDuration') }}</th></tr>
         </thead>
         <tbody>
           <tr v-for="t in summary.tools" :key="t.tool">
@@ -98,13 +98,15 @@ interface OpsSummary {
   security: Record<string, number>
 }
 
-const RANGES = [
-  { v: 1, label: '今天' },
-  { v: 7, label: '近 7 天' },
-  { v: 14, label: '近 14 天' },
-]
+import { useI18n } from 'vue-i18n'
 
 const adminStore = useAdminStore()
+const { t } = useI18n()
+const ranges = computed(() => [
+  { v: 1, label: t('adminOps.today') },
+  { v: 7, label: t('adminOps.last7') },
+  { v: 14, label: t('adminOps.last14') },
+])
 const days = ref(1)
 const summary = ref<Partial<OpsSummary>>({})
 const loading = ref(false)
@@ -136,7 +138,7 @@ async function load(manual = false) {
   loading.value = true
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/ops/summary?days=${days.value}`)
-    if (!res.ok) throw new Error(`加载失败 (${res.status})`)
+    if (!res.ok) throw new Error(t('adminOps.loadFailed', { status: res.status }))
     summary.value = await res.json()
     err.value = ''
   } catch (e: any) { err.value = e.message } finally { loading.value = false }

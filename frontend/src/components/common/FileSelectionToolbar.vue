@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
+import { useI18n } from 'vue-i18n'
 defineProps({
   fileCount: { type: Number, default: 0 },
   folderCount: { type: Number, default: 0 },
@@ -17,20 +18,21 @@ const emit = defineEmits<{
   permanentDelete: []
   cancel: []
 }>()
+const { t } = useI18n()
 </script>
 
 <template>
   <div class="file-selection-toolbar" :class="{ compact, trash }" @click.stop>
-    <span class="file-selection-count">已选 {{ fileCount + folderCount }} 项</span>
+    <span class="file-selection-count">{{ t('common.selected', { count: fileCount + folderCount }) }}</span>
 
     <template v-if="trash">
       <button class="file-selection-btn" @click="emit('restore')">
         <Icon name="status.success" :size="compact ? 11 : 12" />
-        恢复选中
+        {{ t('common.actions.restore') }}
       </button>
       <button class="file-selection-btn danger" @click="emit('permanentDelete')">
         <Icon name="action.delete" :size="compact ? 11 : 12" />
-        永久删除
+        {{ t('common.actions.permanentDelete') }}
       </button>
     </template>
 
@@ -38,25 +40,25 @@ const emit = defineEmits<{
       <button class="file-selection-btn" :disabled="downloading" @click="emit('download')">
         <Icon name="action.download" v-if="!downloading" :size="compact ? 11 : 12" />
         <span v-else class="file-selection-spinner" />
-        {{ downloading ? '下载中…' : '下载' }}
+        {{ downloading ? t('common.status.processing') : t('common.actions.download') }}
       </button>
       <span class="file-selection-divider" />
       <button class="file-selection-btn" @click="emit('cut')">
         <Icon name="action.cut" :size="compact ? 11 : 12" />
-        剪切
+        {{ t('common.actions.cut') }}
       </button>
       <button class="file-selection-btn" @click="emit('copy')">
         <Icon name="action.copy" :size="compact ? 11 : 12" />
-        复制
+        {{ t('common.actions.copy') }}
       </button>
       <span class="file-selection-divider" />
       <button class="file-selection-btn danger" @click="emit('delete')">
         <Icon name="action.delete" :size="compact ? 11 : 12" />
-        删除
+        {{ t('common.actions.delete') }}
       </button>
     </template>
 
-    <button class="file-selection-cancel" @click="emit('cancel')">取消</button>
+    <button class="file-selection-cancel" @click="emit('cancel')">{{ t('common.actions.cancel') }}</button>
   </div>
 </template>
 

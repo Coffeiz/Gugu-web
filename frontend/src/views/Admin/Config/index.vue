@@ -4,13 +4,13 @@
     <!-- 页面标题栏 -->
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">系统配置</h2>
-        <p class="page-desc">修改后点击「保存配置」热更新，无需重启服务</p>
+        <h2 class="page-title">{{ t('adminConfig.title') }}</h2>
+        <p class="page-desc">{{ t('adminConfig.description') }}</p>
       </div>
       <span v-if="configStore.saved" class="saved-badge">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>
-        已保存
+        {{ t('adminConfig.saved') }}
       </span>
     </div>
 
@@ -28,17 +28,17 @@
             </svg>
           </div>
           <div class="card-title-block">
-            <h3>数据库</h3>
-            <p>PostgreSQL 连接配置</p>
+            <h3>{{ t('configUi.database') }}</h3>
+            <p>{{ t('configUi.postgresHint') }}</p>
           </div>
         </div>
 
         <div class="field-grid">
-          <ConfigField label="主机" v-model="draft.db.host" placeholder="localhost" />
-          <ConfigField label="端口" v-model.number="draft.db.port" placeholder="5432" type="number" />
-          <ConfigField label="数据库名" v-model="draft.db.name" placeholder="gugu_web" />
-          <ConfigField label="用户名" v-model="draft.db.user" placeholder="pm" />
-          <ConfigField label="密码" v-model="draft.db.password" type="password" placeholder="留空表示不修改" class="span2" />
+          <ConfigField :label="t('configUi.host')" v-model="draft.db.host" placeholder="localhost" />
+          <ConfigField :label="t('configUi.port')" v-model.number="draft.db.port" placeholder="5432" type="number" />
+          <ConfigField :label="t('configUi.databaseName')" v-model="draft.db.name" placeholder="gugu_web" />
+          <ConfigField :label="t('configUi.username')" v-model="draft.db.user" placeholder="pm" />
+          <ConfigField :label="t('configUi.password')" v-model="draft.db.password" type="password" :placeholder="t('configUi.keepUnchanged')" class="span2" />
         </div>
 
         <div class="card-footer">
@@ -50,14 +50,14 @@
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
-              {{ testLoading.db ? '测试中…' : '测试连接' }}
+              {{ testLoading.db ? t('configUi.testing') : t('configUi.test') }}
             </button>
-            <button class="btn-test btn-init" :class="{ loading: initing }" :disabled="initing" @click="initDb" title="重置连接 + 重建所有表（幂等）">
+            <button class="btn-test btn-init" :class="{ loading: initing }" :disabled="initing" @click="initDb" :title="t('configUi.initTitle')">
               <svg v-if="initing" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
-              {{ initing ? '初始化中…' : '初始化数据库' }}
+              {{ initing ? t('configUi.initializing') : t('configUi.init') }}
             </button>
           </div>
         </div>
@@ -74,15 +74,15 @@
             </svg>
           </div>
           <div class="card-title-block">
-            <h3>Redis 缓存</h3>
-            <p>会话缓存与实时任务队列</p>
+            <h3>{{ t('configUi.redis') }}</h3>
+            <p>{{ t('configUi.redisHint') }}</p>
           </div>
         </div>
 
         <div class="field-grid">
-          <ConfigField label="主机" v-model="draft.redis.host" placeholder="localhost" />
-          <ConfigField label="端口" v-model.number="draft.redis.port" placeholder="6379" type="number" />
-          <ConfigField label="密码" v-model="draft.redis.password" type="password" placeholder="留空表示不修改" class="span2" />
+          <ConfigField :label="t('configUi.host')" v-model="draft.redis.host" placeholder="localhost" />
+          <ConfigField :label="t('configUi.port')" v-model.number="draft.redis.port" placeholder="6379" type="number" />
+          <ConfigField :label="t('configUi.password')" v-model="draft.redis.password" type="password" :placeholder="t('configUi.keepUnchanged')" class="span2" />
         </div>
 
         <div class="card-footer">
@@ -94,8 +94,36 @@
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
-              {{ testLoading.redis ? '测试中…' : '测试连接' }}
+              {{ testLoading.redis ? t('configUi.testing') : t('configUi.test') }}
             </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 站内搜索 ── -->
+      <section id="sec-search" class="config-card search-config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(122,184,200,0.15);--stroke:#7ab8c8">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5L17 17"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>{{ t('configUi.globalSearch') }}</h3>
+            <p>{{ t('configUi.globalSearchHint') }}</p>
+          </div>
+          <div class="search-provider-group">
+            <AdminSelect
+              class="search-provider-select"
+              :model-value="draft.search.global_search_backend"
+              :options="[
+                { value: 'index', label: t('configUi.persistentIndex') },
+                { value: 'ilike', label: t('configUi.ilike') },
+              ]"
+              :aria-label="t('configUi.searchLabel')"
+              @update:model-value="draft.search.global_search_backend = $event"
+            />
+            <p class="config-card-note">{{ t('configUi.searchHint') }}</p>
           </div>
         </div>
       </section>
@@ -110,27 +138,27 @@
             </svg>
           </div>
           <div class="card-title-block">
-            <h3>文件存储</h3>
-            <p>上传文件的存放位置</p>
+            <h3>{{ t('configUi.fileStorage') }}</h3>
+            <p>{{ t('configUi.fileStorageHint') }}</p>
           </div>
         </div>
 
         <div class="toggle-group">
           <button class="toggle-btn" :class="{ active: draft.storage.backend === 'local' }"
-            @click="draft.storage.backend = 'local'">本地磁盘</button>
+            @click="draft.storage.backend = 'local'">{{ t('configUi.localDisk') }}</button>
           <button class="toggle-btn" :class="{ active: draft.storage.backend === 'oss' }"
-            @click="draft.storage.backend = 'oss'">阿里云 OSS</button>
+            @click="draft.storage.backend = 'oss'">{{ t('configUi.aliyunOss') }}</button>
         </div>
 
         <div v-if="draft.storage.backend === 'local'" class="field-grid">
-          <ConfigField label="存储路径" v-model="draft.storage.local_path" placeholder="../Gugu-data/users" class="span2" />
+          <ConfigField :label="t('configUi.storagePath')" v-model="draft.storage.local_path" placeholder="../Gugu-data/users" class="span2" />
         </div>
         <div v-else class="field-grid">
-          <ConfigField label="Bucket 名" v-model="draft.storage.oss_bucket" placeholder="gugu-web" />
+          <ConfigField :label="t('configUi.bucketName')" v-model="draft.storage.oss_bucket" placeholder="gugu-web" />
           <ConfigField label="Endpoint"  v-model="draft.storage.oss_endpoint" placeholder="oss-cn-hangzhou.aliyuncs.com" />
-          <ConfigField label="AccessKey ID"     v-model="draft.storage.oss_access_key_id"     type="password" placeholder="留空表示不修改" />
-          <ConfigField label="AccessKey Secret" v-model="draft.storage.oss_access_key_secret" type="password" placeholder="留空表示不修改" />
-          <ConfigField label="对象前缀" v-model="draft.storage.oss_prefix" placeholder="gugugu/ （选填）" class="span2" />
+          <ConfigField label="AccessKey ID"     v-model="draft.storage.oss_access_key_id" type="password" :placeholder="t('configUi.keepUnchanged')" />
+          <ConfigField label="AccessKey Secret" v-model="draft.storage.oss_access_key_secret" type="password" :placeholder="t('configUi.keepUnchanged')" />
+          <ConfigField :label="t('configUi.objectPrefix')" v-model="draft.storage.oss_prefix" :placeholder="`gugugu/ ${t('configUi.optionalSuffix')}`" class="span2" />
         </div>
 
         <div v-if="draft.storage.backend === 'oss'" class="card-footer oss-footer">
@@ -141,7 +169,7 @@
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
-              {{ testLoading.oss ? '测试中…' : '测试 OSS 连接' }}
+              {{ testLoading.oss ? t('configUi.testing') : t('configUi.testOss') }}
             </button>
           </div>
           <div v-if="testStatus.oss" class="oss-test-result" :class="testStatus.oss.ok ? 'ok' : 'fail'">
@@ -161,24 +189,24 @@
             <Icon name="admin.mail" size="md" />
           </div>
           <div class="card-title-block">
-            <h3>邮件系统</h3>
-            <p>SMTP 发信配置，用于用户反馈邮件提醒</p>
+            <h3>{{ t('configUi.mailSystem') }}</h3>
+            <p>{{ t('configUi.mailHint') }}</p>
           </div>
         </div>
 
         <div class="toggle-group">
           <button class="toggle-btn" :class="{ active: draft.smtp.use_ssl }"
-            @click="draft.smtp.use_ssl = true; draft.smtp.port = 465">SSL（端口 465）</button>
+            @click="draft.smtp.use_ssl = true; draft.smtp.port = 465">{{ t('configUi.ssl') }}</button>
           <button class="toggle-btn" :class="{ active: !draft.smtp.use_ssl }"
-            @click="draft.smtp.use_ssl = false; draft.smtp.port = 587">STARTTLS（端口 587）</button>
+            @click="draft.smtp.use_ssl = false; draft.smtp.port = 587">{{ t('configUi.starttls') }}</button>
         </div>
 
         <div class="field-grid">
-          <ConfigField label="SMTP 服务器" v-model="draft.smtp.host" placeholder="smtp.example.com" />
-          <ConfigField label="端口" v-model.number="draft.smtp.port" type="number" placeholder="465" />
-          <ConfigField label="登录账号" v-model="draft.smtp.user" placeholder="noreply@example.com" />
-          <ConfigField label="登录密码" v-model="draft.smtp.password" type="password" placeholder="留空表示不修改" />
-          <ConfigField label="发件人地址" v-model="draft.smtp.from_addr" placeholder="留空则同登录账号" />
+          <ConfigField :label="t('configUi.smtpServer')" v-model="draft.smtp.host" placeholder="smtp.example.com" />
+          <ConfigField :label="t('configUi.port')" v-model.number="draft.smtp.port" type="number" placeholder="465" />
+          <ConfigField :label="t('configUi.account')" v-model="draft.smtp.user" placeholder="noreply@example.com" />
+          <ConfigField :label="t('configUi.loginPassword')" v-model="draft.smtp.password" type="password" :placeholder="t('configUi.keepUnchanged')" />
+          <ConfigField :label="t('configUi.sender')" v-model="draft.smtp.from_addr" :placeholder="t('configUi.senderKeep')" />
         </div>
 
         <div class="card-footer">
@@ -190,7 +218,7 @@
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
-              {{ testSmtpLoading ? '发送中…' : '测试发送' }}
+              {{ testSmtpLoading ? t('configUi.sending') : t('configUi.sendTest') }}
             </button>
           </div>
         </div>
@@ -210,21 +238,21 @@
         <span class="save-hint" v-if="configStore.saved">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round"><path d="M2 6.5l3 3 6-6"/></svg>
-          配置热更新成功，无需重启服务
+          {{ t('adminConfig.hotUpdated') }}
         </span>
         <span class="save-hint error" v-else-if="configStore.saveError">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round"><path d="M2 2l9 9M11 2l-9 9"/></svg>
           {{ configStore.saveError }}
         </span>
-        <span class="save-hint muted" v-else>密码留空表示不修改，填写新值则覆盖</span>
-        <button class="btn-ghost" @click="resetDraft">撤销修改</button>
+        <span class="save-hint muted" v-else>{{ t('configUi.saveHint') }}</span>
+        <button class="btn-ghost" @click="resetDraft">{{ t('configUi.undo') }}</button>
         <button class="btn-primary" :class="{ loading: configStore.saving }" :disabled="configStore.saving" @click="save">
           <svg v-if="configStore.saving" class="spin-icon" width="13" height="13" viewBox="0 0 12 12"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
           </svg>
-          {{ configStore.saving ? '保存中…' : '保存配置' }}
+          {{ configStore.saving ? t('common.status.saving') : t('adminConfig.save') }}
         </button>
       </div>
 
@@ -234,17 +262,22 @@
 
 <script setup lang="ts">
 import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
+import AdminSelect from '@/components/AdminSelect.vue'
 import ConfigField from './components/ConfigField.vue'
 import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
+
+const { t } = useI18n()
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
 const draft = reactive({
   db:      JSON.parse(JSON.stringify(configStore.cfg.db)),
   redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
+  search:  JSON.parse(JSON.stringify(configStore.cfg.search)),
   storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
   smtp:    JSON.parse(JSON.stringify(configStore.cfg.smtp)),
   security: JSON.parse(JSON.stringify(configStore.cfg.security ?? {
@@ -257,6 +290,7 @@ onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
+  Object.assign(draft.search,  configStore.cfg.search)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
@@ -395,6 +429,7 @@ async function save() {
   await configStore.saveConfig({
     db:      { ...draft.db },
     redis:   { ...draft.redis },
+    search:  { global_search_backend: draft.search.global_search_backend },
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
     security: { ...draft.security },
@@ -404,6 +439,7 @@ async function save() {
 function resetDraft() {
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
+  Object.assign(draft.search,  configStore.cfg.search)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
@@ -483,6 +519,11 @@ async function testSmtp() {
 
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field-grid :deep(.span2) { grid-column: span 2; }
+
+.search-provider-group { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-left: auto; min-width: 0; }
+.config-card-note { margin: 0; color: rgba(255,255,255,0.35); font-size: 12px; line-height: 1.5; text-align: right; }
+.search-provider-select { flex-shrink: 0; }
+.search-config-card .card-head { margin-bottom: 0; }
 
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; }
 .provider-grid { flex-wrap: wrap; }

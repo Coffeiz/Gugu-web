@@ -25,7 +25,7 @@ html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']
   background: var(--surface-card-solid) !important;
   border-color: var(--project-card-border) !important;
 }
-html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing'])::before {
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']) {
   background:
     linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
     var(--pr-project-color) !important;
@@ -36,23 +36,47 @@ html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']
 html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
   background-image: none !important;
 }
-html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::before,
-html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::after {
+html[data-theme][data-family] :is(.drawer-project-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::before,
+html[data-theme][data-family] :is(.drawer-project-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::after {
   opacity: 0 !important;
+}
+
+/* 亮色 Mono 的 Runtime dragGlass 仍使用 legacy 白色 inline border；抓取代理必须
+   复用画布卡片的 Mono 边界 token。只覆盖抓取阶段，landing 继续交给本体样式渐变。 */
+html[data-theme='light'][data-family='mono'] :is(.mind-project-card, .drawer-project-card, .proj-card, .pr-card, .note-card, .entity-sticker, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  border-color: var(--border-strong) !important;
 }
 
 /* 双层 landing 会把源卡复制成直接子层，并移除它自己的 Runtime phase。通过
    代理根的 landing phase 识别这层，继续保留源层的 Runtime 毛玻璃，只让目标层
    的项目渐变负责淡入，避免底色在 pointerup 后瞬间切换。 */
 html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card {
+  background: var(--gugu-card-drag-bg) !important;
   background-image: none !important;
   border-color: var(--runtime-drag-glass-border) !important;
   backdrop-filter: var(--runtime-drag-glass-filter) !important;
   -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
 }
-html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card::before,
-html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card::after {
+/* Mono 的跨 Surface landing 仍会携带抓取阶段的 inline 玻璃表面；项目卡本体在 Mono
+   中是实色、无 blur 的系统卡，landing 也必须沿用同一套 surface/border token。 */
+html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true'][data-runtime-phase='landing'] {
+  background: var(--surface-card-solid) !important;
+  background-image: none !important;
+  border-color: var(--project-card-border) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .pr-card)[data-runtime-proxy-content='true'][data-runtime-phase='landing']::before,
+html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .pr-card)[data-runtime-proxy-content='true'][data-runtime-phase='landing']::after {
   opacity: 0 !important;
+}
+
+/* landing 在指针下揭示本体时，Mind 适配层会暂时抑制一次 hover；等指针离开后
+   再恢复，避免“落地完成 -> 又触发一次抬起”的二次动画。 */
+html[data-theme][data-family] .mind-project-card[data-runtime-hover-suppressed='true']:hover {
+  transform: none;
+  border-color: var(--project-card-border);
+  box-shadow: var(--project-card-shadow);
 }
 
 html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true'] {
@@ -81,4 +105,24 @@ html[data-theme='dark'][data-family] .entity-sticker[data-runtime-proxy-content=
 html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
   background-color: var(--surface-card-solid) !important;
   border-color: var(--border-strong) !important;
+}
+
+/* 亮色咕咕卡片的抓取代理需要恢复旧版的第二层卡片底色。Runtime 的通用 glass 只提供
+   一层 rgba 白色表面，迁移旧拖拽实现时丢掉了这层覆盖，导致项目/文件卡只剩透明玻璃。
+   仅作用抓取阶段，landing 仍交给目标卡片自身的视觉 morph。 */
+html[data-theme='light'][data-family] :is(.proj-card, .drawer-project-card, .pr-card, .fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  background: var(--gugu-card-drag-bg) !important;
+  backdrop-filter: var(--runtime-drag-glass-filter);
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter);
+}
+
+/* 图片卡的缩略图区是独立内容层，恢复旧版的底色和轻微透出；图片本身不被模糊。 */
+html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-area {
+  background: var(--gugu-card-drag-thumb-bg);
+  backdrop-filter: var(--runtime-drag-glass-filter);
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter);
+}
+html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-tiny,
+html[data-theme='light'][data-family] .fc-card[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) .fc-thumb-full.fc-loaded {
+  opacity: .75;
 }

@@ -1,0 +1,36 @@
+/* 日历共享组件样式：Dashboard CalendarPanel 与日历页侧栏共用。
+ * 这些规则不依赖 Teleport；真正脱离页面树的菜单和更多浮层仍归 bridges/calendar.css。 */
+
+/* 近期节点胶囊 */
+.cap-capsule {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px 4px 5px;
+  border-radius: 20px; border: 1px solid;
+  background: var(--cap-bg);
+  transition: filter 0.12s;
+}
+.cap-tag { flex-shrink: 0; font-size: 8px; font-weight: 600; letter-spacing: 0.04em; border-radius: 3px; padding: 0 4px; line-height: 13px; }
+.cap-tag-proj { background: var(--calendar-cap-project-bg); }
+.cap-tag-ev   { background: var(--calendar-cap-event-bg); color: var(--calendar-cap-event-fg); }
+.cap-sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.cap-s-pending { background: var(--calendar-cap-pending-dot); }
+.cap-s-active  { background: var(--calendar-cap-active-dot); }
+.cap-name { font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-bottom: 2px; margin-bottom: -2px; }
+.cap-days { font-size: 10px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
+.cap-days.urgent { color: var(--status-warning); }
+.cap-capsule { transition: box-shadow 0.25s ease; }
+.cap-row:hover .cap-capsule {
+  box-shadow: var(--calendar-cap-hover-shadow);
+}
+
+/* 日历可点击条/chip 的合成层 hover 高光 */
+.cal-chip { position: relative; }
+.cal-chip > * { position: relative; z-index: 1; }
+.cal-chip::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: 0;
+  background: var(--calendar-chip-hover-highlight); opacity: 0;
+  transition: opacity 0.2s ease; pointer-events: none;
+}
+.cal-chip:hover::after,
+.cal-chip.bar-hovered::after { opacity: 1; }

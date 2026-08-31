@@ -14,7 +14,7 @@
       </svg>
     </div>
 
-    <PopupMenu :show="show" :style="popupStyle" popup-class="adp-popup-host">
+    <PopupMenu :show="show" :style="{ ...popupStyle, padding: 0 }" popup-class="adp-popup-host">
       <!-- 主日历弹窗（暗色） -->
       <div class="adp-popup popup-menu-dark">
         <div class="adp-header">
@@ -23,7 +23,7 @@
               stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>
           </button>
           <button class="adp-ym-btn" ref="ymBtnRef" @click.stop="toggleYearPicker">
-            {{ cur.year }} 年 {{ cur.month + 1 }} 月
+            {{ t('sharedUi.yearMonth', { year: cur.year, month: cur.month + 1 }) }}
             <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round" :style="{ transform: showYearPicker ? 'rotate(180deg)' : '', transition: 'transform 0.15s' }">
               <path d="M3 6l5 5 5-5"/>
@@ -46,7 +46,7 @@
       </div>
 
       <!-- 年份选择器（前台亮色 popup-menu） -->
-      <PopupMenu :show="showYearPicker" :style="yearPopupStyle" popup-class="adp-year-popup-host">
+      <PopupMenu :show="showYearPicker" :style="{ ...yearPopupStyle, padding: 0 }" popup-class="adp-year-popup-host">
       <div class="adp-year-popup popup-menu-dark">
         <div class="adp-yp-header">
           <button class="adp-yp-nav" @click.stop="yearBase -= 12">
@@ -73,12 +73,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '选择日期' },
 })
 const emit = defineEmits(['update:modelValue'])
+const { t } = useI18n()
 
 const POPUP_W = 248
 
@@ -215,7 +217,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 
 /* 主弹窗 */
 .adp-popup { width: 248px; padding: 10px; font-family: var(--font-sans); }
-:global(.popup-menu-host.adp-popup-host), :global(.popup-menu-host.adp-year-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 .adp-header {
   display: flex; align-items: center; justify-content: space-between;

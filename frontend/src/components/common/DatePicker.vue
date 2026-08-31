@@ -12,7 +12,7 @@
       <span>{{ displayValue || placeholder }}</span>
     </div>
 
-    <PopupMenu :show="open" :style="popupStyle" popup-class="dp-popup-host">
+    <PopupMenu :show="open" :style="{ ...popupStyle, padding: 0 }">
       <div class="dp-popup" :class="popupClass" ref="popupRef">
 
           <!-- 月份导航 -->
@@ -21,7 +21,7 @@
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L4 6l4 4"/></svg>
             </button>
             <button class="dp-period" @click.stop="enterYearMode">
-              {{ cursor.getFullYear() }}年{{ cursor.getMonth() + 1 }}月
+              {{ periodLabel(cursor) }}
               <svg class="dp-period-caret" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
             </button>
             <button class="dp-nav" @click.stop="nextMonth">
@@ -46,7 +46,7 @@
           <!-- 月份日历 -->
           <template v-if="!yearMode">
             <div class="dp-weekrow">
-              <span v-for="w in '一二三四五六日'" :key="w" class="dp-wh">{{ w }}</span>
+              <span v-for="w in weekDays" :key="w" class="dp-wh">{{ w }}</span>
             </div>
             <div class="dp-grid">
               <button
@@ -81,8 +81,8 @@
 
           <!-- 快捷 -->
           <div v-if="!yearMode" class="dp-footer">
-            <button v-if="showClear" class="dp-clear" @click.stop="clear">清除</button>
-            <button class="dp-today" @click.stop="select(todayIso)">今天</button>
+            <button v-if="showClear" class="dp-clear" @click.stop="clear">{{ t('sharedUi.clear') }}</button>
+            <button class="dp-today" @click.stop="select(todayIso)">{{ t('sharedUi.today') }}</button>
           </div>
         </div>
     </PopupMenu>
@@ -93,6 +93,13 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { nextZ, registerPopover } from '@/composables/windowz'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t, tm, locale } = useI18n()
+const weekDays = computed(() => {
+  const days = tm('sharedUi.weekdays') as string[]
+  return [...days.slice(1), days[0]]
+})
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -125,6 +132,13 @@ const cursor = ref(
     ? new Date(props.modelValue + 'T00:00:00')
     : new Date(today.getFullYear(), today.getMonth(), 1)
 )
+
+function periodLabel(date: Date) {
+  if (locale.value === 'en-US') {
+    return new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'long' }).format(date)
+  }
+  return `${date.getFullYear()}${t('calendar.year')}${date.getMonth() + 1}${t('calendar.month')}`
+}
 
 const yearStart = ref(Math.floor(cursor.value.getFullYear() / 12) * 12)
 
@@ -370,5 +384,4 @@ watch(() => props.modelValue, v => {
    justify-content:space-between 只剩一个子元素就跳到左边 */
 .dp-today { margin-left: auto; }
 
-:global(.popup-menu-host.dp-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 </style>

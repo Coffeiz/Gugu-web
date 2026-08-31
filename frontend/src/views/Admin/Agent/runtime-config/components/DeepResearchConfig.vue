@@ -5,36 +5,38 @@
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="9" r="6"/><path d="M17 17l-3.5-3.5"/></svg>
       </div>
       <div class="card-title-block">
-        <h3>深度研究</h3>
-        <p>从 Tavily、百度千帆、You.com 中选择一个作为 deep_research Provider。API Key 由管理员自行填写，按每日配额计费。</p>
+        <h3>{{ t('searchConfigUi.deepResearch') }}</h3>
+        <p>{{ t('searchConfigUi.deepResearchHint') }}</p>
       </div>
     </div>
     <div class="behavior-grid">
       <div class="behavior-item">
-        <div class="behavior-label"><span>研究 Provider</span><span class="behavior-desc">Tavily、You.com 返回研究答案与来源；百度使用普通搜索并返回网页引用</span></div>
+        <div class="behavior-label"><span>{{ t('searchConfigUi.provider') }}</span><span class="behavior-desc">{{ t('searchConfigUi.providerHint') }}</span></div>
         <AdminSelect :model-value="draft.deep_research_provider" :options="providerOptions" @update:model-value="draft.deep_research_provider = $event" />
       </div>
       <div v-if="draft.deep_research_provider === 'tavily'" class="behavior-item">
-        <div class="behavior-label"><span>Tavily API Key</span><span class="behavior-desc">留空表示保留已存 Key</span></div>
+        <div class="behavior-label"><span>Tavily API Key</span><span class="behavior-desc">{{ t('searchConfigUi.keepKey') }}</span></div>
         <input v-model="draft.tavily_api_key" type="password" class="behavior-input deep-research-input" placeholder="tvly-…" autocomplete="new-password" />
       </div>
       <template v-else-if="draft.deep_research_provider === 'baidu'">
-        <div class="behavior-item"><div class="behavior-label"><span>百度搜索 API Key</span><span class="behavior-desc">调用 /mono/ai_search/web_search，返回网页标题、摘要和 URL</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" placeholder="API Key" autocomplete="new-password" /></div>
+        <div class="behavior-item"><div class="behavior-label"><span>{{ t('searchConfigUi.searchKey') }}</span><span class="behavior-desc">{{ t('searchConfigUi.keyHint') }}</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" placeholder="API Key" autocomplete="new-password" /></div>
       </template>
-      <div v-else class="behavior-item"><div class="behavior-label"><span>You.com API Key</span><span class="behavior-desc">Research API 使用 X-API-Key；需要 Research scope</span></div><input v-model="draft.deep_research_you_api_key" type="password" class="behavior-input deep-research-input" placeholder="YDC_API_KEY" autocomplete="new-password" /></div>
+      <div v-else class="behavior-item"><div class="behavior-label"><span>You.com API Key</span><span class="behavior-desc">{{ t('searchConfigUi.youApiHint') }}</span></div><input v-model="draft.deep_research_you_api_key" type="password" class="behavior-input deep-research-input" :placeholder="t('searchConfigUi.youApiPlaceholder')" autocomplete="new-password" /></div>
       <div class="behavior-item deep-research-test-row">
         <span v-if="test.msg" class="deep-research-test-message" :class="{ success: test.ok, error: !test.ok }">{{ test.msg }}</span>
-        <button class="btn-ghost" :disabled="test.loading" @click="$emit('test')">{{ test.loading ? '测试中…' : '测试连接' }}</button>
+        <button class="btn-ghost" :disabled="test.loading" @click="$emit('test')">{{ test.loading ? t('agentConfigUi.testing') : t('searchConfigUi.testConnection') }}</button>
       </div>
     </div>
-    <div class="card-actions"><span class="save-hint" :class="{ error: !!error }"><template v-if="saved">已保存</template><template v-else-if="error">{{ error }}</template></span><button class="btn-ghost" @click="$emit('reset')">撤销修改</button><button class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? '保存中…' : '保存' }}</button></div>
+    <div class="card-actions"><span class="save-hint" :class="{ error: !!error }"><template v-if="saved">{{ t('searchConfigUi.saved') }}</template><template v-else-if="error">{{ error }}</template></span><button class="btn-ghost" @click="$emit('reset')">{{ t('searchConfigUi.undo') }}</button><button class="btn-primary" :disabled="saving" @click="$emit('save')">{{ saving ? t('searchConfigUi.saving') : t('searchConfigUi.save') }}</button></div>
   </section>
 </template>
 <script setup lang="ts">
 import AdminSelect from '@/components/AdminSelect.vue'
+import { useI18n } from 'vue-i18n'
 defineProps<{ draft: Record<string, any>; test: { loading: boolean; ok: boolean; msg: string }; saving: boolean; saved: boolean; error: string }>()
 defineEmits<{ test: []; reset: []; save: [] }>()
 const providerOptions = [{ value: 'tavily', label: 'Tavily' }, { value: 'baidu', label: '百度搜索' }, { value: 'you', label: 'You.com' }]
+const { t } = useI18n()
 </script>
 
 <style scoped>
@@ -58,8 +60,7 @@ const providerOptions = [{ value: 'tavily', label: 'Tavily' }, { value: 'baidu',
 .deep-research-card .behavior-label span:first-child { font-size:13px; font-weight:500; color:rgba(255,255,255,0.8); }
 .deep-research-card .behavior-desc { font-size:12px; line-height:1.45; color:rgba(255,255,255,0.3); }
 .deep-research-input { width:280px; flex:0 0 280px; }
-.deep-research-card .behavior-input { background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 10px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.8); text-align:center; outline:none; transition:border-color .15s; }
-.deep-research-card .behavior-input:focus { border-color:rgba(123,127,178,0.4); }
+.deep-research-card .behavior-input { border-radius:8px; padding:6px 10px; font-size:13px; font-weight:600; text-align:center; outline:none; }
 .deep-research-test-row { justify-content:flex-end !important; }
 .deep-research-test-message { max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .deep-research-test-message.success { color:#4caf7d; }

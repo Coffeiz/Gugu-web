@@ -84,3 +84,39 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     assert baseline_calls[0][0][0:2] == (7, "user-test")
     assert baseline_calls[0][1]["actual_usage_tokens"] == 1234
     assert baseline_calls[0][1]["compaction_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_does_not_record_byok_usage(monkeypatch):
+    db = _Db()
+
+    async def cap_usage(*args):
+        raise AssertionError("BYOK 不应进入咕咕精力封顶")
+
+    monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
+    async def trim(_):
+        return None
+
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
+    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
+
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    model = SimpleNamespace(model="user-model", provider="user-provider", is_byok=True, context_tokens=80000)
+    result = await run_finalize.finalize_run(
+        session_factory=lambda: _DbContext(db),
+        session_id=7,
+        user_id="user-test",
+        settings=settings,
+        model_cfg=model,
+        rag_context=None,
+        messages=[],
+        initial_len=0,
+        text="reply",
+        files=[],
+        tokens_in=100,
+        tokens_out=20,
+    )
+
+    assert result.tokens_in == 0
+    assert result.tokens_out == 0
+    assert not any(item.__class__.__name__ == "AgentUsage" for item in db.items)

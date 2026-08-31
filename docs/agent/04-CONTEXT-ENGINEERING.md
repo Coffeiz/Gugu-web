@@ -139,7 +139,7 @@ History(n) + Batch(n+1) = History(n+1)
 | DeepSeek（deepseek-v4-flash） | `99.61%` | `1,085,822 / 4,222 / 1,081,600` |
 | 合计 | `99.53%` | `3,062,615 / 14,423 / 3,048,192` |
 
-Round 1 不纳入稳定段结论：MiniMax/GLM 的 Round 1 继承了此前测试留下的热缓存，DeepSeek 的 Round 1 则是未额外预热的冷启动/边界重建样本。完整逐轮数据见 [MiniMax、GLM 与 DeepSeek 真实 Agent 20 轮对话/工具协议测试报告](../reports/TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN-20260826.md)；缓存变化定位由 [11-LoopScope.md](./11-LOOPSCOPE.md) 的 Prefix Diff 和 Cache Diagnostics 提供。
+Round 1 不纳入稳定段结论：MiniMax/GLM 的 Round 1 继承了此前测试留下的热缓存，DeepSeek 的 Round 1 则是未额外预热的冷启动/边界重建样本。完整逐轮数据见 [MiniMax、GLM 与 DeepSeek 真实 Agent 20 轮对话/工具协议测试报告](../reports/2026-08-26-TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN.md)；缓存变化定位由 [11-LoopScope.md](./11-LOOPSCOPE.md) 的 Prefix Diff 和 Cache Diagnostics 提供。
 
 ## 6. 压缩与 baseline
 

@@ -8,7 +8,7 @@
     <button
       v-for="c in options" :key="c || 'none'"
       class="cs-dot" :class="[c ? `cs-${c}` : 'cs-none', { active: (modelValue || null) === c }]"
-      :title="c ? COLOR_LABEL[c] : '默认（无颜色）'"
+      :title="c ? t(`mindUi.colors.${COLOR_LABEL[c]}`) : t('mindUi.defaultColor')"
       @click="emit('update:modelValue', c)"
     ></button>
   </span>
@@ -16,10 +16,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 // 顺序：橙/红/蓝/青（用户指定的排序，底层类名/色值不变，只是显示顺序 + 中文叫法调整）。
 const COLOR_ORDER: string[] = ['amber', 'coral', 'blue', 'teal']
-const COLOR_LABEL: Record<string, string> = { amber: '橙', coral: '红', blue: '蓝', teal: '青' }
+const { t } = useI18n()
+const COLOR_LABEL: Record<string, string> = { amber: 'amber', coral: 'coral', blue: 'blue', teal: 'teal' }
 
 const props = defineProps<{
   modelValue: string | null

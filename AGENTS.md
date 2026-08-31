@@ -15,6 +15,11 @@
 
 完整设计文档见 `agentskills/design/references/`。历史开发文档见 `docs/development/`。
 
+## 本地开发机信息
+
+- 本地开发机、devserver、代理、Mutagen 和权限操作相关信息统一以 `agentskills/local/SKILL.md` 为准，不在本文件或其他 Git 跟踪文件中重复记录。
+- 密码、Token、API Key 等凭据只从本机安全存储或用户临时提供的环境变量读取，不写入仓库、命令、日志、提交记录或同步文件；本地运行信息不会作为凭据保存到 Git。
+
 ## Admin 前端拆分约定
 
 - 修改 `frontend/src/views/Admin/**/index.vue` 时，不得只继续堆叠模板、样式或业务逻辑；如果触及已有大入口文件，应顺手把可独立的模块、弹窗、表单区块拆到 `components/`，把状态与异步流程拆到 `composables/`，把请求和纯逻辑拆到对应 service/utils。
@@ -47,7 +52,13 @@
 ## 语言与提交
 
 - 注释、日志、用户文案、文档和 commit message 使用简体中文。
-- Changelog 只记录简短用户可感知变化；详细排查过程写入 `docs/DEVLOG.md`。
+- Changelog 只记录简短用户可感知变化；详细排查过程按 `docs/devlog/README.md` 约定写入 `docs/devlog/` 下的独立记录。
+
+## 前端提醒组件规范
+
+- 删除、重置、覆盖、停用等需要用户确认的操作，必须使用 `useConfirmDialog` / `confirmDialog` 和统一的 `ConfirmDialog` 组件。
+- 禁止在 UI 源码中直接调用浏览器原生 `alert`、`confirm`、`prompt`；普通成功、失败和状态反馈使用 AppToast 或页面内提示。
+- 新增或修改危险操作时，必须补充取消路径、确认文案 i18n 和原生弹窗扫描回归。
 
 ## Git 提交完整性
 

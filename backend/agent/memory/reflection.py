@@ -460,9 +460,6 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # lens（解读先验）gated 学习：hint 多数轮为空；候选须复现才提拔成规则。顺带做退休维护。
         from agent.memory import lens
         await lens.observe(user_id, out.get("lens_hint"))
-        # 关系温度：超 24h 旧才重算（窗口聚合、纯数据侧、自带 DB 会话,见 memory/temperature.py）
-        from agent.memory import temperature
-        await temperature.maybe_refresh(user_id)
         # pattern 维护只在活跃反思链路中检查，不扫描沉默用户，也不阻塞本轮回复。
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)

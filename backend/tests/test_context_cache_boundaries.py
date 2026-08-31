@@ -1,7 +1,8 @@
 from agent.context.context_diagnostics import first_diff_index, request_diagnostics
 from agent.context.context_assembly import build_messages
 from agent.context.canonical_tool_history import render_events_for_provider
-from agent.context.assembly import PromptMessages
+from agent.loop_drivers import _history_cache_state, _with_single_history_cache
+from agent.context.assembly import PromptMessages, reminder
 
 
 class FakeAdapter:
@@ -185,3 +186,27 @@ def test_tool_continuation_promotes_tail_without_reordering_cache_prefix():
     assert second_wire[:3] == old_prefix
     assert messages.cache_anchor_indices == [2]
     assert messages.newly_appended(3) == second_wire[3:]
+
+
+def test_history_cache_copy_preserves_dynamic_tail_boundary():
+    prompt = PromptMessages([
+        {"role": "system", "content": "稳定系统"},
+        {"role": "user", "content": "上一轮问题"},
+    ])
+    prompt.set_dynamic_tail([
+        reminder("当前时间：2026-08-30（星期日）"),
+    ])
+
+    cached = _with_single_history_cache(render_events_for_provider(prompt))
+
+    assert isinstance(cached, PromptMessages)
+    assert cached.dynamic_tail == prompt.dynamic_tail
+    assert cached.conversation[0] == prompt.conversation[0]
+    assert cached.conversation[1]["content"][0]["text"] == "上一轮问题"
+    stable_limit, anchors = _history_cache_state(cached)
+    assert stable_limit == 2
+    assert all(index < stable_limit for index in anchors)
+    assert not any("cache_control" in block
+                   for message in cached.dynamic_tail
+                   for block in (message.get("content") or [])
+                   if isinstance(block, dict))

@@ -7,9 +7,9 @@
     data-layout-surface
   >
     <div class="col-header">
-      <div class="col-title"><span class="col-dot"></span>已完成</div>
+      <div class="col-title"><span class="col-dot"></span>{{ t('projects.done') }}</div>
       <div class="col-header-right">
-        <button class="archived-entry-mini" @click="$emit('open-archived')" title="查看已归档项目">已归档</button>
+        <button class="archived-entry-mini" @click="$emit('open-archived')" :title="t('projects.archivedView')">{{ t('projects.archivedShort') }}</button>
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
@@ -22,6 +22,7 @@ import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { runtime } from '@/interaction/runtime'
 import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
@@ -29,6 +30,7 @@ const props = defineProps({
   isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },
 })
 defineEmits(['card-click', 'open-archived'])
+const { t } = useI18n()
 const colBodyRef = ref<HTMLElement | null>(null)
 const columnRef = ref<HTMLElement | null>(null)
 const columnGeneration = runtime.surfaces.register({
