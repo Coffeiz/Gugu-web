@@ -9,10 +9,10 @@
         <span class="preview-nav-label">{{ t('navigation.workspace') }}</span>
         <span class="preview-nav-item active"><Icon name="navigation.projects" size="sm" />{{ t('navigation.projects') }}</span>
         <span class="preview-nav-item"><Icon name="navigation.calendar" size="sm" />{{ t('navigation.calendar') }}</span>
-        <span class="preview-nav-item"><Icon name="navigation.mind" size="sm" />{{ t('navigation.mind') }}</span>
+        <span class="preview-nav-item"><Icon name="canvas.note" size="sm" />{{ t('navigation.mind') }}</span>
         <span class="preview-divider" />
         <span class="preview-nav-label">{{ t('navigation.resources') }}</span>
-        <span class="preview-nav-item"><Icon name="navigation.files" size="sm" />{{ t('navigation.files') }}</span>
+        <span class="preview-nav-item"><Icon name="file.folder" size="sm" />{{ t('navigation.files') }}</span>
       </nav>
       <div class="preview-user">
         <span class="preview-avatar">C</span>

@@ -140,7 +140,7 @@ const routes: RouteRecordRaw[] = [
         path: 'dev/onboarding',
         name: 'DevOnboarding',
         component: () => import('@/views/DevOnboarding.vue'),
-        meta: { title: '新手引导 Demo' },
+        meta: { title: 'devOnboarding.title' },
       }] : []),
     ],
   },
