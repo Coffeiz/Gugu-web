@@ -409,7 +409,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 - [x] 逐项审查可选字段：保留项仅属于独立业务状态、会改变工具行为、不能安全默认或低风险分页/筛选便利参数；兼容别名和重复默认说明已移出 Schema，确认门与跨项目定位保留为必要语义。
 - [x] 将日期、时间和其他格式约束写入 `pattern` 或结构条件，必要时配极短说明；日期使用 `YYYY-MM-DD` pattern，时间使用严格 24 小时制 pattern，全天使用显式 `all_day`，文件/空间/动作使用条件 Schema。
 - [x] 增加一致性测试，验证每个注册工具的源码 `input_schema` 与规范化结果完全一致，且 `to_openai()`/`to_anthropic()` 不再改变 Schema 内容；当前 101 个工具 `noncanonical=0`。
-- [x] 为迁移后的工具补齐合法正例、缺字段反例、互斥字段反例、嵌套数组/对象反例和历史兼容测试；覆盖 `test_tool_schema_phase1.py`、`test_tool_schema_validation.py` 及 legacy input 兼容断言。
+- [x] 为迁移后的工具补齐合法正例、缺字段反例、互斥字段反例、嵌套数组/对象反例和历史兼容测试；覆盖 `test_tool_schema_security_contract.py`、`test_tool_schema_validation.py` 及 legacy input 兼容断言。
 - [x] 使用 devserver 对全部工具执行 Schema 注册、能力注入、按需获取和 dispatch 回归；确认工具数量、Schema digest 和错误 trace 无异常变化。
 - [x] 将 `_compact_schema` 降级为迁移期 lint；provider 输出直接复制源码 Schema，不再依赖运行时 Schema 转换，禁止新增工具依赖运行时 Schema 转换。
 - [x] 更新工具编写 README、报告和变更记录，记录迁移前后 Schema 字符数、token、准确率和未迁移工具清单。

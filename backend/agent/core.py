@@ -1063,6 +1063,23 @@ class LLMRunner:
                             )
                         else:
                             adapter_target = normalize_tool_name(raw_target_name)
+                            if adapter_target:
+                                # 固定 Adapter 为了兼容旧模型允许扁平参数，但不能把只有
+                                # name 的调用静默降级成目标工具的空对象，否则错误会伪装成
+                                # 业务 Schema 缺字段，也会诱发模型重复发送同一个空调用。
+                                has_arguments = "arguments" in tc.input
+                                has_flattened_arguments = any(key != "name" for key in tc.input)
+                                if not has_arguments and not has_flattened_arguments:
+                                    protocol_error = invalid_tool_call_payload(
+                                        path="arguments",
+                                        rule="required",
+                                        reason="call_tool.arguments 是必填字段",
+                                    )
+                                elif has_arguments and not isinstance(tc.input.get("arguments"), dict):
+                                    protocol_error = invalid_tool_call_payload(
+                                        path="arguments",
+                                        reason="call_tool.arguments 必须是 JSON object",
+                                    )
                     effective_tool_name = adapter_target or (
                         raw_call_name if isinstance(raw_call_name, str) else "invalid_tool_call"
                     )

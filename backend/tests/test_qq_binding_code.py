@@ -5,6 +5,7 @@ from app.services.im_identity import (
     QQ_BINDING_CODE_MAX_ATTEMPTS,
     _qq_binding_attempts_key,
     _qq_binding_key,
+    bind_qq_owner_if_unbound,
     consume_qq_binding_code,
     create_qq_binding_code,
 )
@@ -66,7 +67,19 @@ async def test_qq_binding_code_is_hashed_and_consumed_once(db, user_a, monkeypat
     assert redis.expirations == {}
 
     assert await consume_qq_binding_code(bot.id, user_a.id, "qq-owner", code) is True
-    assert await consume_qq_binding_code(bot.id, user_a.id, "qq-owner", code) is False
+    assert await consume_qq_binding_code(bot.id, user_a.id, "qq-owner", code) is True
+
+    await db.refresh(bot)
+    assert bot.owner_platform_user_id == "qq-owner"
+    assert bot.owner_bound_at is not None
+
+
+async def test_first_qq_private_message_binds_owner_once(db, user_a, user_b):
+    bot = await _create_bot(db, user_a.id)
+
+    assert await bind_qq_owner_if_unbound(bot.id, user_a.id, "qq-owner") is True
+    assert await bind_qq_owner_if_unbound(bot.id, user_a.id, "qq-other") is False
+    assert await bind_qq_owner_if_unbound(bot.id, user_b.id, "qq-user-b") is False
 
     await db.refresh(bot)
     assert bot.owner_platform_user_id == "qq-owner"
@@ -128,7 +141,7 @@ async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
         "C2C_MESSAGE_CREATE",
         {
             "id": "message-1",
-            "content": "绑定 123456",
+            "content": "123456",
             "author": {"user_openid": "qq-owner"},
             "attachments": [],
         },

@@ -23,7 +23,7 @@
           <div v-if="item.divider" class="pm-nav-divider"></div>
           <button v-else class="pm-nav-item" :class="{ active: activeNav === item.key }" @click="item.key && (activeNav = item.key)">
             <Icon :name="item.icon || ''" size="sm" tone="inherit" />
-            {{ t(item.label) }}
+            {{ t(item.label ?? '') }}
           </button>
         </template>
         <div class="pm-nav-spacer"></div>

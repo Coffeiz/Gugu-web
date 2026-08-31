@@ -516,6 +516,7 @@ class MindCanvasItemResponse(CamelModel):
 
 
 class MindRelationCreate(CamelModel):
+    canvas_id: int
     src_node_id: int
     dst_node_id: int
     allow_parallel: bool = False
@@ -523,6 +524,7 @@ class MindRelationCreate(CamelModel):
 
 class MindRelationResponse(CamelModel):
     id: int
+    canvas_id: Optional[int] = None
     src_node_id: int
     dst_node_id: int
     rel_type: str

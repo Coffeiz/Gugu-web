@@ -40,6 +40,9 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: resolve(__dirname, 'src') },
+      // 临时验证本地 Runtime 的浮层测量修复；验证完成后移除，不进入正式依赖配置。
+      { find: 'gugu-interaction-runtime/vue', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/vue.js') },
+      { find: 'gugu-interaction-runtime', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/index.js') },
       // 统一到 Gugu-web 的 Vue，避免产生两份响应式运行时。
       { find: 'vue', replacement: resolve(__dirname, 'node_modules/vue/dist/vue.runtime.esm-bundler.js') },
     ],
@@ -67,6 +70,10 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Dockerfile 等部署文件不属于前端模块，Mutagen 同步时不能触发 Vite HMR。
+    watch: {
+      ignored: ['**/Dockerfile'],
+    },
     // 与 Admin dev server 保持一致，确保 @vite/client 始终拿到具体布尔值。
     forwardConsole: false,
     // 通过自定义域名/内网穿透访问 dev server 时，需把域名加入白名单，否则 Vite 拦截 Host 头

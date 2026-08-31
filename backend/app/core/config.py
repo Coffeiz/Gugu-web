@@ -189,8 +189,8 @@ class AIPresets(BaseModel):
 
 
 class AgentBehaviorSettings(BaseModel):
-    # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
-    shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
+    # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
+    shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")
     shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
     shell_dangerous_enabled: bool = Field(False, description="是否允许危险 Shell 命令进入确认流程（默认关闭）")
     shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")

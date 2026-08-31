@@ -223,10 +223,11 @@ async def update_node_atomic(db, node_id: int, user_id, client_version: int, fie
     return res.rowcount == 1
 
 
-async def _find_relation(db, user_id: UUID, src: int, dst: int, rel_type: str) -> MindRelation | None:
+async def _find_relation(db, user_id: UUID, src: int, dst: int, rel_type: str, canvas_id: int | None = None) -> MindRelation | None:
     return await db.scalar(
         select(MindRelation).where(
             MindRelation.user_id == user_id,
+            MindRelation.canvas_id == canvas_id,
             MindRelation.src_node_id == src,
             MindRelation.dst_node_id == dst,
             MindRelation.rel_type == rel_type,
@@ -246,8 +247,9 @@ async def upsert_relation(
     status: str = "confirmed",
     note: str | None = None,
     allow_parallel: bool = False,
+    canvas_id: int | None = None,
 ) -> MindRelation:
-    """建一条关系；默认幂等，画布可明确请求平行边。
+    """建一条关系；默认幂等，画布通过 canvas_id 隔离并可明确请求平行边。
 
     无向类型（related）先按 id 归一，于是 (A,B) 与 (B,A) 落同一行。
     默认模式下已有边直接返回，保留咕咕建议/重复操作的幂等语义；allow_parallel 只由画布在
@@ -264,12 +266,12 @@ async def upsert_relation(
         src, dst = dst, src
 
     if not allow_parallel:
-        found = await _find_relation(db, uid, src, dst, rel_type)
+        found = await _find_relation(db, uid, src, dst, rel_type, canvas_id)
         if found is not None:
             return found
 
     rel = MindRelation(
-        user_id=uid, src_node_id=src, dst_node_id=dst,
+        user_id=uid, canvas_id=canvas_id, src_node_id=src, dst_node_id=dst,
         rel_type=rel_type, edge_key=uuid4().hex if allow_parallel else "",
         origin=origin, status=status, note=note,
     )
@@ -282,7 +284,7 @@ async def upsert_relation(
         # 同一条线；默认幂等模式才回查旧边兼容迁移前的唯一约束并发保护。
         if allow_parallel:
             raise
-        found = await _find_relation(db, uid, src, dst, rel_type)
+        found = await _find_relation(db, uid, src, dst, rel_type, canvas_id)
         if found is None:
             raise                              # 不是唯一约束撞车（比如外键不存在），照实抛
         return found

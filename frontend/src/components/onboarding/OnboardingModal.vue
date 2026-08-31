@@ -11,19 +11,51 @@
         <section class="onboarding-step">
           <div
             class="onboarding-visual"
-            :class="{
-              'theme-visual': step === 'style',
-              'complete-visual': step === 'complete',
-            }"
           >
-            <OnboardingThemePreview v-if="step === 'complete'" class="complete-preview-host" />
-            <OnboardingThemePreview v-else-if="step === 'style'" class="theme-preview-host" />
-            <img
-              v-else
-              class="onboarding-media"
-              :src="mediaSource"
-              :alt="mediaAlt"
-            />
+            <Transition name="onboarding-step-fade">
+              <div
+                :key="step"
+                class="onboarding-visual-stage"
+                :class="{
+                  'theme-visual-stage': step === 'style',
+                  'complete-visual-stage': step === 'complete',
+                }"
+              >
+                <OnboardingThemePreview v-if="step === 'complete'" class="complete-preview-host" />
+                <OnboardingThemePreview v-else-if="step === 'style'" class="theme-preview-host" />
+                <OnboardingLanguagePreview v-else-if="step === 'locale'" class="language-preview-host" />
+                <div v-else-if="step === 'features' || step === 'im'" class="feature-media-stage" aria-live="polite">
+                  <img
+                    v-if="featureMediaPrevious"
+                    class="onboarding-media feature-media feature-media-previous"
+                    :class="{ 'is-fading': featureMediaTransition }"
+                    :src="featureMediaPrevious"
+                    :alt="mediaAlt"
+                  />
+                  <img
+                    class="onboarding-media feature-media"
+                    :class="{ 'is-visible': featureMediaTransition }"
+                    :src="featureMediaCurrent"
+                    :alt="mediaAlt"
+                  />
+                </div>
+                <div v-else-if="step === 'model'" class="feature-media-stage" aria-live="polite">
+                  <img
+                    v-if="modelMediaPrevious"
+                    class="onboarding-media feature-media feature-media-previous"
+                    :class="{ 'is-fading': modelMediaTransition }"
+                    :src="modelMediaPrevious"
+                    :alt="mediaAlt"
+                  />
+                  <img
+                    class="onboarding-media feature-media"
+                    :class="{ 'is-visible': modelMediaTransition }"
+                    :src="modelMediaCurrent"
+                    :alt="mediaAlt"
+                  />
+                </div>
+              </div>
+            </Transition>
           </div>
 
           <div class="onboarding-content">
@@ -53,11 +85,14 @@
               </div>
 
               <div v-else-if="step === 'features'" class="feature-options content-options">
-                  <div
+                  <button
                     v-for="item in featureItems"
                     :key="item.key"
+                    type="button"
                     class="feature-option"
-                    :class="`feature-option--${item.key}`"
+                    :class="[`feature-option--${item.key}`, { selected: selectedFeature === item.key }]"
+                    :aria-pressed="selectedFeature === item.key"
+                    @click="selectFeature(item.key)"
                   >
                   <span class="feature-icon">
                     <Icon :name="item.icon" size="sm" tone="inherit" />
@@ -66,7 +101,7 @@
                     <b>{{ t(`onboardingUi.features.${item.key}.title`) }}</b>
                     <small>{{ t(`onboardingUi.features.${item.key}.description`) }}</small>
                   </span>
-                </div>
+                </button>
               </div>
 
               <div v-else-if="step === 'style'" class="theme-options content-options">
@@ -151,13 +186,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RiCheckFill } from '@remixicon/vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
 import OnboardingImSetup from '@/components/onboarding/OnboardingImSetup.vue'
+import OnboardingLanguagePreview from '@/components/onboarding/OnboardingLanguagePreview.vue'
 import OnboardingThemePreview from '@/components/onboarding/OnboardingThemePreview.vue'
 import ProfileByokPane from '@/components/common/ProfileModal/ProfileByokPane.vue'
 import ThemeSwitcher from '@/views/Design/components/ThemeSwitcher.vue'
@@ -181,10 +217,38 @@ const saving = ref(false)
 const initializedForOpen = ref(false)
 const step = computed<Step>(() => steps[index.value])
 
-const mediaSource = computed(() => step.value === 'locale' || step.value === 'im'
-  ? '/onboarding/file-drag.gif'
-  : '/onboarding/kanban-drag.gif')
 const mediaAlt = computed(() => t(`onboardingUi.demo.${step.value}.title`))
+const featureSlides: Record<string, string[]> = {
+  project: ['/onboarding/kanban-drag-1.gif', '/onboarding/file-drag-1.gif'],
+  calendar: ['/onboarding/calendar-1.gif'],
+  im: ['/onboarding/IM-messages-1.gif', '/onboarding/IM-messages-2.gif', '/onboarding/IM-messages-3.gif'],
+}
+const featureSequence = ['project', 'calendar', 'im']
+const featureDurations: Record<string, number> = {
+  '/onboarding/kanban-drag-1.gif': 8030,
+  '/onboarding/file-drag-1.gif': 8030,
+  '/onboarding/calendar-1.gif': 10030,
+  '/onboarding/IM-messages-1.gif': 10030,
+  '/onboarding/IM-messages-2.gif': 8030,
+  '/onboarding/IM-messages-3.gif': 10030,
+}
+const selectedFeature = ref('project')
+const featureSlideIndex = ref(0)
+const featureMediaCurrent = ref(featureSlides.project[0])
+const featureMediaPrevious = ref<string | null>(null)
+const featureMediaTransition = ref(true)
+const featureMedia = computed(() => featureSlides[selectedFeature.value][featureSlideIndex.value] || featureSlides.project[0])
+let featureCycleTimer: ReturnType<typeof setTimeout> | null = null
+let featureSwapTimer: ReturnType<typeof setTimeout> | null = null
+const modelSlides = ['/onboarding/IM-messages-1.gif', '/onboarding/note-write-1.gif']
+const modelMediaCurrent = ref(modelSlides[0])
+const modelMediaPrevious = ref<string | null>(null)
+const modelMediaTransition = ref(true)
+const mediaCrossfadeCleanupMs = 1050
+const featureMode = ref<'features' | 'im'>('features')
+let modelSlideIndex = 0
+let modelCycleTimer: ReturnType<typeof setTimeout> | null = null
+let modelSwapTimer: ReturnType<typeof setTimeout> | null = null
 const localeLabel = computed(() => localeOptions.find(option => option.value === locale.value)?.label || locale.value)
 
 const localeOptions: Array<{ value: SupportedLocale; label: string; native: string; code: string }> = [
@@ -198,6 +262,112 @@ const featureItems = [
   { key: 'calendar', icon: 'navigation.calendar' },
   { key: 'im', icon: 'communication.chat' },
 ]
+
+function stopFeatureCycle() {
+  if (featureCycleTimer) { clearInterval(featureCycleTimer); featureCycleTimer = null }
+  if (featureSwapTimer) { clearTimeout(featureSwapTimer); featureSwapTimer = null }
+}
+
+function swapFeatureMedia() {
+  const nextMedia = featureMedia.value
+  if (featureMediaCurrent.value === nextMedia) return
+  featureMediaPrevious.value = featureMediaCurrent.value
+  featureMediaCurrent.value = nextMedia
+  featureMediaTransition.value = false
+  if (featureSwapTimer) clearTimeout(featureSwapTimer)
+  setTimeout(() => { featureMediaTransition.value = true }, 16)
+  featureSwapTimer = setTimeout(() => {
+    featureMediaPrevious.value = null
+    featureSwapTimer = null
+  }, mediaCrossfadeCleanupMs)
+}
+
+function selectFeature(key: string) {
+  if (!featureSlides[key] || selectedFeature.value === key) return
+  selectedFeature.value = key
+  featureSlideIndex.value = 0
+  swapFeatureMedia()
+  scheduleFeatureCycle()
+}
+
+function cycleFeature() {
+  const slides = featureSlides[selectedFeature.value] || featureSlides.project
+  if (featureSlideIndex.value + 1 < slides.length) {
+    featureSlideIndex.value += 1
+  } else if (featureMode.value === 'features') {
+    const currentIndex = featureSequence.indexOf(selectedFeature.value)
+    selectedFeature.value = featureSequence[(currentIndex + 1) % featureSequence.length]
+    featureSlideIndex.value = 0
+  } else {
+    featureSlideIndex.value = 0
+  }
+  swapFeatureMedia()
+  scheduleFeatureCycle()
+}
+
+function scheduleFeatureCycle() {
+  if (featureCycleTimer) clearTimeout(featureCycleTimer)
+  featureCycleTimer = setTimeout(cycleFeature, featureDurations[featureMedia.value] || 8000)
+}
+
+function startFeatureCycle() {
+  stopFeatureCycle()
+  scheduleFeatureCycle()
+}
+
+function stopModelCycle() {
+  if (modelCycleTimer) { clearTimeout(modelCycleTimer); modelCycleTimer = null }
+  if (modelSwapTimer) { clearTimeout(modelSwapTimer); modelSwapTimer = null }
+}
+
+function cycleModelMedia() {
+  modelMediaPrevious.value = modelMediaCurrent.value
+  modelSlideIndex = (modelSlideIndex + 1) % modelSlides.length
+  modelMediaCurrent.value = modelSlides[modelSlideIndex]
+  modelMediaTransition.value = false
+  setTimeout(() => { modelMediaTransition.value = true }, 16)
+  if (modelSwapTimer) clearTimeout(modelSwapTimer)
+  modelSwapTimer = setTimeout(() => {
+    modelMediaPrevious.value = null
+    modelSwapTimer = null
+  }, mediaCrossfadeCleanupMs)
+  scheduleModelCycle()
+}
+
+function scheduleModelCycle() {
+  if (modelCycleTimer) clearTimeout(modelCycleTimer)
+  modelCycleTimer = setTimeout(cycleModelMedia, 10030)
+}
+
+function startModelCycle() {
+  stopModelCycle()
+  modelSlideIndex = 0
+  modelMediaCurrent.value = modelSlides[0]
+  modelMediaPrevious.value = null
+  modelMediaTransition.value = true
+  scheduleModelCycle()
+}
+
+watch(step, (value) => {
+  if (value === 'features' || value === 'im') {
+    featureMode.value = value
+    selectedFeature.value = value === 'features' ? 'project' : 'im'
+    featureSlideIndex.value = 0
+    featureMediaCurrent.value = featureSlides.project[0]
+    featureMediaPrevious.value = null
+    featureMediaTransition.value = true
+    startFeatureCycle()
+    stopModelCycle()
+  } else if (value === 'model') {
+    stopFeatureCycle()
+    startModelCycle()
+  } else {
+    stopFeatureCycle()
+    stopModelCycle()
+  }
+})
+
+onBeforeUnmount(() => { stopFeatureCycle(); stopModelCycle() })
 
 // 服务端只决定打开这一轮引导时从哪一步继续；打开后由本地 index 单独驱动 UI。
 watch(
@@ -324,6 +494,23 @@ async function next() {
   overflow: hidden;
   background: transparent;
 }
+.onboarding-visual-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.onboarding-step-fade-enter-active,
+.onboarding-step-fade-leave-active {
+  transition: opacity var(--motion-media-crossfade) var(--motion-ease-standard);
+}
+.onboarding-step-fade-enter-from,
+.onboarding-step-fade-leave-to {
+  opacity: 0;
+}
+.onboarding-step-fade-leave-active {
+  position: absolute;
+  inset: 0;
+}
 
 .onboarding-media {
   display: block;
@@ -334,12 +521,51 @@ async function next() {
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
 }
+.feature-media-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
+}
+.feature-media-stage .onboarding-media {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.feature-media {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+}
+.feature-media-previous { z-index: 1; opacity: 1; }
+.feature-media-previous.is-fading {
+  animation: onboarding-media-fade-out var(--motion-media-crossfade) var(--motion-ease-standard) both;
+}
+.feature-media.is-visible {
+  animation: onboarding-media-fade-in var(--motion-media-crossfade) var(--motion-ease-standard) both;
+}
+@keyframes onboarding-media-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes onboarding-media-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.language-preview-host {
+  width: 100%;
+  height: 100%;
+}
 
-.onboarding-visual.theme-visual {
+.onboarding-visual-stage.theme-visual-stage {
   padding: var(--space-lg) 46px 52px;
+  box-sizing: border-box;
   background: transparent;
 }
-.onboarding-visual.complete-visual { background: transparent; }
+.onboarding-visual-stage.complete-visual-stage { background: transparent; }
 
 .theme-preview-host {
   width: 100%;
@@ -512,6 +738,7 @@ async function next() {
 }
 
 .feature-option {
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -522,11 +749,25 @@ async function next() {
   background: var(--workspace-card-bg);
   color: var(--content-secondary);
   box-shadow: var(--workspace-card-shadow);
+  text-align: left;
+  cursor: pointer;
   transition:
-    border-color var(--motion-hover-control) var(--motion-ease-standard);
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
 .feature-option:hover {
   border-color: var(--workspace-card-border-hover);
+}
+.feature-option:focus-visible,
+.feature-option.selected {
+  outline: 0;
+  border-color: var(--border-focus);
+  box-shadow: var(--control-focus-shadow), var(--workspace-card-shadow);
+}
+.feature-option.selected { animation: onboarding-feature-select var(--motion-hover-control) var(--motion-ease-standard) both; }
+@keyframes onboarding-feature-select {
+  from { opacity: .72; }
+  to { opacity: 1; }
 }
 .feature-option--project .feature-icon { background: var(--status-info-bg); color: var(--status-info); }
 .feature-option--calendar .feature-icon { background: var(--status-warning-bg); color: var(--status-warning); }
@@ -637,7 +878,7 @@ async function next() {
 
 @media (max-width: 720px) {
   .onboarding-step { grid-template-rows: 318px minmax(0, 1fr); }
-  .onboarding-visual.theme-visual { padding: var(--space-md) var(--space-md) 42px; }
+  .onboarding-visual-stage.theme-visual-stage { padding: var(--space-md) var(--space-md) 42px; }
   .theme-preview-host {
     min-width: 660px;
     width: 138%;

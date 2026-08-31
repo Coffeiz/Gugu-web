@@ -89,6 +89,7 @@ import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
 import { useI18n } from 'vue-i18n'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
 import Icon from '@/components/common/Icon.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
@@ -195,6 +196,12 @@ async function downloadFile(f: any) {
 }
 
 async function deleteFile(f: any) {
+  if (!await confirmDialog({
+    title: t('filesViewUi.deleteFileTitle'),
+    message: t('filesViewUi.deleteFileMessage', { name: f.name }),
+    tone: 'danger',
+    confirmText: t('filesViewUi.moveToTrash'),
+  })) return
   try {
     await filesApi.delete(f.id)
     clearThumbCache(f.id)

@@ -12,7 +12,10 @@ from app.models import Project
 
 import agent.tools.base as tool_base
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
-from agent.tools.tool_contract import normalize_input_by_schema
+from agent.tools.mind import _BLOCK_ITEM_SCHEMA, _parse_captured_at
+from app.core.tz import LOCAL_TZ
+from app.core.date_input import normalize_date_string
+from agent.tools.tool_contract import build_validator, normalize_input_by_schema, normalize_legacy_input, validate_input
 
 
 async def _ok_handler(db, user_id, args):
@@ -75,6 +78,78 @@ async def test_dispatch_rejects_missing_required_before_handler():
     assert "project_id" in payload["next_action"]
     assert "先向用户询问" in payload["next_action"]
     assert called is False
+
+
+def test_note_tools_accept_legacy_text_inline_nodes_and_keep_strict_schema():
+    raw = {
+        "blocks": [
+            {"type": "heading", "content": [{"text": "日记标题"}]},
+            {"type": "paragraph", "content": [{"text": "正文"}]},
+            {"type": "bullet_list", "items": [{"content": [{"text": "列表项"}]}]},
+        ],
+    }
+
+    normalized, adaptations = normalize_legacy_input("note_create", raw)
+    issues = validate_input(
+        build_validator({
+            "type": "object",
+            "properties": {"blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA}},
+            "required": ["blocks"],
+        }),
+        normalized,
+    )
+
+    assert issues == []
+    assert normalized["blocks"][0]["content"][0] == {"text": "日记标题", "type": "text"}
+    assert normalized["blocks"][2]["items"][0]["content"][0]["type"] == "text"
+    assert len(adaptations) == 3
+
+
+def test_note_tools_do_not_guess_missing_reference_type():
+    raw = {"blocks": [{"type": "paragraph", "content": [{"label": "项目"}]}]}
+
+    normalized, adaptations = normalize_legacy_input("note_create", raw)
+
+    assert normalized == raw
+    assert adaptations == []
+
+
+@pytest.mark.parametrize("value", [
+    "08-23", "08/23", "2026-08-23", "2026/08/23", "08-23-2026",
+    "26-08-23", "08-23-26", "2026年8月23日", "8月23日",
+])
+def test_note_date_parser_accepts_common_model_date_formats(value):
+    parsed = _parse_captured_at(value).astimezone(LOCAL_TZ)
+
+    assert parsed.month == 8
+    assert parsed.day == 23
+
+
+def test_note_date_parser_uses_noon_anchor_without_model_sort_time():
+    parsed = _parse_captured_at("2026-08-23").astimezone(LOCAL_TZ)
+
+    assert parsed.hour == 12
+    assert parsed.minute == 0
+    assert parsed.second == 0
+
+
+def test_all_date_fields_share_canonical_normalization_before_schema_validation():
+    event, event_adaptations = normalize_legacy_input("create_event", {
+        "title": "评审", "date": "08/23", "all_day": True,
+    })
+    project, project_adaptations = normalize_legacy_input("create_project", {
+        "name": "项目", "start_date": "26-08-20", "deadline": "2026年8月23日",
+    })
+
+    assert event["date"] == "2026-08-23"
+    assert event_adaptations == ["create_event.date:normalized_date"]
+    assert project["start_date"] == "2026-08-20"
+    assert project["deadline"] == "2026-08-23"
+    assert project_adaptations == [
+        "create_project.start_date:normalized_date",
+        "create_project.deadline:normalized_date",
+    ]
+    assert normalize_date_string("2026-08-23") == "2026-08-23"
 
 
 async def test_dispatch_rejects_type_enum_and_numeric_boundaries():

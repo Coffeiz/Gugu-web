@@ -88,6 +88,7 @@ describe('画布加载竞态', () => {
   it('加载画布时去掉重复关系，避免连线 TransitionGroup 使用重复 key', async () => {
     const relation = {
       id: 570,
+      canvasId: 1,
       srcNodeId: 1,
       dstNodeId: 2,
       relType: 'related' as const,

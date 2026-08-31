@@ -221,8 +221,11 @@ async def get_canvas_node(db, user_id, node_id, *, kind=None, deleted=None):
     return node
 
 
-async def get_canvas_relation(db, user_id, relation_id):
-    return await get_owned(db, MindRelation, relation_id, user_id)
+async def get_canvas_relation(db, user_id, relation_id, canvas_id=None):
+    relation = await get_owned(db, MindRelation, relation_id, user_id)
+    if relation is None or (canvas_id is not None and relation.canvas_id != canvas_id):
+        return None
+    return relation
 
 
 async def update_canvas_item(db, user_id, canvas_id, item_id, fields, *, commit=False):
@@ -249,6 +252,7 @@ async def remove_canvas_item(db, user_id, canvas_id, item_id, *, commit=False):
     node_id = item.node_id
     relation_ids = (await db.execute(select(MindRelation.id).where(
         MindRelation.user_id == user_id,
+        MindRelation.canvas_id == canvas_id,
         or_(MindRelation.src_node_id == node_id, MindRelation.dst_node_id == node_id),
     ))).scalars().all()
     canvas = await get_owned_canvas(db, user_id, canvas_id)
@@ -299,7 +303,7 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
     if len(nodes) != 2:
         return None, "只能连接画布便签或业务引用节点"
     try:
-        relation = await upsert_relation(db, user_id, source_id, target_id, rel_type=rel_type)
+        relation = await upsert_relation(db, user_id, source_id, target_id, rel_type=rel_type, canvas_id=canvas_id)
     except ValueError as exc:
         return None, str(exc)
     if commit:
@@ -311,11 +315,22 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
 
 
 async def create_relation(
-    db, user_id, source_id, target_id, *, rel_type="related", allow_parallel=False, commit=False,
+    db, user_id, source_id, target_id, *, canvas_id=None, rel_type="related", allow_parallel=False, commit=False,
 ):
-    """创建全局节点关系；画布/API 共用，默认幂等并只 flush。"""
+    """创建关系；画布调用必须传 canvas_id，默认幂等并只 flush。"""
+    if canvas_id is None:
+        return None, "需要提供画布"
     if source_id == target_id:
         return None, "节点不能连向自己"
+    if await get_owned_canvas(db, user_id, canvas_id) is None:
+        return None, "画布不存在"
+    canvas_node_ids = set((await db.execute(select(MindCanvasItem.node_id).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+        MindCanvasItem.node_id.in_((source_id, target_id)),
+    ))).scalars().all())
+    if canvas_node_ids != {source_id, target_id}:
+        return None, "两个节点都必须已经放在同一张画布上"
     nodes = (await db.execute(select(MindNode).where(
         MindNode.id.in_((source_id, target_id)),
         MindNode.user_id == user_id,
@@ -326,7 +341,7 @@ async def create_relation(
     try:
         relation = await upsert_relation(
             db, user_id, source_id, target_id,
-            rel_type=rel_type, allow_parallel=allow_parallel,
+            rel_type=rel_type, allow_parallel=allow_parallel, canvas_id=canvas_id,
         )
     except ValueError as exc:
         return None, str(exc)
@@ -356,10 +371,11 @@ async def bring_canvas_item_to_front(db, user_id, canvas_id, item_id, x, y, *, c
     return target_item, target_node
 
 
-async def disconnect_node_relation(db, user_id, relation_id, *, commit=False):
-    relation = await db.scalar(select(MindRelation).where(
-        MindRelation.id == relation_id, MindRelation.user_id == user_id,
-    ))
+async def disconnect_node_relation(db, user_id, relation_id, *, canvas_id=None, commit=False):
+    conditions = [MindRelation.id == relation_id, MindRelation.user_id == user_id]
+    if canvas_id is not None:
+        conditions.append(MindRelation.canvas_id == canvas_id)
+    relation = await db.scalar(select(MindRelation).where(*conditions))
     if relation is None:
         return None
     await db.delete(relation)
@@ -481,6 +497,7 @@ async def list_canvas_relations_for_canvas(db, user_id, canvas_id):
     detached_ids = _detached_relation_ids(canvas) if canvas is not None else set()
     query = select(MindRelation).where(
         MindRelation.user_id == user_id,
+        MindRelation.canvas_id == canvas_id,
         MindRelation.src_node_id.in_(canvas_node_ids),
         MindRelation.dst_node_id.in_(canvas_node_ids),
     )

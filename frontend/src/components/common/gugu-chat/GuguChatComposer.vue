@@ -52,10 +52,10 @@
       <span class="rec-hint">{{ t('chat.recording') }}</span>
       <button class="rec-cancel" @click="onCancelRecord">{{ t('chat.cancel') }}</button>
     </div>
-    <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : (streaming ? onStopStreaming() : onSend())">
+    <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : onSendClick()">
       <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
-      <Icon name="action.next" v-else-if="!streaming" :size="expanded ? 14 : 13" />
-      <Icon name="action.stop-fill" v-else  :size="expanded ? 14 : 13" />
+      <Icon name="action.next" v-else-if="!streaming || hasDraft" :size="expanded ? 14 : 13" />
+      <Icon name="action.stop-fill" v-else :size="expanded ? 14 : 13" />
     </button>
   </div>
 </template>
@@ -101,6 +101,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:references': [value: ChatReference[]] }>()
+const hasDraft = computed(() => Boolean(props.modelValue.trim() || props.pendingAtt.length))
 const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
 const chatCommands = ref<ChatCommandOption[]>([])
@@ -259,6 +260,12 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault()
     commandMenuVisible.value = false
   }
+}
+
+function onSendClick() {
+  // 生成中有草稿时，点击仍应发送并进入队列；没有草稿才是停止当前生成。
+  if (props.streaming && !hasDraft.value) props.onStopStreaming()
+  else props.onSend()
 }
 
 function onOutsidePointerdown(event: PointerEvent) {

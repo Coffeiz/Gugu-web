@@ -168,8 +168,6 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
         "node_id": node.id,
         "kind": node.kind,
         "title": node.title,
-        # 画布便签更新走 MindNode 乐观锁；搜索结果必须携带当前版本，禁止调用方猜版本重试。
-        "version": node.version,
         "ref_type": node.ref_type,
         "ref_id": node.ref_id,
         "preview": plain[:240],
@@ -592,10 +590,11 @@ async def _canvas_update_note(db, user_id, args: dict):
     results = []
     try:
         for entry in entries:
-            node_id, version = entry.get("node_id"), entry.get("version")
-            if not isinstance(node_id, int) or not isinstance(version, int):
-                raise ValueError("更新画布便签必须提供 node_id 和 version")
-            if await get_canvas_note(db, user_id, node_id) is None:
+            node_id = entry.get("node_id")
+            if not isinstance(node_id, int):
+                raise ValueError("更新画布便签必须提供 node_id")
+            current = await get_canvas_note(db, user_id, node_id)
+            if current is None:
                 raise ValueError("找不到这条画布便签")
             fields = {}
             if "title" in entry:
@@ -610,9 +609,9 @@ async def _canvas_update_note(db, user_id, args: dict):
                 fields["color"] = validate_note_color(entry["color"])
             if not fields:
                 raise ValueError("至少提供一个要修改的字段")
-            node = await update_canvas_note(db, user_id, node_id, version, fields, commit=False)
+            node = await update_canvas_note(db, user_id, node_id, current.version, fields, commit=False)
             if node is False:
-                raise ValueError("画布便签已被其他端修改，请先重新读取后再更新")
+                raise ValueError("画布便签刚被修改，请稍后重试")
             results.append({"node": _node_summary(node), "updated": True})
     except (TypeError, ValueError) as exc:
         return {"error": str(exc)}
@@ -626,15 +625,13 @@ async def _canvas_delete_note(db, user_id, args: dict):
         return {"error": error}
     checked = []
     for entry in entries:
-        node_id, version = entry.get("node_id"), entry.get("version")
-        if not isinstance(node_id, int) or not isinstance(version, int):
-            return {"error": "删除画布便签必须提供 node_id 和 version"}
+        node_id = entry.get("node_id")
+        if not isinstance(node_id, int):
+            return {"error": "删除画布便签必须提供 node_id"}
         node = await get_canvas_note(db, user_id, node_id)
         if node is None:
             return {"error": "找不到这条画布便签"}
-        if node.version != version:
-            return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
-        checked.append((node_id, version, node))
+        checked.append((node_id, node.version, node))
     if batched:
         message = f"将删除 {len(checked)} 条画布便签，并从画布移除其视图项"
     else:
@@ -646,7 +643,7 @@ async def _canvas_delete_note(db, user_id, args: dict):
     try:
         for node_id, version, _ in checked:
             if not await delete_canvas_note(db, user_id, node_id, version, commit=False):
-                raise ValueError("画布便签已被其他端修改，请先重新读取后再删除")
+                raise ValueError("画布便签刚被修改，请稍后重试")
             results.append({"deleted_node_id": node_id, "can_restore": True})
     except (TypeError, ValueError) as exc:
         return {"error": str(exc)}
@@ -733,7 +730,7 @@ async def _canvas_update_anchor(db, user_id, args: dict):
         return {"error": "需要提供 canvas_id 和 relation_id"}
     if source_side not in {"left", "right"} or target_side not in {"left", "right"}:
         return {"error": "source_side 和 target_side 只能是 left 或 right"}
-    relation = await get_canvas_relation(db, user_id, relation_id)
+    relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
     if relation is None:
         return {"error": "关联不存在"}
     anchor = await update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, commit=False)
@@ -744,13 +741,16 @@ async def _canvas_update_anchor(db, user_id, args: dict):
 
 async def _canvas_disconnect(db, user_id, args: dict):
     from agent.security import confirm
+    canvas_id = args.get("canvas_id")
+    if not isinstance(canvas_id, int):
+        return {"error": "需要提供 canvas_id"}
     relation_ids = args.get("relation_ids")
     if relation_ids is not None:
         if not isinstance(relation_ids, list) or not relation_ids or len(relation_ids) > 50:
             return {"error": "relation_ids 必须是 1-50 个关联 id"}
         relations = []
         for relation_id in relation_ids:
-            relation = await get_canvas_relation(db, user_id, relation_id)
+            relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
             if relation is None:
                 return {"error": f"关联 {relation_id} 不存在"}
             relations.append(relation)
@@ -759,19 +759,19 @@ async def _canvas_disconnect(db, user_id, args: dict):
         if blocked is not None:
             return blocked
         for relation in relations:
-            await disconnect_node_relation(db, user_id, relation.id, commit=False)
+            await disconnect_node_relation(db, user_id, relation.id, canvas_id=canvas_id, commit=False)
         await db.commit()
         return {"success": True, "deleted_count": len(relations), "deleted_relation_ids": [r.id for r in relations]}
     relation_id = args.get("relation_id")
     if not isinstance(relation_id, int):
         return {"error": "需要提供 relation_id"}
-    relation = await get_canvas_relation(db, user_id, relation_id)
+    relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
     if relation is None:
         return {"error": "关联不存在"}
     blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
     if blocked is not None:
         return blocked
-    await disconnect_node_relation(db, user_id, relation_id, commit=False)
+    await disconnect_node_relation(db, user_id, relation_id, canvas_id=canvas_id, commit=False)
     return {"deleted_relation_id": relation_id}
 
 
@@ -997,11 +997,11 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_update_note", label="修改画布便签",
             description_short='修改画布便签。',
-            description="按 node_id 和 version 修改一个或多个画布专属便签，最多 20 个；不能修改普通时间流 note。单项调用使用 node_id/version，批量调用使用 updates 数组。",
+            description="对一个或多个画布专属便签做字段增量更新，最多 20 个；不能修改普通时间流 note。单项使用 node_id，批量使用 updates。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "integer"}, "version": {"type": "integer"},
+                    "node_id": {"type": "integer"},
                     "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
@@ -1014,10 +1014,10 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_delete_note", label="删除画布便签",
             description_short='删除画布便签；执行前需确认',
-            description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项调用使用 node_id/version，批量调用使用 notes 数组。",
+            description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项使用 node_id，批量使用 notes。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer"}, "version": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
                 "required": [],
             },
             handler=_canvas_delete_note,
@@ -1069,8 +1069,8 @@ class MindCanvasSkill(BaseSkill):
             description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
-                "properties": {"relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
-                "required": [],
+                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": ["canvas_id"],
             },
             handler=_canvas_disconnect,
             mutates=True,
@@ -1089,7 +1089,7 @@ class MindCanvasSkill(BaseSkill):
                         "properties": {
                             "kind": {"type": "string", "enum": ["create_note", "add_node", "update_item", "remove_item", "delete_note", "connect"]},
                             "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)}, "ref_id": {"type": "integer"},
-                            "node_id": {"type": "integer"}, "version": {"type": "integer"},
+                            "node_id": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
                             "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},

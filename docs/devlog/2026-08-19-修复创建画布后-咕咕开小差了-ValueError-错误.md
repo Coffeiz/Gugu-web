@@ -53,7 +53,7 @@ elif isinstance(content, str):
 
 创建了三个测试脚本逐步排查：
 
-1. **test_simple_valueerror.py** - 测试基础序列化和消息格式
+1. **test_simple_valueerror.py** - 历史一次性基础序列化脚本，现已清理；相关边界由现有契约测试覆盖
 2. **test_minimax_null_fields.py** - 测试 MiniMax API 对 null 字段的容忍度
 3. **test_full_agent_flow.py** - 完整 agent 链路测试，精确定位错误发生位置
 

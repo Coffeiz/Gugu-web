@@ -37,6 +37,58 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     if tool_name == "create_event" and "all_day" not in normalized:
         normalized["all_day"] = not bool(normalized.get("time") or normalized.get("end_time"))
         adaptations.append("create_event.all_day_inferred")
+
+    date_fields = {
+        "create_event": ("date",),
+        "list_events": ("from", "to"),
+        "update_event": ("date", "on_date"),
+        "delete_event": ("on_date",),
+        "add_event_reminder": ("on_date",),
+        "list_event_reminders": ("on_date",),
+        "remove_event_reminder": ("on_date",),
+        "create_project": ("start_date", "deadline"),
+        "update_project": ("start_date", "deadline"),
+    }.get(tool_name, ())
+    if date_fields:
+        from app.core.date_input import normalize_date_string
+
+        for field in date_fields:
+            value = normalized.get(field)
+            if isinstance(value, str):
+                try:
+                    canonical = normalize_date_string(value)
+                    if canonical != value:
+                        normalized[field] = canonical
+                        adaptations.append(f"{tool_name}.{field}:normalized_date")
+                except ValueError:
+                    pass  # 交给当前工具 Schema 返回脱敏的格式错误
+
+    if tool_name in {"note_create", "note_update"}:
+        # 旧版笔记调用把纯文本行内节点写成 {"text": "..."}。type 只有
+        # text/reference 两种可能，且存在 text 时只能无歧义地归一成 text；引用
+        # 节点没有 type 时仍然拒绝，避免把业务数据猜成另一种引用。
+        def normalize_note_nodes(value: Any, path: str) -> Any:
+            if isinstance(value, list):
+                return [
+                    normalize_note_nodes(item, f"{path}[{index}]")
+                    for index, item in enumerate(value)
+                ]
+            if not isinstance(value, dict):
+                return value
+
+            result = dict(value)
+            if "text" in result and "type" not in result:
+                result["type"] = "text"
+                adaptations.append(f"{path}.type:inferred_text")
+
+            for key in ("content", "items", "paragraphs"):
+                if key in result:
+                    result[key] = normalize_note_nodes(result[key], f"{path}.{key}")
+            return result
+
+        for field in ("blocks", "append_blocks"):
+            if field in normalized:
+                normalized[field] = normalize_note_nodes(normalized[field], field)
     return normalized, adaptations
 
 
@@ -289,13 +341,20 @@ def invalid_input_payload(
     return payload
 
 
-def invalid_tool_call_payload(*, path: str = "name", reason: str = "工具名必须是字符串") -> dict[str, Any]:
+def invalid_tool_call_payload(
+    *, path: str = "name", reason: str = "工具名必须是字符串", rule: str = "type"
+) -> dict[str, Any]:
     """返回工具调用外层协议错误，不回显模型传入的实际值。"""
+    next_action = "请按工具 Schema 重新组织调用，不要把业务参数对象放到 name 字段。"
+    if path == "arguments" and rule == "required":
+        next_action = "请先获取目标工具的完整 Schema，再通过 arguments 传入全部业务参数。"
+    elif path == "arguments":
+        next_action = "请先获取目标工具的完整 Schema，并确保 arguments 是 JSON object。"
     return {
         "error": "tool_call_invalid",
-        "issues": [{"path": path, "rule": "type", "message": reason}],
+        "issues": [{"path": path, "rule": rule, "message": reason}],
         "usage_hint": "工具调用协议不正确。工具名必须是字符串，arguments 必须是 JSON object。",
-        "next_action": "请按工具 Schema 重新组织调用，不要把业务参数对象放到 name 字段。",
+        "next_action": next_action,
     }
 
 

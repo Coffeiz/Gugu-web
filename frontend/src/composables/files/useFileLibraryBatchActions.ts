@@ -9,6 +9,7 @@ import { useFileBatchCore } from './useFileBatchCore'
 import { useFilePasteCore } from './useFilePasteCore'
 import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
 import { clearThumbCache } from '@/composables/useThumbCache'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 export interface FileLibraryBatchActionOptions {
   fileActions: ReturnType<typeof useFileActions>
@@ -60,6 +61,7 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
   async function deleteSelected() {
     const { fileIds, folderIds } = core.resolveSelection()
     if (!fileIds.length && !folderIds.length) return
+    if (!await confirmFileDeletion('selected', { count: fileIds.length + folderIds.length })) return
 
     const fileBackups = fileIds.map(id => options.cacheStore.getFile(id)).filter((file): file is FileMeta => file != null)
     options.clearSelection()

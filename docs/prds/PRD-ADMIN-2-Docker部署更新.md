@@ -1,6 +1,6 @@
 # PRD-ADMIN-2：Docker 部署更新与版本分发
 
-> 状态：待实施，GitHub Release + GHCR 分发方案已确定
+> 状态：Phase 1 已实现，首次 GitHub tag 发布与远端镜像验证待执行
 > 创建：2026-08-31
 > 最近更新：2026-08-31
 > 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/DEPLOY.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
@@ -11,8 +11,10 @@
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
 | 生产 Compose 消费预构建镜像 | 已有 | ✅ 已完成 | `docker-compose.prod.yml` 使用 `GUGU_BACKEND_IMAGE` 和 `GUGU_FRONTEND_IMAGE`。 |
-| GHCR 镜像命名约定 | 已有文档约定 | 🟡 部分完成 | 当前文档已使用 `ghcr.io/coffeiz/gugu-web-backend` 和 `gugu-web-frontend`，正式发布流水线尚未建立。 |
-| GitHub Release 更新清单 | 尚未实现 | 🔲 待评估 | 需要固定格式的版本 manifest，不能依赖解析网页文案。 |
+| GHCR 镜像命名约定 | 已有文档约定 | 🟡 部分完成 | 当前文档已使用 `ghcr.io/coffeiz/gugu-web-backend` 和 `gugu-web-frontend`，正式镜像发布仍待首次 tag 验证。 |
+| GitHub Release 更新清单 | Schema 和生成逻辑已实现 | 🟡 部分完成 | 已增加固定格式 Schema，正式 manifest 在版本 tag 发布时生成并上传。 |
+| Docker 发布 CI | Workflow 已实现 | 🟡 部分完成 | PR/main 做 Compose 与镜像构建校验；版本 tag 推送 GHCR、扫描、签名并创建 Release。 |
+| Compose 安全更新入口 | 脚本已实现 | 🟡 部分完成 | 已支持签名校验、配置/数据库备份、业务镜像拉取和服务重建；真实 Docker 更新待远端验证。 |
 | Admin 检查和执行更新 | 尚未实现 | 🔲 待评估 | Admin 只负责发起、确认、展示状态。 |
 | 更新服务与回滚 | 尚未实现 | 🔲 待评估 | 需要独立的受限更新执行器，不能给业务容器任意 Docker 权限。 |
 
@@ -269,10 +271,10 @@ Gugu-web/
 
 ### Phase 1：发布物与手动更新基础
 
-- [ ] `UPD2-001` 固定版本、镜像命名、架构和 manifest Schema；验收：示例 manifest 能表达版本、最低版本、镜像 digest、迁移和回滚字段，并通过 Schema 校验。
-- [ ] `UPD2-002` 建立 GitHub Actions Docker 发布流水线；验收：版本 tag 能构建 backend/frontend、推送 GHCR、生成 digest 和 GitHub Release，构建失败不会发布 stable manifest。
-- [ ] `UPD2-003` 增加 manifest 签名、镜像白名单和 digest 校验；验收：篡改版本、镜像地址、digest、架构或签名时更新器拒绝执行。
-- [ ] `UPD2-004` 补齐 Docker Compose 升级、迁移和配置保护脚本；验收：升级不删除 PostgreSQL、Redis、用户文件、记忆、工作区和 Admin 配置卷。
+- [x] `UPD2-001` 固定版本、镜像命名、架构和 manifest Schema；验收：manifest Schema 与无依赖校验器已实现，能表达版本、最低版本、镜像 digest、迁移和回滚字段，并通过本地校验。
+- [ ] `UPD2-002` 🟡 建立 GitHub Actions Docker 发布流水线；验收：Workflow 已实现版本 tag 构建 backend/frontend、推送 GHCR、生成 digest 和 GitHub Release；待首次 GitHub tag 远端运行验证，构建失败不会发布 stable manifest。
+- [x] `UPD2-003` 增加 manifest 签名、镜像白名单和 digest 校验；验收：发布 Workflow 生成 Cosign 签名，Compose 更新脚本校验 manifest bundle、发布者身份、镜像仓库和 digest。
+- [x] `UPD2-004` 补齐 Docker Compose 升级、迁移和配置保护脚本；验收：更新脚本备份配置和数据库，保留 PostgreSQL、Redis、用户文件、记忆、工作区和 Admin 配置卷，并明确禁止 `down -v` 和无范围清理。
 
 ### Phase 2：Admin 检查与受限执行
 

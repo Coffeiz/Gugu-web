@@ -3,6 +3,7 @@
   --motion-hover-micro: 120ms;
   --motion-hover-control: 150ms;
   --motion-hover-card: 250ms;
+  --motion-media-crossfade: 1000ms;
   --motion-fast: var(--motion-hover-control);
   --motion-default: var(--motion-hover-card);
   --motion-slow: 340ms;
@@ -16,6 +17,7 @@
     --motion-hover-micro: 0ms;
     --motion-hover-control: 0ms;
     --motion-hover-card: 0ms;
+    --motion-media-crossfade: 0ms;
     --motion-fast: 0ms;
     --motion-default: 0ms;
     --motion-slow: 0ms;

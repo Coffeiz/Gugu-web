@@ -8,8 +8,8 @@
           <RiWechatFill v-else />
         </span>
         <div class="onboarding-im-copy"><strong>{{ t(platform.labelKey) }}</strong><small>{{ botsOf(platform.key).length ? t('profileImUi.connectedRebind') : t(platform.hintKey) }}</small></div>
-        <span v-if="botsOf(platform.key).length" class="onboarding-im-status">{{ t('profileImUi.enabled') }}</span>
-        <button type="button" class="onboarding-im-connect" :disabled="connecting === platform.key" @click="startConnect(platform)">{{ connecting === platform.key ? t('profileImUi.generating') : botsOf(platform.key).length ? t('profileImUi.connectedRebind') : t('profileImUi.scanToConnect') }}</button>
+        <button v-if="!botsOf(platform.key).length" type="button" class="onboarding-im-connect" :disabled="connecting === platform.key" @click="startConnect(platform)">{{ connecting === platform.key ? t('profileImUi.generating') : t('profileImUi.scanToConnect') }}</button>
+        <span v-else class="onboarding-im-connected-label">{{ t('profileImUi.enabled') }}</span>
       </div>
     </article>
   </div>
@@ -71,6 +71,8 @@ async function loadBots() {
   } catch { bots.value = [] }
 }
 async function startConnect(platform: Platform) {
+  // 已连接的 IM 不允许从新手引导重新生成二维码；解绑/换绑统一在个人设置中完成。
+  if (botsOf(platform.key).length) return
   connecting.value = platform.key; connectErr.value = ''
   try {
     if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
@@ -117,7 +119,7 @@ onBeforeUnmount(() => { stopPoll(); if (closeTimer) clearTimeout(closeTimer) })
 .onboarding-im-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
 .onboarding-im-copy strong { color: var(--content-primary); font-size: var(--font-size-sm); }
 .onboarding-im-copy small { overflow: hidden; color: var(--content-tertiary); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
-.onboarding-im-status { flex: 0 0 auto; color: var(--status-success); font-size: var(--font-size-xs); }
+.onboarding-im-connected-label { flex: 0 0 auto; color: var(--status-success); font-size: var(--font-size-xs); }
 .onboarding-im-connect, .onboarding-im-cancel {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
   min-height: var(--choice-chip-min-height); padding: var(--choice-chip-padding);

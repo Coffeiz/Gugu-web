@@ -7,6 +7,7 @@ import pytest
 from agent import providers
 from agent.loop_drivers import OpenAIDriver
 from app.api.v1 import agent_admin
+from helpers.agent_provider import probe_capabilities
 
 
 def _preset(**extra):
@@ -43,10 +44,7 @@ async def test_capability_override_persists_and_invalidates_active_runtime(monke
 async def test_capability_probe_persists_fingerprint_and_results(monkeypatch):
     override = {"ai_presets": {"active_id": "local-1", "items": [_preset()]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
-    async def fake_probe(item):
-        return _probe_result()
-
-    monkeypatch.setattr(agent_admin, "_probe_local_capabilities", fake_probe)
+    monkeypatch.setattr(agent_admin, "_probe_local_capabilities", probe_capabilities)
 
     result = await agent_admin.probe_llm_capabilities("local-1")
 
@@ -55,13 +53,6 @@ async def test_capability_probe_persists_fingerprint_and_results(monkeypatch):
     assert result["checked_at"] == item["capability_checked_at"]
     assert item["capability_probe"]["tools"]["status"] == "支持"
     assert result["declared_capabilities"]["provider"] == "local"
-
-
-def _probe_result():
-    return {
-        key: {"status": "支持", "detail": "HTTP 200"}
-        for key in ("chat", "stream", "tools", "json_object", "json_schema")
-    } | {"reasoning": {"status": "未检测", "detail": "人工确认"}}
 
 
 def test_local_runtime_model_defaults_and_override_precedence():

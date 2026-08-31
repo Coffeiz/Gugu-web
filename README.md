@@ -2,277 +2,351 @@
 
 # 咕咕
 
-### 事情，应该有自己的节奏。
+### Agent UI，必须先有 UI。
 
-<!-- 演示 GIF（基本操作 + IM 对话）弄好后取消下面这行注释，图片放 docs/assets/banner.gif -->
-<!-- <img src="docs/assets/banner.gif" alt="咕咕演示" width="720"> -->
+咕咕的想法：把散落的看板、日历、笔记、文件和画布放到一起，让用户和 Agent 在同一个地方做事。
 
-[![project](https://img.shields.io/badge/个人项目管理-596780?style=flat)](docs/product/OVERVIEW.md)
-[![mind](https://img.shields.io/badge/思维画布-7B78A8?style=flat)](docs/product/思维面板/设计草案.md)
-[![assistant](https://img.shields.io/badge/咕咕协作-5B8E7D?style=flat)](docs/agent/00-总览.md)
-<br>
 [![status](https://img.shields.io/badge/status-active-success?style=flat)](https://gugugu.site)
-[![beta](https://img.shields.io/badge/阶段-私人%20Beta-8A7A63?style=flat)](#贡献)
+[![stage](https://img.shields.io/badge/stage-private%20beta-8A7A63?style=flat)](#项目状态)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
+[![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
+[![Python](https://img.shields.io/badge/backend-Python%203.12-3776ab?style=flat)](backend/)
+
+[中文](README.md) ｜ [English](README_EN.md) ｜ [在线预览](https://gugugu.site)
 
 </div>
 
-这是一个连接项目、文件和想法的个人工作空间。
+## 能做什么
 
-咕咕重新思考了个人项目的管理方式。
+| 领域 | 能力 |
+| --- | --- |
+| Agent | 多轮对话、工具调用、联网搜索、定时任务和流式响应 |
+| 工作空间 | 管理项目、阶段、任务、日历、提醒、文件、笔记、终端和无限画布 |
+| 信息获取 | 联网搜索、站内全文搜索、Knowledge / RAG、文件内容检索和相似图搜索 |
+| 长期上下文 | 记忆用户习惯、近期状态、知识和行为模式，支持跨对话延续上下文 |
+| 沙盒执行 | 在隔离环境中运行 Shell 命令，提供工作目录、执行状态和资源边界 |
+| 多用户与租户 | 多用户账户、账户级数据隔离和独立配置；团队协作与多租户能力持续完善 |
+| 权限与安全 | 用户身份、资源归属、会话权限、管理员后台和危险操作确认门 |
+| 即时通讯 | 接入 QQ、微信、飞书等渠道，支持私聊、群聊、消息归一化、上下文会话和通知推送 |
+| 管理后台 | 管理用户、模型、BYOK、搜索、邮件通知、文件存储、日志和系统服务 |
+| 开发观测 | 使用 LoopScope 查看 Agent Loop、Token、Cache、Tool Call 和性能诊断 |
+| 部署运维 | Docker Compose 部署、统一入口、健康检查、日志、数据卷和备份支持 |
 
-项目不只是一个任务列表，而是一段持续发展的过程。文件、记录和想法，会随着时间自然聚集在一起，留下属于项目自己的轨迹。
+## 为什么做咕咕？
 
-每一个细节都经过认真打磨，让工具退后一步，让你专注于真正重要的事情。
+本人原本是一名插画师，以前经常遇到一种情况：和客户约好的稿子忘了记录，后来忙着忙着也就忘了，平时也有一些文件管理上的苦恼。
 
-需要的时候，你也可以和咕咕对话，搜索和整理项目中的信息，让事情继续向前。
+后来有段时间尝试了下 QwenPaw，发现 Agent 在记录项目、整理文档和想法上效率很高。但找了一圈，没有发现一个顺手的 UI：Agent 记录的大量文档，最后还是需要自己去本地找，或者让 Agent 发回来再自己整理。
 
-> 这是一个持续迭代中的私人 Beta。欢迎朋友 Fork、试用，并通过 Issue 或 PR 一起把它打磨得更好。
+Gugu 一开始只有项目管理功能，但后来慢慢加上了交互 Runtime、文件系统、看板、画布、Shell 和沙盒。现在它已经比最初大了很多，相信这些功能也不只是我一个人用得到。
 
----
+> 如果最后还是一个聊天框，为什么要叫 Agent UI？
 
-## 🌱 可以怎么用
+欢迎试用，也欢迎前往 [gugugu.site](https://gugugu.site) 在线体验，或者按照下方的说明在本地部署。不过服务器能力有限，在线体验时可能会没那么流畅。最后，也欢迎提 Issue 和 PR。
 
-**从一个项目开始。** 新建项目、拆成几个阶段，补上截止日期；相关文件会跟着项目沉淀下来，日历也会显示接下来的节点。
+## 功能预览
 
-**把零碎想法先记下来。** 在思维记录里用 Markdown 随手写，按日期回看；它不要求你一开始就把想法整理成一个完整项目。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="frontend/public/onboarding/kanban-drag-1.gif" width="100%" alt="看板跨列拖拽示例">
+      <h3>看板</h3>
+      <p>项目、阶段、任务和截止日期组成真实的项目工作流。</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="frontend/public/onboarding/file-drag-1.gif" width="100%" alt="文件库拖拽示例">
+      <h3>文件库</h3>
+      <p>文件、项目和个人资料在同一套工作空间中持续沉淀。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="frontend/public/onboarding/canvas-drag-1.gif" width="100%" alt="画布自由落点拖拽示例">
+      <h3>画布</h3>
+      <p>把便签、项目、文件和日历活动放到自由画布中，建立可视化关系。</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="frontend/public/onboarding/IM-messages-1.gif" width="100%" alt="咕咕聊天示例">
+      <h3>咕咕聊天</h3>
+      <p>通过自然语言搜索、整理和修改工作空间中的真实数据。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/loopscope.png" width="100%" alt="LoopScope Agent 可观测示例">
+      <h3>LoopScope</h3>
+      <p>观察 Agent Loop、Token、Cache、Tool Call 和运行性能。</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/admin_page.png" width="100%" alt="Admin 管理后台示例">
+      <h3>Admin</h3>
+      <p>管理模型、用户、配置、日志、反馈和系统运行状态。</p>
+    </td>
+  </tr>
+</table>
 
-**需要时再铺到画布上。** 新建画布，把便签、项目、文件和日历活动贴进去，拖出连线，慢慢看清一件事之间的关系。
+## Gugu 是什么
 
-**把重复操作交给咕咕。** 直接说“帮我找上周的方案”“把这个活动改到周五”或“记录一下这个想法”；网页、飞书、QQ 和微信里的内容会回到同一套项目数据里。
+咕咕不是给聊天框增加几个工具，而是让 Agent 工作在真实的个人工作环境中。
 
----
+### Workspace
 
-## ✨ 核心特性
+项目、日历、文件、笔记和画布组成一个持续使用的个人工作空间。信息不再分散在互不关联的页面和对话里，而是可以围绕项目和时间自然沉淀。
 
-| 功能 | 状态 | 说明 |
-|------|:---:|------|
-| 📋 项目看板 | ✅ | 阶段跟踪、截止日期、改名联动存储目录 |
-| 🗂️ 文件库 | ✅ | 四空间（项目/思维/素材/个人），支持本地 / OSS 双后端和文件预览 |
-| 🧠 思维画布 | ✅ | 无限画布记想法：富文本便签 + 项目/文件/活动引用卡 + 拖拽建立关联连线，时间流视图按天回顾 |
-| 📅 日历排期 | ✅ | 月/周视图、项目节点、自定义事件、活动提醒 |
-| 🏠 总览 | ✅ | 统计卡片 + 近期节点 + 最近文件 |
-| 💬 自然语言管理 | ✅ | SSE 流式对话，支持 Anthropic / OpenAI / 通义 / DeepSeek / MiniMax / MiMo |
-| 🤖 IM / 机器人接入 | ✅ | 飞书 / QQ / 微信机器人常驻网关，群聊私聊直接跟咕咕对话，操作项目/文件/日程 |
-| ⏰ 定时任务 | ✅ | 一次性/周期提醒，失败自动延迟重试，支持通知与 IM 推送 |
-| ⚙️ 管理后台 | ✅ | 配置热更新、用户管理、审计日志、运维监控、数据分析 |
-| 🎨 素材板 | 🔜 | 素材管理 + 自动打 tag |
-| 👤 客户管理 | 🔜 | 后端已就绪，前端页面待开发 |
+### Agent
 
----
+Agent 可以通过工具读取和修改这些工作状态：查找项目、创建任务、安排日历、搜索文件、整理笔记，或在授权后执行更复杂的操作。
 
-## 🛠️ 技术栈
+### Memory
 
-**前端** · Vue 3 · Vite 5 · Pinia · Arco Design Vue · TipTap · Vue Router 4
+随着长期使用，咕咕会形成关于用户、习惯、知识和近期状态的上下文，让后续对话不必每次从零开始。
 
-**后端** · FastAPI · SQLAlchemy 2.0 + PostgreSQL 16 · Redis · Alembic · APScheduler · JWT
+```text
+                  Gugu Agent
+                      │
+       ┌──────────────┼──────────────┐
+       │              │              │
+    Workspace       Memory         Tools
+       │                              │
+ ┌─────┼─────┐                 Search / Shell
+ 项目  日历  文件 ...              IM / Actions
+```
 
-**IM 接入** · 飞书（WebSocket 长连）· QQ 官方机器人 · 微信
+## 核心能力
 
-**部署** · 本地开发用源码挂载 Docker Compose；生产用构建物 Docker Compose + Nginx（默认 `9595`），裸机 systemd 仍可用，详见 [部署文档](docs/ops/DEPLOY.md)
+### AI Agent
 
----
+- 多轮 Agent Loop
+- Tool Calling
+- Web Search
+- Shell Sandbox
+- Scheduled Tasks
 
-## 🚀 快速开始
+### 工作空间
 
-### 前置环境
+- 项目与任务
+- 日历与提醒
+- 文件库
+- 笔记与无限画布
 
-- Docker 20+ & Docker Compose v2（本地开发，见方式一）
-- 或本地：Node.js 20+ / Python 3.12+（方式二）
+### 长期上下文
 
-### 方式一：Docker Compose（本地开发，推荐新人上手）
+- Memory
+- Knowledge / RAG
+- 用户与行为模式
 
-包含 web（uvicorn）+ worker（IM 消息处理）+ gateway（IM 长连接）+ Postgres + Redis + LoopScope Collector，跑 vite dev server 带热更新；
-不是生产部署方式（生产用裸机 systemd，见上方「部署」）。
+### 外部连接
+
+- QQ
+- 微信
+- 飞书
+- 其他 IM 渠道
+
+### 开发与观测
+
+- LoopScope
+- Interaction Runtime
+- 管理后台与审计日志
+
+## 技术亮点
+
+### Agent Runtime
+
+统一处理 Agent 上下文、模型 Round、工具选择、工具执行和受控续轮。相关设计见 [Agent 文档](docs/agent/00-INDEX.md) 和 [Agent Loop](docs/agent/03-AGENT-LOOP.md)。
+
+### Memory
+
+负责长期用户上下文、近期状态、知识召回和反思结果。相关设计见 [Memory 与 Reflection](docs/agent/07-MEMORY-AND-REFLECTION.md) 和 [RAG 与 Knowledge](docs/agent/06-RAG-AND-KNOWLEDGE.md)。
+
+### LoopScope
+
+用于观察 Agent Runtime 的运行链路、Token、缓存、工具调用和性能问题。相关说明见 [LoopScope 文档](docs/agent/11-LOOPSCOPE.md)。
+
+### Interaction Runtime
+
+独立的 npm Runtime，负责复杂拖拽、跨容器交互、画布落点和视觉生命周期。Gugu-web 通过 `gugu-interaction-runtime` npm package 使用它，相关仓库见 [Gugu Interaction Runtime](https://github.com/Coffeiz/Gugu-interaction-runtime)。
+
+## 快速开始
+
+### 前置要求
+
+- Docker 20+ 和 Docker Compose v2
+- 可访问的模型 Provider 或 BYOK 配置
+- 首次启动需要 PostgreSQL、Redis 和网络访问
+
+### Docker Compose
 
 ```bash
-# 1. 克隆
-git clone https://github.com/coffeiz/gugu-web.git
-cd gugu-web
-
-# 2. 准备环境变量（注意路径在 backend/ 下，不是仓库根目录）
+git clone https://github.com/Coffeiz/Gugu-web.git
+cd Gugu-web
 cp .env.example backend/.env
-# 编辑 backend/.env，填入 SECRET_KEY / AI__API_KEY 等；DB__*/REDIS__* 已由
-# docker-compose.yml 覆盖成容器网络地址，不用改
-
-# 3. 一键启动（首次启动会自动建表 + 跑 alembic 迁移，全新数据库和已有数据库都能正确处理，
-# 见 backend/docker-entrypoint.sh）
+# 编辑 backend/.env，填写 SECRET_KEY 和模型配置
 docker compose up -d
-# 默认是轻量模式；需要 Shell 沙盒时再显式启用：
-# docker compose --profile sandbox up -d
-
-# 直连 PyPI 官方源在部分网络环境下会很慢甚至构建失败？换源不用改文件，构建前设个
-# 环境变量即可（后端镜像默认走官方源，不影响网络正常的用户）：
-# PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose up -d --build
-
-# 4. 浏览器访问
-# 前端    → http://localhost:9595
-# 管理后台 → http://localhost:9595/admin/  （独立打包入口，见 frontend/admin/；账号密码见
-#            backend/.env 的 ADMIN_USERNAME/ADMIN_PASSWORD，默认 admin/guguadmin，生产部署务必改掉）
-# 后端    → http://localhost:8000/docs
-# LoopScope Collector → http://localhost:4320
-
-# 常用：docker compose logs -f backend worker   查日志
-#      docker compose down                      停止（加 -v 连数据卷一起删）
 ```
 
-开发 Compose 默认开启 LoopScope trace，`backend`、`worker` 和 `gateway` 会通过 Compose 内网连接
-Collector；Collector 数据保存在独立的 `loopscope_data` volume。LoopScope 前端仍独立运行，启动方式见
-[`loopscope/README.md`](loopscope/README.md)，默认访问 `http://localhost:4319`。
+启动后访问：
 
-### 方式一（生产）：构建物 Docker Compose + Nginx
+- Gugu：<http://localhost:9595>
+- Admin：<http://localhost:9595/admin/>
+- Backend API：<http://localhost:8000/docs>
+- LoopScope Collector：<http://localhost:4320>
 
-生产环境使用 `docker-compose.prod.yml`。它只消费已构建的前后端镜像，不挂载源码、不运行
-Vite 热更新或 Uvicorn reload；数据库迁移、PostgreSQL、Redis、SearXNG、文件存储和 Admin
-配置卷由 Compose 管理，默认通过 Nginx 从 `9595` 提供访问。
+首次运行会初始化数据库并执行迁移。Admin 账号由 `backend/.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 控制，生产环境必须修改默认值。
+
+需要 Shell 沙盒时，再显式启用：
 
 ```bash
-# 在仓库根目录构建并推送镜像；前端 Runtime 从 npm 安装
-docker build -f backend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-backend:版本号 .
-docker build -f frontend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
-docker push ghcr.io/coffeiz/gugu-web-backend:版本号
-docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
-
-# 服务器准备 backend/.env、searxng/settings.yml 和生产密码
-export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
-export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
-export GUGU_DB_PASSWORD='生产数据库密码'
-docker compose -f docker-compose.prod.yml up -d
-# 需要 Shell 沙盒时：
-# GUGU_SANDBOX_ENABLED=true docker compose -f docker-compose.prod.yml --profile sandbox up -d
+docker compose --profile sandbox up -d
 ```
 
-默认连接 Compose 内部的 PostgreSQL：`GUGU_DB_HOST=postgres`。如果已有外部数据库，
-只需覆盖 `GUGU_DB_HOST`、`GUGU_DB_PORT`、`GUGU_DB_NAME`、`GUGU_DB_USER` 和
-`GUGU_DB_PASSWORD`，后端会改连外部地址；不需要修改镜像。
+## 配置
 
-Redis 默认同样连接 Compose 内部的 `redis:6379`。使用外部 Redis 时覆盖
-`GUGU_REDIS_HOST`、`GUGU_REDIS_PORT` 和 `GUGU_REDIS_PASSWORD` 即可。
+README 只保留配置索引，完整变量和运行规则将在 `docs/configuration.md` 中整理。
 
-访问 `http://服务器地址:9595`。Shell 沙盒和受控 egress 默认随 Compose 启动；准备 Rootless Docker
-后，`sandboxd` 会通过宿主机 Docker Socket 提供沙盒执行，`egress-proxy` 只通过内部网络提供公网出口。
-不需要时可设置 `GUGU_SANDBOX_ENABLED=false` 关闭沙盒执行，或设置
-`GUGU_SANDBOX_NETWORK_PROFILE=none` 让沙盒默认断网；两者都不需要修改 Compose 文件。临时公网访问仍需
-在 Admin → Shell 沙盒中开启，并在会话首次使用时确认。完整的配置卷、
-迁移和 Nginx 说明见 [生产构建物 Compose](docs/ops/DEPLOY.md#310-生产构建物-compose默认端口-9595)。
+| 配置用途 | 说明 |
+| --- | --- |
+| Database | 主数据存储，默认使用 PostgreSQL |
+| Redis | 消息、会话和 Runtime 状态 |
+| LLM / BYOK | 模型 Provider 和个人 API Key |
+| Search | Web Search 与站内搜索后端 |
+| Mail | 用户反馈和系统邮件通知 |
+| IM | QQ、微信、飞书连接 |
+| LoopScope | Agent 链路和性能观测 |
+| Sandbox | Shell 执行环境和网络出口 |
 
-### 方式二：本地开发
+## 部署
 
-#### 后端
+生产环境使用构建物 Docker Compose 和 Nginx，通过 `9595` 提供统一入口：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+生产部署的数据库、Redis、文件、记忆、配置卷、迁移、备份、日志和健康检查见 [生产部署文档](docs/ops/DEPLOY.md)。
+
+部署摘要：
+
+- 生产镜像使用前后端构建产物，不挂载源码
+- 前端 Runtime 从 npm 安装，不依赖同级 `gugu-interaction-runtime` 仓库
+- PostgreSQL、Redis 和用户数据使用持久化卷
+- 镜像标签应使用 Git SHA 或版本号，不依赖 `latest`
+- 升级前应备份数据库和用户数据
+
+## 项目结构
+
+```text
+gugu/
+├─ frontend/      Web 工作空间与 Admin 前端
+├─ backend/       API、Agent、Memory、Tools 与数据服务
+├─ loopscope/     Agent 可观测系统
+├─ docker/        部署与运行环境
+└─ docs/          产品、架构、运维与开发文档
+```
+
+后端仍处于持续演进中，具体模块边界以 [Backend 文档](docs/backend/OVERVIEW.md) 和 [Agent 架构文档](docs/agent/02-ARCHITECTURE.md) 为准。
+
+## 架构
+
+```text
+Web / Desktop / IM
+        │
+        ▼
+      Gugu
+        │
+ ┌──────┼──────────┐
+ │      │          │
+Agent  Workspace  Memory
+ │                  │
+Tools              RAG
+ │
+LLM Providers
+ │
+LoopScope
+```
+
+当前事实型文档：
+
+- [Agent Architecture](docs/agent/02-ARCHITECTURE.md)
+- [Agent Loop](docs/agent/03-AGENT-LOOP.md)
+- [Memory 与 Reflection](docs/agent/07-MEMORY-AND-REFLECTION.md)
+- [RAG 与 Knowledge](docs/agent/06-RAG-AND-KNOWLEDGE.md)
+- [LoopScope](docs/agent/11-LOOPSCOPE.md)
+- [Backend Overview](docs/backend/OVERVIEW.md)
+- [Interaction Runtime](https://github.com/Coffeiz/Gugu-interaction-runtime)
+
+## 开发
+
+### 环境准备
+
+```bash
+corepack enable
+corepack pnpm install
+```
+
+### 启动前端
+
+```bash
+corepack pnpm --filter gugu-web dev
+```
+
+### 启动后端
+
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# 初始化数据库（需先起 PostgreSQL + Redis）
-cp ../.env.example .env
-# 全新数据库不用手动跑 alembic：启动时 app.main 的 lifespan 会自动建表
-# （见 app/db/session.py 的 create_all_tables）；alembic upgrade head 只用于
-# 已有数据库套用后续增量迁移，见下方「常用」
-
-# 启动
-make dev-web               # Web 热重载（前台运行，Ctrl+C 停止）
-# 接 IM 时另开终端：make dev-worker
-
-# 常用：alembic upgrade head   在已有数据库上套用新迁移（首次建表不需要这步）
-# 首次使用 Worker 热重载：make deps-dev
+make dev-web
 ```
 
-#### 前端
+### 常用检查
+
 ```bash
-cd frontend
-corepack pnpm install --frozen-lockfile
-corepack pnpm --filter gugu-web dev                # http://localhost:5173
+corepack pnpm --dir frontend typecheck
+corepack pnpm --dir frontend test:run
+corepack pnpm --dir frontend build
+cd backend && PYTHONPATH=. .venv/bin/pytest
 ```
 
----
+前端复杂拖拽和画布交互依赖已发布的 `gugu-interaction-runtime` npm package。Runtime 本身是独立仓库，不在 Gugu-web workspace 中直接编译。
 
-## 📚 开发参考
+## 项目状态
 
-| 想了解 | 从这里开始 |
-|--------|------------|
-| 产品与代码 | [项目总览](docs/product/OVERVIEW.md) · [完整文档导航](docs/OVERVIEW.md) |
-| 咕咕协作 | [对话引擎架构](docs/agent/00-总览.md) |
-| 后端与文件 | [后端与 API](docs/backend/backend.md) · [存储规范](docs/backend/STORAGE.md) |
-| 本地与生产 | [部署文档](docs/ops/DEPLOY.md) |
+Gugu 当前仍处于快速迭代阶段，适合个人部署、体验和参与开发。
 
-接口以运行中的 [OpenAPI 文档](http://localhost:8000/docs) 为准；后端常用运维命令可通过 `backend/start.sh --help` 查看。
+| 状态 | 含义 |
+| --- | --- |
+| ✅ Stable | 已有持续使用和回归验证的能力 |
+| 🚧 In Development | 主要流程可用，仍在快速调整 |
+| 🧪 Experimental | 设计或实现仍可能发生较大变化 |
 
----
+### Roadmap
 
-## ⚙️ 配置系统
+- 持续提升 Agent 工具调用准确性和可观测性
+- 完善 Memory 与 Knowledge 的长期使用体验
+- 扩展文件、画布和项目之间的协同操作
+- 完善 QQ、微信、飞书等外部连接
+- 补充安装、部署和备份文档
 
-优先级：**`.env`** → **`config.override.json`**（Admin UI 写入，**热更新无需重启**）
+## 贡献
 
-| 模块 | 来源 | 用途 |
-|------|------|------|
-| Database | `.env` + Admin | PostgreSQL 连接 |
-| Redis | `.env` + Admin | 缓存、会话 |
-| Storage | `.env` + Admin | 本地 / 阿里云 OSS |
-| Security | `.env` | JWT Secret / 过期时间 |
+这是一个 Vibe Coding 项目。大量实现由 AI 辅助完成，但架构、产品方向、代码审查和验收由人工负责。
 
-管理后台路径：`/admin/config`（首次访问通过 `/admin/login` 登录）。
+欢迎通过 Issue 报告问题、提出建议，也欢迎通过 Pull Request 贡献改进。
 
----
+提交前建议完成：
 
-## 🗺️ 路线图
+```bash
+corepack pnpm --dir frontend typecheck
+corepack pnpm --dir frontend test:run
+corepack pnpm --dir frontend build
+cd backend && PYTHONPATH=. .venv/bin/pytest
+```
 
-- [x] 项目看板、日历、文件库、总览
-- [x] 管理后台（在线配置 + 热更新）
-- [x] 本地 / OSS 存储双后端
-- [x] 自然语言管理（SSE 流式对话，支持多个模型服务商）
-- [x] 定时任务（一次性 / 周期提醒，通知或 IM 推送）
-- [x] 思维画布（无限画布、引用卡、关联连线）
-- [x] IM / 机器人接入（飞书 / QQ / 微信）
-- [ ] 素材板（素材管理 + 自动打 tag）
-- [ ] 客户管理前端页面
-- [ ] 团队 / 企业版（ToB）
+Bug 修复应尽量补充对应的 regression test；报告问题时请提供复现步骤、运行环境、相关日志和脱敏后的截图，不要提交密钥、Token 或用户隐私数据。
 
-详细规划见 [`docs/product/WISHLIST.md`](docs/product/WISHLIST.md)。
+## License & Contact
 
----
+本项目使用 [Apache License 2.0](LICENSE)。
 
-## ⚠️ 当前限制 / 已知问题
-
-- 微信（iLink）引用消息暂不支持识别原文——平台协议限制，非代码 bug。
-- QQ 引用较早消息时，可能因平台时效窗口拿不到引用上下文。
-
-完整记录（现象/影响/结论/规避）见 [`docs/ops/KNOWN-ISSUES.md`](docs/ops/KNOWN-ISSUES.md)。
-
----
-
-## 📖 文档索引
-
-`docs/` 按主题分成 `agent/`（对话引擎相关，含子目录 `proposals/`/`_archive/`）、`backend/`、`product/`、`ops/`、`security/` 五类，完整导航见 [`docs/OVERVIEW.md`](docs/OVERVIEW.md)。常用入口：
-
-| 文档 | 内容 |
-|------|------|
-| [docs/product/OVERVIEW.md](docs/product/OVERVIEW.md) | 项目总览、技术栈、API、进度 |
-| [docs/backend/STORAGE.md](docs/backend/STORAGE.md) | 文件存储结构（权威） |
-| [docs/backend/backend.md](docs/backend/backend.md) | 后端开发参考 |
-| [docs/development/design.md](docs/development/design.md) | UI/UX 设计规范 |
-| [docs/product/WISHLIST.md](docs/product/WISHLIST.md) | 功能规划 |
-| [docs/DEVLOG.md](docs/DEVLOG.md) | 早期开发记录 |
-
----
-
-## 🤝 贡献
-
-欢迎 Issue 与 PR！开发流程：
-
-1. Fork → 新建 feature 分支
-2. 提交前确保 lint / typecheck 通过
-3. PR 描述清楚改动与原因
-
----
-
-## 📄 License
-
-Apache-2.0
-
----
-
-<p align="center">
-  Made with ❤️ by <a href="https://github.com/coffeiz">coffeiz</a>
-</p>
+问题反馈和合作联系请优先使用 GitHub [Issues](https://github.com/Coffeiz/Gugu-web/issues)。

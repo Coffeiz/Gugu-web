@@ -1,7 +1,7 @@
 """思维面板 API（P1：记录/便签；P2：画布）。
 
 记录是按 `captured_at` 排的时间流；画布只保存全局便签/对象节点的摆放状态，
-不拥有也不删除节点本体。关系当前只有无类型的 `related`（见实现方案）。
+不拥有也不删除节点本体；画布关系按 `canvas_id` 隔离。关系当前只有无类型的 `related`。
 
 两条不变量走 `app/core/mind.py`，路由里不要自己手写：
 - 更新便签用 `update_node_atomic`（原子 UPDATE + rowcount），不是「先读再比再写」；
@@ -254,7 +254,7 @@ def _canvas_resp(canvas: MindMap) -> MindCanvasResponse:
 
 def _relation_resp(rel: MindRelation) -> MindRelationResponse:
     return MindRelationResponse(
-        id=rel.id, src_node_id=rel.src_node_id, dst_node_id=rel.dst_node_id,
+        id=rel.id, canvas_id=rel.canvas_id, src_node_id=rel.src_node_id, dst_node_id=rel.dst_node_id,
         rel_type=rel.rel_type, origin=rel.origin, status=rel.status,
         created_at=rel.created_at, updated_at=rel.updated_at,
     )
@@ -549,9 +549,10 @@ async def create_relation(
 ):
     relation, error = await create_relation_service(
         db, current_user.id, body.src_node_id, body.dst_node_id,
+        canvas_id=body.canvas_id,
         allow_parallel=body.allow_parallel,
     )
-    if error == "节点不存在":
+    if error in {"节点不存在", "画布不存在"}:
         raise HTTPException(404, error)
     if error:
         raise HTTPException(422, error)
@@ -568,11 +569,28 @@ async def delete_relation(
     db: AsyncSession = Depends(get_db),
 ):
     relation = await get_canvas_relation(db, current_user.id, rid)
-    if relation is None:
+    if relation is None or relation.canvas_id is not None:
         raise HTTPException(404, "关联不存在")
     await disconnect_node_relation(db, current_user.id, rid)
     await db.commit()
     await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid})
+
+
+@router.delete("/canvases/{cid}/relations/{rid}", status_code=204)
+async def delete_canvas_relation(
+    cid: int,
+    rid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """只删除指定画布上的关系，避免误操作其它画布的同节点关系。"""
+    await _get_canvas(db, cid, current_user.id)
+    relation = await get_canvas_relation(db, current_user.id, rid, cid)
+    if relation is None:
+        raise HTTPException(404, "画布关联不存在")
+    await disconnect_node_relation(db, current_user.id, rid, canvas_id=cid)
+    await db.commit()
+    await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid, "canvas_id": cid})
 
 
 @router.post("/nodes/ref", response_model=MindNodeResponse, status_code=201)

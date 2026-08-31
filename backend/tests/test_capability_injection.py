@@ -81,6 +81,16 @@ def test_fixed_adapter_preserves_nested_and_flattened_business_arguments():
     assert _resolve_adapter_arguments({"name": "http_get"}) == {}
 
 
+def test_invalid_tool_call_payload_supports_required_arguments():
+    payload = invalid_tool_call_payload(
+        path="arguments", rule="required", reason="call_tool.arguments 是必填字段"
+    )
+    assert payload["issues"] == [{
+        "path": "arguments", "rule": "required", "message": "call_tool.arguments 是必填字段",
+    }]
+    assert "完整 Schema" in payload["next_action"]
+
+
 def test_tool_name_protocol_does_not_stringify_business_objects():
     """错误的 name 对象必须停在协议校验，不得变成一个伪工具名。"""
     assert normalize_tool_name("  canvas_create  ") == "canvas_create"

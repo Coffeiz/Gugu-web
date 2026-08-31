@@ -374,6 +374,7 @@ export interface MindCanvasItem {
 }
 export interface MindRelation {
   id: number
+  canvasId: number | null
   srcNodeId: number
   dstNodeId: number
   relType: 'related'
@@ -419,9 +420,9 @@ export const mindApi = {
     post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data),
   removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
   listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
-  createRelation: (srcNodeId: number, dstNodeId: number, allowParallel = false) =>
-    post<MindRelation>('/mind/relations', { srcNodeId, dstNodeId, allowParallel }),
-  deleteRelation: (id: number) => del(`/mind/relations/${id}`),
+  createRelation: (canvasId: number, srcNodeId: number, dstNodeId: number, allowParallel = false) =>
+    post<MindRelation>('/mind/relations', { canvasId, srcNodeId, dstNodeId, allowParallel }),
+  deleteRelation: (canvasId: number, id: number) => del(`/mind/canvases/${canvasId}/relations/${id}`),
   createRefNode: (refType: 'project' | 'file' | 'event', refId: number) =>
     post<MindNote>('/mind/nodes/ref', { refType, refId }),
 }
@@ -670,6 +671,7 @@ export const userBotsApi = {
   create: (body: any)            => request('POST',   '/me/bots', body),
   update: (id: number, body: any) => request('PUT',    `/me/bots/${id}`, body),
   remove: (id: number)           => request('DELETE', `/me/bots/${id}`),
+  unbindQqIdentity: (id: number) => request('DELETE', `/me/bots/${id}/qq-binding`),
   createQqBindingCode: (id: number) => request('POST', `/me/bots/${id}/qq-binding-code`),
 }
 

@@ -105,7 +105,7 @@ async def _save_knowledge(db, user_id, args: dict):
         pass
     return {
         "success": True, "id": saved.id, "title": saved.title,
-        "version": saved.version, "source_type": saved.source.type,
+        "source_type": saved.source.type,
         "confidence": saved.confidence,
     }
 

@@ -212,7 +212,7 @@ async function fetchModels(event?: MouseEvent) {
   finally { modelLoading.value = false }
 }
 function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) draft.model = model; modelMenuOpen.value = false }
-async function probeVision(dim: typeof visionDims[number]['key']) {
+async function probeVision(dim: string) {
   const draft = editor.value
   visionFeedbackTarget.value = draft?.id ? String(draft.id) : 'new'
   if (!draft?.provider || !draft.model) {

@@ -132,38 +132,34 @@ async def test_create_note_rejects_invalid_color_and_other_users_reference(db, u
     assert foreign_ref == {"error": "引用对象不存在"}
 
 
-async def test_update_note_appends_and_uses_version(db, user_a):
+async def test_update_note_appends_without_exposing_version(db, user_a):
     created = await _create_note(db, user_a.id, {
         "blocks": [{"type": "paragraph", "content": [{"type": "text", "text": "第一段"}]}],
     })
     note = created["note"]
     updated = await _update_note(db, user_a.id, {
-        "node_id": note["node_id"], "version": note["version"], "color": "amber",
+        "node_id": note["node_id"], "color": "amber",
         "append_blocks": [{"type": "bullet_list", "items": [{"content": [{"type": "text", "text": "第二项"}]}]}],
     })
-    assert updated["note"]["version"] == note["version"] + 1
     assert updated["note"]["color"] == "amber"
     assert updated["note"]["content_md"] == "第一段\n\n- 第二项"
 
-    stale = await _update_note(db, user_a.id, {
-        "node_id": note["node_id"], "version": note["version"], "title": "旧版本",
+    updated = await _update_note(db, user_a.id, {
+        "node_id": note["node_id"], "title": "增量标题",
     })
-    assert "其他端修改" in stale["error"]
+    assert updated["note"]["title"] == "增量标题"
 
 
-async def test_delete_requires_exact_version_and_restore_returns_note(db, user_a):
+async def test_delete_reads_current_version_and_restore_returns_note(db, user_a):
     created = await _create_note(db, user_a.id, {
         "blocks": [{"type": "paragraph", "content": [{"type": "text", "text": "待删"}]}],
     })
     note = created["note"]
-    assert await _delete_note(db, user_a.id, {"node_id": note["node_id"]}) == {
-        "error": "删除便签必须提供 node_id 和 version",
-    }
-    deleted = await _delete_note(db, user_a.id, {"node_id": note["node_id"], "version": note["version"]})
+    deleted = await _delete_note(db, user_a.id, {"node_id": note["node_id"]})
     assert deleted == {"deleted_node_id": note["node_id"], "can_restore": True}
     restored = await _restore_note(db, user_a.id, {"node_id": note["node_id"]})
     assert restored["note"]["node_id"] == note["node_id"]
-    assert restored["note"]["version"] == note["version"] + 2
+    assert "version" not in restored["note"]
 
 
 async def test_undo_last_gugu_note_never_deletes_user_note(db, user_a):

@@ -827,6 +827,23 @@ sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 
 > **大白话**：本项目不强制用 git 部署，更新代码的方式很朴素——把改好的文件传上服务器（scp/rsync/zip 都行），然后跑几条命令让新代码生效：装可能新增的依赖包、跑数据库迁移（如果改了数据库表结构）、重启对应的进程。**最容易漏的一步是数据库迁移**——只传代码不迁移，新加的字段在数据库里根本不存在，一写入就报错。
 
+### 7.0.1 Docker Compose 生产镜像更新
+
+生产 Docker 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建并推送到 GHCR，GitHub Release 附带 `update-manifest.json` 和签名 bundle。更新前先下载这两个资产，再使用仓库内的安全入口：
+
+```bash
+scripts/release/compose-update.sh \
+  --manifest /path/to/update-manifest.json \
+  --bundle /path/to/update-manifest.json.bundle \
+  --confirm
+```
+
+脚本会验证 manifest、Release 签名和 backend/frontend 镜像签名，备份 `backend/.env` 与数据库，拉取 manifest 指定的不可变 digest，并重建业务容器。它不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会删除 `pgdata`、`gugu_data`、`gugu_config` 或 `sandbox_socket` 卷。
+
+普通更新不带 `--profile sandbox`，因此不会因为更新业务镜像而拉取 egress proxy 或其他沙盒专用镜像。若当前已有 `sandboxd` 在运行，脚本只会同步使用中的业务镜像，不会自动改变沙盒开关。
+
+更新脚本依赖环境中已有的 `GUGU_DB_PASSWORD` 和 `GUGU_ADMIN_PASSWORD`，不会从仓库文件或命令参数打印这些凭据。`COSIGN_IDENTITY_REGEXP` 和 `COSIGN_OIDC_ISSUER` 可用于企业部署时收紧签名发布者范围。
+
 ```bash
 # scp/rsync 传新代码后：
 cd backend

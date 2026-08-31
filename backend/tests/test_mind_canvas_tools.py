@@ -83,7 +83,7 @@ async def test_search_canvas_excludes_timeline_note_and_returns_canvas_note(db, 
     assert result["count"] == 1
     assert result["matches"][0]["node_id"] == canvas_note.id
     assert result["matches"][0]["kind"] == "canvas_note"
-    assert result["matches"][0]["version"] == canvas_note.version
+    assert "version" not in result["matches"][0]
 
 
 async def test_search_placeable_nodes_returns_owned_project_file_event_only(db, user_a, user_b):
@@ -204,17 +204,16 @@ async def test_update_and_remove_canvas_item_only_change_view(db, user_a):
     assert await db.get(MindNode, node.id) is not None
 
 
-async def test_update_canvas_note_uses_version_and_rejects_timeline_note(db, user_a):
+async def test_update_canvas_note_reads_current_version_and_rejects_timeline_note(db, user_a):
     canvas = await _canvas(db, user_a)
     canvas_note = await _node(db, user_a, kind="canvas_note", title="旧标题", content="旧正文")
-    old_version = canvas_note.version
     result = await _canvas_update_note(db, user_a.id, {
-        "node_id": canvas_note.id, "version": old_version,
+        "node_id": canvas_note.id,
         "title": "新标题", "content": "新正文", "color": "blue",
     })
     assert result["updated"] is True
     assert result["node"]["title"] == "新标题"
-    assert result["node"]["version"] == old_version + 1
+    assert "version" not in result["node"]
     timeline_note = await _node(db, user_a, kind="note", title="时间流")
     rejected = await _canvas_update_note(db, user_a.id, {"node_id": timeline_note.id, "version": 1, "title": "不应修改"})
     assert "画布便签" in rejected["error"]
@@ -340,12 +339,12 @@ async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a
     await _item(db, user_a, canvas, first, x=100)
     await _item(db, user_a, canvas, second, x=300)
     relation = await _canvas_connect(db, user_a.id, {"canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id})
-    blocked_relation = await _canvas_disconnect(db, user_a.id, {"relation_id": relation["relation_id"]})
+    blocked_relation = await _canvas_disconnect(db, user_a.id, {"canvas_id": canvas.id, "relation_id": relation["relation_id"]})
     assert json.loads(blocked_relation)["needs_confirm"] is True
 
     relation_token = json.loads(blocked_relation)["confirm_token"]
     deleted_relation = await _canvas_disconnect(db, user_a.id, {
-        "relation_id": relation["relation_id"], "confirm": True, "confirm_token": relation_token,
+        "canvas_id": canvas.id, "relation_id": relation["relation_id"], "confirm": True, "confirm_token": relation_token,
     })
     assert deleted_relation["deleted_relation_id"] == relation["relation_id"]
 
@@ -384,9 +383,9 @@ async def test_canvas_mutations_reject_self_cross_user_and_stale_versions(db, us
     })
     assert updated["updated"] is True
     stale = await _canvas_update_note(db, user_a.id, {
-        "node_id": note.id, "version": version, "content": "旧版本覆盖",
+        "node_id": note.id, "content": "再次增量修改",
     })
-    assert "其他端修改" in stale["error"]
+    assert stale["updated"] is True
 
 
 async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db, user_a):
@@ -503,12 +502,12 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     notes = await db.scalars(select(MindNode).where(MindNode.id.in_(note_ids)))
     versions = [note.version for note in notes]
     blocked = await _canvas_delete_note(db, user_a.id, {
-        "notes": [{"node_id": node_id, "version": version} for node_id, version in zip(note_ids, versions)],
+            "notes": [{"node_id": node_id} for node_id in note_ids],
     })
     blocked_payload = json.loads(blocked)
     assert blocked_payload["needs_confirm"] is True
     deleted = await _canvas_delete_note(db, user_a.id, {
-        "notes": [{"node_id": node_id, "version": version} for node_id, version in zip(note_ids, versions)],
+            "notes": [{"node_id": node_id} for node_id in note_ids],
         "confirm": True,
         "confirm_token": blocked_payload["confirm_token"],
     })
@@ -549,7 +548,7 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     delete_request = {
         "canvas_id": canvas_id,
         "request_id": "batch-crud-delete-001",
-        "operations": [{"kind": "delete_note", "node_id": batch_node["node_id"], "version": batch_node["version"]}],
+            "operations": [{"kind": "delete_note", "node_id": batch_node["node_id"]}],
     }
     blocked_batch = await _canvas_batch(db, user_id, delete_request)
     blocked_batch_payload = json.loads(blocked_batch)

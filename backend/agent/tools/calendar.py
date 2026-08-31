@@ -240,9 +240,9 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="create_event",
             label="新建日历事件",
-            description_short='创建活动或截止提醒；可设置提醒。',
-            description=("在日历上创建事件或截止提醒。可一次把提醒也带上（reminders）——这样「建活动+设提醒」一个调用搞定，"
-                         "不用再单独调 add_event_reminder。"),
+            description_short='创建活动或截止提醒；日期传字符串，可设置提醒。',
+            description=("在日历上创建事件或截止提醒。date 使用日期字符串（支持常见年月日格式，系统归一为 YYYY-MM-DD），"
+                         "time/end_time 使用带双引号的 HH:MM；可一次把提醒也带上（reminders），不用再单独调 add_event_reminder。"),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -271,8 +271,8 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="list_events",
             label="查询日历事件",
-            description_short='查询日历事件；支持按时间和类型筛选。',
-            description="查询日历事件，可按日期范围和类型筛选。每个活动会**连同它自己的提醒**一起返回（reminders 字段，无提醒则不带），不用再逐个查提醒。",
+            description_short='查询日历事件；支持按日期范围和类型筛选。',
+            description="查询日历事件，可按日期范围和类型筛选；from/to 传日期字符串。每个活动会**连同它自己的提醒**一起返回（reminders 字段，无提醒则不带），不用再逐个查提醒。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -287,7 +287,7 @@ class CalendarSkill(BaseSkill):
             name="update_event",
             label="更新日历事件",
             description_short='修改活动字段；提醒请用 add_event_reminder',
-            description="修改日历事件的标题、日期、类型、关联项目、描述。",
+            description="修改日历事件的标题、日期、类型、关联项目、描述；date/on_date 传日期字符串，time/end_time 传 HH:MM。",
             input_schema={
                 "type": "object",
                 "properties": {

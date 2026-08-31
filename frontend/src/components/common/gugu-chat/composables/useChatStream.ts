@@ -79,6 +79,18 @@ export function useChatStream(options: {
     pendingQueue.value = []
   }
 
+  async function drainPendingQueue() {
+    while (pendingQueue.value.length) {
+      const next = pendingQueue.value[0]
+      const sameView = next.viewGeneration === options.getViewGeneration()
+      const sameSession = next.sessionId == null || next.sessionId === sessionId.value
+      pendingQueue.value.shift()
+      if (!sameView || !sameSession) continue
+      await send(next.text, next.attachments, next.references)
+      break
+    }
+  }
+
   // 新对话第一轮发送时 sessionId 还是 null——后端稍后通过 session_id 事件回传真实 id。
   // 把这个真实 id 回填到所有「入队时 sessionId == null 且属于当前 viewGeneration」的排队项上，
   // 否则下一轮消费时 null !== realId 会被当作"已经离开的会话"丢弃（PR #8 复查的 P1）。
@@ -519,17 +531,7 @@ export function useChatStream(options: {
       // viewGeneration 里就允许消费——真实 id 已在收到 session_id 事件时由
       // resolvePendingSession 回填。
       if (ownsView) {
-        while (pendingQueue.value.length) {
-          const next = pendingQueue.value[0]
-          const sameView = next.viewGeneration === options.getViewGeneration()
-          const sameSession = next.sessionId == null || next.sessionId === sessionId.value
-          if (sameView && sameSession) {
-            pendingQueue.value.shift()
-            send(next.text, next.attachments, next.references)
-            break
-          }
-          pendingQueue.value.shift()   // 属于已经离开的会话，丢弃不发
-        }
+        await drainPendingQueue()
       }
     }
   }

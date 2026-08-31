@@ -503,7 +503,7 @@ class ProjectsSkill(BaseSkill):
             name="update_project",
             label="更新项目",
             description_short="修改项目；可调整优先级，none 清除优先级。",
-            description="修改项目的状态、截止日期、开始日期、客户名称、优先级。",
+            description="修改项目的状态、截止日期、开始日期、客户名称、优先级；start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -525,7 +525,7 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short="创建项目；可带 stages/todos，后续用 add_stage/add_todo",
-            description="创建项目，必须填写开始日期和截止日期，可一次设置颜色、优先级、阶段和待办。",
+            description="创建项目，必须填写开始日期和截止日期（日期字符串，系统统一归一为 YYYY-MM-DD），可一次设置颜色、优先级、阶段和待办。",
             input_schema={
                 "type": "object",
                 "properties": {

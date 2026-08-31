@@ -1,13 +1,15 @@
 """思维面板工具：检索、读取及受限块协议下的笔记 CRUD。"""
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from app.core.mind import (
     create_mind_note, restore_mind_note, soft_delete_mind_note, update_mind_note,
 )
+from app.core.date_input import parse_flexible_date
 from app.core.mind_content import MindContentError, serialize_mind_blocks, validate_mind_references
 from app.services.mind import get_live_note, get_user_node, latest_gugu_note, list_live_nodes, list_node_relations, search_live_nodes
 from app.search.query import normalize_queries
+from app.core.tz import LOCAL_TZ
 from agent.tools.base import BaseSkill, Tool
 
 _MAX_RESULTS = 10
@@ -88,7 +90,6 @@ def _node_summary(node: Any) -> dict:
         "kind": node.kind,
         "title": node.title,
         "color": node.color,
-        "version": node.version,
         "preview": plain[:_PREVIEW_LENGTH],
         "captured_at": node.captured_at.isoformat(),
         "source": {"type": node.ref_type, "id": node.ref_id} if node.ref_type else None,
@@ -104,15 +105,39 @@ def _note_detail(node: Any) -> dict:
     }
 
 
+def _date_anchor(value: date) -> datetime:
+    """日期-only 使用本地当天的固定锚点，避免模型参与生成排序时间。"""
+    return datetime.combine(value, time(12), tzinfo=LOCAL_TZ)
+
+
+def _parse_date_only(text: str) -> datetime | None:
+    try:
+        parsed = parse_flexible_date(text)
+    except ValueError as exc:
+        if "格式" not in str(exc):
+            raise
+        return None
+    return _date_anchor(parsed)
+
+
 def _parse_captured_at(value) -> datetime:
     if not isinstance(value, str):
-        raise MindContentError("captured_at 必须是带时区的 ISO 8601 时间")
+        raise MindContentError("captured_at 必须是日期或带时区的 ISO 8601 时间")
+    text = value.strip()
+    if not text:
+        raise MindContentError("captured_at 不能为空")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        date_only = _parse_date_only(text)
     except ValueError as exc:
-        raise MindContentError("captured_at 必须是带时区的 ISO 8601 时间") from exc
+        raise MindContentError("captured_at 日期格式无法识别") from exc
+    if date_only is not None:
+        return date_only
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MindContentError("captured_at 必须是日期或带时区的 ISO 8601 时间") from exc
     if parsed.tzinfo is None:
-        raise MindContentError("captured_at 必须带时区")
+        raise MindContentError("captured_at 日期时间必须带时区")
     return parsed
 
 
@@ -229,14 +254,11 @@ async def _create_note(db, user_id, args: dict):
 
 async def _update_note(db, user_id, args: dict):
     node_id = args.get("node_id")
-    version = args.get("version")
-    if not isinstance(node_id, int) or not isinstance(version, int):
-        return {"error": "更新便签必须提供 node_id 和 version"}
+    if not isinstance(node_id, int):
+        return {"error": "更新便签必须提供 node_id"}
     node = await _get_live_note(db, user_id, node_id)
     if node is None:
         return {"error": "找不到这条便签"}
-    if "blocks" in args and "append_blocks" in args:
-        return {"error": "blocks 和 append_blocks 不能同时提供"}
 
     try:
         fields = {}
@@ -245,11 +267,7 @@ async def _update_note(db, user_id, args: dict):
                 fields[name] = args[name]
         if "captured_at" in args:
             fields["captured_at"] = _parse_captured_at(args["captured_at"])
-        if "blocks" in args:
-            content_md, refs = serialize_mind_blocks(args["blocks"])
-            await validate_mind_references(db, user_id, refs)
-            fields["content_md"] = content_md
-        elif "append_blocks" in args:
+        if "append_blocks" in args:
             appended, refs = serialize_mind_blocks(args["append_blocks"])
             if not appended:
                 return {"error": "append_blocks 不能为空"}
@@ -257,9 +275,9 @@ async def _update_note(db, user_id, args: dict):
             fields["content_md"] = f"{node.content_md}\n\n{appended}" if node.content_md else appended
         if not fields:
             return {"error": "至少提供一个要修改的字段"}
-        if not await update_mind_note(db, node_id, user_id, version, fields):
+        if not await update_mind_note(db, node_id, user_id, node.version, fields):
             await db.rollback()
-            return {"error": "便签已被其他端修改，请先重新读取后再更新"}
+            return {"error": "便签刚被修改，请稍后重试；本次只允许追加或修改指定字段"}
         await db.commit()
     except (MindContentError, ValueError) as exc:
         await db.rollback()
@@ -269,14 +287,14 @@ async def _update_note(db, user_id, args: dict):
 
 async def _delete_note(db, user_id, args: dict):
     node_id = args.get("node_id")
-    version = args.get("version")
-    if not isinstance(node_id, int) or not isinstance(version, int):
-        return {"error": "删除便签必须提供 node_id 和 version"}
-    if await _get_live_note(db, user_id, node_id) is None:
+    if not isinstance(node_id, int):
+        return {"error": "删除便签必须提供 node_id"}
+    node = await _get_live_note(db, user_id, node_id)
+    if node is None:
         return {"error": "找不到这条便签"}
-    if not await soft_delete_mind_note(db, node_id, user_id, version):
+    if not await soft_delete_mind_note(db, node_id, user_id, node.version):
         await db.rollback()
-        return {"error": "便签已被其他端修改，请先重新读取后再删除"}
+        return {"error": "便签刚被修改，请稍后重试"}
     await db.commit()
     return {"deleted_node_id": node_id, "can_restore": True}
 
@@ -345,8 +363,8 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="note_create", label="记录思维笔记",
-            description_short='创建时间流笔记；blocks 必须是 [{type:"paragraph",content:[{type:"text",text:"内容"}]}]，标题用 heading block',
-            description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。",
+            description_short='创建时间流笔记；可选 captured_at 指定日期，不填就是今天。',
+            description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。日记只按日期归档，同一天的先后顺序由系统按写入顺序自动决定。补录历史日记时传 captured_at 日期即可，支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -362,20 +380,19 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="note_update", label="更新思维笔记",
-            description_short='更新思维笔记。',
-            description="更新已知笔记的标题、内容、颜色或时间；必须使用 node_id/version，整篇改写需先确认。",
+            description_short='更新思维笔记；captured_at 只用于指定归属日期，不用于指定排序序号。',
+            description="对已知笔记做增量更新；使用 node_id 指定目标，只能追加 append_blocks 或修改标题、颜色、归属日期，不能整篇覆盖。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"},
-                    "version": {"type": "integer"},
                     "title": {"type": ["string", "null"]},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
-                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
                     "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
                     "captured_at": {"type": "string"},
                 },
-                "required": ["node_id", "version"],
+                "required": ["node_id"],
+                "additionalProperties": False,
             },
             handler=_update_note,
             mutates=True,
@@ -383,15 +400,15 @@ class MindSkill(BaseSkill):
         Tool(
             name="note_delete", label="删除思维笔记",
             description_short='删除思维笔记，执行前确认。',
-            description="软删一条已确认的便签，可由 note_restore 恢复。只能传搜索或读取结果里的精确"
-                        "node_id 和 version；绝不能按标题、关键词或日期模糊删除。",
+            description="软删一条已确认的便签，可由 note_restore 恢复。只能传搜索或读取结果里的精确 node_id；"
+                        "服务端自动读取当前记录，绝不能按标题、关键词或日期模糊删除。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"},
-                    "version": {"type": "integer"},
                 },
-                "required": ["node_id", "version"],
+                "required": ["node_id"],
+                "additionalProperties": False,
             },
             handler=_delete_note,
             mutates=True,

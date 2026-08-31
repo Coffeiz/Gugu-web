@@ -223,16 +223,16 @@ async def batch_canvas_operations(
                 continue
 
             if kind == "delete_note":
-                node_id, version = operation.get("node_id"), operation.get("version")
-                if not isinstance(node_id, int) or not isinstance(version, int):
-                    raise ValueError(f"第 {index + 1} 个删除便签操作缺少 node_id 或 version")
+                node_id = operation.get("node_id")
+                if not isinstance(node_id, int):
+                    raise ValueError(f"第 {index + 1} 个删除便签操作缺少 node_id")
                 node = await get_canvas_node(
                     db, user_id, node_id, kind="canvas_note", deleted=False,
                 )
-                if node is None or node.version != version:
-                    raise ValueError(f"第 {index + 1} 个画布便签已被其他端修改，请先重新读取")
+                if node is None:
+                    raise ValueError(f"第 {index + 1} 个画布便签不存在")
                 if not await delete_canvas_note(
-                    db, user_id, node_id, version, commit=False,
+                    db, user_id, node_id, node.version, commit=False,
                 ):
                     raise ValueError(f"第 {index + 1} 个画布便签删除失败")
                 results.append({

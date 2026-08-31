@@ -24,9 +24,12 @@ export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
 }
 
-/** 按 capturedAt 倒序；同一时刻用 id 兜底，保证顺序稳定不抖 */
+/** 按归属日期倒序；同一天按实际写入时间倒序，最后用 id 兜底。 */
 function byCapturedDesc(a: MindNote, b: MindNote): number {
-  if (a.capturedAt !== b.capturedAt) return a.capturedAt < b.capturedAt ? 1 : -1
+  const aDay = localDayKey(parseUtc(a.capturedAt))
+  const bDay = localDayKey(parseUtc(b.capturedAt))
+  if (aDay !== bDay) return aDay < bDay ? 1 : -1
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1
   return b.id - a.id
 }
 
@@ -562,7 +565,9 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function createCanvasRelation(srcNodeId: number, dstNodeId: number, allowParallel = false) {
-    const relation = await mindApi.createRelation(srcNodeId, dstNodeId, allowParallel)
+    const canvasId = activeCanvasId.value
+    if (canvasId == null) throw new Error('当前没有打开的画布')
+    const relation = await mindApi.createRelation(canvasId, srcNodeId, dstNodeId, allowParallel)
     if (!canvasRelations.value.some(current => current.id === relation.id)) canvasRelations.value.push(relation)
     return relation
   }
@@ -571,6 +576,7 @@ export const useMindStore = defineStore('mind', () => {
     const now = new Date().toISOString()
     const relation: MindRelation = {
       id: -(++optimisticRelationSeq),
+      canvasId: activeCanvasId.value,
       srcNodeId,
       dstNodeId,
       relType: 'related',
@@ -593,7 +599,9 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function removeCanvasRelation(id: number) {
-    await mindApi.deleteRelation(id)
+    const canvasId = activeCanvasId.value
+    if (canvasId == null) return
+    await mindApi.deleteRelation(canvasId, id)
     canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
   }
 

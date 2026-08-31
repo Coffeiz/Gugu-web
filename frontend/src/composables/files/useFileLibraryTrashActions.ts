@@ -3,6 +3,7 @@ import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/serv
 import type { FileMeta } from '@/stores/filesCache'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import { i18n } from '@/i18n'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 interface TrashApi {
   restore: (id: number) => Promise<unknown>
@@ -74,6 +75,7 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
   }
 
   async function hardDeleteFile(file: FileMeta) {
+    if (!await confirmFileDeletion('permanent-file', { name: file.displayName })) return
     try {
       await api.hardDelete(file.id)
       options.loadContents()
@@ -84,6 +86,7 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
   }
 
   async function hardDeleteFolder(folder: TrashFolderMeta) {
+    if (!await confirmFileDeletion('permanent-folder', { name: folder.name })) return
     try {
       await api.hardDeleteFolder(folder.id)
       options.loadContents()
@@ -97,6 +100,7 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
     const fileIds = [...options.selectedFileIds.value]
     const folderIds = [...options.selectedTrashFolderIds.value]
     if (!fileIds.length && !folderIds.length) return
+    if (!await confirmFileDeletion('permanent-selected', { count: fileIds.length + folderIds.length })) return
     try {
       await Promise.all([
         ...fileIds.map(id => api.restore(id)),

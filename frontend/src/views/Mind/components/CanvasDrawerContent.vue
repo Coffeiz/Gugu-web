@@ -38,6 +38,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
+import { runtime } from '@/interaction/runtime'
 import { showAppError } from '@/composables/useAppToast'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
@@ -77,11 +78,12 @@ onBeforeUpdate(() => {
   const elements = Array.from(root.querySelectorAll<HTMLElement>('.canvas-item'))
   pendingLayoutItems = createLayoutItems(elements, 'card')
   if (!pendingLayoutItems.length) return
+  const flipProfile = runtime.getMotionProfile()?.flip
   pendingLayout = createFlipTransaction({
     // 与画布抽屉 viewport 的 resize 事务保持同一时长，避免卡片先结束后
     // 继续被外层的垂直居中高度过渡带动，收尾时出现 1px 的二次移动。
-    duration: 350,
-    easing: 'cubic-bezier(.22,1,.36,1)',
+    duration: flipProfile?.duration ?? 350,
+    easing: flipProfile?.easing ?? 'cubic-bezier(.22,1,.36,1)',
   })
   pendingLayout.capture(pendingLayoutItems)
 })

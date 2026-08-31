@@ -13,11 +13,12 @@
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t(platform.labelKey) }}</span><span class="pm-field-hint">{{ t(platform.hintKey) }}</span></div><button v-if="!botsOf(platform.key).length" class="pm-bind-btn" :disabled="connecting === platform.key" @click="startConnect(platform.key)">{{ connecting === platform.key ? t('profileImUi.generating') : t('profileImUi.scanToConnect') }}</button><span v-else class="pm-field-hint pm-bound-tag">{{ t('profileImUi.connectedRebind') }}</span></div>
       <div v-for="bot in botsOf(platform.key)" :key="bot.id" class="pm-bot-item">
         <div class="pm-bot-item-top"><div class="pm-bot-info"><span class="pm-bot-name">{{ displayBotName(bot) }}<span v-if="bot.sandbox" class="pm-bot-tag">{{ t('profileImUi.sandbox') }}</span></span><span class="pm-bot-appid">{{ bot.app_id }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.enabled === true" :aria-label="bot.enabled === true ? t('profileImUi.disableBot') : t('profileImUi.enableBot')" @update:model-value="toggleBot(bot)" /><span class="pm-switch-label" :class="{ on: bot.enabled === true }">{{ bot.enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span><button class="pm-bot-del" @click="removeBot(bot)">{{ t('profileImUi.deleteBot') }}</button></div>
-        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.qqBinding') }}</span><span class="pm-field-hint">{{ t('profileImUi.qqBindingHint') }}</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? t('profileImUi.generating') : t('profileImUi.generateCode') }}</button><div v-if="bindingCodes[bot.id]" class="pm-binding-code-result"><span class="pm-binding-code-command" :title="t('profileImUi.sendToBot')"><span class="pm-binding-code-prefix">{{ t('profileImUi.bindCommand') }}</span><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ t('profileImUi.codeExpiry', { seconds: bindingCodes[bot.id].expiresIn }) }}</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? t('profileImUi.bindingCopied') : t('profileImUi.copyBinding')" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? t('profileImUi.copied') : t('profileImUi.copy') }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">{{ t('profileImUi.bound') }}</span></div></div>
+        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.qqBinding') }}</span><span class="pm-field-hint">{{ t('profileImUi.qqBindingHint') }}</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound && (!bindingCodes[bot.id] || bindingCodes[bot.id].expiresIn <= 0)" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? t('profileImUi.generating') : t('profileImUi.generateCode') }}</button><div v-if="bindingCodes[bot.id] && bindingCodes[bot.id].expiresIn > 0" class="pm-binding-code-result"><span class="pm-binding-code-command" :title="t('profileImUi.sendToBot')"><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ t('profileImUi.codeExpiry', { seconds: bindingCodes[bot.id].expiresIn }) }}</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? t('profileImUi.bindingCopied') : t('profileImUi.copyBinding')" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? t('profileImUi.copied') : t('profileImUi.copy') }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">{{ t('profileImUi.bound') }}</span><span v-else-if="bindingCodes[bot.id]" class="pm-field-hint">{{ t('profileImUi.codeExpired') }}</span><button v-if="bot.owner_bound" type="button" class="pm-style-chip pm-unbind-chip" @click="unbindQqIdentity(bot)">{{ t('profileImUi.unbindQq') }}</button></div></div>
         <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupChat') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupChatHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_chat_enabled === true" :aria-label="t('profileImUi.toggleGroupChat')" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: bot.group_chat_enabled === true }">{{ bot.group_chat_enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">{{ t('profileImUi.responseMode') }}</span><span class="pm-help-row"><span class="pm-field-hint">{{ t('profileImUi.responseModeHint') }}</span><button :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">{{ t('profileImUi.guide') }}</button></span><PopupMenu :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">{{ t('profileImUi.fullMessageTitle') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep1') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep2') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep3') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep4') }}</div><div class="pm-help-pop-note">{{ t('profileImUi.fullMessageNote') }}</div></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ t(`profileImUi.${option.key === 'reply_all' ? 'replyAll' : option.key === 'reply_mentions' ? 'replyMentions' : 'recordOnly'}`) }}</button></div></div>
         <template v-if="platform.key === 'qq'">
           <MessageFormatSettings :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
+          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.privateStreaming') }}</span><span class="pm-field-hint">{{ t('profileImUi.privateStreamingHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.private_streaming_enabled === true" :aria-label="t('profileImUi.togglePrivateStreaming')" @update:model-value="togglePrivateStreaming(bot)" /><span class="pm-switch-label" :class="{ on: bot.private_streaming_enabled === true }">{{ bot.private_streaming_enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
         <template v-if="platform.key === 'qq' && bot.group_chat_enabled">
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
@@ -32,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onActivated, onDeactivated, onMounted, ref } from 'vue'
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import Icon from '@/components/common/Icon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -45,10 +46,10 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
 
-interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; owner_bound?: boolean }
+interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
   'enabled' | 'group_chat_enabled' | 'group_response_mode' | 'group_allowed_tools' |
-  'group_message_format' | 'private_message_format' |
+  'group_message_format' | 'private_message_format' | 'private_streaming_enabled' |
   'group_memory_enabled' | 'member_memory_enabled'
 >>
 
@@ -74,7 +75,7 @@ const helpAnchorRefs = ref<Record<number, HTMLElement | null>>({})
 function setHelpAnchorRef(botId: number, el: unknown) { helpAnchorRefs.value[botId] = el instanceof HTMLElement ? el : null }
 function toggleHelpPop(botId: number) { helpPopBotId.value = helpPopBotId.value === botId ? null : botId }
 function onDocClickCloseHelp() { helpPopBotId.value = null }
-const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let bindingCountdown: ReturnType<typeof setInterval> | null = null; let bindingStatusPoll: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 // 「接入咕咕」设置全部走同一套 latest-intent 乐观事务：apply 永远同步发生，
 // 同 bot 同字段的 persistence 由 optimisticIntent 串行，旧失败不会回滚更新点击。
@@ -100,7 +101,7 @@ function displayBotName(bot: Bot): string {
         : null
   return defaultKey ? t(`profileImUi.${defaultKey}`) : name
 }
-function patchLocalBot(botId: number, patch: BotSettingPatch) {
+function patchLocalBot(botId: number, patch: Partial<Bot>) {
   const index = bots.value.findIndex(bot => bot.id === botId)
   if (index === -1) return
   bots.value[index] = { ...bots.value[index], ...patch }
@@ -127,6 +128,11 @@ async function loadBots() {
       return
     }
     bots.value = result.items || []
+    const boundIds = new Set(bots.value.filter(bot => bot.owner_bound).map(bot => bot.id))
+    if (boundIds.size) {
+      bindingCodes.value = Object.fromEntries(Object.entries(bindingCodes.value).filter(([id]) => !boundIds.has(Number(id))))
+    }
+    if (!Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) stopBindingStatusPoll()
   } catch {}
 }
 function updateBotSetting(botId: number, patch: BotSettingPatch, fallbackError: string): Promise<void> {
@@ -167,7 +173,14 @@ function resumePoll() {
 }
 function cancelConnect() { stopPoll(); connect.value = null }
 function toggleBot(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { enabled: !current.enabled }, t('profileImUi.connectionSettingsFailed')) }
-async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } } } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.codeGenerateFailed') } finally { bindingBotId.value = null } }
+async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } }; startBindingStatusPoll() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.codeGenerateFailed') } finally { bindingBotId.value = null } }
+function tickBindingCodes() {
+  const next = Object.fromEntries(Object.entries(bindingCodes.value).map(([id, binding]) => [id, { ...binding, expiresIn: Math.max(0, binding.expiresIn - 1) }]))
+  bindingCodes.value = next
+  if (!Object.values(next).some(binding => binding.expiresIn > 0)) stopBindingStatusPoll()
+}
+function startBindingStatusPoll() { stopBindingStatusPoll(); bindingStatusPoll = setInterval(() => { void loadBots() }, 3000) }
+function stopBindingStatusPoll() { if (bindingStatusPoll) { clearInterval(bindingStatusPoll); bindingStatusPoll = null } }
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -187,11 +200,21 @@ async function copyText(text: string) {
 async function copyBindingCode(botId: number) {
   const binding = bindingCodes.value[botId]
   if (!binding) return
-  const copied = await copyText(`绑定 ${binding.code}`)
+  const copied = await copyText(binding.code)
   if (!copied) { connectErr.value = t('profileImUi.copyFailed'); return }
   copiedBindingBotId.value = botId
   if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
   copyFeedbackTimer = setTimeout(() => { copiedBindingBotId.value = null; copyFeedbackTimer = null }, 1600)
+}
+async function unbindQqIdentity(bot: Bot) {
+  if (!await confirmDialog({ title: t('profileImUi.unbindQqTitle'), message: t('profileImUi.unbindQqMessage'), tone: 'warning', confirmText: t('profileImUi.unbindQq') })) return
+  try {
+    await userBotsApi.unbindQqIdentity(bot.id)
+    patchLocalBot(bot.id, { owner_bound: false })
+    const next = { ...bindingCodes.value }
+    delete next[bot.id]
+    bindingCodes.value = next
+  } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || t('profileImUi.unbindQqFailed') }
 }
 function clearCopyFeedback() { if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); copyFeedbackTimer = null; copiedBindingBotId.value = null }
 function toggleGroupChat(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { group_chat_enabled: !current.group_chat_enabled }, '群聊设置失败') }
@@ -215,12 +238,19 @@ function setMessageFormat(bot: Bot, scope: 'group' | 'private', mode: string) {
   const patch = scope === 'group' ? { group_message_format: mode } : { private_message_format: mode }
   void updateBotSetting(bot.id, patch, '消息格式设置失败')
 }
+function togglePrivateStreaming(bot: Bot) {
+  const current = botById(bot.id)
+  if (current) void updateBotSetting(bot.id, { private_streaming_enabled: current.private_streaming_enabled !== true }, t('profileImUi.privateStreamingFailed'))
+}
 async function removeBot(bot: Bot) { if (!await confirmDialog({ title: t('profileImUi.deleteBotTitle'), message: t('profileImUi.deleteBotMessage', { name: displayBotName(bot) }), tone: 'danger', confirmText: t('profileImUi.deleteBot') })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed') } }
-onMounted(() => { void preferences.fetch(); loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
+onMounted(() => { void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
+onDeactivated(stopBindingStatusPoll)
 onDeactivated(clearCopyFeedback)
 onDeactivated(onDocClickCloseHelp)
 onActivated(resumePoll)
+onActivated(() => { if (Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) startBindingStatusPoll() })
+onBeforeUnmount(() => { stopBindingStatusPoll(); if (bindingCountdown) clearInterval(bindingCountdown); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('click', onDocClickCloseHelp) })
 </script>
 
 <style scoped>

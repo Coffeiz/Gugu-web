@@ -17,7 +17,7 @@ Phase 0-1 已完成第一批落地。全量工具基线为 100 个工具、完�
 
 ## 验证
 
-新增 `backend/tests/test_tool_schema_phase1.py`，与现有 Schema validator、HTTP URL 约束测试合计通过 28 项。测试覆盖合法调用、空对象、互斥来源、条件字段、旧 `update_todo` 调用和最近对话无参数分支。
+新增 `backend/tests/test_tool_schema_security_contract.py`，与现有 Schema validator、HTTP URL 约束测试合计通过 28 项。测试覆盖合法调用、空对象、互斥来源、条件字段、旧 `update_todo` 调用和最近对话无参数分支。
 
 Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope trace 和 HTTP Schema 相关回归通过 40 项。当前工作区未提交，待后续 Phase 5 A/B 测试统一提交报告。
 
@@ -146,7 +146,7 @@ Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope tra
 
 迁移前审计为 101 个工具、394 个字段级 `description`；截至本轮已删除 394 个冗余字段说明，必要安全语义已移到工具级短描述。
 审计入口：[audit_tool_schemas.py](../../backend/scripts/audit_tool_schemas.py)；注册级一致性和
-日期/时间结构约束测试位于 [test_tool_schema_phase1.py](../../backend/tests/test_tool_schema_phase1.py)。
+日期/时间结构约束测试位于 [test_tool_schema_security_contract.py](../../backend/tests/test_tool_schema_security_contract.py)。
 
 第二批覆盖日历查询/提醒及项目查询、日期和阶段/待办结构；保留默认值、清除语义和确认门等
 无法仅由类型推断的业务说明，未做机械删除。
@@ -210,7 +210,7 @@ Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope tra
 
 Phase 8 devserver 回归已完成。同步后的在线版本通过全量 Schema 注册、能力快照、固定 Adapter、目录注入和双 provider 序列化检查：工具数 101、能力快照工具数 101、Adapter 工具数 101、目录长度 14,900 字符、Anthropic/OpenAI Schema 各 101 个，`noncanonical=0`、短描述超长数为 0、审计 `issues=0`。本阶段完成。
 
-Phase 8 checklist 收尾：关键业务语义已改为显式字段、枚举、`oneOf`、条件 Schema 或 action；可选字段已按独立状态、行为影响、默认安全性和低风险便利参数分类复核；日期/时间 pattern、全天 `all_day`、嵌套结构和互斥输入均有结构约束。正例、缺字段、互斥、嵌套和历史兼容覆盖在 `test_tool_schema_phase1.py` 与 `test_tool_schema_validation.py`，最新 38 项通过。此前未勾选项属于文档状态滞后，现已同步完成。
+Phase 8 checklist 收尾：关键业务语义已改为显式字段、枚举、`oneOf`、条件 Schema 或 action；可选字段已按独立状态、行为影响、默认安全性和低风险便利参数分类复核；日期/时间 pattern、全天 `all_day`、嵌套结构和互斥输入均有结构约束。正例、缺字段、互斥、嵌套和历史兼容覆盖在 `test_tool_schema_security_contract.py` 与 `test_tool_schema_validation.py`，最新 38 项通过。此前未勾选项属于文档状态滞后，现已同步完成。
 
 ### 三个错误的修复后复测
 

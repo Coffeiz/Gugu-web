@@ -7,6 +7,7 @@ import { useFilePasteCore } from './useFilePasteCore'
 import type { useFileActions } from './useFileActions'
 import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
 import { clearThumbCache } from '@/composables/useThumbCache'
+import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 type ContextType = 'file' | 'multi-file' | 'folder' | 'empty'
 type ContextTarget = FileMeta | FolderMeta
@@ -164,6 +165,11 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
     const fileIds = state.value.type === 'multi-file'
       ? [...options.selectedFileIds.value]
       : target ? [target.id] : []
+    if (!fileIds.length) return
+    if (!await confirmFileDeletion(fileIds.length > 1 ? 'selected' : 'file', {
+      count: fileIds.length,
+      name: target && 'displayName' in target ? target.displayName : undefined,
+    })) return
     close()
     await Promise.all(fileIds.map(id => options.fileActions.deleteFile(id)))
     options.fileCacheStore.removeFiles(fileIds)

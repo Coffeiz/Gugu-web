@@ -25,7 +25,7 @@ const props = defineProps({
 const emit = defineEmits<{ 'after-leave': [] }>()
 const popupRef = ref<HTMLElement | null>(null)
 const popupZ = ref(0)
-const popupStyle = ref<Record<string, string | number>>({ position: 'fixed' })
+const popupStyle = ref<Record<string, string | number | undefined>>({ position: 'fixed' })
 let unregister: (() => void) | null = null
 
 function setPopupZ(z: number) {

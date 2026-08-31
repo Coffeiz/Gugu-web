@@ -201,6 +201,7 @@ import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLib
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
 import { workspacesApi } from '@/services/api'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
@@ -767,6 +768,10 @@ async function ctxDelete() {
   if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
     ? [...selectedIds.value] : [(ctx.value.target as FileMeta).id]
+  if (!await confirmFileDeletion(ids.length > 1 ? 'selected' : 'file', {
+    count: ids.length,
+    name: ctx.value.target && 'displayName' in ctx.value.target ? ctx.value.target.displayName : undefined,
+  })) return
   // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，n  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
   const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
   await optimisticMutation({
