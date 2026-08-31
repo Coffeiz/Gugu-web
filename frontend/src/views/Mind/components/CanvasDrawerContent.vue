@@ -22,10 +22,12 @@
         <button :disabled="savingIds.has(canvas.id)" :title="t('mindUi.deleteCanvas')" class="ci-btn ci-delete" @click.stop="remove(canvas)"><Icon name="action.delete" :size="11" /></button>
       </div>
     </div>
-    <button class="canvas-create-card" data-layout-role="card" data-layout-group="mind:drawer:canvases" data-layout-key="canvas-create" @click="onCreate"><Icon name="action.add" :size="14" />{{ t('mindUi.newCanvas') }}</button>
-    <div v-if="selectedIds.size" class="canvas-selection-actions">
-      <button type="button" class="ci-batch-delete" @click="removeSelected"><Icon name="action.delete" :size="12" />{{ t('common.actions.delete') }}</button>
-      <button type="button" class="ci-clear-selection" @click="clearSelection">{{ t('common.actions.clearSelection') }}</button>
+    <div class="canvas-drawer-footer">
+      <button class="canvas-create-card" data-layout-role="card" data-layout-group="mind:drawer:canvases" data-layout-key="canvas-create" @click="onCreate"><Icon name="action.add" :size="14" />{{ t('mindUi.newCanvas') }}</button>
+      <div v-if="selectedIds.size" class="canvas-selection-actions">
+        <button type="button" class="ci-batch-delete" @click="removeSelected"><Icon name="action.delete" :size="12" />{{ t('common.actions.delete') }}</button>
+        <button type="button" class="ci-clear-selection" @click="clearSelection">{{ t('common.actions.clearSelection') }}</button>
+      </div>
     </div>
   </div>
 </template>
@@ -38,7 +40,6 @@ import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
 import { showAppError } from '@/composables/useAppToast'
 import { confirmDialog } from '@/composables/useConfirmDialog'
-import { runtime } from '@/interaction/runtime'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -59,18 +60,28 @@ watch(() => props.canvases, canvases => {
 })
 let pendingLayout: ReturnType<typeof createFlipTransaction> | null = null
 let pendingLayoutItems: ReturnType<typeof createLayoutItems> = []
+let lastLayoutSignature = props.canvases.map(canvas => canvas.id).join('|')
 
 onBeforeUpdate(() => {
+  const layoutSignature = props.canvases.map(canvas => canvas.id).join('|')
+  const layoutChanged = layoutSignature !== lastLayoutSignature
   pendingLayout?.cancel()
+  pendingLayout = null
+  pendingLayoutItems = []
+  if (!layoutChanged) return
+  lastLayoutSignature = layoutSignature
   const root = listRef.value
   if (!root) return
-  const elements = Array.from(root.querySelectorAll<HTMLElement>('.canvas-item, .canvas-create-card'))
+  // 新建按钮位于 sticky footer，会随抽屉高度自然定位；如果也参与卡片 FLIP，
+  // 删除时会同时叠加 transform 和 viewport height 两套位移，造成按钮抽动。
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('.canvas-item'))
   pendingLayoutItems = createLayoutItems(elements, 'card')
   if (!pendingLayoutItems.length) return
-  const profile = runtime.getMotionProfile()?.flip
   pendingLayout = createFlipTransaction({
-    duration: profile?.duration ?? 250,
-    easing: profile?.easing ?? 'cubic-bezier(.22,1,.36,1)',
+    // 与画布抽屉 viewport 的 resize 事务保持同一时长，避免卡片先结束后
+    // 继续被外层的垂直居中高度过渡带动，收尾时出现 1px 的二次移动。
+    duration: 350,
+    easing: 'cubic-bezier(.22,1,.36,1)',
   })
   pendingLayout.capture(pendingLayoutItems)
 })
@@ -179,7 +190,8 @@ defineExpose({ listRef })
 .ci-btn { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
 .ci-btn:hover { background: var(--action-soft-hover); color: var(--action-primary); }
 .ci-delete:hover { background: var(--status-danger-bg); color: var(--status-danger); }
-.canvas-selection-actions { display: flex; align-items: center; width: 100%; gap: 6px; padding: 7px 4px 2px; }
+.canvas-drawer-footer { position: sticky; bottom: 0; z-index: 2; width: 100%; padding: 6px 0 9px; }
+.canvas-selection-actions { display: flex; align-items: center; width: 100%; gap: 6px; padding: 7px 4px 0; }
 .ci-batch-delete, .ci-clear-selection { display: inline-flex; align-items: center; justify-content: center; flex: 1 1 0; gap: 4px; min-height: 26px; padding: 4px 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font: 600 11px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
 .ci-batch-delete { color: var(--status-danger); background: var(--status-danger-bg); border-color: color-mix(in srgb, var(--status-danger) 30%, var(--border-subtle)); }
 .ci-batch-delete:hover { background: color-mix(in srgb, var(--status-danger) 14%, var(--surface-soft)); border-color: var(--status-danger); }
