@@ -45,6 +45,8 @@ async def page_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
     """
     operation = TerminalOperation.VIEW
     settings = get_settings()
+    if not getattr(getattr(settings, "sandbox", None), "enabled", False):
+        return TerminalAccessDecision(False, "Shell 沙盒未开启", operation)
     if not getattr(settings.agent, "shell_enabled", False):
         return TerminalAccessDecision(False, "管理员未开启 Shell 工具", operation)
     if await effective_shell_enabled(db, user_id):

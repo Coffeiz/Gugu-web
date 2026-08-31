@@ -499,7 +499,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; items: unknown[] }>('/workspaces'),
   create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
@@ -512,7 +512,7 @@ export type TerminalAccessStatus = Awaited<ReturnType<typeof workspacesApi.statu
 
 /** 终端入口与后端 page_access 保持同一套 Shell 能力判定。 */
 export function canAccessTerminals(status: TerminalAccessStatus): boolean {
-  return status.globalEnabled && (
+  return status.sandboxEnabled && status.globalEnabled && (
     status.userEnabled || (status.systemGlobalEnabled && status.userSystemEnabled)
   )
 }

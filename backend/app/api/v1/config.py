@@ -55,11 +55,23 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
     import traceback as _tb
     from app.api.v1.audit_log import write_log
     try:
+        agent_patch = body.patch.get("agent")
+        sandbox_patch = body.patch.get("sandbox")
+        if isinstance(agent_patch, dict) and any(
+            agent_patch.get(field) is True
+            for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled")
+        ):
+            sandbox_enabled = (
+                sandbox_patch.get("enabled")
+                if isinstance(sandbox_patch, dict) and "enabled" in sandbox_patch
+                else get_settings().sandbox.enabled
+            )
+            if not sandbox_enabled:
+                raise HTTPException(status_code=400, detail="开启 Shell 前必须先开启 Shell 沙盒")
         new_cfg = await save_override(body.patch)
         sections = "、".join(body.patch.keys())
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)
-        agent_patch = body.patch.get("agent")
         shell_fields = {
             "shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled",
         }

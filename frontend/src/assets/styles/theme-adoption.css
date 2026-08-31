@@ -372,9 +372,11 @@ html[data-theme='dark'][data-family] .mini-player .mp-track {
   background: var(--surface-soft-hover);
 }
 html[data-theme='dark'][data-family] .mini-player .mp-fill,
-html[data-theme='dark'][data-family] .mini-player .mp-thumb,
+html[data-theme='dark'][data-family] .mini-player .mp-thumb {
+  background: var(--action-primary);
+}
 html[data-theme='dark'][data-family] .mini-player .mp-btn--play {
-  background: var(--brand-gradient);
+  background: var(--action-primary);
 }
 html[data-theme='dark'][data-family] .mini-player .mp-btn--pin:hover,
 html[data-theme='dark'][data-family] .mini-player .mp-vol-btn:hover {

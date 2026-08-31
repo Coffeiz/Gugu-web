@@ -20,6 +20,7 @@
         v-if="activeTab === 'permissions'"
         :agent="agentDraft"
         :byok="byokDraft"
+        :sandbox-enabled="configStore.cfg.sandbox.enabled === true"
         :saving="permissionSaving"
         :saved="permissionSaved"
         :error="permissionError"

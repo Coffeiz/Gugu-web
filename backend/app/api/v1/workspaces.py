@@ -47,6 +47,7 @@ async def list_workspaces(
     )).all())
     return {
         "globalEnabled": bool(get_settings().agent.shell_enabled),
+        "sandboxEnabled": bool(getattr(get_settings().sandbox, "enabled", False)),
         "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
         "autopilotGlobalEnabled": bool(get_settings().agent.shell_autopilot_enabled),

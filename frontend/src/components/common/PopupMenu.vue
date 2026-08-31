@@ -27,6 +27,7 @@ const popupRef = ref<HTMLElement | null>(null)
 const popupZ = ref(0)
 const popupStyle = ref<Record<string, string | number | undefined>>({ position: 'fixed' })
 let unregister: (() => void) | null = null
+let resizeObserver: ResizeObserver | null = null
 
 function setPopupZ(z: number) {
   popupZ.value = z
@@ -69,6 +70,13 @@ function position() {
   popupStyle.value = { ...popupStyle.value, ...props.style, left: `${left}px`, top: `${top}px`, minWidth: props.placement === 'bottom' ? `${rect.width}px` : undefined, zIndex: popupZ.value || nextZ() }
 }
 function refresh() { void nextTick(position) }
+function observePopupSize() {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  if (!popupRef.value || typeof ResizeObserver === 'undefined') return
+  resizeObserver = new ResizeObserver(() => refresh())
+  resizeObserver.observe(popupRef.value)
+}
 watch(() => props.style, value => {
   const next = { ...popupStyle.value, ...value }
   for (const key of ['top', 'bottom', 'left', 'right', 'width', 'minWidth', 'transformOrigin']) {
@@ -78,14 +86,23 @@ watch(() => props.style, value => {
 }, { deep: true })
 watch(() => props.show, value => {
   unregister?.(); unregister = value ? registerPopover(setPopupZ) : null
-  if (value) { popupZ.value = nextZ(); popupStyle.value = { ...popupStyle.value, ...props.style, zIndex: popupZ.value }; refresh() } else popupZ.value = TOP_Z + 1
+  if (value) {
+    popupZ.value = nextZ()
+    popupStyle.value = { ...popupStyle.value, ...props.style, zIndex: popupZ.value }
+    refresh()
+    void nextTick(observePopupSize)
+  } else {
+    popupZ.value = TOP_Z + 1
+    resizeObserver?.disconnect()
+    resizeObserver = null
+  }
   // show 关闭时先于 DOM patch 提升当前节点，避免点击空白路径在 before-leave 前被宿主面板盖住。
   if (!value && popupRef.value) {
     setPopupZ(100001)
   }
 }, { immediate: true })
 onMounted(() => { document.addEventListener('mousedown', raiseBeforeAnchorInteraction, true); window.addEventListener('resize', refresh); window.addEventListener('scroll', refresh, true) })
-onBeforeUnmount(() => { unregister?.(); document.removeEventListener('mousedown', raiseBeforeAnchorInteraction, true); window.removeEventListener('resize', refresh); window.removeEventListener('scroll', refresh, true) })
+onBeforeUnmount(() => { unregister?.(); resizeObserver?.disconnect(); document.removeEventListener('mousedown', raiseBeforeAnchorInteraction, true); window.removeEventListener('resize', refresh); window.removeEventListener('scroll', refresh, true) })
 defineExpose({ contains: (target: Node) => !!popupRef.value?.contains(target), element: () => popupRef.value })
 </script>
 
