@@ -92,11 +92,16 @@ function connect(forcePromptRecovery = false) {
     } catch { emit('error', t('terminalUi.invalidOutput')) }
   }
   current.onerror = () => { if (isCurrent()) connected.value = false }
-  current.onclose = () => {
+  current.onclose = (event) => {
     if (!isCurrent()) return
     if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
     socket = null
     connected.value = false
+    if (event.code === 4401 || event.code === 4403) {
+      intentionalClose = true
+      statusText.value = t('terminals.unavailable')
+      return
+    }
     if (!intentionalClose) scheduleReconnect()
   }
 }

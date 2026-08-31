@@ -353,7 +353,7 @@ const paletteChoices: Array<{ value: ThemePalette; label: string; note: string; 
     { label: 'Primary', color: '#c98f98' }, { label: 'Surface', color: '#f7eff0' }, { label: 'Success', color: '#89a58e' }, { label: 'Danger', color: '#bd7c82' },
   ] },
   { value: 'sky', label: 'Sky', note: '低饱和天空邻近色', swatches: [
-    { label: 'Primary', color: '#83a9c2' }, { label: 'Surface', color: '#edf4f7' }, { label: 'Success', color: '#84a598' }, { label: 'Danger', color: '#b98087' },
+    { label: 'Primary', color: '#839fc2' }, { label: 'Surface', color: '#edf4f7' }, { label: 'Success', color: '#84a598' }, { label: 'Danger', color: '#b98087' },
   ] },
   { value: 'sage', label: 'Sage', note: '低饱和鼠尾草邻近色', swatches: [
     { label: 'Primary', color: '#84ab9e' }, { label: 'Surface', color: '#edf5f2' }, { label: 'Success', color: '#789d8c' }, { label: 'Danger', color: '#b98186' },

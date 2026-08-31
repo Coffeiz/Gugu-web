@@ -42,11 +42,10 @@ const palettes: Array<{ value: ThemePalette; label: string }> = [
 .theme-controls { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-sm); margin-left:auto; }
 .control-cluster { display:flex; align-items:center; gap:var(--space-xs); }
 .control-label { color:var(--content-tertiary); font-size:var(--font-size-xs); font-weight:var(--font-weight-medium); letter-spacing:var(--tracking-label); }
-.segmented { display:flex; gap:var(--space-xs); padding:var(--space-xs); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-soft); }
-.segmented button { min-width:58px; height:28px; border:0; border-radius:var(--radius-xs); padding:0 var(--space-sm); color:var(--content-secondary); background:transparent; cursor:pointer; font:var(--font-weight-semibold) var(--font-size-xs) var(--font-sans); transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast); }
-.segmented button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
-.segmented button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
-.segmented button.family-choice.active { color:var(--content-primary); border:1px solid var(--border-default); background:var(--surface-raised); box-shadow:none; }
+.segmented { display:flex; gap:var(--space-xs); padding:var(--space-xs); border:1px solid var(--choice-chip-border); border-radius:var(--choice-chip-radius); background:var(--segmented-track-bg); }
+.segmented button { min-width:58px; min-height:var(--choice-chip-min-height); height:var(--choice-chip-min-height); border:1px solid transparent; border-radius:var(--choice-chip-radius); padding:var(--choice-chip-padding); color:var(--choice-chip-fg); background:var(--choice-chip-bg); cursor:pointer; font:var(--font-weight-semibold) var(--font-size-xs) var(--font-sans); transition:background-color var(--motion-hover-control) var(--motion-ease-standard),border-color var(--motion-hover-control) var(--motion-ease-standard),color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.segmented button:hover { color:var(--choice-chip-fg-hover); background:var(--choice-chip-bg-hover); border-color:var(--choice-chip-border-hover); }
+.segmented button.active { color:var(--selection-fg); background:var(--segmented-pill-bg); border-color:var(--choice-chip-border-active); box-shadow:var(--segmented-pill-shadow); }
 .segmented button:focus-visible { outline:none; box-shadow:var(--control-focus-shadow); }
 @media (max-width:720px) { .theme-controls { width:100%; margin-left:0; justify-content:flex-start; } }
 </style>

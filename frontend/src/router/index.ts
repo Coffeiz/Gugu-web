@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
+import { canAccessTerminals, workspacesApi } from '@/services/api'
 
 const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
@@ -167,6 +168,17 @@ router.beforeEach((to) => {
 
   if (to.meta.authPublic && userToken) {
     return { path: '/projects' }
+  }
+})
+
+router.beforeEach(async (to) => {
+  if (to.name !== 'Terminals') return
+  try {
+    const status = await workspacesApi.status()
+    if (!canAccessTerminals(status)) return { path: '/projects' }
+  } catch (cause) {
+    const status = (cause as { status?: number }).status
+    if (status === 401 || status === 403) return { path: '/projects' }
   }
 })
 

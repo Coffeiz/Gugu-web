@@ -1,13 +1,13 @@
 <template>
-  <div>
+  <div :class="{ 'profile-byok-pane--compact': compact, 'profile-byok-pane--onboarding': onboarding }">
     <div class="pm-section">
-      <div class="pm-section-label">{{ t('profileByokUi.title') }}</div>
-      <p class="pm-field-hint">{{ t('profileByokUi.hint') }}</p>
+      <div v-if="!compact" class="pm-section-label">{{ t('profileByokUi.title') }}</div>
+      <p v-if="!compact" class="pm-field-hint">{{ t('profileByokUi.hint') }}</p>
       <div v-if="needsReconfigure" class="pm-msg err">{{ t('profileByokUi.reconfigure') }}</div>
       <div v-if="loading" class="pm-field-hint">{{ t('profileByokUi.loading') }}</div>
       <div v-else-if="error" class="pm-msg err">{{ error }}</div>
       <template v-else>
-        <div v-for="group in groups" :key="group.value" class="byok-group">
+        <div v-for="group in visibleGroups" :key="group.value" class="byok-group">
           <div class="byok-group-heading"><div class="byok-group-title">{{ t(group.labelKey) }}</div><button class="pm-style-chip" @click="openEditor(group.value)">{{ t('profileByokUi.addModel') }}</button></div>
           <div v-if="itemsFor(group.value).length === 0" class="pm-field-hint">{{ t('profileByokUi.notConfigured') }}</div>
           <div v-if="itemsFor(group.value).length" class="byok-card-grid">
@@ -20,10 +20,12 @@
                 </div>
               </div>
               <div class="byok-card-actions">
+                <template v-if="!onboarding">
                 <button class="pm-style-chip" @click="openEditor(item.capability, item)">{{ t('profileByokUi.edit') }}</button>
                 <button class="pm-style-chip" :disabled="testing === item.id" @click="test(item)">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button>
                 <button v-if="item.capability === 'llm'" class="pm-style-chip" :disabled="visionTesting?.startsWith(`${item.id}:`)" @click="probeCardVisionAll(item)">{{ visionTesting === `${item.id}:all` ? t('profileByokUi.probing') : t('profileByokUi.probe') }}</button>
                 <button class="pm-style-chip" :class="{ active: item.enabled }" @click="toggle(item)">{{ item.enabled ? t('profileByokUi.enabled') : t('profileByokUi.disabled') }}</button>
+                </template>
                 <button class="pm-danger-btn" @click="remove(item)">{{ t('profileByokUi.delete') }}</button>
               </div>
             </div>
@@ -48,12 +50,17 @@
             </Transition>
             </template>
           </div>
-          <div v-if="newEditor && newEditor.capability === group.value" class="byok-editor byok-editor--new">
+          <Teleport to="body" :disabled="!onboarding">
+          <Transition name="onboarding-model-backdrop">
+          <div v-if="onboarding && newEditor && newEditor.capability === group.value" class="onboarding-model-dialog-backdrop" @click="closeNewEditor"></div>
+          </Transition>
+          <Transition :name="onboarding ? 'onboarding-model' : 'byok-editor-none'">
+          <div v-if="newEditor && newEditor.capability === group.value" class="byok-editor byok-editor--new" :class="{ 'onboarding-model-editor': onboarding }" @click.self="onboarding && closeNewEditor()">
             <div class="byok-editor-title">{{ t('profileByokUi.addConfig', { label: t(group.labelKey) }) }}</div>
             <div class="byok-form-grid">
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(newEditor).length }">
-                <ProviderSelect :model-value="newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" @update:model-value="applyProviderTo(newEditor, $event)" />
-                <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(newEditor, $event)" />
+                <ProviderSelect :model-value="newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderTo(newEditor, $event)" />
+                <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderChild(newEditor, $event)" />
               </div>
               <InterfaceTypeSelect v-if="newEditor.provider === 'mimo'" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || 'openai'" :options="[{ key: 'openai', label: t('profileByokUi.openaiCompatible') }, { key: 'anthropic', label: t('profileByokUi.anthropicCompatible') }]" :hint="t('profileByokUi.anthropicHint')" @update:model-value="newEditor.api_format = String($event)" />
               <InterfaceTypeSelect v-else-if="newEditor.provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="newEditor.api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="newEditor.api_format = String($event)" />
@@ -65,11 +72,13 @@
             </div>
             <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
           </div>
+          </Transition>
+          </Teleport>
           <div v-if="message && messageCapability === group.value" class="byok-message pm-msg" :class="messageType">{{ message }}</div>
         </div>
       </template>
     </div>
-    <div class="pm-sep"></div>
+    <div v-if="!compact" class="pm-sep"></div>
   </div>
 </template>
 
@@ -113,6 +122,12 @@ const ollamaInterfaceOptions = computed(() => [
   { key: 'openai', label: t('profileByokUi.openaiCompatible') },
 ])
 const { t } = useI18n()
+const props = defineProps({
+  compact: { type: Boolean, default: false },
+  capability: { type: String, default: '' },
+  onboarding: { type: Boolean, default: false },
+})
+const visibleGroups = computed(() => props.capability ? groups.filter(group => group.value === props.capability) : groups)
 const localizedVisionDims = computed(() => visionDims.map(dim => ({ ...dim, label: t(dim.labelKey) })))
 const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
@@ -283,6 +298,28 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOn
 
 <style scoped>
 .byok-group { margin-top: 14px; }
+.profile-byok-pane--compact .pm-section { padding: 0; }
+.profile-byok-pane--compact .byok-group { margin-top: 0; }
+.profile-byok-pane--compact .byok-group-heading { margin-bottom: var(--space-sm); }
+.profile-byok-pane--compact .byok-card-grid { margin-top: var(--space-sm); }
+.profile-byok-pane--compact .byok-card { background: var(--surface-soft); }
+.profile-byok-pane--compact .byok-message { margin-bottom: 0; }
+.profile-byok-pane--onboarding .byok-group-heading .pm-style-chip {
+  min-height: var(--choice-chip-min-height); padding: var(--choice-chip-padding);
+  border: 1px solid var(--choice-chip-border); border-radius: var(--choice-chip-radius);
+  background: var(--choice-chip-bg); color: var(--choice-chip-fg);
+  font: 500 var(--font-size-xs) var(--font-sans); line-height: var(--choice-chip-line-height);
+}
+.profile-byok-pane--onboarding .byok-group-heading .pm-style-chip:hover {
+  border-color: var(--choice-chip-border-hover); background: var(--choice-chip-bg-hover); color: var(--choice-chip-fg-hover);
+}
+.profile-byok-pane--onboarding .byok-card {
+  gap: var(--space-md); padding: 13px 14px;
+  border-color: var(--workspace-card-border); border-radius: var(--radius-md);
+  background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow);
+  transition: border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.profile-byok-pane--onboarding .byok-card:hover { border-color: var(--workspace-card-border-hover); }
 .byok-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .byok-group-title { color: var(--text-primary); font-size: 13px; font-weight: 650; margin-bottom: 6px; }
 .byok-card-grid { display: grid; grid-template-columns: 1fr; row-gap: 10px; margin-top: 8px; }
@@ -304,6 +341,23 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOn
 .byok-card-grid:has(.byok-editor--expanded) { row-gap: 10px; }
 .byok-card:has(+ .byok-editor--expanded) { margin-bottom: -10px; border-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .byok-editor--expanded { grid-column: 1; }
+.onboarding-model-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 30000;
+  background: var(--surface-scrim); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.onboarding-model-editor {
+  position: fixed; z-index: 30001; top: 50%; left: 50%; width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px); margin: 0; padding: var(--space-lg); overflow-y: auto;
+  transform: translate(-50%, -50%); border: 1px solid var(--workspace-card-border);
+  border-radius: var(--card-radius); background: var(--surface-card-solid); box-shadow: var(--modal-card-shadow);
+}
+.onboarding-model-enter-active, .onboarding-model-leave-active {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.onboarding-model-enter-from, .onboarding-model-leave-to { opacity: 0; }
+.onboarding-model-backdrop-enter-active, .onboarding-model-backdrop-leave-active { transition: opacity var(--modal-enter-duration) var(--modal-enter-easing); }
+.onboarding-model-backdrop-enter-from, .onboarding-model-backdrop-leave-to { opacity: 0; }
+:global(.onboarding-provider-popup) { z-index: 30002 !important; }
 .byok-editor-enter-active { max-height: 420px; box-sizing: border-box; overflow: hidden; transition: max-height .32s cubic-bezier(.22,.61,.36,1), padding .24s ease-out; }
 .byok-editor-leave-active { max-height: 420px; box-sizing: border-box; overflow: hidden; transition: max-height .34s cubic-bezier(.16, 1, .3, 1), padding .26s cubic-bezier(.16, 1, .3, 1); }
 .byok-editor-enter-from, .byok-editor-leave-to { max-height: 0; padding-top: 0; padding-bottom: 0; }

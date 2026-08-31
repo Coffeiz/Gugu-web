@@ -139,7 +139,10 @@ describe('主题 CSS 回归契约', () => {
     expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
   })
 
-  it('通知气泡暗色不继承亮色纯白高光，亮色实体样式保持唯一', () => {
+  it('通知气泡使用统一浮层材质，暗色不继承亮色纯白高光', () => {
+    expect(notificationBubbleVue).toContain('background: var(--popup-surface-bg);')
+    expect(notificationBubbleVue).toContain('box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);')
+    expect(notificationBubbleVue).not.toContain('background: var(--panel-bg);')
     const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family] .nb-item)")
     expect(darkEdge).toContain('--nb-border: var(--border-default)')
     expect(darkEdge).toContain('--nb-highlight-top: var(--highlight-soft)')

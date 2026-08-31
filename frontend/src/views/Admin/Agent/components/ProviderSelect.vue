@@ -4,7 +4,7 @@
       <span>{{ selectedLabel }}</span>
       <FlipChevron :open="open" :size="11" class="provider-chevron" />
     </button>
-    <PopupMenu :show="open" :anchor="wrapRef" popup-class="provider-popup">
+    <PopupMenu :show="open" :anchor="wrapRef" :popup-class="popupClass ? `provider-popup ${popupClass}` : 'provider-popup'">
       <div v-for="provider in providers" :key="provider.key" class="provider-option-group">
         <button
           type="button"
@@ -17,7 +17,7 @@
         </button>
       </div>
     </PopupMenu>
-    <PopupMenu :show="Boolean(expandedProvider && childAnchor)" :anchor="childAnchor" popup-class="provider-child-popup">
+    <PopupMenu :show="Boolean(expandedProvider && childAnchor)" :anchor="childAnchor" :popup-class="popupClass ? `provider-child-popup ${popupClass}` : 'provider-child-popup'">
       <button
         v-for="child in expandedChildren"
         :key="child.key"
@@ -43,6 +43,7 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   providers: { type: Array as PropType<ProviderOption[]>, default: () => [] },
   placeholder: { type: String, default: '' },
+  popupClass: { type: String, default: '' },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const { t } = useI18n()

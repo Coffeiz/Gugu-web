@@ -55,8 +55,23 @@ const calendarView = load('../../views/Calendar/index.vue')
 const adoptedForms = load('./adoption/forms.css')
 const configField = load('../../views/Admin/Config/components/ConfigField.vue')
 const eventFormFields = load('../../components/events/EventFormFields.vue')
+const terminalsView = load('../../views/Terminals/index.vue')
+const terminalsRouter = load('../../router/index.ts')
+const terminalPty = load('../../views/Terminals/components/InteractivePtyTerminal.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连', () => {
+    expect(terminalsRouter).toContain("if (to.name !== 'Terminals') return")
+    expect(terminalsRouter).toContain('canAccessTerminals(status)')
+    expect(terminalsView).toContain('if (status === 401 || status === 403)')
+    expect(terminalPty).toContain('event.code === 4401 || event.code === 4403')
+  })
+
+  it('Shell 未启用时不显示文件库工作区按钮', () => {
+    expect(filesView).toContain(':show-new-workspace-button="preferencesStore.shellEnabled && currentType === \'folder\'')
+    expect(filesView).toContain("import { usePreferencesStore } from '@/stores/preferences'")
+  })
+
   it('项目阶段待办循环不遮蔽 i18n 翻译函数', () => {
     expect(projectCard).not.toContain('v-for="(t, i) in currentTodos"')
     expect(projectCard).toContain('v-for="(todo, i) in currentTodos"')

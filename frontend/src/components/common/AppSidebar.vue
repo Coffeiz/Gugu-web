@@ -88,7 +88,7 @@ import NavItem from './NavItem.vue'
 import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
 import Brand from './Brand.vue'
-import { workspacesApi } from '@/services/api'
+import { canAccessTerminals, workspacesApi } from '@/services/api'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
@@ -116,7 +116,10 @@ function handleLogout() { authStore.logout(); router.push('/login') }
 async function refreshTerminalVisibility() {
   try {
     const status = await workspacesApi.status()
-    terminalVisible.value = status.globalEnabled && (status.userEnabled || status.userSystemEnabled)
+    terminalVisible.value = canAccessTerminals(status)
+    if (!terminalVisible.value && router.currentRoute.value.name === 'Terminals') {
+      await router.replace('/projects')
+    }
   } catch {
     terminalVisible.value = false
   }

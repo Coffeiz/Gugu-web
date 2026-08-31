@@ -25,7 +25,7 @@ from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
-from app.services.mind_canvas import (
+from app.services.canvas.service import (
     add_canvas_item as add_canvas_item_service,
     bring_canvas_item_to_front as bring_canvas_item_to_front_service,
     create_canvas_note as create_canvas_note_service,
@@ -38,7 +38,7 @@ from app.services.mind_canvas import (
     get_canvas_relation,
     get_or_create_reference as get_or_create_reference_service,
     list_canvas_items as list_canvas_items_service,
-    list_canvas_relations as list_canvas_relations_service,
+    list_canvas_relations_for_canvas,
     list_canvases as list_canvas_service,
     remove_canvas_item as remove_canvas_item_service,
     disconnect_node_relation,
@@ -537,8 +537,7 @@ async def list_canvas_relations(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    node_ids = [node.id for _, node in await list_canvas_items_service(db, current_user.id, cid)]
-    rows = await list_canvas_relations_service(db, current_user.id, node_ids)
+    rows = await list_canvas_relations_for_canvas(db, current_user.id, cid)
     return [_relation_resp(rel) for rel in rows]
 
 

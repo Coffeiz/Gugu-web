@@ -49,7 +49,7 @@
             {{ t('storageAuditExtra.orphans') }} <b :style="{ color: fileReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ fileReport.orphan_count }}</b> ·
             {{ t('storageAuditExtra.misplaced') }} <b :style="{ color: fileReport.misplaced_count ? '#e0a96a' : 'inherit' }">{{ fileReport.misplaced_count || 0 }}</b>
           </div>
-          <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok">✅ {{ t('storageAuditUi.healthy') }}</div>
+          <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditUi.healthy') }}</div>
           <div v-if="fileReport.ghost_count" class="recon-block">
             <div class="recon-block-title">{{ t('storageAuditExtra.ghostRecords') }}</div>
             <div v-for="g in fileReport.ghosts" :key="g.id" class="recon-row">
@@ -230,7 +230,7 @@
       <div v-if="memMsg" class="sa-inline-msg" :class="memMsgKind">{{ memMsg }}</div>
 
       <template v-if="memReport">
-        <div v-if="!memReport.files.length" class="recon-ok">✅ {{ t('storageAuditExtra.noLegacy') }}</div>
+        <div v-if="!memReport.files.length" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditExtra.noLegacy') }}</div>
         <template v-else>
           <div class="recon-summary">
             {{ t('storageAuditExtra.legacySummary', { total: memReport.files.length, safe: memReport.safeCount }) }}
@@ -269,6 +269,7 @@ import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import Checkbox from '@/components/common/Checkbox.vue'
+import { RiCheckFill } from '@remixicon/vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
@@ -621,7 +622,8 @@ async function cleanupLegacy(keys: string[]) {
   background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; }
 .recon-summary { line-height: 1.7; color: rgba(255,255,255,0.88); }
 .recon-summary b { font-weight: 700; }
-.recon-ok { margin-top: 8px; color: #5ab899; font-weight: 600; }
+.recon-ok { display: flex; align-items: center; gap: 4px; margin-top: 8px; color: #5ab899; font-weight: 600; }
+.recon-ok__icon { width: 1em; height: 1em; flex: 0 0 auto; }
 .recon-err { color: #e07676; font-weight: 600; }
 .recon-block { margin-top: 10px; }
 .recon-block-title { font-weight: 600; margin-bottom: 4px; color: rgba(255,255,255,0.85); }

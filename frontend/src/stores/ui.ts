@@ -109,7 +109,7 @@ export const useUiStore = defineStore('ui', () => {
       if (!bubble || bubble.id == null) return
       const last = Number(localStorage.getItem(_BUBBLE_SEEN_KEY) || 0)
       if (bubble.id > last) {
-        liveNotification.value = { seq: ++_liveSeq, title: bubble.title, content: bubble.content }
+        liveNotification.value = { seq: ++_liveSeq, id: bubble.id, title: bubble.title, content: bubble.content }
         playGuguSfx('notification')
         _markBubbleSeen(bubble.id)
       }

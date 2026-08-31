@@ -7,7 +7,7 @@ import json
 
 from sqlalchemy import select
 
-from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, Project
+from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from agent.tools.mind_canvas import (
     _canvas_add_node,
     _canvas_create,
@@ -234,6 +234,34 @@ async def test_connect_is_idempotent_and_requires_same_canvas(db, user_a):
     })
     assert created["relation_id"] == reused["relation_id"]
     assert reused["created_or_reused"] is True
+    assert created["source_side"] == "right"
+    assert created["target_side"] == "left"
+    assert created["anchor_source"] == "geometry"
+    assert created["verification"]["checked_relation_id"] == created["relation_id"]
+
+
+async def test_removing_canvas_item_detaches_relation_without_deleting_global_relation(db, user_a):
+    canvas = await _canvas(db, user_a)
+    first = await _node(db, user_a, kind="ref", title="抽屉节点一", ref_type="project", ref_id=101)
+    second = await _node(db, user_a, kind="ref", title="抽屉节点二", ref_type="project", ref_id=102)
+    first_item = await _item(db, user_a, canvas, first)
+    await _item(db, user_a, canvas, second, x=200)
+    relation = await _canvas_connect(db, user_a.id, {
+        "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id,
+    })
+
+    removed = await _canvas_remove_node(db, user_a.id, {
+        "canvas_id": canvas.id, "item_id": first_item.id,
+    })
+    assert removed["node_preserved"] is True
+    assert (await _canvas_get(db, user_a.id, {"canvas_id": canvas.id}))["relations"] == []
+
+    restored = await _canvas_add_node(db, user_a.id, {
+        "canvas_id": canvas.id, "node_id": first.id, "position": {"x": 10, "y": 20},
+    })
+    assert restored["created"] is True
+    assert (await _canvas_get(db, user_a.id, {"canvas_id": canvas.id}))["relations"] == []
+    assert await db.get(MindRelation, relation["relation_id"]) is not None
 
 
 async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a):
@@ -279,6 +307,24 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     custom_view = await _canvas_get(db, user_a.id, {"canvas_id": canvas.id})
     assert custom_view["relation_audit"][0]["status"] == "custom"
     assert "可能是有意的回环布局" in custom_view["relation_audit"][0]["reason"]
+
+    rejected = await _canvas_connect(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "source_node_id": first.id,
+        "target_node_id": second.id,
+        "source_side": "left",
+        "target_side": "right",
+    })
+    assert "省略 source_side/target_side" in rejected["error"]
+
+    repaired = await _canvas_connect(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "source_node_id": first.id,
+        "target_node_id": second.id,
+    })
+    assert repaired["anchor_source"] == "geometry"
+    assert repaired["source_side"] == "right"
+    assert repaired["target_side"] == "left"
 
 
 async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a):
@@ -550,8 +596,8 @@ async def test_empty_canvas_auto_placement_with_scale(db, user_a):
     assert pos["y"] == -760.0
 
 
-async def test_get_canvas_limit_1_hides_dangling_relations(db, user_a):
-    """limit=1 时不应返回指向未返回节点的 relation。"""
+async def test_get_canvas_limit_1_keeps_full_relations_and_marks_incomplete_audit(db, user_a):
+    """节点分页仍返回全画布关系，并明确标记当前页之外的审计端点。"""
     data = {"x": 0, "y": 0, "scale": 1.0, "viewport": {"width": 1200, "height": 800}}
     canvas = await _canvas(db, user_a, data=data)
     # 创建两个便签并连接
@@ -582,10 +628,17 @@ async def test_get_canvas_limit_1_hides_dangling_relations(db, user_a):
     })
     assert len(result["nodes"]) == 1
     assert result["truncated"] is True
+    assert result["pagination"] == {"offset": 0, "limit": 1, "total": 2, "next_offset": 1}
+    assert result["relation_count"] == 1
+    assert result["relation_scope"] == "canvas"
     returned_ids = {n["node_id"] for n in result["nodes"]}
-    # relations 不应包含指向未返回节点的连接
-    for rel in result.get("relations", []):
-        assert rel["source_node_id"] in returned_ids, \
-            f"relation source {rel['source_node_id']} not in returned nodes"
-        assert rel["target_node_id"] in returned_ids, \
-            f"relation target {rel['target_node_id']} not in returned nodes"
+    assert len(result["relations"]) == 1
+    assert result["relation_audit"][0]["status"] == "incomplete"
+    assert result["relation_audit_scope"] == "visible_nodes"
+
+    second_page = await _canvas_get(db, user_a.id, {
+        "canvas_id": canvas.id, "limit": 1, "offset": 1,
+    })
+    assert len(second_page["nodes"]) == 1
+    assert second_page["pagination"]["next_offset"] is None
+    assert second_page["relation_audit"][0]["status"] == "incomplete"

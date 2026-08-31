@@ -167,9 +167,11 @@ const columns = [
   align-items: center;
   gap: var(--space-sm);
   padding: 0 var(--space-md);
-  border-bottom: 1px solid var(--topbar-border);
-  background: var(--topbar-bg);
-  box-shadow: var(--topbar-shadow);
+  margin: var(--space-sm) var(--space-sm) 0;
+  border: 1px solid var(--glass-card-border);
+  border-radius: var(--card-radius);
+  background: var(--glass-card-background);
+  box-shadow: var(--glass-card-shadow);
   backdrop-filter: var(--topbar-blur);
   -webkit-backdrop-filter: var(--topbar-blur);
 }

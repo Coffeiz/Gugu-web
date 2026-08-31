@@ -27,13 +27,14 @@ export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig:
   const presetsLoading = ref(false)
   const llmMsg = ref('')
   const llmMsgError = ref(false)
+  const llmMsgSuccess = ref(false)
   const testingId = ref<string | number | null>(null)
   const activatingId = ref<string | number | null>(null)
   const probingId = ref<string | number | null>(null)
   const probingDim = ref<string | null>(null)
 
-  function showMsg(msg: string, isError = false) {
-    llmMsg.value = msg; llmMsgError.value = isError
+  function showMsg(msg: string, isError = false, withCheck = false) {
+    llmMsg.value = msg; llmMsgError.value = isError; llmMsgSuccess.value = withCheck && !isError
     setTimeout(() => { llmMsg.value = '' }, isError ? 5000 : 3000)
   }
   async function fetchPresets() {
@@ -92,5 +93,5 @@ export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig:
     } catch (error) { showMsg(t('adminAgentUi.testFailed', { message: error instanceof Error ? error.message : String(error) }), true) }
     finally { testingId.value = null }
   }
-  return { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset }
+  return { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset }
 }

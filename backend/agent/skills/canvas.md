@@ -81,13 +81,12 @@ bottom = y + height
 - 同卡片多线：左右两个端口可分别连向不同节点，无需换向
 
 **判断逻辑**：
-- 两节点水平相邻 → 优先相向端点（避免交叉）
-- 用户要求"画一个循环"、"能互相连"、"形成闭环" → 用同向端点
-- 目标卡片与源卡片在同一张、或左右排布混乱 → 用同向端点避免交叉
-- 方向判断用两卡片中心的水平坐标，不用节点 ID 顺序
+- 普通连接不要由模型自行填 `source_side` / `target_side`；`canvas_connect` 和 `canvas_batch` 会根据当前卡片中心自动计算相向端点。
+- 用户要求"画一个循环"、"能互相连"、"形成闭环"或明确指定端点时，才传同向/指定端点，并将 `allow_custom_anchor` 设为 `true`。
+- 方向判断必须用服务端读取到的两卡片中心水平坐标，不用节点 ID 顺序或旧快照推断。
 
 **其它规则**：
-- 创建关系时可在 `canvas_connect` 传 `source_side` / `target_side`。
+- 创建普通关系时不要传 `source_side` / `target_side`；只有有意回环或明确端点时才传，并同时传 `allow_custom_anchor=true`。
 - 读取画布关系时，以返回的 `source_node_id` / `target_node_id` 对应端点；数据库可能按节点 ID 归一，不能因此自行交换端点。
 - `canvas_get` 的 `relation_audit` 是只读核对依据：先看两端卡片中心坐标和 `recommended`，`custom` 只表示与默认布局不同，可能是有意回环，不得直接当作错误改写。
 - 已有关系修改端点使用 `canvas_update_anchor`；移动节点后不要擅自重算已经确认的端点。
@@ -105,7 +104,7 @@ bottom = y + height
 - 上述数组每次最多 20 项；单项调用继续使用原来的单数参数和返回格式。创建、放置和更新都只接受位置、层级和折叠状态，不要传 `w/h`；如果需要调整视觉尺寸，应由前端/Runtime 的布局策略处理。
 - `canvas_batch` 用于需要跨类型、跨步骤保持原子性的事务，单次最多 20 个操作。支持 `create_note`、`add_node`、`update_item`、`remove_item`、`delete_note` 和 `connect`。
 - 批量事务使用稳定的 `request_id`；任一操作失败会整体回滚。
-- 批量连接也遵循相向端点规则，并可指定两端连接点。
+- 批量连接默认由服务端按卡片中心自动选择相向端点；只有有意回环或明确端点时才指定两端连接点。
 - 批量布局失败会整体回滚；收到回滚结果后先调整方案，不要盲目重复提交。
 - `canvas_delete_note` 和批量中的 `delete_note` 都会一次性展示影响并请求确认；版本冲突时整批不执行。
 
@@ -119,13 +118,11 @@ bottom = y + height
 把项目放到文件右侧：先读取文件的 `position` 和 `layout.effective_size`，令项目的
 `x = 文件 right + 150`，并保持合适的 `y`；如果用户没有指定高度方向，不要覆盖文件。
 
-把左侧节点连接到右侧节点：
+把两个节点连接起来（普通连接不传端点）：
 
 ```json
 {
   "source_node_id": 12,
-  "target_node_id": 34,
-  "source_side": "right",
-  "target_side": "left"
+  "target_node_id": 34
 }
 ```

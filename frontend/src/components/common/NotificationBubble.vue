@@ -51,7 +51,7 @@ const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的
 
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
-// 气泡关闭只动本组件 visible，不影响 uiStore.notifications，也不改已读态（气泡不算已读）。
+// 气泡关闭只动本组件 visible，同时将对应通知标记为已读，避免重新登录时再次补弹。
 // 普通通知不自动消失，只能靠用户点 ✕ 关（是否显示过只弹一次由 uiStore._markBubbleSeen 独立
 // 保证，与关闭方式无关）——新气泡到来时旧气泡照常堆叠在上方，都留着等用户处理。
 watch(() => uiStore.liveNotification, (n) => {
@@ -165,12 +165,12 @@ function dismiss(id: number) {
   box-sizing: border-box;
   width: 360px;          /* 固定宽度，与 GuguChat 小窗/播放器同宽、右对齐成一列 */
   padding: 13px 15px 15px;   /* 左右对称，内容区占满整宽 */
-  background: var(--panel-bg);
+  background: var(--popup-surface-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--nb-border);
   border-radius: 20px;
-  box-shadow: var(--glass-shadow-lg);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   pointer-events: auto;
   position: relative;
   overflow: hidden;

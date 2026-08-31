@@ -7,7 +7,7 @@
     :show-selection="currentType !== 'root'"
     :show-view-toggle="currentType !== 'trash'"
     :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder'"
-    :show-new-workspace-button="currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
+    :show-new-workspace-button="preferencesStore.shellEnabled && currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
     :workspace-exists="Boolean(currentWorkspace)"
     :show-sort="currentType !== 'root'"
     :view-mode="viewMode"
@@ -176,6 +176,7 @@ import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
+import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore, isPreviewable, isAudioExt } from '@/stores/preview'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
@@ -215,6 +216,7 @@ import {
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 
 const projectStore = useProjectStore()
+const preferencesStore = usePreferencesStore()
 const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const cbStore      = useClipboardStore()

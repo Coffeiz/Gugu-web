@@ -78,6 +78,7 @@ import { confirmDialog } from '@/composables/useConfirmDialog'
 import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useI18n } from 'vue-i18n'
+import router from '@/router'
 
 const terminals = ref<TerminalItem[]>([])
 const selectedId = ref<string | null>(null)
@@ -118,7 +119,17 @@ async function load(options: { autoOpen?: boolean } = {}) {
       }
     }
     if (selectedId.value) await loadEvents(selectedId.value, true)
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminalUi.readError') }
+  } catch (cause) {
+    const status = (cause as { status?: number }).status
+    if (status === 401 || status === 403) {
+      enabled.value = false
+      terminals.value = []
+      selectedId.value = null
+      await router.replace('/projects')
+      return
+    }
+    error.value = cause instanceof Error ? cause.message : t('terminalUi.readError')
+  }
 }
 
 async function loadEvents(id: string, reset = false, controller?: AbortController) {

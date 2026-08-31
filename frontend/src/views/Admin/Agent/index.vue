@@ -131,7 +131,7 @@
           </div>
         </div>
 
-        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }">{{ llmMsg }}</div>
+        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }"><RiCheckFill v-if="llmMsgSuccess" class="llm-msg__icon" aria-hidden="true" />{{ llmMsg }}</div>
       </div>
 
       <LlmPresetEditor
@@ -596,6 +596,7 @@ import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.v
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
+import { RiCheckFill } from '@remixicon/vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
@@ -605,7 +606,7 @@ const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavi
 const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
-const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
+const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 const byokDraft = reactive({ ...configStore.cfg.byok })
 const permissionSaving = ref(false)
 const permissionSaved = ref(false)
@@ -969,7 +970,7 @@ async function probeVision(id: string | number | undefined, dim?: string) {
     if (dim) {
       // 单维度（弹窗内）
       const label = visionDims.value.find(d => d.key === dim)?.label || dim
-      if (data.supported === true)       showMsg(t('adminAgentUi.dimensionSupported', { label }))
+      if (data.supported === true)       showMsg(t('adminAgentUi.dimensionSupported', { label }), false, true)
       else if (data.supported === false) showMsg(t('adminAgentUi.dimensionUnsupported', { label, detail: data.detail }), true)
       else                               showMsg(t('adminAgentUi.dimensionUnknown', { label, detail: data.detail }), true)
       if (data.supported === true || data.supported === false) {
@@ -1222,10 +1223,12 @@ function resetPermissions() {
 .pca-btn--testing, .pca-btn--activating { opacity: 0.6; cursor: default; }
 
 .llm-msg {
+  display: flex; align-items: center; gap: 4px;
   margin-top: 12px; padding: 10px 14px; border-radius: 10px;
   font-size: 13px; color: #5ab899;
   background: rgba(90,184,153,0.1); border: 1px solid rgba(90,184,153,0.2);
 }
+.llm-msg__icon { width: 1em; height: 1em; flex: 0 0 auto; }
 .llm-msg--error {
   color: #e07878;
   background: rgba(220,100,100,0.1); border-color: rgba(220,100,100,0.2);

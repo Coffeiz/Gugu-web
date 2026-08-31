@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.models.mind_canvas_batch import MindCanvasBatchRequest
-from app.services.mind_canvas import (
+from app.services.canvas.layout_engine import canvas_layout
+from app.services.canvas.service import (
     add_canvas_item,
     connect_nodes,
     create_canvas_note,
@@ -19,14 +20,13 @@ from app.services.mind_canvas import (
     get_canvas_node,
     get_or_create_reference,
     remove_canvas_item,
+    relation_anchor_from_canvas,
     update_canvas_item,
     update_relation_anchor,
 )
 
 _RELATION_SIDES = frozenset(("left", "right"))
 _PLACEABLE_TYPES = frozenset(("project", "file", "event"))
-
-
 def _payload_fingerprint(operations: list[Any]) -> str:
     payload = json.dumps(
         operations,
@@ -268,6 +268,29 @@ async def batch_canvas_operations(
                         db, user_id, canvas.id, relation, *sides, commit=False,
                     ) is None:
                         raise ValueError(f"第 {index + 1} 个连接操作找不到关系所在画布")
+                else:
+                    existing_anchor = relation_anchor_from_canvas(canvas, relation.id)
+                    if existing_anchor is not None:
+                        results.append({
+                            "index": index,
+                            "kind": kind,
+                            "relation_id": relation.id,
+                            "created_or_reused": True,
+                            "anchor_source": "existing",
+                        })
+                        continue
+                    source_item = await get_canvas_item_by_node(db, user_id, canvas.id, source_id)
+                    target_item = await get_canvas_item_by_node(db, user_id, canvas.id, target_id)
+                    source_node = await get_canvas_node(db, user_id, source_id, deleted=False)
+                    target_node = await get_canvas_node(db, user_id, target_id, deleted=False)
+                    if all(value is not None for value in (source_item, target_item, source_node, target_node)):
+                        sides = canvas_layout.recommended_relation_sides(source_node, source_item, target_node, target_item)
+                        if source_id != relation.src_node_id:
+                            sides = (sides[1], sides[0])
+                        if await update_relation_anchor(
+                            db, user_id, canvas.id, relation, *sides, commit=False,
+                        ) is None:
+                            raise ValueError(f"第 {index + 1} 个连接操作找不到关系所在画布")
                 results.append({
                     "index": index,
                     "kind": kind,

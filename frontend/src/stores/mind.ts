@@ -586,7 +586,11 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function saveCanvasRelationAnchors(id: number, anchors: Record<string, RelationAnchorSides>) {
-    await updateCanvasData(id, { relationAnchors: anchors })
+    const current = canvases.value.find(canvas => canvas.id === id)
+    const detached = Array.isArray(current?.data?.detachedRelationIds)
+      ? current.data.detachedRelationIds.filter(value => typeof value === 'number' && !Object.prototype.hasOwnProperty.call(anchors, String(value)))
+      : []
+    await updateCanvasData(id, { relationAnchors: anchors, detachedRelationIds: detached })
   }
 
   // 实时：咕咕/IM 改了便签 → 时间流列表刷新；当前打开的画布也重拉，卡片上的笔记正文才能跟着更新

@@ -98,6 +98,8 @@ cp .env.example backend/.env
 # 3. 一键启动（首次启动会自动建表 + 跑 alembic 迁移，全新数据库和已有数据库都能正确处理，
 # 见 backend/docker-entrypoint.sh）
 docker compose up -d
+# 默认是轻量模式；需要 Shell 沙盒时再显式启用：
+# docker compose --profile sandbox up -d
 
 # 直连 PyPI 官方源在部分网络环境下会很慢甚至构建失败？换源不用改文件，构建前设个
 # 环境变量即可（后端镜像默认走官方源，不影响网络正常的用户）：
@@ -137,6 +139,8 @@ export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
 export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
 export GUGU_DB_PASSWORD='生产数据库密码'
 docker compose -f docker-compose.prod.yml up -d
+# 需要 Shell 沙盒时：
+# GUGU_SANDBOX_ENABLED=true docker compose -f docker-compose.prod.yml --profile sandbox up -d
 ```
 
 默认连接 Compose 内部的 PostgreSQL：`GUGU_DB_HOST=postgres`。如果已有外部数据库，

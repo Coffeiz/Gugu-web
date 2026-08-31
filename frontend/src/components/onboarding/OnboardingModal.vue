@@ -3,7 +3,7 @@
     :show="show"
     width="960px"
     height="720px"
-    background="var(--modal-card-bg)"
+    background="var(--panel-bg)"
     @close="later"
   >
     <div class="onboarding-modal">
@@ -16,7 +16,7 @@
               'complete-visual': step === 'complete',
             }"
           >
-            <OnboardingCompleteScene v-if="step === 'complete'" />
+            <OnboardingThemePreview v-if="step === 'complete'" class="complete-preview-host" />
             <OnboardingThemePreview v-else-if="step === 'style'" class="theme-preview-host" />
             <img
               v-else
@@ -24,10 +24,6 @@
               :src="mediaSource"
               :alt="mediaAlt"
             />
-            <div class="visual-fade" />
-            <div class="visual-close">
-              <CloseButton :title="t('common.actions.close')" @click="later" />
-            </div>
           </div>
 
           <div class="onboarding-content">
@@ -52,12 +48,17 @@
                     <b>{{ option.label }}</b>
                     <small>{{ option.native }}</small>
                   </span>
-                  <span class="selection-mark">✓</span>
+                  <span class="selection-mark"><RiCheckFill /></span>
                 </button>
               </div>
 
               <div v-else-if="step === 'features'" class="feature-options content-options">
-                <div v-for="item in featureItems" :key="item.key" class="feature-option">
+                  <div
+                    v-for="item in featureItems"
+                    :key="item.key"
+                    class="feature-option"
+                    :class="`feature-option--${item.key}`"
+                  >
                   <span class="feature-icon">
                     <Icon :name="item.icon" size="sm" tone="inherit" />
                   </span>
@@ -79,29 +80,31 @@
                 />
               </div>
 
-              <OnboardingModelSetup v-else-if="step === 'model'" class="content-options" />
+              <ProfileByokPane
+                v-else-if="step === 'model'"
+                compact
+                onboarding
+                capability="llm"
+                class="content-options onboarding-model-pane"
+              />
 
-              <div v-else-if="step === 'im'" class="direct-settings content-options">
-                <div class="embedded-pane im-pane">
-                  <ProfileImPane />
-                </div>
-              </div>
+              <OnboardingImSetup v-else-if="step === 'im'" class="content-options" />
 
               <div v-else class="complete-options content-options">
                 <div class="complete-option-row">
-                  <span class="complete-option-mark">✓</span>
+                  <span class="complete-option-mark"><RiCheckFill /></span>
                   <div><b>{{ t('onboardingUi.steps.locale') }}</b><small>{{ localeLabel }}</small></div>
                 </div>
                 <div class="complete-option-row">
-                  <span class="complete-option-mark">✓</span>
+                  <span class="complete-option-mark"><RiCheckFill /></span>
                   <div><b>{{ t('onboardingUi.steps.style') }}</b><small>{{ palette }} · {{ family }} · {{ preference }}</small></div>
                 </div>
                 <div class="complete-option-row">
-                  <span class="complete-option-mark">✓</span>
+                  <span class="complete-option-mark"><RiCheckFill /></span>
                   <div><b>{{ t('onboardingUi.steps.model') }}</b><small>{{ t('onboardingUi.demo.optional') }}</small></div>
                 </div>
                 <div class="complete-option-row">
-                  <span class="complete-option-mark">✓</span>
+                  <span class="complete-option-mark"><RiCheckFill /></span>
                   <div><b>{{ t('onboardingUi.steps.im') }}</b><small>{{ t('onboardingUi.imHint') }}</small></div>
                 </div>
               </div>
@@ -110,8 +113,8 @@
         </section>
       </main>
 
-      <footer class="onboarding-actions">
-        <ActionButton class="onboarding-action" variant="secondary" :disabled="saving" @click="later">
+      <footer class="onboarding-actions" :class="{ 'is-busy': saving }" :aria-busy="saving">
+        <ActionButton class="onboarding-action" variant="secondary" @click="later">
           {{ t('onboardingUi.later') }}
         </ActionButton>
 
@@ -128,7 +131,7 @@
             class="onboarding-action"
             variant="secondary"
             :class="{ 'action-placeholder': index === 0 }"
-            :disabled="saving || index === 0"
+            :disabled="index === 0"
             :aria-hidden="index === 0"
             @click="previous"
           >
@@ -136,7 +139,7 @@
           </ActionButton>
           <ActionButton
             class="onboarding-action"
-            :disabled="saving || (step === 'locale' && !locale)"
+            :disabled="step === 'locale' && !locale"
             @click="next"
           >
             {{ step === 'complete' ? t('onboardingUi.finish') : t('onboardingUi.next') }}
@@ -150,14 +153,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RiCheckFill } from '@remixicon/vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import CloseButton from '@/components/common/CloseButton.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
-import ProfileImPane from '@/components/common/ProfileModal/ProfileImPane.vue'
+import OnboardingImSetup from '@/components/onboarding/OnboardingImSetup.vue'
 import OnboardingThemePreview from '@/components/onboarding/OnboardingThemePreview.vue'
-import OnboardingModelSetup from '@/components/onboarding/OnboardingModelSetup.vue'
-import OnboardingCompleteScene from '@/components/onboarding/OnboardingCompleteScene.vue'
+import ProfileByokPane from '@/components/common/ProfileModal/ProfileByokPane.vue'
 import ThemeSwitcher from '@/views/Design/components/ThemeSwitcher.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { getLocale, type SupportedLocale } from '@/i18n'
@@ -225,6 +227,7 @@ async function selectLocale(value: SupportedLocale) {
 }
 
 async function later() {
+  if (saving.value) return
   try {
     await updateOnboardingGuide({ dismissed: true })
   } catch {
@@ -296,14 +299,14 @@ async function next() {
   flex-direction: column;
   overflow: hidden;
   color: var(--content-primary);
-  background: var(--surface-base);
+  background: transparent;
 }
 
 .onboarding-main {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface-base);
+  background: transparent;
 }
 
 /* 所有步骤共享同一个固定骨架：visual 尺寸和内容两栏都不会随步骤重排。 */
@@ -316,9 +319,10 @@ async function next() {
 
 .onboarding-visual {
   position: relative;
+  z-index: 4;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface-soft);
+  background: transparent;
 }
 
 .onboarding-media {
@@ -327,43 +331,27 @@ async function next() {
   height: 100%;
   object-fit: cover;
   object-position: center;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
 }
 
 .onboarding-visual.theme-visual {
   padding: var(--space-lg) 46px 52px;
-  background: var(--surface-page);
+  background: transparent;
 }
-.onboarding-visual.complete-visual { background: var(--surface-page); }
+.onboarding-visual.complete-visual { background: transparent; }
 
 .theme-preview-host {
   width: 100%;
   height: 100%;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
 }
-
-/* 渐变由 visual 的真实像素过渡到底部 surface，而不是把图片 alpha mask 到 visual 背景。
-   content 再向上压一小段，两个区域在纯色段交叉，GIF / 样板都能完整淡出。 */
-.visual-fade {
-  position: absolute;
-  z-index: 2;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 132px;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    color-mix(in srgb, var(--surface-base) 18%, transparent) 22%,
-    color-mix(in srgb, var(--surface-base) 72%, transparent) 64%,
-    var(--surface-base) 100%
-  );
-}
-
-.visual-close {
-  position: absolute;
-  z-index: 4;
-  top: var(--space-md);
-  right: var(--space-md);
+.complete-preview-host {
+  width: 100%;
+  height: 100%;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 54%, transparent 100%);
 }
 
 .onboarding-content {
@@ -376,7 +364,7 @@ async function next() {
   align-items: stretch;
   gap: 38px;
   padding: 46px 46px 20px;
-  background: var(--surface-base);
+  background: transparent;
 }
 
 .content-heading {
@@ -426,6 +414,14 @@ async function next() {
   margin: 0;
 }
 
+.onboarding-model-pane {
+  align-self: stretch;
+  overflow-y: auto;
+  padding-right: var(--space-sm);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .locale-options,
 .feature-options {
   align-self: center;
@@ -439,25 +435,22 @@ async function next() {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) 20px;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-md);
   min-height: var(--control-lg);
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--control-border);
-  border-radius: var(--control-radius);
-  background: var(--control-bg);
+  padding: var(--space-md);
+  border: 1px solid var(--workspace-card-border);
+  border-radius: var(--card-radius);
+  background: var(--workspace-card-bg);
   color: var(--control-fg-strong);
+  box-shadow: var(--workspace-card-shadow);
   text-align: left;
   cursor: pointer;
   transition:
-    background-color var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard),
-    color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+    border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 
 .locale-option:hover {
-  border-color: var(--control-border-hover);
-  background: var(--control-bg-hover);
+  border-color: var(--workspace-card-border-hover);
 }
 
 .locale-option:focus-visible {
@@ -469,8 +462,8 @@ async function next() {
 /* 选中态只画边缘与泛光，不再盖一层 action-soft 蒙版。 */
 .locale-option.selected {
   border-color: var(--border-focus);
-  background: var(--control-bg);
-  box-shadow: var(--control-focus-shadow);
+  background: var(--workspace-card-bg);
+  box-shadow: var(--control-focus-shadow), var(--workspace-card-shadow);
 }
 
 .language-code {
@@ -504,8 +497,13 @@ async function next() {
   border-radius: 50%;
   color: transparent;
   background: var(--control-bg);
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
+  line-height: 0;
+}
+.selection-mark :deep(svg),
+.complete-option-mark :deep(svg) {
+  display: block;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
 }
 .locale-option.selected .selection-mark {
   border-color: var(--action-primary);
@@ -519,11 +517,20 @@ async function next() {
   align-items: center;
   gap: var(--space-md);
   padding: var(--space-md);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--workspace-card-border);
   border-radius: var(--card-radius);
-  background: var(--surface-soft);
+  background: var(--workspace-card-bg);
   color: var(--content-secondary);
+  box-shadow: var(--workspace-card-shadow);
+  transition:
+    border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
+.feature-option:hover {
+  border-color: var(--workspace-card-border-hover);
+}
+.feature-option--project .feature-icon { background: var(--status-info-bg); color: var(--status-info); }
+.feature-option--calendar .feature-icon { background: var(--status-warning-bg); color: var(--status-warning); }
+.feature-option--im .feature-icon { background: var(--status-success-bg); color: var(--status-success); }
 .feature-icon {
   flex: 0 0 34px;
   width: 34px;
@@ -531,16 +538,15 @@ async function next() {
   display: grid;
   place-items: center;
   border-radius: var(--control-radius);
-  background: var(--action-soft);
-  color: var(--action-primary);
 }
 
 .theme-options {
   align-self: center;
   padding: var(--space-md);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--workspace-card-border);
   border-radius: var(--card-radius);
-  background: var(--surface-soft);
+  background: var(--workspace-card-bg);
+  box-shadow: var(--workspace-card-shadow);
 }
 .theme-options :deep(.theme-controls) {
   width: 100%;
@@ -552,22 +558,6 @@ async function next() {
 }
 .theme-options :deep(.control-cluster) { min-width: 0; justify-content: space-between; }
 .theme-options :deep(.segmented) { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
-
-.direct-settings {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.embedded-pane {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--card-radius);
-  background: var(--surface-base);
-}
 
 .complete-options {
   align-self: center;
@@ -581,9 +571,10 @@ async function next() {
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-md);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--workspace-card-border);
   border-radius: var(--card-radius);
-  background: var(--surface-soft);
+  background: var(--workspace-card-bg);
+  box-shadow: var(--workspace-card-shadow);
 }
 .complete-option-mark {
   width: 24px;
@@ -594,8 +585,7 @@ async function next() {
   border-radius: 50%;
   background: var(--status-success-bg);
   color: var(--status-success);
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
+  line-height: 0;
 }
 .complete-option-row > div { min-width: 0; }
 .complete-option-row b { display: block; font-size: var(--font-size-xs); }
@@ -610,8 +600,8 @@ async function next() {
   align-items: center;
   gap: var(--space-md);
   padding: 0 var(--space-lg);
-  border-top: 1px solid var(--divider-line);
-  background: var(--surface-base);
+  border-top: 1px solid var(--panel-divider);
+  background: transparent;
 }
 
 /* 三个导航操作位统一固定尺寸，文案长短不参与布局。 */
@@ -622,6 +612,7 @@ async function next() {
   flex: 0 0 92px;
 }
 .onboarding-actions > .onboarding-action { justify-self: start; }
+.onboarding-actions.is-busy { pointer-events: none; }
 .action-group { justify-self: end; display: flex; align-items: center; gap: var(--space-sm); }
 .action-placeholder { visibility: hidden; pointer-events: none; }
 

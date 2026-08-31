@@ -315,7 +315,7 @@ async function doDeleteAccount() {
 .pm-palette-swatch.palette-mist { background: #7b7fb2; }
 .pm-palette-swatch.palette-cafe { background: #715653; }
 .pm-palette-swatch.palette-rose { background: #c98f98; }
-.pm-palette-swatch.palette-sky { background: #83a9c2; }
+.pm-palette-swatch.palette-sky { background: #839fc2; }
 .pm-palette-swatch.palette-sage { background: #84ab9e; }
 
 .pm-bind-btn {

@@ -29,6 +29,15 @@
   --panel-glass-shadow: inset -1px 0 0 var(--panel-glass-side-highlight);
   --panel-glass-blur: blur(24px);
   --panel-content-bg: var(--surface-panel);
+  /* 完整面板的统一层次背景：顶部保持浮层清透，底部混入 scrim 增加承托感。 */
+  --panel-bg-bottom: color-mix(in srgb, var(--surface-base) 72%, var(--surface-scrim));
+  --panel-bg: linear-gradient(
+    to top,
+    var(--panel-bg-bottom),
+    color-mix(in srgb, var(--panel-bg-bottom) 58%, var(--modal-card-bg)) 32%,
+    var(--modal-card-bg) 68%,
+    var(--modal-card-bg) 100%
+  ), var(--surface-base);
   /* Content dividers are not glass edges. Aero light's border tokens are deliberately white, so
      keep inner separators on the old neutral ink line and restore the dark mapping below. */
   --panel-divider: color-mix(in srgb,var(--content-primary) 6%,transparent);

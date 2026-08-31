@@ -73,31 +73,19 @@ async def _search_memory(db, user_id, args: dict):
 
 
 async def _save_knowledge(db, user_id, args: dict):
-    from agent.knowledge.models import KnowledgeEntry, KnowledgeScope
-    from agent.knowledge.store import KnowledgeStore, source_from_input
-
-    title = str(args.get("title") or "").strip()
-    content = str(args.get("content") or "").strip()
-    if not title or not content:
-        return {"error": "需要提供 title 和 content"}
-    source_type = str(args.get("source_type") or "user").strip().lower()
-    confidence = str(args.get("confidence") or "confirmed").strip().lower()
-    if confidence not in {"confirmed", "probable", "unverified"}:
-        return {"error": "confidence 只能是 confirmed、probable 或 unverified"}
+    from agent.knowledge.capture import normalize_capture, save_capture
     try:
-        source = source_from_input(
-            source_type, str(args.get("source_ref") or ""),
-            str(args.get("source_label") or ""),
+        values = normalize_capture(
+            args.get("title", ""), args.get("content", ""),
+            topic=args.get("topic", ""), source_type=args.get("source_type", "user"),
+            source_ref=args.get("source_ref", ""), source_label=args.get("source_label", ""),
+            confidence=args.get("confidence", "confirmed"),
+            capture_mode=args.get("capture_mode", "explicit"),
         )
     except ValueError as exc:
         return {"error": str(exc)}
-    entry = KnowledgeEntry.create(
-        title=title, content=content, topic=str(args.get("topic") or ""),
-        scope=KnowledgeScope(type="owner", owner_user_id=str(user_id)),
-        source=source, confidence=confidence,  # type: ignore[arg-type]
-    )
     try:
-        saved = await KnowledgeStore(user_id).save(entry)
+        saved = await save_capture(user_id, values)
     except ValueError as exc:
         return {"error": str(exc)}
     try:
@@ -153,8 +141,9 @@ class MemorySkill(BaseSkill):
             name="save_knowledge", label="保存知识",
             description_short='保存可复用知识；支持来源类型和置信度。',
             description=(
-                "保存用户明确要求长期保留的事实、规则或资料摘要。"
-                "默认写入 owner 知识库，不把普通聊天自动保存为知识。"
+                "保存一条已经整理好的、可长期复用的事实、规则或资料摘要。"
+                "仅在用户明确要求保存，或已确认需要保留工具结果时使用；"
+                "普通聊天不要自动保存。正文必须自包含并填写真实来源。"
             ),
             input_schema={
                 "type": "object",
@@ -166,6 +155,7 @@ class MemorySkill(BaseSkill):
                     "source_ref": {"type": "string"},
                     "source_label": {"type": "string"},
                     "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
+                    "capture_mode": {"type": "string", "enum": ["explicit", "tool_result", "automatic"]},
                 },
                 "required": ["title", "content"],
             },

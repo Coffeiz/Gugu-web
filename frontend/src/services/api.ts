@@ -507,6 +507,15 @@ export const workspacesApi = {
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
 }
 
+export type TerminalAccessStatus = Awaited<ReturnType<typeof workspacesApi.status>>
+
+/** 终端入口与后端 page_access 保持同一套 Shell 能力判定。 */
+export function canAccessTerminals(status: TerminalAccessStatus): boolean {
+  return status.globalEnabled && (
+    status.userEnabled || (status.systemGlobalEnabled && status.userSystemEnabled)
+  )
+}
+
 export type TerminalItem = {
   id: string
   name: string

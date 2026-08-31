@@ -29,6 +29,28 @@ def relation_anchor_from_canvas(canvas, relation_id):
     return {"source_side": src_side, "target_side": dst_side}
 
 
+def _detached_relation_ids(canvas) -> set[int]:
+    try:
+        data = json.loads(canvas.data_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return set()
+    raw_ids = data.get("detachedRelationIds") if isinstance(data, dict) else None
+    if not isinstance(raw_ids, list):
+        return set()
+    return {value for value in raw_ids if isinstance(value, int) and not isinstance(value, bool)}
+
+
+def _set_detached_relation_ids(canvas, relation_ids: set[int]) -> None:
+    try:
+        data = json.loads(canvas.data_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data["detachedRelationIds"] = sorted(relation_ids)
+    canvas.data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
 async def update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, *, commit=False):
     """更新指定画布上的关系端点，保留画布 data_json 的其它视图状态。"""
     if source_side not in _RELATION_SIDES or target_side not in _RELATION_SIDES:
@@ -225,6 +247,13 @@ async def remove_canvas_item(db, user_id, canvas_id, item_id, *, commit=False):
     if item is None:
         return None
     node_id = item.node_id
+    relation_ids = (await db.execute(select(MindRelation.id).where(
+        MindRelation.user_id == user_id,
+        or_(MindRelation.src_node_id == node_id, MindRelation.dst_node_id == node_id),
+    ))).scalars().all()
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    if canvas is not None and relation_ids:
+        _set_detached_relation_ids(canvas, _detached_relation_ids(canvas) | set(relation_ids))
     await db.delete(item)
     if commit:
         await db.commit()
@@ -399,7 +428,21 @@ async def list_canvases(db, user_id, *, project_id=None, limit=20, offset=0):
     return rows, total, counts
 
 
-async def list_canvas_nodes(db, user_id, canvas_id, *, limit):
+async def count_canvas_nodes(db, user_id, canvas_id):
+    return await db.scalar(
+        select(func.count(MindCanvasItem.id))
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(
+            MindCanvasItem.canvas_id == canvas_id,
+            MindCanvasItem.user_id == user_id,
+            MindNode.user_id == user_id,
+            MindNode.kind.in_(("canvas_note", "ref")),
+            MindNode.deleted_at.is_(None),
+        )
+    ) or 0
+
+
+async def list_canvas_nodes(db, user_id, canvas_id, *, limit, offset=0):
     return (await db.execute(
         select(MindCanvasItem, MindNode)
         .join(MindNode, MindNode.id == MindCanvasItem.node_id)
@@ -411,6 +454,7 @@ async def list_canvas_nodes(db, user_id, canvas_id, *, limit):
             MindNode.deleted_at.is_(None),
         )
         .order_by(MindCanvasItem.z, MindCanvasItem.id)
+        .offset(offset)
         .limit(limit)
     )).all()
 
@@ -424,6 +468,26 @@ async def list_canvas_relations(db, user_id, node_ids):
             MindRelation.src_node_id.in_(node_ids),
             MindRelation.dst_node_id.in_(node_ids),
         ).order_by(MindRelation.id)
+    )).scalars().all()
+
+
+async def list_canvas_relations_for_canvas(db, user_id, canvas_id):
+    """返回画布内完整关系，节点详情是否在当前快照页由调用方单独判断。"""
+    canvas_node_ids = select(MindCanvasItem.node_id).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+    )
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    detached_ids = _detached_relation_ids(canvas) if canvas is not None else set()
+    query = select(MindRelation).where(
+        MindRelation.user_id == user_id,
+        MindRelation.src_node_id.in_(canvas_node_ids),
+        MindRelation.dst_node_id.in_(canvas_node_ids),
+    )
+    if detached_ids:
+        query = query.where(MindRelation.id.not_in(detached_ids))
+    return (await db.execute(
+        query.order_by(MindRelation.id)
     )).scalars().all()
 
 

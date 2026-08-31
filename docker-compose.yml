@@ -3,7 +3,8 @@
 #
 # 用法：
 #   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
-#   docker compose up -d                    # 默认包含 sandboxd、工具执行和受控 egress
+#   docker compose up -d                    # 默认轻量模式；保留搜索、Worker、Gateway，不启动 Shell 沙盒
+#   docker compose --profile sandbox up -d  # 额外启用 sandboxd 和受控 egress
 #   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
 #
 # 直连 PyPI 官方源慢（部分网络环境常见，见 backend/Dockerfile 里 PIP_INDEX_URL 的注释）？
@@ -68,6 +69,7 @@ services:
   # 受控 egress 代理。沙盒只连接 egress_internal，代理通过 default 网络访问公网；
   # 沙盒容器没有 default/bridge 网络，因此不能绕过代理直连外网。
   egress-proxy:
+    profiles: [sandbox]
     logging: *json-file-logging
     image: ubuntu/squid:latest
     volumes:
@@ -107,6 +109,7 @@ services:
       context: ./backend
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=false
     command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
     env_file:
       - ./backend/.env
@@ -134,6 +137,7 @@ services:
       # 变成一个空 index url——2026-07-14 实测过这个坑，两种写法差着能不能装上依赖。
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=false
     ports:
       - "8000:8000"
     env_file:
@@ -187,6 +191,7 @@ services:
       context: ./backend
       args:
         - PIP_INDEX_URL   # 跟 backend 同一个镜像/同一个坑，见上面 backend.build.args 的注释
+        - GUGU_INSTALL_DOCKER_CLI=false
     command: ["python", "-m", "worker"]
     env_file:
       - ./backend/.env
@@ -234,6 +239,7 @@ services:
       context: ./backend
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=false
     command: ["python", "-m", "agent.gateway.gateway"]
     env_file:
       - ./backend/.env
@@ -265,14 +271,15 @@ services:
       - gugu_data:/data
 
   # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
-  # 默认启动；如不需要沙盒，
-  # 设置 GUGU_SANDBOX_ENABLED=false 即可关闭执行能力，仍不会让业务进程接触 Docker。
+  # 只有显式启用 --profile sandbox 才构建/启动；轻量模式不会安装 Docker CLI。
   sandboxd:
+    profiles: [sandbox]
     logging: *json-file-logging
     build:
       context: ./backend
       args:
         - PIP_INDEX_URL
+        - GUGU_INSTALL_DOCKER_CLI=true
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
     env_file:
       - ./backend/.env
