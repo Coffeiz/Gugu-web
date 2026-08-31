@@ -208,9 +208,9 @@
 
               <div v-else-if="step === 'im'" class="direct-settings content-options im-settings">
                 <div class="setup-summary">
-                  <span class="status-dot idle" />
+                  <span class="setup-link-mark">↗</span>
                   <div>
-                    <b>{{ t('onboardingUi.notConnected') }}</b>
+                    <b>{{ t('onboardingUi.demo.im.title') }}</b>
                     <small>{{ t('onboardingUi.imHint') }}</small>
                   </div>
                 </div>
@@ -802,6 +802,17 @@ async function next() {
 .setup-summary small { display: block; }
 .setup-summary b { font-size: 11px; }
 .setup-summary small { margin-top: 2px; color: var(--content-tertiary); font-size: 9.5px; }
+.setup-link-mark {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--onb-accent);
+  background: var(--onb-accent-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
 .summary-tag { padding: 4px 8px; border-radius: 99px; color: var(--content-tertiary); background: var(--control-bg); font-size: 8.5px; font-weight: 700; }
 
 .embedded-pane {
