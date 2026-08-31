@@ -216,8 +216,13 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, req.attachments, req.message, model_cfg=model_cfg)
+        from agent.context.references import build_reference_context
+        reference_text = await build_reference_context(db, user_id, req.references)
+        if reference_text:
+            aug_text = f"{reference_text}\n\n{aug_text}" if aug_text else reference_text
         user_message = ConversationMessage(session_id=session.id, role="user", content=req.message,
-                                           files=attach_cards or None)
+                                           files=attach_cards or None,
+                                           references_json=req.references or None)
         db.add(user_message)
         await db.flush()
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3）：只 claim

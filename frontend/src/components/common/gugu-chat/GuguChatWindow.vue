@@ -69,13 +69,15 @@
         :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
-        @interaction-select="onInteractionSelect"
+        @interaction-select="onInteractionSelect" @reference-click="onReferenceClick"
       />
 
       <!-- 输入框 -->
       <GuguChatComposer
         ref="composerRef"
         v-model="inputTextModel"
+        :owner-z="props.ownerZ"
+        :references="props.references" @update:references="emit('update:references', $event)"
         :pending-att="pendingAtt" :att-uploading="attUploading"
         :recording="recording" :record-secs="recordSecs"
         :expanded="expanded" :streaming="streaming" :vw="vw"
@@ -105,11 +107,12 @@ import Icon from '@/components/common/Icon.vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
-import type { ChatMessage, ChatFile } from './chatTypes'
+import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
 
 const props = defineProps<{
   // 窗口展示
   windowStyle: Record<string, string | number>
+  ownerZ: number
   expanded: boolean
   resizing: boolean
   streaming: boolean
@@ -132,6 +135,7 @@ const props = defineProps<{
   sessionSettling: boolean
   // 输入框
   inputText: string
+  references: ChatReference[]
   pendingAtt: ChatFile[]
   attUploading: boolean
   recording: boolean
@@ -152,6 +156,7 @@ const props = defineProps<{
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
+  onReferenceClick: (reference: ChatReference) => void
   onPromptConnect: () => void
   onRenameSession: (id: number, title: string) => void
   onEnterExpanded: () => void
@@ -165,7 +170,7 @@ const props = defineProps<{
 }>()
 const { t } = useI18n()
 
-const emit = defineEmits<{ 'update:inputText': [value: string] }>()
+const emit = defineEmits<{ 'update:inputText': [value: string]; 'update:references': [value: ChatReference[]] }>()
 
 // inputText 是 props（只读），用 computed 包装成可写的 v-model 桥，把输入变化
 // 通过 emit('update:inputText') 回传给父组件（父组件持有真正的 inputText 状态）。

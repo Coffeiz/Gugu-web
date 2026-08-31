@@ -53,18 +53,8 @@ html[data-theme][data-family] .topbar .btn-primary-custom:hover {
   box-shadow: none !important;
 }
 
-/* ── Projects ─────────────────────────────────────────────────────────────────────────── */
-html[data-theme][data-family] .proj-card {
-  color: var(--content-primary);
-  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color) !important;
-  border-color: var(--project-card-border) !important;
-  /* 阴影由 ProjectCard 自身的静止态/高光动画负责；不能用 !important 压住 keyframes。 */
-  box-shadow: var(--project-card-shadow);
-}
-html[data-theme][data-family] .proj-card:hover {
-  border-color: var(--project-card-hover-border) !important;
-  box-shadow: var(--project-card-hover-shadow);
-}
+/* ── Projects ───────────────────────────────────────────────────────────────────────────
+   ProjectCard 自身是最终 paint / motion owner；本层只负责它内部旧 scoped 规则的语义映射。 */
 html[data-theme='dark'][data-family] .proj-card .proj-name,
 html[data-theme='dark'][data-family] .proj-card .drop-content {
   color: var(--content-primary) !important;
@@ -93,21 +83,6 @@ html[data-theme][data-family] .proj-card .done-label {
   background: var(--status-success-bg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--status-success) 34%,transparent);
 }
-html[data-theme][data-family] .todo-pop-popup {
-  color: var(--content-primary);
-  background: var(--popup-background);
-  border-color: var(--popup-border);
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
-}
-html[data-theme][data-family] .todo-pop-popup .tp-title,
-html[data-theme][data-family] .todo-pop-popup .tp-name,
-html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-primary); }
-html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .todo-pop-popup .tp-check { background: var(--control-bg); border-color: var(--action-outline); color: var(--content-on-accent); }
-html[data-theme][data-family] .todo-pop-popup .tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
-html[data-theme][data-family] .todo-pop-popup .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
-html[data-theme][data-family] .todo-pop-popup .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
-
 html[data-theme][data-family] .seg-bar .seg,
 html[data-theme][data-family] .progress-bar { background: var(--surface-soft-hover) !important; }
 
@@ -442,4 +417,42 @@ html[data-theme='dark'][data-family] .chat-window .chat-input-row {
 html[data-theme='dark'][data-family] .chat-window .exp-sidebar-divider,
 html[data-theme='dark'][data-family] .chat-window .exp-group-divider {
   background: var(--gugu-chat-sidebar-border) !important;
+}
+
+/* 聊天气泡中的业务引用最终由 MarkdownView 渲染，必须在全局主题层覆盖通用 .mind-ref。
+   否则 scoped 组件样式无法命中子组件生成的节点，引用会退化成普通选中色。 */
+html[data-theme][data-family] .chat-window .chat-reference {
+  display: inline-flex;
+  align-items: center;
+  max-width: 22ch;
+  padding: 1px 6px;
+  border: 1px solid var(--gugu-chat-reference-border);
+  border-radius: var(--radius-sm);
+  background: var(--gugu-chat-reference-bg);
+  color: var(--gugu-chat-reference-fg);
+  font-weight: 650;
+  font-size: .92em;
+  line-height: 1.45;
+  vertical-align: baseline;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--gugu-chat-reference-border) 24%,transparent);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+              border-color var(--motion-hover-control) var(--motion-ease-standard),
+              box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+              color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .chat-window .chat-reference:hover {
+  background: var(--action-soft-hover);
+  border-color: var(--action-primary);
+}
+html[data-theme][data-family] .chat-window .msg.user .chat-reference {
+  background: var(--surface-raised);
+  border-color: var(--action-outline);
+  color: var(--action-primary-hover);
+  box-shadow: inset 0 0 0 1px var(--border-highlight), var(--elevation-card);
+}
+html[data-theme][data-family] .chat-window .msg.user .chat-reference:hover {
+  background: var(--surface-raised);
+  border-color: var(--action-primary);
 }

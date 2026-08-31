@@ -3,7 +3,7 @@ import { getLocale, i18n } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
-import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
+import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { API_BASE } from '../chatConstants'
 import { FILE_TOOLS, PROJECT_TOOLS, CALENDAR_TOOLS } from './useChatActions'
@@ -14,6 +14,7 @@ interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 interface QueuedMessage {
   text: string
   attachments: ChatFile[]
+  references: ChatReference[]
   sessionId: number | null
   viewGeneration: number
 }
@@ -35,6 +36,7 @@ export function useChatStream(options: {
   mkid: () => number
   now: () => string
   inputText: Ref<string>
+  inputReferences: Ref<ChatReference[]>
   sessionId: Ref<number | null>
   sessions: Ref<ChatSession[]>
   getViewGeneration: () => number
@@ -397,11 +399,12 @@ export function useChatStream(options: {
     }
   }
 
-  async function send(forcedText?: string, forcedAttachments?: ChatFile[]) {
+  async function send(forcedText?: string, forcedAttachments?: ChatFile[], forcedReferences?: ChatReference[]) {
     // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
     const fromInput = forcedText === undefined
     const text = (fromInput ? options.inputText.value : (forcedText ?? '')).trim()
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
+    const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
     if (!text && !atts.length) return
     if (fromInput) {
       const isNewCommand = /^\/new\s*$/i.test(text)
@@ -412,9 +415,11 @@ export function useChatStream(options: {
         options.onContentReset?.()
       } else {
         messages.value.push({ id: mkid(), role: 'user', text, time: now(),
+          references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
       }
       options.inputText.value = ''
+      options.inputReferences.value = []
       options.pendingAtt.value = []
       options.composerRef.value?.resetHeight()
       trackApi.track('chat_message', { turn: _sessionTurn }).catch(() => {})
@@ -424,7 +429,7 @@ export function useChatStream(options: {
     // 带上此刻的会话身份——真正发出去之前会再核对一次，身份对不上就丢弃，不发进别的会话。
     if (streaming.value) {
       pendingQueue.value.push({
-        text, attachments: atts,
+        text, attachments: atts, references: refs,
         sessionId: sessionId.value, viewGeneration: options.getViewGeneration(),
       })
       return
@@ -450,7 +455,7 @@ export function useChatStream(options: {
       const res = await fetch(`${API_BASE}/agent/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, attachments: atts.map(a => a.attach_id),
+        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, attachments: atts.map(a => a.attach_id), references: refs,
                                ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
         signal: abortCtrl.value.signal,
       })
@@ -520,7 +525,7 @@ export function useChatStream(options: {
           const sameSession = next.sessionId == null || next.sessionId === sessionId.value
           if (sameView && sameSession) {
             pendingQueue.value.shift()
-            send(next.text, next.attachments)
+            send(next.text, next.attachments, next.references)
             break
           }
           pendingQueue.value.shift()   // 属于已经离开的会话，丢弃不发

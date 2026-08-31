@@ -114,6 +114,7 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
+    "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS references_json JSONB NULL",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS search_limit_daily INTEGER NULL",
     "ALTER TABLE conversation_sessions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NULL",
     "CREATE INDEX IF NOT EXISTS ix_conversation_sessions_workspace_id ON conversation_sessions (workspace_id)",

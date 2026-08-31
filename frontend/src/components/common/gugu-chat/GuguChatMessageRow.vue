@@ -14,8 +14,8 @@
       <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
     </template>
   </div>
-  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="$emit('actionClick', $event)"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderMd(msg.text))" :text="msg.text" chat /></div>
-  <div v-else-if="msg.text" class="msg-bubble">{{ displayQQFaces(msg.text) }}</div>
+  <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat /></div>
+  <div v-else-if="msg.text" class="msg-bubble" @click="onBodyClick"><MarkdownView v-if="msg.references?.length" :html="renderChatText(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /><template v-else>{{ displayQQFaces(msg.text) }}</template></div>
   <div v-if="msg.files && msg.files.length" class="msg-files">
     <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
     <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
@@ -70,14 +70,14 @@ import { useI18n } from 'vue-i18n'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import GuguChatInteraction from './GuguChatInteraction.vue'
-import type { ChatMessage, ChatFile } from './chatTypes'
-import { renderMd, renderMdStream } from './markdown'
+import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
+import { renderMdStream, renderChatMd, renderChatText } from './markdown'
 import {
   isImageFile, isAnimatedImageFile, canPreview,
   fmtSize, fmtDur, voiceBar, displayQQFaces,
 } from './messageDisplay'
 import { makeLazyThumbDirective } from './lazyThumbDirective'
-defineProps<{
+const props = defineProps<{
   msg: ChatMessage
   isGroupSession: boolean
   copiedId: number | null
@@ -85,16 +85,26 @@ defineProps<{
 }>()
 const { t } = useI18n()
 
-defineEmits<{
+const emit = defineEmits<{
   copy: [msg: ChatMessage]
   toggleVoice: [file: ChatFile]
   openFile: [file: ChatFile]
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
   interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  referenceClick: [reference: ChatReference]
 }>()
 
 const vLazyThumb = makeLazyThumbDirective('card')
 // QQ 表情需要保留 GIF/动画 WebP，不能走会转成 JPEG 的 card 缩略图端点。
 const vLazyFace = makeLazyThumbDirective('full')
+
+function onBodyClick(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  const refEl = target.closest<HTMLElement>('.chat-reference')
+  if (!refEl) return
+  const reference = props.msg.references?.find(item =>
+    item.type === refEl.dataset.refType && String(item.id) === refEl.dataset.refId)
+  if (reference) emit('referenceClick', reference)
+}
 </script>

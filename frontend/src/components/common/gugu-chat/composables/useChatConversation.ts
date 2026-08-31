@@ -2,7 +2,7 @@ import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { getGreeting } from '@/composables/useGreeting'
-import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
+import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
@@ -67,6 +67,7 @@ export function useChatConversation(options: {
   ])
 
   const inputText = ref('')
+  const inputReferences = ref<ChatReference[]>([])
   const thinkingLabels = ref<string[]>([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
   // 状态气泡贯穿整个生成期：工具/复查/思考只替换同一个气泡的内容，直到真实输出或中断。
   const statusKind = ref('')   // '' | 'text'（工具/自定义思考）| 'dots'（默认思考三点）
@@ -339,7 +340,7 @@ export function useChatConversation(options: {
 
   // ── SSE 收发（send/stopStreaming/resumeStream），见 useChatStream.ts ──
   const streamApi = useChatStream({
-    messages, mkid, now, inputText, sessionId, sessions,
+    messages, mkid, now, inputText, inputReferences, sessionId, sessions,
     getViewGeneration,
     pendingAtt: options.pendingAtt,
     composerRef: options.composerRef,
@@ -414,7 +415,7 @@ export function useChatConversation(options: {
 
   return {
     messages, mkid, now, sessionSettling,
-    inputText, thinkingLabels, streaming, statusKind, statusTyped,
+    inputText, inputReferences, thinkingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,
     sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,

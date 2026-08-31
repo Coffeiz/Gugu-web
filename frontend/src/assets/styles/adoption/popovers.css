@@ -25,8 +25,7 @@ html[data-theme][data-family] :is(
   .popup-menu-host > .dp-popup,
   .popup-menu-host > .adp-popup,
   .popup-menu-host > .adp-year-popup,
-  .popup-menu-host > .note-picker,
-  .popup-menu-host > .ne-picker
+  .popup-menu-host > .note-picker
 ) {
   background: transparent;
   border: 0;

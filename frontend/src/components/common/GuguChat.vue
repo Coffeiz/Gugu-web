@@ -40,6 +40,7 @@
       v-if="open"
       ref="windowRef"
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
+      :owner-z="chatZ"
       :streaming="streaming" :is-chat-dragging="isChatDragging"
       :current-session-title="currentSessionTitle"
       :current-session-workspace-name="currentSessionWorkspaceName"
@@ -52,6 +53,7 @@
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
       v-model:input-text="inputText"
+      :references="inputReferences" @update:references="inputReferences = $event"
       :pending-att="pendingAtt" :att-uploading="attUploading"
       :recording="recording" :record-secs="recordSecs" :vw="vw"
       :on-remove-att="removeAtt"
@@ -61,6 +63,7 @@
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-interaction-select="onInteractionSelect"
+      :on-reference-click="onReferenceClick"
       :on-prompt-connect="promptConnectIM"
       :on-rename-session="renameSession"
       :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
@@ -109,7 +112,7 @@ import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './gugu-chat/GuguChatSidebar.vue'
 import GuguChatBindDialog from './gugu-chat/GuguChatBindDialog.vue'
 import GuguChatWindow from './gugu-chat/GuguChatWindow.vue'
-import type { ChatMessage, ChatFile, ImPlatformKey } from './gugu-chat/chatTypes'
+import type { ChatMessage, ChatFile, ChatReference, ImPlatformKey } from './gugu-chat/chatTypes'
 import { API_BASE } from './gugu-chat/chatConstants'
 import { renderMd } from './gugu-chat/markdown'
 import { canPreview, fmtSize } from './gugu-chat/messageDisplay'
@@ -119,6 +122,7 @@ import { useChatActions } from './gugu-chat/composables/useChatActions'
 import { useChatConversation } from './gugu-chat/composables/useChatConversation'
 import { useChatImConnect } from './gugu-chat/composables/useChatImConnect'
 import { useChatWindow } from './gugu-chat/composables/useChatWindow'
+import { useMindRefActions } from '@/composables/useMindRefActions'
 const { t } = useI18n()
 
 interface QuotaInfo {
@@ -151,6 +155,7 @@ const { refreshAfterTools, onChatActionClick } = useChatActions({
   router,
   onBindPlatform: (platform) => openChatImBind(platform),
 })
+const { openMindRef } = useMindRefActions()
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
 const miniPlayerRef = ref<InstanceType<typeof GuguChatMiniPlayer> | null>(null)
 const rippleActive  = ref(false)
@@ -218,7 +223,7 @@ const messagesEl    = computed(() => windowRef.value?.messageListRef?.el ?? null
 const windowElRef   = computed(() => windowRef.value?.el ?? null)
 
 const {
-  open, expanded, resizing, chatClosing, fabZ,
+  open, expanded, resizing, chatClosing, chatZ, fabZ,
   vw, vh,
   windowStyle, miniPlayerStyle,
   miniPinned, reopenResume,
@@ -351,7 +356,7 @@ const conversation = useChatConversation({
 })
 const {
   messages, mkid, now, sessionSettling,
-  inputText, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
+  inputText, inputReferences, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, ownerPlatformUserId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
   stick, lastTop,
@@ -391,6 +396,10 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
       _msg.interaction.selectedOptionId = null
     }
   }
+}
+
+async function onReferenceClick(reference: ChatReference) {
+  await openMindRef(reference.type, reference.id)
 }
 
 watch(isTypingText, v => {
@@ -462,7 +471,9 @@ function copyMsg(msg: ChatMessage) {
 }
 
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
-watch(open, (v) => { if (v) { animateGreeting(); loadBots(); loadQuota(); pickOfflineLabel() } })
+watch(open, (v) => {
+  if (v) { animateGreeting(); loadBots(); loadQuota(); pickOfflineLabel() }
+})
 
 // ── 展开/收起 ────────────────────────────────────────────
 // ── 侧栏 IM 接入（飞书 / QQ / 微信）：Bot 列表、侧栏扫码连接、聊天内扫码绑定的唯一

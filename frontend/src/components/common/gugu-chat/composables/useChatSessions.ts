@@ -2,7 +2,7 @@ import { nextTick, computed, type Ref } from 'vue'
 import { i18n } from '@/i18n'
 import { agentApi, getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
-import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
+import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 
@@ -12,6 +12,7 @@ interface RawSessionMessage {
   role: string
   content: string
   files?: ChatFile[]
+  references?: ChatReference[]
   quotedText?: string
   platformUserId?: string | null
   platformUserName?: string | null
@@ -162,6 +163,7 @@ export function useChatSessions(options: {
           text: displayQQFaces(m.content),
           html: null,
           files: m.files && m.files.length ? m.files : undefined,
+          references: m.references && m.references.length ? m.references : undefined,
           quotedText: m.quotedText || undefined,
           time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
           _createdAt: m.createdAt,

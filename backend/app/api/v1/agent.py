@@ -39,6 +39,7 @@ class ChatRequest(BaseModel):
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     session_id: Optional[int] = None
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
+    references: Optional[list[dict]] = None   # 用户通过 @ 补全选中的业务对象
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
     interaction_prompt_id: Optional[int] = None
     interaction_token: Optional[str] = None
@@ -315,6 +316,7 @@ async def chat(
         session_id=body.session_id,
         source="web",
         attachments=body.attachments or [],
+        references=body.references or [],
         greeting=body.greeting,
         locale=body.locale,
         origin=request.headers.get("X-Client-Id"),
@@ -579,6 +581,7 @@ async def get_session_messages(
              "timelineOrder": m.id * 1000,
              "content": render_content(m.content),
              "files": m.files or [],
+             "references": m.references_json or [],
              "quotedText": m.quoted_text,
              "platformUserId": m.platform_user_id,
              "platformUserName": m.platform_user_name,

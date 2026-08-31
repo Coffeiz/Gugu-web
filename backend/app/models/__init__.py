@@ -632,6 +632,8 @@ class ConversationMessage(Base):
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
     # 表格等）原样摊平显示，见 devlog 2026-07-10。
     quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
+    # 网页聊天中用户明确选择的业务对象引用；正文仍只存可读文本，供刷新后恢复可点击胶囊。
+    references_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)

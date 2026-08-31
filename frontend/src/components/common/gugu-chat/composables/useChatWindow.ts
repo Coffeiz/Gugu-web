@@ -16,7 +16,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, type ComputedRef, type Ref } from 'vue'
 import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
-import { nextZ } from '@/composables/windowz'
+import { nextZ, raisePopoversAbove } from '@/composables/windowz'
 import { playGuguSfx } from '@/services/sfx'
 import { SMALL_W, SMALL_H, SIDEBAR_W, SESSION_KEY, LAST_SESSION_KEY, MINI_PINNED_KEY, REOPEN_RESUME_KEY } from '../chatConstants'
 
@@ -106,7 +106,10 @@ export function useChatWindow(options: UseChatWindowOptions) {
   }
 
   // ── 窗口层级 ────────────────────────────────────────────
-  function raiseChat() { chatZ.value = nextZ() }
+  function raiseChat() {
+    chatZ.value = nextZ()
+    raisePopoversAbove(chatZ.value)
+  }
   watch(open, v => { if (v) raiseChat() })
 
   // FAB 层级：离场动画尚未结束时窗口仍缩回悬浮球，不能提前把球提到窗口前面。

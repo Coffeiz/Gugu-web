@@ -1,6 +1,7 @@
 import { marked, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { i18n } from '@/i18n'
+import type { ChatReference } from './chatTypes'
 
 marked.use({
   breaks: true, gfm: true,
@@ -80,6 +81,28 @@ function prepareMarkdown(text: string) {
 }
 
 export function renderMd(text: string) { return text ? marked.parse(prepareMarkdown(text)) as string : '' }
+
+/** 聊天中的 @ 引用使用和笔记 mind-ref 相同的数据属性与独立视觉层。 */
+export function renderChatMd(text: string, references: ChatReference[] = []) {
+  let html = renderMd(text)
+  for (const reference of references) {
+    const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+    html = html.replace(new RegExp(`@${label}`, 'g'), `<span class="mind-ref chat-reference" data-ref-type="${reference.type}" data-ref-id="${reference.id}">@${safeLabel}</span>`)
+  }
+  return html
+}
+
+/** 用户消息保持纯文本排版，仅把已选中的 @ 对象替换成可点击引用标签。 */
+export function renderChatText(text: string, references: ChatReference[] = []) {
+  let html = text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char)).replace(/\n/g, '<br>')
+  for (const reference of references) {
+    const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+    html = html.replace(new RegExp(`@${label}`, 'g'), `<span class="mind-ref chat-reference" data-ref-type="${reference.type}" data-ref-id="${reference.id}">@${safeLabel}</span>`)
+  }
+  return html
+}
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
