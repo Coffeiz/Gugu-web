@@ -1,17 +1,13 @@
 # syntax=docker/dockerfile:1.7
 # 咕咕前端生产镜像：构建 dist 后只保留 Nginx 静态站点。
-# 构建命令需要传入同级 gugu-interaction-runtime named context。
 FROM node:22-slim AS build
 
 WORKDIR /workspace
 RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 
-# 先复制稳定的 workspace 元数据，保证依赖层可复用；runtime 是 frontend 的 file 依赖，
-# 由 --build-context runtime=../gugu-interaction-runtime 显式提供。
+# 先复制稳定的 workspace 元数据，保证依赖层可复用。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY frontend/package.json ./frontend/package.json
-COPY frontend/scripts/ ./frontend/scripts/
-COPY --from=runtime . /gugu-interaction-runtime
 RUN pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/

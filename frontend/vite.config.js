@@ -11,9 +11,6 @@ const APP_VER = (() => {
   try { return execSync('git rev-parse --short HEAD').toString().trim() } catch { return String(Date.now()) }
 })()
 
-// 1.0.1 联调直接编译同级 Runtime 源码。Vite 默认只监视项目根目录，外部
-// /src 改动不会让浏览器失效旧的 /@fs 模块，必须主动监听并整页刷新。
-const RUNTIME_SRC = resolve(__dirname, '../../gugu-interaction-runtime/src')
 const adminEntry = {
   name: 'admin-entry',
   configureServer(server) {
@@ -25,25 +22,11 @@ const adminEntry = {
     })
   },
 }
-const runtimeSourceReload = {
-  name: 'runtime-source-reload',
-  configureServer(server) {
-    server.watcher.add(RUNTIME_SRC)
-    const reloadRuntime = file => {
-      if (file.startsWith(RUNTIME_SRC)) server.ws.send({ type: 'full-reload', path: '*' })
-    }
-    server.watcher.on('change', reloadRuntime)
-    server.watcher.on('add', reloadRuntime)
-    server.watcher.on('unlink', reloadRuntime)
-  },
-}
-
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(APP_VER) },
   plugins: [
     vue(),
     adminEntry,
-    runtimeSourceReload,
     Components({
       resolvers: [ArcoResolver({ sideEffect: true })],
       dts: 'components.d.ts',   // 生成全局组件类型声明，供 vue-tsc / 编辑器识别（已 gitignore）
@@ -57,8 +40,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: resolve(__dirname, 'src') },
-      // Runtime 源码在同级仓库，不能依赖 Node 从该目录向上寻找业务的 node_modules。
-      // 两侧统一到 Gugu-web 的 Vue，避免产生两份响应式运行时。
+      // 统一到 Gugu-web 的 Vue，避免产生两份响应式运行时。
       { find: 'vue', replacement: resolve(__dirname, 'node_modules/vue/dist/vue.runtime.esm-bundler.js') },
     ],
     dedupe: ['vue'],
