@@ -1,6 +1,7 @@
 import { marked, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { i18n } from '@/i18n'
+import { MIND_REF_TYPE_ICON_PATH } from '@/composables/useMindEditor'
 import type { ChatReference } from './chatTypes'
 
 marked.use({
@@ -82,13 +83,20 @@ function prepareMarkdown(text: string) {
 
 export function renderMd(text: string) { return text ? marked.parse(prepareMarkdown(text)) as string : '' }
 
-/** 聊天中的 @ 引用使用和笔记 mind-ref 相同的数据属性与独立视觉层。 */
+function renderChatReference(reference: ChatReference, safeLabel: string) {
+  const iconPath = MIND_REF_TYPE_ICON_PATH[reference.type] ?? ''
+  return `<span class="mind-ref chat-reference" data-mind-ref="" data-ref-type="${reference.type}" data-ref-id="${reference.id}">` +
+    `<svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" class="mind-ref-icon"><path d="${iconPath}"/></svg>` +
+    `<span class="mind-ref-label">${safeLabel}</span></span>`
+}
+
+/** 聊天中的 @ 引用直接复用笔记 mind-ref 的结构、图标和样式契约。 */
 export function renderChatMd(text: string, references: ChatReference[] = []) {
   let html = renderMd(text)
   for (const reference of references) {
     const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-    html = html.replace(new RegExp(`@${label}`, 'g'), `<span class="mind-ref chat-reference" data-ref-type="${reference.type}" data-ref-id="${reference.id}">@${safeLabel}</span>`)
+    html = html.replace(new RegExp(`@${label}`, 'g'), renderChatReference(reference, safeLabel))
   }
   return html
 }
@@ -99,7 +107,7 @@ export function renderChatText(text: string, references: ChatReference[] = []) {
   for (const reference of references) {
     const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-    html = html.replace(new RegExp(`@${label}`, 'g'), `<span class="mind-ref chat-reference" data-ref-type="${reference.type}" data-ref-id="${reference.id}">@${safeLabel}</span>`)
+    html = html.replace(new RegExp(`@${label}`, 'g'), renderChatReference(reference, safeLabel))
   }
   return html
 }

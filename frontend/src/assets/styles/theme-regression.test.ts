@@ -30,7 +30,6 @@ const surfacesCss = load('./adoption/surfaces.css')
 const datePickerCss = load('./adoption/date-picker.css')
 const publicPagesCss = load('./adoption/public-pages.css')
 const adoptionIndexCss = load('./adoption/index.css')
-const overlayCss = load('./overlay-theme-bridge.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
 const themeAdoptionCss = load('./theme-adoption.css')
 const productCss = load('./tokens/product.css')
@@ -41,6 +40,9 @@ const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
 const fileSelectionToolbarVue = load('../../components/common/FileSelectionToolbar.vue')
 const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
+const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+const eventFormPanelVue = load('../../components/events/EventFormPanel.vue')
+const imageViewerVue = load('../../components/common/viewers/ImageViewer.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
 const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sky', 'sky'], ['sage', 'sage']].map(([file, name]) => ({
@@ -158,6 +160,21 @@ describe('主题 CSS 回归契约', () => {
     expect(runtimeCss).not.toContain('.proj-card::before')
   })
 
+  it('项目卡最终 paint 只由组件负责，主题层不重复接管根卡片', () => {
+    const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+    expect(projectCardVue).toContain('border: 1px solid var(--project-card-border)')
+    expect(projectCardVue).toContain('box-shadow: var(--project-card-shadow)')
+    expect(themeAdoptionCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
+    expect(productCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
+  })
+
+  it('todo popup 由通用容器负责 surface，业务组件负责内容主题', () => {
+    expect(load('../../components/common/PopupMenu.vue')).toContain('background: var(--popup-surface-bg)')
+    expect(load('../../components/common/PopupMenu.vue')).toContain('border: 1px solid var(--popup-surface-border)')
+    expect(themeAdoptionCss).not.toContain('.todo-pop-popup')
+    expect(projectCardVue).toContain('html[data-theme][data-family] .todo-pop-popup')
+  })
+
   it('亮色调色板将导航选中面统一为实体亮面', () => {
     for (const paletteCss of lightPaletteCss) {
       const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)(?:\n| )\}/)?.[1] ?? ''
@@ -225,11 +242,12 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('ImageViewer 暗色只重映射 toolbar 局部 token，不复制实体 paint', () => {
-    const darkBlock = cssBlock(overlayCss, "html[data-theme='dark'][data-family] .iv-wrap")
+    const darkBlock = cssBlock(imageViewerVue, "html[data-theme='dark'][data-family] .iv-wrap")
     expect(darkBlock).toContain('--iv-toolbar-bg:')
     expect(darkBlock).toContain('--iv-toolbar-border: var(--border-strong)')
     expect(darkBlock).toContain('--iv-toolbar-filter: var(--popup-surface-blur)')
-    expect(overlayCss).not.toContain("html[data-theme='dark'][data-family] .iv-toolbar")
+    expect(imageViewerVue).not.toContain("html[data-theme='dark'][data-family] .iv-toolbar")
+    expect(eventFormPanelVue).toContain('html[data-theme][data-family] .event-form-body')
   })
 
   it('文件工具栏只有一套尺寸和前景契约', () => {

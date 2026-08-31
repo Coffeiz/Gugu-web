@@ -313,7 +313,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(20, 22, 30, 0.32);
+  background: var(--surface-scrim);
   /* 保持独立合成层：opacity 过渡结束后不丢层，避免层析构时的整页重绘 */
   will-change: opacity;
 }
@@ -325,11 +325,10 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   top: 0;
   bottom: 0;
   width: 60vw;
-  background: rgba(242, 243, 248, 0.98);
-  border-left: 1px solid rgba(255, 255, 255, 0.7);
+  background: var(--modal-card-bg);
+  border-left: 1px solid var(--modal-card-border);
   border-radius: 20px 0 0 20px;
-  box-shadow: -8px 0 48px rgba(20, 25, 60, 0.18),
-              inset 1px 0 0 rgba(255, 255, 255, 0.9);
+  box-shadow: var(--modal-card-shadow), inset 1px 0 0 var(--modal-card-highlight);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -342,8 +341,8 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px 13px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  background: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid var(--panel-divider);
+  background: var(--surface-glass);
   flex-shrink: 0;
 }
 .fp-title {
@@ -380,15 +379,15 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   cursor: pointer; transition: background 0.15s, color 0.15s;
 }
 .fp-action-btn svg { display: block; }
-.fp-action-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
-.fp-close-btn:hover { background: rgba(200, 90, 90, 0.1); color: rgba(200, 90, 90, 0.9); }
+.fp-action-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
+.fp-close-btn:hover { background: var(--status-danger-bg); color: var(--status-danger); }
 
 /* ── 内容区 ── */
 .fp-body {
   flex: 1;
   overflow: hidden;
   position: relative;
-  background: rgba(230, 232, 240, 0.5);
+  background: var(--surface-base);
 }
 .fp-iframe {
   width: 100%; height: 100%; border: none; display: block;
@@ -401,11 +400,11 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   align-items: center; justify-content: center;
   gap: 12px; color: var(--text-secondary); font-size: 13px;
 }
-.fp-error { color: rgba(180, 80, 80, 0.8); }
+.fp-error { color: var(--status-danger); }
 .fp-spinner {
   width: 28px; height: 28px; border-radius: 50%;
-  border: 2px solid rgba(123, 127, 178, 0.2);
-  border-top-color: rgba(123, 127, 178, 0.7);
+  border: 2px solid var(--action-soft);
+  border-top-color: var(--action-primary);
   animation: fp-spin 0.7s linear infinite;
 }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
@@ -432,7 +431,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-leave-to   .fp-panel { transform: translateX(100%); }
 
 /* ── info 按钮激活态 ── */
-.fp-action-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }
+.fp-action-btn.active { background: var(--action-soft); color: var(--action-primary); }
 
 /* ── 文件信息弹窗 ── */
 .fp-info-win {
@@ -440,11 +439,11 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   width: 220px;
   border-radius: 12px;
   overflow: hidden;
-  background: rgba(242, 243, 248, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.7);
-  box-shadow: 0 8px 32px rgba(20,25,60,0.18), 0 2px 8px rgba(0,0,0,0.07);
+  background: var(--popup-surface-bg);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+  border: 1px solid var(--popup-surface-border);
+  box-shadow: var(--popup-surface-shadow);
   user-select: none;
   /* z-index 由 :style 动态(myZ+1,信息窗在面板之上) */
 }
@@ -453,8 +452,8 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   align-items: center;
   justify-content: space-between;
   padding: 9px 10px 9px 14px;
-  background: rgba(255,255,255,0.55);
-  border-bottom: 1px solid rgba(0,0,0,0.07);
+  background: var(--surface-glass);
+  border-bottom: 1px solid var(--panel-divider);
   cursor: grab;
   font-size: 12px;
   font-weight: 600;

@@ -123,8 +123,8 @@ defineExpose({ listRef })
 .cd-list { box-sizing: border-box; padding: 0 9px 9px; }
 .canvas-list { width: 190px; }
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.canvas-item:hover { background: rgba(255,255,255,.55); }
-.canvas-item.active { background: rgba(255,255,255,.86); color: var(--color-primary); font-weight: 700; box-shadow: 0 1px 3px rgba(60,70,100,.08); }
+.canvas-item:hover { background: var(--sidebar-item-hover); }
+.canvas-item.active { background: var(--sidebar-item-active); color: var(--sidebar-item-active-fg); font-weight: 700; box-shadow: var(--elevation-card); }
 .ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* global.css 里 .rename-sizer 是 inline-block，宽度随文字内容收缩——在这个 flex 行里
    会导致输入框跟着文字宽度走，右边的操作按钮跟着一起挪动、不再固定在行尾。这里改成
@@ -135,8 +135,8 @@ defineExpose({ listRef })
 .canvas-item:hover .ci-actions { opacity: 1; }
 .canvas-item:has(.rename-sizer) .ci-actions { opacity: 1; }
 .ci-btn { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
-.ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
-.ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
-.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
-.canvas-create-card:hover { background: rgba(123,127,178,.07); border-color: rgba(123,127,178,.4); color: var(--color-primary); }
+.ci-btn:hover { background: var(--action-soft-hover); color: var(--action-primary); }
+.ci-delete:hover { background: var(--status-danger-bg); color: var(--status-danger); }
+.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed var(--border-subtle); border-radius: 6px; background: var(--surface-soft); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.canvas-create-card:hover { background: var(--action-soft); border-color: var(--action-outline); color: var(--action-primary); }
 </style>

@@ -19,7 +19,6 @@ global.css
     ├── design-theme-fixes.css
     ├── bridges/index.css           # Teleport / 浮层跨 DOM 树桥接
     │   ├── calendar-theme-bridge.css
-    │   ├── overlay-theme-bridge.css
     │   └── file-drop-theme-refinements.css
     └── adoption/index.css          # 迁移期按功能域的旧组件兼容样式
 ```
@@ -28,9 +27,9 @@ global.css
 
 - `variables.css` 是全局唯一样式入口；组件覆盖和 bridge 不得被页面直接重复引入。
 - `components/index.css` 负责最终组件 paint 的编排，日历工具栏、GuguChat 和文件工具栏的主题覆盖先保持原文件 owner。
-- `components/calendar.css` 负责日历页与 Dashboard 共用的近期节点胶囊和条目 hover；Teleport 菜单仍归 bridge。
+- `components/calendar.css` 负责日历页与 Dashboard 共用的近期节点胶囊和条目 hover；日历 Teleport 内容主题归 `EventFormPanel.vue` 等业务组件。
 - `components/files.css` 负责文件卡、文件夹卡、文件操作按钮和行内重命名控件的共享结构样式。
-- `components/popups.css` 负责通用弹层结构、菜单项和过渡；Teleport 根节点的定位与跨树主题代理仍归 bridge。
+- `components/popups.css` 负责通用弹层结构、菜单项和过渡；Teleport 根节点由 `PopupMenu.vue` 负责，业务内容主题归属各自组件。
 - `components/forms.css` 负责标题编辑和基础输入控件的跨页面结构样式。
 - `bridges/index.css` 只负责 Teleport、浮层根节点和拖拽跨 DOM 边界，不承接组件几何或业务状态。
 - `theme-refinements.css` 只提供主题/语义变量映射；具体组件的背景、边框、阴影和高光由组件文件消费。

@@ -419,40 +419,29 @@ html[data-theme='dark'][data-family] .chat-window .exp-group-divider {
   background: var(--gugu-chat-sidebar-border) !important;
 }
 
-/* 聊天气泡中的业务引用最终由 MarkdownView 渲染，必须在全局主题层覆盖通用 .mind-ref。
-   否则 scoped 组件样式无法命中子组件生成的节点，引用会退化成普通选中色。 */
+/* 聊天气泡引用保留原有的浅色胶囊，只复用 mind-ref 的内容结构与图标。 */
 html[data-theme][data-family] .chat-window .chat-reference {
   display: inline-flex;
   align-items: center;
   max-width: 22ch;
   padding: 1px 6px;
-  border: 1px solid var(--gugu-chat-reference-border);
+  border: 1px solid var(--action-outline);
   border-radius: var(--radius-sm);
-  background: var(--gugu-chat-reference-bg);
-  color: var(--gugu-chat-reference-fg);
+  background: var(--surface-raised);
+  color: var(--action-primary-hover);
   font-weight: 650;
   font-size: .92em;
   line-height: 1.45;
   vertical-align: baseline;
   cursor: pointer;
   text-decoration: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--gugu-chat-reference-border) 24%,transparent);
+  box-shadow: inset 0 0 0 1px var(--border-highlight), var(--elevation-card);
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
               border-color var(--motion-hover-control) var(--motion-ease-standard),
               box-shadow var(--motion-hover-control) var(--motion-ease-standard),
               color var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] .chat-window .chat-reference:hover {
-  background: var(--action-soft-hover);
-  border-color: var(--action-primary);
-}
-html[data-theme][data-family] .chat-window .msg.user .chat-reference {
-  background: var(--surface-raised);
-  border-color: var(--action-outline);
-  color: var(--action-primary-hover);
-  box-shadow: inset 0 0 0 1px var(--border-highlight), var(--elevation-card);
-}
-html[data-theme][data-family] .chat-window .msg.user .chat-reference:hover {
   background: var(--surface-raised);
   border-color: var(--action-primary);
 }

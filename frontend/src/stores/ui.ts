@@ -38,6 +38,7 @@ export const useUiStore = defineStore('ui', () => {
   const newProjectRange = ref<{ start: string; end: string } | null>(null)
   const calendarActiveRange = ref<{ start: string; end: string } | null>(null)
   const openProfile = ref(false)
+  const profileInitialNav = ref<string | null>(null)
   const pendingChatSession   = ref<unknown>(null)
   const pendingFileTarget    = ref<{ kind: string; id: number } | null>(null)
   const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
@@ -129,6 +130,7 @@ export const useUiStore = defineStore('ui', () => {
     pendingCalendarDate.value = null
     pendingProjectHighlight.value = null
     pendingProjectHighlightMs.value = null
+    profileInitialNav.value = null
   }
 
   async function _persistRead(ids: number[] | null) {
@@ -151,7 +153,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     notifCount, notifications, liveNotification, fetchNotifications, checkLoginBubble,
     pushNotification, markAllRead, markRead, resetAccountState,
-    openNewProject, newProjectInitStatus, openProfile, sidebarCollapsed, newProjectRange,
+    openNewProject, newProjectInitStatus, openProfile, profileInitialNav, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
     pendingNoteId,

@@ -11,7 +11,8 @@ import { useLiveStore } from './live'
 import { useFilesCacheStore } from './filesCache'
 import { useProjectStore } from './projects'
 import { useMindStore } from './mind'
-import { onboardingProjectId } from '@/composables/useOnboarding'
+import { onboardingGuideState } from '@/composables/useOnboardingGuide'
+import { onboardingProjectId, onboardingSeedState } from '@/composables/useOnboardingSeed'
 
 type UserResponse = components['schemas']['UserResponse']
 
@@ -28,6 +29,8 @@ function resetAccountState() {
   useProjectStore().resetAccountState()
   useMindStore().resetAccountState()
   onboardingProjectId.value = null
+  onboardingSeedState.value = null
+  onboardingGuideState.value = null
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -57,6 +60,7 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ username, email, password, locale: getLocale() }),
     })
     const body = await res.json().catch(() => ({}))
@@ -70,6 +74,7 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ username, password }),
     })
     const body = await res.json().catch(() => ({}))
@@ -83,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       const res = await fetch(`${BASE_URL}/auth/me`, {
+        credentials: 'include',
         headers: { Authorization: `Bearer ${token.value}` },
       })
       // 只有明确的 401 才代表 token 失效。后端短暂 5xx、锁等待或网络中断
@@ -119,6 +125,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    void fetch(`${BASE_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
     useAudioStore().stop()
     resetAccountState()
     token.value = ''

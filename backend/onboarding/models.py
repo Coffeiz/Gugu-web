@@ -12,21 +12,40 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.tz import now_utc
 from app.db.base import Base
 from app.db.types import UtcDateTime
+from onboarding.guide_state import default_guide_state, normalize_guide_state
+from onboarding.seed_state import default_seed_state, normalize_seed_state
 
 
 def default_state() -> dict:
-    """新用户的初始播种状态。"""
+    """同一行中分离保存播种状态和弹窗引导状态。"""
     return {
-        "seeded": False,
-        "seeded_project_id": None,
-        "seeded_project_name": None,
-        "guide_enabled": False,
-        "guide_version": 1,
-        "current_step": "locale",
-        "completed_steps": [],
-        "dismissed": False,
-        "completed_at": None,
+        "seed": default_seed_state(),
+        "guide": default_guide_state(),
     }
+
+
+def normalize_state(raw: dict | None) -> dict:
+    """将旧扁平状态迁移为 seed/guide 两个命名空间，保留未知顶层字段。"""
+    source = raw if isinstance(raw, dict) else {}
+    if "seed" in source or "guide" in source:
+        result = {**default_state(), **source}
+        result["seed"] = normalize_seed_state(result.get("seed"))
+        result["guide"] = normalize_guide_state(result.get("guide"))
+        return result
+
+    # 兼容 2026-08-31 之前已经写入的扁平状态；不把旧用户自动开启弹窗引导。
+    seed = normalize_seed_state({
+        "seeded": source.get("seeded", False),
+        "project_id": source.get("seeded_project_id"),
+        "project_name": source.get("seeded_project_name"),
+    })
+    guide = default_guide_state()
+    return {**default_state(), **{key: value for key, value in source.items()
+                                  if key not in {"seeded", "seeded_project_id", "seeded_project_name",
+                                                 "guide_enabled", "guide_version", "current_step",
+                                                 "completed_steps", "dismissed", "completed_at"}},
+            "seed": seed,
+            "guide": guide}
 
 
 class OnboardingState(Base):

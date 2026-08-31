@@ -94,7 +94,7 @@ import { TOP_Z } from '@/composables/windowz'
 import Icon from '@/components/common/Icon.vue'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps({ show: Boolean })
+const props = defineProps({ show: Boolean, initialNav: { type: String, default: 'info' } })
 const emit  = defineEmits(['close'])
 const router = useRouter()
 const authStore = useAuthStore()
@@ -120,7 +120,7 @@ const infoMsgType = ref('ok')
 
 watch(() => props.show, value => {
   if (value) {
-    activeNav.value = 'info'
+    activeNav.value = props.initialNav || 'info'
     infoMsg.value = ''
     showDeleteAccount.value = false
     deletePwd.value = ''

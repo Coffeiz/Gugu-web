@@ -452,10 +452,11 @@ async function setPriority(n: number) {
 <style scoped>
 .proj-card {
   position: relative; display: flex; flex-shrink: 0;
-  border: 1px solid rgba(255,255,255,0.72);
+  color: var(--content-primary);
+  border: 1px solid var(--project-card-border);
   border-radius: var(--radius-md);
   corner-shape: squircle;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  box-shadow: var(--project-card-shadow);
   background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
@@ -463,12 +464,11 @@ async function setPriority(n: number) {
      transform/box-shadow 的时长要跟 .hover-card-fx 保持同一个数（见 global.css），不然这份
      本地声明会赢过全局那份、悄悄用着自己的时长——画布上项目卡跟便签/活动贴纸并排悬停时
      能看出抬起速度不一样，就是这里曾经各写各的 0.3s/0.25s 导致的。 */
-  transition: transform var(--motion-hover-card) cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow var(--motion-hover-card) ease, background var(--motion-hover-card) ease-out;
+  transition: var(--project-card-motion);
   user-select: none;
 }
 .proj-card.file-drag-over {
-  box-shadow: 0 0 0 2px rgba(123,127,178,0.6), 0 6px 18px rgba(80,90,110,0.13);
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--action-primary) 60%,transparent), var(--project-card-hover-shadow);
   transform: translateY(-2px);
 }
 .drop-overlay {
@@ -489,7 +489,7 @@ async function setPriority(n: number) {
 /* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
    这里补文件卡同款阴影。内部控件按住时不能覆盖根卡的
    hover transform，否则卡片会从 translateY(-2px) 突然回到 0，看起来像被按下。 */
-.proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
+.proj-card:hover { border-color: var(--project-card-hover-border); box-shadow: var(--project-card-hover-shadow); }
 
 .card-body { position: relative; z-index: 1; flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
@@ -632,4 +632,30 @@ async function setPriority(n: number) {
   pointer-events: none;
 }
 
+</style>
+
+<style>
+/* Teleport 到 body 的阶段待办内容主题映射，跟随弹窗业务组件归属。 */
+html[data-theme][data-family] .todo-pop-popup .tp-title,
+html[data-theme][data-family] .todo-pop-popup .tp-name,
+html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .todo-pop-popup .tp-count,
+html[data-theme][data-family] .todo-pop-popup .tp-empty { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .todo-pop-popup .tp-check {
+  color: var(--content-on-accent); background: var(--control-bg); border-color: var(--action-outline);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-check.checked {
+  background: var(--action-primary-bg); border-color: var(--action-primary);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-del { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop-popup .tp-del:hover {
+  color: var(--status-danger); background: var(--status-danger-bg);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-add {
+  color: var(--content-secondary); background: transparent; border-color: var(--border-subtle);
+}
+html[data-theme][data-family] .todo-pop-popup .tp-add:hover {
+  color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline);
+}
 </style>

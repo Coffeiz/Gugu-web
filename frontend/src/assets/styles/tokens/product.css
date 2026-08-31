@@ -83,24 +83,6 @@ html[data-theme][data-family] .file-card-btn { color: var(--content-secondary); 
 html[data-theme][data-family] .file-card-btn:hover { color: var(--content-primary); background: var(--surface-card-solid); }
 html[data-theme][data-family] .file-card-btn.del:hover { color: var(--status-danger); }
 
-/* Real ProjectCard is the reference implementation: preserve project color, sheen and exact motion. */
-html[data-theme][data-family] .proj-card {
-  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color);
-  border-color: var(--project-card-border);
-  border-radius: var(--project-card-radius);
-  corner-shape: squircle;
-  box-shadow: var(--project-card-shadow);
-  transition: var(--project-card-motion);
-}
-html[data-theme][data-family] .proj-card.hover-card-fx:hover {
-  transform: translateY(-2px);
-  border-color: var(--project-card-hover-border);
-  box-shadow: var(--project-card-hover-shadow);
-}
-html[data-theme][data-family] .proj-card.hover-card-fx:active:not(:has(:active)) {
-  transform: translateY(1px);
-  opacity: .93;
-}
 /* ── GuguChat ───────────────────────────────────────────────────
    窗口根节点只负责边框、圆角和阴影；聊天主体继续沿用组件自己的背景与 blur，避免根节点
    和 chat-main 同时铺材质导致整窗变成另一层面板。 */

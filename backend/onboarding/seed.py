@@ -78,7 +78,7 @@ async def seed_for_user(db: AsyncSession, user, *, locale: str | None = None) ->
     user_id = user.id
     try:
         st = await state.get_state(db, user_id)
-        if st.get("seeded"):
+        if st["seed"].get("seeded"):
             return
 
         # 1) 引导项目：日期＝初次登陆日 → 截止日 +3 天
@@ -111,11 +111,10 @@ async def seed_for_user(db: AsyncSession, user, *, locale: str | None = None) ->
         await db.commit()
 
         # 4) 回填状态
-        await state.update_state(db, user_id, {
-            "seeded": True, "seeded_project_id": proj.id, "seeded_project_name": name,
-            "guide_enabled": True, "guide_version": 1, "current_step": "locale",
-            "completed_steps": [], "dismissed": False, "completed_at": None,
+        await state.update_seed_state(db, user_id, {
+            "seeded": True, "project_id": proj.id, "project_name": name,
         })
+        await state.reset_guide_state(db, user_id)
         logger.info("onboarding: 已为用户 %s 播种引导项目 %s（%s）", user_id, proj.id, name)
     except Exception as e:
         logger.exception("onboarding: 播种失败（不影响注册）: %s", e)

@@ -69,8 +69,8 @@ async def main():
             print("== 播种 ==")
             await seed.seed_for_user(db, u)
             st = await state.get_state(db, uid)
-            pid = st["seeded_project_id"]
-            check("seeded=True", st["seeded"] is True)
+            pid = st["seed"]["project_id"]
+            check("seeded=True", st["seed"]["seeded"] is True)
             check("有 seeded_project_id", bool(pid))
             p = await db.get(Project, pid)
             check("项目存在且名在池里", p is not None and p.name in content.PROJECT_NAMES)

@@ -14,6 +14,18 @@ export function getToken(): string {
   return localStorage.getItem('user_token') ?? ''
 }
 
+export function getCookieValue(name: string): string {
+  if (typeof document === 'undefined') return ''
+  const prefix = `${encodeURIComponent(name)}=`
+  const item = document.cookie.split('; ').find(value => value.startsWith(prefix))
+  return item ? decodeURIComponent(item.slice(prefix.length)) : ''
+}
+
+export function getCsrfHeaders(cookieName = 'gugu_user_csrf_token'): Record<string, string> {
+  const token = getCookieValue(cookieName)
+  return token ? { 'X-CSRF-Token': token } : {}
+}
+
 // 本标签页的 client-id：每次写操作作为 X-Client-Id 头发给后端，后端把它塞进 SSE 事件的 origin。
 // 前端收到「origin === 自己」的回声时跳过重拉（本页已乐观更新过），只让别的标签页/端刷新。
 // 每标签页独立（内存级、不持久化）——刷新页面换一个新 id 也无妨，回声抑制只是优化不影响正确性。
@@ -27,10 +39,13 @@ export const CLIENT_ID: string =
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
                                 signal?: AbortSignal): Promise<T> {
   const token = getToken()
-  const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
+  const headers: Record<string, string> = {
+    'X-Client-Id': CLIENT_ID,
+    ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? {} : getCsrfHeaders()),
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const opts: RequestInit = { method, headers, signal }
+  const opts: RequestInit = { method, headers, signal, credentials: 'include' }
   if (body !== null) {
     if (isForm) {
       opts.body = body
@@ -79,9 +94,12 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${BASE_URL}${path}`)
+    xhr.withCredentials = true
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
+    const csrf = getCsrfHeaders()
+    if (csrf['X-CSRF-Token']) xhr.setRequestHeader('X-CSRF-Token', csrf['X-CSRF-Token'])
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total)
     }
@@ -187,8 +205,10 @@ export const filesApi = {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/batch-download`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...getCsrfHeaders(),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ ids, folderIds }),
@@ -214,7 +234,8 @@ export const filesApi = {
   download: async (id: number, filename: string) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/download`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const blob = await res.blob()
@@ -603,6 +624,8 @@ export const agentApi = {
 
 export const onboardingApi = {
   getState:  ()             => get('/onboarding/state'),
+  updateState: (patch: Record<string, unknown>) => request('PATCH', '/onboarding/state', patch),
+  reopen:     ()             => post('/onboarding/state/reopen'),
   devReseed: ()             => post('/onboarding/dev/reseed'),
   devResetGuide: ()         => post('/onboarding/dev/reset-guide'),
 }

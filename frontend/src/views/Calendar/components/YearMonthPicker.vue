@@ -47,15 +47,15 @@ defineExpose({ contains })
 <style>
 /* useCalendarNav 按 220px border-box 计算 period-btn 中心；这里必须包含 padding/border，
    否则 content-box 会额外长 30px，视觉中心固定向右偏 15px。 */
-.cal-month-picker { position: fixed; box-sizing: border-box; background: var(--panel-bg); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.82); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14); padding: 14px; }
+.cal-month-picker { position: fixed; box-sizing: border-box; background: var(--popup-surface-bg); backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur); border: 1px solid var(--popup-surface-border); border-radius: var(--popup-surface-radius); box-shadow: var(--popup-surface-shadow); padding: 14px; }
 .picker-year-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.picker-year { font-size: 13px; font-weight: 700; color: #1e2028; }
-.picker-nav { width: 26px; height: 26px; border-radius: 7px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #8a8fa8; transition: background 0.12s; }
-.picker-nav:hover { background: rgba(0,0,0,0.07); }
+.picker-year { font-size: 13px; font-weight: 700; color: var(--content-primary); }
+.picker-nav { width: 26px; height: 26px; border-radius: 7px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--content-secondary); transition: background 0.12s; }
+.picker-nav:hover { background: var(--surface-soft-hover); }
 .picker-months { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
-.picker-month { padding: 6px 0; border-radius: 8px; border: none; font-size: 12px; font-weight: 500; font-family: var(--font-family-ui); cursor: pointer; background: none; color: #1e2028; transition: all 0.12s; }
-.picker-month:hover { background: rgba(123,127,178,0.14); }
-.picker-month.active { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-weight: 700; box-shadow: 0 2px 6px rgba(123,127,178,0.3); }
+.picker-month { padding: 6px 0; border-radius: 8px; border: none; font-size: 12px; font-weight: 500; font-family: var(--font-family-ui); cursor: pointer; background: none; color: var(--content-primary); transition: all 0.12s; }
+.picker-month:hover { background: var(--action-soft-hover); }
+.picker-month.active { background: var(--action-primary-bg); color: var(--content-on-accent); font-weight: 700; box-shadow: var(--elevation-card); }
 .picker-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .picker-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .picker-enter-from,.picker-leave-to { opacity: 0; transform: scaleY(0.9) translateY(-6px); transform-origin: top; }

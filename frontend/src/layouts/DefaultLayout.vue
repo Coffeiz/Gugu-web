@@ -56,7 +56,10 @@
     <FilePreviewModal :show="!!previewStore.singleFile" :file="previewStore.singleFile" @close="previewStore.close" />
 
     <!-- 个人资料 Modal -->
-    <ProfileModal :show="uiStore.openProfile" @close="uiStore.openProfile = false" />
+    <ProfileModal :show="uiStore.openProfile" :initial-nav="uiStore.profileInitialNav || 'info'" @close="uiStore.openProfile = false; uiStore.profileInitialNav = null" />
+
+    <!-- 首次配置引导：状态由 onboarding composable 管理，布局只负责挂载。 -->
+    <OnboardingModal :show="shouldShowOnboarding" />
 
     <!-- 浮动预览窗口（图片 / 视频，可多开） -->
     <Teleport to="body">
@@ -72,7 +75,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { runOnboarding } from '@/composables/useOnboarding'
+import { runOnboarding, shouldShowOnboarding } from '@/composables/useOnboarding'
 import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'
@@ -90,6 +93,7 @@ import EventEditModal  from '@/components/events/EventEditModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
 import ProfileModal        from '@/components/common/ProfileModal.vue'
+import OnboardingModal     from '@/components/onboarding/OnboardingModal.vue'
 import FloatPreviewWindow    from '@/components/common/FloatPreviewWindow.vue'
 import NotificationBubble   from '@/components/common/NotificationBubble.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'

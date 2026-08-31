@@ -12,7 +12,16 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import get_settings
 from app.core.ratelimit import rate_limit
 from app.core.redis import get_redis
-from app.core.security import hash_password, verify_password, create_user_token, get_current_user
+from app.core.security import (
+    USER_ACCESS_COOKIE,
+    USER_CSRF_COOKIE,
+    clear_auth_cookies,
+    create_user_token,
+    get_current_user,
+    hash_password,
+    set_auth_cookies,
+    verify_password,
+)
 from app.core.tz import now_utc, iso_utc
 from app.db.session import get_db
 from app.models import User, AgentUsage, FrontendEvent
@@ -23,7 +32,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(body: UserRegister, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(body: UserRegister, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "register", 20, 3600)   # 同 IP 每小时最多 20 次注册尝试
     existing = await db.execute(
         select(User).where(
@@ -49,14 +58,16 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
     from onboarding.seed import seed_for_user
     await seed_for_user(db, user, locale=body.locale)
 
+    token = create_user_token(user.id)
+    set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return TokenResponse(
-        access_token=create_user_token(user.id),
+        access_token=token,
         user=UserResponse.from_user(user),
     )
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(body: UserLogin, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "login", 10, 300, extra=body.username)   # 同 IP+用户名 5 分钟最多 10 次
     # 登录标识既可以是用户名也可以是邮箱——两个字段都有唯一约束，不会互相碰撞匹配到别人。
     result = await db.execute(
@@ -75,10 +86,18 @@ async def login(body: UserLogin, request: Request, db: AsyncSession = Depends(ge
     db.add(FrontendEvent(user_id=user.id, event="web_login"))
     await db.commit()
 
+    token = create_user_token(user.id)
+    set_auth_cookies(response, token, USER_ACCESS_COOKIE, USER_CSRF_COOKIE, request)
     return TokenResponse(
-        access_token=create_user_token(user.id),
+        access_token=token,
         user=UserResponse.from_user(user),
     )
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    clear_auth_cookies(response, USER_ACCESS_COOKIE, USER_CSRF_COOKIE)
+    return {"ok": True}
 
 
 # ── 密码找回 ────────────────────────────────────────────────────────────────

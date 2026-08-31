@@ -54,7 +54,7 @@ from app.services.mind import (
     update_note as update_note_service,
 )
 from app.models import (
-    CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem,
+    CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem, Project,
     MindMap, MindNode, MindRelation, User,
 )
 from app.schemas import (
@@ -199,7 +199,15 @@ async def ref_suggest(
     """
     q = (q or "").strip()
     if not q:
-        return []
+        # `@` 刚触发时展示用户最近使用/更新的对象，用户继续输入后再切换为搜索结果。
+        recent: list[MindRefSuggestItem] = []
+        projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id).order_by(Project.updated_at.desc()).limit(limit))).all()
+        files = (await db.scalars(select(File).where(File.user_id == current_user.id, File.deleted_at.is_(None)).order_by(File.updated_at.desc()).limit(limit))).all()
+        events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id).order_by(CalendarEvent.date.desc()).limit(limit))).all()
+        recent.extend(MindRefSuggestItem(type="project", id=x.id, label=x.name, subtitle=x.client) for x in projects)
+        recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
+        recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
+        return recent[:limit * len(_REF_TYPES)]
     result = await run_global_search(db, current_user.id, q, per_type=limit, types=_REF_TYPES)
     items: list[MindRefSuggestItem] = []
     for g in result["groups"]:

@@ -1,6 +1,6 @@
 # PRD-ONBOARDING-1：新用户配置引导
 
-> 状态：待实施，已有播种内容、语言持久化和模型/IM配置能力
+> 状态：Phase 1、Phase 2 首版已完成，Phase 3 待实施
 > 创建：2026-08-31
 > 最近更新：2026-08-31
 > 关联模块：`backend/onboarding/`、`backend/app/api/v1/preferences.py`、`backend/app/api/v1/auth.py`、`frontend/src/composables/useOnboarding.ts`、`frontend/src/stores/preferences.ts`、`frontend/src/components/common/ProfileModal/`
@@ -14,8 +14,8 @@
 | 用户语言持久化 | 已有 | ✅ 已完成 | 语言写入用户偏好，前端加载后恢复。 |
 | 模型配置 | 已有 | ✅ 已完成 | 用户可以在个人设置中查看和配置模型。 |
 | IM 连接配置 | 已有 | ✅ 已完成 | 已有 Feishu、QQ、WeChat 等连接入口和状态。 |
-| 首次配置引导 | 无 | 🔲 待评估 | 当前只有播种状态，没有连续的欢迎、功能展示和配置进度。 |
-| 引导完成状态 | 无 | 🔲 待评估 | 需要支持跳过、继续和重新查看，不应依赖是否创建过项目。 |
+| 首次配置引导 | Phase 2 首版已完成 | ✅ 已完成 | 已有独立状态、首次展示判定、版本字段和主布局大尺寸引导弹窗；当前版本使用 `public/onboarding/` 中的 GIF 素材测试。 |
+| 引导完成状态 | Phase 2 首版已完成 | 🟡 部分完成 | 已支持步骤保存、关闭、完成和重新打开；真实配置清单与状态回填留在 Phase 3。 |
 
 ## 1. 背景与目标
 
@@ -65,6 +65,10 @@
 
 功能展示优先使用真实播种内容的名称和状态；如果某项播种内容缺失，展示仍必须正常，不得阻塞引导。页面提供“下一步”和“稍后设置”，不提供创建项目按钮。
 
+引导整体采用大尺寸弹窗，不新增独立页面。弹窗上方为产品功能演示区，使用固定 `3:4` 竖向比例展示真实界面截图、局部操作演示或轻量交互预览；下方为当前步骤的说明和设置区。演示区应优先呈现真实产品界面，不使用与实际功能无关的装饰性插图。
+
+当前版本上下分区：整个引导弹窗固定为 `4:3`；上半区为横向铺满的媒体演示区，下半区为说明和设置区。演示区使用 `frontend/public/onboarding/` 中的 MP4/GIF 素材，素材直接作为缩略图式背景内容展示，不再套模拟应用标题栏或窗口外框，底部以渐变淡出收束。移动端在可用高度不足时允许纵向滚动，底部固定操作区提供“上一步”“稍后设置”“下一步/完成”。
+
 ### FR-ONB-004：模型配置引导
 
 模型步骤展示当前模型状态，并提供两条清晰路径：
@@ -76,6 +80,8 @@
 
 模型步骤需要说明模型实际用于聊天、文件理解、项目整理和工具操作；不在此处展示过多 Provider 高级字段。
 
+模型的常用状态和操作直接放在弹窗下方设置区内，当前版本直接嵌入现有模型配置模块，不再打开个人设置弹窗，避免出现第二层选择界面和重复表单。
+
 ### FR-ONB-005：IM 连接引导
 
 IM 步骤展示 Feishu、QQ、WeChat 等现有渠道的连接入口和状态。每个渠道必须说明连接后的实际效果，包括接收提醒、查询项目或日历、私聊咕咕和必要的确认交互。
@@ -83,6 +89,8 @@ IM 步骤展示 Feishu、QQ、WeChat 等现有渠道的连接入口和状态。�
 用户可以连接一个或多个渠道，也可以跳过。连接成功后优先发送一条低风险测试消息或提供明确的测试动作；授权取消、连接失败和权限不足必须显示可理解的状态与重试入口。
 
 引导只负责调度现有连接流程，不直接保存平台凭据，不在前端日志、URL 或可见错误中输出密钥、Token 或授权参数。
+
+IM 的当前连接状态、渠道选择和测试动作放在弹窗下方设置区内。授权或绑定过程复用现有个人设置和连接流程；如需完整授权操作，可打开对应的个人设置入口，返回后刷新渠道状态，不在引导中嵌套另一套完整弹窗。
 
 ### FR-ONB-006：完成、跳过与恢复
 
@@ -100,32 +108,98 @@ IM 步骤展示 Feishu、QQ、WeChat 等现有渠道的连接入口和状态。�
 
 ### 3.1 状态与事实源
 
-`onboarding_state.state` 继续作为引导自身状态的事实源，扩展为版本化 JSON，建议包含：
+`onboarding_state.state` 继续作为同一用户的状态容器，但必须分成 `seed` 和 `guide` 两个独立命名空间。播种状态控制示例数据幂等性，弹窗引导状态控制 UI 版本和步骤进度；两者不得通过对方字段推断状态。
+
+建议结构如下：
 
 ```json
 {
-  "seeded": true,
-  "seeded_project_id": 123,
-  "seeded_project_name": "示例项目",
-  "guide_version": 1,
-  "current_step": "features",
-  "completed_steps": ["locale", "features"],
-  "dismissed": false,
-  "completed_at": null
+  "seed": {
+    "seeded": true,
+    "project_id": 123,
+    "project_name": "示例项目"
+  },
+  "guide": {
+    "enabled": true,
+    "version": 1,
+    "current_step": "features",
+    "completed_steps": ["locale", "features"],
+    "dismissed": false,
+    "completed_at": null
+  }
 }
 ```
 
 用户语言仍以 `UserPreferences.data.locale` 为事实源；引导不得复制一份语言字段。模型状态以现有模型/BYOK接口返回为准，IM 状态以现有各渠道连接接口返回为准。
 
-状态写入必须按用户所有权隔离，并通过现有 `onboarding` API 操作。未知字段需要保留，后续版本升级采用合并更新，不清空已有播种字段。
+状态写入必须按用户所有权隔离，并通过现有 `onboarding` API 操作。未知字段需要保留，后续版本升级采用合并更新，不清空已有播种字段。读取旧版扁平字段时只做兼容转换：播种字段进入 `seed`，引导字段进入 `guide`，旧用户不得因此自动开启弹窗引导。
 
 ### 3.2 页面与组件边界
 
 新增独立的引导容器和步骤组件，建议放在 `frontend/src/components/onboarding/` 或对应页面目录下；`useOnboarding.ts` 负责状态读取、步骤推进、跳过和完成，页面入口只负责展示和路由调度。
 
+引导容器负责大尺寸弹窗、遮罩和步骤切换；当前首版由 `OnboardingModal.vue` 统一编排，弹窗外框固定 `4:3`，上半区使用横向宽幅媒体容器和底部渐变淡出，下半区独立滚动。语言选择点击后立即写入现有偏好并刷新整张引导的文案；样式步骤复用 `useTheme` 即时应用 Aero/Mono 与明暗模式；模型步骤直接嵌入既有模型配置模块。长文案、窄屏和系统缩放下均不得出现内容溢出或底部操作区被遮挡。
+
 模型和 IM 连接应复用个人设置中已有组件或打开已有设置面板，避免出现两套表单、校验规则和授权流程。功能展示只读取项目、文件和日历现有数据，不额外创建演示数据。
 
 所有用户可见文案必须进入现有 i18n 消息表，并保持 `zh-CN`、`en-US`、`ja-JP` 的 key 集合一致。播种数据本身仍由注册时语言决定，不因引导切换语言而重写已有项目内容。
+
+### 3.2.1 文件与目标目录
+
+Phase 1 的新增和修改文件固定落在以下目录；后续实现不得把 onboarding 状态逻辑散落到业务页面或用户模型中：
+
+目录树：
+
+```text
+backend/
+└── onboarding/
+    ├── __init__.py                 # 注册 onboarding_state 模型
+    ├── models.py                   # 状态表与 seed/guide 容器兼容迁移
+    ├── state.py                    # 状态持久化与两个状态域的更新入口
+    ├── seed_state.py               # 播种状态规则
+    ├── seed.py                     # 注册时创建示例数据
+    ├── content.py                  # 播种内容池
+    ├── guide_state.py              # 弹窗引导版本、步骤和展示判定
+    ├── routes.py                   # 用户状态 API 与 Dev 调试 API
+    └── assets/                     # 播种附属素材
+
+backend/tests/
+└── test_onboarding_state.py        # Phase 1 状态与隔离测试
+
+frontend/src/
+├── composables/
+│   ├── useOnboarding.ts            # 两个状态域的兼容编排入口
+│   ├── useOnboardingSeed.ts        # 播种项目引用
+│   └── useOnboardingGuide.ts       # 弹窗引导状态与操作
+├── components/onboarding/
+│   └── OnboardingModal.vue         # Phase 2 大尺寸弹窗、3:4 演示区和步骤操作
+├── services/api.ts                 # onboarding API 请求封装
+├── stores/auth.ts                  # 账号边界清理两个状态域
+└── views/DevOnboarding.vue         # Dev 状态检查与重新触发入口
+
+frontend/src/i18n/messages.ts       # Phase 2 引导文案
+```
+
+| 类型 | 文件/目录 | 职责 |
+|---|---|---|
+| 已修改 | `backend/onboarding/models.py` | `onboarding_state` 持久化模型、两个状态域的默认容器和旧扁平状态兼容转换。 |
+| 已新增 | `backend/onboarding/seed_state.py` | 播种状态默认值和规范化；不处理弹窗步骤。 |
+| 已新增 | `backend/onboarding/guide_state.py` | 弹窗引导版本、步骤、首次展示判定和进度字段校验。 |
+| 已修改 | `backend/onboarding/state.py` | 通用状态读写，以及 seed/guide 两个状态域的更新入口。 |
+| 已修改 | `backend/onboarding/routes.py` | 用户状态读取、受控更新、重新打开和 Dev 调试接口。 |
+| 已修改 | `frontend/src/services/api.ts` | onboarding 状态读取、更新和重新打开请求封装。 |
+| 已修改 | `frontend/src/composables/useOnboarding.ts` | 兼容编排入口，只负责一次读取并分发两个状态域。 |
+| 已新增 | `frontend/src/composables/useOnboardingSeed.ts` | 播种项目 ID 和播种摘要引用。 |
+| 已新增 | `frontend/src/composables/useOnboardingGuide.ts` | 弹窗引导状态、首次展示状态和进度操作。 |
+| 已修改 | `frontend/src/stores/auth.ts` | 账号切换/退出时分别清理两个状态域。 |
+| 已新增 | `backend/tests/test_onboarding_state.py` | 状态迁移、首次展示、重新打开、非法字段和用户隔离测试。 |
+| 既有复用 | `backend/onboarding/seed.py`、`backend/onboarding/content.py` | 注册播种和示例内容，不在 Phase 1 重写。 |
+| 既有复用 | `backend/alembic/versions/20260627000001_add_onboarding_state.py` | `onboarding_state` 表结构迁移，不新增重复表。 |
+| Phase 2 已新增 | `frontend/src/components/onboarding/OnboardingModal.vue` | 大尺寸引导弹窗、3:4 演示区、语言/功能/模型/IM/完成步骤和操作栏。 |
+| Phase 2 已完成 | `frontend/src/composables/useOnboardingGuide.ts` | 使用既有引导状态推进步骤、保存进度、跳过和完成，不另建重复状态源。 |
+| Phase 2 已完成 | `frontend/src/i18n/messages.ts` | 引导步骤、按钮、状态和错误文案的三语言 key。 |
+
+文件边界约束：后端播种状态只放在 `backend/onboarding/seed_state.py`，弹窗引导规则只放在 `backend/onboarding/guide_state.py`；前端两类状态分别放在 `useOnboardingSeed.ts` 和 `useOnboardingGuide.ts`，展示组件放在 `components/onboarding/`；`useOnboarding.ts` 和 `DefaultLayout.vue` 只负责编排与挂载，不承载具体步骤业务逻辑。
 
 ### 3.3 API 与兼容性
 
@@ -170,30 +244,31 @@ cd frontend && npm run typecheck && npm run test:run
 | 用户跳过模型或 IM 后不理解下一步 | 配置完成率低 | 完成页和配置清单显示实际能力差异，并提供直接入口。 |
 | 引导状态被任意 JSON 覆盖 | 播种状态丢失或越权 | 后端只接受白名单字段和有限状态转换，并补所有权测试。 |
 | 多端同时打开引导 | 步骤互相覆盖 | 更新使用版本或更新时间条件，冲突时重新读取服务端状态。 |
+| `3:4` 演示图与长文案在小屏冲突 | 弹窗内容溢出或操作按钮不可见 | 演示区固定宽高比，设置区单独滚动，移动端改为上下布局并覆盖窄屏、系统缩放和长文案验收。 |
 
 待确认事项：
 
-- 功能展示是否采用纯静态卡片，还是使用播种项目中的真实名称做轻量动态演示。
+- 功能演示优先使用播种项目中的真实名称和状态；需要确定每个场景采用静态截图、局部动效还是轻量交互预览。
 - 完成后的配置清单默认展示多久，以及用户关闭后从哪个固定入口重新打开。
 - 模型和 IM 是否需要在完成页显示“推荐配置”，还是只展示当前真实状态。
 
 ## 6. 唯一实施 TODO
 
-### Phase 1：状态与入口
+### Phase 1：状态与入口（已完成）
 
-- [ ] `ONB-001` 扩展 `onboarding_state` 的版本化引导状态并增加白名单更新接口；验收：支持读取、推进、跳过、完成和恢复，保留既有播种字段，跨用户修改测试通过。
-- [ ] `ONB-002` 建立首次展示判定、版本迁移和主动重新打开入口；验收：新用户自动进入，已完成用户不被重复打断，刷新和重新登录可恢复。
+- [x] `ONB-001` 扩展 `onboarding_state` 的版本化引导状态并增加白名单更新接口；验收：支持读取、推进、跳过、完成和恢复，保留既有播种字段，跨用户修改测试通过。
+- [x] `ONB-002` 建立首次展示判定、版本迁移和主动重新打开入口；验收：新用户自动进入，已完成用户不被重复打断，刷新和重新登录可恢复。
 
-### Phase 2：引导流程
+### Phase 2：引导流程（首版已完成）
 
-- [ ] `ONB-010` 实现语言选择步骤并接入现有偏好持久化；验收：默认预选正确、切换即时生效、保存失败可重试，三种语言文案完整。
-- [ ] `ONB-011` 实现基于播种数据的功能展示步骤；验收：展示项目、文件、日历、Web 和 IM 场景，不创建或修改业务数据，播种缺失时仍可继续。
-- [ ] `ONB-012` 编排现有模型配置和验证流程；验收：系统默认、自定义模型成功、验证失败和跳过路径均能正确返回引导。
-- [ ] `ONB-013` 编排现有 IM 连接和测试流程；验收：至少一个渠道连接成功、取消、失败、多个渠道和跳过路径均可恢复。
-- [ ] `ONB-014` 实现完成页、配置清单和重新查看入口；验收：显示真实状态，提供项目、日历和对话试用动作，不重复创建示例数据。
+- [x] `ONB-010` 实现语言选择步骤并接入现有偏好持久化；点击语言后即时切换当前引导文案，三种语言文案已补齐。
+- [x] `ONB-011` 实现基于播种数据的功能展示步骤；大尺寸弹窗使用固定 `3:4` 演示区，不创建或修改业务数据。
+- [x] `ONB-012` 编排现有模型配置入口；模型步骤直接嵌入现有模型配置模块，沿用既有模型验证流程。
+- [x] `ONB-013` 编排现有 IM 配置入口；IM 步骤可打开个人设置的 IM 配置页，沿用既有连接和测试流程。
+- [ ] `ONB-014` 补齐真实配置清单、完成页试用动作和返回引导后的状态回填；当前首版已提供完成页、完成状态和重新查看入口。
 
 ### Phase 3：验证与上线
 
 - [ ] `ONB-020` 补齐后端所有权、状态迁移、并发更新和脱敏事件测试；验收：用户隔离、未知字段保留、非法状态拒绝和隐私边界均有回归覆盖。
-- [ ] `ONB-021` 补齐前端三语言、响应式布局、跳过恢复和模型/IM交互测试；验收：类型检查与前端测试通过，关键视口无溢出或文案重叠。
+- [ ] `ONB-021` 补齐前端三语言、响应式布局、3:4 演示区、跳过恢复和模型/IM交互测试；验收：类型检查与前端测试通过，关键视口无溢出、文案重叠或底部操作区遮挡，返回个人设置后能刷新真实配置状态。
 - [ ] `ONB-022` 在 devserver 完成新用户端到端验证并更新产品文档；验收：记录真实注册、引导、模型状态和 IM 连接结果，发布开关和回滚方式可执行。

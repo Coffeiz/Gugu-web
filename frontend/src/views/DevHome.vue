@@ -1,5 +1,5 @@
 <template>
-  <div class="dev-home">
+  <div class="dev-home glass-card">
     <header class="dev-header">
       <div>
         <span class="dev-kicker">GUGU / DEVELOPMENT</span>
@@ -10,15 +10,15 @@
     </header>
 
     <section class="tool-grid">
-      <article v-for="tool in devToolRegistry" :key="tool.path ?? tool.href" class="tool-card">
+      <article v-for="tool in devToolRegistry" :key="tool.path ?? tool.href" class="tool-card glass-card">
         <span class="tool-eyebrow">{{ tool.eyebrow ?? 'TOOL' }}</span>
         <div class="tool-row">
           <div>
             <h2>{{ tool.label }}</h2>
             <p>{{ tool.description }}</p>
           </div>
-          <button v-if="tool.external" class="tool-open" @click="openExternal(tool)">↗</button>
-          <router-link v-else-if="tool.path" class="tool-open" :to="tool.path">→</router-link>
+          <button v-if="tool.external" class="tool-open" @click="openExternal(tool)"><Icon name="action.next" :size="16" /></button>
+          <router-link v-else-if="tool.path" class="tool-open" :to="tool.path"><Icon name="action.next" :size="16" /></router-link>
         </div>
         <div class="tool-footer">
           <code>{{ tool.external ? tool.href : tool.path }}</code>
@@ -33,6 +33,7 @@
 
 <script setup lang="ts">
 import { devToolRegistry, type DevToolEntry } from './devRegistry'
+import Icon from '@/components/common/Icon.vue'
 
 function absoluteApiBase() {
   // 让 LoopScope 通过自己的 Vite 代理访问 Gugu，避免 4319 -> 5173/8000 的跨源 CORS。
@@ -82,10 +83,19 @@ function openExternal(tool: DevToolEntry) {
 
 <style scoped>
 .dev-home {
-  width: min(980px, calc(100% - var(--space-xl) * 2));
-  margin: 0 auto;
-  padding: calc(var(--space-xl) * 2) 0;
+  --dev-divider: color-mix(in srgb, var(--content-secondary) 22%, transparent);
+  --glass-card-background: var(--column-bg);
+  --glass-card-background-hover: var(--column-bg);
+  --glass-card-border: var(--border-default);
+  --glass-card-border-hover: var(--border-default);
+  --glass-card-shadow: var(--elevation-card);
+  --glass-card-shadow-hover: var(--elevation-card-hover);
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 22px 24px;
   color: var(--content-primary);
+  box-sizing: border-box;
 }
 .dev-header {
   display: flex;
@@ -93,7 +103,7 @@ function openExternal(tool: DevToolEntry) {
   justify-content: space-between;
   gap: var(--space-xl);
   padding-bottom: var(--space-xl);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--dev-divider);
 }
 .dev-kicker, .tool-eyebrow {
   font-size: var(--font-size-xs);
@@ -130,16 +140,17 @@ function openExternal(tool: DevToolEntry) {
 .tool-card {
   min-height: 176px;
   padding: var(--space-lg);
-  border: 1px solid var(--border-subtle);
+  --glass-card-background: var(--surface-glass);
+  --glass-card-background-hover: var(--surface-glass-hover);
+  --glass-card-border: var(--dev-divider);
+  --glass-card-border-hover: var(--border-default);
+  --glass-card-shadow: var(--elevation-card);
+  --glass-card-shadow-hover: var(--elevation-card-hover);
   border-radius: var(--radius-md);
-  background: var(--surface-card);
-  box-shadow: var(--elevation-card);
-  transition: transform .18s var(--motion-ease-standard), box-shadow .18s var(--motion-ease-standard), border-color .18s var(--motion-ease-standard);
+  transition: var(--card-motion), background var(--glass-card-transition);
 }
 .tool-card:hover {
   transform: translateY(-2px);
-  border-color: var(--border-default);
-  box-shadow: var(--elevation-card-hover);
 }
 .tool-row {
   display: grid;
@@ -159,10 +170,11 @@ function openExternal(tool: DevToolEntry) {
   background: var(--surface-raised);
   color: var(--action-primary);
   text-decoration: none;
-  font-size: var(--font-size-lg);
   cursor: pointer;
+  transition: background var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tool-open:hover { background: var(--action-soft); border-color: var(--action-outline); }
+.tool-open:hover { background: var(--action-soft-hover); border-color: var(--action-outline); transform: translateY(-1px); }
+.tool-open:active { transform: translateY(1px); }
 .tool-footer {
   display: flex;
   align-items: center;
@@ -170,13 +182,14 @@ function openExternal(tool: DevToolEntry) {
   gap: var(--space-sm);
   margin-top: var(--space-lg);
   padding-top: var(--space-md);
-  border-top: 1px solid var(--border-hairline);
+  border-top: 1px solid var(--dev-divider);
   color: var(--content-tertiary);
   font-size: var(--font-size-xs);
 }
 .tool-footer code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-note { margin-top: var(--space-lg); }
 @media (max-width: 720px) {
+  .dev-home { padding: var(--space-lg); }
   .tool-grid { grid-template-columns: 1fr; }
 }
 </style>

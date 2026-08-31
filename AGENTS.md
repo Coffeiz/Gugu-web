@@ -15,6 +15,11 @@
 
 完整设计文档见 `agentskills/design/references/`。历史开发文档见 `docs/development/`。
 
+## 本地开发机信息
+
+- 本地开发机、devserver、代理、Mutagen 和权限操作相关信息统一以 `agentskills/local/SKILL.md` 为准，不在本文件或其他 Git 跟踪文件中重复记录。
+- 密码、Token、API Key 等凭据只从本机安全存储或用户临时提供的环境变量读取，不写入仓库、命令、日志、提交记录或同步文件；本地运行信息不会作为凭据保存到 Git。
+
 ## Admin 前端拆分约定
 
 - 修改 `frontend/src/views/Admin/**/index.vue` 时，不得只继续堆叠模板、样式或业务逻辑；如果触及已有大入口文件，应顺手把可独立的模块、弹窗、表单区块拆到 `components/`，把状态与异步流程拆到 `composables/`，把请求和纯逻辑拆到对应 service/utils。

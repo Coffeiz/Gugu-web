@@ -43,7 +43,7 @@
               <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeVision" />
             </div>
-            <div class="byok-editor-actions"><button class="pm-style-chip" :disabled="testing === item.id" @click="test({ id: item.id, capability: editors[item.id].capability })">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === String(item.id) && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === item.id" @click="test({ id: item.id, capability: editors[item.id].capability })">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
             </div>
             </Transition>
             </template>
@@ -63,7 +63,7 @@
               <template v-if="newEditor.capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="newEditor.thinking_mode" :options="thinkingOptionsFor(newEditor)" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(newEditor, $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeNewVision" />
             </div>
-            <div class="byok-editor-actions"><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
           </div>
           <div v-if="message && messageCapability === group.value" class="byok-message pm-msg" :class="messageType">{{ message }}</div>
         </div>
@@ -114,7 +114,7 @@ const ollamaInterfaceOptions = computed(() => [
 ])
 const { t } = useI18n()
 const localizedVisionDims = computed(() => visionDims.map(dim => ({ ...dim, label: t(dim.labelKey) })))
-const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
+const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
 function providersFor(capability: string): readonly ProviderOption[] {
@@ -125,10 +125,11 @@ function thinkingEffortsFor(draft: Pick<Editor, 'provider' | 'model'>): Thinking
   return providerEfforts[draft.provider] || []
 }
 function thinkingOptionsFor(draft: Pick<Editor, 'provider' | 'model'>): ThinkingOption[] {
-  const supportsThinking = ['deepseek', 'qwen', 'mimo', 'glm', 'glm-coding', 'ollama'].includes(draft.provider)
+  const supportsThinking = ['deepseek', 'qwen', 'mimo', 'minimax', 'glm', 'glm-coding', 'ollama'].includes(draft.provider)
+  const minimaxM2 = draft.provider === 'minimax' && /\bM2(?:\.|-|$)/i.test(draft.model || '')
   return [
     { value: 'default', label: t(thinkingLabels.default) },
-    { value: 'disabled', label: t(thinkingLabels.disabled) },
+    ...(!minimaxM2 ? [{ value: 'disabled' as ThinkingMode, label: t(thinkingLabels.disabled) }] : []),
     ...(supportsThinking ? [{ value: 'adaptive' as ThinkingMode, label: t(thinkingLabels.adaptive) }] : []),
     ...thinkingEffortsFor(draft).map(value => ({ value, label: t(thinkingLabels[value]) })),
   ]
@@ -196,7 +197,32 @@ async function fetchModels(event?: MouseEvent) {
   finally { modelLoading.value = false }
 }
 function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) draft.model = model; modelMenuOpen.value = false }
-async function probeVision(dim: typeof visionDims[number]['key']) { if (!editor.value || !editor.value.provider || !editor.value.model) return; visionTesting.value = dim; try { const result = await byokApi.visionProbe({ provider: editor.value.provider, api_format: editor.value.api_format, base_url: editor.value.base_url, api_key: editor.value.value, credential_id: editor.value.id, model: editor.value.model, dim }); if (result.supported !== null) { const field = visionDims.find(item => item.key === dim)?.field; if (field && editor.value) { editor.value[field] = result.supported; const saved = items.value.find(item => item.id === editor.value?.id); if (saved) saved[field] = result.supported } } message.value = result.detail || (result.supported === true ? `${dim}能力支持` : result.supported === false ? `${dim}能力不支持` : `${dim}能力未能判定`); messageType.value = result.supported === true ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '多模态检测失败'; messageType.value = 'err' } finally { visionTesting.value = null } }
+async function probeVision(dim: typeof visionDims[number]['key']) {
+  const draft = editor.value
+  visionFeedbackTarget.value = draft?.id ? String(draft.id) : 'new'
+  if (!draft?.provider || !draft.model) {
+    visionFeedback.value = t('profileByokUi.detectMissingModel')
+    visionFeedbackType.value = 'err'
+    return
+  }
+  visionTesting.value = dim
+  try {
+    const result = await byokApi.visionProbe({ provider: draft.provider, api_format: draft.api_format, base_url: draft.base_url, api_key: draft.value, credential_id: draft.id, model: draft.model, dim })
+    if (result.supported !== null) {
+      const field = visionDims.find(item => item.key === dim)?.field
+      if (field) {
+        draft[field] = result.supported
+        const saved = items.value.find(item => item.id === draft.id)
+        if (saved) saved[field] = result.supported
+      }
+    }
+    visionFeedback.value = result.detail || (result.supported === true ? t('profileByokUi.detectSupported') : result.supported === false ? t('profileByokUi.detectUnsupported') : t('profileByokUi.detectUndetermined'))
+    visionFeedbackType.value = result.supported === true ? 'ok' : 'err'
+  } catch (e) {
+    visionFeedback.value = e instanceof Error ? e.message : t('profileByokUi.detectFailed')
+    visionFeedbackType.value = 'err'
+  } finally { visionTesting.value = null }
+}
 async function probeCardVisionAll(item: Item) {
   if (!item.provider || !item.model) return
   visionTesting.value = `${item.id}:all`
@@ -219,7 +245,7 @@ async function probeCardVisionAll(item: Item) {
 }
 async function load() { loading.value = true; error.value = ''; try { const result = await byokApi.list(); items.value = result.items as Item[]; needsReconfigure.value = result.status === 'needs_reconfigure' } catch (e) { error.value = e instanceof Error ? e.message : 'BYOK 加载失败' } finally { loading.value = false } }
 function setActiveEditor(id: number) { editor.value = editors.value[id] || null }
-function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', max_tokens: item.max_tokens ?? null, context_tokens: item.context_tokens, thinking: item.thinking, reasoning_effort: item.reasoning_effort, thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', max_tokens: null, context_tokens: null, thinking: null, reasoning_effort: null, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = '' }
+function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', max_tokens: item.max_tokens ?? null, context_tokens: item.context_tokens, thinking: item.thinking, reasoning_effort: item.reasoning_effort, thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', max_tokens: null, context_tokens: null, thinking: null, reasoning_effort: null, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; visionFeedback.value = ''; visionFeedbackTarget.value = null }
 function applyProviderTo(target: Editor, value: string) { applyProvider(target, value) }
 function closeNewEditor() { newEditor.value = null }
 function notifyQuotaChanged() { window.dispatchEvent(new Event('gugu-quota-changed')) }
@@ -293,7 +319,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOn
 .byok-subsection .asel-wrap { min-width: 0; }
 .byok-subsection .asel-trigger { width: 100%; box-sizing: border-box; }
 .byok-budget-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.byok-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.byok-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.byok-editor-feedback { flex: 1 1 auto; min-width: 0; margin-right: auto; overflow-wrap: anywhere; font-size: 11px; line-height: 1.35; }
+.byok-editor-actions > button { flex: 0 0 auto; white-space: nowrap; }
 .model-picker { position: relative; min-width: 0; }
 .model-picker-row { display: flex; gap: 6px; }
 .model-picker-row .form-input { min-width: 0; flex: 1; }

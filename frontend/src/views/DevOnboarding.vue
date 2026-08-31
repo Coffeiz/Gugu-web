@@ -6,12 +6,12 @@
     </header>
 
     <section class="hero-card">
-      <div class="hero-copy"><span class="hero-mark">✦</span><div><h2>{{ state?.seeded ? t('devOnboarding.seeded') : t('devOnboarding.notSeeded') }}</h2><p>{{ state?.seeded ? t('devOnboarding.reseedHint') : t('devOnboarding.description') }}</p></div></div>
+      <div class="hero-copy"><span class="hero-mark">✦</span><div><h2>{{ state?.seed?.seeded ? t('devOnboarding.seeded') : t('devOnboarding.notSeeded') }}</h2><p>{{ state?.seed?.seeded ? t('devOnboarding.reseedHint') : t('devOnboarding.description') }}</p></div></div>
       <div class="actions"><button class="button button-ghost" @click="refresh">{{ t('devOnboarding.refresh') }}</button><button class="button button-ghost" :disabled="busy" @click="resetGuide">{{ busy ? t('devOnboarding.resetGuideStarted') : t('devOnboarding.resetGuide') }}</button><button class="button button-primary" :disabled="busy" @click="reseed">{{ busy ? t('devOnboarding.reseedStarted') : t('devOnboarding.reseed') }}</button></div>
     </section>
 
     <section class="status-grid">
-      <article class="status-card"><span class="status-icon">⌂</span><div><p class="card-label">{{ t('devOnboarding.project') }}</p><strong>{{ state?.seeded ? t('devOnboarding.projectKept') : t('devOnboarding.notSeeded') }}</strong><small>{{ t('devOnboarding.projectId') }}：{{ state?.seeded_project_id ?? '—' }}</small></div></article>
+      <article class="status-card"><span class="status-icon">⌂</span><div><p class="card-label">{{ t('devOnboarding.project') }}</p><strong>{{ state?.seed?.seeded ? t('devOnboarding.projectKept') : t('devOnboarding.notSeeded') }}</strong><small>{{ t('devOnboarding.projectId') }}：{{ state?.seed?.project_id ?? '—' }}</small></div></article>
       <article class="status-card"><span class="status-icon">♫</span><div><p class="card-label">{{ t('devOnboarding.mp3') }}</p><strong>{{ t('devOnboarding.projectKept') }}</strong><small>{{ t('devOnboarding.reseedHint') }}</small></div></article>
       <article class="status-card muted"><span class="status-icon">◌</span><div><p class="card-label">{{ t('devOnboarding.bubble') }}</p><strong>{{ t('devOnboarding.bubbleRemoved') }}</strong><small>{{ t('devOnboarding.description') }}</small></div></article>
     </section>
@@ -25,6 +25,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onboardingApi } from '@/services/api'
+import { reopenOnboarding } from '@/composables/useOnboardingGuide'
 
 const { t } = useI18n()
 const state = ref<Record<string, any> | null>(null)
@@ -41,7 +42,7 @@ async function reseed() {
 }
 async function resetGuide() {
   busy.value = true; msg.value = t('devOnboarding.resetGuideStarted')
-  try { const r = await onboardingApi.devResetGuide(); state.value = r.state; msg.value = t('devOnboarding.resetGuideDone') } catch { msg.value = t('devOnboarding.resetGuideFailed') } finally { busy.value = false }
+  try { const r = await onboardingApi.devResetGuide(); state.value = r.state; await reopenOnboarding(); msg.value = t('devOnboarding.resetGuideDone') } catch { msg.value = t('devOnboarding.resetGuideFailed') } finally { busy.value = false }
 }
 
 onMounted(refresh)

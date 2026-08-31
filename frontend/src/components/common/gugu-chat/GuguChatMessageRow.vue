@@ -101,7 +101,7 @@ const vLazyFace = makeLazyThumbDirective('full')
 
 function onBodyClick(event: MouseEvent) {
   const target = event.target as HTMLElement
-  const refEl = target.closest<HTMLElement>('.chat-reference')
+  const refEl = target.closest<HTMLElement>('.mind-ref')
   if (!refEl) return
   const reference = props.msg.references?.find(item =>
     item.type === refEl.dataset.refType && String(item.id) === refEl.dataset.refId)
