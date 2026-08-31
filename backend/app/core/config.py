@@ -83,9 +83,9 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(4000, description="最大输出 token 数")
+    max_tokens: int = Field(8000, description="最大输出 token 数")
     temperature: float = Field(0.7, description="发散度 0~2")
-    context_tokens: int = Field(120000, description="历史上下文 token 预算")
+    context_tokens: int = Field(128000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
@@ -160,9 +160,9 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 4000
+    max_tokens: int = 8000
     temperature: float = 0.7
-    context_tokens: int = 120000
+    context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     vision: bool = False

@@ -95,8 +95,8 @@
               </div>
               <div class="preset-card-meta">
                 <span class="preset-model">{{ p.model }}</span>
-                <span class="preset-meta-item">out {{ p.max_tokens ?? 4000 }}</span>
-                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 120000 }}</span>
+                <span class="preset-meta-item">out {{ p.max_tokens ?? 8000 }}</span>
+                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 128000 }}</span>
                 <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
                 <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><Icon name="admin.eye" size="xs" />{{ t('agent.image') }}</span>
@@ -726,7 +726,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, temperature: 0.7, context_tokens: 128000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -737,7 +737,7 @@ function openNewPreset() {
 function openEditPreset(p: LlmPresetRecord) {
   editClosing.value = false
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '', vision_detail: p.vision_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
+  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, vision_detail: p.vision_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
