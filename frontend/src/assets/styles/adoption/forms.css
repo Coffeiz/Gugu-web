@@ -38,7 +38,6 @@ html[data-theme][data-family] :is(
   border-color: var(--input-border-focus);
   box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
 }
-html[data-theme][data-family] .rename-input-inline:focus:not(:disabled) { box-shadow: var(--input-hover-shadow); }
 html[data-theme][data-family] :is(
   .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
   .field-input, .stage-input, .tpl-name-input, .np-todo-input,
