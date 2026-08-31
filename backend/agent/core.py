@@ -25,6 +25,7 @@ from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 from app.core.tz import now_utc
 from agent.interactions.stream_events import encode_event
+from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_name
 
 _log = logging.getLogger("agent.core")
 
@@ -1050,9 +1051,21 @@ class LLMRunner:
                         driver.update_tools(ctx, [])
                 for call_index, tc in enumerate(result.tool_calls):
                     adapter_target = None
-                    if tc.name == "call_tool" and isinstance(tc.input, dict):
-                        adapter_target = str(tc.input.get("name") or "").strip() or None
-                    effective_tool_name = adapter_target or tc.name
+                    protocol_error = None
+                    raw_call_name = getattr(tc, "name", None)
+                    if not isinstance(raw_call_name, str):
+                        protocol_error = invalid_tool_call_payload()
+                    elif raw_call_name == "call_tool" and isinstance(tc.input, dict):
+                        raw_target_name = tc.input.get("name")
+                        if raw_target_name is not None and normalize_tool_name(raw_target_name) is None:
+                            protocol_error = invalid_tool_call_payload(
+                                reason="call_tool.name 必须是字符串"
+                            )
+                        else:
+                            adapter_target = normalize_tool_name(raw_target_name)
+                    effective_tool_name = adapter_target or (
+                        raw_call_name if isinstance(raw_call_name, str) else "invalid_tool_call"
+                    )
                     label = self._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label
@@ -1071,6 +1084,21 @@ class LLMRunner:
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
                     tool_calls_used += 1
+                    if protocol_error is not None:
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                        yield stream_event(
+                            "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, input={}, verify=verify_mode,
+                            status="invalid",
+                        )
+                        protocol_result = json.dumps(protocol_error, ensure_ascii=False)
+                        yield stream_event(
+                            "tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, verify=verify_mode,
+                            status="error", result=protocol_result,
+                        )
+                        dispatched.append((tc, protocol_result))
+                        continue
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
                         # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。

@@ -18,6 +18,18 @@ MAX_VALIDATION_ISSUES = 5
 _INTEGER_TEXT = re.compile(r"^[+-]?\d+$")
 
 
+def normalize_tool_name(value: Any) -> str | None:
+    """只接受字符串工具名，不把对象、数组等值强制转换成工具名。
+
+    工具名是协议标识，不是业务字段。将错误的 JSON 值转成字符串会把原始
+    参数伪装成一个新工具名，最终产生误导性的“未知工具”错误。
+    """
+    if not isinstance(value, str):
+        return None
+    name = value.strip()
+    return name or None
+
+
 def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
     normalized = dict(instance)
@@ -275,6 +287,16 @@ def invalid_input_payload(
     if hints:
         payload["schema_hints"] = hints
     return payload
+
+
+def invalid_tool_call_payload(*, path: str = "name", reason: str = "工具名必须是字符串") -> dict[str, Any]:
+    """返回工具调用外层协议错误，不回显模型传入的实际值。"""
+    return {
+        "error": "tool_call_invalid",
+        "issues": [{"path": path, "rule": "type", "message": reason}],
+        "usage_hint": "工具调用协议不正确。工具名必须是字符串，arguments 必须是 JSON object。",
+        "next_action": "请按工具 Schema 重新组织调用，不要把业务参数对象放到 name 字段。",
+    }
 
 
 def enrich_tool_error(tool_name: str, result: Any) -> Any:

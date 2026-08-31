@@ -260,6 +260,11 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     assert first_node["layout"]["recommended_center_distance"] == 750
     assert canvas_view["relations"][0]["source_side"] == "right"
     assert canvas_view["relations"][0]["target_side"] == "left"
+    audit = canvas_view["relation_audit"][0]
+    assert audit["recommended"] == {"source_side": "right", "target_side": "left"}
+    assert audit["status"] == "aligned"
+    assert audit["source"]["center"] == {"x": 132.0, "y": 94.0}
+    assert audit["target"]["center"] == {"x": 322.0, "y": 94.0}
 
     updated = await _canvas_update_anchor(db, user_a.id, {
         "canvas_id": canvas.id,
@@ -270,6 +275,10 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     assert updated["updated"] is True
     assert updated["source_side"] == "left"
     assert updated["target_side"] == "right"
+
+    custom_view = await _canvas_get(db, user_a.id, {"canvas_id": canvas.id})
+    assert custom_view["relation_audit"][0]["status"] == "custom"
+    assert "可能是有意的回环布局" in custom_view["relation_audit"][0]["reason"]
 
 
 async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a):

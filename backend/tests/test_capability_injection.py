@@ -10,7 +10,7 @@ from agent.tools.meta import _use_skill
 from agent.capabilities.diagnostics import capability_injection_diagnostics
 from agent.runtime.loopscope_trace.hooks import _skill_result_metadata
 from agent.runtime.loopscope_trace.hooks import _tool_names_from_schemas
-from agent.tools.tool_contract import invalid_input_payload
+from agent.tools.tool_contract import invalid_input_payload, invalid_tool_call_payload, normalize_tool_name
 
 
 def test_catalog_contains_short_descriptions_only():
@@ -79,6 +79,19 @@ def test_fixed_adapter_preserves_nested_and_flattened_business_arguments():
         "url": "https://example.com",
     }) == {"url": "https://example.com"}
     assert _resolve_adapter_arguments({"name": "http_get"}) == {}
+
+
+def test_tool_name_protocol_does_not_stringify_business_objects():
+    """错误的 name 对象必须停在协议校验，不得变成一个伪工具名。"""
+    assert normalize_tool_name("  canvas_create  ") == "canvas_create"
+    assert normalize_tool_name({"canvas_id": 161, "relation_id": 837}) is None
+    assert normalize_tool_name(["canvas_create"]) is None
+    payload = invalid_tool_call_payload(reason="call_tool.name 必须是字符串")
+    assert payload["error"] == "tool_call_invalid"
+    assert payload["issues"] == [{
+        "path": "name", "rule": "type", "message": "call_tool.name 必须是字符串"
+    }]
+    assert "canvas_id" not in str(payload)
 
 
 def test_capability_diagnostics_are_redacted_to_metrics():

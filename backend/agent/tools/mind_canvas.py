@@ -76,6 +76,59 @@ def _limit(value: Any, default: int = 10) -> int:
     return max(1, min(value, _MAX_RESULTS))
 
 
+def _relation_anchor_audit(
+    relation: Any,
+    node_by_id: dict[int, dict[str, Any]],
+    canvas: Any,
+) -> dict[str, Any]:
+    """为模型提供基于卡片位置的连接点核对信息。
+
+    related 关系的节点 ID 会在服务层归一，不能把 ID 顺序当成画面方向。
+    这里仅给出几何上的默认建议；已保存的同侧端点仍标记为 custom，保留
+    loop 等有意布局，不在读取阶段擅自改线。
+    """
+    source = node_by_id.get(relation.src_node_id)
+    target = node_by_id.get(relation.dst_node_id)
+    current = relation_anchor_from_canvas(canvas, relation.id)
+    audit: dict[str, Any] = {
+        "relation_id": relation.id,
+        "source_node_id": relation.src_node_id,
+        "target_node_id": relation.dst_node_id,
+        "current": current or {"source_side": None, "target_side": None},
+    }
+    if source is None or target is None:
+        audit["status"] = "incomplete"
+        audit["reason"] = "关系两端没有同时出现在本次快照中"
+        return audit
+
+    def center(node: dict[str, Any]) -> tuple[float, float]:
+        position = node.get("position") or {}
+        size = (node.get("layout") or {}).get("effective_size") or {}
+        return (
+            float(position.get("x", 0)) + float(size.get("w", 0)) / 2,
+            float(position.get("y", 0)) + float(size.get("h", 0)) / 2,
+        )
+
+    source_center = center(source)
+    target_center = center(target)
+    expected = (
+        {"source_side": "right", "target_side": "left"}
+        if target_center[0] >= source_center[0]
+        else {"source_side": "left", "target_side": "right"}
+    )
+    audit["source"] = {"node_id": relation.src_node_id, "center": {"x": source_center[0], "y": source_center[1]}}
+    audit["target"] = {"node_id": relation.dst_node_id, "center": {"x": target_center[0], "y": target_center[1]}}
+    audit["recommended"] = expected
+    if current is None:
+        audit["status"] = "implicit"
+    elif current == expected:
+        audit["status"] = "aligned"
+    else:
+        audit["status"] = "custom"
+        audit["reason"] = "当前端点与按水平位置计算的默认端点不同，可能是有意的回环布局"
+    return audit
+
+
 def _mutation_entries(args: dict, plural_key: str) -> tuple[list[dict[str, Any]], bool, str | None]:
     """把单项参数统一成批量条目，同时保持旧的单项返回契约。"""
     raw = args.get(plural_key)
@@ -219,6 +272,10 @@ async def _canvas_get(db, user_id, args: dict):
         node_ids = [node.id for _, node in visible_rows]
         if node_ids:
             relations = await list_canvas_relations(db, user_id, node_ids)
+            node_by_id = {
+                node.id: _node_summary(node, item, include_content=False)
+                for item, node in visible_rows
+            }
             result["relations"] = [
                 {
                     "relation_id": relation.id,
@@ -230,8 +287,13 @@ async def _canvas_get(db, user_id, args: dict):
                 }
                 for relation in relations
             ]
+            result["relation_audit"] = [
+                _relation_anchor_audit(relation, node_by_id, canvas)
+                for relation in relations
+            ]
         else:
             result["relations"] = []
+            result["relation_audit"] = []
     return result
 
 
@@ -769,7 +831,11 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_get", label="读取思维画布",
             description_short='读取画布节点、连接和 viewport。',
-            description="读取画布节点、连接和最后查看的 camera/viewport；排布时参考节点实际尺寸。",
+            description=(
+                "只读读取画布节点、连接和最后查看的 camera/viewport；排布或检查连线时必须参考节点实际尺寸、"
+                "position 和 relation_audit。relation_audit 按两端卡片中心坐标给出 recommended 端点，"
+                "custom 只表示当前端点与默认建议不同，不代表可以直接修改；不要仅凭节点 ID 顺序判断左右。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -955,8 +1021,14 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_connect", label="连接画布节点",
-            description_short='连接同画布节点；可指定 source_side/target_side',
-            description="连接同一画布中的节点；默认 related 且幂等，可指定两端连接点。",
+            description_short='连接同画布节点；按卡片位置选择连接点',
+            description=(
+                "连接同一画布中的节点；默认 related 且幂等，可指定两端连接点。调用前先用 canvas_get 读取两端位置，"
+                "按卡片中心的水平坐标选择端点：目标在源右侧时 source_side=right、target_side=left；"
+                "目标在源左侧时 source_side=left、target_side=right。source_node_id/target_node_id 可能按 ID 归一，"
+                "不能用 ID 顺序代替位置判断。用户未明确要求回环时不要使用 left/left 或 right/right。"
+                "同一个卡片的同一 left/right 端口允许连接多个不同节点；不要为了避免多线而擅自换到另一侧。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
