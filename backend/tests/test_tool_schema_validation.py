@@ -12,6 +12,7 @@ from app.models import Project
 
 import agent.tools.base as tool_base
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
+from agent.tools.tool_contract import normalize_input_by_schema
 
 
 async def _ok_handler(db, user_id, args):
@@ -130,13 +131,88 @@ async def test_boolean_type_error_explains_native_json_value():
     })
 
     raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
-        "confirm": "true",
+        "confirm": "yes",
     })
     payload = json.loads(raw)
 
     assert payload["schema_hints"] == [
         "confirm 必须是 boolean：使用 true 或 false，不要加引号。",
     ]
+
+
+def test_schema_normalization_converts_numeric_text_and_omits_optional_empty_values():
+    normalized, adaptations = normalize_input_by_schema({
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "temperature": {"type": "number"},
+            "include_content": {"type": "boolean"},
+            "offset": {"type": "integer"},
+        },
+    }, {"limit": "20", "temperature": "0.7", "include_content": "TRUE", "offset": "  "})
+
+    assert normalized == {"limit": 20, "temperature": 0.7, "include_content": True}
+    assert adaptations == [
+        "limit:string_to_integer",
+        "temperature:string_to_number",
+        "include_content:string_to_boolean",
+        "offset:empty_omitted",
+    ]
+
+
+def test_schema_normalization_does_not_guess_required_empty_numbers_or_array_shapes():
+    schema = {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "include_content": {"type": "boolean"},
+            "types": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["limit"],
+    }
+    normalized, adaptations = normalize_input_by_schema(
+        schema, {"limit": "", "include_content": "", "types": {"item": ["project", "file"]}}
+    )
+
+    assert normalized == {"limit": "", "types": {"item": ["project", "file"]}}
+    assert adaptations == ["include_content:empty_omitted"]
+
+
+async def test_dispatch_applies_schema_normalization_before_handler():
+    seen = None
+
+    async def handler(db, user_id, args):
+        nonlocal seen
+        seen = dict(args)
+        return {"ok": True}
+
+    reg, _ = _make_registry({
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "include_content": {"type": "boolean"},
+        },
+    }, handler)
+    raw, _ = await reg.dispatch(
+        "not-a-uuid", "schema_test_tool",
+        {"limit": "20", "include_content": "true"},
+    )
+
+    assert json.loads(raw)["ok"] is True
+    assert seen == {"limit": 20, "include_content": True}
+
+
+async def test_dispatch_keeps_required_empty_number_invalid():
+    reg, _ = _make_registry({
+        "type": "object",
+        "properties": {"limit": {"type": "integer"}},
+        "required": ["limit"],
+    })
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {"limit": ""})
+
+    payload = json.loads(raw)
+    assert payload["error"] == "tool_input_invalid"
+    assert payload["issues"][0]["path"] == "limit"
 
 
 async def test_additional_properties_default_allowed(db, user_a):
