@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +27,34 @@ class _FakeStream:
 
     def has_sent(self) -> bool:
         return self.sent
+
+
+def test_collect_and_stream_share_im_preparation_rules():
+    from agent import runner
+    from agent.models import AgentRequest
+
+    source = Path(runner.__file__).read_text(encoding="utf-8")
+    assert source.count("_snapshot_im_memory(") >= 3
+    assert source.count("_proactive_lead_for(req, history)") == 2
+    assert source.count("chat_attach.should_transcribe_audio(model_cfg)") == 2
+
+    private_req = AgentRequest(
+        message="hello", user_id="user", user_name="member", source="qq",
+        platform_user_id="platform-user",
+    )
+    snapshot, saved_memory = runner._snapshot_im_memory(
+        "base", {"platform_user": {"summary": "stable preference"}}, private_req,
+        restricted=True,
+    )
+    assert "当前发言人的平台记忆" in snapshot
+    assert saved_memory == {"platform_user": {"summary": "stable preference"}}
+
+    group_req = AgentRequest(
+        message="hello", user_id="user", user_name="member", source="qq",
+        chat_id="group",
+    )
+    assert runner._proactive_lead_for(group_req, [SimpleNamespace(role="assistant", content="lead")]) == "lead"
+    assert runner._proactive_lead_for(private_req, [SimpleNamespace(role="assistant", content="lead")]) == ""
 
 
 @pytest.mark.asyncio

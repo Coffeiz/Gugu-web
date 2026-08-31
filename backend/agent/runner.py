@@ -10,7 +10,6 @@ from app.core.tz import now_utc, set_ctx_tz
 
 import asyncio
 import json
-from types import SimpleNamespace
 from typing import AsyncGenerator, AsyncIterator, List, Tuple
 
 from sqlalchemy import select
@@ -21,7 +20,7 @@ from agent import quota
 from agent.context import builder, loaders, tokens, session_snapshot, assembly, session_history, audit, run_context
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
-from agent.im.context_loader import load_context_data, load_platform_user_memory
+from agent.im.context_loader import load_context_data
 from agent.im.permissions import filter_tool_names
 from agent.im.session import (
     GROUP_CONTEXT_LIMIT,
@@ -42,6 +41,39 @@ def _canonical_tool_batch_records(messages) -> list[dict]:
     return [record for record in records
             if isinstance(record, dict)
             and (record.get("metadata") or {}).get("round_id")]
+
+
+def _snapshot_im_memory(snapshot_context: str, im_memory: dict, req: AgentRequest,
+                        *, restricted: bool) -> tuple[str, dict]:
+    """统一把有权限的 IM 记忆写入 snapshot，并返回 snapshot 保存形状。"""
+    from agent.im.context_loader import format_group_memory, format_platform_user_memory
+
+    group_memory = (im_memory or {}).get("group") or {}
+    group_block = format_group_memory({"group": group_memory})
+    if group_block:
+        snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
+
+    private_member_memory = {}
+    if not req.chat_id and restricted:
+        private_member_memory = (im_memory or {}).get("platform_user") or {}
+        member_block = format_platform_user_memory(
+            {"platform_user": private_member_memory}
+        )
+        if member_block:
+            snapshot_context = f"{snapshot_context}\n\n---\n\n{member_block}"
+
+    snapshot_memory = {"group": group_memory} if req.chat_id else {
+        "platform_user": private_member_memory,
+    }
+    return snapshot_context, snapshot_memory
+
+
+def _proactive_lead_for(req: AgentRequest, history: list) -> str:
+    """主动消息前导只属于群聊，避免私聊重复注入历史首条 assistant。"""
+    if not req.chat_id:
+        return ""
+    nonsumm = [item for item in history if getattr(item, "role", None) != "summary"]
+    return nonsumm[0].content if nonsumm and nonsumm[0].role == "assistant" else ""
 
 
 async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
@@ -347,21 +379,10 @@ async def _run_collect_unlocked(
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
             )
-            from agent.im.context_loader import format_group_memory, format_platform_user_memory
-            group_memory = (data.im_memory or {}).get("group") or {}
-            group_block = format_group_memory({"group": group_memory})
-            if group_block:
-                snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
-            # 私聊 member 只把当前平台用户的稳定记忆放进 snapshot；不注入 daily
-            # 或 owner 记忆。群聊仍只走上面的群公开记忆分支。
-            private_member_memory = {}
-            if not req.chat_id and context_policy.restricted:
-                private_member_memory = (data.im_memory or {}).get("platform_user") or {}
-                member_block = format_platform_user_memory(
-                    {"platform_user": private_member_memory}
-                )
-                if member_block:
-                    snapshot_context = f"{snapshot_context}\n\n---\n\n{member_block}"
+            snapshot_context, snapshot_im_memory = _snapshot_im_memory(
+                snapshot_context, data.im_memory, req,
+                restricted=context_policy.restricted,
+            )
             return {
                 "system_prompt": static_prompt,
                 "snapshot_context": snapshot_context,
@@ -370,9 +391,7 @@ async def _run_collect_unlocked(
                 "user_tz": data.user_tz,
                 "im_channels": data.im_channels,
                 # 共享 snapshot 只保存当前群公开记忆；成员个人记忆按请求动态读取。
-                "im_memory": ({"group": group_memory}
-                              if req.chat_id else
-                              {"platform_user": private_member_memory}),
+                "im_memory": snapshot_im_memory,
                 "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory),
             }
 
@@ -382,11 +401,6 @@ async def _run_collect_unlocked(
         # 兼容旧 snapshot：旧版本把群记忆放在动态尾部，命中旧快照时恢复到正文。
         from agent.im.context_loader import restore_group_memory_snapshot
         restore_group_memory_snapshot(snapshot)
-        member_memory = await load_platform_user_memory(req)
-        context_data = SimpleNamespace(im_memory={
-            "group": (snapshot.get("im_memory") or {}).get("group") or {},
-            "platform_user": member_memory,
-        })
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
         history = await session_history.load_session_history(
@@ -403,10 +417,7 @@ async def _run_collect_unlocked(
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
-        _proactive_lead = ""
-        if req.chat_id:
-            _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
-            _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
+        _proactive_lead = _proactive_lead_for(req, history)
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
@@ -801,17 +812,15 @@ async def _run_stream_unlocked(
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
             )
-            from agent.im.context_loader import format_group_memory
-            group_memory = (data.im_memory or {}).get("group") or {}
-            group_block = format_group_memory({"group": group_memory})
-            if group_block:
-                snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
+            snapshot_context, snapshot_im_memory = _snapshot_im_memory(
+                snapshot_context, data.im_memory, req,
+                restricted=context_policy.restricted,
+            )
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": req.source,
                                       "chat_id": req.chat_id, "profile": profile.prompt_file},
                     "user_tz": data.user_tz, "im_channels": data.im_channels,
-                    # 共享 snapshot 只保存当前群公开记忆；成员个人记忆按请求动态读取。
-                    "im_memory": {"group": group_memory},
+                    "im_memory": snapshot_im_memory,
                     "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory)}
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
@@ -821,12 +830,6 @@ async def _run_stream_unlocked(
         _legacy_group = format_group_memory({"group": (snapshot.get("im_memory") or {}).get("group") or {}})
         if _legacy_group and "## 当前群组记忆（仅限本群公开信息）" not in (snapshot.get("snapshot_context") or ""):
             snapshot["snapshot_context"] = f"{snapshot.get('snapshot_context') or ''}\n\n---\n\n{_legacy_group}"
-        member_memory = await load_platform_user_memory(req)
-        context_data = SimpleNamespace(im_memory={
-            "group": (snapshot.get("im_memory") or {}).get("group") or {},
-            "platform_user": member_memory,
-        })
-
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
         history = await session_history.load_session_history(
             db,
@@ -839,8 +842,7 @@ async def _run_stream_unlocked(
         if strip_thinking:
             clean_persisted_history(history)
             strip_thinking = False
-        _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
-        _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
+        _proactive_lead = _proactive_lead_for(req, history)
 
         from app.core import chat_attach
         llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
@@ -899,7 +901,7 @@ async def _run_stream_unlocked(
 
     # 语音转写（跟 run_collect 一致）：不支持时直接结束
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    if _transcribe_media:
+    if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
         async with _sess._SessionLocal() as voice_db:
             transcript = await _voice.transcribe(
