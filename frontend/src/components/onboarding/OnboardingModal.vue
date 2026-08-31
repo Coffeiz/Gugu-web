@@ -10,8 +10,10 @@
       <main class="onboarding-main">
         <Transition name="onboarding-step" mode="out-in">
           <section :key="step" class="onboarding-step">
-            <div class="onboarding-visual">
+            <div class="onboarding-visual" :class="{ 'theme-visual': step === 'style' }">
+              <OnboardingThemePreview v-if="step === 'style'" class="theme-preview-host" />
               <img
+                v-else
                 class="onboarding-media"
                 :src="mediaSource"
                 :alt="mediaAlt"
@@ -56,6 +58,17 @@
                     <small>{{ t(`onboardingUi.features.${item.key}.description`) }}</small>
                   </span>
                 </div>
+              </div>
+
+              <div v-else-if="step === 'style'" class="theme-options content-options">
+                <ThemeSwitcher
+                  :model-value="preference"
+                  :family="family"
+                  :palette="palette"
+                  @update:model-value="setTheme"
+                  @update:family="setFamily"
+                  @update:palette="setPalette"
+                />
               </div>
 
               <div v-else-if="step === 'model'" class="direct-settings content-options">
@@ -137,16 +150,20 @@ import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
 import ProfileByokPane from '@/components/common/ProfileModal/ProfileByokPane.vue'
 import ProfileImPane from '@/components/common/ProfileModal/ProfileImPane.vue'
+import OnboardingThemePreview from '@/components/onboarding/OnboardingThemePreview.vue'
+import ThemeSwitcher from '@/views/Design/components/ThemeSwitcher.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { getLocale, type SupportedLocale } from '@/i18n'
+import { useTheme } from '@/composables/useTheme'
 import { onboardingGuideState, updateOnboardingGuide } from '@/composables/useOnboardingGuide'
 
 defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
 const { t } = useI18n()
 const preferences = usePreferencesStore()
+const { preference, family, palette, setTheme, setFamily, setPalette } = useTheme()
 
-const steps = ['locale', 'features', 'model', 'im', 'complete'] as const
+const steps = ['locale', 'features', 'style', 'model', 'im', 'complete'] as const
 type Step = typeof steps[number]
 
 const index = ref(0)
@@ -173,10 +190,9 @@ const featureItems = [
 ]
 
 watch(onboardingGuideState, value => {
-  const saved = value?.current_step
+  const saved = value?.current_step as Step | undefined
   if (!saved) return
-  const normalized = saved === 'style' ? 'model' : saved
-  const savedIndex = steps.indexOf(normalized as Step)
+  const savedIndex = steps.indexOf(saved)
   index.value = savedIndex >= 0 ? savedIndex : 0
 }, { immediate: true })
 
@@ -274,6 +290,16 @@ async function next() {
   object-position: center;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 68%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 68%, transparent 100%);
+}
+
+.onboarding-visual.theme-visual {
+  padding: 22px 48px 46px;
+  background: var(--surface-page);
+}
+
+.theme-preview-host {
+  width: 100%;
+  height: 100%;
 }
 
 .visual-close {
@@ -387,9 +413,7 @@ async function next() {
   font-weight: 750;
 }
 
-.locale-copy {
-  min-width: 0;
-}
+.locale-copy { min-width: 0; }
 
 .locale-copy b,
 .feature-option b,
@@ -459,6 +483,21 @@ async function next() {
   color: var(--action-primary);
 }
 
+.theme-options {
+  display: flex;
+  justify-content: center;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--card-radius);
+  background: var(--surface-soft);
+}
+
+.theme-options :deep(.theme-controls) {
+  width: 100%;
+  margin-left: 0;
+  justify-content: center;
+}
+
 .direct-settings {
   min-height: 0;
   display: flex;
@@ -489,9 +528,7 @@ async function next() {
   background: var(--status-success);
 }
 
-.status-dot.neutral {
-  background: var(--content-tertiary);
-}
+.status-dot.neutral { background: var(--content-tertiary); }
 
 .summary-tag {
   flex: 0 0 auto;
@@ -534,10 +571,7 @@ async function next() {
   font-weight: 800;
 }
 
-.complete-copy b {
-  display: block;
-  font-size: 14px;
-}
+.complete-copy b { display: block; font-size: 14px; }
 
 .onboarding-actions {
   position: relative;
@@ -568,9 +602,7 @@ async function next() {
 }
 
 .onboarding-progress span.active,
-.onboarding-progress span.done {
-  background: var(--action-primary);
-}
+.onboarding-progress span.done { background: var(--action-primary); }
 
 .action-group {
   justify-self: end;
@@ -597,9 +629,7 @@ async function next() {
 }
 
 .onboarding-modal[data-step='model'] .content-heading p,
-.onboarding-modal[data-step='im'] .content-heading p {
-  margin-top: 6px;
-}
+.onboarding-modal[data-step='im'] .content-heading p { margin-top: 6px; }
 
 .onboarding-modal[data-step='model'] .content-options,
 .onboarding-modal[data-step='im'] .content-options {
@@ -615,46 +645,17 @@ async function next() {
     transform var(--motion-default) var(--motion-ease-standard);
 }
 
-.onboarding-step-enter-from {
-  opacity: 0;
-  transform: translateX(8px);
-}
-
-.onboarding-step-leave-to {
-  opacity: 0;
-  transform: translateX(-8px);
-}
+.onboarding-step-enter-from { opacity: 0; transform: translateX(8px); }
+.onboarding-step-leave-to { opacity: 0; transform: translateX(-8px); }
 
 @media (max-width: 720px) {
-  .onboarding-visual {
-    flex-basis: 230px;
-  }
-
-  .onboarding-content {
-    padding-right: 20px;
-    padding-left: 20px;
-  }
-
-  .locale-options,
-  .feature-options {
-    grid-template-columns: 1fr;
-  }
-
-  .onboarding-actions {
-    grid-template-columns: 1fr auto;
-    gap: 10px;
-    padding: 0 14px;
-  }
-
-  .onboarding-progress {
-    position: absolute;
-    left: 50%;
-    top: -14px;
-    transform: translateX(-50%);
-  }
-
-  .action-group {
-    grid-column: 2;
-  }
+  .onboarding-visual { flex-basis: 230px; }
+  .onboarding-visual.theme-visual { padding: 16px 18px 38px; }
+  .theme-preview-host { min-width: 660px; transform: scale(.72); transform-origin: top left; width: 138%; height: 138%; }
+  .onboarding-content { padding-right: 20px; padding-left: 20px; }
+  .locale-options,.feature-options { grid-template-columns: 1fr; }
+  .onboarding-actions { grid-template-columns: 1fr auto; gap: 10px; padding: 0 14px; }
+  .onboarding-progress { position: absolute; left: 50%; top: -14px; transform: translateX(-50%); }
+  .action-group { grid-column: 2; }
 }
 </style>
