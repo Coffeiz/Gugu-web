@@ -36,7 +36,7 @@
     <template v-else>
       <div v-if="isHeading" class="nc-head">
         <span class="nc-title" @click="startEditAt('title')">{{ title }}</span>
-        <CardAffordances :hovering="isHovering && !editing" actions-placement="inline" :node-id="null">
+        <CardAffordances :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="inline" :node-id="null">
           <template #actions>
           <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
           <button class="nc-icon" :title="t('mindUi.edit')" @pointerdown.stop @click.stop="startEditAt(null)">
@@ -48,7 +48,7 @@
           </template>
         </CardAffordances>
       </div>
-      <CardAffordances v-else :hovering="isHovering && !editing" actions-placement="float" :node-id="null">
+      <CardAffordances v-else :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="float" :node-id="null">
         <template #actions>
         <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
         <button class="nc-icon" :title="t('mindUi.edit')" @pointerdown.stop @click.stop="startEditAt(null)">
@@ -71,7 +71,7 @@
          跟文件/活动/项目引用卡三种画布卡片同样的路数（见 NoteSticker.vue 的说明）。 -->
     <CardAffordances
       v-if="canvasMode"
-      :node-id="note.id" :hovering="isHovering && !editing" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
+      :node-id="note.id" :hovering="isHovering && !editing && !runtimeHoverSuppressed" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
       @connect-drag-start="(e, side) => emit('connect-drag-start', e, side)"
     />
   </div>
@@ -126,6 +126,7 @@ const props = defineProps<{
   // v-if="canvasMode"。NoteSticker.vue 原样转发 MindCanvas.vue 给它的同名 prop。
   connecting?: boolean
   connectionTargetSide?: 'left' | 'right' | null
+  runtimeHoverSuppressed?: boolean
 }>()
 
 const emit = defineEmits<{

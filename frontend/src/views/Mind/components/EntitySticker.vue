@@ -22,7 +22,7 @@
     </span>
     <CardAffordances
       v-if="!isTombstone"
-      :hovering="isHovering"
+      :hovering="isHovering && !isHoverSuppressed"
       :node-id="item.nodeId"
       :connecting="connecting"
       :target-side="connectionTargetSide"
@@ -117,6 +117,7 @@ const eventTimeLabel = computed(() => {
 
 const isHovering = ref(false)
 function onEnter() {
+  if (isHoverSuppressed.value) return
   isHovering.value = true
   emit('hover', props.item, true)
 }
@@ -147,7 +148,7 @@ onMounted(() => nextTick(observeCard))
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
 
-const { onPointerDown } = useMindRuntimeObject({
+const { isHoverSuppressed, onPointerDown } = useMindRuntimeObject({
   objectId: () => mindCanvasObjectId(props.item),
   element: () => cardRef.value,
 })

@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { runtime } from '@/interaction/runtime'
 import type { MoveAction } from '@/interaction/runtime'
 import {
@@ -25,25 +25,35 @@ export function useMindRuntimeObject(options: {
   let stopAction: (() => void) | null = null
   let phaseObserver: MutationObserver | null = null
   let hoverSuppressionCleanup: (() => void) | null = null
+  const hoverSuppressed = ref(false)
 
   const clearHoverSuppression = () => {
     hoverSuppressionCleanup?.()
     hoverSuppressionCleanup = null
+    hoverSuppressed.value = false
   }
 
   const suppressHoverUntilLeave = (element: HTMLElement) => {
     clearHoverSuppression()
-    if (!element.matches(':hover')) return
+    hoverSuppressed.value = true
     element.dataset.runtimeHoverSuppressed = 'true'
     const onLeave = () => {
+      if (element.dataset.runtimePhase !== 'idle') return
       delete element.dataset.runtimeHoverSuppressed
+      hoverSuppressed.value = false
       hoverSuppressionCleanup = null
     }
     element.addEventListener('pointerleave', onLeave, { once: true })
     hoverSuppressionCleanup = () => {
       element.removeEventListener('pointerleave', onLeave)
       delete element.dataset.runtimeHoverSuppressed
+      hoverSuppressed.value = false
     }
+    // phase 切换发生在 RAF 中，浏览器可能在下一帧才补发合成 pointerenter。
+    // 如果指针实际已经离开，则不把这次落地抑制带到下一次真实进入。
+    requestAnimationFrame(() => {
+      if (element.dataset.runtimePhase === 'idle' && !element.matches(':hover')) clearHoverSuppression()
+    })
   }
 
   const observeLandingHover = (element: HTMLElement) => {
@@ -53,7 +63,7 @@ export function useMindRuntimeObject(options: {
     phaseObserver = new MutationObserver(() => {
       const phase = element.dataset.runtimePhase
       if (phase !== 'idle') {
-        clearHoverSuppression()
+        hoverSuppressed.value = true
       } else if (previousPhase === 'revealing') {
         // landing 在指针下揭示本体时，浏览器不会产生新的 pointerleave；若此时
         // 直接恢复 hover，目标卡会在落地结束再播放一次抬起动画。
@@ -168,6 +178,7 @@ export function useMindRuntimeObject(options: {
   })
 
   return {
+    isHoverSuppressed: hoverSuppressed,
     onPointerDown: () => clearHoverSuppression(),
     onClick: options.onClick,
   }
