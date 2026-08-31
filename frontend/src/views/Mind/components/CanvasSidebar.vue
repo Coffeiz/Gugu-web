@@ -32,7 +32,7 @@
     >
         <section class="cd-content-panel canvas-panel" :class="contentPanelClass('canvases')" :aria-hidden="visiblePanel !== 'canvases'">
           <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
-            <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" />
+            <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @delete-many="onDeleteMany" />
           </DrawerTrack>
         </section>
     </DrawerViewport>
@@ -126,6 +126,7 @@ const emit = defineEmits<{
   (e: 'create'): void
   (e: 'open', id: number): void
   (e: 'delete', id: number): void
+  (e: 'deleteMany', ids: number[]): void
   (e: 'addProject', id: number): void
 }>()
 
@@ -289,6 +290,9 @@ function onOpen(id: number) {
 function onDelete(canvas: MindCanvas) {
   emit('delete', canvas.id)
 }
+function onDeleteMany(ids: number[]) {
+  emit('deleteMany', ids)
+}
 
 onMounted(() => {
   syncDrawerSurfaceElements()
@@ -336,19 +340,6 @@ onMounted(() => {
 .canvas-list { width: 190px; }
 .project-list { display: flex; flex-direction: column; width: 284px; height: 100%; min-height: 0; gap: 0; }
 .project-list-scroll { flex: 1 1 auto; max-height: none; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: auto; }
-
-.canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
-.canvas-create-card:hover { background: rgba(123,127,178,.07); border-color: rgba(123,127,178,.4); color: var(--color-primary); }
-.ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-item:hover { background: rgba(255,255,255,.55); }
-.canvas-item.active { background: rgba(255,255,255,.86); color: var(--color-primary); font-weight: 700; box-shadow: 0 1px 3px rgba(60,70,100,.08); }
-.rename-sizer { flex: 1; min-width: 0; }
-.ci-actions { display: flex; flex-shrink: 0; gap: 2px; opacity: 0; transition: opacity .15s; }
-.canvas-item:hover .ci-actions, .canvas-item:has(.rename-input-inline) .ci-actions { opacity: 1; }
-.ci-btn { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
-.ci-btn:hover { background: rgba(123,127,178,.16); color: var(--color-primary); }
-.ci-delete:hover { background: rgba(200,90,90,.14); color: #c85a5a; }
 
 .project-search {
   flex: 0 0 38px;

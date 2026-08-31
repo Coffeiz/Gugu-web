@@ -64,7 +64,11 @@ export const useMindStore = defineStore('mind', () => {
   const canvasRelations = ref<MindRelation[]>([])
   let canvasLoadSeq = 0
   const pendingCanvasLoads = new Map<number, number>()
+  let foregroundCanvasLoadId: number | null = null
   const invalidatedCanvasLoads = new Set<number>()
+  const pendingCanvasDeletes = new Set<number>()
+  // 删除请求与实时刷新可能交错；在服务端确认前后都暂时保留墓碑，避免旧列表响应把已删画布写回来。
+  const locallyDeletedCanvasIds = new Set<number>()
   const canvasDataSaves = new Map<number, Promise<void>>()
   const canvasZSaves = new Map<number, Promise<void>>()
   // 抽屉→画布先创建负 id placeholder。regrab 可能发生在 createRefNode/addCanvasItem 完成前，
@@ -76,7 +80,7 @@ export const useMindStore = defineStore('mind', () => {
     if (!loaded.value) return
     fetchNotes()
     if (canvasesLoaded.value) fetchCanvases()
-    if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value)
+    if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value, { priority: 'background' })
   }
 
   function requestMindRefresh() {
@@ -138,7 +142,10 @@ export const useMindStore = defineStore('mind', () => {
     jumpTarget.value = ''
     canvasLoadSeq += 1
     pendingCanvasLoads.clear()
+    foregroundCanvasLoadId = null
     invalidatedCanvasLoads.clear()
+    pendingCanvasDeletes.clear()
+    locallyDeletedCanvasIds.clear()
     pendingProjectRefCreates.clear()
     pendingMindRefresh = false
   }
@@ -198,7 +205,7 @@ export const useMindStore = defineStore('mind', () => {
     try {
       const nextCanvases = await mindApi.listCanvases()
       if (requestEpoch !== getAccountBoundaryEpoch()) return
-      canvases.value = nextCanvases
+      canvases.value = nextCanvases.filter(canvas => !locallyDeletedCanvasIds.has(canvas.id))
       if (activeCanvasId.value != null && !nextCanvases.some(canvas => canvas.id === activeCanvasId.value)) {
         activeCanvasId.value = null
         canvasItems.value = []
@@ -212,7 +219,12 @@ export const useMindStore = defineStore('mind', () => {
 
   async function createCanvas(title = '未命名画布') {
     const canvas = await mindApi.createCanvas({ title })
-    canvases.value = [canvas, ...canvases.value]
+    locallyDeletedCanvasIds.delete(canvas.id)
+    // 创建接口响应可能晚于实时 create 事件到达；实时事件已经插入同一条记录时，
+    // 只替换现有项，不能再次 prepend，否则列表会出现两个相同 id 的卡片。
+    const existingIndex = canvases.value.findIndex(item => item.id === canvas.id)
+    if (existingIndex >= 0) canvases.value.splice(existingIndex, 1, canvas)
+    else canvases.value = [canvas, ...canvases.value]
     return canvas
   }
 
@@ -224,6 +236,9 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   async function deleteCanvas(id: number) {
+    if (pendingCanvasDeletes.has(id)) return
+    pendingCanvasDeletes.add(id)
+    locallyDeletedCanvasIds.add(id)
     // 删除请求一发出就让该画布的 pending load 失效，避免「open → delete → load response」
     // 的旧响应把已经从列表移除的画布重新写成 active。
     invalidatedCanvasLoads.add(id)
@@ -232,9 +247,12 @@ export const useMindStore = defineStore('mind', () => {
       await mindApi.deleteCanvas(id)
     } catch (error) {
       invalidatedCanvasLoads.delete(id)
+      pendingCanvasDeletes.delete(id)
+      locallyDeletedCanvasIds.delete(id)
       throw error
     }
     canvases.value = canvases.value.filter(canvas => canvas.id !== id)
+    invalidatedCanvasLoads.delete(id)
     // 删的正好是当前打开这张——清空本地视图状态，CanvasView.vue 的 ensureCanvas() 会在
     // 路由跳到别的画布 id 后自然重新 loadCanvas；这里不主动切换，留给调用方决定切去哪张
     // （比如优先切到列表里剩下的第一张，没有了就新建一张）。
@@ -243,11 +261,36 @@ export const useMindStore = defineStore('mind', () => {
       canvasItems.value = []
       canvasRelations.value = []
     }
+    pendingCanvasDeletes.delete(id)
   }
 
-  async function loadCanvas(id: number) {
+  async function deleteCanvases(ids: number[]) {
+    const uniqueIds = [...new Set(ids)]
+    if (!uniqueIds.length) return
+    uniqueIds.forEach(id => locallyDeletedCanvasIds.add(id))
+    try {
+      await Promise.all(uniqueIds.map(id => mindApi.deleteCanvas(id)))
+    } catch (error) {
+      uniqueIds.forEach(id => locallyDeletedCanvasIds.delete(id))
+      throw error
+    }
+    const removed = new Set(uniqueIds)
+    canvases.value = canvases.value.filter(canvas => !removed.has(canvas.id))
+    if (activeCanvasId.value != null && removed.has(activeCanvasId.value)) {
+      activeCanvasId.value = null
+      canvasItems.value = []
+      canvasRelations.value = []
+    }
+  }
+
+  async function loadCanvas(id: number, options: { priority?: 'foreground' | 'background' } = {}) {
+    const priority = options.priority ?? 'foreground'
+    // 实时事件触发的后台刷新不能抢占用户刚发起的创建/切换，否则会把新画布的加载请求
+    // 判定为过期，并把界面留在旧画布上。
+    if (priority === 'background' && foregroundCanvasLoadId != null) return false
     const requestSeq = ++canvasLoadSeq
     pendingCanvasLoads.set(id, requestSeq)
+    if (priority === 'foreground') foregroundCanvasLoadId = id
     try {
       const [items, relations] = await Promise.all([
         mindApi.listCanvasItems(id),
@@ -275,6 +318,7 @@ export const useMindStore = defineStore('mind', () => {
       throw error
     } finally {
       if (pendingCanvasLoads.get(id) === requestSeq) pendingCanvasLoads.delete(id)
+      if (priority === 'foreground' && foregroundCanvasLoadId === id) foregroundCanvasLoadId = null
     }
   }
 
@@ -614,7 +658,8 @@ export const useMindStore = defineStore('mind', () => {
     if (kind === 'canvas') {
       const canvas = value as MindCanvas
       const index = canvases.value.findIndex(item => item.id === Number(event.entity_id))
-      if (event.operation === 'delete') { if (index >= 0) canvases.value.splice(index, 1); return index >= 0 }
+      if (event.operation === 'delete') { locallyDeletedCanvasIds.add(Number(event.entity_id)); if (index >= 0) canvases.value.splice(index, 1); return index >= 0 }
+      locallyDeletedCanvasIds.delete(Number(event.entity_id))
       if (index >= 0) canvases.value.splice(index, 1, canvas)
       else if (event.operation === 'create') canvases.value = [canvas, ...canvases.value]
       else return false
@@ -635,7 +680,7 @@ export const useMindStore = defineStore('mind', () => {
   return {
     notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, loadMoreNotes, resetAccountState, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
-    fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
+    fetchCanvases, createCanvas, renameCanvas, deleteCanvas, deleteCanvases, loadCanvas, addNoteToCanvas, updateCanvasItem,
     addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, addOptimisticCanvasRelation, replaceOptimisticCanvasRelation, rollbackOptimisticCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
     saveCanvasView, saveCanvasRelationAnchors,
   }

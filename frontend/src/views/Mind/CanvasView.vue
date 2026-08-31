@@ -33,6 +33,7 @@
         @create="createCanvas"
         @open="openCanvas"
         @delete="deleteCanvas"
+        @delete-many="deleteCanvases"
         @add-project="addProjectAtCenter"
       />
 
@@ -174,7 +175,9 @@ async function ensureCanvas() {
 let activationSeq = 0
 /** 画布 ID 的唯一切换入口；路由只负责进入画布模式，当前画布由 Store 管理。 */
 async function activateCanvas(id: number) {
-  if (!store.canvases.some(canvas => canvas.id === id)) return
+  if (!store.canvases.some(canvas => canvas.id === id)) {
+    return
+  }
   const seq = ++activationSeq
   flushViewSave()
   canvasProjectIdsReady.value = false
@@ -250,9 +253,15 @@ onBeforeUnmount(() => {
   flushViewSave()
 })
 
-async function createCanvas() {
-  const canvas = await store.createCanvas()
-  await activateCanvas(canvas.id)
+let canvasCreateQueue = Promise.resolve()
+function createCanvas() {
+  const run = canvasCreateQueue.then(async () => {
+    const canvas = await store.createCanvas()
+    await activateCanvas(canvas.id)
+  })
+  // 保证一次失败不会阻塞后续创建；当前这次调用仍然保留原始错误给事件处理方。
+  canvasCreateQueue = run.catch(() => {})
+  return run
 }
 async function openCanvas(id: number) {
   if (id === activeCanvasId.value) return
@@ -262,6 +271,15 @@ async function openCanvas(id: number) {
 async function deleteCanvas(id: number) {
   const wasActive = id === activeCanvasId.value
   await store.deleteCanvas(id)
+  if (!wasActive) return
+  const next = store.canvases[0] ?? await store.createCanvas()
+  await activateCanvas(next.id)
+}
+async function deleteCanvases(ids: number[]) {
+  const uniqueIds = [...new Set(ids)]
+  if (!uniqueIds.length) return
+  const wasActive = activeCanvasId.value != null && uniqueIds.includes(activeCanvasId.value)
+  await store.deleteCanvases(uniqueIds)
   if (!wasActive) return
   const next = store.canvases[0] ?? await store.createCanvas()
   await activateCanvas(next.id)

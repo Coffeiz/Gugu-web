@@ -32,6 +32,7 @@ const doneGroup = load('../../views/Projects/components/done/DoneGroup.vue')
 const archivedProjects = load('../../views/Projects/components/ArchivedProjectsModal.vue')
 const uploadModal = load('../../views/Files/UploadModal.vue')
 const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
+const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
 const trashView = load('../../views/Files/components/FilesTrashView.vue')
@@ -60,6 +61,13 @@ const terminalsRouter = load('../../router/index.ts')
 const terminalPty = load('../../views/Terminals/components/InteractivePtyTerminal.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('画布列表使用与项目抽屉一致的 Runtime 布局契约', () => {
+    expect(canvasDrawerContent).toContain('data-layout-collection="mind:drawer:canvases"')
+    expect(canvasDrawerContent).toContain('data-layout-role="card"')
+    expect(canvasDrawerContent).toContain('runtime.getMotionProfile()?.flip')
+    expect(canvasSidebar).not.toContain('.canvas-item {')
+  })
+
   it('Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连', () => {
     expect(terminalsRouter).toContain("if (to.name !== 'Terminals') return")
     expect(terminalsRouter).toContain('canAccessTerminals(status)')
