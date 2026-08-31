@@ -210,7 +210,7 @@ watch(() => props.note.contentMd, () => {
 function onDocDown(e: MouseEvent) {
   if (!props.editing) return
   const t = e.target as HTMLElement
-  if (cardRef.value?.contains(t) || t.closest('.ne-picker') || t.closest('.ne-toolbar-floating')) return
+  if (cardRef.value?.contains(t) || t.closest('.reference-picker') || t.closest('.ne-toolbar-floating')) return
   finishEditing()
 }
 // finishEditing 已经同步 flush 过一次；emit('close') 会让 editing 变 false 反过来触发下面

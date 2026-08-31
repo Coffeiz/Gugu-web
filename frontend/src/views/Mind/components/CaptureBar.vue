@@ -107,7 +107,7 @@ function onDocDown(e: MouseEvent) {
   const t = e.target as HTMLElement
   if (barRef.value?.contains(t)) return
   if (t.closest?.('.dp-popup')) return
-  if (t.closest?.('.ne-picker')) return
+  if (t.closest?.('.reference-picker')) return
   collapse()
 }
 onMounted(() => {
