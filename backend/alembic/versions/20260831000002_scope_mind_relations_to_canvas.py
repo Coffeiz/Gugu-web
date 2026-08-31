@@ -55,12 +55,6 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_constraint("uq_mind_relation", "mind_relations", type_="unique")
-    op.drop_index("uq_mind_relation_legacy", table_name="mind_relations")
-    op.drop_index("ix_mind_relations_canvas_id", table_name="mind_relations")
-    op.drop_column("mind_relations", "canvas_id")
-    op.create_unique_constraint(
-        "uq_mind_relation",
-        "mind_relations",
-        ["user_id", "src_node_id", "dst_node_id", "rel_type", "edge_key"],
+    raise NotImplementedError(
+        "该迁移不可逆：多个画布可能已经存在相同关系，无法安全恢复旧的全局唯一约束"
     )

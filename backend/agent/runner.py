@@ -901,7 +901,10 @@ async def _run_stream_unlocked(
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
+        async with _sess._SessionLocal() as voice_db:
+            transcript = await _voice.transcribe(
+                _transcribe_media, settings, db=voice_db, user_id=user_id,
+            )
         if transcript is None:
             _release_model(model_cfg)
             yield ("final", AgentResponse(
@@ -955,8 +958,13 @@ async def _run_stream_unlocked(
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
-    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
-    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id, query=aug_text)
+    async with _sess._SessionLocal() as tool_db:
+        tool_names = await _filter_shell_tool(
+            tool_db, user_id, session_id, tool_names, session=session,
+        )
+        capability_context = await _capability_context(
+            tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
+        )
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(

@@ -56,8 +56,16 @@ async def send_qq_stream_by_round(
     response: AgentResponse | None = None
     stream_sent = False
     last_text = ""
-    try:
-        async for kind, value in token_iter:
+    transport_error: Exception | None = None
+    async for kind, value in token_iter:
+        if kind == "final" and isinstance(value, AgentResponse):
+            response = value
+            continue
+        if transport_error is not None:
+            # 平台流已经失败，但必须继续消费 Agent generator，才能完成
+            # finalize_run、历史落盘和 session baseline gate。
+            continue
+        try:
             if kind == "token":
                 stream.push(str(value or ""))
             elif kind == ROUND_END:
@@ -68,21 +76,26 @@ async def send_qq_stream_by_round(
                 stream = qq.create_private_text_stream(
                     payload.get("platform_user_id") or "", **stream_kwargs
                 )
-            elif kind == "final" and isinstance(value, AgentResponse):
-                response = value
-        response = response or AgentResponse()
-        last_text = _fix_loose_bold(response.text or "")
-        if not last_text.strip():
-            last_text = "给你～" if response.files else "嗯~在的，你说～"
+        except Exception as exc:
+            transport_error = exc
+            stream = None
+
+    response = response or AgentResponse()
+    last_text = _fix_loose_bold(response.text or "")
+    if not last_text.strip():
+        last_text = "给你～" if response.files else "嗯~在的，你说～"
+    if transport_error is not None:
+        from app.core.redaction import diag_log
+        diag_log("agent.im.qq_stream_transport", transport_error)
+        return False, response, last_text
+    try:
         await stream.finish(last_text)
-        stream_sent = stream_sent or stream.has_sent()
-        return stream_sent, response, last_text
-    except Exception:
-        response = response or AgentResponse()
-        last_text = _fix_loose_bold(response.text or "")
-        return stream_sent or stream.has_sent(), response, last_text
-    finally:
-        await _close_async_iterator(token_iter)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.im.qq_stream_transport", exc)
+        return False, response, last_text
+    stream_sent = stream_sent or stream.has_sent()
+    return stream_sent, response, last_text
 
 async def send_text(payload: dict, text: str) -> bool:
     """构造并发送一条平台无关的文本回复。"""

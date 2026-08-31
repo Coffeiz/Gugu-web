@@ -85,6 +85,76 @@ Gugu 一开始只有项目管理功能，但后来慢慢加上了交互 Runtime�
   </tr>
 </table>
 
+## 快速开始
+
+### 前置要求
+
+- Docker 20+ 和 Docker Compose v2
+- 可访问的模型 Provider 或 BYOK 配置
+- 首次启动需要 PostgreSQL、Redis 和网络访问
+
+### Docker Compose
+
+```bash
+git clone https://github.com/Coffeiz/Gugu-web.git
+cd Gugu-web
+cp .env.example backend/.env
+# 编辑 backend/.env，填写 SECRET_KEY 和模型配置
+# 普通 Compose 还要显式设置一个不会写入仓库的管理员密码
+export GUGU_ADMIN_PASSWORD="$(openssl rand -base64 32)"
+docker compose up -d
+```
+
+Docker Compose 会同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务，不需要另外安装联网搜索后端。
+
+启动后访问：
+
+- Gugu：<http://localhost:9595>
+- Admin：<http://localhost:9595/admin/>
+- Backend API：<http://localhost:8000/docs>
+- LoopScope Collector：<http://localhost:4320>
+
+首次运行会初始化数据库并执行迁移。Admin 账号由 `GUGU_ADMIN_USERNAME` 和 `GUGU_ADMIN_PASSWORD` 控制；普通 Compose 要求显式设置 `GUGU_ADMIN_PASSWORD` 作为容器运行时密码，不会使用公开默认密码。
+
+需要 Shell 沙盒时，再显式启用：
+
+```bash
+docker compose --profile sandbox up -d
+```
+
+## 配置
+
+README 只保留配置索引，完整变量和运行规则将在 `docs/configuration.md` 中整理。
+
+| 配置用途 | 说明 |
+| --- | --- |
+| Database | 主数据存储，默认使用 PostgreSQL |
+| Redis | 消息、会话和 Runtime 状态 |
+| LLM / BYOK | 模型 Provider 和个人 API Key |
+| Search | 内置 SearXNG Web Search 与站内搜索后端 |
+| Mail | 用户反馈和系统邮件通知 |
+| IM | QQ、微信、飞书连接 |
+| LoopScope | Agent 链路和性能观测 |
+| Sandbox | Shell 执行环境和网络出口 |
+
+## 部署
+
+生产环境使用构建物 Docker Compose 和 Nginx，通过 `9595` 提供统一入口：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+生产部署的数据库、Redis、文件、记忆、配置卷、迁移、备份、日志和健康检查见 [部署指南](docs/DEPLOY.md)；更复杂的运维排障见 [运维部署文档](docs/ops/DEPLOY.md)。
+
+部署摘要：
+
+- 生产镜像使用前后端构建产物，不挂载源码
+- 前端 Runtime 从 npm 安装，不依赖同级 `gugu-interaction-runtime` 仓库
+- PostgreSQL、Redis 和用户数据使用持久化卷
+- 镜像标签应使用 Git SHA 或版本号，不依赖 `latest`
+- 升级前应备份数据库和用户数据
+
 ## Gugu 是什么
 
 咕咕不是给聊天框增加几个工具，而是让 Agent 工作在真实的个人工作环境中。
@@ -165,72 +235,6 @@ Agent 可以通过工具读取和修改这些工作状态：查找项目、创�
 ### Interaction Runtime
 
 独立的 npm Runtime，负责复杂拖拽、跨容器交互、画布落点和视觉生命周期。Gugu-web 通过 `gugu-interaction-runtime` npm package 使用它，相关仓库见 [Gugu Interaction Runtime](https://github.com/Coffeiz/Gugu-interaction-runtime)。
-
-## 快速开始
-
-### 前置要求
-
-- Docker 20+ 和 Docker Compose v2
-- 可访问的模型 Provider 或 BYOK 配置
-- 首次启动需要 PostgreSQL、Redis 和网络访问
-
-### Docker Compose
-
-```bash
-git clone https://github.com/Coffeiz/Gugu-web.git
-cd Gugu-web
-cp .env.example backend/.env
-# 编辑 backend/.env，填写 SECRET_KEY 和模型配置
-docker compose up -d
-```
-
-启动后访问：
-
-- Gugu：<http://localhost:9595>
-- Admin：<http://localhost:9595/admin/>
-- Backend API：<http://localhost:8000/docs>
-- LoopScope Collector：<http://localhost:4320>
-
-首次运行会初始化数据库并执行迁移。Admin 账号由 `backend/.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 控制，生产环境必须修改默认值。
-
-需要 Shell 沙盒时，再显式启用：
-
-```bash
-docker compose --profile sandbox up -d
-```
-
-## 配置
-
-README 只保留配置索引，完整变量和运行规则将在 `docs/configuration.md` 中整理。
-
-| 配置用途 | 说明 |
-| --- | --- |
-| Database | 主数据存储，默认使用 PostgreSQL |
-| Redis | 消息、会话和 Runtime 状态 |
-| LLM / BYOK | 模型 Provider 和个人 API Key |
-| Search | Web Search 与站内搜索后端 |
-| Mail | 用户反馈和系统邮件通知 |
-| IM | QQ、微信、飞书连接 |
-| LoopScope | Agent 链路和性能观测 |
-| Sandbox | Shell 执行环境和网络出口 |
-
-## 部署
-
-生产环境使用构建物 Docker Compose 和 Nginx，通过 `9595` 提供统一入口：
-
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
-
-生产部署的数据库、Redis、文件、记忆、配置卷、迁移、备份、日志和健康检查见 [生产部署文档](docs/ops/DEPLOY.md)。
-
-部署摘要：
-
-- 生产镜像使用前后端构建产物，不挂载源码
-- 前端 Runtime 从 npm 安装，不依赖同级 `gugu-interaction-runtime` 仓库
-- PostgreSQL、Redis 和用户数据使用持久化卷
-- 镜像标签应使用 Git SHA 或版本号，不依赖 `latest`
-- 升级前应备份数据库和用户数据
 
 ## 项目结构
 

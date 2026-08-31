@@ -1,17 +1,17 @@
-"""管理员默认凭据与环境变量覆盖的回归测试。"""
+"""管理员凭据与环境变量覆盖的回归测试。"""
 from __future__ import annotations
 
 from app.core.config import AppSettings
 
 
-def test_admin_default_credentials_are_admin_and_guguadmin(monkeypatch):
+def test_admin_password_has_no_public_default(monkeypatch):
     monkeypatch.delenv("ADMIN_USERNAME", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
 
     settings = AppSettings()
 
     assert settings.admin_username == "admin"
-    assert settings.admin_password == "guguadmin"
+    assert settings.admin_password == ""
 
 
 def test_admin_credentials_can_be_overridden_by_environment(monkeypatch):

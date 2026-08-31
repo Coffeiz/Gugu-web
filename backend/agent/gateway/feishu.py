@@ -1004,11 +1004,13 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
-                final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
-                if final_text:
-                    ok = await send_text(receive_id, final_text, channel_id)
-                    return (ok, final_resp)
-                return (False, final_resp)
+        final_text = _stream_fallback_text(
+            final_resp.text if final_resp is not None else accumulated,
+            bool(final_resp and final_resp.files),
+        )
+        if final_text:
+            ok = await send_text(receive_id, final_text, channel_id)
+            return (ok, final_resp)
         return (False, final_resp)
 
     # 2) 把 card_id 当一条 interactive 消息发出去——不 send，user 端永远看不到。
@@ -1022,11 +1024,13 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
-                final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
-                if final_text:
-                    ok = await send_text(receive_id, final_text, channel_id)
-                    return (ok, final_resp)
-                return (False, final_resp)
+        final_text = _stream_fallback_text(
+            final_resp.text if final_resp is not None else accumulated,
+            bool(final_resp and final_resp.files),
+        )
+        if final_text:
+            ok = await send_text(receive_id, final_text, channel_id)
+            return (ok, final_resp)
         return (False, final_resp)
 
     # 3) 初始化 element 级流式更新的 sequence（sequence 从 1 开始严格递增）
@@ -1074,9 +1078,12 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
                 final_resp = payload
                 if payload.cancelled:
                     # 用户中途取消 → 卡片保留 partial 内容（不清空，避免给用户错觉"什么都没了"）
-                    break
+                    pending_final_text = accumulated
+                    continue
                 pending_final_text = _stream_fallback_text(payload.text or accumulated, bool(payload.files))
-                break
+                # final 先交给发送层，继续消费到生成器自然结束，确保 runner 的
+                # session gate 能执行 baseline update。
+                continue
     except Exception as e:
         diag_log("agent.gateway.feishu.stream_consume", e)   # 原始 → 受限诊断出口
         print(f"[feishu] 流式消费异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
