@@ -9,14 +9,22 @@
     <div class="onboarding-modal">
       <main class="onboarding-main">
         <section class="onboarding-step">
-          <div class="onboarding-visual" :class="{ 'theme-visual': step === 'style' }">
-            <OnboardingThemePreview v-if="step === 'style'" class="theme-preview-host" />
+          <div
+            class="onboarding-visual"
+            :class="{
+              'theme-visual': step === 'style',
+              'complete-visual': step === 'complete',
+            }"
+          >
+            <OnboardingCompleteScene v-if="step === 'complete'" />
+            <OnboardingThemePreview v-else-if="step === 'style'" class="theme-preview-host" />
             <img
               v-else
               class="onboarding-media"
               :src="mediaSource"
               :alt="mediaAlt"
             />
+            <div class="visual-fade" />
             <div class="visual-close">
               <CloseButton :title="t('common.actions.close')" @click="later" />
             </div>
@@ -71,38 +79,30 @@
                 />
               </div>
 
-              <div v-else-if="step === 'model'" class="direct-settings content-options">
-                <div class="setup-summary">
-                  <span class="status-dot" />
-                  <div>
-                    <b>{{ t('onboardingUi.systemDefault') }}</b>
-                    <small>{{ t('onboardingUi.available') }}</small>
-                  </div>
-                  <span class="summary-tag">{{ t('onboardingUi.demo.optional') }}</span>
-                </div>
-                <div class="embedded-pane model-pane">
-                  <ProfileByokPane />
-                </div>
-              </div>
+              <OnboardingModelSetup v-else-if="step === 'model'" class="content-options" />
 
               <div v-else-if="step === 'im'" class="direct-settings content-options">
-                <div class="setup-summary">
-                  <span class="status-dot neutral" />
-                  <div>
-                    <b>{{ t('onboardingUi.demo.im.title') }}</b>
-                    <small>{{ t('onboardingUi.imHint') }}</small>
-                  </div>
-                </div>
                 <div class="embedded-pane im-pane">
                   <ProfileImPane />
                 </div>
               </div>
 
-              <div v-else class="complete-copy content-options">
-                <span class="complete-copy-mark">✓</span>
-                <div>
-                  <b>{{ t('onboardingUi.completeTitle') }}</b>
-                  <small>{{ t('onboardingUi.completeHint') }}</small>
+              <div v-else class="complete-options content-options">
+                <div class="complete-option-row">
+                  <span class="complete-option-mark">✓</span>
+                  <div><b>{{ t('onboardingUi.steps.locale') }}</b><small>{{ localeLabel }}</small></div>
+                </div>
+                <div class="complete-option-row">
+                  <span class="complete-option-mark">✓</span>
+                  <div><b>{{ t('onboardingUi.steps.style') }}</b><small>{{ palette }} · {{ family }} · {{ preference }}</small></div>
+                </div>
+                <div class="complete-option-row">
+                  <span class="complete-option-mark">✓</span>
+                  <div><b>{{ t('onboardingUi.steps.model') }}</b><small>{{ t('onboardingUi.demo.optional') }}</small></div>
+                </div>
+                <div class="complete-option-row">
+                  <span class="complete-option-mark">✓</span>
+                  <div><b>{{ t('onboardingUi.steps.im') }}</b><small>{{ t('onboardingUi.imHint') }}</small></div>
                 </div>
               </div>
             </div>
@@ -139,7 +139,7 @@
             :disabled="saving || (step === 'locale' && !locale)"
             @click="next"
           >
-            {{ saving ? t('onboardingUi.saving') : step === 'complete' ? t('onboardingUi.finish') : t('onboardingUi.next') }}
+            {{ step === 'complete' ? t('onboardingUi.finish') : t('onboardingUi.next') }}
           </ActionButton>
         </div>
       </footer>
@@ -154,9 +154,10 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import CloseButton from '@/components/common/CloseButton.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
-import ProfileByokPane from '@/components/common/ProfileModal/ProfileByokPane.vue'
 import ProfileImPane from '@/components/common/ProfileModal/ProfileImPane.vue'
 import OnboardingThemePreview from '@/components/onboarding/OnboardingThemePreview.vue'
+import OnboardingModelSetup from '@/components/onboarding/OnboardingModelSetup.vue'
+import OnboardingCompleteScene from '@/components/onboarding/OnboardingCompleteScene.vue'
 import ThemeSwitcher from '@/views/Design/components/ThemeSwitcher.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { getLocale, type SupportedLocale } from '@/i18n'
@@ -178,11 +179,11 @@ const saving = ref(false)
 const initializedForOpen = ref(false)
 const step = computed<Step>(() => steps[index.value])
 
-const mediaSource = computed(() => {
-  if (step.value === 'locale' || step.value === 'im') return '/onboarding/file-drag.gif'
-  return '/onboarding/kanban-drag.gif'
-})
+const mediaSource = computed(() => step.value === 'locale' || step.value === 'im'
+  ? '/onboarding/file-drag.gif'
+  : '/onboarding/kanban-drag.gif')
 const mediaAlt = computed(() => t(`onboardingUi.demo.${step.value}.title`))
+const localeLabel = computed(() => localeOptions.find(option => option.value === locale.value)?.label || locale.value)
 
 const localeOptions: Array<{ value: SupportedLocale; label: string; native: string; code: string }> = [
   { value: 'zh-CN', label: '简体中文', native: '中文', code: '中' },
@@ -196,9 +197,7 @@ const featureItems = [
   { key: 'im', icon: 'communication.chat' },
 ]
 
-// 服务端状态只负责“打开这一轮引导时从哪一步继续”。
-// 打开后由本地 index 单独驱动界面；否则 next() 的服务端回写会触发 watcher，
-// 与本地推进叠加后一次跳两步，previous() 也会被异步回写覆盖。
+// 服务端只决定打开这一轮引导时从哪一步继续；打开后由本地 index 单独驱动 UI。
 watch(
   [() => props.show, onboardingGuideState],
   ([visible, value]) => {
@@ -241,10 +240,7 @@ async function previous() {
   saving.value = true
   index.value = targetIndex
   try {
-    await updateOnboardingGuide({
-      current_step: steps[targetIndex],
-      dismissed: false,
-    })
+    await updateOnboardingGuide({ current_step: steps[targetIndex], dismissed: false })
   } catch {
     index.value = fromIndex
   } finally {
@@ -300,21 +296,22 @@ async function next() {
   flex-direction: column;
   overflow: hidden;
   color: var(--content-primary);
-  background: var(--modal-card-bg);
+  background: var(--surface-base);
 }
 
 .onboarding-main {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  background: var(--surface-base);
 }
 
-/* 所有步骤共享完全相同的两行骨架；内容切换只替换行内节点，不改变几何。 */
+/* 所有步骤共享同一个固定骨架：visual 尺寸和内容两栏都不会随步骤重排。 */
 .onboarding-step {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: 360px minmax(0, 1fr);
+  grid-template-rows: 388px minmax(0, 1fr);
 }
 
 .onboarding-visual {
@@ -330,36 +327,56 @@ async function next() {
   height: 100%;
   object-fit: cover;
   object-position: center;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 76%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 76%, transparent 100%);
 }
 
 .onboarding-visual.theme-visual {
-  padding: var(--space-lg) 46px 34px;
+  padding: var(--space-lg) 46px 52px;
   background: var(--surface-page);
 }
+.onboarding-visual.complete-visual { background: var(--surface-page); }
 
 .theme-preview-host {
   width: 100%;
   height: 100%;
 }
 
+/* 渐变由 visual 的真实像素过渡到底部 surface，而不是把图片 alpha mask 到 visual 背景。
+   content 再向上压一小段，两个区域在纯色段交叉，GIF / 样板都能完整淡出。 */
+.visual-fade {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 132px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--surface-base) 18%, transparent) 22%,
+    color-mix(in srgb, var(--surface-base) 72%, transparent) 64%,
+    var(--surface-base) 100%
+  );
+}
+
 .visual-close {
   position: absolute;
-  z-index: 3;
+  z-index: 4;
   top: var(--space-md);
   right: var(--space-md);
 }
 
-/* 下半部固定为“左说明 / 右交互”两栏。 */
 .onboarding-content {
+  position: relative;
+  z-index: 3;
   min-height: 0;
+  margin-top: -28px;
   display: grid;
   grid-template-columns: minmax(250px, .78fr) minmax(0, 1.22fr);
   align-items: stretch;
   gap: 38px;
-  padding: 18px 46px 20px;
-  overflow: hidden;
+  padding: 46px 46px 20px;
+  background: var(--surface-base);
 }
 
 .content-heading {
@@ -399,7 +416,7 @@ async function next() {
   min-height: 0;
   display: flex;
   align-items: stretch;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .content-options {
@@ -449,9 +466,10 @@ async function next() {
   box-shadow: var(--control-focus-shadow);
 }
 
+/* 选中态只画边缘与泛光，不再盖一层 action-soft 蒙版。 */
 .locale-option.selected {
   border-color: var(--border-focus);
-  background: var(--action-soft);
+  background: var(--control-bg);
   box-shadow: var(--control-focus-shadow);
 }
 
@@ -468,20 +486,8 @@ async function next() {
 }
 
 .locale-copy { min-width: 0; }
-
-.locale-copy b,
-.feature-option b,
-.setup-summary b {
-  display: block;
-  color: var(--content-primary);
-  font-size: var(--font-size-sm);
-  line-height: 1.35;
-}
-
-.locale-copy small,
-.feature-option small,
-.setup-summary small,
-.complete-copy small {
+.locale-copy b,.feature-option b { display: block; color: var(--content-primary); font-size: var(--font-size-sm); line-height: 1.35; }
+.locale-copy small,.feature-option small,.complete-option-row small {
   display: block;
   margin-top: var(--space-xs);
   color: var(--content-tertiary);
@@ -501,7 +507,6 @@ async function next() {
   font-size: 10px;
   font-weight: var(--font-weight-bold);
 }
-
 .locale-option.selected .selection-mark {
   border-color: var(--action-primary);
   color: var(--content-on-accent);
@@ -519,7 +524,6 @@ async function next() {
   background: var(--surface-soft);
   color: var(--content-secondary);
 }
-
 .feature-icon {
   flex: 0 0 34px;
   width: 34px;
@@ -538,7 +542,6 @@ async function next() {
   border-radius: var(--card-radius);
   background: var(--surface-soft);
 }
-
 .theme-options :deep(.theme-controls) {
   width: 100%;
   margin-left: 0;
@@ -547,100 +550,60 @@ async function next() {
   justify-content: stretch;
   gap: var(--space-sm);
 }
-
-.theme-options :deep(.control-cluster) {
-  min-width: 0;
-  justify-content: space-between;
-}
-
-.theme-options :deep(.segmented) {
-  min-width: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
+.theme-options :deep(.control-cluster) { min-width: 0; justify-content: space-between; }
+.theme-options :deep(.segmented) { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 
 .direct-settings {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
-
-.setup-summary {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--card-radius);
-  background: var(--surface-soft);
-}
-
-.setup-summary > div {
-  min-width: 0;
-  flex: 1;
-}
-
-.status-dot {
-  width: 9px;
-  height: 9px;
-  flex: 0 0 9px;
-  border-radius: 50%;
-  background: var(--status-success);
-}
-
-.status-dot.neutral { background: var(--content-tertiary); }
-
-.summary-tag {
-  flex: 0 0 auto;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: 999px;
-  background: var(--action-soft);
-  color: var(--action-primary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-}
-
 .embedded-pane {
   min-height: 0;
   flex: 1;
-  margin-top: var(--space-sm);
   overflow: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--card-radius);
   background: var(--surface-base);
 }
 
-.complete-copy {
+.complete-options {
   align-self: center;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+.complete-option-row {
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-lg);
+  gap: var(--space-sm);
+  padding: var(--space-md);
   border: 1px solid var(--border-subtle);
   border-radius: var(--card-radius);
   background: var(--surface-soft);
 }
-
-.complete-copy-mark {
-  width: 36px;
-  height: 36px;
+.complete-option-mark {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   background: var(--status-success-bg);
   color: var(--status-success);
+  font-size: 10px;
   font-weight: var(--font-weight-bold);
 }
-
-.complete-copy b {
-  display: block;
-  font-size: var(--font-size-md);
-}
+.complete-option-row > div { min-width: 0; }
+.complete-option-row b { display: block; font-size: var(--font-size-xs); }
+.complete-option-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .onboarding-actions {
   position: relative;
-  z-index: 4;
+  z-index: 5;
   flex: 0 0 62px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -651,29 +614,16 @@ async function next() {
   background: var(--surface-base);
 }
 
-/* Footer 三个操作位统一尺寸；文案长短不再改变布局。 */
+/* 三个导航操作位统一固定尺寸，文案长短不参与布局。 */
 .onboarding-actions :deep(.onboarding-action) {
   width: 92px;
   min-width: 92px;
   max-width: 92px;
   flex: 0 0 92px;
 }
-
-.onboarding-actions > .onboarding-action {
-  justify-self: start;
-}
-
-.action-group {
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.action-placeholder {
-  visibility: hidden;
-  pointer-events: none;
-}
+.onboarding-actions > .onboarding-action { justify-self: start; }
+.action-group { justify-self: end; display: flex; align-items: center; gap: var(--space-sm); }
+.action-placeholder { visibility: hidden; pointer-events: none; }
 
 .onboarding-progress {
   display: flex;
@@ -681,7 +631,6 @@ async function next() {
   justify-content: center;
   gap: var(--space-xs);
 }
-
 .onboarding-progress span {
   width: 24px;
   height: 4px;
@@ -692,27 +641,12 @@ async function next() {
     background-color var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
-
-.onboarding-progress span.done {
-  background: var(--action-primary);
-  opacity: .42;
-}
-
-.onboarding-progress span.active {
-  width: 34px;
-  background: var(--action-primary);
-  opacity: 1;
-}
+.onboarding-progress span.done { background: var(--action-primary); opacity: .42; }
+.onboarding-progress span.active { width: 34px; background: var(--action-primary); opacity: 1; }
 
 @media (max-width: 720px) {
-  .onboarding-step {
-    grid-template-rows: 300px minmax(0, 1fr);
-  }
-
-  .onboarding-visual.theme-visual {
-    padding: var(--space-md) var(--space-md) 30px;
-  }
-
+  .onboarding-step { grid-template-rows: 318px minmax(0, 1fr); }
+  .onboarding-visual.theme-visual { padding: var(--space-md) var(--space-md) 42px; }
   .theme-preview-host {
     min-width: 660px;
     width: 138%;
@@ -720,22 +654,16 @@ async function next() {
     transform: scale(.72);
     transform-origin: top left;
   }
-
   .onboarding-content {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
     gap: var(--space-md);
-    padding: var(--space-md) var(--space-lg);
+    margin-top: -24px;
+    padding: 38px var(--space-lg) var(--space-md);
   }
-
-  .content-heading {
-    align-self: start;
-  }
-
-  .content-heading p {
-    max-width: none;
-  }
-
+  .content-heading { align-self: start; }
+  .content-heading p { max-width: none; }
+  .complete-options { grid-template-columns: 1fr; }
   .onboarding-actions {
     grid-template-columns: 92px minmax(0, 1fr) 192px;
     gap: var(--space-sm);
