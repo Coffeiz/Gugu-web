@@ -192,7 +192,7 @@ async function fetchModels(event?: MouseEvent) {
   try {
     const result = await byokApi.modelsPreview({ provider: draft.provider, base_url: draft.base_url, api_format: draft.api_format, api_key: draft.value, credential_id: draft.id })
     modelOptions.value = result.models || []
-    if (!modelOptions.value.length) modelError.value = 'Provider 没有返回可用模型'
+    if (!modelOptions.value.length) modelError.value = '提供商没有返回可用模型'
   } catch (e) { modelOptions.value = []; modelError.value = e instanceof Error ? e.message : '获取模型列表失败' }
   finally { modelLoading.value = false }
 }

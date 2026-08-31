@@ -494,7 +494,7 @@
             <ToggleSwitch :model-value="embeddingDraft.multimodal" aria-label="切换多模态 Embedding" @update:model-value="embeddingDraft.multimodal = $event" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>提供方 provider</span><span class="behavior-desc">选择服务商；通用兼容用于其他 OpenAI 兼容端点</span></div>
+            <div class="behavior-label"><span>提供商</span><span class="behavior-desc">选择提供商；通用兼容用于其他 OpenAI 兼容端点</span></div>
             <AdminSelect
               :model-value="embeddingDraft.provider"
               :options="[
