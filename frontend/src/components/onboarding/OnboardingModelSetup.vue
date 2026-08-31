@@ -26,7 +26,7 @@
 
       <div class="model-fields">
         <label class="model-field">
-          <span>{{ t('profileByokUi.provider') }}</span>
+          <span>{{ t('adminRuntimeUi.selectProvider') }}</span>
           <ProviderSelect
             :model-value="draft.provider"
             :providers="providerOptions"
@@ -124,8 +124,8 @@ const modelPickerRef = ref<HTMLElement | null>(null)
 
 const draft = reactive<Draft>({ provider: '', value: '', api_format: '', base_url: '', model: '' })
 const providerOptions = computed(() => MODEL_PROVIDERS.map(provider => ({ key: provider.value, label: t(provider.labelKey) })))
-const canSave = computed(() => Boolean(draft.provider && draft.model && (item.value || draft.value || keyOptional.value)))
 const keyOptional = computed(() => draft.provider === 'local' || (draft.provider === 'ollama' && !/ollama\.com/i.test(draft.base_url)))
+const canSave = computed(() => Boolean(draft.provider && draft.model && (item.value || draft.value || keyOptional.value)))
 
 function providerLabel(value: string) {
   const provider = MODEL_PROVIDERS.find(entry => entry.value === value)
@@ -228,8 +228,6 @@ async function save() {
       const row = await byokApi.create({ ...payload, value: draft.value }) as Item
       item.value = await byokApi.update(row.id, { enabled: true }) as Item
     }
-    feedback.value = t('profileByokUi.saved')
-    feedbackType.value = 'ok'
     window.dispatchEvent(new Event('gugu-quota-changed'))
     syncDraft(item.value)
     expanded.value = false
