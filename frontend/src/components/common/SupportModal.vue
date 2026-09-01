@@ -53,7 +53,7 @@ function toggleQr(channel: 'alipay' | 'wechat') { expandedQr.value = expandedQr.
 .support-header p { margin:6px 0 0; color:var(--content-secondary); font-size:12px; }
 .support-header :deep(.app-close-button) { flex:0 0 30px; }
 .support-grid { display:flex; flex-direction:column; gap:8px; }
-.support-card { width:100%; min-width:0; padding:12px 14px; display:flex; align-items:center; gap:12px; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); color:var(--content-primary); text-align:left; cursor:pointer; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
+.support-card { width:100%; min-width:0; padding:12px 14px; display:flex; align-items:center; gap:12px; border:1px solid var(--border-hairline); border-radius:var(--radius-md); background:var(--surface-soft); color:var(--content-primary); text-align:left; cursor:pointer; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
 .support-card:hover { background:var(--surface-soft-hover); border-color:var(--border-focus); }
 .support-card-summary { width:100%; display:flex; align-items:center; gap:12px; }
 .support-card-summary :deep(.flip-chevron) { margin-left:auto; }
