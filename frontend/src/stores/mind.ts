@@ -20,7 +20,7 @@ import type { LiveEventPayload } from '@/types/live-events'
 import { isMindLandingActive, onMindLandingSettled } from '@/interaction/runtime/canvas'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
-import { reconcileCanvasItems } from '@/interaction/sync/InteractionSyncReconciler'
+import { canvasLocalItemsForLoad, reconcileCanvasItems } from '@/interaction/sync/InteractionSyncReconciler'
 import type { InteractionMutation } from '@/interaction/sync/InteractionSyncState'
 import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
 
@@ -352,8 +352,9 @@ export const useMindStore = defineStore('mind', () => {
       const isCurrentRequest = pendingCanvasLoads.get(id) === requestSeq
       const stillExists = canvases.value.some(canvas => canvas.id === id)
       if (!isCurrentRequest || requestSeq !== canvasLoadSeq || invalidatedCanvasLoads.has(id) || !stillExists) return false
+      const previousCanvasId = activeCanvasId.value
+      const localItems = canvasLocalItemsForLoad(previousCanvasId, id, canvasItems.value)
       activeCanvasId.value = id
-      const localItems = activeCanvasId.value === id ? canvasItems.value : []
       const pending = InteractionSync.pending().filter(mutation => mutation.entityKey.startsWith(`canvas:${id}:`))
       const reconciled = reconcileCanvasItems(items, localItems, pending)
       canvasItems.value = normalizeCanvasZ(reconciled).map(({ item, z }) => ({ ...item, z }))

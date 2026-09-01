@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 from sqlalchemy import func, select
 
 from app.api.v1.mind import (
@@ -204,14 +205,23 @@ async def test_note_mutations_publish_canonical_mind_events(db, user_a, monkeypa
         published.append((user_id, resources, kwargs))
 
     monkeypatch.setattr(mind_api.events, "publish", publish)
-    note = await _new_note(db, user_a, content="初始")
-    await update_note(note.id, MindNoteUpdate(content_md="更新", version=1), current_user=user_a, db=db)
-    await delete_note(note.id, current_user=user_a, db=db)
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-client-id", b"tab-test"), (b"x-mutation-id", b"mutation-test")],
+    })
+    note = await create_note(MindNoteCreate(content_md="初始"), request=request, current_user=user_a, db=db)
+    await update_note(note.id, MindNoteUpdate(content_md="更新", version=1), request=request, current_user=user_a, db=db)
+    await delete_note(note.id, request=request, current_user=user_a, db=db)
 
     assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
     assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
     assert published[0][2]["event_payload"]["kind"] == "note"
     assert published[0][2]["event_payload"]["entity"]["id"] == note.id
+    assert [(entry[2]["origin"], entry[2]["mutation_id"]) for entry in published] == [
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -223,14 +233,23 @@ async def test_canvas_mutations_publish_canonical_mind_events(db, user_a, monkey
         published.append((user_id, resources, kwargs))
 
     monkeypatch.setattr(mind_api.events, "publish", publish)
-    canvas = await create_canvas(MindCanvasCreate(title="事件画布"), current_user=user_a, db=db)
-    await update_canvas(canvas.id, MindCanvasUpdate(title="更新画布"), current_user=user_a, db=db)
-    await delete_canvas(canvas.id, current_user=user_a, db=db)
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-client-id", b"tab-test"), (b"x-mutation-id", b"mutation-test")],
+    })
+    canvas = await create_canvas(MindCanvasCreate(title="事件画布"), request=request, current_user=user_a, db=db)
+    await update_canvas(canvas.id, MindCanvasUpdate(title="更新画布"), request=request, current_user=user_a, db=db)
+    await delete_canvas(canvas.id, request=request, current_user=user_a, db=db)
 
     assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
     assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
     assert [entry[2]["event_payload"]["kind"] for entry in published[:2]] == ["canvas", "canvas"]
     assert published[-1][2]["event_payload"] == {"kind": "canvas", "entity": {"id": canvas.id}}
+    assert [(entry[2]["origin"], entry[2]["mutation_id"]) for entry in published] == [
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+    ]
 
 
 # ── `[[` 对象引用补全 ─────────────────────────────────────────────────────────

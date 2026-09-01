@@ -2,6 +2,11 @@ import type { InteractionMutation } from './InteractionSyncState'
 
 type Identity = { id: number; nodeId?: number; clientKey?: string }
 
+/** 只有同一张画布才能复用本地 identity，切换画布必须从空快照开始认领。 */
+export function canvasLocalItemsForLoad<T>(activeCanvasId: number | null, requestedCanvasId: number, localItems: T[]): T[] {
+  return activeCanvasId === requestedCanvasId ? localItems : []
+}
+
 /** 服务端列表回写只替换 canonical 字段，已有前端身份由 id/nodeId/pending 认领。 */
 export function reconcileCanvasItems<T extends Identity>(
   serverItems: T[], localItems: T[], pending: InteractionMutation[],
@@ -19,6 +24,7 @@ export function reconcileCanvasItems<T extends Identity>(
       ?? (serverItem.nodeId == null ? undefined : localByNodeId.get(serverItem.nodeId))
     const clientKey = local?.clientKey ?? mutation?.clientKey
     if (local) claimed.add(local.clientKey ?? `${local.id}`)
+    if (mutation?.clientKey) claimed.add(mutation.clientKey)
     return clientKey ? { ...serverItem, clientKey } : serverItem
   })
 
