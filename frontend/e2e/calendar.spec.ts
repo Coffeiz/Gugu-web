@@ -73,18 +73,11 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
     await page.reload()
     await expect(page.locator('.month-body')).toBeVisible()
 
-    const cell = page.locator(`.month-cell[data-iso="${initialDate}"]`)
-    const chip = cell.locator('.event-chip.chip-ev-click').filter({ hasText: title })
-    if (await chip.count() === 0) {
-      // 月视图容量有限，活动可能被收进「更多」弹层；测试行为本身不应依赖
-      // 该日期当前是否已经有其它项目/活动占满可见槽位。
-      await cell.locator('.chip-more-btn').click()
-      await expect(page.locator('.overflow-item').filter({ hasText: title })).toBeVisible()
-      await page.locator('.overflow-item').filter({ hasText: title }).click()
-    } else {
-      await expect(chip).toBeVisible()
-      await chip.click()
-    }
+    // 月格会按可用高度把活动收进「更多」弹层，不能用月格中的即时 DOM
+    // 数量判断入口。侧栏在活动数据加载后始终展示当天活动，作为稳定入口。
+    const sidebarEvent = page.locator('.sidebar-ev').filter({ hasText: title })
+    await expect(sidebarEvent).toBeVisible({ timeout: 15000 })
+    await sidebarEvent.click()
 
     const editModal = page.locator('.eem-popup')
     await expect(editModal).toBeVisible()

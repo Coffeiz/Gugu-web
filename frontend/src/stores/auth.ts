@@ -99,8 +99,9 @@ export const useAuthStore = defineStore('auth', () => {
       // 不应清掉本地登录态，否则一次服务抖动会把用户误登出。
       if (res.status === 401) { logout(); return }
       if (!res.ok) return
-      user.value = await res.json()
-      setUserTimezone(user.value.timezone)
+      const nextUser = await res.json() as UserWithTimezone
+      user.value = nextUser
+      setUserTimezone(nextUser.timezone)
       _syncTimezone()
     } catch {
       // 保留 token，等待下一次请求或用户主动重试。
