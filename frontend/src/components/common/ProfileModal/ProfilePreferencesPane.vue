@@ -51,6 +51,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/useTheme'
 import { useI18n } from 'vue-i18n'

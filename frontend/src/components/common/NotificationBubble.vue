@@ -24,6 +24,7 @@
 </template>
 
 <script setup lang="ts">
+import { reactive, ref, watch } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/MarkdownView.vue'

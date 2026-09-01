@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       # 集成 job 通过 VITE_USE_LOCAL_RUNTIME=1 显式验证 pinned Runtime 构建产物；
       # 普通/生产构建使用 frontend/package.json 中的 npm Runtime 包。
@@ -202,6 +202,12 @@ jobs:
       - name: Build RAG worker
         run: pnpm --filter gugu-rag-ts-worker build
 
+      - name: RAG worker smoke test
+        working-directory: backend
+        run: |
+          printf '%s\n' '{"op":"tokenize","text":"部署上线"}' | node bin/gugu-rag-ts-worker.mjs > /tmp/rag-worker-smoke.jsonl
+          node -e "const fs = require('fs'); const line = fs.readFileSync('/tmp/rag-worker-smoke.jsonl', 'utf8').trim(); const result = JSON.parse(line); if (result.status !== 'ok' || !Array.isArray(result.tokens) || result.tokens.length === 0) { throw new Error('RAG worker smoke test failed: ' + line) }"
+
       - name: Create database schema
         working-directory: backend
         env:
@@ -304,6 +310,7 @@ jobs:
       PLAYWRIGHT_USERNAME: e2e_ci_user
       PLAYWRIGHT_PASSWORD: E2eCiPass!2026
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
+      VITE_API_PROXY_TARGET: http://127.0.0.1:8000
     steps:
       - name: Checkout Gugu-web
         uses: actions/checkout@v4
@@ -370,7 +377,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Runtime dependencies for integration alias
         working-directory: gugu-interaction-runtime
@@ -393,6 +400,15 @@ jobs:
             sleep 1
           done
           echo '::error::frontend dev server 未在预期时间内启动'; cat /tmp/frontend.log; exit 1
+
+      - name: Check frontend API proxy login
+        working-directory: frontend
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data "{\"username\":\"$PLAYWRIGHT_USERNAME\",\"password\":\"$PLAYWRIGHT_PASSWORD\"}" \
+            -o /dev/null \
+            http://127.0.0.1:5173/api/v1/auth/login
 
       - name: Run E2E (稳定关键路径)
         working-directory: frontend
