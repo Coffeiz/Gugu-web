@@ -10,6 +10,17 @@ type Schemas = components['schemas']
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
+export interface SiteConfig {
+  icpNumber: string
+  icpUrl: string
+}
+
+export async function fetchSiteConfig(): Promise<SiteConfig> {
+  const response = await fetch(`${BASE_URL}/site-config`, { credentials: 'same-origin' })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return response.json() as Promise<SiteConfig>
+}
+
 export function getToken(): string {
   return localStorage.getItem('user_token') ?? ''
 }

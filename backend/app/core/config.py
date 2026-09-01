@@ -334,6 +334,8 @@ class AppSettings(BaseSettings):
     )
 
     app_name: str = "Gugu"
+    gugu_site_icp_number: str = Field("", description="站点备案号；为空时前端不显示备案信息")
+    gugu_site_icp_url: str = Field("https://beian.miit.gov.cn/", description="站点备案信息链接")
     debug: bool = False
     secret_key: str = Field("change-me-in-production", description="JWT 签名密钥")
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")

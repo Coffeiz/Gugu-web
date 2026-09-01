@@ -27,7 +27,7 @@
         <div v-if="error" class="error-msg">{{ error }}</div>
 
         <button type="submit" class="btn-primary" :disabled="loading">
-          {{ loading ? t('auth.registering') : t('auth.register') }}
+          <span>{{ loading ? t('auth.registering') : t('auth.register') }}</span>
         </button>
       </form>
 
@@ -139,13 +139,24 @@ async function handleRegister() {
 
 .btn-primary {
   width: 100%; padding: 11px; margin-top: 4px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: background-color 0.15s;
+  cursor: pointer;
+  position: relative; isolation: isolate; overflow: hidden;
+  transition: box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) var(--motion-ease-standard);
   box-shadow: none;
 }
-.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
+.btn-primary::before {
+  content: ''; position: absolute; inset: 0; z-index: 0;
+  border-radius: inherit; background: var(--action-primary-bg-hover);
+  opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.btn-primary > span { position: relative; z-index: 1; }
+.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg); opacity: 1; }
+.btn-primary:hover:not(:disabled)::before { opacity: 1; }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .ack-row {
