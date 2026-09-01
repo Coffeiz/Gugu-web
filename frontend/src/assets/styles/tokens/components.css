@@ -167,8 +167,8 @@
   --gugu-chat-session-active: var(--sidebar-item-active);
   --gugu-chat-session-active-fg: var(--sidebar-item-active-fg);
   --gugu-chat-caption: var(--content-tertiary);
-  --gugu-chat-header-height: 56px;
-  --gugu-chat-composer-height: 56px;
+  --gugu-chat-header-height: 50px;
+  --gugu-chat-composer-height: 50px;
   --gugu-chat-user-bg: var(--action-primary);
   --gugu-chat-file-bg: rgba(255,255,255,.50);
   --gugu-chat-file-border: rgba(255,255,255,.65);

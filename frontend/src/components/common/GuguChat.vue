@@ -257,10 +257,9 @@ async function enterExpanded() {
   expanded.value = true
   loadBots()
   markResizing()
-  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度；用目标宽度离屏测量，避免把旧宽度的行数
-  // 带到动画结束才纠正，也不需要为了兜底提前撑高窗口。
+  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度，输入高度统一在过渡结束后校准，
+  // 避免用中间态宽度测量导致窗口先撑高再回落。
   await nextTick()
-  composerRef.value?.fitTextarea?.(true)
   trackApi.track('chat_expanded').catch(() => {})
   await fetchSessions()
   await nextTick()
@@ -284,7 +283,6 @@ async function exitExpanded() {
   expanded.value = false
   markResizing()
   await nextTick()
-  composerRef.value?.fitTextarea?.(false)
   const el = messagesEl.value
   if (!el) return
   stick.value = true
@@ -570,16 +568,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 /* 状态指示气泡不在虚拟列表里，是紧跟在占位容器后面的普通流内元素，补回同款左右留白 + gap */
 :deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
 .chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }
-
-/* chat-att-row/chat-input-row/rec-bar/att-btn 自身样式已随 GuguChatComposer.vue 迁移；
-   这里只留跨组件的祖先态覆盖（大窗态放大按钮/输入区），用 :deep() 穿透子组件 scope。 */
-.chat-main.is-expanded :deep(.att-btn) { height: 32px; }   /* 放大态对齐放大发送按钮(32) */
-.chat-main.is-expanded :deep(.chat-input-row) { padding: 14px 20px; gap: 10px; }
-.chat-main.is-expanded :deep(.rec-bar) { height: 32px; }   /* 放大态对齐 32 */
-/* 大窗的附件/发送按钮为 32px；单行输入也占满同一高度，图标和文字的视觉中线才一致。 */
-.chat-main.is-expanded :deep(.chat-input-row textarea) { padding: 5.5px 0; }
-/* 小窗输入字号略小，与小窗整体一致 */
-.chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
 
 /* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
    跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、

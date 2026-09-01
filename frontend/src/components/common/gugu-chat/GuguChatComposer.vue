@@ -185,6 +185,7 @@ function syncEditorState() {
   emit('update:modelValue', text)
   emit('update:references', referencesFromDoc(doc))
   syncReferencePicker(editor)
+  void nextTick(() => fitTextarea())
 }
 
 function findReferenceTrigger(editor: any) {
@@ -308,6 +309,7 @@ watch(() => [props.modelValue, props.references] as const, ([text, references]) 
   const editor = chatEditor.value
   if (!editor || chatTextFromDoc(editor.getJSON() as MindDocNode) === text) return
   editor.commands.setContent(chatDoc(text, references) as any, { emitUpdate: false })
+  void nextTick(() => fitTextarea())
 })
 
 function onInputSelection() {
@@ -360,10 +362,12 @@ defineExpose({
   display: flex; align-items: center; justify-content: center; height: 28px; padding: 0;
   opacity: 0.7; transition: opacity 0.15s, color 0.15s; }   /* 与发送按钮(28)等高，底对齐时中心也对齐 */
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
+.chat-input-row > .att-btn,
+.chat-input-row > .send-btn { align-self: center; }
 .chat-input-row {
   min-height: var(--gugu-chat-composer-height);
   box-sizing: border-box;
-  display: flex; align-items: flex-end; gap: 8px;   /* 输入框多行增高时，附件/发送按钮贴底对齐 */
+  display: flex; align-items: center; gap: 8px;   /* 大小窗图标与输入内容共用垂直中线 */
   position: relative;
   padding: 10px 13px;
   border-top: 1px solid rgba(255,255,255,0.65);
@@ -461,7 +465,7 @@ defineExpose({
 .chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; }
 .chat-input-editor :deep(.ProseMirror .mind-ref-label) { overflow: hidden; text-overflow: ellipsis; }
 
-.exp-send-btn { width: 32px; height: 32px; border-radius: 9px; }
+.exp-send-btn { width: 28px; height: 28px; border-radius: 8px; }
 
 /* ── 通用发送按钮 ── */
 /* 背景色不进这里、留给全局 token 接管：tokens/product.css 提供基础色，
