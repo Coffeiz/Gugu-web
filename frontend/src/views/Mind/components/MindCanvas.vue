@@ -272,22 +272,7 @@ const landingObjectNodeIds = new Map<string, number>()
 const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
 const landingNodeIds = reactive(new Set<number>())
-const probeVisualPhases = new Map<string, string>()
 function onRuntimeVisual(event: RuntimeEvent) {
-  if (import.meta.env.DEV && (event.type === 'move-visual-update' || event.type === 'move-visual-end')) {
-    if (event.type === 'move-visual-end' || probeVisualPhases.get(event.sessionId) !== event.phase) {
-      if (event.type === 'move-visual-update') probeVisualPhases.set(event.sessionId, event.phase)
-      else probeVisualPhases.delete(event.sessionId)
-      console.log('[mind-hover-probe] canvas-visual ' + JSON.stringify({
-        type: event.type,
-        sessionId: event.sessionId,
-        objectId: event.objectId,
-        phase: event.type === 'move-visual-update' ? event.phase : null,
-        nodeId: landingObjectNodeIds.get(event.objectId) ?? props.items.find(item => mindCanvasObjectId(item) === event.objectId)?.nodeId ?? null,
-        trackedLandingObjects: landingObjectNodeIds.size,
-      }))
-    }
-  }
   if (event.type === 'move-visual-end') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
