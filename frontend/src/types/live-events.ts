@@ -13,6 +13,7 @@ export interface LiveEventPayload {
   revision: number
   payload?: unknown
   origin?: string | null
+  mutation_id?: string | null
   created_at: string
 }
 

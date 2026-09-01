@@ -46,12 +46,35 @@ async def test_terminal_page_hidden_when_admin_shell_is_disabled(db, user_a, mon
 
 
 @pytest.mark.asyncio
+async def test_terminal_page_hidden_when_sandbox_is_disabled(db, user_a, monkeypatch):
+    monkeypatch.setattr(
+        terminal_access,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=True),
+            sandbox=SimpleNamespace(enabled=False),
+        ),
+    )
+    monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
+    monkeypatch.setattr(terminal_access, "effective_shell_system_enabled", _async_true)
+
+    decision = await page_access(db, user_a.id)
+
+    assert not decision.allowed
+    assert decision.reason == "Shell 沙盒未开启"
+
+
+@pytest.mark.asyncio
 async def test_terminal_page_can_show_without_workspace_when_shell_is_enabled(db, user_a, monkeypatch):
     monkeypatch.setattr(
         terminal_access,
         "get_settings",
-        lambda: SimpleNamespace(agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False)),
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
+            sandbox=SimpleNamespace(enabled=True),
+        ),
     )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     decision = await page_access(db, user_a.id)
     assert decision.allowed
@@ -254,8 +277,12 @@ async def test_terminal_sse_replays_closed_terminal_until_end_marker(db, user_a,
     monkeypatch.setattr(
         terminal_access,
         "get_settings",
-        lambda: SimpleNamespace(agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False)),
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
+            sandbox=SimpleNamespace(enabled=True),
+        ),
     )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     terminal = TerminalSessionRecord(
         id="term-sse-replay", owner_id=user_a.id, name="SSE 终端",
@@ -268,8 +295,9 @@ async def test_terminal_sse_replays_closed_terminal_until_end_marker(db, user_a,
         exit_code=0, ok=True, source=TerminalSource.USER.value,
     )
     await terminate_terminal(db, terminal)
+    await db.commit()
 
-    response = await stream_terminal_events(terminal.id, after=0, user=user_a, db=db)
+    response = await stream_terminal_events(terminal.id, after=0, user_id=user_a.id)
     chunks = [chunk async for chunk in response.body_iterator]
     body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
 
@@ -330,8 +358,12 @@ async def test_terminal_input_allows_user_terminal_without_session(db, user_a, m
     monkeypatch.setattr(
         terminal_access,
         "get_settings",
-        lambda: SimpleNamespace(agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False)),
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
+            sandbox=SimpleNamespace(enabled=True),
+        ),
     )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     monkeypatch.setattr(terminal_access, "evaluate", _async_allowed_decision)
     terminal = TerminalSessionRecord(

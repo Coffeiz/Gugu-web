@@ -50,6 +50,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
@@ -73,6 +74,7 @@ import {
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
+const route = useRoute()
 const projectStore = useProjectStore()
 const { openMindRef } = useMindRefActions()
 
@@ -153,13 +155,16 @@ onMounted(async () => {
     !store.canvasesLoaded ? store.fetchCanvases() : Promise.resolve(),
     !projectStore.projectsLoaded && !projectStore.loading ? projectStore.fetchProjects() : Promise.resolve(),
   ])
-  await ensureCanvas()
+  const requestedId = Number(route.query.object_id)
+  await ensureCanvas(Number.isFinite(requestedId) ? requestedId : undefined)
 })
-async function ensureCanvas() {
+async function ensureCanvas(requestedId?: number) {
   const rememberedId = Number(localStorage.getItem('mind-last-canvas-id'))
-  const fallbackId = Number.isFinite(rememberedId) && store.canvases.some(canvas => canvas.id === rememberedId)
+  const requestedCanvas = Number.isFinite(requestedId) && store.canvases.some(canvas => canvas.id === requestedId)
+    ? requestedId : undefined
+  const fallbackId = requestedCanvas ?? (Number.isFinite(rememberedId) && store.canvases.some(canvas => canvas.id === rememberedId)
     ? rememberedId
-    : store.canvases[0]?.id
+    : store.canvases[0]?.id)
   let id = fallbackId
   if (id == null) {
     const canvas = await store.createCanvas()
@@ -434,8 +439,8 @@ async function addProjectAtCenter(projectId: number) {
   await store.addRefToCanvas(activeCanvasId.value, 'project', projectId, x, y)
 }
 /** 抽屉项目松手后先本地乐观插入一张画布卡，立刻交给抽屉克隆做落地动画——不等
- * createRefNode/addCanvasItem 这两次串行请求（真实环境轻松上百毫秒），克隆体才不会
- * 在空中冻住顿一下。接口在背后跑，成功后原地换真实数据，失败则原地摘除并提示。 */
+ * createRefNode/addCanvasItem 这两次串行请求。接口在背后跑，成功后原地换真实数据，
+ * 失败则原地摘除并提示。 */
 async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) {
   const canvas = canvasRef.value
   const canvasId = activeCanvasId.value

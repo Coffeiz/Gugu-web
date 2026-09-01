@@ -32,6 +32,7 @@ from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool, current_dispatch_session
+from agent.tools.line_edit import apply_line_edits, numbered_lines
 
 # 可读/可改的文本类扩展名
 TEXT_EXTS = frozenset({
@@ -419,7 +420,12 @@ async def _read_file(db, user_id, args: dict):
         text = await doctext.extract_text(data, ext)   # 文本类直接 decode；文档走 pdftotext/LibreOffice
     except Exception as e:
         return json.dumps({"error": f"读取失败：{str(e)[:80]}"})
-    return {"file_id": f.id, "name": f"{f.display_name}.{f.ext}", "content": text}
+    return {
+        "file_id": f.id,
+        "name": f"{f.display_name}.{f.ext}",
+        "content": text,
+        "numbered_content": numbered_lines(text),
+    }
 
 
 async def _edit_one(db, user_id, f, spec: dict) -> dict:
@@ -435,15 +441,12 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
         old = (await storage.get(f.storage_key)).decode("utf-8", errors="replace")
     except Exception as e:
         return {"error": f"读取失败：{str(e)[:80]}", "name": nm}
-    mode = spec.get("mode", "replace_all")
+    mode = spec.get("mode")
     # `change`：一句话改动摘要——给模型「反馈用户改了啥」的事实依据（按回执说，别自己编）。
     def _clip(s, n=24):
         s = (s or "").replace("\n", " ")
         return s[:n] + ("…" if len(s) > n else "")
-    if mode == "replace_all":
-        new = spec.get("content", "")
-        change = f"整体覆盖（{len(old)} → {len(new)} 字）"
-    elif mode == "append":
+    if mode == "append":
         add = spec.get("content", "")
         new = old + add
         change = f"末尾追加 {len(add)} 字"
@@ -455,6 +458,12 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
         n = old.count(find)
         new = old.replace(find, rep)
         change = f"替换 {n} 处：「{_clip(find)}」→「{_clip(rep)}」"
+    elif mode == "line_edit":
+        try:
+            new, changed_lines = apply_line_edits(old, spec.get("line_edits", []))
+        except ValueError as exc:
+            return {"error": str(exc), "name": nm}
+        change = f"按行修改 {changed_lines} 行"
     else:
         return {"error": f"未知 mode: {mode}", "name": nm}
     data = new.encode("utf-8")
@@ -464,12 +473,12 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     f.updated_at = now_utc()
     await db.commit()
     result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
-    # P2c · 内容骤降告警：replace_all 最容易把整段覆盖丢。改后显著变短时确定性提示模型核对，
+    # 内容骤降告警：行级整体替换也可能误删正文，改后显著变短时确定性提示模型核对。
     # 不全靠它自己「读回来发现」（配合 skills.md「改正文必须 read_file 读回比对」铁律）。
     if len(old) >= 200 and len(new) < len(old) * 0.5:
         result["warning"] = (
             f"⚠️ 改后内容明显变短（原约 {len(old)} 字 → 新约 {len(new)} 字）。"
-            f"若你本只想改局部却用了整体覆盖，可能把其它内容覆盖丢了——"
+            f"若你本只想改局部却用了整篇替换，可能把其它内容覆盖丢了——"
             f"请立刻 read_file 读回核对内容是否完整，缺了就补回。"
         )
     return result
@@ -1442,7 +1451,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="edit_file", label="修改文件",
             description_short='修改文本文件；支持替换、追加和查找替换。',
-            description="修改文本文件；支持整体替换、追加和查找替换，多个文件用 edits 批量处理。",
+            description="修改文本文件；支持按 target_lines 更新/删除指定行、整体替换、追加和查找替换，多个文件用 edits 批量处理。target_lines 支持 8、8-11、8,11，content 为空表示删除；行号以最新 read_file 内容为准，多个范围不能重叠。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1453,20 +1462,14 @@ class FilesSkill(BaseSkill):
                             "properties": {
                                 "file": {"type": "string"},
                                 "file_id": {"type": "integer"},
-                                "mode": {"type": "string", "enum": ["replace_all", "append", "find_replace"]},
+                                "mode": {"type": "string", "enum": ["append", "find_replace", "line_edit"]},
                                 "content": {"type": "string"},
                                 "find": {"type": "string"},
                                 "replace": {"type": "string"},
+                                "line_edits": {"type": "array", "items": {"type": "object", "properties": {"target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"}, "content": {"type": "string"}, "expected": {"type": "string"}}, "required": ["target_lines", "content"], "additionalProperties": False}},
                             },
                             "required": ["mode"],
                             "allOf": [
-                                {
-                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "replace_all"}}},
-                                    "then": {
-                                        "required": ["content"],
-                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
-                                    },
-                                },
                                 {
                                     "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
                                     "then": {
@@ -1481,24 +1484,20 @@ class FilesSkill(BaseSkill):
                                         "not": {"required": ["content"]},
                                     },
                                 },
+                                {"if": {"required": ["mode"], "properties": {"mode": {"const": "line_edit"}}}, "then": {"required": ["line_edits"], "not": {"anyOf": [{"required": ["content"]}, {"required": ["find"]}, {"required": ["replace"]}]}}},
                             ],
                         },
                     },
                     "file_id": {"type": "integer"},
                     "file": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["replace_all", "append", "find_replace"]},
+                    "mode": {"type": "string", "enum": ["append", "find_replace", "line_edit"]},
                     "content": {"type": "string"},
                     "find": {"type": "string"},
                     "replace": {"type": "string"},
+                    "line_edits": {"type": "array", "items": {"type": "object", "properties": {"target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"}, "content": {"type": "string"}, "expected": {"type": "string"}}, "required": ["target_lines", "content"], "additionalProperties": False}},
                 },
                 "allOf": [
-                    {
-                        "if": {"required": ["mode"], "properties": {"mode": {"const": "replace_all"}}},
-                        "then": {
-                            "required": ["content"],
-                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
-                        },
-                    },
+                    {"if": {"required": ["mode"], "properties": {"mode": {"const": "line_edit"}}}, "then": {"required": ["line_edits"], "not": {"anyOf": [{"required": ["content"]}, {"required": ["find"]}, {"required": ["replace"]}]}}},
                     {
                         "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
                         "then": {

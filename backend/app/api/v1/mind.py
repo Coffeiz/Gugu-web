@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,13 +84,16 @@ def _to_resp(n: MindNode) -> MindNodeResponse:
     )
 
 
-async def _publish_mind(user_id, operation: str, entity_id, kind: str, entity) -> None:
+async def _publish_mind(user_id, operation: str, entity_id, kind: str, entity,
+                        request: Request | None = None) -> None:
     """发布已提交的思维面板实体；payload 使用 JSON 可传输的响应模型。"""
     if hasattr(entity, "model_dump"):
         entity = entity.model_dump(mode="json", by_alias=True)
     await events.publish(
         user_id,
         "mind",
+        origin=request.headers.get("X-Client-Id") if request else None,
+        mutation_id=request.headers.get("X-Mutation-Id") if request else None,
         operation=operation,
         entity_id=entity_id,
         event_payload={"kind": kind, "entity": entity},
@@ -120,6 +123,7 @@ async def list_notes(
 @router.post("/notes", response_model=MindNodeResponse, status_code=201)
 async def create_note(
     body: MindNoteCreate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -133,7 +137,7 @@ async def create_note(
     await db.commit()
     await db.refresh(n)
     response = _to_resp(n)
-    await _publish_mind(current_user.id, "create", n.id, "note", response)
+    await _publish_mind(current_user.id, "create", n.id, "note", response, request)
     return response
 
 
@@ -141,6 +145,7 @@ async def create_note(
 async def update_note(
     nid: int,
     body: MindNoteUpdate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -162,13 +167,14 @@ async def update_note(
     await db.commit()
     await db.refresh(n)
     response = _to_resp(n)
-    await _publish_mind(current_user.id, "update", n.id, "note", response)
+    await _publish_mind(current_user.id, "update", n.id, "note", response, request)
     return response
 
 
 @router.delete("/notes/{nid}", status_code=204)
 async def delete_note(
     nid: int,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -179,7 +185,7 @@ async def delete_note(
         await db.rollback()
         raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
     await db.commit()
-    await _publish_mind(current_user.id, "delete", nid, "note", {"id": nid})
+    await _publish_mind(current_user.id, "delete", nid, "note", {"id": nid}, request)
 
 
 @router.get("/ref-suggest", response_model=list[MindRefSuggestItem])
@@ -324,6 +330,7 @@ async def list_canvases(
 @router.post("/canvases", response_model=MindCanvasResponse, status_code=201)
 async def create_canvas(
     body: MindCanvasCreate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -335,7 +342,7 @@ async def create_canvas(
         raise HTTPException(404, "项目不存在")
     await db.commit()
     response = _canvas_resp(canvas)
-    await _publish_mind(current_user.id, "create", canvas.id, "canvas", response)
+    await _publish_mind(current_user.id, "create", canvas.id, "canvas", response, request)
     return response
 
 
@@ -343,6 +350,7 @@ async def create_canvas(
 async def update_canvas(
     cid: int,
     body: MindCanvasUpdate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -356,20 +364,21 @@ async def update_canvas(
     canvas = await update_canvas_service(db, current_user.id, cid, fields)
     await db.commit()
     response = _canvas_resp(canvas)
-    await _publish_mind(current_user.id, "update", canvas.id, "canvas", response)
+    await _publish_mind(current_user.id, "update", canvas.id, "canvas", response, request)
     return response
 
 
 @router.delete("/canvases/{cid}", status_code=204)
 async def delete_canvas(
     cid: int,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     canvas = await _get_canvas(db, cid, current_user.id)
     await delete_canvas_service(db, current_user.id, cid)
     await db.commit()
-    await _publish_mind(current_user.id, "delete", cid, "canvas", {"id": cid})
+    await _publish_mind(current_user.id, "delete", cid, "canvas", {"id": cid}, request)
 
 
 @router.get("/canvases/{cid}/items", response_model=list[MindCanvasItemResponse])
@@ -388,6 +397,7 @@ async def list_canvas_items(
 async def add_canvas_item(
     cid: int,
     body: MindCanvasItemCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -407,7 +417,7 @@ async def add_canvas_item(
     await db.commit()
     ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
     response = _item_resp(item, node, ref_data)
-    await _publish_mind(current_user.id, "create", item.id, "canvas_item", response)
+    await _publish_mind(current_user.id, "create", item.id, "canvas_item", response, request)
     return response
 
 
@@ -415,6 +425,7 @@ async def add_canvas_item(
 async def create_canvas_note(
     cid: int,
     body: MindCanvasNoteCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -430,7 +441,7 @@ async def create_canvas_note(
         raise HTTPException(422, str(exc))
     await db.commit()
     response = _item_resp(item, node)
-    await _publish_mind(current_user.id, "create", item.id, "canvas_item", response)
+    await _publish_mind(current_user.id, "create", item.id, "canvas_item", response, request)
     return response
 
 
@@ -438,6 +449,7 @@ async def create_canvas_note(
 async def update_canvas_note(
     nid: int,
     body: MindCanvasNoteUpdate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -458,7 +470,7 @@ async def update_canvas_note(
         raise HTTPException(409, "画布便签已被其他端修改，请刷新后重试")
     await db.commit()
     response = _to_resp(node)
-    await _publish_mind(current_user.id, "update", node.id, "canvas_note", response)
+    await _publish_mind(current_user.id, "update", node.id, "canvas_note", response, request)
     return response
 
 
@@ -467,6 +479,7 @@ async def bring_canvas_item_to_front(
     cid: int,
     iid: int,
     body: MindCanvasItemBringToFront,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -481,7 +494,7 @@ async def bring_canvas_item_to_front(
     target_item, target_node = target
     ref_data = (await _ref_data_by_node_id(db, [target_node], current_user.id)).get(target_node.id)
     response = _item_resp(target_item, target_node, ref_data)
-    await _publish_mind(current_user.id, "update", target_item.id, "canvas_item", response)
+    await _publish_mind(current_user.id, "update", target_item.id, "canvas_item", response, request)
     return response
 
 
@@ -490,6 +503,7 @@ async def update_canvas_item(
     cid: int,
     iid: int,
     body: MindCanvasItemUpdate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -510,7 +524,7 @@ async def update_canvas_item(
     await db.commit()
     ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
     response = _item_resp(item, node, ref_data)
-    await _publish_mind(current_user.id, "update", item.id, "canvas_item", response)
+    await _publish_mind(current_user.id, "update", item.id, "canvas_item", response, request)
     return response
 
 
@@ -518,6 +532,7 @@ async def update_canvas_item(
 async def remove_canvas_item(
     cid: int,
     iid: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -527,7 +542,7 @@ async def remove_canvas_item(
         raise HTTPException(404, "画布贴纸不存在")
     await remove_canvas_item_service(db, current_user.id, cid, iid)
     await db.commit()
-    await _publish_mind(current_user.id, "delete", iid, "canvas_item", {"id": iid, "canvas_id": cid})
+    await _publish_mind(current_user.id, "delete", iid, "canvas_item", {"id": iid, "canvas_id": cid}, request)
 
 
 @router.get("/canvases/{cid}/relations", response_model=list[MindRelationResponse])
@@ -544,6 +559,7 @@ async def list_canvas_relations(
 @router.post("/relations", response_model=MindRelationResponse, status_code=201)
 async def create_relation(
     body: MindRelationCreate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -558,13 +574,14 @@ async def create_relation(
         raise HTTPException(422, error)
     await db.commit()
     response = _relation_resp(relation)
-    await _publish_mind(current_user.id, "create", relation.id, "relation", response)
+    await _publish_mind(current_user.id, "create", relation.id, "relation", response, request)
     return response
 
 
 @router.delete("/relations/{rid}", status_code=204)
 async def delete_relation(
     rid: int,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -573,13 +590,14 @@ async def delete_relation(
         raise HTTPException(404, "关联不存在")
     await disconnect_node_relation(db, current_user.id, rid)
     await db.commit()
-    await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid})
+    await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid}, request)
 
 
 @router.delete("/canvases/{cid}/relations/{rid}", status_code=204)
 async def delete_canvas_relation(
     cid: int,
     rid: int,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -590,12 +608,13 @@ async def delete_canvas_relation(
         raise HTTPException(404, "画布关联不存在")
     await disconnect_node_relation(db, current_user.id, rid, canvas_id=cid)
     await db.commit()
-    await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid, "canvas_id": cid})
+    await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid, "canvas_id": cid}, request)
 
 
 @router.post("/nodes/ref", response_model=MindNodeResponse, status_code=201)
 async def create_ref_node(
     body: MindRefNodeCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -611,5 +630,5 @@ async def create_ref_node(
     if created:
         await db.commit()
         response = _to_resp(node)
-        await _publish_mind(current_user.id, "create", node.id, "ref_node", response)
+        await _publish_mind(current_user.id, "create", node.id, "ref_node", response, request)
     return _to_resp(node)

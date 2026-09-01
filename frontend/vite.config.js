@@ -22,6 +22,14 @@ const adminEntry = {
     })
   },
 }
+const localRuntimeAliases = process.env.VITE_USE_LOCAL_RUNTIME === '1'
+  ? [
+      // Integration CI / 本地联调可显式使用 sibling Runtime；生产镜像默认走 npm 包。
+      { find: 'gugu-interaction-runtime/vue', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/vue.js') },
+      { find: 'gugu-interaction-runtime', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/index.js') },
+    ]
+  : []
+
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(APP_VER) },
   plugins: [
@@ -40,9 +48,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: resolve(__dirname, 'src') },
-      // 临时验证本地 Runtime 的浮层测量修复；验证完成后移除，不进入正式依赖配置。
-      { find: 'gugu-interaction-runtime/vue', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/vue.js') },
-      { find: 'gugu-interaction-runtime', replacement: resolve(__dirname, '../../gugu-interaction-runtime/dist-lib/index.js') },
+      ...localRuntimeAliases,
       // 统一到 Gugu-web 的 Vue，避免产生两份响应式运行时。
       { find: 'vue', replacement: resolve(__dirname, 'node_modules/vue/dist/vue.runtime.esm-bundler.js') },
     ],

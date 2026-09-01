@@ -9,7 +9,7 @@ html[data-theme][data-family] .ne-body .ProseMirror .ne-codeblock { background: 
 html[data-theme][data-family] .md-preview .np-code-lang,
 html[data-theme][data-family] .ne-body .ProseMirror .ne-codeblock-lang { border-bottom-color: var(--border-subtle); }
 html[data-theme][data-family] .md-preview .np-hr,
-html[data-theme][data-family] .ne-body .ProseMirror hr { background: var(--border-default); }
+html[data-theme][data-family] .ne-body .ProseMirror hr { background: var(--note-divider); }
 html[data-theme][data-family] .mind-ref {
   color: var(--content-primary);
   background: var(--action-soft);

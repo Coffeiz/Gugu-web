@@ -311,7 +311,7 @@ describe('主题 CSS 回归契约', () => {
     expect(darkTokens).toContain('--file-card-bg: var(--surface-card-solid);')
     expect(darkTokens).toContain('--file-card-bg-selected: var(--surface-raised);')
     expect(darkTokens).toContain('--file-card-border-selected: var(--action-outline);')
-    expect(darkTokens).toContain('--file-card-selection-overlay: var(--selection-bg);')
+    expect(darkTokens).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);')
     expect(darkTokens).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
 
     // Legacy bridge / Mono adoption 不得重新获得 fc-card paint 或 border ownership。

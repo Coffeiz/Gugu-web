@@ -3,7 +3,7 @@ import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { resolveFolderIds } from '@/utils/folderKeys'
-import { optimisticMutation } from '@/utils/optimisticMutation'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import type { useFileActions } from './useFileActions'
 import { useFileBatchCore } from './useFileBatchCore'
 import { useFilePasteCore } from './useFilePasteCore'
@@ -64,23 +64,33 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
     if (!await confirmFileDeletion('selected', { count: fileIds.length + folderIds.length })) return
 
     const fileBackups = fileIds.map(id => options.cacheStore.getFile(id)).filter((file): file is FileMeta => file != null)
-    options.clearSelection()
-    options.cacheStore.removeFiles(fileIds)
-    options.pruneHistoryForFolders(folderIds)
-    folderIds.forEach(id => options.cacheStore.removeFolder(id))
-    options.loadContents()
-
+    const folderBackups = folderIds.map(id => options.cacheStore.getFolder(id)).filter((folder): folder is FolderMeta => folder != null)
     try {
-      await Promise.all([
-        fileIds.length ? options.fileActions.batchDelete(fileIds) : Promise.resolve(),
-        ...folderIds.map(id => options.fileActions.deleteFolder(id)),
-      ])
-      await options.fetchStorage()
-    } catch (error) {
-      fileBackups.forEach(file => options.cacheStore.addFile(file))
-      options.loadContents()
-      console.error('[Files] 批量删除失败:', error instanceof Error ? error.message : String(error))
-    }
+      await InteractionSync.execute({
+        scope: 'file.batch-delete', entityKey: `file-batch-delete:${fileIds.join(',')}:${folderIds.join(',')}`,
+        apply: () => {
+          options.clearSelection()
+          options.cacheStore.removeFiles(fileIds)
+          options.pruneHistoryForFolders(folderIds)
+          folderIds.forEach(id => options.cacheStore.removeFolder(id))
+          options.loadContents()
+        },
+        rollback: () => {
+          fileBackups.forEach(file => options.cacheStore.addFile(file))
+          folderBackups.forEach(folder => options.cacheStore.addFolder(folder))
+          options.loadContents()
+        },
+        request: async mutation => {
+          await Promise.all([
+            fileIds.length ? options.fileActions.batchDelete(fileIds, { mutationId: mutation.mutationId }) : Promise.resolve(),
+            ...folderIds.map(id => options.fileActions.deleteFolder(id, { mutationId: mutation.mutationId })),
+          ])
+          return null
+        },
+        onCommit: options.fetchStorage,
+        onError: error => console.error('[Files] 批量删除失败:', error instanceof Error ? error.message : String(error)),
+      })
+    } catch { /* 错误已回滚并记录 */ }
   }
 
   const pasteCore = useFilePasteCore({
@@ -91,20 +101,23 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
       const fileBackups = fileIds.map(id => options.cacheStore.getFile(id)).filter((file): file is FileMeta => file != null)
       const folderBackups = folderIds.map(id => options.cacheStore.getFolder(id)).filter((folder): folder is FolderMeta => folder != null)
       let movedFolders: FolderMeta[] = []
-      await optimisticMutation({
+      await InteractionSync.execute({
+        scope: 'file.move-paste', entityKey: `file-paste:${fileIds.join(',')}:${folderIds.join(',')}`,
         apply: () => {
           fileIds.forEach(id => options.cacheStore.updateFile(id, { folderId: destination.folderId, projectId: destination.projectId }))
           folderIds.forEach(id => options.cacheStore.updateFolder(id, { parentId: destination.folderId, projectId: destination.projectId }))
           options.clipboardStore.clear()
         },
         afterMutate: options.loadContents,
-        work: async () => {
+        request: async mutation => {
           await Promise.all([
-            Promise.all(fileBackups.map(file => options.fileActions.moveFile(file.id, destination.folderId, destination.projectId))),
+            Promise.all(fileBackups.map(file => options.fileActions.moveFile(file.id, destination.folderId, destination.projectId, { mutationId: mutation.mutationId }))),
             Promise.all(folderIds.map(id => options.fileActions.moveFolder(
               id, destination.folderId, folderBackups.find(folder => folder.id === id)?.version ?? 1, destination.projectId,
+              { mutationId: mutation.mutationId },
             ))).then(result => { movedFolders = result }),
           ])
+          return null
         },
         rollback: () => {
           fileBackups.forEach(file => options.cacheStore.updateFile(file.id, { folderId: file.folderId, projectId: file.projectId }))

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from app.core.tz import now_utc
 from uuid import UUID
+from dataclasses import dataclass
 
 import bcrypt as _bcrypt
 import secrets
@@ -22,6 +23,14 @@ ADMIN_ACCESS_COOKIE = "gugu_admin_access_token"
 ADMIN_CSRF_COOKIE = "gugu_admin_csrf_token"
 CSRF_HEADER = "X-CSRF-Token"
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@dataclass(frozen=True)
+class CurrentUserIdentity:
+    """不绑定 request DB 生命周期的用户身份快照。"""
+
+    id: UUID
+    username: str
 
 
 def _cookie_secure(request: Request) -> bool:
@@ -172,6 +181,23 @@ async def get_current_user_id(
         return user_id
     except (JWTError, KeyError, ValueError):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
+
+
+async def get_current_user_identity(
+    user_id: UUID = Depends(get_current_user_id),
+) -> CurrentUserIdentity:
+    """为 StreamingResponse/长连接提供短事务身份快照。"""
+    from app.db import session as db_session
+    from app.models import User
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        raise HTTPException(status_code=503, detail="数据库暂不可用")
+    async with db_session._SessionLocal() as db:
+        user = await db.get(User, user_id)
+        if not account_is_active(user):
+            raise HTTPException(status_code=401, detail="用户不存在或已停用")
+        return CurrentUserIdentity(id=user.id, username=user.username)
 
 
 def decode_user_token(token: str) -> UUID:

@@ -52,6 +52,79 @@ _MAX_RESULTS = 20
 _MAX_MUTATIONS = 20
 _PLACEABLE_TYPES = ("project", "file", "event")
 _CANVAS_TYPES = ("canvas_note", "project", "file", "event")
+
+_CANVAS_LAYOUT_PROPERTIES = {
+    "item_id": {"type": "integer"},
+    "x": {"type": "number"},
+    "y": {"type": "number"},
+    "z": {"type": "integer"},
+    "collapsed": {"type": "boolean"},
+}
+_CANVAS_UPDATE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": _CANVAS_LAYOUT_PROPERTIES,
+    "required": ["item_id"],
+    "anyOf": [{"required": [field]} for field in ("x", "y", "z", "collapsed")],
+    "additionalProperties": False,
+}
+_CANVAS_UPDATE_NODE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "canvas_id": {"type": "integer"},
+        **_CANVAS_LAYOUT_PROPERTIES,
+        "updates": {"type": "array", "minItems": 1, "maxItems": _MAX_MUTATIONS, "items": _CANVAS_UPDATE_ITEM_SCHEMA},
+    },
+    "required": ["canvas_id"],
+    "oneOf": [
+        {
+            "required": ["item_id"],
+            "not": {"required": ["updates"]},
+            "anyOf": [{"required": [field]} for field in ("x", "y", "z", "collapsed")],
+        },
+        {
+            "required": ["updates"],
+            "not": {"anyOf": [{"required": [field]} for field in ("item_id", "x", "y", "z", "collapsed")]},
+        },
+    ],
+}
+_CANVAS_NOTE_UPDATE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "node_id": {"type": "integer"},
+        "title": {"type": "string", "maxLength": 300},
+        "content": {"type": "string"},
+        "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
+    },
+    "required": ["node_id"],
+    "anyOf": [{"required": [field]} for field in ("title", "content", "color")],
+    "additionalProperties": False,
+}
+_CANVAS_NOTE_CREATE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "maxLength": 300},
+        "content": {"type": "string"},
+        "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
+        "position": {"type": "object"},
+    },
+    "additionalProperties": False,
+}
+_CANVAS_ADD_NODE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "node_id": {"type": "integer"},
+        "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)},
+        "ref_id": {"type": "integer"},
+        "position": {"type": "object"},
+    },
+    "oneOf": [
+        {"required": ["node_id"], "not": {"anyOf": [{"required": ["ref_type"]}, {"required": ["ref_id"]}]}},
+        {"required": ["ref_type", "ref_id"], "not": {"required": ["node_id"]}},
+    ],
+    "additionalProperties": False,
+}
+
+
 def _json_object(raw: str | None) -> dict[str, Any]:
     return parse_canvas_data(raw)
 
@@ -97,11 +170,8 @@ def _relation_anchor_audit(
 
     source_center = center(source)
     target_center = center(target)
-    expected = (
-        {"source_side": "right", "target_side": "left"}
-        if target_center[0] >= source_center[0]
-        else {"source_side": "left", "target_side": "right"}
-    )
+    recommended_sides = _recommended_relation_sides(source, target)
+    expected = {"source_side": recommended_sides[0], "target_side": recommended_sides[1]}
     audit["source"] = {"node_id": relation.src_node_id, "center": {"x": source_center[0], "y": source_center[1]}}
     audit["target"] = {"node_id": relation.dst_node_id, "center": {"x": target_center[0], "y": target_center[1]}}
     audit["recommended"] = expected
@@ -111,7 +181,7 @@ def _relation_anchor_audit(
         audit["status"] = "aligned"
     else:
         audit["status"] = "custom"
-        audit["reason"] = "当前端点与按水平位置计算的默认端点不同，可能是有意的回环布局"
+        audit["reason"] = "当前端点与按卡片水平投影计算的默认端点不同，可能是有意的回环布局"
     return audit
 
 
@@ -196,12 +266,20 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
 
 
 def _recommended_relation_sides(source: dict[str, Any], target: dict[str, Any]) -> tuple[str, str]:
-    """只按卡片中心的水平位置建议端点，不把节点 ID 当成布局顺序。"""
+    """按卡片水平投影建议端点，不把节点 ID 当成布局顺序。"""
     source_x = float((source.get("position") or {}).get("x", 0))
     target_x = float((target.get("position") or {}).get("x", 0))
     source_w = float(((source.get("layout") or {}).get("effective_size") or {}).get("w", 0))
     target_w = float(((target.get("layout") or {}).get("effective_size") or {}).get("w", 0))
-    return ("right", "left") if target_x + target_w / 2 >= source_x + source_w / 2 else ("left", "right")
+    source_right = source_x + source_w
+    target_right = target_x + target_w
+    if source_right <= target_x:
+        return "right", "left"
+    if target_right <= source_x:
+        return "left", "right"
+    # 水平投影重叠通常表示上下编排；同侧出线能让多张竖排卡片共用一条外侧走线。
+    side = "right" if target_x + target_w / 2 >= source_x + source_w / 2 else "left"
+    return side, side
 
 
 async def _canvas_list(db, user_id, args: dict):
@@ -835,7 +913,7 @@ class MindCanvasSkill(BaseSkill):
             description_short='读取画布节点、连接和 viewport。',
             description=(
                 "只读读取画布节点、连接和最后查看的 camera/viewport；排布或检查连线时必须参考节点实际尺寸、"
-                "position 和 relation_audit。relation_audit 按两端卡片中心坐标给出 recommended 端点，"
+                "position 和 relation_audit。relation_audit 按两端卡片水平投影给出 recommended 端点；上下编排的卡片默认同侧出线，"
                 "custom 只表示当前端点与默认建议不同，不代表可以直接修改；不要仅凭节点 ID 顺序判断左右。"
                 "节点结果支持 limit/offset 分页；pagination.total/next_offset 表示是否还有节点。"
                 "relations 返回全画布关系，relation_audit_scope=visible_nodes 表示当前页之外的关系端点会标记为 incomplete。"
@@ -921,7 +999,11 @@ class MindCanvasSkill(BaseSkill):
                     "confirm": {"type": "boolean"},
                     "confirm_token": {"type": "string"},
                 },
-                "required": ["canvas_id"],
+                "required": [],
+                "oneOf": [
+                    {"required": ["canvas_id"], "not": {"required": ["canvas_ids"]}},
+                    {"required": ["canvas_ids"], "not": {"required": ["canvas_id"]}},
+                ],
             },
             handler=_canvas_delete,
             mutates=True,
@@ -939,9 +1021,13 @@ class MindCanvasSkill(BaseSkill):
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
-                    "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
+                    "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": _CANVAS_NOTE_CREATE_ITEM_SCHEMA},
                 },
                 "required": ["canvas_id"],
+                "oneOf": [
+                    {"required": ["notes"], "not": {"anyOf": [{"required": ["title"]}, {"required": ["content"]}, {"required": ["color"]}, {"required": ["position"]}]}},
+                    {"not": {"required": ["notes"]}},
+                ],
             },
             handler=_canvas_create_note,
             mutates=True,
@@ -958,9 +1044,14 @@ class MindCanvasSkill(BaseSkill):
                     "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)},
                     "ref_id": {"type": "integer"},
                     "position": {"type": "object"},
-                    "nodes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
+                    "nodes": {"type": "array", "minItems": 1, "maxItems": 20, "items": _CANVAS_ADD_NODE_ITEM_SCHEMA},
                 },
                 "required": ["canvas_id"],
+                "oneOf": [
+                    {"required": ["nodes"], "not": {"anyOf": [{"required": ["node_id"]}, {"required": ["ref_type"]}, {"required": ["ref_id"]}, {"required": ["position"]}]}},
+                    {"required": ["node_id"], "not": {"required": ["nodes"]}},
+                    {"required": ["ref_type", "ref_id"], "not": {"required": ["nodes"]}},
+                ],
             },
             handler=_canvas_add_node,
             mutates=True,
@@ -968,17 +1059,8 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_update_node", label="调整画布节点",
             description_short='调整画布节点位置和层级。',
-            description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项传 item_id，批量传 updates；不支持修改 w/h。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "canvas_id": {"type": "integer"}, "item_id": {"type": "integer"},
-                    "x": {"type": "number"}, "y": {"type": "number"},
-                    "z": {"type": "integer"}, "collapsed": {"type": "boolean"},
-                    "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
-                },
-                "required": ["canvas_id"],
-            },
+            description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项必须传 canvas_id、item_id 和至少一个布局字段；批量必须传 canvas_id 和 updates，每项必须传 item_id 和至少一个布局字段；所有 ID 为整数，x/y 为数字，z 为整数；不支持修改 w/h。",
+            input_schema=_CANVAS_UPDATE_NODE_SCHEMA,
             handler=_canvas_update_node,
             mutates=True,
         ),
@@ -990,6 +1072,10 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {"canvas_id": {"type": "integer"}, "item_id": {"type": "integer"}, "item_ids": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "integer"}}},
                 "required": ["canvas_id"],
+                "oneOf": [
+                    {"required": ["item_id"], "not": {"required": ["item_ids"]}},
+                    {"required": ["item_ids"], "not": {"required": ["item_id"]}},
+                ],
             },
             handler=_canvas_remove_node,
             mutates=True,
@@ -1004,9 +1090,13 @@ class MindCanvasSkill(BaseSkill):
                     "node_id": {"type": "integer"},
                     "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
-                    "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
+                    "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": _CANVAS_NOTE_UPDATE_ITEM_SCHEMA},
                 },
                 "required": [],
+                "oneOf": [
+                    {"required": ["updates"], "not": {"anyOf": [{"required": ["node_id"]}, {"required": ["title"]}, {"required": ["content"]}, {"required": ["color"]}]}},
+                    {"required": ["node_id"], "not": {"required": ["updates"]}, "anyOf": [{"required": ["title"]}, {"required": ["content"]}, {"required": ["color"]}]},
+                ],
             },
             handler=_canvas_update_note,
             mutates=True,
@@ -1019,6 +1109,10 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
                 "required": [],
+                "oneOf": [
+                    {"required": ["node_id"], "not": {"required": ["notes"]}},
+                    {"required": ["notes"], "not": {"required": ["node_id"]}},
+                ],
             },
             handler=_canvas_delete_note,
             mutates=True,
@@ -1071,6 +1165,10 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
                 "required": ["canvas_id"],
+                "oneOf": [
+                    {"required": ["relation_id"], "not": {"required": ["relation_ids"]}},
+                    {"required": ["relation_ids"], "not": {"required": ["relation_id"]}},
+                ],
             },
             handler=_canvas_disconnect,
             mutates=True,

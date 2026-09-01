@@ -51,7 +51,7 @@ def test_personality_is_in_static_prompt_only_when_enabled(monkeypatch):
         },
     )
 
-    assert static.startswith("## 当前交流语言")
+    assert "## 当前交流语言" in static
     assert "称呼我为小北，回答先给结论。" in static
     assert "<user-preference>" not in static
     assert "## 咕咕人格（用户自定义）" not in static

@@ -1,7 +1,8 @@
 import { getLocale } from '@/i18n'
+import { effectiveTimezone } from './userTimezone'
 
 export function formatDate(value: Date | string | number, options: Intl.DateTimeFormatOptions = {}) {
-  return new Intl.DateTimeFormat(getLocale(), options).format(new Date(value))
+  return new Intl.DateTimeFormat(getLocale(), { ...options, timeZone: options.timeZone ?? effectiveTimezone() }).format(new Date(value))
 }
 
 export function formatNumber(value: number, options: Intl.NumberFormatOptions = {}) {

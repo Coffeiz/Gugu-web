@@ -216,13 +216,28 @@ LoopScope 只负责观测，不维护上下文工程或工具 Schema 的完成�
 
 LoopScope 中对应的观测入口是 Context Provenance、Token Usage、Cache Diagnostics 和 Prefix Diff；它们用于验证上述文档描述的实现是否在实际 Provider 输入中成立。
 
+### 6.1 当前前端入口
+
+LoopScope 前端目前只有一个主工作区和三个辅助页面：
+
+| 路径 | 用途 |
+|---|---|
+| `/` | 在当前 Session 内切换 Conversation 与 Monitor；Conversation 用于真实对话，Monitor 用于 Run/Span 排障 |
+| `/tokens` | 查看 LoopScope 自己的设计 Token |
+| `/changelog` | 查看 LoopScope 版本变更 |
+| `/settings` | 保存当前浏览器标签页的 Gugu API 地址、Collector 地址和连接配置 |
+
+Monitor 不再是独立的 Session 页面。Run 和 Span 通过分页接口按需读取；Run 详情可分别展开 Content、Assembly、Diagnostics、Schema、Input、Output、Source 和 Attributes。多个 Run 可以导出为 `loopscope-run-export` v2 JSON，供离线比较。
+
+前端读取 Collector 的接口为 `GET /api/sessions`、`GET /api/sessions/:key/runs`、`GET /api/runs/:id` 和 `GET /api/runs/:id/spans`；Collector 还提供 `GET /api/runs/:id/context`、`GET /api/runs/:id/usage`，供上下文和用量查询。Gugu trace bridge 通过 `POST /api/collector/runs` 写入 Run snapshot。Collector 默认监听 `127.0.0.1:4320`，前端开发服务器默认监听 `4319`。
+
 ## 7. 用 LoopScope 开发咕咕
 
 ### 7.1 新功能开发
 
 1. 先打开 Gugu `/dev` 并确认 LoopScope bridge 已连接。
 2. 只做一个最小请求，记录 Session、Run、模型和渠道。
-3. 先看 Run 状态与 Round 数，再展开 Context、LLM、Tool 和 Output。
+3. 先看 Run 状态与 Round 数，再展开 Context/Assembly、LLM、Tool 和 Output。
 4. 确认新增 Prompt、Memory、RAG 或工具 Schema 出现在正确的 Context Source 中。
 5. 检查最终 Provider Input，而不是只看本地 builder 的中间对象。
 6. 用同一请求重复运行，比较 prefix digest、cache usage、Round 数和工具调用次数。

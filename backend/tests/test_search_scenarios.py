@@ -77,6 +77,19 @@ async def test_scenario_note_search_uses_multiple_terms_once(db, user_a):
     assert {match["title"] for match in result["matches"]} == {"部署方案", "上线清单"}
 
 
+async def test_scenario_romaji_search_matches_note_content(db, user_a):
+    await _add(db, MindNode(
+        user_id=user_a.id, kind="note", title="日记", content_md="",
+        content_plain="今日はふわふわした気分だった。",
+    ))
+
+    result = await run_global_search(
+        db, user_a.id, "fuwafuwa", types=["note"], language="ja-JP",
+    )
+
+    assert [item["title"] for item in result["groups"][0]["items"]] == ["日记"]
+
+
 async def test_scenario_group_search_stays_in_current_group(db, user_a):
     current = await _add(db, ConversationSession(
         user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_id="scenario-group-a", title="群 A",

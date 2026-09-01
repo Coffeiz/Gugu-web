@@ -64,6 +64,7 @@ bottom = y + height
 - “靠近某节点”使用 `near_node`，在目标节点右侧留出至少 150px；如果用户指定上、下或左侧，也必须在对应方向留出同样的 150px。
 - “放在当前视野中央/角落”使用 `viewport_center` 或 `viewport_*`，不要把屏幕坐标直接写成世界坐标。
 - `auto` 只适合没有指定位置的普通新增，不代表可以与已有卡片重叠。
+- 用户要查看或回到刚创建/查到的画布时，在回复中附 `[画布名](gugu://open-object/canvas/{canvas_id})`；ID 只使用本轮真实结果中的 `canvas_id`。
 
 ## 连接方向
 
@@ -112,6 +113,8 @@ bottom = y + height
 `canvas_create_note.notes`，移动多个节点直接使用 `canvas_update_node.updates`。
 只有“创建便签 → 放置引用 → 调整布局 → 建立连接”这类相互依赖的多类型流程，才使用
 `canvas_batch`。
+
+调用 Canvas 修改工具时，`canvas_id` 必须来自 `canvas_list`/`canvas_get` 或用户明确提供，不能根据 `item_id` 猜测；ID 必须传 JSON 数字而不是字符串。单项与批量入口不能混用：移动节点使用 `canvas_id + item_id + 至少一个布局字段`，或 `canvas_id + updates[]`；删除节点/关系同样在单数 ID 与数组 ID 之间二选一。收到 Schema 错误后必须按全部 issues 修正，不要重复提交相同参数。
 
 ## 典型示例
 

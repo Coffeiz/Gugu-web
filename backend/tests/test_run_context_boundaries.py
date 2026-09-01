@@ -9,7 +9,7 @@ from agent.rag import context as rag_context
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_anthropic", [True, False])
-async def test_prepare_run_binds_rag_watermark_and_keeps_current_time_provider_only(
+async def test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch(
     monkeypatch, use_anthropic,
 ):
     observed_watermarks = []
@@ -54,7 +54,7 @@ async def test_prepare_run_binds_rag_watermark_and_keeps_current_time_provider_o
     messages = prepared.anthr_messages if use_anthropic else prepared.oa_messages
     assert observed_watermarks == [11]
     assert rag_context.get_conversation_before_message_id() is None
-    assert "当前时间：" in str(messages.dynamic_tail)
-    assert "当前时间：" not in str(messages.conversation)
+    assert messages.dynamic_tail == []
+    assert "消息时间：" in str(messages.conversation)
     assert (prepared.anthr_initial_len if use_anthropic else prepared.oa_initial_len) == len(messages.conversation)
     assert audit_calls[0]["history"] == []

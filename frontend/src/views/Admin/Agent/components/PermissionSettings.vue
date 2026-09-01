@@ -43,7 +43,7 @@
               <span>{{ t('agent.shell') }}</span>
               <span class="permission-desc">{{ t('agent.shellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_enabled === true" :aria-label="t('agent.shell')" @update:model-value="setAgentFlag('shell_enabled', $event)" />
+            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_enabled === true" :disabled="!sandboxEnabled" :aria-label="t('agent.shell')" @update:model-value="setAgentFlag('shell_enabled', $event)" />
           </div>
 
           <div class="permission-item">
@@ -51,7 +51,7 @@
               <span>{{ t('agent.autopilot') }}</span>
               <span class="permission-desc">{{ t('agent.autopilotHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_autopilot_enabled === true" :disabled="agent.shell_enabled !== true" :aria-label="t('agent.autopilot')" @update:model-value="setAgentFlag('shell_autopilot_enabled', $event)" />
+            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_autopilot_enabled === true" :disabled="!sandboxEnabled || agent.shell_enabled !== true" :aria-label="t('agent.autopilot')" @update:model-value="setAgentFlag('shell_autopilot_enabled', $event)" />
           </div>
 
           <div class="permission-item">
@@ -59,7 +59,7 @@
               <span>{{ t('agent.systemShell') }}</span>
               <span class="permission-desc">{{ t('agent.systemShellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_system_enabled === true" :disabled="agent.shell_enabled !== true" :aria-label="t('agent.systemShell')" @update:model-value="setAgentFlag('shell_system_enabled', $event)" />
+            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_system_enabled === true" :disabled="!sandboxEnabled || agent.shell_enabled !== true" :aria-label="t('agent.systemShell')" @update:model-value="setAgentFlag('shell_system_enabled', $event)" />
           </div>
 
           <div class="permission-item">
@@ -67,7 +67,7 @@
               <span>{{ t('agent.dangerousShell') }}</span>
               <span class="permission-desc">{{ t('agent.dangerousShellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="agent.shell_dangerous_enabled === true" :disabled="agent.shell_enabled !== true" :aria-label="t('agent.dangerousShell')" @update:model-value="setAgentFlag('shell_dangerous_enabled', $event)" />
+            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_dangerous_enabled === true" :disabled="!sandboxEnabled || agent.shell_enabled !== true" :aria-label="t('agent.dangerousShell')" @update:model-value="setAgentFlag('shell_dangerous_enabled', $event)" />
           </div>
         </div>
       </section>
@@ -91,6 +91,7 @@ const { t } = useI18n()
 const props = defineProps({
   agent: { type: Object as PropType<Record<string, any>>, required: true },
   byok: { type: Object as PropType<Record<string, any>>, required: true },
+  sandboxEnabled: { type: Boolean, default: false },
   saving: { type: Boolean, default: false },
   saved: { type: Boolean, default: false },
   error: { type: String, default: '' },

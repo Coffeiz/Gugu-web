@@ -37,43 +37,6 @@ html[data-theme='dark'][data-family] .topbar:hover {
   --gb-tint: var(--glass-bg);
   box-shadow: var(--topbar-shadow);
 }
-html[data-theme][data-family] .topbar .btn-ghost-custom {
-  transition:
-    background-color var(--hover-motion-control),
-    border-color var(--hover-motion-control),
-    box-shadow var(--hover-motion-control),
-    color var(--hover-motion-control),
-    transform var(--hover-motion-control),
-    opacity var(--hover-motion-control) !important;
-}
-html[data-theme][data-family] .topbar .btn-primary-custom {
-  transition:
-    background-color var(--hover-motion-control),
-    border-color var(--hover-motion-control),
-    box-shadow var(--hover-motion-control),
-    color var(--hover-motion-control),
-    transform var(--hover-motion-control),
-    opacity var(--hover-motion-control) !important;
-}
-/* Restore the intended light upload affordance instead of inheriting a generic surface hover. */
-html[data-theme='light'][data-family] .topbar .btn-ghost-custom:hover {
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  box-shadow: none !important;
-}
-html[data-theme='dark'][data-family] .topbar .btn-ghost-custom {
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border) !important;
-  color: var(--control-fg) !important;
-  box-shadow: none !important;
-}
-html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover {
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  color: var(--control-fg-strong) !important;
-  box-shadow: none !important;
-}
-
 /* ── Calendar toolbar shell + controls ── */
 html[data-theme][data-family] .cal-toolbar {
   transition: box-shadow var(--hover-motion-control);

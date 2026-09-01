@@ -154,6 +154,8 @@ watch(() => uiStore.pendingChatSession, async (id) => {
 const { refreshAfterTools, onChatActionClick } = useChatActions({
   router,
   onBindPlatform: (platform) => openChatImBind(platform),
+  onOpenObject: (type, id) => { void openChatObject(type, id) },
+  onOpenSkill: (slug) => { void router.push({ path: '/skills', query: { skill: slug } }) },
 })
 const { openMindRef } = useMindRefActions()
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
@@ -255,10 +257,9 @@ async function enterExpanded() {
   expanded.value = true
   loadBots()
   markResizing()
-  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度；用目标宽度离屏测量，避免把旧宽度的行数
-  // 带到动画结束才纠正，也不需要为了兜底提前撑高窗口。
+  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度，输入高度统一在过渡结束后校准，
+  // 避免用中间态宽度测量导致窗口先撑高再回落。
   await nextTick()
-  composerRef.value?.fitTextarea?.(true)
   trackApi.track('chat_expanded').catch(() => {})
   await fetchSessions()
   await nextTick()
@@ -282,7 +283,6 @@ async function exitExpanded() {
   expanded.value = false
   markResizing()
   await nextTick()
-  composerRef.value?.fitTextarea?.(false)
   const el = messagesEl.value
   if (!el) return
   stick.value = true
@@ -400,6 +400,18 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
 
 async function onReferenceClick(reference: ChatReference) {
   await openMindRef(reference.type, reference.id)
+}
+
+async function openChatObject(type: string, id: number) {
+  if (type === 'project' || type === 'event') {
+    await openMindRef(type, id)
+    return
+  }
+  const paths: Record<string, string> = {
+    canvas: '/mind/canvases', note: '/mind/notes', 'scheduled-task': '/schedules',
+  }
+  const path = paths[type]
+  if (path) await router.push({ path, query: { object_id: String(id) } })
 }
 
 watch(isTypingText, v => {
@@ -557,23 +569,13 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 :deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
 .chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }
 
-/* chat-att-row/chat-input-row/rec-bar/att-btn 自身样式已随 GuguChatComposer.vue 迁移；
-   这里只留跨组件的祖先态覆盖（大窗态放大按钮/输入区），用 :deep() 穿透子组件 scope。 */
-.chat-main.is-expanded :deep(.att-btn) { height: 32px; }   /* 放大态对齐放大发送按钮(32) */
-.chat-main.is-expanded :deep(.chat-input-row) { padding: 14px 20px; gap: 10px; }
-.chat-main.is-expanded :deep(.rec-bar) { height: 32px; }   /* 放大态对齐 32 */
-/* 大窗的附件/发送按钮为 32px；单行输入也占满同一高度，图标和文字的视觉中线才一致。 */
-.chat-main.is-expanded :deep(.chat-input-row textarea) { padding: 5.5px 0; }
-/* 小窗输入字号略小，与小窗整体一致 */
-.chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
-
 /* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
    跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
    没法在模板里挂 class，数值直接写这里（hover/active 与全局 .press-fx 保持一致） */
 /* .msg-bubble.md-body 本体现在渲染于 GuguChatMessageRow.vue（子组件，无 data-v-GuguChat
    属性），这里必须整条选择器都用 :deep() 才能穿透组件边界匹配到，光把内层 a 包 :deep()
    不够——外层 class 名同样带着父组件的 scope 校验。 */
-:deep(.msg-bubble.md-body a[href^="gugu://"]) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card)) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
@@ -589,11 +591,32 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:hover) {
+:deep(.msg-bubble.md-body a.chat-object-card) {
+  display: inline-flex; align-items: center; vertical-align: middle; gap: 9px;
+  min-width: 210px; max-width: min(340px, 100%); margin: 5px 6px 5px 0; padding: 9px 11px;
+  color: var(--content-primary); background: var(--surface-card-solid);
+  border: 1px solid var(--border-default); border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow); text-decoration: none; cursor: pointer;
+  transition: var(--card-motion);
+}
+:deep(.msg-bubble.md-body a.chat-object-card:hover) {
+  color: var(--content-primary); opacity: 1;
+  background-color: var(--card-surface-bg-hover); border-color: var(--card-surface-border-hover);
+  box-shadow: var(--card-shadow-hover); transform: translateY(-1px);
+}
+:deep(.msg-bubble.md-body a.chat-object-card:active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.chat-object-card-icon) { display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px; border-radius: var(--radius-sm); background: var(--surface-soft-hover); color: var(--action-primary); }
+:deep(.chat-object-card-icon-svg) { display: block; width: 16px; height: 16px; fill: currentColor; }
+:deep(.chat-object-card-body) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+:deep(.chat-object-card-body strong) { overflow: hidden; font-size: 12.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+:deep(.chat-object-card-body small) { color: var(--content-tertiary); font-size: 10.5px; }
+:deep(.chat-object-card-arrow) { display: grid; place-items: center; flex: 0 0 16px; color: var(--content-tertiary); }
+:deep(.chat-object-card-arrow-svg) { display: block; width: 14px; height: 14px; fill: currentColor; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):hover) {
   background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
   box-shadow: none; opacity: 1;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):active) { transform: translateY(1px); opacity: 0.93; }
 
 /* .cb-* 扫码绑定弹窗样式已随 GuguChatBindDialog.vue 迁移 */
 /* .im-qr-cancel 已随 GuguChatImConnect.vue 迁移 */

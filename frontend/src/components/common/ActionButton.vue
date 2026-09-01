@@ -5,7 +5,7 @@
     :disabled="disabled"
     type="button"
   >
-    <slot />
+    <span class="app-action-button-content"><slot /></span>
   </button>
 </template>
 
@@ -31,16 +31,18 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   gap: 6px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  font: 500 13px/1 var(--font-sans);
+  font: 500 13px/var(--line-height-ui) var(--font-sans);
   white-space: nowrap;
   word-break: keep-all;
   writing-mode: horizontal-tb;
   cursor: pointer;
   filter: none;
-  transition: filter var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard),
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--motion-hover-control) var(--motion-ease-standard),
     color var(--motion-hover-control) var(--motion-ease-standard),
     box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    transform var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) ease;
 }
 .app-action-button.is-fit { width: auto; min-width: 0; flex-basis: auto; }
@@ -50,7 +52,19 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   background: var(--action-primary-bg);
   box-shadow: none;
 }
-.app-action-button.is-primary:hover:not(:disabled) { background: var(--action-primary-bg); filter: brightness(1.05); box-shadow: none; opacity: .92; }
+.app-action-button.is-primary::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  content: '';
+  background: var(--action-primary-bg-hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.app-action-button.is-primary:hover:not(:disabled) { box-shadow: none; opacity: .92; }
+.app-action-button-content { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: inherit; }
+.app-action-button.is-primary:hover:not(:disabled)::before { opacity: 1; }
 .app-action-button.is-secondary {
   border: 1px solid var(--action-secondary-border);
   color: var(--action-secondary-fg);
@@ -64,6 +78,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   filter: brightness(1.04);
   box-shadow: none;
 }
+.app-action-button:active:not(:disabled) { transform: translateY(1px); opacity: .93; }
 .app-action-button:disabled { opacity: .5; cursor: default; }
 .app-action-button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 </style>

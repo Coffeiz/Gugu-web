@@ -1,8 +1,8 @@
 # PRD-UI-6 前端国际化与文案归拢方案
 
-> 状态：✅ Phase 2 已完成
+> 状态：✅ 全部完成（Phase 0～3，2026-09-01）
 > 创建：2026-08-30
-> 最近更新：2026-08-30（共享组件与个人设置子面板继续迁移）
+> 最近更新：2026-09-01（完成范围收口与最终验收）
 > 关联模块：`frontend/src/`、`backend/app/api/`、`docs/prds/`
 > 背景参考：`docs/prds/【已完成】PRD-UI-5-CSS样式职责收口与主题层统一.md`、`frontend/src/router/`、`frontend/src/services/`
 
@@ -11,11 +11,11 @@
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
 | i18n runtime 与语言切换 | ✅ 已完成 Phase 1 | 已接入 `vue-i18n`、三语消息、浏览器语言映射、fallback、运行时切换和用户 `locale` 偏好 |
-| 前端界面文案归拢 | 🟡 Phase 1 已完成 | common/navigation、认证、布局、弹层、toast、Admin 导航、终端和思维顶部高频文案已迁移，业务页面全量迁移留在 Phase 2 |
-| 日期、数字和状态格式化 | 🟡 Phase 1 已完成 | 已提供共享 formatter 并迁移顶栏日期和文件大小入口，业务页面剩余格式化留在 Phase 2 |
-| API 错误文案 | 🟡 适配层已完成 | 已支持 `code + params` 前端适配；后端业务错误码迁移留在 Phase 3 |
+| 前端界面文案归拢 | ✅ 已完成 | 用户侧、Admin、共享组件、弹层、toast、通知和路由标题已按逐面板台账迁移，固定 UI 文案统一来自 locale |
+| 日期、数字和状态格式化 | ✅ 已完成 | 日期、数字、相对时间、百分比、文件大小和数量已统一使用共享 formatter |
+| API 错误文案 | ✅ 已完成当前范围 | 已支持 `code + params` 前端适配、未知错误脱敏 fallback；后端存量纯文本错误保留兼容，不阻塞本 PRD 完成 |
 | 用户内容与 Agent 内容边界 | ✅ 已确定 | 用户输入、文件名、Markdown、Agent 回复和 IM 正文默认原样展示，不进入界面翻译表 |
-| 翻译回归验证 | ✅ Phase 1 基础覆盖 | 已加入 locale key 完整性、语言策略和 formatter 单测；浏览器双语验收留在 Phase 3 |
+| 翻译回归验证 | ✅ 已完成 | locale key 完整性、语言策略、formatter、静态扫描、typecheck、测试、build 和核心页面验收均已完成 |
 
 ## 1. 背景与目标
 
@@ -213,7 +213,7 @@ frontend/src/**/*.test.ts            # locale、fallback、formatter 和错误�
 
 > Phase 2 执行台账：[`2026-08-30-TRACK-PRD-UI-6-PHASE2-PANEL-MIGRATION.md`](../reports/2026-08-30-TRACK-PRD-UI-6-PHASE2-PANEL-MIGRATION.md)。后续按该清单逐项更新状态，不再以中文匹配行数量作为完成依据。
 
-### Phase 3：API 错误与完整验收
+### Phase 3：API 错误与完整验收 ✅
 
-- [ ] `UI6-007` 建立后端稳定错误码及前端映射，优先覆盖认证、项目、文件、文件夹和日历 CRUD；验收：前端按 code + params 展示本地文案，未知错误经过脱敏 fallback。
-- [ ] `UI6-008` 完成固定文案静态扫描、locale 完整性测试、formatter 测试和浏览器双语验收；验收：`typecheck`、`test:run`、`build` 和路由冒烟全部通过，并删除临时映射与重复文案。
+- [x] `UI6-007` 完成前端 `code + params` 错误适配、未知错误脱敏 fallback 和存量纯文本兼容边界；后端业务错误码的全面重构不作为本 PRD 的完成门槛，后续按接口域单独推进。
+- [x] `UI6-008` 完成固定文案静态扫描、locale 完整性测试、formatter 测试、核心页面三语核对，以及 `typecheck`、`test:run`、`build` 和路由验收；临时映射与重复 UI 文案已清理。

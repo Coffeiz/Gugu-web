@@ -26,7 +26,7 @@
       <div class="mp-controls">
         <div class="mp-vol-spacer" />
         <button class="mp-btn mp-btn--play" @click="onToggle">
-          <Icon name="media.play"  v-if="!playing" :size="16" />
+          <Icon name="media.play-fill"  v-if="!playing" :size="16" />
           <Icon name="media.pause" v-else :size="16" />
         </button>
         <div class="mp-vol-group">
@@ -85,15 +85,15 @@ defineExpose({ barsEl: computed(() => barsEl.value) })
 .mini-player {
   position: fixed; right: 28px; box-sizing: border-box; width: 360px;   /* border-box 外宽 360，与小窗/气泡严格对齐 */
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
-  background: var(--panel-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
-  box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
+  background: var(--glass-card-background); backdrop-filter: var(--glass-card-blur); -webkit-backdrop-filter: var(--glass-card-blur);
+  border: 1px solid var(--glass-card-border); border-radius: var(--card-radius);
+  box-shadow: var(--glass-card-shadow); padding: 12px 14px 10px;
   display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */
 }
 .mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mp-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .mp-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; flex-shrink: 0; }
-.mp-bars i { display: block; width: 2.5px; border-radius: 99px; background: rgba(100,110,200,0.55); height: 4px; }
+.mp-bars i { display: block; width: 2.5px; border-radius: 99px; background: color-mix(in srgb, var(--action-primary) 58%, transparent); height: 4px; }
 .mp-bars--playing i { animation: mp-eq 0.55s ease-in-out infinite alternate; }
 .mp-bars--playing i:nth-child(1) { animation-duration: 0.55s; }
 .mp-bars--playing i:nth-child(2) { animation-duration: 0.42s; animation-delay: 0.1s; }
@@ -102,28 +102,28 @@ defineExpose({ barsEl: computed(() => barsEl.value) })
 @keyframes mp-eq { from { height: 3px; } to { height: 13px; } }
 .mp-seek-row { display: flex; align-items: center; gap: 6px; }
 .mp-time { font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.mp-track { flex: 1; height: 3px; border-radius: 99px; background: rgba(100,110,200,0.12); position: relative; cursor: pointer; }
+.mp-track { flex: 1; height: 3px; border-radius: 99px; background: color-mix(in srgb, var(--action-primary) 14%, transparent); position: relative; cursor: pointer; }
 .mp-track:hover .mp-thumb { opacity: 1; }
-.mp-fill { height: 100%; border-radius: 99px; background: linear-gradient(to right, rgba(100,110,200,0.65), rgba(140,120,210,0.75)); pointer-events: none; }
-.mp-thumb { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 10px; height: 10px; border-radius: 50%; background: rgba(100,110,200,0.9); pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+.mp-fill { height: 100%; border-radius: 99px; background: var(--action-primary); pointer-events: none; }
+.mp-thumb { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 10px; height: 10px; border-radius: 50%; background: var(--action-primary); pointer-events: none; opacity: 0; transition: opacity 0.15s; }
 .mp-btn--pin { width: 24px; height: 24px; border-radius: 6px; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: none; color: var(--text-secondary); transition: background 0.12s, color 0.12s; }
 .mp-btn--pin svg { display: block; }
-.mp-btn--pin:hover { background: rgba(100,110,200,0.12); color: rgba(100,110,200,0.9); }
-.mp-btn--pinned { color: rgba(100,110,200,0.8); }
-.mp-btn--pinned:hover { background: rgba(100,110,200,0.12); color: rgba(100,110,200,1); }
+.mp-btn--pin:hover { background: var(--action-soft-hover); color: var(--action-primary); }
+.mp-btn--pinned { color: var(--action-primary); }
+.mp-btn--pinned:hover { background: var(--action-soft-hover); color: var(--action-primary-hover); }
 .mp-btn--close { width: 24px; height: 24px; border-radius: 6px; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: none; color: var(--text-secondary); transition: background 0.12s, color 0.12s; }
-.mp-btn--close:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
+.mp-btn--close:hover { background: color-mix(in srgb, var(--status-danger) 10%, transparent) !important; color: var(--status-danger) !important; }
 .mp-controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
 .mp-btn { border: none; cursor: pointer; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: transform 0.15s, background 0.12s; }
-.mp-btn--play { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, rgba(110,115,190,0.85), rgba(140,120,200,0.9)); color: white; justify-self: center; box-shadow: 0 3px 10px rgba(100,110,200,0.28), inset 0 1px 0 rgba(255,255,255,0.32); }
+.mp-btn--play { width: 34px; height: 34px; border-radius: 50%; background: var(--action-primary); color: var(--content-on-accent); justify-self: center; box-shadow: var(--elevation-card); }
 .mp-btn--play svg { display: block; }
 .mp-btn--play:hover { transform: scale(1.08); }
 .mp-btn--play:active { transform: scale(0.93); }
 .mp-vol-group { display: flex; align-items: center; gap: 4px; justify-self: end; }
 .mp-vol-btn { width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: var(--text-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: background 0.12s, color 0.12s; }
-.mp-vol-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
+.mp-vol-btn:hover { background: var(--action-soft-hover); color: var(--action-primary); }
 .mp-vol-btn svg { display: block; }
-.mp-vol-slider { width: 60px; height: 3px; cursor: pointer; accent-color: rgba(100,110,200,0.75); }
+.mp-vol-slider { width: 60px; height: 3px; cursor: pointer; accent-color: var(--action-primary); }
 /* 时长/曲线跟 GuguChat.vue 的 .chat-open-enter-active/.chat-open-leave-active 严格对齐——
    播放器跟聊天窗口经常联动出现（比如小窗打开顶起播放器），用不同的时长/曲线会让两者
    一个先到位、一个还在动，看着不同步（2026-07-17 复现：播放器隐藏后再打开跟窗口动画对不上）。 */
@@ -136,7 +136,7 @@ defineExpose({ barsEl: computed(() => barsEl.value) })
   cursor: pointer; transition: background 0.12s, color 0.12s;
 }
 .popup-close-btn svg { display: block; }
-.popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
+.popup-close-btn:hover { background: color-mix(in srgb, var(--status-danger) 10%, transparent) !important; color: var(--status-danger) !important; }
 
 .mini-player-enter-active { transition: opacity 0.22s ease, transform 0.36s cubic-bezier(0.16, 1, 0.3, 1); }
 .mini-player-leave-active { transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0); }

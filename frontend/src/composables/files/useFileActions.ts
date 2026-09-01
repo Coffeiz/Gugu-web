@@ -1,4 +1,5 @@
 import { filesApi, foldersApi } from '@/services/api'
+import type { RequestMeta } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 
 type FolderTarget = Pick<FolderMeta, 'id' | 'name'> | { folderId?: number; displayName: string }
@@ -34,7 +35,7 @@ export function fileActionScopeError(options: FileActionOptions, targetProjectId
   return null
 }
 
-/** 文件浏览层共用的 API 动作。缓存、乐观更新和页面提示由宿主继续负责。 */
+/** 文件浏览层共用的 API 动作；InteractionSync adapter 由动作宿主负责本地 apply/rollback。 */
 export function useFileActions(options: FileActionOptions = {}) {
   const scope = options.scope ?? 'personal'
   const allowCrossProject = options.allowCrossProject ?? scope !== 'project'
@@ -66,30 +67,30 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.download(id, name)
   }
 
-  function renameFile(id: number, displayName: string) {
-    return filesApi.update(id, { displayName })
+  function renameFile(id: number, displayName: string, meta?: RequestMeta) {
+    return filesApi.update(id, { displayName }, meta)
   }
 
-  function renameFolder(id: number, name: string, version: number) {
-    return foldersApi.rename(id, name, version)
+  function renameFolder(id: number, name: string, version: number, meta?: RequestMeta) {
+    return foldersApi.rename(id, name, version, meta)
   }
 
-  function deleteFile(id: number) {
-    return filesApi.delete(id)
+  function deleteFile(id: number, meta?: RequestMeta) {
+    return filesApi.delete(id, meta)
   }
 
-  function deleteFolder(id: number) {
-    return foldersApi.delete(id)
+  function deleteFolder(id: number, meta?: RequestMeta) {
+    return foldersApi.delete(id, meta)
   }
 
-  function moveFile(id: number, folderId: number | null, projectId: number | null = null) {
+  function moveFile(id: number, folderId: number | null, projectId: number | null = null, meta?: RequestMeta) {
     assertProjectTarget(projectId)
-    return filesApi.update(id, { folderId, projectId })
+    return filesApi.update(id, { folderId, projectId }, meta)
   }
 
-  function moveFolder(id: number, parentId: number | null, version: number, projectId: number | null = null) {
+  function moveFolder(id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta) {
     assertProjectTarget(projectId)
-    return foldersApi.move(id, parentId, version, projectId)
+    return foldersApi.move(id, parentId, version, projectId, meta)
   }
 
   function copyFile(id: number, folderId: number | null, projectId: number | null = null,
@@ -112,8 +113,8 @@ export function useFileActions(options: FileActionOptions = {}) {
     return filesApi.batchDownload(fileIds, folderIds, filename)
   }
 
-  function batchDelete(fileIds: number[]) {
-    return filesApi.batchDelete(fileIds)
+  function batchDelete(fileIds: number[], meta?: RequestMeta) {
+    return filesApi.batchDelete(fileIds, meta)
   }
 
   return {

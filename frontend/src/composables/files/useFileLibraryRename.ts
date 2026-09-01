@@ -1,13 +1,15 @@
 import { nextTick, ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import type { RequestMeta } from '@/services/api'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
 interface RenameOptions {
   getFile: (id: number) => FileMeta | null | undefined
   getFolder: (id: number) => FolderMeta | null | undefined
   updateFile: (id: number, patch: Partial<FileMeta>) => void
   updateFolder: (id: number, patch: Partial<FolderMeta>) => void
-  renameFile: (id: number, name: string) => void | Promise<unknown>
-  renameFolder: (id: number, name: string, version: number) => Promise<{ version: number }>
+  renameFile: (id: number, name: string, meta?: RequestMeta) => void | Promise<unknown>
+  renameFolder: (id: number, name: string, version: number, meta?: RequestMeta) => Promise<{ version: number }>
   reload: () => void
   onError?: (scope: 'file' | 'folder', error: unknown) => void
 }
@@ -51,13 +53,14 @@ export function useFileLibraryRename(options: RenameOptions) {
 
     if (fileId != null) {
       const oldName = options.getFile(fileId)?.displayName
-      options.updateFile(fileId, { displayName: name })
-      options.reload()
       try {
-        await options.renameFile(fileId, name)
+        await InteractionSync.execute({
+          scope: 'file.rename', entityKey: `file:${fileId}`,
+          apply: () => { options.updateFile(fileId, { displayName: name }); options.reload() },
+          rollback: () => { if (oldName != null) options.updateFile(fileId, { displayName: oldName }); options.reload() },
+          request: mutation => Promise.resolve(options.renameFile(fileId, name, { mutationId: mutation.mutationId })),
+        })
       } catch (error) {
-        if (oldName != null) options.updateFile(fileId, { displayName: oldName })
-        options.reload()
         options.onError?.('file', error)
       }
       return
@@ -66,14 +69,15 @@ export function useFileLibraryRename(options: RenameOptions) {
     const folder = options.getFolder(folderId as number)
     const oldName = folder?.name
     const version = folder?.version ?? 1
-    options.updateFolder(folderId as number, { name })
-    options.reload()
     try {
-      const updated = await options.renameFolder(folderId as number, name, version)
-      options.updateFolder(folderId as number, { version: updated.version })
+      await InteractionSync.execute({
+        scope: 'folder.rename', entityKey: `folder:${folderId}`,
+        apply: () => { options.updateFolder(folderId as number, { name }); options.reload() },
+        rollback: () => { if (oldName != null) options.updateFolder(folderId as number, { name: oldName }); options.reload() },
+        request: mutation => options.renameFolder(folderId as number, name, version, { mutationId: mutation.mutationId }),
+        onCommit: updated => options.updateFolder(folderId as number, { version: updated.version }),
+      })
     } catch (error) {
-      if (oldName != null) options.updateFolder(folderId as number, { name: oldName })
-      options.reload()
       options.onError?.('folder', error)
     }
   }

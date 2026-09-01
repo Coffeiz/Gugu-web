@@ -105,8 +105,13 @@ def _schedule_dispose(engine) -> None:
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     ensure_engine()
-    async with _SessionLocal() as session:
+    session = _SessionLocal()
+    try:
         yield session
+    finally:
+        # 客户端断开 SSE/流式请求时，Starlette 可能取消当前 task。用 shield
+        # 保证连接归还连接池，避免取消沿着 asyncpg terminate 路径再次打断清理。
+        await asyncio.shield(session.close())
 
 
 _MIGRATIONS = [

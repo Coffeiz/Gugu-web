@@ -18,7 +18,7 @@ html[data-family='mono'] .mini-player {
 html[data-family='mono'] .mini-player .mp-bars i { background: color-mix(in srgb,var(--action-primary) 72%,transparent); }
 html[data-family='mono'] .mini-player .mp-track { background: color-mix(in srgb,var(--action-primary) 14%,transparent); }
 html[data-family='mono'] .mini-player .mp-fill {
-  background: linear-gradient(to right,var(--action-primary),var(--action-primary-hover));
+  background: var(--action-primary);
 }
 html[data-family='mono'] .mini-player .mp-thumb { background: var(--action-primary); }
 html[data-family='mono'] .mini-player :is(.mp-btn--pin:hover, .mp-btn--pinned:hover) {

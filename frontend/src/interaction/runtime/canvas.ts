@@ -1,4 +1,4 @@
-import type { LandingRect } from './index'
+import { runtime, type LandingRect } from './index'
 
 export const MIND_CANVAS_SURFACE_ID = 'mind:canvas'
 export const MIND_CANVAS_DRAWER_SURFACE_ID = 'mind:canvas-drawer'
@@ -24,6 +24,15 @@ const landingTargetResolvers = new Map<string, LandingTargetResolver>()
 const activeMindLandings = new Set<string>()
 const mindLandingSettledListeners = new Set<() => void>()
 let mindLandingSettlingFrame: number | null = null
+
+// Runtime 是 landing 生命周期的唯一事实源；这里仅把 Mind 专属对象映射到
+// Store 的刷新闸门，不再由 MindCanvas 每帧手动推断 Runtime 是否仍在移动。
+runtime.subscribe(event => {
+  if (event.type !== 'move-visual-update' && event.type !== 'move-visual-end') return
+  if (!event.objectId.startsWith('mind:')) return
+  if (event.type === 'move-visual-update') beginMindLanding(event.objectId)
+  if (event.type === 'move-visual-end') endMindLanding(event.objectId)
+})
 
 function cancelMindLandingSettling(): void {
   if (mindLandingSettlingFrame == null) return

@@ -5,6 +5,7 @@ adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 
 包成 StreamingResponse；以及对话会话的纯 CRUD 端点。
 """
 from typing import Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
@@ -13,7 +14,7 @@ from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import chat_attach
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_id, get_current_user_identity, CurrentUserIdentity
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc
 from app.db.session import get_db
@@ -307,7 +308,7 @@ async def attachment_preview_pdf(
 async def chat(
     body: ChatRequest,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: CurrentUserIdentity = Depends(get_current_user_identity),
 ):
     req = AgentRequest(
         message=body.message,
@@ -334,11 +335,13 @@ async def chat(
 @router.get("/sessions/{session_id}/stream")
 async def resume_stream(
     session_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_id: UUID = Depends(get_current_user_id),
 ):
     """续看进行中的生成（刷新后重连）。无进行中的生成则立即返回 idle done。"""
-    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        session = await get_owned(db, ConversationSession, session_id, user_id)
     if not session:
         raise HTTPException(404, "对话不存在")
     return StreamingResponse(

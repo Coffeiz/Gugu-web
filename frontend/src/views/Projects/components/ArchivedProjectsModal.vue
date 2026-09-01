@@ -182,20 +182,18 @@ async function restore(id: number) {
 .ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 18px; border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0;
+  padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0;
 }
-.ap-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.ap-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
 .ap-close {
   width: 26px; height: 26px; border-radius: 8px; border: none; background: none;
-  color: var(--text-secondary); display: flex; align-items: center; justify-content: center;
+  color: var(--content-secondary); display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.15s;
 }
-.ap-close:hover { background: rgba(0,0,0,0.08); }
+.ap-close:hover { background: var(--surface-soft-hover); }
 
 .ap-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 16px; }
-.ap-empty {
-  padding: 32px 0; text-align: center; color: var(--text-secondary); font-size: 13px;
-}
+.ap-empty { padding: 32px 0; text-align: center; color: var(--content-secondary); font-size: 13px; }
 
 /* ── 年目录（同「已完成」列约定）── */
 .year-group { margin-bottom: 4px; }
@@ -207,19 +205,19 @@ async function restore(id: number) {
   font-family: var(--font-sans); text-align: left;
   transition: background 0.12s;
 }
-.year-row:hover { background: rgba(0,0,0,0.04); }
+.year-row:hover { background: var(--surface-soft-hover); }
 .year-chev {
-  color: rgba(0,0,0,0.2);
+  color: var(--content-tertiary);
   transform: rotate(-90deg);
   transition: transform 0.2s cubic-bezier(0.34,1.1,0.64,1);
   flex-shrink: 0;
 }
 .year-chev.open { transform: rotate(0deg); }
-.year-label { font-size: 12px; font-weight: 700; color: rgba(0,0,0,0.62); flex: 1; letter-spacing: 0.03em; }
-.year-cnt { font-size: 10px; color: rgba(0,0,0,0.38); }
+.year-label { font-size: 12px; font-weight: 700; color: var(--content-primary); flex: 1; letter-spacing: 0.03em; }
+.year-cnt { font-size: 10px; color: var(--content-tertiary); }
 .year-body {
   padding: 2px 0 2px 6px;
-  border-left: 1px solid rgba(0,0,0,0.06);
+  border-left: 1px solid var(--border-subtle);
   margin-left: 6px; margin-top: 1px;
   min-height: 0; overflow: hidden;
 }
@@ -233,10 +231,10 @@ async function restore(id: number) {
   font-family: var(--font-sans); text-align: left;
   transition: background 0.12s;
 }
-.month-row:hover { background: rgba(0,0,0,0.04); }
-.month-name { font-size: 11px; font-weight: 500; color: rgba(0,0,0,0.52); flex: 1; }
-.month-cnt { font-size: 10px; color: rgba(0,0,0,0.35); }
-.month-chev { color: rgba(0,0,0,0.22); transform:rotate(-90deg); transition: transform 0.16s; }
+.month-row:hover { background: var(--surface-soft-hover); }
+.month-name { font-size: 11px; font-weight: 500; color: var(--content-secondary); flex: 1; }
+.month-cnt { font-size: 10px; color: var(--content-tertiary); }
+.month-chev { color: var(--content-tertiary); transform:rotate(-90deg); transition: transform 0.16s; }
 .month-chev.open { transform: rotate(0deg); }
 
 /* ── 项目行 ── */
@@ -247,14 +245,14 @@ async function restore(id: number) {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 10px; transition: background 0.12s;
 }
-.ap-row:hover { background: rgba(255,255,255,0.55); }
+.ap-row:hover { background: var(--surface-soft-hover); }
 .ap-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .ap-info { flex: 1; min-width: 0; }
 .ap-name {
-  font-size: 13px; font-weight: 600; color: var(--text-primary);
+  font-size: 13px; font-weight: 600; color: var(--content-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ap-sub { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+.ap-sub { font-size: 11px; color: var(--content-secondary); margin-top: 1px; }
 .ap-restore {
   flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 5px 10px;
   border-radius: 8px; border: 1px solid rgba(123,127,178,0.35);

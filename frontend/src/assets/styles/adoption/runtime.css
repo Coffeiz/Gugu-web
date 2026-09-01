@@ -71,14 +71,6 @@ html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .pr-card)
   opacity: 0 !important;
 }
 
-/* landing 在指针下揭示本体时，Mind 适配层会暂时抑制一次 hover；等指针离开后
-   再恢复，避免“落地完成 -> 又触发一次抬起”的二次动画。 */
-html[data-theme][data-family] .mind-project-card[data-runtime-hover-suppressed='true']:hover {
-  transform: none;
-  border-color: var(--project-card-border);
-  box-shadow: var(--project-card-shadow);
-}
-
 html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true'] {
   background: var(--note-surface) !important;
   border-color: var(--note-border) !important;

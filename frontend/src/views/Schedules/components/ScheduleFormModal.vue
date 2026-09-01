@@ -58,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, reactive, ref, watch, type PropType } from 'vue'
+import { computed, nextTick, reactive, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ActionButton from '@/components/common/ActionButton.vue'

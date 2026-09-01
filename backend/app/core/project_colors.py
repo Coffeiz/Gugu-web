@@ -19,4 +19,25 @@ PROJECT_COLOR_PRESETS: tuple[str, ...] = (
     "linear-gradient(135deg,#be8b8f,#c8aa72)",
 )
 
+# Agent/Skill 使用稳定的语义 token，CSS 渐变只留在存储和前端展示层。
+PROJECT_COLOR_KEYS: tuple[str, ...] = (
+    "amber", "sage", "teal", "sky", "indigo", "lavender", "rose", "sunset",
+)
+PROJECT_COLOR_BY_KEY = dict(zip(PROJECT_COLOR_KEYS, PROJECT_COLOR_PRESETS, strict=True))
+PROJECT_COLOR_KEY_BY_VALUE = {value: key for key, value in PROJECT_COLOR_BY_KEY.items()}
+
 DEFAULT_PROJECT_COLOR = PROJECT_COLOR_PRESETS[5]
+
+
+def project_color_value(value: str | None) -> str | None:
+    """将模型使用的语义色名转换为数据库/前端使用的渐变值。"""
+    if value is None:
+        return None
+    return PROJECT_COLOR_BY_KEY.get(value, value)
+
+
+def project_color_key(value: str | None) -> str | None:
+    """将数据库/前端渐变值转换为模型使用的语义色名。"""
+    if value is None:
+        return None
+    return PROJECT_COLOR_KEY_BY_VALUE.get(value)

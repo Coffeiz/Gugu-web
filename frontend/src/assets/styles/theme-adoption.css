@@ -28,31 +28,6 @@ html[data-theme][data-family] .theme-mode-quick button:hover {
 }
 
 /* ── Real Topbar controls ─────────────────────────────────────────────────────────────── */
-html[data-theme][data-family] .topbar .btn-ghost-custom {
-  color: var(--control-fg) !important;
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border) !important;
-  box-shadow: none !important;
-}
-html[data-theme][data-family] .topbar .btn-ghost-custom:hover {
-  color: var(--control-fg-strong) !important;
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  box-shadow: none !important;
-}
-html[data-theme][data-family] .topbar .btn-primary-custom {
-  color: var(--content-on-accent) !important;
-  background: var(--action-primary-bg) !important;
-  filter: none !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-html[data-theme][data-family] .topbar .btn-primary-custom:hover {
-  background: var(--action-primary-bg) !important;
-  filter: brightness(1.05);
-  box-shadow: none !important;
-}
-
 /* ── Projects ───────────────────────────────────────────────────────────────────────────
    ProjectCard 自身是最终 paint / motion owner；本层只负责它内部旧 scoped 规则的语义映射。 */
 html[data-theme='dark'][data-family] .proj-card .proj-name,
@@ -372,9 +347,11 @@ html[data-theme='dark'][data-family] .mini-player .mp-track {
   background: var(--surface-soft-hover);
 }
 html[data-theme='dark'][data-family] .mini-player .mp-fill,
-html[data-theme='dark'][data-family] .mini-player .mp-thumb,
+html[data-theme='dark'][data-family] .mini-player .mp-thumb {
+  background: var(--action-primary);
+}
 html[data-theme='dark'][data-family] .mini-player .mp-btn--play {
-  background: var(--brand-gradient);
+  background: var(--action-primary);
 }
 html[data-theme='dark'][data-family] .mini-player .mp-btn--pin:hover,
 html[data-theme='dark'][data-family] .mini-player .mp-vol-btn:hover {
@@ -391,10 +368,17 @@ html[data-theme='dark'][data-family] .chat-window .rec-time { color: var(--statu
 html[data-theme='dark'][data-family] .chat-window .tool-spinner { border-color: var(--border-subtle); border-top-color: var(--action-primary); }
 html[data-theme='dark'][data-family] .chat-window .tool-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
-html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://'] {
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://']:not(.chat-object-card) {
   color: var(--content-on-accent);
   background: var(--gugu-chat-send-bg);
   box-shadow: none;
+}
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a.chat-object-card {
+  background-color: color-mix(in srgb, var(--surface-raised) 72%, var(--surface-card-solid));
+}
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a.chat-object-card:hover {
+  color: var(--content-primary);
+  background-color: var(--surface-raised);
 }
 html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,
 html[data-theme='dark'][data-family] .exp-session-title.is-header.is-editing {

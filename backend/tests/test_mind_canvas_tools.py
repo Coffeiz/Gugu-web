@@ -224,7 +224,7 @@ async def test_connect_is_idempotent_and_requires_same_canvas(db, user_a):
     first = await _node(db, user_a, title="第一节点")
     second = await _node(db, user_a, title="第二节点")
     await _item(db, user_a, canvas, first)
-    await _item(db, user_a, canvas, second, x=200)
+    await _item(db, user_a, canvas, second, x=400)
     created = await _canvas_connect(db, user_a.id, {
         "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id,
     })
@@ -244,7 +244,7 @@ async def test_removing_canvas_item_detaches_relation_without_deleting_global_re
     first = await _node(db, user_a, kind="ref", title="抽屉节点一", ref_type="project", ref_id=101)
     second = await _node(db, user_a, kind="ref", title="抽屉节点二", ref_type="project", ref_id=102)
     first_item = await _item(db, user_a, canvas, first)
-    await _item(db, user_a, canvas, second, x=200)
+    await _item(db, user_a, canvas, second, x=400)
     relation = await _canvas_connect(db, user_a.id, {
         "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id,
     })
@@ -268,7 +268,7 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     first = await _node(db, user_a, title="端点一")
     second = await _node(db, user_a, title="端点二")
     await _item(db, user_a, canvas, first)
-    await _item(db, user_a, canvas, second, x=200)
+    await _item(db, user_a, canvas, second, x=400)
 
     relation = await _canvas_connect(db, user_a.id, {
         "canvas_id": canvas.id,
@@ -291,7 +291,7 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     assert audit["recommended"] == {"source_side": "right", "target_side": "left"}
     assert audit["status"] == "aligned"
     assert audit["source"]["center"] == {"x": 132.0, "y": 94.0}
-    assert audit["target"]["center"] == {"x": 322.0, "y": 94.0}
+    assert audit["target"]["center"] == {"x": 522.0, "y": 94.0}
 
     updated = await _canvas_update_anchor(db, user_a.id, {
         "canvas_id": canvas.id,

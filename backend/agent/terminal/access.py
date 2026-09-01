@@ -12,6 +12,7 @@ from enum import StrEnum
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.security.shell_policy import available_for_session, evaluate
+from agent.sandbox.docker_runtime import sandbox_readiness
 from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.models import ConversationSession
@@ -45,6 +46,12 @@ async def page_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
     """
     operation = TerminalOperation.VIEW
     settings = get_settings()
+    sandbox = getattr(settings, "sandbox", None)
+    if sandbox is None:
+        return TerminalAccessDecision(False, "Shell 沙盒未开启", operation)
+    sandbox_ready, sandbox_reason = sandbox_readiness(sandbox)
+    if not sandbox_ready:
+        return TerminalAccessDecision(False, sandbox_reason, operation)
     if not getattr(settings.agent, "shell_enabled", False):
         return TerminalAccessDecision(False, "管理员未开启 Shell 工具", operation)
     if await effective_shell_enabled(db, user_id):

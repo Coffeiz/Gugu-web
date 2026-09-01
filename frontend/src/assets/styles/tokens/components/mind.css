@@ -104,7 +104,7 @@ html[data-theme='dark'][data-family] {
 
   /* Connection feedback keeps enough contrast on dark surfaces without falling back to a white
      ring. Existing relations stay neutral; only the draft/outline/active port are emphasized. */
-  --mind-connection-outline: color-mix(in srgb,var(--action-primary) 58%,var(--content-secondary));
+  --mind-connection-outline: color-mix(in srgb,var(--action-primary) 44%,transparent);
   --mind-connection-dot-bg: color-mix(in srgb,var(--action-primary) 88%,var(--content-primary));
   --mind-connection-dot-border: var(--surface-card-solid);
   --mind-connection-dot-shadow: 0 1px 5px rgba(0,0,0,.45);
@@ -112,6 +112,6 @@ html[data-theme='dark'][data-family] {
   --mind-connection-dot-muted-opacity: .58;
 
   --mind-relation-line: color-mix(in srgb,var(--content-secondary) 42%,transparent);
-  --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 68%,var(--content-secondary));
+  --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 56%,transparent);
   --mind-relation-line-danger: color-mix(in srgb,var(--status-danger) 72%,var(--content-secondary));
 }

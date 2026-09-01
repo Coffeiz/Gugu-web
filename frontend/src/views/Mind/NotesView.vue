@@ -37,6 +37,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveStore } from '@/stores/live'
@@ -51,6 +52,7 @@ import DateIndex from './components/DateIndex.vue'
 import NoteTimeline from './components/NoteTimeline.vue'
 
 const store     = useMindStore()
+const route     = useRoute()
 const { t } = useI18n()
 const liveStore = useLiveStore()
 const uiStore   = useUiStore()
@@ -63,7 +65,15 @@ const layoutRef   = ref<HTMLElement | null>(null)
 const highlightId = ref<number | null>(null)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
-onMounted(() => { if (!store.loaded) store.fetchNotes() })
+onMounted(async () => {
+  if (!store.loaded) await store.fetchNotes()
+  const requestedId = Number(route.query.object_id)
+  if (store.notes.some(note => note.id === requestedId)) {
+    highlightId.value = requestedId
+    if (highlightTimer) clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => { highlightId.value = null }, 2200)
+  }
+})
 // 进面板默认展开底部捕捉条，光标直接待输入——降低"想到就记"的操作成本，不用先点一下才能打字。
 // 复用 captureRef.expand()（跟 jumpTarget=今天且当天没记录时那条路径同一个方法），内部本来
 // 就会在展开后 focus 编辑器。

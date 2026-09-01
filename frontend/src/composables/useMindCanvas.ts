@@ -77,6 +77,17 @@ export function pickAnchorSide(fromCenter: { x: number; y: number }, towardCente
   return towardCenter.x >= fromCenter.x ? 'right' : 'left'
 }
 
+/** 默认关系端点：水平投影重叠的卡片视为上下编排，两端从同一侧出线。 */
+export function pickRelationAnchorSides(
+  from: { x: number; y: number; w: number; h: number },
+  toward: { x: number; y: number; w: number; h: number },
+): { srcSide: AnchorSide; dstSide: AnchorSide } {
+  if (from.x + from.w <= toward.x) return { srcSide: 'right', dstSide: 'left' }
+  if (toward.x + toward.w <= from.x) return { srcSide: 'left', dstSide: 'right' }
+  const side = toward.x + toward.w / 2 >= from.x + from.w / 2 ? 'right' : 'left'
+  return { srcSide: side, dstSide: side }
+}
+
 /** 贴纸四边任意一侧的连接点（世界坐标）。 */
 export function itemAnchorAt(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y: number }): { x: number; y: number } {
   const { w, h } = itemSize(item)

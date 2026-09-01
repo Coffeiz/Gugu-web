@@ -6,6 +6,7 @@ import { ref, computed } from 'vue'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useLiveStore } from '@/stores/live'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
 export interface EventDraft {
   name: string
@@ -133,19 +134,33 @@ export function useEventEditForm() {
   /** 保存编辑中的活动：更新活动本身 + 对账提醒 + 广播日历有变（Calendar 页面自己的
    *  watch(liveStore.rev.calendar) 会据此刷新，不用这里手动去碰它的本地数组）。 */
   async function saveEvent(ev: EditingEvent) {
-    if (ev.allDay) { ev.time = ''; ev.endTime = '' }
-    const updated = await eventsApi.update(ev.id as unknown as number, {
-      title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null,
-      description: ev.description || undefined, version: ev.version,
+    const previous = { ...ev }
+    const nextTime = ev.allDay ? '' : ev.time
+    const nextEndTime = ev.allDay ? '' : ev.endTime
+    return InteractionSync.execute({
+      scope: 'calendar.event.update',
+      entityKey: `calendar-event:${ev.id}`,
+      apply: () => { ev.time = nextTime; ev.endTime = nextEndTime },
+      rollback: () => Object.assign(ev, previous),
+      request: async mutation => {
+        const updated = await eventsApi.update(ev.id as unknown as number, {
+          title: ev.name, date: ev.date, time: nextTime || null, endTime: nextEndTime || null,
+          description: ev.description || undefined, version: ev.version,
+        }, { mutationId: mutation.mutationId })
+        await applyReminders(ev.id as unknown as number, ev.name, ev.date, nextTime)
+        return updated
+      },
+      onCommit: () => liveStore.bump('calendar'),
     })
-    await applyReminders(ev.id as unknown as number, ev.name, ev.date, ev.time)
-    liveStore.bump('calendar')
-    return updated
   }
 
   async function deleteEvent(id: string | number) {
-    await eventsApi.delete(id as unknown as number)
-    liveStore.bump('calendar')
+    await InteractionSync.execute({
+      scope: 'calendar.event.delete', entityKey: `calendar-event:${id}`,
+      apply: () => {}, rollback: () => {},
+      request: mutation => eventsApi.delete(id as unknown as number, { mutationId: mutation.mutationId }),
+      onCommit: () => liveStore.bump('calendar'),
+    })
   }
 
   return {

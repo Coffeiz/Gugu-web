@@ -21,6 +21,7 @@ from app.services.workspaces import (
     delete_workspace,
     update_workspace,
 )
+from agent.sandbox.docker_runtime import sandbox_readiness
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -45,8 +46,10 @@ async def list_workspaces(
         .where(ConversationSession.user_id == user.id, ConversationSession.workspace_id.is_not(None))
         .group_by(ConversationSession.workspace_id)
     )).all())
+    sandbox_ready, _ = sandbox_readiness(get_settings().sandbox)
     return {
         "globalEnabled": bool(get_settings().agent.shell_enabled),
+        "sandboxEnabled": sandbox_ready,
         "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
         "autopilotGlobalEnabled": bool(get_settings().agent.shell_autopilot_enabled),

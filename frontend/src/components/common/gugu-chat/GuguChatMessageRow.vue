@@ -100,6 +100,8 @@ const vLazyThumb = makeLazyThumbDirective('card')
 const vLazyFace = makeLazyThumbDirective('full')
 
 function onBodyClick(event: MouseEvent) {
+  // gugu:// 动作链接交给主聊天组件统一拦截，避免浏览器把自定义协议当成外部请求。
+  emit('actionClick', event)
   const target = event.target as HTMLElement
   const refEl = target.closest<HTMLElement>('.mind-ref')
   if (!refEl) return

@@ -23,6 +23,23 @@ def test_relation_sides_use_card_centers_not_node_ids():
     assert engine.recommended_relation_sides(node, right, node, left) == ("left", "right")
 
 
+def test_relation_sides_use_same_outer_side_for_vertically_stacked_cards():
+    engine = CanvasLayoutEngine()
+    node = SimpleNamespace(kind="ref", ref_type="project")
+    upper = SimpleNamespace(x=100, y=0, w=240, h=120)
+    lower = SimpleNamespace(x=100, y=180, w=240, h=120)
+    assert engine.recommended_relation_sides(node, upper, node, lower) == ("right", "right")
+    assert engine.recommended_relation_sides(node, lower, node, upper) == ("right", "right")
+
+
+def test_relation_sides_keep_opposite_edges_for_non_overlapping_horizontal_cards():
+    engine = CanvasLayoutEngine()
+    node = SimpleNamespace(kind="ref", ref_type="project")
+    left = SimpleNamespace(x=0, y=0, w=240, h=120)
+    right = SimpleNamespace(x=300, y=180, w=240, h=120)
+    assert engine.recommended_relation_sides(node, left, node, right) == ("right", "left")
+
+
 def test_resolve_position_supports_viewport_and_auto_without_database_access():
     engine = CanvasLayoutEngine()
     viewport = {"x": -100, "y": 50, "scale": 2, "viewport": {"width": 1200, "height": 800}}

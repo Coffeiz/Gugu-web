@@ -74,7 +74,12 @@
           </div>
           </Transition>
           </Teleport>
-          <div v-if="message && messageCapability === group.value" class="byok-message pm-msg" :class="messageType">{{ message }}</div>
+          <div v-if="message && messageCapability === group.value" class="byok-message pm-msg" :class="messageType">
+            <template v-if="messageParts.length">
+              <span v-for="(part, index) in messageParts" :key="part.key" class="byok-message-part" :class="`is-${part.status}`"><span v-if="index" class="byok-message-separator">｜</span><span class="byok-message-dot" aria-hidden="true"></span>{{ part.label }}：{{ part.text }}</span>
+            </template>
+            <template v-else><span class="byok-message-dot" :class="messageType === 'ok' ? 'is-supported' : 'is-unsupported'" aria-hidden="true"></span>{{ message }}</template>
+          </div>
         </div>
       </template>
     </div>
@@ -129,7 +134,8 @@ const props = defineProps({
 })
 const visibleGroups = computed(() => props.capability ? groups.filter(group => group.value === props.capability) : groups)
 const localizedVisionDims = computed(() => visionDims.map(dim => ({ ...dim, label: t(dim.labelKey) })))
-const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
+type VisionResult = { key: string; label: string; text: string; status: 'supported' | 'unsupported' | 'unknown' }
+const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<VisionResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
 function providersFor(capability: string): readonly ProviderOption[] {
@@ -212,6 +218,7 @@ async function fetchModels(event?: MouseEvent) {
   finally { modelLoading.value = false }
 }
 function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) draft.model = model; modelMenuOpen.value = false }
+function stripStatusMarks(value: string) { return value.replace(/\s*[✅✔☑]\s*$/gu, '').trim() }
 async function probeVision(dim: string) {
   const draft = editor.value
   visionFeedbackTarget.value = draft?.id ? String(draft.id) : 'new'
@@ -231,7 +238,7 @@ async function probeVision(dim: string) {
         if (saved) saved[field] = result.supported
       }
     }
-    visionFeedback.value = result.detail || (result.supported === true ? t('profileByokUi.detectSupported') : result.supported === false ? t('profileByokUi.detectUnsupported') : t('profileByokUi.detectUndetermined'))
+    visionFeedback.value = stripStatusMarks(result.detail || (result.supported === true ? t('profileByokUi.detectSupported') : result.supported === false ? t('profileByokUi.detectUnsupported') : t('profileByokUi.detectUndetermined')))
     visionFeedbackType.value = result.supported === true ? 'ok' : 'err'
   } catch (e) {
     visionFeedback.value = e instanceof Error ? e.message : t('profileByokUi.detectFailed')
@@ -242,25 +249,26 @@ async function probeCardVisionAll(item: Item) {
   if (!item.provider || !item.model) return
   visionTesting.value = `${item.id}:all`
   messageCapability.value = item.capability
-  const labels = { image: '图片', video: '视频', audio: '音频' } as const
-  const results: string[] = []
+  messageParts.value = []
+  const results: VisionResult[] = []
   const detected: Record<string, boolean> = {}
   try {
     for (const dim of visionDims) {
       const result = await byokApi.visionProbe({ provider: item.provider, api_format: item.api_format, base_url: item.base_url, api_key: '', credential_id: item.id, model: item.model, dim: dim.key })
       const field = dim.field
       if (result.supported !== null) { item[field] = result.supported; detected[field] = result.supported }
-      results.push(`${labels[dim.key]}：${result.supported === true ? '支持' : result.supported === false ? '不支持' : '测不准'}`)
+      results.push({ key: dim.key, label: t(dim.labelKey), text: result.supported === true ? t('profileByokUi.statusSupported') : result.supported === false ? t('profileByokUi.statusUnsupported') : t('profileByokUi.statusUnknown'), status: result.supported === true ? 'supported' : result.supported === false ? 'unsupported' : 'unknown' })
     }
     if (Object.keys(detected).length) Object.assign(item, await byokApi.update(item.id, detected))
-    message.value = `多模态检测完成（${results.join('；')}）`
-    messageType.value = results.some(result => result.endsWith('测不准')) ? 'err' : 'ok'
+    messageParts.value = results
+    message.value = '多模态检测完成'
+    messageType.value = results.some(result => result.status !== 'supported') ? 'err' : 'ok'
   } catch (e) { message.value = e instanceof Error ? e.message : '多模态检测失败'; messageType.value = 'err' }
   finally { visionTesting.value = null }
 }
 async function load() { loading.value = true; error.value = ''; try { const result = await byokApi.list(); items.value = result.items as Item[]; needsReconfigure.value = result.status === 'needs_reconfigure' } catch (e) { error.value = e instanceof Error ? e.message : 'BYOK 加载失败' } finally { loading.value = false } }
 function setActiveEditor(id: number) { editor.value = editors.value[id] || null }
-function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', max_tokens: item.max_tokens ?? 8000, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', max_tokens: 8000, context_tokens: 128000, thinking: null, reasoning_effort: null, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; visionFeedback.value = ''; visionFeedbackTarget.value = null }
+function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', max_tokens: item.max_tokens ?? 8000, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', max_tokens: 8000, context_tokens: 128000, thinking: null, reasoning_effort: null, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; visionFeedback.value = ''; visionFeedbackTarget.value = null }
 function applyProviderTo(target: Editor, value: string) { applyProvider(target, value) }
 function closeNewEditor() { newEditor.value = null }
 function notifyQuotaChanged() { window.dispatchEvent(new Event('gugu-quota-changed')) }
@@ -270,7 +278,7 @@ function clearClosingEditor(id: number) { closingEditors.value.delete(id) }
 function closeEditor(id?: number) { if (id !== undefined) { closingEditors.value.add(id); delete editors.value[id] }; editor.value = id !== undefined && editor.value?.id === id ? null : editor.value; modelMenuOpen.value = false }
 async function saveEditor(id: number) { const draft = editors.value[id]; if (!draft) return; saving.value = true; message.value = ''; try { const payload: Record<string, unknown> = { provider: draft.provider, capability: draft.capability, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }; if (draft.value) payload.value = draft.value; const row = await byokApi.update(id, payload); const index = items.value.findIndex(item => item.id === row.id); if (index >= 0) items.value[index] = row as Item; delete editors.value[id]; if (editor.value?.id === id) editor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 async function toggle(item: Item) { try { const enabled = !item.enabled; Object.assign(item, await byokApi.update(item.id, { enabled })); if (enabled) items.value.filter(row => row.capability === item.capability && row.id !== item.id).forEach(row => { row.enabled = false }); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '更新失败'; messageType.value = 'err' } }
-async function test(item: { id: number; capability: string }) { testing.value = item.id; messageCapability.value = item.capability; try { const body = await byokApi.test(item.id); message.value = body.message || (body.ok ? '检查通过' : '检查失败'); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
+async function test(item: { id: number; capability: string }) { testing.value = item.id; messageCapability.value = item.capability; try { const body = await byokApi.test(item.id); message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败')); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
 async function remove(item: Item) {
   if (!await confirmDialog({
     title: t('profileByokUi.deleteTitle'),
@@ -334,6 +342,15 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOn
 .byok-card-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; }
 .byok-card-actions .pm-danger-btn { padding: 5px 10px; border-radius: var(--choice-chip-radius); }
 .byok-message { margin-top: 12px; }
+.byok-message-part { color: var(--text-secondary, #8f95aa); }
+.byok-message-part.is-supported { color: var(--status-success, #5ab899); }
+.byok-message-part.is-unsupported { color: var(--status-danger, #e07878); }
+.byok-message-part.is-unknown { color: var(--status-warning, #c89b56); }
+.byok-message-separator { color: var(--text-secondary, #8f95aa); margin: 0 8px; }
+.byok-message-dot { display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
+.byok-message-dot.is-supported { color: var(--status-success, #5ab899); }
+.byok-message-dot.is-unsupported { color: var(--status-danger, #e07878); }
+.byok-editor-feedback::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
 .byok-form-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 10px 0; }
 .byok-editor { margin-top: 8px; padding: 12px; border: 1px solid var(--input-border); border-radius: 10px; background: var(--surface-subtle); }
 .byok-editor--expanded { margin-top: 0; border-top: 1px solid var(--input-border); border-left: 0; border-right: 0; border-top-left-radius: 0; border-top-right-radius: 0; box-shadow: inset 1px 0 var(--input-border), inset -1px 0 var(--input-border); }

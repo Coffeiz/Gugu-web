@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { CLIENT_ID, projectsApi, eventsApi } from '@/services/api'
+import { projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { mapProjectResponse, type Project, type ProjectStage, type ProjectStatus } from '@/types/project'
 import {
@@ -9,6 +9,9 @@ import {
 import { DEFAULT_PROJECT_COLOR } from '@/utils/projectColors'
 import type { components } from '@/types/api'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import type { LiveEventPayload } from '@/types/live-events'
 
 type EventResponse = components['schemas']['EventResponse']
 
@@ -175,7 +178,19 @@ export const useProjectStore = defineStore('projects', () => {
       const version = project?.version ?? confirmed?.version
       try {
         // payload 用紧类型 Partial<Project>（stages 结构化），wire 的 ProjectUpdate 是松类型，边界处一次性收
-        const updated = await projectsApi.update(id, { ...payload, version } as unknown as components['schemas']['ProjectUpdate'])
+        const updated = await InteractionSync.execute({
+          scope: 'project.update',
+          entityKey: `project:${id}`,
+          apply: () => {},
+          rollback: () => {
+            if (projectWriteRevisions.get(id) === revision) restoreConfirmed(id)
+          },
+          request: mutation => projectsApi.update(
+            id,
+            { ...payload, version } as unknown as components['schemas']['ProjectUpdate'],
+            { mutationId: mutation.mutationId },
+          ),
+        })
         if (!updated) return
         rememberConfirmed(mapProjectResponse(updated))
         const current = projects.value.find(item => item.id === id)
@@ -356,25 +371,42 @@ export const useProjectStore = defineStore('projects', () => {
 
   // 实时：咕咕/IM 改了项目或日历事件 → 只要主列表加载过，即使为空也刷新。
   const live = useLiveStore()
-  watch(() => live.resourceEvent, (event) => {
-    if (!event || event.resource !== 'projects' || event.origin === CLIENT_ID) return
+  const eventQueue = new InteractionSyncEventQueue()
+  let lastHandledEventTick = 0
+  function applyCanonicalProjectEvent(event: LiveEventPayload): boolean {
     const id = Number(event.entity_id)
     const payload = event.payload as components['schemas']['ProjectResponse'] | undefined
-    if (!Number.isFinite(id)) return void fetchProjects()
+    if (!Number.isFinite(id)) return false
     if (event.operation === 'delete') {
       projects.value = projects.value.filter(project => project.id !== id)
       confirmedProjects.delete(id)
-      return
+      return true
     }
-    if (!payload || Number(payload.id) !== id) return void fetchProjects()
+    if (!payload || Number(payload.id) !== id) return false
     try {
       const next = mapProjectResponse(payload)
       const index = projects.value.findIndex(project => project.id === id)
       if (event.operation === 'create' && index === -1) projects.value = [next, ...projects.value]
       else if (index >= 0) projects.value.splice(index, 1, next)
-      else void fetchProjects()
+      else return false
       rememberConfirmed(next)
-    } catch { void fetchProjects() }
+      return true
+    } catch { return false }
+  }
+  eventQueue.register('projects', applyCanonicalProjectEvent, () => { void fetchProjects() })
+  watch(() => live.resourceEvent, event => {
+    if (!event || event.resource !== 'projects' || !projectsLoaded.value) return
+    lastHandledEventTick = event._t
+    eventQueue.receive(event)
+  })
+  watch(() => live.rev.projects, () => {
+    if (!projectsLoaded.value) return
+    const currentEvent = live.resourceEvent
+    if (currentEvent?.resource === 'projects' && currentEvent._t === lastHandledEventTick) {
+      lastHandledEventTick = 0
+      return
+    }
+    eventQueue.enqueue('projects')
   })
   watch(() => live.rev.calendar, () => fetchUpcomingCalEvents())
 

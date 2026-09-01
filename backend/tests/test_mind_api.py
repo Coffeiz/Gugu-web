@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 from sqlalchemy import func, select
 
 from app.api.v1.mind import (
@@ -204,14 +205,23 @@ async def test_note_mutations_publish_canonical_mind_events(db, user_a, monkeypa
         published.append((user_id, resources, kwargs))
 
     monkeypatch.setattr(mind_api.events, "publish", publish)
-    note = await _new_note(db, user_a, content="初始")
-    await update_note(note.id, MindNoteUpdate(content_md="更新", version=1), current_user=user_a, db=db)
-    await delete_note(note.id, current_user=user_a, db=db)
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-client-id", b"tab-test"), (b"x-mutation-id", b"mutation-test")],
+    })
+    note = await create_note(MindNoteCreate(content_md="初始"), request=request, current_user=user_a, db=db)
+    await update_note(note.id, MindNoteUpdate(content_md="更新", version=1), request=request, current_user=user_a, db=db)
+    await delete_note(note.id, request=request, current_user=user_a, db=db)
 
     assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
     assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
     assert published[0][2]["event_payload"]["kind"] == "note"
     assert published[0][2]["event_payload"]["entity"]["id"] == note.id
+    assert [(entry[2]["origin"], entry[2]["mutation_id"]) for entry in published] == [
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -223,14 +233,23 @@ async def test_canvas_mutations_publish_canonical_mind_events(db, user_a, monkey
         published.append((user_id, resources, kwargs))
 
     monkeypatch.setattr(mind_api.events, "publish", publish)
-    canvas = await create_canvas(MindCanvasCreate(title="事件画布"), current_user=user_a, db=db)
-    await update_canvas(canvas.id, MindCanvasUpdate(title="更新画布"), current_user=user_a, db=db)
-    await delete_canvas(canvas.id, current_user=user_a, db=db)
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-client-id", b"tab-test"), (b"x-mutation-id", b"mutation-test")],
+    })
+    canvas = await create_canvas(MindCanvasCreate(title="事件画布"), request=request, current_user=user_a, db=db)
+    await update_canvas(canvas.id, MindCanvasUpdate(title="更新画布"), request=request, current_user=user_a, db=db)
+    await delete_canvas(canvas.id, request=request, current_user=user_a, db=db)
 
     assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
     assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
     assert [entry[2]["event_payload"]["kind"] for entry in published[:2]] == ["canvas", "canvas"]
     assert published[-1][2]["event_payload"] == {"kind": "canvas", "entity": {"id": canvas.id}}
+    assert [(entry[2]["origin"], entry[2]["mutation_id"]) for entry in published] == [
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+        ("tab-test", "mutation-test"),
+    ]
 
 
 # ── `[[` 对象引用补全 ─────────────────────────────────────────────────────────
@@ -314,21 +333,21 @@ async def test_canvas_item_keeps_note_global_and_duplicate_add_is_idempotent(db,
     canvas = await create_canvas(MindCanvasCreate(title="方案桌面"), current_user=user_a, db=db)
 
     first = await add_canvas_item(
-        canvas.id, MindCanvasItemCreate(node_id=note.id, x=120, y=80), current_user=user_a, db=db,
+        canvas.id, MindCanvasItemCreate(node_id=note.id, x=120, y=80), request=None, current_user=user_a, db=db,
     )
     duplicate = await add_canvas_item(
-        canvas.id, MindCanvasItemCreate(node_id=note.id, x=999, y=999), current_user=user_a, db=db,
+        canvas.id, MindCanvasItemCreate(node_id=note.id, x=999, y=999), request=None, current_user=user_a, db=db,
     )
     assert duplicate.id == first.id
     assert duplicate.x == 120 and duplicate.y == 80
 
     moved = await update_canvas_item(
-        canvas.id, first.id, MindCanvasItemUpdate(x=260, y=180, z=3), current_user=user_a, db=db,
+        canvas.id, first.id, MindCanvasItemUpdate(x=260, y=180, z=3), request=None, current_user=user_a, db=db,
     )
     assert (moved.x, moved.y, moved.z) == (260, 180, 3)
     assert (await _row(db, note.id)).content_md.startswith("# 保留原文")
 
-    await remove_canvas_item(canvas.id, first.id, current_user=user_a, db=db)
+    await remove_canvas_item(canvas.id, first.id, request=None, current_user=user_a, db=db)
     assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 0
     assert await _row(db, note.id) is not None  # 移出画布绝不删除原记录
 
@@ -344,12 +363,12 @@ async def test_event_canvas_item_embeds_display_snapshot(db, user_a):
     await db.commit()
     await db.refresh(event)
     node = await create_ref_node(
-        MindRefNodeCreate(ref_type="event", ref_id=event.id), current_user=user_a, db=db,
+        MindRefNodeCreate(ref_type="event", ref_id=event.id), request=None, current_user=user_a, db=db,
     )
     canvas = await create_canvas(MindCanvasCreate(title="活动快照"), current_user=user_a, db=db)
 
     added = await add_canvas_item(
-        canvas.id, MindCanvasItemCreate(node_id=node.id), current_user=user_a, db=db,
+        canvas.id, MindCanvasItemCreate(node_id=node.id), request=None, current_user=user_a, db=db,
     )
     assert added.ref_data == {
         "date": "2026-07-14", "time": "14:30", "endTime": "15:30", "description": "确认画布交互细节",
@@ -363,7 +382,7 @@ async def test_event_canvas_item_embeds_display_snapshot(db, user_a):
 async def test_canvas_note_is_independent_from_record_timeline(db, user_a):
     canvas = await create_canvas(MindCanvasCreate(title="独立便签"), current_user=user_a, db=db)
     item = await create_canvas_note(
-        canvas.id, MindCanvasNoteCreate(title="画布想法", content_md="空间里的内容", x=80, y=120),
+        canvas.id, MindCanvasNoteCreate(title="画布想法", content_md="空间里的内容", x=80, y=120), request=None,
         current_user=user_a, db=db,
     )
     assert item.node.kind == "canvas_note"
@@ -383,7 +402,7 @@ async def test_canvas_rejects_other_users_node_and_keeps_canvas_private(db, user
     foreign = await _new_note(db, user_b, content="别人的节点")
     with pytest.raises(HTTPException) as e:
         await add_canvas_item(
-            canvas.id, MindCanvasItemCreate(node_id=foreign.id), current_user=user_a, db=db,
+            canvas.id, MindCanvasItemCreate(node_id=foreign.id), request=None, current_user=user_a, db=db,
         )
     assert e.value.status_code == 404
 
@@ -396,7 +415,7 @@ async def test_canvas_rejects_other_users_node_and_keeps_canvas_private(db, user
 async def test_delete_canvas_cascades_items_but_keeps_nodes(db, user_a):
     canvas = await create_canvas(MindCanvasCreate(title="要删的画布"), current_user=user_a, db=db)
     note = await _new_note(db, user_a, content="节点应该留下")
-    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=note.id, x=10, y=20), current_user=user_a, db=db)
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=note.id, x=10, y=20), request=None, current_user=user_a, db=db)
     assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 1
 
     await delete_canvas(canvas.id, current_user=user_a, db=db)
@@ -426,8 +445,8 @@ async def test_canvas_relations_only_list_visible_nodes_and_are_idempotent(db, u
     a = await _new_note(db, user_a, content="A")
     b = await _new_note(db, user_a, content="B")
     outside = await _new_note(db, user_a, content="不在画布上")
-    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), current_user=user_a, db=db)
-    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=b.id), current_user=user_a, db=db)
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=a.id), request=None, current_user=user_a, db=db)
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=b.id), request=None, current_user=user_a, db=db)
 
     one = await create_relation(MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db)
     same = await create_relation(MindRelationCreate(canvas_id=canvas.id, src_node_id=b.id, dst_node_id=a.id), current_user=user_a, db=db)
@@ -450,8 +469,8 @@ async def test_canvas_relations_are_isolated_between_canvases(db, user_a):
     first = await _new_note(db, user_a, content="A")
     second = await _new_note(db, user_a, content="B")
     for canvas in (first_canvas, second_canvas):
-        await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=first.id), current_user=user_a, db=db)
-        await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=second.id), current_user=user_a, db=db)
+        await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=first.id), request=None, current_user=user_a, db=db)
+        await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=second.id), request=None, current_user=user_a, db=db)
 
     relation = await create_relation(
         MindRelationCreate(canvas_id=first_canvas.id, src_node_id=first.id, dst_node_id=second.id),
@@ -470,15 +489,15 @@ async def test_ref_node_reuses_one_proxy_and_checks_target_ownership(db, user_a,
     await db.refresh(project)
 
     first = await create_ref_node(
-        MindRefNodeCreate(ref_type="project", ref_id=project.id), current_user=user_a, db=db,
+        MindRefNodeCreate(ref_type="project", ref_id=project.id), request=None, current_user=user_a, db=db,
     )
     same = await create_ref_node(
-        MindRefNodeCreate(ref_type="project", ref_id=project.id), current_user=user_a, db=db,
+        MindRefNodeCreate(ref_type="project", ref_id=project.id), request=None, current_user=user_a, db=db,
     )
     assert (first.id, first.ref_type, first.ref_id, first.title) == (same.id, "project", project.id, "可贴项目")
 
     with pytest.raises(HTTPException) as e:
         await create_ref_node(
-            MindRefNodeCreate(ref_type="project", ref_id=project.id), current_user=user_b, db=db,
+            MindRefNodeCreate(ref_type="project", ref_id=project.id), request=None, current_user=user_b, db=db,
         )
     assert e.value.status_code == 404

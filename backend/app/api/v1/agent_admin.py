@@ -1100,13 +1100,13 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
     # 视频在 Anthropic 路（MiniMax M3）是硬编码已知能力，无需探测；其余 Anthropic 路不支持视频块
     if dim == "video" and is_anthropic:
         if adapter.supports_video(model):
-            return True, 200, "MiniMax M3 原生支持视频块 ✅"
+            return True, 200, "MiniMax M3 原生支持视频块"
         return False, 200, "Anthropic 路当前仅 MiniMax M3 支持视频块"
 
     # MiMo 的 OpenAI 扩展块（video_url / input_audio）是已知能力，直接判定，避免探测格式不匹配误判
     if not is_anthropic and dim in ("video", "audio"):
         if (dim == "video" and adapter.supports_video(model)) or (dim == "audio" and adapter.supports_audio(model)):
-            return True, 200, f"MiMo 原生支持{dim_label}输入 ✅"
+            return True, 200, f"MiMo 原生支持{dim_label}输入"
 
     try:
         if is_anthropic:
@@ -1158,7 +1158,7 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
             await client.chat.completions.create(model=model, max_tokens=16,
                                                  messages=[{"role": "user", "content": content}])
         await close_probe_client()
-        return True, 200, f"模型接受了{dim_label}输入 ✅"
+        return True, 200, f"模型接受了{dim_label}输入"
     except Exception as e:
         await close_probe_client()
         sc = getattr(e, "status_code", None) or 0

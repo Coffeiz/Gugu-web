@@ -25,6 +25,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
@@ -35,6 +36,7 @@ import ScheduleFormModal from './components/ScheduleFormModal.vue'
 import { useScheduledTasks } from './composables/useScheduledTasks'
 
 const authStore = useAuthStore()
+const route = useRoute()
 const { t } = useI18n()
 const imChannels = computed(() => authStore.user?.imChannels ?? [])
 const { tasks, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
@@ -42,7 +44,12 @@ const showModal = ref(false)
 const editing = ref<any | null>(null)
 const formErr = ref('')
 
-onMounted(() => { void load() })
+onMounted(async () => {
+  await load()
+  const requestedId = Number(route.query.object_id)
+  const task = tasks.value.find(item => Number(item.id) === requestedId)
+  if (task) openEdit(task)
+})
 
 function openCreate() {
   editing.value = null

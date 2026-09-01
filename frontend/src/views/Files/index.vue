@@ -182,7 +182,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt, fileIconColor, fileListIcon } from '@/utils/fileTypes'
-import { optimisticMutation } from '@/utils/optimisticMutation'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav'
 import { useFilesNav } from '@/composables/useFilesNav'
@@ -584,14 +584,16 @@ async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId
     : (currentSeg.value?.projectId ?? null)
   const backups = nFolderIds.map(id => cacheStore.getFolder(id)).filter(Boolean) as FolderMeta[]
   let results: FolderMeta[] = []
-  await optimisticMutation({
+  await InteractionSync.execute({
+    scope: 'folder.move', entityKey: `folder-move:${nFolderIds.join(',')}`,
     apply: () => nFolderIds.forEach(id => cacheStore.updateFolder(id, { parentId: nTarget })),
     afterMutate: loadContents,
     // version 在 apply() 之后、work() 之前读——apply 只改 parentId，此时缓存里的 version 仍是
     // 服务端当前值；对不上（并发改动）后端给 409，走 rollback + loadContents 拉回真实状态。
-    work: async () => {
+    request: async mutation => {
       results = await Promise.all(nFolderIds.map(id =>
-        fileActions.moveFolder(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId)))
+        fileActions.moveFolder(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId, { mutationId: mutation.mutationId })))
+      return results
     },
     rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
     onCommit: () => results.forEach(r => cacheStore.updateFolder(r.id, { version: r.version })),
@@ -602,10 +604,11 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
   const nFileIds = fileIds as number[]
   const nTarget = targetFolderId as number | null
   const backups = nFileIds.map(id => cacheStore.getFile(id)).filter(Boolean) as FileMeta[]
-  await optimisticMutation({
+  await InteractionSync.execute({
+    scope: 'file.move', entityKey: `file-move:${nFileIds.join(',')}`,
     apply: () => nFileIds.forEach(id => cacheStore.updateFile(id, { folderId: nTarget })),
     afterMutate: loadContents,
-    work: () => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget))),
+    request: mutation => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }))),
     rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
     onError: err => console.error('[Files] 移动失败:', (err as Error).message),
   })
@@ -774,13 +777,14 @@ async function ctxDelete() {
   })) return
   // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，n  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
   const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
-  await optimisticMutation({
+  await InteractionSync.execute({
+    scope: 'file.batch-delete', entityKey: `file-batch-delete:${ids.join(',')}`,
     apply: () => {
       cacheStore.removeFiles(ids)
       selectedIds.value = new Set()
     },
     afterMutate: loadContents,
-    work: () => Promise.all(ids.map(id => fileActions.deleteFile(id))),
+    request: mutation => Promise.all(ids.map(id => fileActions.deleteFile(id, { mutationId: mutation.mutationId }))),
     onCommit: fetchStorage,
     rollback: () => backups.forEach(f => cacheStore.addFile(f)),
     onError: e => console.error('[Files] 删除失败:', (e as Error).message),

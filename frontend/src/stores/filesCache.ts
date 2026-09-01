@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { filesApi, foldersApi, CLIENT_ID } from '@/services/api'
+import { filesApi, foldersApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import type { components } from '@/types/api'
 import type { LiveEventPayload } from '@/types/live-events'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
 
 // 文件/文件夹领域类型：核心字段绑定 OpenAPI 生成的响应体（filesApi.all / foldersApi.all 的返回）。
 // 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
@@ -95,6 +96,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   function resetAccountState() {
+    eventQueue.cancel()
     allFiles.value = []
     allFolders.value = []
     loaded.value = false
@@ -213,14 +215,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   //  ③ 其余（add/update/移动/批量/重连补刷）：合并防抖后全量 refresh —— 这些需要 join 后的完整实体
   //     （projectName/color/排序等），本地拼不出，仍靠重拉；防抖把一串事件收敛成一次重拉。
   // ⚠️ 别改成 _checkVersion 版本门控——/files/version 的 GET 可能被浏览器缓存拿到旧版本号 → 漏刷（踩过）。
-  let _refreshTimer: ReturnType<typeof setTimeout> | null = null
-  function _scheduleRefresh() {
-    if (_refreshTimer) return
-    _refreshTimer = setTimeout(() => { _refreshTimer = null; if (loaded.value) refresh() }, 80)
-  }
+  const eventQueue = new InteractionSyncEventQueue()
+  eventQueue.register('files', applyCanonicalEvent, () => { if (loaded.value) void refresh() })
   watch(() => useLiveStore().resourceEvent, (event) => {
-    if (!event || event.resource !== 'files' || event.origin === CLIENT_ID || !loaded.value) return
-    if (!applyCanonicalEvent(event)) _scheduleRefresh()
+    if (!event || event.resource !== 'files' || !loaded.value) return
+    eventQueue.receive(event)
   })
 
   return {

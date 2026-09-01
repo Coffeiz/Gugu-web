@@ -395,7 +395,19 @@ async def _run_collect_unlocked(
                 "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory),
             }
 
-        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
+        async def _load_system_prompt(current_user_tz):
+            style_prefs = await loaders.load_style_prefs(db, user_id)
+            return builder.build_static_prompt(
+                profile.prompt_file.removesuffix(".md"), req.user_name,
+                skills=profile.skills, style_prefs=style_prefs,
+                current_date=session_snapshot.current_date_text(current_user_tz),
+            )
+
+        snapshot = await session_snapshot.ensure_snapshot(
+            db, session, load_context=_load_snapshot,
+        )
+        snapshot_user_tz = snapshot["user_tz"]
+        snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
         # 兼容旧 snapshot：旧版本把群记忆放在动态尾部，命中旧快照时恢复到正文。
@@ -559,7 +571,7 @@ async def _run_collect_unlocked(
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
@@ -823,7 +835,19 @@ async def _run_stream_unlocked(
                     "im_memory": snapshot_im_memory,
                     "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory)}
 
-        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
+        async def _load_system_prompt(current_user_tz):
+            style_prefs = await loaders.load_style_prefs(db, user_id)
+            return builder.build_static_prompt(
+                profile.prompt_file.removesuffix(".md"), req.user_name,
+                skills=profile.skills, style_prefs=style_prefs,
+                current_date=session_snapshot.current_date_text(current_user_tz),
+            )
+
+        snapshot = await session_snapshot.ensure_snapshot(
+            db, session, load_context=_load_snapshot,
+        )
+        snapshot_user_tz = snapshot["user_tz"]
+        snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
         from agent.im.context_loader import format_group_memory
@@ -970,7 +994,7 @@ async def _run_stream_unlocked(
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
@@ -1392,7 +1416,7 @@ async def _run_scheduled_once(
         capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
         if capability_context is not None:
             from agent.capabilities.injector import catalog_block
-            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
+            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
         runner = LLMRunner(tool_names, settings, capability_context=capability_context)
 
         from app.core.chat_attach import build_user_content

@@ -8,6 +8,7 @@ import {
 import type { EventDraft } from '@/composables/useEventEditForm'
 import type { CalendarRenderItem, CalendarTimeSelection } from '../domain/calendarTypes'
 import type { components } from '@/types/api'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
 type EventResponse = components['schemas']['EventResponse']
 
@@ -82,15 +83,26 @@ export function useCalendarEventForm(options: EventFormOptions) {
 
   async function deleteEvent(event: { id: string | number; _uid?: string }) {
     const match = (item: CalendarRenderItem) => event._uid != null ? item._uid === event._uid : String(item.id) === String(event.id)
-    extraEvents.value = extraEvents.value.filter(item => !match(item))
-    nextMonthEvents.value = nextMonthEvents.value.filter(item => !match(item))
-    spilloverEvents.value = spilloverEvents.value.filter(item => !match(item))
-    refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-    cacheMonth(cursor.value, extraEvents.value)
-    try { await eventsApi.delete(event.id as number) } catch { /* 对账刷新会恢复服务端真实状态 */ }
-    finally {
-      void fetchEvents(); void fetchNextMonthEvents(); void fetchSpilloverEvents()
+    const previous = {
+      extra: [...extraEvents.value], next: [...nextMonthEvents.value], spill: [...spilloverEvents.value],
     }
+    await InteractionSync.execute({
+      scope: 'calendar.event.delete', entityKey: `calendar-event:${event.id}`,
+      apply: () => {
+        extraEvents.value = extraEvents.value.filter(item => !match(item))
+        nextMonthEvents.value = nextMonthEvents.value.filter(item => !match(item))
+        spilloverEvents.value = spilloverEvents.value.filter(item => !match(item))
+        refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+        cacheMonth(cursor.value, extraEvents.value)
+      },
+      rollback: () => {
+        extraEvents.value = previous.extra; nextMonthEvents.value = previous.next; spilloverEvents.value = previous.spill
+        refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+        cacheMonth(cursor.value, extraEvents.value)
+      },
+      request: mutation => eventsApi.delete(event.id as number, { mutationId: mutation.mutationId }),
+      onCommit: () => { void fetchEvents(); void fetchNextMonthEvents(); void fetchSpilloverEvents() },
+    })
   }
 
   async function saveEvent() {

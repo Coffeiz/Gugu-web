@@ -24,7 +24,7 @@
  */
 import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, pickAnchorSide, pickRelationAnchorSides, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { relationCurvePath } from '@/utils/canvasRelationGeometry'
 
 const props = defineProps({
@@ -74,11 +74,6 @@ watch(() => props.hoveredNodeId, (_next, prev) => {
   if (!hoverRaf) hoverRaf = requestAnimationFrame(pumpHoverFrames)
 })
 onBeforeUnmount(() => { if (hoverRaf) cancelAnimationFrame(hoverRaf) })
-
-function centerFor(item: MindCanvasItem) {
-  const { w, h } = geometry(item)
-  return { x: item.x + w / 2, y: item.y + h / 2 }
-}
 
 /**
  * 拖拽/落地时优先量 Runtime 代理上的真实连接点，覆盖 rotateZ 后的真实端点；静止卡只在
@@ -139,12 +134,12 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
   if (explicit) anchorSideCache.set(relation.id, explicit)
   let sides = explicit ?? anchorSideCache.get(relation.id)
   if (!sides) {
-    const srcCenter = centerFor(src)
-    const dstCenter = centerFor(dst)
-    sides = {
-      srcSide: pickAnchorSide(srcCenter, dstCenter),
-      dstSide: pickAnchorSide(dstCenter, srcCenter),
-    }
+    const srcSize = geometry(src)
+    const dstSize = geometry(dst)
+    sides = pickRelationAnchorSides(
+      { ...src, ...srcSize },
+      { ...dst, ...dstSize },
+    )
     anchorSideCache.set(relation.id, sides)
   }
   return sides

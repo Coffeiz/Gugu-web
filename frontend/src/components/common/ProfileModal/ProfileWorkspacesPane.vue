@@ -4,7 +4,7 @@
       <div class="pm-section-label">{{ t('profileWorkspacesUi.shellAccess') }}</div>
       <p class="pm-workspaces-intro">{{ t('profileWorkspacesUi.shellIntro') }}</p>
       <div v-if="shellLoading" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.loadingShell') }}</div>
-      <template v-else-if="globalEnabled">
+      <template v-else-if="sandboxEnabled && globalEnabled">
         <div class="pm-tool-rows">
           <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.shellSandbox') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.shellSandboxHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellEnabled" :aria-label="t('profileWorkspacesUi.toggleShellSandbox')" @update:model-value="prefsStore.saveShellEnabled($event)" /></div>
           <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.systemShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.systemShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellSystemEnabled" :aria-label="t('profileWorkspacesUi.toggleSystemShell')" @update:model-value="prefsStore.saveShellSystemEnabled($event)" /></div>
@@ -52,11 +52,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import { agentApi, terminalsApi, workspacesApi } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useLiveStore } from '@/stores/live'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
@@ -73,6 +74,7 @@ const items = ref<WorkspaceItem[]>([])
 const loading = ref(true)
 const error = ref('')
 const shellLoading = ref(true)
+const sandboxEnabled = ref(false)
 const globalEnabled = ref(false)
 const systemGlobalEnabled = ref(false)
 const dangerousGlobalEnabled = ref(false)
@@ -82,6 +84,7 @@ const rebuilding = ref(false)
 const shellMessage = ref('')
 const shellMessageType = ref<'ok' | 'err'>('ok')
 const prefsStore = usePreferencesStore()
+const liveStore = useLiveStore()
 const { t } = useI18n()
 const editingId = ref<number | null>(null)
 const editingName = ref('')
@@ -92,6 +95,7 @@ async function load() {
   error.value = ''
   try {
     const response = await workspacesApi.status()
+    sandboxEnabled.value = response.sandboxEnabled === true
     globalEnabled.value = response.globalEnabled
     systemGlobalEnabled.value = response.systemGlobalEnabled
     dangerousGlobalEnabled.value = response.dangerousGlobalEnabled
@@ -185,6 +189,11 @@ async function remove(item: WorkspaceItem) {
 }
 
 onMounted(load)
+watch(() => liveStore.resourceEvent, (event) => {
+  if (event?.resource === 'terminals' && event.operation === 'refresh') {
+    void load()
+  }
+})
 </script>
 
 <style>

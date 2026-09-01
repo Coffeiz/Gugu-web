@@ -21,6 +21,7 @@
 import { cronLabel } from '../utils/scheduleCron'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useI18n } from 'vue-i18n'
+import { effectiveTimezone } from '@/utils/userTimezone'
 
 defineProps({
   task: { type: Object, required: true },
@@ -40,7 +41,7 @@ function channelLabel(channels: any) {
 function fmtTime(iso: string) {
   try {
     const date = new Date(iso)
-    return new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
+    return new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: effectiveTimezone() }).format(date)
   } catch {
     return ''
   }

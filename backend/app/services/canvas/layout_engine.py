@@ -40,9 +40,19 @@ class CanvasLayoutEngine:
     def recommended_relation_sides(self, source_node: Any, source_item: Any, target_node: Any, target_item: Any) -> tuple[str, str]:
         source_w, _ = self.effective_size(source_node, source_item)
         target_w, _ = self.effective_size(target_node, target_item)
+        source_left = float(source_item.x)
+        source_right = source_left + source_w
+        target_left = float(target_item.x)
+        target_right = target_left + target_w
         source_center = float(source_item.x) + source_w / 2
         target_center = float(target_item.x) + target_w / 2
-        return ("right", "left") if target_center >= source_center else ("left", "right")
+        if source_right <= target_left:
+            return "right", "left"
+        if target_right <= source_left:
+            return "left", "right"
+        # 卡片水平投影重叠时，通常是上下编排。两端使用同一侧，避免连线穿过卡片间隙后绕成回环。
+        side = "right" if target_center >= source_center else "left"
+        return side, side
 
     def resolve_position(
         self,

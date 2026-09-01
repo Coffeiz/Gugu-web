@@ -68,9 +68,6 @@ defineProps({
 /* global.css 继续唯一拥有 fc-card 的结构、transition/transform 和 hover ::after 高光；
    这里唯一拥有文件卡 paint 与文件专属状态。亮色 file-card token 明确锁定 v0.20.4。 */
 .fc-card {
-  --fc-preselection-bg: rgba(123,127,178,.06);
-  --fc-preselection-border: rgba(123,127,178,.45);
-  --fc-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px rgba(123,127,178,.15);
   background: var(--file-card-bg);
   border: 1px solid var(--file-card-border);
   box-shadow: var(--file-card-shadow);
@@ -95,13 +92,11 @@ defineProps({
   border-color: var(--file-card-border-selected);
   box-shadow: var(--file-card-shadow-selected);
 }
-/* Full-card 预框选属于 FileCard 自己。亮色在这里统一覆盖文件库与项目文件区；暗色继续由
-   component-theme-refinements 的 dark semantic mapping 接管，因此同一 resolved theme 不会
-   有两层 selector 同时写最终 paint。 */
-:global(html[data-theme='light'][data-family]) .fc-card.pre-selected:not(.selected) {
-  background: var(--fc-preselection-bg);
-  border-color: var(--fc-preselection-border);
-  box-shadow: var(--fc-preselection-shadow);
+/* Full-card 预框选属于 FileCard 自己；不同主题只通过专用 token 调整强度。 */
+.fc-card.pre-selected:not(.selected) {
+  background: var(--file-card-preselection-bg);
+  border-color: var(--file-card-preselection-border);
+  box-shadow: var(--file-card-preselection-shadow);
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移。 */
 .fc-card.no-lift:hover { transform: none; }
@@ -146,8 +141,8 @@ defineProps({
   position: relative; height: var(--fc-area-h, 90px); flex-shrink: 0; overflow: hidden;
   border-radius: 14px 14px 0 0;
   background: var(--file-card-thumb-bg);
-  mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 72%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 72%, transparent 100%);
 }
 .fc-thumb-area :deep(img) {
   position: absolute; inset: 0; width: 100%; height: 100%;
