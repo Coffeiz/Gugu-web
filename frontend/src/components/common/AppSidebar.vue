@@ -18,6 +18,11 @@
         <NavItem to="/files" icon="file.folder">{{ t('navigation.files') }}</NavItem>
         <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">{{ t('navigation.terminals') }}</NavItem>
         <NavItem to="/skills" icon="resource.skill">{{ t('navigation.skills') }}</NavItem>
+      </div>
+
+      <div class="nav-divider"></div>
+      <div class="nav-section">
+        <span class="nav-label">{{ t('navigation.collaboration') }}</span>
         <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">{{ t('navigation.customers') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
         <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">{{ t('navigation.team') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
       </div>
@@ -49,10 +54,13 @@
   </aside>
 
   <FeedbackModal :show="feedbackOpen" @close="feedbackOpen = false" />
+  <SupportModal :show="supportModalOpen" @close="supportModalOpen = false" />
 
   <Teleport to="body">
     <Transition name="popup">
       <div v-if="settingsOpen" class="settings-popup" :style="settingsStyle" @click.stop>
+        <button v-if="supportAvailable" class="settings-menu-item" @click="supportModalOpen = true; settingsOpen = false"><Icon name="user.gugu" size="sm" tone="inherit" />{{ t('layout.support') }}</button>
+        <div class="settings-menu-sep"></div>
         <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />{{ t('layout.submitFeedback') }}</button>
         <div class="settings-menu-sep"></div>
         <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />{{ t('layout.profile') }}</button>
@@ -87,8 +95,10 @@ import { useTheme } from '@/composables/useTheme'
 import NavItem from './NavItem.vue'
 import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
+import SupportModal from './SupportModal.vue'
 import Brand from './Brand.vue'
 import { canAccessTerminals, workspacesApi } from '@/services/api'
+import { SUPPORT_ALIPAY_QR_URL, SUPPORT_KOFI_URL, SUPPORT_WECHAT_QR_URL } from '@/config/support'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
@@ -106,6 +116,8 @@ const themeModeTitle = computed(() => preference.value === 'system'
   : `${t('layout.currentDisplay', { mode: currentModeLabel.value })}${t('layout.clickToSwitch')}`)
 const feedbackOpen = ref(false)
 const terminalVisible = ref(false)
+const supportModalOpen = ref(false)
+const supportAvailable = computed(() => Boolean(SUPPORT_KOFI_URL || SUPPORT_ALIPAY_QR_URL || SUPPORT_WECHAT_QR_URL))
 
 function cycleTheme() {
   setTheme(preference.value === 'light' ? 'dark' : preference.value === 'dark' ? 'system' : 'light')
