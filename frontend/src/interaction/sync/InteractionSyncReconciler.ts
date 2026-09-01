@@ -17,15 +17,16 @@ export function reconcileCanvasItems<T extends Identity>(
   const pendingByNodeId = new Map(pending.filter(item => item.nodeId != null).map(item => [item.nodeId!, item]))
   const claimed = new Set<string>()
 
-  const result = serverItems.map(serverItem => {
+  const result = serverItems.flatMap(serverItem => {
     const mutation = pendingByPersistedId.get(serverItem.id)
       ?? (serverItem.nodeId == null ? undefined : pendingByNodeId.get(serverItem.nodeId))
+    if (mutation?.cancelled && mutation.persistedItemId === serverItem.id) return []
     const local = localById.get(serverItem.id)
       ?? (serverItem.nodeId == null ? undefined : localByNodeId.get(serverItem.nodeId))
     const clientKey = local?.clientKey ?? mutation?.clientKey
     if (local) claimed.add(local.clientKey ?? `${local.id}`)
     if (mutation?.clientKey) claimed.add(mutation.clientKey)
-    return clientKey ? { ...serverItem, clientKey } : serverItem
+    return [clientKey ? { ...serverItem, clientKey } : serverItem]
   })
 
   // 请求尚未返回时保留 optimistic placeholder；已取消的 mutation 不得重新认领。

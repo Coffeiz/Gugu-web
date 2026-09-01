@@ -442,6 +442,7 @@ export const useMindStore = defineStore('mind', () => {
           const currentIndex = canvasItems.value.findIndex(current => current.clientKey === clientKey)
           if (!pending || pending.cancelled || currentIndex === -1) {
             await mindApi.removeCanvasItem(canvasId, created.id, mutation)
+            canvasItems.value = canvasItems.value.filter(current => current.clientKey !== clientKey)
             pendingProjectRefCreates.delete(tempId)
             InteractionSync.cancel(mutation.mutationId)
             InteractionSync.finish(mutation.mutationId)
@@ -461,6 +462,7 @@ export const useMindStore = defineStore('mind', () => {
         const latestIndex = canvasItems.value.findIndex(item => item.clientKey === clientKey)
         if (!latestPending || latestPending.cancelled || latestIndex === -1) {
           await mindApi.removeCanvasItem(canvasId, created.id, mutation)
+          canvasItems.value = canvasItems.value.filter(current => current.clientKey !== clientKey)
           pendingProjectRefCreates.delete(tempId)
           InteractionSync.cancel(mutation.mutationId)
           InteractionSync.finish(mutation.mutationId)
