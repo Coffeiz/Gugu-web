@@ -132,7 +132,15 @@
           </div>
         </div>
 
-        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }"><RiCheckFill v-if="llmMsgSuccess" class="llm-msg__icon" aria-hidden="true" />{{ llmMsg }}</div>
+        <div v-if="llmMsg" class="llm-msg" :class="{ 'llm-msg--error': llmMsgError }">
+          <span v-if="!llmMsgParts.length" class="llm-msg__dot" :class="llmMsgError ? 'is-error' : 'is-success'" aria-hidden="true"></span>
+          <template v-if="llmMsgParts.length">
+            <template v-for="(part, index) in llmMsgParts" :key="part.key">
+              <span class="llm-msg__part" :class="`is-${part.status}`"><span v-if="index" class="llm-msg__separator">｜</span><span class="llm-msg__dot" aria-hidden="true"></span>{{ part.label }}：{{ part.text }}</span>
+            </template>
+          </template>
+          <template v-else>{{ llmMsg }}</template>
+        </div>
       </div>
 
       <LlmPresetEditor
@@ -586,7 +594,7 @@ import UsagePanel from './observability/components/UsagePanel.vue'
 import PromptPanel from './prompting/components/PromptPanel.vue'
 import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
 import { useAgentRuntimeConfig } from './runtime-config/useAgentRuntimeConfig'
-import { useLlmPresets } from './llm/useLlmPresets'
+import { useLlmPresets, type LlmMessagePart } from './llm/useLlmPresets'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
@@ -597,7 +605,6 @@ import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.v
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
-import { RiCheckFill } from '@remixicon/vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
@@ -607,7 +614,7 @@ const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavi
 const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
-const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
+const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgParts, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, showMsgParts, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 const byokDraft = reactive({ ...configStore.cfg.byok })
 const permissionSaving = ref(false)
 const permissionSaved = ref(false)
@@ -982,21 +989,24 @@ async function probeVision(id: string | number | undefined, dim?: string) {
     } else {
       // 全维度（卡片）
       const results = data.results || {}
-      const ok: string[] = [], no: string[] = [], unk: string[] = []
+      const probeParts: LlmMessagePart[] = []
       for (const d of visionDims.value) {
         const r = results[d.key]
         if (!r) continue
-        if (r.supported === true) ok.push(d.label)
-        else if (r.supported === false) no.push(d.label)
-        else unk.push(d.label)
+        if (r.supported === true || r.supported === false) {
+          const preset = presets.value.find(item => String(item.id) === String(id))
+          if (preset) preset[d.key === 'image' ? 'vision' : `vision_${d.key}`] = r.supported
+        }
+        probeParts.push({
+          key: d.key,
+          label: d.label,
+          text: r.supported === true ? t('profileByokUi.statusSupported') : r.supported === false ? t('profileByokUi.statusUnsupported') : t('profileByokUi.statusUnknown'),
+          status: r.supported === true ? 'supported' : r.supported === false ? 'unsupported' : 'unknown',
+        })
       }
-      const parts: string[] = []
-      if (ok.length) parts.push(t('adminAgentUi.supportedList', { values: ok.join('、') }))
-      if (no.length) parts.push(t('adminAgentUi.unsupportedList', { values: no.join('、') }))
-      if (unk.length) parts.push(t('adminAgentUi.unknownList', { values: unk.join('、') }))
-      showMsg(parts.length ? t('adminAgentUi.probeComplete', { details: parts.join('；') }) : t('adminAgentUi.probeNoResult'))
+      if (probeParts.length) showMsgParts(t('adminAgentUi.probeCompleteLabel'), probeParts)
+      else showMsg(t('adminAgentUi.probeNoResult'))
     }
-    await fetchPresets()   // 刷新卡片徽章
   } catch (e) {
     showMsg(t('adminAgentUi.probeFailed', { message: e instanceof Error ? e.message : String(e) }), true)
   } finally {
@@ -1236,6 +1246,12 @@ function resetPermissions() {
   background: rgba(90,184,153,0.1); border: 1px solid rgba(90,184,153,0.2);
 }
 .llm-msg__icon { width: 1em; height: 1em; flex: 0 0 auto; }
+.llm-msg__part { color: var(--text-secondary, #8f95aa); }
+.llm-msg__part.is-supported { color: var(--status-success, #5ab899); }
+.llm-msg__part.is-unsupported { color: var(--status-danger, #e07878); }
+.llm-msg__part.is-unknown { color: var(--status-warning, #c89b56); }
+.llm-msg__separator { color: var(--text-secondary, #8f95aa); margin: 0 8px; }
+.llm-msg__dot { display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
 .llm-msg--error {
   color: #e07878;
   background: rgba(220,100,100,0.1); border-color: rgba(220,100,100,0.2);

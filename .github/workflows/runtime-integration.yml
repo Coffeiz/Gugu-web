@@ -195,12 +195,13 @@ jobs:
         run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --frozen-lockfile
 
       - name: Expose RAG worker runtime dependencies
-        # 制品输出在 backend/bin；将 worker 包的生产依赖复制到制品旁边，避免依赖
-        # pnpm workspace 的符号链接层级，确保独立启动时 Node 能解析原生 jieba。
+        # 制品输出在 backend/bin；把 wrapper 和 Linux 原生包直接安装到制品旁边，
+        # 避免依赖 pnpm workspace 的符号链接层级。
         run: |
           mkdir -p "$GITHUB_WORKSPACE/backend/bin/node_modules"
-          cp -RL "$GITHUB_WORKSPACE/backend/ts/workers/rag/node_modules/@node-rs" \
-            "$GITHUB_WORKSPACE/backend/bin/node_modules/"
+          npm install --prefix "$GITHUB_WORKSPACE/backend/bin" --no-save --include=optional \
+            --ignore-scripts --no-fund --no-audit \
+            @node-rs/jieba@2.0.1 @node-rs/jieba-linux-x64-gnu@2.0.1
 
       - name: Build RAG worker
         run: pnpm --filter gugu-rag-ts-worker build

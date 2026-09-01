@@ -547,4 +547,10 @@ Object.assign((messages['en-US'] as Record<string, any>).onboardingUi.demo, { st
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { privateStreaming: '私聊流式回复', privateStreamingHint: '使用 QQ 官方接口实时更新私聊消息；每个工具 round 结束后发送一条消息', togglePrivateStreaming: '切换私聊流式回复', privateStreamingFailed: '私聊流式设置失败' })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { privateStreaming: '個別チャットのストリーミング返信', privateStreamingHint: 'QQ 公式 API で個別メッセージをリアルタイム更新し、各ツール round ごとに送信します', togglePrivateStreaming: '個別ストリーミング返信を切り替え', privateStreamingFailed: '個別ストリーミング設定に失敗' })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { privateStreaming: 'Private streaming replies', privateStreamingHint: 'Use the QQ official API to update private messages live and send one message per tool round', togglePrivateStreaming: 'Toggle private streaming replies', privateStreamingFailed: 'Failed to update private streaming settings' })
+Object.assign((messages['zh-CN'] as Record<string, any>).adminAgentUi, { probeCompleteLabel: '多模态检测完成' })
+Object.assign((messages['ja-JP'] as Record<string, any>).adminAgentUi, { probeCompleteLabel: 'マルチモーダル検出完了' })
+Object.assign((messages['en-US'] as Record<string, any>).adminAgentUi, { probeCompleteLabel: 'Multimodal detection complete' })
+Object.assign((messages['zh-CN'] as Record<string, any>).profileByokUi, { statusSupported: '支持', statusUnsupported: '不支持', statusUnknown: '未知' })
+Object.assign((messages['ja-JP'] as Record<string, any>).profileByokUi, { statusSupported: '対応', statusUnsupported: '非対応', statusUnknown: '不明' })
+Object.assign((messages['en-US'] as Record<string, any>).profileByokUi, { statusSupported: 'Supported', statusUnsupported: 'Unsupported', statusUnknown: 'Unknown' })
 export type MessageSchema = typeof zhCN

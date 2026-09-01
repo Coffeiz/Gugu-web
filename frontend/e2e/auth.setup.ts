@@ -9,15 +9,23 @@ setup('使用测试账号登录', async ({ page }) => {
   }
 
   await page.goto('/login')
-  await page.locator('input[autocomplete="username"]').fill(username)
-  await page.locator('input[autocomplete="current-password"]').fill(password)
+  const usernameInput = page.locator('input[autocomplete="username"]')
+  const passwordInput = page.locator('input[autocomplete="current-password"]')
+  await usernameInput.fill(username)
+  await passwordInput.fill(password)
+  await expect(usernameInput).toHaveValue(username)
+  await expect(passwordInput).toHaveValue(password)
+  page.on('requestfailed', request => {
+    console.log(`[浏览器请求失败] ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`)
+  })
+  page.on('pageerror', error => console.log(`[浏览器异常] ${error.message}`))
   const loginResponse = page.waitForResponse(response =>
     response.url().endsWith('/api/v1/auth/login') && response.request().method() === 'POST',
   )
-  const [, response] = await Promise.all([
-    page.getByRole('button', { name: '登录' }).click(),
-    loginResponse,
-  ])
+  const loginButton = page.getByRole('button', { name: '登录' })
+  await expect(loginButton).toBeEnabled()
+  await loginButton.click()
+  const response = await loginResponse
   expect(response.ok(), `登录接口返回 ${response.status()}: ${await response.text()}`).toBeTruthy()
   await expect(page).not.toHaveURL(/\/login/)
   await page.context().storageState({ path: authFile })
