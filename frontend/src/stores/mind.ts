@@ -401,24 +401,12 @@ export const useMindStore = defineStore('mind', () => {
     }
     pendingProjectRefCreates.set(tempId, { clientKey, cancelled: false })
     canvasItems.value.push(placeholder)
-    if (import.meta.env.DEV) console.log('[mind-hover-probe] optimistic-insert ' + JSON.stringify({
-      canvasId, projectId, tempId, clientKey, x, y, z,
-    }))
 
     const ready = (async () => {
       let persistedItemId: number | null = null
       try {
-        if (import.meta.env.DEV) console.log('[mind-hover-probe] create-ref-start ' + JSON.stringify({
-          canvasId, projectId, tempId, clientKey,
-        }))
         const node = await mindApi.createRefNode('project', projectId)
-        if (import.meta.env.DEV) console.log('[mind-hover-probe] create-ref-end ' + JSON.stringify({
-          canvasId, projectId, tempId, clientKey, nodeId: node.id,
-        }))
         const created = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
-        if (import.meta.env.DEV) console.log('[mind-hover-probe] create-item-end ' + JSON.stringify({
-          canvasId, projectId, tempId, clientKey, itemId: created.id, nodeId: created.nodeId,
-        }))
         persistedItemId = created.id
         let resolved: MindCanvasItem = { ...created, clientKey }
         let persistedX = created.x
@@ -453,14 +441,8 @@ export const useMindStore = defineStore('mind', () => {
         }
         canvasItems.value[latestIndex] = resolved
         pendingProjectRefCreates.delete(tempId)
-        if (import.meta.env.DEV) console.log('[mind-hover-probe] optimistic-replaced ' + JSON.stringify({
-          canvasId, projectId, tempId, clientKey, itemId: resolved.id, nodeId: resolved.nodeId,
-        }))
         return resolved
       } catch (error) {
-        if (import.meta.env.DEV) console.log('[mind-hover-probe] optimistic-failed ' + JSON.stringify({
-          canvasId, projectId, tempId, clientKey, persistedItemId,
-        }))
         const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
         if (index !== -1) canvasItems.value.splice(index, 1)
         pendingProjectRefCreates.delete(tempId)

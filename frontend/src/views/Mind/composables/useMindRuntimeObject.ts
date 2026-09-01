@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { runtime } from '@/interaction/runtime'
 import type { MoveAction } from '@/interaction/runtime'
 import {
@@ -23,89 +23,7 @@ export function useMindRuntimeObject(options: {
   let stopBinding: (() => void) | null = null
   let stopResolver: (() => void) | null = null
   let stopAction: (() => void) | null = null
-  let phaseObserver: MutationObserver | null = null
-  let affordanceObserver: MutationObserver | null = null
-  let hoverSuppressionCleanup: (() => void) | null = null
-  const hoverSuppressed = ref(false)
-
-  const clearHoverSuppression = () => {
-    hoverSuppressionCleanup?.()
-    hoverSuppressionCleanup = null
-    hoverSuppressed.value = false
-  }
-
-  const suppressHoverUntilLeave = (element: HTMLElement) => {
-    clearHoverSuppression()
-    hoverSuppressed.value = true
-    element.dataset.runtimeHoverSuppressed = 'true'
-    const onLeave = () => {
-      if (element.dataset.runtimePhase !== 'idle') return
-      delete element.dataset.runtimeHoverSuppressed
-      hoverSuppressed.value = false
-      hoverSuppressionCleanup = null
-    }
-    element.addEventListener('pointerleave', onLeave, { once: true })
-    hoverSuppressionCleanup = () => {
-      element.removeEventListener('pointerleave', onLeave)
-      delete element.dataset.runtimeHoverSuppressed
-      hoverSuppressed.value = false
-    }
-    // phase 切换发生在 RAF 中，浏览器可能在下一帧才补发合成 pointerenter。
-    // 如果指针实际已经离开，则不把这次落地抑制带到下一次真实进入。
-    requestAnimationFrame(() => {
-      if (element.dataset.runtimePhase === 'idle' && !element.matches(':hover')) clearHoverSuppression()
-    })
-  }
-
-  const observeLandingHover = (element: HTMLElement) => {
-    phaseObserver?.disconnect()
-    affordanceObserver?.disconnect()
-    clearHoverSuppression()
-    let previousPhase = element.dataset.runtimePhase
-    phaseObserver = new MutationObserver(() => {
-      const phase = element.dataset.runtimePhase
-      if (import.meta.env.DEV) console.log('[mind-hover-probe] phase ' + JSON.stringify({
-        objectId: getObjectId(),
-        clientKey: element.closest<HTMLElement>('[data-canvas-item-id]')?.dataset.canvasItemId,
-        phase,
-        previousPhase,
-        hovered: element.matches(':hover'),
-        suppressed: element.dataset.runtimeHoverSuppressed === 'true',
-        hidden: !!element.querySelector('[data-card-affordances].runtime-affordances-hidden'),
-      }))
-      if (phase !== 'idle') {
-        if (previousPhase === 'idle') suppressHoverUntilLeave(element)
-        else hoverSuppressed.value = true
-      } else if (previousPhase !== 'idle') {
-        // landing 在指针下揭示本体时，浏览器不会产生新的 mouseenter。落地结束
-        // 后若指针仍在卡片上，先解除抑制再补发一次事件，恢复正常 hover 状态。
-        if (element.matches(':hover')) {
-          clearHoverSuppression()
-          element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, view: window }))
-        } else {
-          clearHoverSuppression()
-        }
-      }
-      previousPhase = phase
-    })
-    phaseObserver.observe(element, { attributes: true, attributeFilter: ['data-runtime-phase'] })
-    affordanceObserver = new MutationObserver(() => {
-      if (!import.meta.env.DEV) return
-      const affordances = element.querySelector<HTMLElement>('[data-card-affordances]')
-      const actions = affordances?.querySelector<HTMLElement>('.card-actions')
-      const dot = affordances?.querySelector<HTMLElement>('.conn-dot')
-      console.log('[mind-hover-probe] affordances ' + JSON.stringify({
-        objectId: getObjectId(),
-        phase: element.dataset.runtimePhase,
-        hovered: element.matches(':hover'),
-        hidden: affordances?.classList.contains('runtime-affordances-hidden') ?? false,
-        affordancesOpacity: affordances ? getComputedStyle(affordances).opacity : null,
-        actionsOpacity: actions ? getComputedStyle(actions).opacity : null,
-        dotOpacity: dot ? getComputedStyle(dot, '::before').opacity : null,
-      }))
-    })
-    affordanceObserver.observe(element, { attributes: true, subtree: true, attributeFilter: ['class'] })
-  }
+  let stopHoverProbe: (() => void) | null = null
 
   const getElement = () => typeof options.element === 'function' ? options.element() : options.element.value
   const getObjectId = () => typeof options.objectId === 'function' ? options.objectId() : options.objectId
@@ -163,7 +81,8 @@ export function useMindRuntimeObject(options: {
     stopBinding?.()
     stopBinding = runtime.bindObjectPointer(objectId, element)
     boundElement = element
-    observeLandingHover(element)
+    stopHoverProbe?.()
+    stopHoverProbe = installHoverProbe(element, objectId)
     stopResolver?.()
     stopAction?.()
     stopResolver = registerMindLandingResolver(objectId, destination => {
@@ -196,11 +115,7 @@ export function useMindRuntimeObject(options: {
   onMounted(sync)
   watch(() => [getObjectId(), getElement()] as const, sync)
   onBeforeUnmount(() => {
-    phaseObserver?.disconnect()
-    phaseObserver = null
-    affordanceObserver?.disconnect()
-    affordanceObserver = null
-    clearHoverSuppression()
+    stopHoverProbe?.()
     stopBinding?.()
     stopResolver?.()
     stopAction?.()
@@ -213,8 +128,139 @@ export function useMindRuntimeObject(options: {
   })
 
   return {
-    isHoverSuppressed: hoverSuppressed,
-    onPointerDown: () => clearHoverSuppression(),
+    onPointerDown: () => {},
     onClick: options.onClick,
+  }
+}
+
+function installHoverProbe(element: HTMLElement, objectId: string): (() => void) | null {
+  if (!import.meta.env.DEV || typeof MutationObserver === 'undefined') return null
+  ;(window as Window & { __GUGU_RUNTIME_HOVER_PROBE__?: boolean }).__GUGU_RUNTIME_HOVER_PROBE__ = true
+
+  let lastPhase: string | null = null
+  let lastVisualPhase: string | null = null
+  const snapshot = (kind: string, extra: Record<string, unknown> = {}) => {
+    const affordances = element.querySelector<HTMLElement>('[data-card-affordances]')
+    const actions = affordances?.querySelector<HTMLElement>('.card-actions')
+    const dot = affordances?.querySelector<HTMLElement>('.conn-dot')
+    console.log('[mind-hover-probe] ' + JSON.stringify({
+      kind,
+      objectId,
+      t: Math.round(performance.now() * 10) / 10,
+      phase: element.dataset.runtimePhase ?? null,
+      connected: element.isConnected,
+      hovered: element.matches(':hover'),
+      affordancesHidden: affordances?.classList.contains('runtime-affordances-hidden') ?? false,
+      affordancesOpacity: affordances ? getComputedStyle(affordances).opacity : null,
+      actionsOpacity: actions ? getComputedStyle(actions).opacity : null,
+      dotOpacity: dot ? getComputedStyle(dot).opacity : null,
+      ...extra,
+    }))
+  }
+
+  const stopRuntimeEvents = runtime.subscribe(event => {
+    if (event.type === 'move-visual-update' && event.objectId === objectId) {
+      if (lastVisualPhase === event.phase) return
+      lastVisualPhase = event.phase
+      snapshot('runtime-visual-phase', { sessionId: event.sessionId, visualPhase: event.phase })
+    }
+    if (event.type === 'move-visual-end' && event.objectId === objectId) {
+      snapshot('runtime-visual-end', { sessionId: event.sessionId })
+      lastVisualPhase = null
+    }
+  })
+
+  const phaseObserver = new MutationObserver(records => {
+    if (!records.some(record => record.target === element && record.attributeName === 'data-runtime-phase')) return
+    const phase = element.dataset.runtimePhase ?? null
+    if (phase === lastPhase) return
+    lastPhase = phase
+    snapshot('dom-phase', { phase })
+  })
+  phaseObserver.observe(element, { attributes: true, attributeFilter: ['data-runtime-phase'] })
+
+  const geometrySnapshot = () => {
+    const rect = element.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    return {
+      rect: {
+        left: Math.round(rect.left * 10) / 10,
+        top: Math.round(rect.top * 10) / 10,
+        width: Math.round(rect.width * 10) / 10,
+        height: Math.round(rect.height * 10) / 10,
+      },
+      transform: style.transform,
+      opacity: style.opacity,
+      visibility: style.visibility,
+      pointerEvents: style.pointerEvents,
+      display: style.display,
+      parentConnected: element.parentElement?.isConnected ?? false,
+    }
+  }
+
+  const elementObserver = new MutationObserver(records => {
+    const relevant = records.filter(record => record.type === 'attributes')
+    if (relevant.length === 0) return
+    snapshot('dom-element-mutation', {
+      attributes: relevant.map(record => record.attributeName),
+      ...geometrySnapshot(),
+    })
+  })
+  elementObserver.observe(element, {
+    attributes: true,
+    attributeFilter: ['class', 'style', 'data-runtime-phase', 'data-layout-key'],
+  })
+
+  const parentObserver = new MutationObserver(records => {
+    const relevant = records.filter(record => record.type === 'childList')
+    if (relevant.length === 0) return
+    snapshot('dom-parent-mutation', {
+      added: relevant.flatMap(record => Array.from(record.addedNodes)).length,
+      removed: relevant.flatMap(record => Array.from(record.removedNodes)).length,
+      stillSameNode: element.isConnected,
+      ...geometrySnapshot(),
+    })
+  })
+  if (element.parentElement) parentObserver.observe(element.parentElement, { childList: true })
+
+  const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+    snapshot('dom-resize', geometrySnapshot())
+  })
+  resizeObserver?.observe(element)
+
+  const affordanceObserver = new MutationObserver(records => {
+    if (!records.some(record => record.attributeName === 'class')) return
+    const target = records.find(record => record.attributeName === 'class')?.target
+    if (!(target instanceof HTMLElement)) return
+    if (!target.matches('[data-card-affordances], .card-actions, .conn-dot')) return
+    snapshot('affordance-class', { target: target.className })
+  })
+  affordanceObserver.observe(element, { subtree: true, attributes: true, attributeFilter: ['class'] })
+
+  const onMouseEnter = (event: MouseEvent) => snapshot('dom-mouseenter', {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    elementAtPoint: document.elementFromPoint(event.clientX, event.clientY)?.className ?? null,
+    ...geometrySnapshot(),
+  })
+  const onMouseLeave = (event: MouseEvent) => snapshot('dom-mouseleave', {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    elementAtPoint: document.elementFromPoint(event.clientX, event.clientY)?.className ?? null,
+    ...geometrySnapshot(),
+  })
+  element.addEventListener('mouseenter', onMouseEnter)
+  element.addEventListener('mouseleave', onMouseLeave)
+
+  snapshot('bind')
+  return () => {
+    stopRuntimeEvents()
+    phaseObserver.disconnect()
+    elementObserver.disconnect()
+    parentObserver.disconnect()
+    resizeObserver?.disconnect()
+    affordanceObserver.disconnect()
+    element.removeEventListener('mouseenter', onMouseEnter)
+    element.removeEventListener('mouseleave', onMouseLeave)
   }
 }

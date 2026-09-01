@@ -451,14 +451,8 @@ async function addProjectAtScreen(projectId: number, center: { x: number; y: num
   const position = { x: world.x - width / 2, y: world.y - height / 2 }
   const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, position.x, position.y)
   ready.catch(() => showAppError(t('mindUi.addFailed')))
-  if (import.meta.env.DEV) console.log('[mind-hover-probe] landing-target-wait ' + JSON.stringify({
-    canvasId, projectId, tempId: item.id, clientKey: item.clientKey, optimistic: true, center, position,
-  }))
   await nextTick()
   const target = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
-  if (import.meta.env.DEV) console.log('[mind-hover-probe] landing-target-ready ' + JSON.stringify({
-    canvasId, projectId, tempId: item.id, clientKey: item.clientKey, optimistic: true, found: !!target,
-  }))
   return target
 }
 async function onItemMoved(item: MindCanvasItem) {

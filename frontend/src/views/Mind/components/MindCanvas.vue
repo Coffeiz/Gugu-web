@@ -49,7 +49,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, beginMindLanding, endMindLanding, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import { relationEnvelope } from '@/utils/canvasRelationGeometry'
@@ -272,25 +272,26 @@ const landingObjectNodeIds = new Map<string, number>()
 const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
 const landingNodeIds = reactive(new Set<number>())
+const probeVisualPhases = new Map<string, string>()
 function onRuntimeVisual(event: RuntimeEvent) {
-  if (import.meta.env.DEV && (
-    event.type === 'move-visual-update'
-    || event.type === 'move-visual-end'
-    || event.type === 'move-visual-settled'
-  )) {
-    console.log('[mind-hover-probe] canvas-runtime ' + JSON.stringify({
-      type: event.type,
-      objectId: event.objectId,
-      sessionId: event.sessionId,
-    }))
+  if (import.meta.env.DEV && (event.type === 'move-visual-update' || event.type === 'move-visual-end')) {
+    if (event.type === 'move-visual-end' || probeVisualPhases.get(event.sessionId) !== event.phase) {
+      if (event.type === 'move-visual-update') probeVisualPhases.set(event.sessionId, event.phase)
+      else probeVisualPhases.delete(event.sessionId)
+      console.log('[mind-hover-probe] canvas-visual ' + JSON.stringify({
+        type: event.type,
+        sessionId: event.sessionId,
+        objectId: event.objectId,
+        phase: event.type === 'move-visual-update' ? event.phase : null,
+        nodeId: landingObjectNodeIds.get(event.objectId) ?? props.items.find(item => mindCanvasObjectId(item) === event.objectId)?.nodeId ?? null,
+        trackedLandingObjects: landingObjectNodeIds.size,
+      }))
+    }
   }
-  if (event.type === 'move-visual-end' || event.type === 'move-visual-settled') {
+  if (event.type === 'move-visual-end') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
-    if (event.type === 'move-visual-settled') {
-      endMindLanding(event.objectId)
-      landingObjectNodeIds.delete(event.objectId)
-    }
+    landingObjectNodeIds.delete(event.objectId)
     if (activeVisualNodeId.value === nodeId) activeVisualNodeId.value = null
     if (nodeId != null) {
       landingPositions.delete(nodeId)
@@ -299,9 +300,6 @@ function onRuntimeVisual(event: RuntimeEvent) {
     return
   }
   if (event.type !== 'move-visual-update' || !event.objectId.startsWith('mind:')) return
-  // 实时事件不能在 active 阶段刷新正在被 regrab 的对象；否则旧 landing
-  // 收尾时的 refresh 会把新 session 使用的 optimistic DOM 替换掉。
-  beginMindLanding(event.objectId)
   runtimeVisualFrame.value++
   const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
   if (!item) return

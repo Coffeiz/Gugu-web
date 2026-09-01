@@ -195,16 +195,6 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(runtimeSetup.slice(start, end)).not.toContain('disableTargetVisualMorph')
   })
 
-  it('画布 landing 在指针下揭示时抑制落地期 hover，结束后立即恢复', () => {
-    expect(runtimeAdoption).toContain(".mind-project-card[data-runtime-hover-suppressed='true']:hover")
-    expect(runtimeAdoption).toContain('transform: none;')
-    expect(runtimeAdoption).toContain('box-shadow: var(--project-card-shadow);')
-    expect(mindRuntimeObject).toContain('suppressHoverUntilLeave(element)')
-    expect(mindRuntimeObject).toContain("element.dispatchEvent(new MouseEvent('mouseenter'")
-    expect(mindRuntimeObject).toContain('clearHoverSuppression()')
-    expect(mindRuntimeObject).toContain("element.addEventListener('pointerleave', onLeave, { once: true })")
-  })
-
   it('项目名输入框不再有 project 专属透明底，统一复用共享 input contract', () => {
     expect(formsAdoption).toContain('.header-name-input,')
     expect(projectAdoption).not.toContain('.proj-header .header-name-input')

@@ -72,12 +72,6 @@ const { onPointerDown } = useMindRuntimeObject({
   surfaceId: MIND_PROJECT_DRAWER_SURFACE_ID,
   onMove: action => {
     if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID) return
-    if (import.meta.env.DEV) console.log('[mind-hover-probe] drawer-move ' + JSON.stringify({
-      projectId: props.project.id,
-      objectId: `mind:drawer-project:${props.project.id}`,
-      point: action.point,
-      sourceSize: action.sourceSize,
-    }))
     const center = coastPoint(action)
     if (!center) return
     const landingObjectId = `mind:drawer-project:${props.project.id}`

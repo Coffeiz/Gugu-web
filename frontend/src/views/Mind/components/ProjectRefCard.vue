@@ -20,7 +20,7 @@
   >
     <ProjectCardBody :project="project" />
 
-    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
       <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
@@ -46,7 +46,7 @@
          "已删除，仅保留快照"，缓存刚加载完那一下会先说谎再改口。跟 FileRefCard.vue 同一个
          坑（见其注释），这里只是文字层面的表现，不像文件卡那样有缩略图区带来的跳动。 -->
     <span class="pr-deleted">{{ projectStore.loading ? t('common.status.loading') : t('filesUi.deletedSnapshot') }}</span>
-    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
       <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
@@ -89,34 +89,11 @@ const emit = defineEmits<{
 // CardAffordances 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
-watch(isHovering, hovering => {
-  if (import.meta.env.DEV) console.log('[mind-hover-probe] project-state ' + JSON.stringify({
-    projectId: props.item.node.refId,
-    nodeId: props.item.nodeId,
-    clientKey: props.item.clientKey,
-    hovering,
-    phase: (cardEl.value ?? missingRef.value)?.dataset.runtimePhase,
-  }))
-})
 function onEnter() {
-  if (import.meta.env.DEV) console.log('[mind-hover-probe] project-enter ' + JSON.stringify({
-    projectId: props.item.node.refId,
-    nodeId: props.item.nodeId,
-    clientKey: props.item.clientKey,
-    phase: (cardEl.value ?? missingRef.value)?.dataset.runtimePhase,
-    suppressed: isHoverSuppressed.value,
-  }))
-  if (isHoverSuppressed.value) return
   isHovering.value = true
   emit('hover', props.item, true)
 }
 function onLeave() {
-  if (import.meta.env.DEV) console.log('[mind-hover-probe] project-leave ' + JSON.stringify({
-    projectId: props.item.node.refId,
-    nodeId: props.item.nodeId,
-    clientKey: props.item.clientKey,
-    phase: (cardEl.value ?? missingRef.value)?.dataset.runtimePhase,
-  }))
   isHovering.value = false
   emit('hover', props.item, false)
 }
@@ -207,7 +184,7 @@ onBeforeUnmount(() => {
 
 // 项目和文件贴纸统一由 Runtime 负责抓取、物理落地和重抓接管；项目回抽屉的目标
 // Surface 由 MindCanvas 统一提交，组件只保留业务点击和展示职责。
-const { isHoverSuppressed, onPointerDown } = useMindRuntimeObject({
+const { onPointerDown } = useMindRuntimeObject({
   objectId: () => mindCanvasObjectId(props.item),
   element: () => cardEl.value ?? missingRef.value,
   objectType: MIND_PROJECT_OBJECT_TYPE,
