@@ -1,6 +1,7 @@
 """流式出站与 session gate 的关键回归测试。"""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from pathlib import Path
 from inspect import signature
@@ -114,6 +115,42 @@ async def test_terminal_websocket_setup_failure_cleans_pty_resources():
     assert manager.actions == [
         ("unsubscribe", "term-setup-race", "queue"),
         ("detach", "term-setup-race"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_websocket_cleanup_survives_task_cancellation_and_partial_failure():
+    from app.api.v1.terminals import _cleanup_terminal_websocket_resources
+
+    class _Manager:
+        def __init__(self):
+            self.actions = []
+
+        async def unsubscribe(self, terminal_id, queue):
+            self.actions.append(("unsubscribe", terminal_id, queue))
+            raise ValueError("subscription already gone")
+
+        async def detach(self, terminal_id):
+            self.actions.append(("detach", terminal_id))
+
+    manager = _Manager()
+
+    async def cancelled_setup():
+        try:
+            await asyncio.sleep(60)
+        except BaseException:
+            await _cleanup_terminal_websocket_resources(manager, "term-cancel", "queue", True)
+            raise
+
+    task = asyncio.create_task(cancelled_setup())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert manager.actions == [
+        ("unsubscribe", "term-cancel", "queue"),
+        ("detach", "term-cancel"),
     ]
 
 

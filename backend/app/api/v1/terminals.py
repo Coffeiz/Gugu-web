@@ -50,12 +50,12 @@ async def _cleanup_terminal_websocket_resources(manager, terminal_id: str, queue
     if queue is not None:
         try:
             await manager.unsubscribe(terminal_id, queue)
-        except (LookupError, RuntimeError):
+        except Exception:
             logger.info("terminal_pty unsubscribe_cleanup_skipped")
     if attached:
         try:
             await manager.detach(terminal_id)
-        except (LookupError, RuntimeError):
+        except Exception:
             logger.info("terminal_pty detach_cleanup_skipped")
 
 
