@@ -1,6 +1,6 @@
 # 隐私政策
 
-> 生效日期：2026-09-01　|　版本：1.2
+> 生效日期：2026-09-01　|　版本：1.3
 > 产品：咕咕（gugugu.site）
 
 我们知道你不喜欢读长篇法律文件。这份政策会直接告诉你：我们收集了什么、怎么用、发给谁、你怎么删。有任何问题都可以通过站内反馈联系我们。
@@ -77,6 +77,7 @@
 | 阿里云通义千问 | aliyun.com/product/bailian |
 | DeepSeek | deepseek.com/privacy |
 | MiniMax | minimaxi.com/protocol/privacy |
+| 智谱 GLM | zhipuai.cn/privacy |
 
 > **重要**：你的对话内容由实际使用的提供商的隐私政策约束。若当前使用境外提供商（Anthropic / OpenAI / DeepSeek），数据将传输至中国境外服务器处理。我们会尽量在切换提供商时更新本政策。
 

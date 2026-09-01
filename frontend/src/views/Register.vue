@@ -4,6 +4,7 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
+      <AuthLanguageSwitcher />
       <AuthBrand />
 
       <form @submit.prevent="handleRegister" novalidate>
@@ -48,6 +49,7 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/AuthBrand.vue'
+import AuthLanguageSwitcher from '@/components/common/AuthLanguageSwitcher.vue'
 import { useI18n } from 'vue-i18n'
 
 const router  = useRouter()

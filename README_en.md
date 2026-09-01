@@ -27,6 +27,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 | Workspace | Projects, stages, tasks, calendars, reminders, files, notes, terminals, and an infinite canvas |
 | Information access | Web search, full-text search, Knowledge / RAG, file retrieval, and similar-image search |
 | Long-term context | User habits, recent state, knowledge, and behavior patterns across conversations |
+| Themes and appearance | Multiple palettes, Aero / Mono styles, and light, dark, or system-following modes |
 | Sandbox execution | Run Shell commands in an isolated environment with working-directory and resource boundaries |
 | Multi-user and tenancy | User accounts, account-level data isolation, and independent configuration; team collaboration and multi-tenant capabilities are still evolving |
 | Permissions and security | Identity, resource ownership, session permissions, an admin console, and confirmation gates for dangerous operations |
