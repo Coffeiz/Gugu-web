@@ -116,7 +116,8 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   -webkit-backdrop-filter: blur(24px);
 }
 .exp-sidebar-header {
-  min-height: 50px;
+  height: var(--gugu-chat-header-height);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -134,14 +135,14 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 .exp-group-divider { margin: var(--space-sm) var(--space-xs); }
 
 .exp-new-session-wrap {
-  min-height: 48px;
+  min-height: var(--gugu-chat-composer-height);
   box-sizing: border-box;
   padding: var(--space-sm);
   flex-shrink: 0;
 }
 .exp-new-session-btn {
   width: 100%;
-  height: var(--control-sm);
+  height: var(--control-height-md);
   display: flex;
   align-items: center;
   justify-content: center;

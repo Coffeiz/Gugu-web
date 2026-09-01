@@ -361,6 +361,8 @@ defineExpose({
   opacity: 0.7; transition: opacity 0.15s, color 0.15s; }   /* 与发送按钮(28)等高，底对齐时中心也对齐 */
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
 .chat-input-row {
+  min-height: var(--gugu-chat-composer-height);
+  box-sizing: border-box;
   display: flex; align-items: flex-end; gap: 8px;   /* 输入框多行增高时，附件/发送按钮贴底对齐 */
   position: relative;
   padding: 10px 13px;

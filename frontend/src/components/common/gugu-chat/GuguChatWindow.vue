@@ -249,12 +249,14 @@ defineExpose({
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .chat-header {
+  min-height: var(--gugu-chat-header-height);
+  box-sizing: border-box;
   display: flex; align-items: center; gap: 9px;
-  padding: 13px 14px 10px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--gugu-chat-header-border, rgba(255,255,255,0.5));
   flex-shrink: 0;
 }
-.chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
+.chat-main.is-expanded .chat-header { padding: 0 20px; }
 .chat-title { display:inline-flex; align-items:center; font-size: 13px; font-weight: 700; }
 .chat-title.is-new-session { display: inline-flex; padding: 2px 6px; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
@@ -329,6 +331,8 @@ defineExpose({
 .chat-main.is-expanded :deep(.rec-bar) { height: 32px; }
 .chat-main.is-expanded :deep(.chat-input-row textarea) { padding: 5.5px 0; }
 .chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
+/* 缩小窗口单行输入不需要占满展开态底栏高度，避免空白集中在编辑器上方；多行内容仍可自然增高。 */
+.chat-main:not(.is-expanded) :deep(.chat-input-row) { min-height: 52px; }
 
 /* 消息列表容器与内部结构渲染于 GuguChatMessageList.vue，需要 :deep() 穿透 */
 :deep(.chat-messages) {

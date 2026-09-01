@@ -44,6 +44,7 @@ const noteCard = load('../../views/Mind/components/NoteCard.vue')
 const captureBar = load('../../views/Mind/components/CaptureBar.vue')
 const referenceSuggestMenu = load('../../components/common/ReferenceSuggestMenu.vue')
 const chatComposer = load('../../components/common/gugu-chat/GuguChatComposer.vue')
+const chatWindow = load('../../components/common/gugu-chat/GuguChatWindow.vue')
 const eventEditModal = load('../../components/events/EventEditModal.vue')
 const contextMenu = load('../../components/ContextMenu.vue')
 const dateSpanPicker = load('../../components/common/DateSpanPicker.vue')
@@ -61,6 +62,18 @@ const terminalsRouter = load('../../router/index.ts')
 const terminalPty = load('../../views/Terminals/components/InteractivePtyTerminal.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('GuguChat 左右栏头部和底部使用同一组高度契约', () => {
+    const chatTokens = load('./tokens/components.css')
+    expect(chatTokens).toContain('--gugu-chat-header-height: 56px;')
+    expect(chatTokens).toContain('--gugu-chat-composer-height: 56px;')
+    expect(chatSidebar).toContain('height: var(--gugu-chat-header-height);')
+    expect(chatSidebar).toContain('min-height: var(--gugu-chat-composer-height);')
+    expect(chatSidebar).toContain('height: var(--control-height-md);')
+    expect(chatWindow).toContain('min-height: var(--gugu-chat-header-height);')
+    expect(chatComposer).toContain('min-height: var(--gugu-chat-composer-height);')
+    expect(chatWindow).toContain('chat-main:not(.is-expanded) :deep(.chat-input-row) { min-height: 52px; }')
+  })
+
   it('画布列表使用与项目抽屉一致的 Runtime 布局契约', () => {
     expect(canvasDrawerContent).toContain('data-layout-collection="mind:drawer:canvases"')
     expect(canvasDrawerContent).toContain('data-layout-role="card"')
