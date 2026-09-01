@@ -43,10 +43,9 @@ jobs:
         with:
           node-version: 20
 
-      # frontend 的 file:../../gugu-interaction-runtime 会在 npm ci 时触发 Runtime 的
-      # prepare/build:lib。每个 job 都是独立 runner，不能依赖 runtime job 已安装过的
-      # node_modules；先在当前 job 安装 Runtime devDependencies，确保 prepare 能找到 Vite。
-      - name: Install Runtime dependencies for local link
+      # 集成 job 通过 VITE_USE_LOCAL_RUNTIME=1 显式验证 pinned Runtime 构建产物；
+      # 普通/生产构建使用 frontend/package.json 中的 npm Runtime 包。
+      - name: Install Runtime dependencies for integration alias
         working-directory: gugu-interaction-runtime
         run: npm ci --no-audit --no-fund
 
@@ -195,6 +194,11 @@ jobs:
       - name: Install RAG worker dependencies
         run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --frozen-lockfile
 
+      - name: Expose RAG worker runtime dependencies
+        # worker 制品输出在 backend/bin，但原生 jieba 依赖安装在 backend/ts/node_modules；
+        # 建立稳定的 Node 模块查找入口，确保 pytest 启动 worker 时能加载依赖。
+        run: ln -s "$GITHUB_WORKSPACE/backend/ts/node_modules" "$GITHUB_WORKSPACE/backend/node_modules"
+
       - name: Build RAG worker
         run: pnpm --filter gugu-rag-ts-worker build
 
@@ -307,13 +311,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # frontend/package.json 用 file:../../gugu-interaction-runtime 本地依赖引用
-      # gugu-interaction-runtime 的构建产物 dist-lib（不发布 npm 包）。npm ci 解析
-      # 该路径时目标必须是仓库的同级兄弟目录（$GITHUB_WORKSPACE/../），因此先
-      # checkout runtime 到仓库内 gugu-interaction-runtime，再建立兄弟目录符号链接；
-      # npm 11 为 file: 依赖创建的 node_modules 符号链接可能断链，由 frontend 的
-      # postinstall 脚本 scripts/fix-runtime-link.mjs 自动修复。三个 job 都需要
-      # 相同的目录布局，e2e job 同样不能省略。
+      # E2E 通过 VITE_USE_LOCAL_RUNTIME=1 验证 pinned Runtime 的本地构建产物；
+      # frontend/package.json 的默认依赖仍指向 npm 发布包。
       - name: Read pinned Runtime commit
         run: echo "RUNTIME_COMMIT=$(tr -d '[:space:]' < .runtime-version)" >> "$GITHUB_ENV"
 
@@ -374,7 +373,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Runtime dependencies for local link
+      - name: Install Runtime dependencies for integration alias
         working-directory: gugu-interaction-runtime
         run: npm ci --no-audit --no-fund
 
