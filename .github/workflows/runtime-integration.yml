@@ -263,8 +263,6 @@ jobs:
   # 留在 backend/tests/ 的 pytest 里验证，不强行塞进浏览器测试。
   e2e:
     runs-on: ubuntu-latest
-    env:
-      VITE_USE_LOCAL_RUNTIME: '1'
     services:
       postgres:
         image: postgres:16-alpine
@@ -289,6 +287,7 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     env:
+      VITE_USE_LOCAL_RUNTIME: '1'
       DB__HOST: 127.0.0.1
       DB__PORT: 5432
       DB__NAME: gugu_web
