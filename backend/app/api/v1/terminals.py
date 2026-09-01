@@ -59,6 +59,16 @@ async def _cleanup_terminal_websocket_resources(manager, terminal_id: str, queue
             logger.info("terminal_pty detach_cleanup_skipped")
 
 
+async def _reject_terminal_websocket_setup(websocket, status_code: int, manager, terminal_id: str, queue, attached: bool) -> None:
+    """拒绝 setup 时保证 close 异常或取消也不会跳过资源释放。"""
+    try:
+        await websocket.close(code=4401 if status_code == 401 else 4403)
+    except (RuntimeError, WebSocketDisconnect):
+        logger.info("terminal_pty websocket_close_skipped")
+    finally:
+        await _cleanup_terminal_websocket_resources(manager, terminal_id, queue, attached)
+
+
 class TerminalCreate(BaseModel):
     name: str = Field(default="终端", min_length=1, max_length=200)
     sessionId: int | None = None
@@ -223,15 +233,22 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         return
     except HTTPException as exc:
         logger.info("terminal_pty websocket_rejected status=%s", exc.status_code)
-        await websocket.close(code=4401 if exc.status_code == 401 else 4403)
-        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
+        await _reject_terminal_websocket_setup(websocket, exc.status_code, manager, row_id, queue, attached)
         return
     except (LookupError, RuntimeError, ValueError) as exc:
         reason = redact(str(exc))[:120]
         logger.warning("terminal_pty websocket_setup_failed error=%s reason=%s", type(exc).__name__, reason)
-        await websocket.close(code=4409, reason=reason)
-        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
+        try:
+            await websocket.close(code=4409, reason=reason)
+        except (RuntimeError, WebSocketDisconnect):
+            logger.info("terminal_pty websocket_close_skipped")
+        finally:
+            await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
         return
+    except BaseException:
+        # CancelledError 不属于 Exception；资源一旦取得所有权必须在取消路径释放。
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
+        raise
 
     receive_task = asyncio.create_task(websocket.receive_json())
     output_task = asyncio.create_task(queue.get())

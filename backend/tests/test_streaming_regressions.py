@@ -90,7 +90,7 @@ def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
 
 @pytest.mark.asyncio
 async def test_terminal_websocket_setup_failure_cleans_pty_resources():
-    from app.api.v1.terminals import _cleanup_terminal_websocket_resources
+    from app.api.v1.terminals import _reject_terminal_websocket_setup
 
     class _Manager:
         def __init__(self):
@@ -102,8 +102,14 @@ async def test_terminal_websocket_setup_failure_cleans_pty_resources():
         async def detach(self, terminal_id):
             self.actions.append(("detach", terminal_id))
 
+    class _WebSocket:
+        async def close(self, **_kwargs):
+            raise RuntimeError("already disconnected")
+
     manager = _Manager()
-    await _cleanup_terminal_websocket_resources(manager, "term-setup-race", "queue", True)
+    await _reject_terminal_websocket_setup(
+        _WebSocket(), 403, manager, "term-setup-race", "queue", True,
+    )
 
     assert manager.actions == [
         ("unsubscribe", "term-setup-race", "queue"),
