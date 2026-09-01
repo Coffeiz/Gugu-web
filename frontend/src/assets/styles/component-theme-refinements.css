@@ -238,5 +238,5 @@ html[data-theme][data-family] .file-card-btn:hover {
 }
 html[data-theme][data-family] .file-card-btn.del:hover {
   color: var(--status-danger);
-  background: var(--status-danger-bg);
+  background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid));
 }
