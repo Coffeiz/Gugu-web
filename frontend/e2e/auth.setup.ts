@@ -2,6 +2,8 @@ import { test as setup, expect } from '@playwright/test'
 import { authFile } from '../playwright.config'
 
 setup('使用测试账号登录', async ({ page }) => {
+  // CI 首次启动 Vite 需要完成依赖预构建，登录 setup 使用独立的冷启动预算。
+  setup.setTimeout(120000)
   const username = process.env.PLAYWRIGHT_USERNAME
   const password = process.env.PLAYWRIGHT_PASSWORD
   if (!username || !password) {
@@ -10,9 +12,9 @@ setup('使用测试账号登录', async ({ page }) => {
 
   // Vite dev server 首次访问可能仍在预构建依赖；等待网络空闲并确认登录页已挂载，
   // 避免把冷启动期间的空白页面误判成登录回归。
-  await page.goto('/login', { waitUntil: 'networkidle' })
+  await page.goto('/login', { waitUntil: 'networkidle', timeout: 90000 })
   const loginButton = page.getByRole('button', { name: '登录' })
-  await expect(loginButton).toBeVisible({ timeout: 30000 })
+  await expect(loginButton).toBeVisible({ timeout: 60000 })
   const usernameInput = page.locator('input[autocomplete="username"]')
   const passwordInput = page.locator('input[autocomplete="current-password"]')
   await usernameInput.fill(username)
