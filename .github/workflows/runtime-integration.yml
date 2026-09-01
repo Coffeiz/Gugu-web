@@ -212,6 +212,11 @@ jobs:
           printf '%s\n' '{"op":"tokenize","text":"部署上线"}' | node bin/gugu-rag-ts-worker.mjs > /tmp/rag-worker-smoke.jsonl
           node -e "const fs = require('fs'); const line = fs.readFileSync('/tmp/rag-worker-smoke.jsonl', 'utf8').trim(); const result = JSON.parse(line); if (result.status !== 'ok' || !Array.isArray(result.tokens) || result.tokens.length === 0) { throw new Error('RAG worker smoke test failed: ' + line) }"
 
+      - name: Install frontend dependencies for affected tests
+        if: github.event_name == 'pull_request'
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
       - name: Create database schema
         working-directory: backend
         env:
