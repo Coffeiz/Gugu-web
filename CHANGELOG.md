@@ -24,6 +24,8 @@
 
 ### 改进
 
+- **聊天资源卡片**：项目、活动、画布、笔记、定时任务和用户 Skill 支持统一卡片展示；Skill 使用独立链接协议并可从聊天直接定位到技能编辑入口。
+- **Agent 会话上下文**：拆分稳定 system prompt 与动态 session snapshot，用户 persona 保持原有替换逻辑，并支持 system 配置在下一轮立即生效。
 - **隐私与注册体验**：更新隐私政策内容，移除注册页中的测试数据提示，避免将开发环境信息展示给用户。
 - **IM 连接与消息可靠性**：补充 QQ 绑定状态轮询、解绑确认、流式回复配置和消息格式设置；改善 IM 会话上下文、进度消息和多平台回复状态。
 - **工具 Schema 与错误恢复**：统一工具参数校验、Schema 错误结构、增量更新约束和错误脱敏；模型工具不再填写数据库版本字段，减少因参数形状错误导致的重复失败。
@@ -78,6 +80,7 @@
 
 ### 测试
 
+- 前端聊天 Markdown 卡片测试 8 passed，前端生产构建通过。
 - 后端全量测试 `1777 passed`；Ownership 守卫、Confirm gate 守卫和 Python 编译检查通过。
 - 前端 `npm run typecheck` 通过；Shell 相关回归测试 `40 passed`。
 - 补充 ContextBudget、压缩重试、baseline 生命周期、session pending gate 与 provider usage 阈值回归测试；上下文专项测试 64 passed，devserver 专项测试 67 passed。
