@@ -56,7 +56,6 @@
 - [Wishlist](product/WISHLIST.md)：尚未纳入当前基线的候选方向。
 - [文件预览历史方案](product/_archibe/FILE-PREVIEW.md)：文件预览、抽屉和浮动窗口的历史设计记录。
 - [思维面板归档资料](product/_archibe/思维面板/)：笔记、画布、数据模型和历史实现方案；当前行为以代码和 Agent 专题文档为准。
-- [本地交互与服务端同步一致性](prds/【已完成】PRD-UI-7-本地交互与服务端同步一致性.md)：`InteractionSync` 统一交互同步模型，已完成 Phase 1-4 收敛。
 - [前端 JS 转 TS 历史指南](product/_archibe/【已完成】前端-JS转TS迁移指南.md)：前端迁移记录。
 
 ## 运维与性能
