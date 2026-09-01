@@ -6,8 +6,6 @@
 `run_global_search` 是查询核心，路由和 agent 工具（`agent/tools/global_search.py`）
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
-import json
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,14 +14,20 @@ from app.db.session import get_db
 from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
-    User, UserPreferences, Project, File, Folder, CalendarEvent, Client,
-    ConversationSession, ConversationMessage, MindNode,
+    User, Project, File, Folder, CalendarEvent, Client, MindNode,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
 from app.models import KnowledgeIndexEntry
 from agent.rag.persistent_store import search_persistent_index
 from agent.rag.ts_sidecar import TsSidecarUnavailable
+from app.services.conversations import (
+    list_messages_for_search_scan,
+    list_sessions_for_search_scan,
+    search_global_messages,
+    search_session_titles,
+)
+from app.services.user_preferences import get_user_locale
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -295,26 +299,11 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
     # ── 对话：会话标题 + 消息正文（合并去重，正文命中给片段）──
     if wanted is None or "conversation" in wanted:
         conv: dict = {}   # session_id → {id, title, subtitle}
-        title_rows = (await db.execute(
-            select(ConversationSession).where(
-                ConversationSession.user_id == uid,
-                keyword_condition([ConversationSession.title], search_queries, mode),
-            ).order_by(keyword_score([ConversationSession.title], search_queries).desc(),
-                       _primary_rank(ConversationSession.title, q), ConversationSession.updated_at.desc()).limit(per_type)
-        )).scalars().all()
+        title_rows = await search_session_titles(db, uid, search_queries, mode, per_type, q)
         for s in title_rows:
             conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}
 
-        msg_rows = (await db.execute(
-            select(ConversationMessage, ConversationSession.title)
-            .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-            .where(ConversationSession.user_id == uid,
-                   keyword_condition([ConversationMessage.content], search_queries, mode))
-            .order_by(
-                keyword_score([ConversationMessage.content], search_queries).desc(),
-                ConversationMessage.created_at.desc(),
-            ).limit(MSG_PER_TYPE)
-        )).all()
+        msg_rows = await search_global_messages(db, uid, search_queries, mode, MSG_PER_TYPE)
         for m, stitle in msg_rows:
             if m.session_id not in conv:
                 conv[m.session_id] = {"id": m.session_id, "title": stitle,
@@ -325,10 +314,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
 
         if use_romaji and len(conv) < per_type:
             # 拼音/罗马音扫描对话标题
-            sess_scan = (await db.execute(
-                select(ConversationSession).where(ConversationSession.user_id == uid)
-                .order_by(ConversationSession.updated_at.desc()).limit(ROMAJI_SCAN)
-            )).scalars().all()
+            sess_scan = await list_sessions_for_search_scan(db, uid, ROMAJI_SCAN)
             for s in sess_scan:
                 if s.id not in conv and _romaji_matches_object(s, "conversation", search_queries, language):
                     conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}
@@ -336,12 +322,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                         break
 
             if len(conv) < per_type:
-                message_scan = (await db.execute(
-                    select(ConversationMessage, ConversationSession.title)
-                    .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-                    .where(ConversationSession.user_id == uid)
-                    .order_by(ConversationMessage.created_at.desc()).limit(ROMAJI_SCAN)
-                )).all()
+                message_scan = await list_messages_for_search_scan(db, uid, ROMAJI_SCAN)
                 for message, session_title in message_scan:
                     if message.session_id not in conv and _romaji_matches_object(
                         message, "message", search_queries, language,
@@ -477,11 +458,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
     """统一全局搜索入口；Admin 可在索引与 ILIKE 之间热切换。"""
     search_queries = normalize_queries(q, queries)
     if language not in {"zh-CN", "ja-JP", "en-US"}:
-        prefs = await db.execute(select(UserPreferences.data_json).where(UserPreferences.user_id == user_id))
-        try:
-            language = json.loads(prefs.scalar_one_or_none() or "{}").get("locale")
-        except (TypeError, ValueError):
-            language = None
+        language = await get_user_locale(db, user_id)
     language = language if language in {"zh-CN", "ja-JP", "en-US"} else "zh-CN"
     # 持久化索引按原文检索，无法执行拼音/罗马音转换；这类查询必须走
     # ILIKE 扫描分支，才能覆盖 SudachiPy/romkan2 的候选读音。
@@ -504,7 +481,10 @@ async def search(
     q: str = "",
     queries: list[str] | None = Query(default=None),
     mode: str = "OR",
+    per_type: int = Query(default=PER_TYPE, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await run_global_search(db, current_user.id, q, queries=queries, mode=mode)
+    return await run_global_search(
+        db, current_user.id, q, per_type=per_type, queries=queries, mode=mode,
+    )

@@ -28,6 +28,10 @@ setup('使用测试账号登录', async ({ page }) => {
   const loginResponse = page.waitForResponse(response =>
     response.url().endsWith('/api/v1/auth/login') && response.request().method() === 'POST',
   )
+  const onboardingStateResponse = page.waitForResponse(response =>
+    response.url().endsWith('/api/v1/onboarding/state') && response.request().method() === 'GET',
+    { timeout: 30000 },
+  ).catch(() => null)
   await expect(loginButton).toBeEnabled()
   await loginButton.click()
   const response = await loginResponse
@@ -35,7 +39,9 @@ setup('使用测试账号登录', async ({ page }) => {
   await expect(page).not.toHaveURL(/\/login/)
 
   // 新测试用户默认会显示首次设置向导；稳定路径需要从实际业务页面开始，不能让
-  // 向导遮住后续页面。按钮文案随用户语言变化，因此按三种支持语言统一处理。
+  // 向导遮住后续页面。CI 冷启动时引导状态请求可能晚于登录跳转，给它完整的
+  // 应用启动窗口；按钮文案随用户语言变化，因此按三种支持语言统一处理。
+  await onboardingStateResponse
   const onboarding = page.locator('.onboarding-modal')
   await onboarding.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined)
   const laterButton = onboarding.getByRole('button', { name: /^(稍后设置|Set up later|後で設定)$/ })
