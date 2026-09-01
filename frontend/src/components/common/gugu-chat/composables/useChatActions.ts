@@ -20,6 +20,8 @@ export const FILE_TOOLS = new Set(['edit_file','create_document','rename_file','
 export function useChatActions(options: {
   router: Router
   onBindPlatform: (platform: string) => void
+  onOpenObject: (type: string, id: number) => void
+  onOpenSkill: (slug: string) => void
 }) {
   const projectStore = useProjectStore()
   const liveStore = useLiveStore()
@@ -66,7 +68,12 @@ export function useChatActions(options: {
     if (mFile) {
       uiStore.pendingFileTarget = { kind: 'file', id: parseInt(mFile[1]) }
       options.router.push('/files')
+      return
     }
+    const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)
+    if (mObject) options.onOpenObject(mObject[1].toLowerCase(), Number(mObject[2]))
+    const mSkill = href.match(/^gugu:\/\/open-skill\/([a-z0-9][a-z0-9-]{0,79})$/i)
+    if (mSkill) options.onOpenSkill(mSkill[1].toLowerCase())
   }
 
   return { refreshAfterTools, onChatActionClick }

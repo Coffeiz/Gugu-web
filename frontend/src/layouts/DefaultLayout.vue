@@ -11,8 +11,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><span class="btn-content"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />{{ t('common.actions.upload') }}</span></a-button>
-          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><span class="btn-content"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />{{ t('common.actions.createProject') }}</span></a-button>
+          <ActionButton variant="secondary" class="topbar-upload-button" @click="openUpload"><Icon name="action.upload" :size="13" />{{ t('common.actions.upload') }}</ActionButton>
+          <ActionButton class="topbar-create-button" @click="openNewProject"><Icon name="action.add" :size="14" />{{ t('common.actions.createProject') }}</ActionButton>
         </div>
       </header>
 
@@ -84,6 +84,7 @@ import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
 import Icon from '@/components/common/Icon.vue'
+import ActionButton from '@/components/common/ActionButton.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
 import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
@@ -173,7 +174,9 @@ const fullBleed    = computed(() => !!route.meta.fullBleed)
 const isCanvasWorkspace = computed(() => route.path.startsWith('/mind/canvases'))
 
 const todayStr = computed(() => {
+  // 中文日期格式默认会把日期和星期连在一起，增加一个可见间隔。
   return formatDate(new Date(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
+    .replace(/日(?=星期)/, '日 ')
 })
 </script>
 
@@ -282,42 +285,24 @@ const todayStr = computed(() => {
   height: 100%;
   line-height: var(--line-height-ui);
 }
-
-/* 顶栏按钮不做悬停上浮；上传文件走次要按钮 token，新建项目走全局 press-fx 阴影。 */
-.btn-ghost-custom {
-  --topbar-btn-shadow: none;
-  background: var(--surface-raised) !important;
-  border: 1px solid var(--action-outline) !important;
-  border-radius: var(--radius-sm) !important;
-  color: var(--action-secondary-fg) !important;
-  box-shadow: none !important;
-  font-size: 13px; font-weight: 500;
-  transition: background 0.2s ease-out, box-shadow 0.2s ease-out,
-              transform 0.15s ease, opacity 0.15s ease !important;
+.topbar-actions .topbar-create-button {
+  width: 100px;
+  min-width: 100px;
+  flex-basis: 100px;
+  height: var(--control-height-md);
+  min-height: var(--control-height-md);
 }
-.topbar .btn-ghost-custom:hover {
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  color: var(--control-fg-strong) !important;
-  box-shadow: none !important;
+.topbar-actions .topbar-upload-button {
+  --action-secondary-bg: var(--surface-raised);
+  --action-secondary-bg-hover: var(--surface-raised);
+  --action-secondary-border: color-mix(in srgb, var(--action-outline) 70%, transparent);
+  --action-secondary-border-hover: color-mix(in srgb, var(--input-border-hover) 82%, transparent);
+  width: 100px;
+  min-width: 100px;
+  flex-basis: 100px;
+  height: var(--control-height-md);
+  min-height: var(--control-height-md);
 }
-.btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
-
-.btn-primary-custom {
-  --topbar-btn-shadow: none;
-  background: var(--action-primary-bg) !important;
-  border: none !important;
-  border-radius: var(--radius-sm) !important;
-  box-shadow: none !important;
-  font-size: 13px; font-weight: 500;
-  transition: box-shadow 0.2s ease-out, opacity 0.2s ease-out,
-              transform 0.15s ease !important;
-}
-.btn-primary-custom:hover {
-  background: var(--action-primary-bg-hover) !important;
-  opacity: 0.92;
-}
-.btn-primary-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .page-content {
   height: 100%;

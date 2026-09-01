@@ -28,8 +28,5 @@
     "test:inventory:helpers": "node scripts/tests/audit-test-helpers.mjs",
     "test:inventory:domains": "node scripts/tests/generate-domain-audit.mjs",
     "test:boundaries": "node scripts/tests/check-test-boundaries.mjs"
-  },
-  "dependencies": {
-    "gugu-interaction-runtime": "link:gugu-interaction-runtime"
   }
 }

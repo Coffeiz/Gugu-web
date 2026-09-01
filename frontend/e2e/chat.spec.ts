@@ -36,7 +36,7 @@ test.describe('GuguChat 悬浮窗', () => {
 
     const aiBubblesBefore = await chatWindow.locator(AI_REPLY).count()
     const text = `e2e-chat-${Date.now()}`
-    await chatWindow.locator('.chat-input-row textarea').fill(text)
+    await chatWindow.locator('.chat-input-editor .ProseMirror').fill(text)
     await chatWindow.locator('.send-btn').click()
 
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: text })).toBeVisible()
@@ -60,7 +60,7 @@ test.describe('GuguChat 悬浮窗', () => {
 
     const aiBubblesBefore = await chatWindow.locator(AI_REPLY).count()
     const text = `e2e-chat-expand-${Date.now()}`
-    await chatWindow.locator('.chat-input-row textarea').fill(text)
+    await chatWindow.locator('.chat-input-editor .ProseMirror').fill(text)
     await chatWindow.locator('.send-btn').click()
     await expect(chatWindow.locator(AI_REPLY)).toHaveCount(aiBubblesBefore + 1, { timeout: 15000 })
 
@@ -94,7 +94,7 @@ test.describe('GuguChat 悬浮窗', () => {
     const chatWindow = page.locator('.chat-window')
     await expect(chatWindow).toBeVisible()
 
-    const textarea = chatWindow.locator('.chat-input-row textarea')
+    const textarea = chatWindow.locator('.chat-input-editor .ProseMirror')
     const sendBtn = chatWindow.locator('.send-btn')
 
     const firstText = `e2e-queue-first-${Date.now()}`
@@ -169,7 +169,7 @@ test.describe('GuguChat 悬浮窗', () => {
     await sidebar.locator('.exp-new-session-btn').click()
     await expect(chatWindow.locator('.msg')).toHaveCount(0)
 
-    const textarea = chatWindow.locator('.chat-input-row textarea')
+    const textarea = chatWindow.locator('.chat-input-editor .ProseMirror')
     const sendBtn = chatWindow.locator('.send-btn')
 
     // 第一条：必然触发 session_id 事件回传真实 id；请求被延迟 800ms，给第二条的入队留出确定的窗口
@@ -215,7 +215,7 @@ test.describe('GuguChat 悬浮窗', () => {
     const sidebar = page.locator('.exp-sidebar')
     await expect(sidebar).toBeVisible()
 
-    const textarea = chatWindow.locator('.chat-input-row textarea')
+    const textarea = chatWindow.locator('.chat-input-editor .ProseMirror')
     const sendBtn = chatWindow.locator('.send-btn')
 
     // 会话 A：新建 + 发消息 + 等回复，记录 A 的 session id

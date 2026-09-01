@@ -6,14 +6,14 @@ import asyncio
 import base64
 import json
 import logging
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import account_is_active, decode_user_token, get_current_user, is_user_active
+from app.core.security import account_is_active, decode_user_token, get_current_user, get_current_user_id, is_user_active
 from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.core import events
@@ -41,6 +41,32 @@ router = APIRouter(prefix="/terminals", tags=["terminals"])
 logger = logging.getLogger(__name__)
 _terminal_tasks: dict[str, asyncio.Task] = {}
 _terminal_event_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _cleanup_terminal_websocket_resources(manager, terminal_id: str, queue, attached: bool) -> None:
+    """统一释放 WebSocket setup/loop 持有的 PTY subscription 和 attachment。"""
+    if manager is None:
+        return
+    if queue is not None:
+        try:
+            await manager.unsubscribe(terminal_id, queue)
+        except Exception:
+            logger.info("terminal_pty unsubscribe_cleanup_skipped")
+    if attached:
+        try:
+            await manager.detach(terminal_id)
+        except Exception:
+            logger.info("terminal_pty detach_cleanup_skipped")
+
+
+async def _reject_terminal_websocket_setup(websocket, status_code: int, manager, terminal_id: str, queue, attached: bool) -> None:
+    """拒绝 setup 时保证 close 异常或取消也不会跳过资源释放。"""
+    try:
+        await websocket.close(code=4401 if status_code == 401 else 4403)
+    except (RuntimeError, WebSocketDisconnect):
+        logger.info("terminal_pty websocket_close_skipped")
+    finally:
+        await _cleanup_terminal_websocket_resources(manager, terminal_id, queue, attached)
 
 
 class TerminalCreate(BaseModel):
@@ -136,26 +162,32 @@ async def get_terminal_detail(terminal_id: str, user: User = Depends(get_current
 
 
 @router.websocket("/{terminal_id}/ws")
-async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSession = Depends(get_db)):
+async def terminal_websocket(terminal_id: str, websocket: WebSocket):
     """交互式 PTY 网关；agent-events 终端继续使用原有事件接口。"""
     manager = None
     queue = None
     attached = False
+    row_id = terminal_id
     try:
         user_id = decode_user_token(_websocket_token(websocket))
         from app.security.risk_policy import enforce_user_throttle
         await enforce_user_throttle(user_id)
-        user = await db.get(User, user_id)  # ownership-exempt: user_id 已由 WebSocket token 解码，仅查询当前用户
-        row = await get_terminal(db, user_id, terminal_id) if account_is_active(user) else None
-        if row is None or row.mode != "interactive-pty":
-            raise HTTPException(status_code=404, detail="交互式终端不存在")
-        access = await authorize_operation(
-            db, user_id, owner_id=row.owner_id, session_id=row.session_id,
-            workspace_id=row.workspace_id, operation=TerminalOperation.INPUT,
-        )
-        if not access.allowed:
-            raise HTTPException(status_code=403, detail=access.reason)
-        root = await resolve_shell_root(db, user_id, row.shell_mode, row.workspace_id)
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as auth_db:
+            user = await auth_db.get(User, user_id)  # orm-exempt: user_id 已由 WebSocket token 解码
+            row = await get_terminal(auth_db, user_id, terminal_id) if account_is_active(user) else None
+            if row is None or row.mode != "interactive-pty":
+                raise HTTPException(status_code=404, detail="交互式终端不存在")
+            access = await authorize_operation(
+                auth_db, user_id, owner_id=row.owner_id, session_id=row.session_id,
+                workspace_id=row.workspace_id, operation=TerminalOperation.INPUT,
+            )
+            if not access.allowed:
+                raise HTTPException(status_code=403, detail=access.reason)
+            root = await resolve_shell_root(auth_db, user_id, row.shell_mode, row.workspace_id)
+            row_id = row.id
+            row_shell_mode = row.shell_mode
+            row_network_profile = row.network_profile
         if root is None:
             raise HTTPException(status_code=403, detail="终端没有可用的沙盒目录")
         # 先完成 WebSocket 握手，再启动 PTY/发布状态事件，避免慢沙盒或事件总线让
@@ -163,52 +195,60 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         await websocket.accept(subprotocol=_websocket_auth_protocol(websocket))
         manager = get_pty_manager()
         spec = PtyLaunchSpec(
-            terminal_id=row.id, root=str(root), shell_mode=row.shell_mode,
-            network_profile=row.network_profile, cols=120, rows=32,
+            terminal_id=row_id, root=str(root), shell_mode=row_shell_mode,
+            network_profile=row_network_profile, cols=120, rows=32,
         )
-        session = manager.get(row.id)
+        session = manager.get(row_id)
         if session is None:
             session, queue = await manager.start_with_subscription(spec)
         else:
-            await manager.attach(row.id)
+            await manager.attach(row_id)
             attached = True
-            queue = await manager.subscribe(row.id)
+            queue = await manager.subscribe(row_id)
         if not attached:
-            await manager.attach(row.id)
+            await manager.attach(row_id)
             attached = True
-        row.status = TerminalStatus.RUNNING.value
-        row.pty_pid = session.handle.pid
-        row.pty_sandbox_id = session.handle.sandbox_id
-        row.pty_cols, row.pty_rows = session.cols, session.rows
-        row.updated_at = now_utc()
-        await db.commit()
-        await events.publish(user_id, "terminals", operation="update", entity_id=row.id,
-                             event_payload=serialize_terminal(row))
-        logger.info("terminal_pty websocket_open terminal=%s user=%s", row.id, str(user_id)[:8])
+        async with db_session._SessionLocal() as state_db:
+            state_row = await get_terminal(state_db, user_id, row_id)
+            if state_row is None:
+                raise HTTPException(status_code=404, detail="交互式终端不存在")
+            state_row.status = TerminalStatus.RUNNING.value
+            state_row.pty_pid = session.handle.pid
+            state_row.pty_sandbox_id = session.handle.sandbox_id
+            state_row.pty_cols, state_row.pty_rows = session.cols, session.rows
+            state_row.updated_at = now_utc()
+            await state_db.commit()
+            state_payload = serialize_terminal(state_row)
+        terminal_status = TerminalStatus.RUNNING.value
+        await events.publish(user_id, "terminals", operation="update", entity_id=row_id,
+                             event_payload=state_payload)
+        logger.info("terminal_pty websocket_open terminal=%s user=%s", row_id, str(user_id)[:8])
         await websocket.send_json({
-            "type": "ready", "terminalId": row.id, "mode": "interactive-pty",
+            "type": "ready", "terminalId": row_id, "mode": "interactive-pty",
             "cols": session.cols, "rows": session.rows,
         })
     except WebSocketDisconnect:
         logger.info("terminal_pty websocket_disconnected_during_setup")
-        if manager is not None:
-            try:
-                if queue is not None:
-                    await manager.unsubscribe(row.id, queue)
-                if attached:
-                    await manager.detach(row.id)
-            except (LookupError, RuntimeError):
-                logger.info("terminal_pty setup_cleanup_skipped")
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
         return
     except HTTPException as exc:
         logger.info("terminal_pty websocket_rejected status=%s", exc.status_code)
-        await websocket.close(code=4401 if exc.status_code == 401 else 4403)
+        await _reject_terminal_websocket_setup(websocket, exc.status_code, manager, row_id, queue, attached)
         return
     except (LookupError, RuntimeError, ValueError) as exc:
         reason = redact(str(exc))[:120]
         logger.warning("terminal_pty websocket_setup_failed error=%s reason=%s", type(exc).__name__, reason)
-        await websocket.close(code=4409, reason=reason)
+        try:
+            await websocket.close(code=4409, reason=reason)
+        except (RuntimeError, WebSocketDisconnect):
+            logger.info("terminal_pty websocket_close_skipped")
+        finally:
+            await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
         return
+    except BaseException:
+        # CancelledError 不属于 Exception；资源一旦取得所有权必须在取消路径释放。
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
+        raise
 
     receive_task = asyncio.create_task(websocket.receive_json())
     output_task = asyncio.create_task(queue.get())
@@ -227,13 +267,21 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
                 if chunk is None:
                     # 用户主动停止时，记录的 terminated 优先于 PTY 的退出回调，
                     # 避免停止后又被异步队列结束事件改写成 exited。
-                    if row.status != TerminalStatus.TERMINATED.value:
-                        row.status = TerminalStatus.EXITED.value
-                        row.closed_at = now_utc()
-                        row.updated_at = row.closed_at
-                        await db.commit()
-                        await events.publish(user_id, "terminals", operation="update", entity_id=row.id,
-                                             event_payload=serialize_terminal(row))
+                    if terminal_status != TerminalStatus.TERMINATED.value:
+                        async with db_session._SessionLocal() as state_db:
+                            state_row = await get_terminal(state_db, user_id, row_id)
+                            if state_row is not None and state_row.status != TerminalStatus.TERMINATED.value:
+                                terminal_status = TerminalStatus.EXITED.value
+                                state_row.status = terminal_status
+                                state_row.closed_at = now_utc()
+                                state_row.updated_at = state_row.closed_at
+                                await state_db.commit()
+                                state_payload = serialize_terminal(state_row)
+                            else:
+                                state_payload = None
+                        if state_payload is not None:
+                            await events.publish(user_id, "terminals", operation="update", entity_id=row_id,
+                                                 event_payload=state_payload)
                     try:
                         await websocket.send_json({"type": "exit"})
                     except (RuntimeError, WebSocketDisconnect):
@@ -248,12 +296,12 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
                 value = receive_task.result()
                 message = PtyClientMessage.from_dict(value)
                 if message.type == "input":
-                    await manager.write(row.id, message.data.encode("utf-8"))
+                    await manager.write(row_id, message.data.encode("utf-8"))
                 elif message.type == "resize":
-                    await manager.resize(row.id, message.cols, message.rows)
+                    await manager.resize(row_id, message.cols, message.rows)
                     await websocket.send_json({"type": "status", "cols": message.cols, "rows": message.rows})
                 elif message.type == "signal":
-                    await manager.signal(row.id, message.signal)
+                    await manager.signal(row_id, message.signal)
                 elif message.type == "detach":
                     break
                 receive_task = asyncio.create_task(websocket.receive_json())
@@ -270,11 +318,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         output_task.cancel()
         status_task.cancel()
         await asyncio.gather(receive_task, output_task, status_task, return_exceptions=True)
-        await manager.unsubscribe(row.id, queue)
-        try:
-            await manager.detach(row.id)
-        except LookupError:
-            pass
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
 
 
 async def _wait_for_account_suspend(user_id):
@@ -292,20 +336,31 @@ async def _wait_for_account_suspend(user_id):
 
 
 @router.get("/{terminal_id}/events")
-async def stream_terminal_events(terminal_id: str, after: int = Query(default=0, ge=0), user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    row = _require(await get_terminal(db, user.id, terminal_id))
-    access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.VIEW)
+async def stream_terminal_events(terminal_id: str, after: int = Query(default=0, ge=0), user_id: UUID = Depends(get_current_user_id)):
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as auth_db:
+        row = _require(await get_terminal(auth_db, user_id, terminal_id))
+        access = await authorize_operation(
+            auth_db, user_id, owner_id=row.owner_id, session_id=row.session_id,
+            operation=TerminalOperation.VIEW,
+        )
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
 
     async def generate():
         cursor = after
         for _ in range(30):
-            events = await terminal_events(db, row, cursor)
+            async with db_session._SessionLocal() as stream_db:
+                current = await get_terminal(stream_db, user_id, terminal_id)
+                if current is None:
+                    break
+                events = await terminal_events(stream_db, current, cursor)
+                closed = current.closed_at
+                last_sequence = current.last_sequence
             for event in events:
                 cursor = event.sequence
                 yield f"data: {json.dumps({'event': serialize_event(event)}, ensure_ascii=False)}\n\n"
-            if row.closed_at and cursor >= row.last_sequence:
+            if closed and cursor >= last_sequence:
                 break
             await asyncio.sleep(0.5)
         yield "event: end\ndata: {}\n\n"

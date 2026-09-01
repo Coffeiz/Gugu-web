@@ -1,8 +1,12 @@
 """流式出站与 session gate 的关键回归测试。"""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from pathlib import Path
+from inspect import signature
+
+from fastapi.dependencies.utils import get_dependant
 
 import pytest
 
@@ -55,6 +59,99 @@ def test_collect_and_stream_share_im_preparation_rules():
     )
     assert runner._proactive_lead_for(group_req, [SimpleNamespace(role="assistant", content="lead")]) == "lead"
     assert runner._proactive_lead_for(private_req, [SimpleNamespace(role="assistant", content="lead")]) == ""
+
+
+def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
+    from app.api.v1.agent import chat, resume_stream
+    from app.api.v1.terminals import stream_terminal_events, terminal_websocket
+    from app.db.session import get_db
+
+    def dependency_calls(callable_):
+        root = get_dependant(path="/test", call=callable_)
+        result = []
+
+        def walk(node):
+            if node.call is not None:
+                result.append(node.call)
+            for child in node.dependencies:
+                walk(child)
+
+        walk(root)
+        return result
+
+    for endpoint in (chat, resume_stream, stream_terminal_events, terminal_websocket):
+        assert get_db not in dependency_calls(endpoint), endpoint.__name__
+
+    assert "db" not in signature(resume_stream).parameters
+    assert "db" not in signature(stream_terminal_events).parameters
+
+    session_source = Path(__file__).parents[1].joinpath("app/db/session.py").read_text(encoding="utf-8")
+    assert "await asyncio.shield(session.close())" in session_source
+
+
+@pytest.mark.asyncio
+async def test_terminal_websocket_setup_failure_cleans_pty_resources():
+    from app.api.v1.terminals import _reject_terminal_websocket_setup
+
+    class _Manager:
+        def __init__(self):
+            self.actions = []
+
+        async def unsubscribe(self, terminal_id, queue):
+            self.actions.append(("unsubscribe", terminal_id, queue))
+
+        async def detach(self, terminal_id):
+            self.actions.append(("detach", terminal_id))
+
+    class _WebSocket:
+        async def close(self, **_kwargs):
+            raise RuntimeError("already disconnected")
+
+    manager = _Manager()
+    await _reject_terminal_websocket_setup(
+        _WebSocket(), 403, manager, "term-setup-race", "queue", True,
+    )
+
+    assert manager.actions == [
+        ("unsubscribe", "term-setup-race", "queue"),
+        ("detach", "term-setup-race"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_websocket_cleanup_survives_task_cancellation_and_partial_failure():
+    from app.api.v1.terminals import _cleanup_terminal_websocket_resources
+
+    class _Manager:
+        def __init__(self):
+            self.actions = []
+
+        async def unsubscribe(self, terminal_id, queue):
+            self.actions.append(("unsubscribe", terminal_id, queue))
+            raise ValueError("subscription already gone")
+
+        async def detach(self, terminal_id):
+            self.actions.append(("detach", terminal_id))
+
+    manager = _Manager()
+
+    async def cancelled_setup():
+        try:
+            await asyncio.sleep(60)
+        except BaseException:
+            await _cleanup_terminal_websocket_resources(manager, "term-cancel", "queue", True)
+            raise
+
+    task = asyncio.create_task(cancelled_setup())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert manager.actions == [
+        ("unsubscribe", "term-cancel", "queue"),
+        ("detach", "term-cancel"),
+    ]
 
 
 @pytest.mark.asyncio

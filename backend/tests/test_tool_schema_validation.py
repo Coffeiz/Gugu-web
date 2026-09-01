@@ -9,13 +9,20 @@ import pytest
 from sqlalchemy import select
 
 from app.models import Project
+from app.core.project_colors import PROJECT_COLOR_KEYS, PROJECT_COLOR_PRESETS, project_color_key, project_color_value
 
 import agent.tools.base as tool_base
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
 from agent.tools.mind import _BLOCK_ITEM_SCHEMA, _parse_captured_at
 from app.core.tz import LOCAL_TZ
 from app.core.date_input import normalize_date_string
-from agent.tools.tool_contract import build_validator, normalize_input_by_schema, normalize_legacy_input, validate_input
+from agent.tools.tool_contract import (
+    build_validator,
+    invalid_input_payload,
+    normalize_input_by_schema,
+    normalize_legacy_input,
+    validate_input,
+)
 
 
 async def _ok_handler(db, user_id, args):
@@ -213,6 +220,39 @@ async def test_boolean_type_error_explains_native_json_value():
     assert payload["schema_hints"] == [
         "confirm 必须是 boolean：使用 true 或 false，不要加引号。",
     ]
+
+
+def test_note_schema_recovery_explains_flat_block_shape():
+    schema = {"type": "array", "items": _BLOCK_ITEM_SCHEMA}
+    validator = build_validator(schema)
+    issues = validate_input(validator, [{
+        "type": "task_list",
+        "items": [{"checked": True, "content": [{"content": []}]}],
+    }])
+
+    payload = invalid_input_payload("note_create", issues, schema={"properties": {"blocks": schema}})
+
+    assert "重建完整 blocks" in payload["next_action"]
+    assert any("扁平项" in hint for hint in payload["schema_hints"])
+    assert any("item" in hint for hint in payload["schema_hints"])
+
+
+def test_note_block_schema_rejects_unknown_wrapper_fields():
+    validator = build_validator({"type": "array", "items": _BLOCK_ITEM_SCHEMA})
+    issues = validate_input(validator, [{"type": "paragraph", "item": []}])
+
+    assert issues[0]["rule"] == "additionalProperties"
+
+
+def test_project_colors_use_semantic_tokens_at_agent_boundary():
+    from agent.tools import registry
+
+    create_schema = registry.get("create_project").input_schema
+    set_color_schema = registry.get("set_color").input_schema
+    assert create_schema["properties"]["color"]["enum"] == list(PROJECT_COLOR_KEYS)
+    assert set_color_schema["properties"]["color"]["enum"] == list(PROJECT_COLOR_KEYS)
+    assert project_color_value("lavender") == PROJECT_COLOR_PRESETS[5]
+    assert project_color_key(PROJECT_COLOR_PRESETS[5]) == "lavender"
 
 
 def test_schema_normalization_converts_numeric_text_and_omits_optional_empty_values():

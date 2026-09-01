@@ -88,11 +88,14 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
     expect(fileCard).toContain('var(--file-card-preselection-thumb-overlay)')
-    expect(fileCard).toContain(":global(html[data-theme='light'][data-family]) .fc-card.pre-selected:not(.selected)")
+    // 亮色预选不再由主题层复制 selector，FileCard 自己消费亮色 token 并拥有状态 paint。
+    expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) {')
     expect(fileCard).not.toContain(":global(html[data-theme='light'][data-family] .project-modal-root)")
     expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card::after,')
+    expect(fileCard).toContain('linear-gradient(to bottom, black 72%, transparent 100%)')
+    expect(componentRefinements).toContain('background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid));')
   })
 
   it('20.4 selected ring 在 hover 时保持，generic hover utility 不再拥有 File/FolderCard shadow/transition', () => {
@@ -192,14 +195,6 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(start).toBeGreaterThanOrEqual(0)
     expect(end).toBeGreaterThan(start)
     expect(runtimeSetup.slice(start, end)).not.toContain('disableTargetVisualMorph')
-  })
-
-  it('画布 landing 在指针下揭示时只抑制一次 hover，离开后恢复', () => {
-    expect(runtimeAdoption).toContain(".mind-project-card[data-runtime-hover-suppressed='true']:hover")
-    expect(runtimeAdoption).toContain('transform: none;')
-    expect(runtimeAdoption).toContain('box-shadow: var(--project-card-shadow);')
-    expect(mindRuntimeObject).toContain('suppressHoverUntilLeave(element)')
-    expect(mindRuntimeObject).toContain("element.addEventListener('pointerleave', onLeave, { once: true })")
   })
 
   it('项目名输入框不再有 project 专属透明底，统一复用共享 input contract', () => {

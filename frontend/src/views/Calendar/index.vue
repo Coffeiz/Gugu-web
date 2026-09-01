@@ -139,7 +139,9 @@ import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useEventModalStore } from '@/stores/eventModal'
-import { CLIENT_ID, eventsApi } from '@/services/api'
+import { eventsApi } from '@/services/api'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
 import { useHolidays } from '@/composables/useHolidays'
 import { showAppError } from '@/composables/useAppToast'
 import { defaultTimeRange } from '@/composables/useEventEditForm'
@@ -488,16 +490,30 @@ async function commitDrag() {
       const idx = list.findIndex(e => e.id === ev.id)
       if (idx !== -1) list[idx] = { ...list[idx], date: range.start }
     }
-    patch(extraEvents.value)
-    patch(nextMonthEvents.value)
-    patch(spilloverEvents.value)
-    refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-    cacheMonth(cursor.value, [...extraEvents.value])
-    try {
-      const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
-      const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
-      applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
+    await InteractionSync.execute({
+      scope: 'calendar.event.move',
+      entityKey: `calendar-event:${ev.id}`,
+      apply: () => {
+        patch(extraEvents.value); patch(nextMonthEvents.value); patch(spilloverEvents.value)
+        refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+        cacheMonth(cursor.value, [...extraEvents.value])
+      },
+      rollback: () => {
+        const restore = (list: CalItem[]) => {
+          const i = list.findIndex(e => e.id === ev.id)
+          if (i !== -1) list[i] = { ...list[i], date: ev.date }
+        }
+        restore(extraEvents.value); restore(nextMonthEvents.value); restore(spilloverEvents.value)
+        refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+        cacheMonth(cursor.value, [...extraEvents.value])
+      },
+      request: mutation => eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version }, { mutationId: mutation.mutationId }),
+      onCommit: updated => {
+        const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
+        applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
+      },
+      onError: async (e: any) => { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } },
+    })
   }
 
   if (drag.type && ['proj-chip', 'proj-bar', 'proj-resize-start', 'proj-resize-end'].includes(drag.type)) {
@@ -936,10 +952,15 @@ function _setEventLocal(id: string | number, fields: Partial<CalItem>) {
 async function _persistEvent(s: EvDragState) {
   refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
   cacheMonth(cursor.value, [...extraEvents.value])
-  try {
-    const updated = await eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
-    if (updated?.version) _setEventLocal(s.id, { version: updated.version })
-  } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
+  await InteractionSync.execute({
+    scope: 'calendar.event.resize',
+    entityKey: `calendar-event:${s.id}`,
+    apply: () => {},
+    rollback: () => {},
+    request: mutation => eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version }, { mutationId: mutation.mutationId }),
+    onCommit: updated => { if (updated?.version) _setEventLocal(s.id, { version: updated.version }) },
+    onError: async (e: any) => { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } },
+  })
 }
 
 function onEvResize(ev: CalItem, edge: 'start' | 'end' | null, e: MouseEvent) {   // 拖边缘改起止时间
@@ -1218,14 +1239,24 @@ onUnmounted(() => {
 })
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
-watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents() })
-watch(() => liveStore.resourceEvent, (event) => {
-  if (!event || event.resource !== 'calendar' || event.origin === CLIENT_ID) return
-  if (!applyLiveEvent(event)) {
-    void fetchEvents()
-    void fetchNextMonthEvents()
-    void fetchSpilloverEvents()
+const calendarEventQueue = new InteractionSyncEventQueue()
+let lastCalendarEventTick = 0
+const refreshCalendarEvents = () => {
+  void fetchEvents(); void fetchNextMonthEvents(); void fetchSpilloverEvents()
+}
+calendarEventQueue.register('calendar', applyLiveEvent, refreshCalendarEvents)
+watch(() => liveStore.rev.calendar, () => {
+  const currentEvent = liveStore.resourceEvent
+  if (currentEvent?.resource === 'calendar' && currentEvent._t === lastCalendarEventTick) {
+    lastCalendarEventTick = 0
+    return
   }
+  calendarEventQueue.enqueue('calendar')
+})
+watch(() => liveStore.resourceEvent, (event) => {
+  if (!event || event.resource !== 'calendar') return
+  lastCalendarEventTick = event._t
+  calendarEventQueue.receive(event)
 })
 watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))

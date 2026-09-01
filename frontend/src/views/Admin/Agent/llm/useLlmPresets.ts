@@ -17,6 +17,12 @@ type LlmPresetSummary = {
   api_key?: string
   [key: string]: unknown
 }
+export type LlmMessagePart = {
+  key: string
+  label: string
+  text: string
+  status: 'supported' | 'unsupported' | 'unknown'
+}
 
 export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig: (value: Record<string, Record<string, unknown>>) => Promise<unknown> }, agentDraft: AgentDraft) {
   const t = i18n.global.t
@@ -26,6 +32,7 @@ export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig:
   const poolMode = ref('random')
   const presetsLoading = ref(false)
   const llmMsg = ref('')
+  const llmMsgParts = ref<LlmMessagePart[]>([])
   const llmMsgError = ref(false)
   const llmMsgSuccess = ref(false)
   const testingId = ref<string | number | null>(null)
@@ -34,8 +41,16 @@ export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig:
   const probingDim = ref<string | null>(null)
 
   function showMsg(msg: string, isError = false, withCheck = false) {
+    llmMsgParts.value = []
     llmMsg.value = msg; llmMsgError.value = isError; llmMsgSuccess.value = withCheck && !isError
     setTimeout(() => { llmMsg.value = '' }, isError ? 5000 : 3000)
+  }
+  function showMsgParts(msg: string, parts: LlmMessagePart[]) {
+    llmMsg.value = msg
+    llmMsgParts.value = parts
+    llmMsgError.value = false
+    llmMsgSuccess.value = false
+    setTimeout(() => { llmMsg.value = ''; llmMsgParts.value = [] }, 3000)
   }
   async function fetchPresets() {
     presetsLoading.value = true
@@ -93,5 +108,5 @@ export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig:
     } catch (error) { showMsg(t('adminAgentUi.testFailed', { message: error instanceof Error ? error.message : String(error) }), true) }
     finally { testingId.value = null }
   }
-  return { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset }
+  return { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgParts, llmMsgError, llmMsgSuccess, testingId, activatingId, probingId, probingDim, showMsg, showMsgParts, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset }
 }

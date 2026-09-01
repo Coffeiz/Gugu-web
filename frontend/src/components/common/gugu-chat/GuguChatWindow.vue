@@ -249,12 +249,14 @@ defineExpose({
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .chat-header {
+  min-height: var(--gugu-chat-header-height);
+  box-sizing: border-box;
   display: flex; align-items: center; gap: 9px;
-  padding: 13px 14px 10px;
+  padding: 0 8px 0 14px;
   border-bottom: 1px solid var(--gugu-chat-header-border, rgba(255,255,255,0.5));
   flex-shrink: 0;
 }
-.chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
+.chat-main.is-expanded .chat-header { padding: 0 8px 0 20px; }
 .chat-title { display:inline-flex; align-items:center; font-size: 13px; font-weight: 700; }
 .chat-title.is-new-session { display: inline-flex; padding: 2px 6px; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
@@ -322,13 +324,6 @@ defineExpose({
 }
 .popup-close-btn svg { display: block; }
 .popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
-
-/* 大窗态祖先态覆盖：放大按钮/输入区（跨组件，用 :deep() 穿透子组件 scope） */
-.chat-main.is-expanded :deep(.att-btn) { height: 32px; }
-.chat-main.is-expanded :deep(.chat-input-row) { padding: 14px 20px; gap: 10px; }
-.chat-main.is-expanded :deep(.rec-bar) { height: 32px; }
-.chat-main.is-expanded :deep(.chat-input-row textarea) { padding: 5.5px 0; }
-.chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
 
 /* 消息列表容器与内部结构渲染于 GuguChatMessageList.vue，需要 :deep() 穿透 */
 :deep(.chat-messages) {

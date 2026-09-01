@@ -5,8 +5,10 @@ import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.sandbox.docker_runtime import (
     DockerRuntimeStatus,
@@ -19,6 +21,9 @@ from agent.sandbox.docker_runtime import (
     valid_image_digest,
 )
 from app.core.config import get_settings, invalidate_settings_cache, write_override_json
+from app.core.events import publish
+from app.db.session import get_db
+from app.models import User
 from agent.sandbox.quota import clear_sandbox_directory
 from agent.security.logsafe import fingerprint
 
@@ -146,6 +151,13 @@ def _egress_proxy_error(cfg) -> str | None:
     return None
 
 
+async def _publish_terminal_refresh(db: AsyncSession) -> None:
+    """沙盒总开关变化后，让已登录页面立即重新计算终端入口可见性。"""
+    user_ids = (await db.execute(select(User.id))).scalars().all()  # orm-exempt: 管理员沙盒状态变更需要向所有用户广播刷新事件
+    for user_id in user_ids:
+        await publish(user_id, "terminals", operation="refresh")
+
+
 @router.get("/status")
 async def sandbox_status():
     return _response()
@@ -185,7 +197,7 @@ async def validate_egress_proxy():
 
 
 @router.post("/enable")
-async def enable_sandbox():
+async def enable_sandbox(db: AsyncSession = Depends(get_db)):
     cfg = get_settings().sandbox
     runtime = probe_docker()
     image_ready = (
@@ -208,17 +220,22 @@ async def enable_sandbox():
     sandbox["enabled"] = True
     write_override_json(override)
     invalidate_settings_cache()
+    await _publish_terminal_refresh(db)
     return _response()
 
 
 @router.post("/disable")
-async def disable_sandbox():
+async def disable_sandbox(db: AsyncSession = Depends(get_db)):
     override = _read_override()
     sandbox = override.setdefault("sandbox", {})
     sandbox["enabled"] = False
+    agent = override.setdefault("agent", {})
+    for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled"):
+        agent[field] = False
     write_override_json(override)
     invalidate_settings_cache()
     reclaimed = cleanup_running_sandboxes()
+    await _publish_terminal_refresh(db)
     response = _response()
     response["reclaimed_containers"] = reclaimed
     return response

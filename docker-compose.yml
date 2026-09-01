@@ -1,16 +1,6 @@
-# 本地/开发一键起全栈用的 compose 文件——不是生产部署方式，生产用裸机 systemd 三服务
-# （见 backend/start.sh install），原因见 backend/Dockerfile 顶部注释。
-#
-# 用法：
-#   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
-#   docker compose up -d                    # 默认轻量模式；保留搜索、Worker、Gateway，不启动 Shell 沙盒
-#   docker compose --profile sandbox up -d  # 额外启用 sandboxd 和受控 egress
-#   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
-#
-# 直连 PyPI 官方源慢（部分网络环境常见，见 backend/Dockerfile 里 PIP_INDEX_URL 的注释）？
-# 换源不用改文件，构建前设个环境变量即可（下面 backend/worker 的 build.args 会读到）：
-#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose build
-#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose up -d --build
+# Preview Compose：默认使用公开的 latest 构建镜像，不挂载源码，不运行 Vite/Uvicorn reload。
+# 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用。
+# 正式部署请改用 docker-compose.prod.yml，并固定镜像版本或 digest。
 
 x-json-file-logging: &json-file-logging
   driver: json-file
@@ -24,17 +14,15 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${GUGU_DB_USER:-gugu}
-      POSTGRES_PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      POSTGRES_PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       POSTGRES_DB: ${GUGU_DB_NAME:-gugu}
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gugu -d gugu"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
 
   redis:
     logging: *json-file-logging
@@ -42,32 +30,24 @@ services:
     environment:
       GUGU_REDIS_PASSWORD: ${GUGU_REDIS_PASSWORD:-}
     command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server; fi"]
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD-SHELL", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then redis-cli -a \"$${GUGU_REDIS_PASSWORD}\" ping; else redis-cli ping; fi"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
 
-  # 普通联网搜索和图片搜索的本地引擎。后端通过 Compose 内网地址访问，
-  # 宿主机只绑定 127.0.0.1，避免把未带认证的 JSON 搜索接口暴露到局域网。
   searxng:
     logging: *json-file-logging
     image: searxng/searxng:latest
-    ports:
-      - "127.0.0.1:8888:8080"
     volumes:
-      - ./searxng:/etc/searxng:rw
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
-      SEARXNG_BASE_URL: http://localhost:8888/
-      UWSGI_WORKERS: 1
-      UWSGI_THREADS: 2
-    mem_limit: 350m
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
+      UWSGI_WORKERS: 2
+      UWSGI_THREADS: 4
+    mem_limit: 512m
     restart: unless-stopped
 
-  # 受控 egress 代理。沙盒只连接 egress_internal，代理通过 default 网络访问公网；
-  # 沙盒容器没有 default/bridge 网络，因此不能绕过代理直连外网。
   egress-proxy:
     profiles: [sandbox]
     logging: *json-file-logging
@@ -79,37 +59,9 @@ services:
       - egress_internal
     restart: unless-stopped
 
-  # 开发观测 Collector。Gugu 的 backend/worker/gateway 默认通过 Compose 内网
-  # 上报 LoopScope；数据保存在独立 volume，不混入业务 PostgreSQL。
-  loopscope-collector:
-    logging: *json-file-logging
-    build:
-      context: ./loopscope
-      dockerfile: apps/collector/Dockerfile
-    environment:
-      LOOPSCOPE_HOST: 0.0.0.0
-      LOOPSCOPE_PORT: 4320
-      LOOPSCOPE_DB_PATH: /data/loopscope.db
-    ports:
-      - "127.0.0.1:4320:4320"
-    volumes:
-      - loopscope_data:/data
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4320/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-
-  # 只执行一次的数据库初始化/迁移任务。Web 和 Worker 都等它成功后再启动，
-  # 避免两个容器同时执行 alembic 产生迁移竞态。
   migrate:
     logging: *json-file-logging
-    build:
-      context: ./backend
-      args:
-        - PIP_INDEX_URL
-        - GUGU_INSTALL_DOCKER_CLI=false
+    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
     command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
     env_file:
       - ./backend/.env
@@ -118,39 +70,32 @@ services:
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
-      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       STORAGE__LOCAL_PATH: /data/users
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
+      SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ./backend:/app
       - gugu_data:/data
+      - gugu_config:/config
 
   backend:
     logging: *json-file-logging
-    build:
-      context: ./backend
-      # 裸变量名（不是 `PIP_INDEX_URL: ${PIP_INDEX_URL:-}` 那种带默认值写法）——环境变量没设置
-      # 时 compose 不会传这个 build arg，落到 Dockerfile 里 ARG 的默认值（官方 PyPI 源）；带
-      # `:-` 写法未设置时会解析成空字符串，作为显式空值传给 docker build 反而**覆盖**掉那个默认值，
-      # 变成一个空 index url——2026-07-14 实测过这个坑，两种写法差着能不能装上依赖。
-      args:
-        - PIP_INDEX_URL
-        - GUGU_INSTALL_DOCKER_CLI=false
-    ports:
-      - "8000:8000"
+    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
     env_file:
-      # backend/.env 是应用自己按 app/core/config.py 的 env_file=".env" 约定去找的路径
-      # （从 backend/ 目录启动时相对路径解析），跟下面 environment: 覆盖的 DB__*/REDIS__*
-      # 不冲突——environment 优先级更高，专门覆盖成 compose 网络里的服务名。
       - ./backend/.env
     environment:
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
-      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
@@ -159,13 +104,12 @@ services:
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
-      LOOPSCOPE_ENABLED: "1"
-      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,23 +119,15 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
-      loopscope-collector:
-        condition: service_healthy
     volumes:
-      - ./backend:/app
       - gugu_data:/data
+      - gugu_config:/config
       - sandbox_socket:/run/gugu
+    restart: unless-stopped
 
-  # IM 队列消费者（飞书/QQ/微信消息 → 跑 agent 回复）——跟 backend 是同一个镜像，
-  # 只是 command 换成 worker 入口；没配 IM 频道凭据也能起，只是收不到消息，不影响
-  # web API 本身。
   worker:
     logging: *json-file-logging
-    build:
-      context: ./backend
-      args:
-        - PIP_INDEX_URL   # 跟 backend 同一个镜像/同一个坑，见上面 backend.build.args 的注释
-        - GUGU_INSTALL_DOCKER_CLI=false
+    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
     command: ["python", "-m", "worker"]
     env_file:
       - ./backend/.env
@@ -200,7 +136,7 @@ services:
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
-      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
@@ -209,13 +145,9 @@ services:
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
-      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
-      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
-      LOOPSCOPE_ENABLED: "1"
-      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -225,21 +157,16 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
-      loopscope-collector:
-        condition: service_healthy
     volumes:
-      - ./backend:/app
       - gugu_data:/data
+      - gugu_config:/config
       - sandbox_socket:/run/gugu
+    restart: unless-stopped
 
   # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
   gateway:
     logging: *json-file-logging
-    build:
-      context: ./backend
-      args:
-        - PIP_INDEX_URL
-        - GUGU_INSTALL_DOCKER_CLI=false
+    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
     command: ["python", "-m", "agent.gateway.gateway"]
     env_file:
       - ./backend/.env
@@ -248,15 +175,14 @@ services:
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
-      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       STORAGE__LOCAL_PATH: /data/users
-      LOOPSCOPE_ENABLED: "1"
-      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -264,22 +190,16 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      loopscope-collector:
-        condition: service_healthy
     volumes:
-      - ./backend:/app
       - gugu_data:/data
+      - gugu_config:/config
+    restart: unless-stopped
 
-  # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
-  # 只有显式启用 --profile sandbox 才构建/启动；轻量模式不会安装 Docker CLI。
   sandboxd:
     profiles: [sandbox]
     logging: *json-file-logging
-    build:
-      context: ./backend
-      args:
-        - PIP_INDEX_URL
-        - GUGU_INSTALL_DOCKER_CLI=true
+    # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
+    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
     env_file:
       - ./backend/.env
@@ -287,45 +207,46 @@ services:
       DOCKER_HOST: unix:///run/gugu/docker.sock
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
-    volumes:
-      - gugu_data:/data
-      - sandbox_socket:/run/gugu
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
     depends_on:
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+      - sandbox_socket:/run/gugu
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
     restart: unless-stopped
 
   frontend:
     logging: *json-file-logging
-    build:
-      context: ..
-      dockerfile: Gugu-web/frontend/Dockerfile
-    ports:
-      - "9595:5173"   # 宿主机 9595 → 容器内 vite dev server 仍然是 5173，容器内部端口不用改
-    environment:
-      # 见 vite.config.js 的 proxy 注释：容器网络里 "localhost" 指前端容器自己，
-      # 用 compose 服务名 backend 才能连到后端容器。
-      VITE_API_PROXY_TARGET: http://backend:8000
-    volumes:
-      - ./frontend:/workspace/frontend
-      # 源码目录挂载会覆盖镜像内的 frontend/node_modules；依赖卷必须挂在被覆盖的
-      # 子目录上，否则 pnpm dev 启动时找不到 Vite。
-      - /workspace/frontend/node_modules
+    image: ${GUGU_FRONTEND_IMAGE:-ghcr.io/coffeiz/gugu-web-frontend:latest}
     depends_on:
       - backend
+
+  nginx:
+    logging: *json-file-logging
+    image: nginx:1.27-alpine
+    ports:
+      - "${GUGU_HTTP_PORT:-9595}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
 
 volumes:
   pgdata:
   gugu_data:
+  gugu_config:
   sandbox_socket:
-  loopscope_data:
 
 networks:
   egress_internal:

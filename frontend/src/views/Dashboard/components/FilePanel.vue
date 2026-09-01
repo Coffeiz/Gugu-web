@@ -83,6 +83,7 @@
 <script setup lang="ts">
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { filesApi } from '@/services/api'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
@@ -185,10 +186,15 @@ async function commitRename(f: any) {
   const name = renameText.value.trim()
   renamingId.value = null
   if (!name || name === f.name) return
+  const previous = store.getFile(f.id)
   try {
-    await filesApi.update(f.id, { displayName: name })
-    store.updateFile(f.id, { displayName: name })
-  } catch { /* ignore */ }
+    await InteractionSync.execute({
+      scope: 'file.dashboard-rename', entityKey: `file:${f.id}`,
+      apply: () => store.updateFile(f.id, { displayName: name }),
+      rollback: () => { if (previous) store.updateFile(f.id, { displayName: previous.displayName }) },
+      request: mutation => filesApi.update(f.id, { displayName: name }, { mutationId: mutation.mutationId }),
+    })
+  } catch { /* 统一事务已回滚 */ }
 }
 
 async function downloadFile(f: any) {
@@ -202,11 +208,16 @@ async function deleteFile(f: any) {
     tone: 'danger',
     confirmText: t('filesViewUi.moveToTrash'),
   })) return
+  const previous = store.getFile(f.id)
   try {
-    await filesApi.delete(f.id)
-    clearThumbCache(f.id)
-    store.removeFile(f.id)
-  } catch { /* ignore */ }
+    await InteractionSync.execute({
+      scope: 'file.dashboard-delete', entityKey: `file:${f.id}`,
+      apply: () => store.removeFile(f.id),
+      rollback: () => { if (previous) store.addFile(previous) },
+      request: mutation => filesApi.delete(f.id, { mutationId: mutation.mutationId }),
+      onCommit: () => clearThumbCache(f.id),
+    })
+  } catch { /* 统一事务已回滚 */ }
 }
 
 async function onUploaded() {

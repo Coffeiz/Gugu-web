@@ -12,9 +12,11 @@
  * 周起始 = 周一（国内习惯）。
  */
 
-/** 当前浏览器时区（IANA，如 Asia/Shanghai）。后端迁移出 User.timezone 后由调用方传入覆盖。 */
+import { effectiveTimezone, browserTimezone } from './userTimezone'
+
+/** 当前浏览器时区（IANA，如 Asia/Shanghai）。 */
 export function browserTz(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  return browserTimezone()
 }
 
 /** 把后端时间串解析成绝对时刻:带时区标记（Z / ±hh:mm）就原样，naive 的当 UTC 补 `Z`。 */
@@ -26,19 +28,19 @@ export function parseUtc(iso: string | null | undefined): Date {
 }
 
 /** 该绝对时刻在 tz 下属于哪一天,返回 `YYYY-MM-DD`（en-CA 天然 ISO 格式）。 */
-export function localDayKey(instant: Date, tz: string = browserTz()): string {
+export function localDayKey(instant: Date, tz: string = effectiveTimezone()): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(instant)
 }
 
 /** 两个时刻在 tz 下是否同一本地天。 */
-export function isSameLocalDay(a: Date, b: Date, tz: string = browserTz()): boolean {
+export function isSameLocalDay(a: Date, b: Date, tz: string = effectiveTimezone()): boolean {
   return localDayKey(a, tz) === localDayKey(b, tz)
 }
 
 /** 是否"今天"(按 tz 的本地天,不是 UTC 天)。now 可注入便于测试。 */
-export function isToday(instant: Date, tz: string = browserTz(), now: Date = new Date()): boolean {
+export function isToday(instant: Date, tz: string = effectiveTimezone(), now: Date = new Date()): boolean {
   return isSameLocalDay(instant, now, tz)
 }
 
@@ -52,7 +54,7 @@ function mondayIndex(dayKey: string): number {
 }
 
 /** 是否"本周"(周一为起点,按 tz 的本地周)。now 可注入便于测试。 */
-export function isThisWeek(instant: Date, tz: string = browserTz(), now: Date = new Date()): boolean {
+export function isThisWeek(instant: Date, tz: string = effectiveTimezone(), now: Date = new Date()): boolean {
   return mondayIndex(localDayKey(instant, tz)) === mondayIndex(localDayKey(now, tz))
 }
 

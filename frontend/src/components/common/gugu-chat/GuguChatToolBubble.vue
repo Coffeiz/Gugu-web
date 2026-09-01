@@ -115,7 +115,7 @@ function cleanupDetailTransition(element: Element) {
 </script>
 
 <style scoped>
-.tool-event-bubble { width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--surface-glass); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: background var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.tool-event-bubble { width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: background var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .tool-event-bubble:has(.tool-event-head:hover) { background: var(--surface-glass-hover); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
 .tool-event-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 9px; width: 100%; min-height: 54px; border: 0; padding: 10px 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tool-event-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--border-focus); }
@@ -128,7 +128,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-meta { grid-column: 2; grid-row: 2; color: var(--content-secondary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-duration { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--content-tertiary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-head :deep(.flip-chevron) { grid-column: 4; grid-row: 1 / span 2; align-self: center; }
-.tool-event-detail { padding: 10px 12px 11px; border-top: 1px solid var(--border-default); background: var(--surface-raised); color: var(--content-secondary); }
+.tool-event-detail { padding: 10px 12px 11px; border-top: 1px solid var(--border-default); background: var(--gugu-chat-assistant-bg); color: var(--content-secondary); }
 .tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-default); }
 .tool-event-caption { display: block; margin-bottom: 4px; color: var(--content-tertiary); font-size: var(--font-size-xs); font-weight: 600; }
 pre { max-height: 180px; margin: 0; overflow: auto; color: var(--content-primary); white-space: pre-wrap; word-break: break-word; font: var(--font-size-xs)/var(--line-height-body) var(--font-family-mono); }

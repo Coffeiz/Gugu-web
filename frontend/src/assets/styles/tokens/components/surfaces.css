@@ -124,6 +124,10 @@
   --file-card-bg-selected: rgba(255,255,255,.92);
   --file-card-border-selected: rgba(123,127,178,.55);
   --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
+  --file-card-hover-overlay: var(--card-hover-overlay);
+  --file-card-preselection-bg: rgba(123,127,178,.06);
+  --file-card-preselection-border: rgba(123,127,178,.45);
+  --file-card-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px rgba(123,127,178,.15);
   --file-card-selection-overlay: rgba(123,127,178,.14);
   --file-card-selection-thumb-overlay: rgba(123,127,178,.28);
   --file-card-preselection-thumb-overlay: rgba(123,127,178,.16);
@@ -362,7 +366,11 @@ html[data-theme='dark'][data-family] {
   --file-card-bg-selected: var(--surface-raised);
   --file-card-border-selected: var(--action-outline);
   --file-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
-  --file-card-selection-overlay: var(--selection-bg);
+  --file-card-hover-overlay: color-mix(in srgb,var(--action-primary) 6%,transparent);
+  --file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 5%,var(--surface-card-solid));
+  --file-card-preselection-border: color-mix(in srgb,var(--action-primary) 38%,transparent);
+  --file-card-preselection-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 12%,transparent);
+  --file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);
   --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --file-card-badge-bg: var(--surface-soft);
@@ -377,10 +385,10 @@ html[data-theme='dark'][data-family] {
   --folder-card-bg-selected: var(--surface-raised);
   --folder-card-border-selected: var(--action-outline);
   --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
-  --folder-card-selection-overlay: var(--selection-bg);
-  --folder-card-bg-preselected: var(--action-soft);
-  --folder-card-border-preselected: var(--action-outline);
-  --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px var(--selection-bg);
+  --folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 8%,transparent);
+  --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,var(--surface-card-solid));
+  --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
+  --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px color-mix(in srgb,var(--action-primary) 12%,transparent);
   --folder-card-checkbox-bg: var(--control-bg);
   --folder-card-checkbox-border: var(--action-outline);
   --folder-card-checkbox-bg-checked: var(--action-primary-bg);

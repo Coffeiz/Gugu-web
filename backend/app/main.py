@@ -53,6 +53,7 @@ from app.api.v1 import user_skills as user_skills_router
 from app.api.v1 import byok as byok_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
+from app.api.v1 import public_config as public_config_router
 from onboarding.routes import router as onboarding_router   # 独立子系统（backend/onboarding/）
 from app.db.session import create_all_tables
 
@@ -316,6 +317,7 @@ app.include_router(workspaces_router.router, prefix="/api/v1")
 app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
+app.include_router(public_config_router.router, prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）
 app.include_router(user_bots_router.router,      prefix="/api/v1")
 app.include_router(qq_connect_router.router,     prefix="/api/v1")

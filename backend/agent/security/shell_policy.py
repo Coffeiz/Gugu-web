@@ -106,6 +106,9 @@ async def evaluate(
         return ShellDecision(False, "Shell 范围无效，只能是 sandbox 或 system", risk)
     if not settings.agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
+    sandbox = getattr(settings, "sandbox", None)
+    if sandbox is not None and not getattr(sandbox, "enabled", False):
+        return ShellDecision(False, "Shell 沙盒未开启", risk)
     if session_id and session is None:
         session = await db.get(ConversationSession, session_id)
     if session_id and (not session or session.user_id != user_id):

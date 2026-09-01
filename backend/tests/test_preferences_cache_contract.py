@@ -34,6 +34,19 @@ def test_personality_stays_out_of_dynamic_tail_and_history_wrapping():
     assert "确认门" in static
 
 
+def test_static_prompt_contains_no_runtime_context_sections():
+    static, dynamic, _ = builder.build_split(
+        "default", "测试用户", [], [], memory={"lens": "动态记忆不应进入 system"},
+        source="qq", im_channels={"qq": True},
+    )
+
+    assert "动态记忆不应进入 system" not in static
+    assert "动态记忆不应进入 system" in dynamic
+    assert all(section not in static for section in (
+        "## 项目", "## 日历", "## 笔记", "## 文件", "## 当前对话来源 / 通知渠道",
+    ))
+
+
 def test_disabled_personality_keeps_default_persona_and_does_not_change_security_prompt():
     enabled, _, _ = builder.build_split(
         "default", "测试用户", [], [],

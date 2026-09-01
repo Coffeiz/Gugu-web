@@ -5,6 +5,7 @@ import { API_BASE } from '../chatConstants'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
+import { effectiveTimezone } from '@/utils/userTimezone'
 
 interface RawSessionMessage {
   id: number
@@ -165,7 +166,7 @@ export function useChatSessions(options: {
           files: m.files && m.files.length ? m.files : undefined,
           references: m.references && m.references.length ? m.references : undefined,
           quotedText: m.quotedText || undefined,
-          time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
           _createdAt: m.createdAt,
           _timelineOrder: m.timelineOrder ?? m.id,
           runId: m.runId,
@@ -173,7 +174,7 @@ export function useChatSessions(options: {
         }
       })
       const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
-        id: mkid(), role: 'tool', text: '', time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+        id: mkid(), role: 'tool', text: '', time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
         toolCallId: event.toolCallId, toolName: event.toolName,
         toolLabel: event.toolLabel,
         _timelineOrder: event.timelineOrder,
@@ -184,7 +185,7 @@ export function useChatSessions(options: {
         event.kind === 'assistant'
           ? {
               id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
-              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
               runId: event.runId, roundId: event.roundId,
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
             }
@@ -193,7 +194,7 @@ export function useChatSessions(options: {
               toolCallId: event.toolCallId, toolName: event.toolName, toolLabel: event.toolLabel,
               toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
               toolInput: event.toolInput, toolResult: event.toolResult,
-              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
             },
       )
@@ -213,7 +214,7 @@ export function useChatSessions(options: {
           for (const item of (interactionData.items || [])) {
             messages.value.push({
               id: mkid(), role: 'interaction', text: '', _createdAt: item.created_at,
-              time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
               interaction: {
                 promptId: Number(item.id), kind: String(item.kind || 'confirm'),
                 toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,

@@ -196,8 +196,18 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     "locale": current_locale,
                     }
 
-        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot, locale=current_locale)
+        async def _load_system_prompt(current_user_tz):
+            return builder.build_static_prompt(
+                profile.prompt_file.removesuffix(".md"), req.user_name,
+                skills=profile.skills, style_prefs=style_prefs,
+                current_date=session_snapshot.current_date_text(current_user_tz),
+            )
+
+        snapshot = await session_snapshot.ensure_snapshot(
+            db, session, load_context=_load_snapshot, locale=current_locale,
+        )
         user_tz = snapshot["user_tz"]
+        snapshot["system_prompt"] = await _load_system_prompt(user_tz)
         set_ctx_tz(user_tz)
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
@@ -294,7 +304,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
-        transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
+        async with _sess._SessionLocal() as voice_db:
+            transcript = await _voice.transcribe(
+                _transcribe_media, settings, db=voice_db, user_id=user_id,
+            )
         if transcript is None:        # 未配置语音模型
             block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
             async with _sess._SessionLocal() as db2:
@@ -400,8 +413,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # 发送给模型。不要再把同一段文字追加进 system-reminder：两份语义相同的
     # 开场上下文会提高模型复述问候的概率，也会破坏固定前缀的稳定性。
 
-    # Web 后台生成与 IM 共用能力目录：首轮只声明能力目录和 ask_user，
-    # 只有模型获取后才把对应工具 schema 写入后续轮次。
+    # Web 后台生成与 IM 共用稳定能力目录：简介模式首轮注入全部已授权工具的
+    # 短描述和字段签名；完整业务 Schema 仍通过 get_tool_schema 按需获取。
     from agent.runner import _capability_context, _filter_shell_tool
     async with _sess._SessionLocal() as db:
         if model_cfg is None:
@@ -414,7 +427,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
         )
 
     from agent.llm.llm_select import use_anthropic_for

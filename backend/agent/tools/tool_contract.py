@@ -16,6 +16,13 @@ from jsonschema.exceptions import SchemaError, ValidationError
 
 MAX_VALIDATION_ISSUES = 5
 _INTEGER_TEXT = re.compile(r"^[+-]?\d+$")
+_NOTE_SCHEMA_HINTS = [
+    "请重新生成完整的 blocks/append_blocks 数组，不要只改报错字段。",
+    "paragraph/heading 使用 content 数组；bullet_list/ordered_list/task_list 使用 items 数组；blockquote 使用 paragraphs 数组。",
+    "列表和待办只支持扁平项：列表项只能是 {content:[{type:text/reference,...}]}，待办项只能是 {checked:boolean,content:[{type:text/reference,...}]}。",
+    "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与 append_blocks 同时传。",
+    "行内对象必须带 type；不要在列表项内嵌套列表、content 或 paragraphs，也不要把数组包装成 {item:[...]}。",
+]
 
 
 def normalize_tool_name(value: Any) -> str | None:
@@ -34,6 +41,14 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
     normalized = dict(instance)
     adaptations: list[str] = []
+    if tool_name in {"create_project", "set_color"} and isinstance(normalized.get("color"), str):
+        # 兼容旧版本已经生成的 CSS 渐变参数；新的模型 schema 只暴露语义色名。
+        from app.core.project_colors import project_color_key
+
+        color_key = project_color_key(normalized["color"])
+        if color_key != normalized["color"]:
+            normalized["color"] = color_key
+            adaptations.append(f"{tool_name}.color:normalized_token")
     if tool_name == "create_event" and "all_day" not in normalized:
         normalized["all_day"] = not bool(normalized.get("time") or normalized.get("end_time"))
         adaptations.append("create_event.all_day_inferred")
@@ -296,13 +311,16 @@ def _schema_repair_hints(schema: dict[str, Any] | None, issues: list[dict[str, s
         return hints
     for issue in issues:
         path = issue.get("path", "")
-        if issue.get("rule") != "type" or "." in path:
+        if issue.get("rule") not in {"type", "enum"} or "." in path:
             continue
         definition = properties.get(path)
         if not isinstance(definition, dict):
             continue
         expected = definition.get("type")
-        if expected == "array":
+        if issue.get("rule") == "enum" and isinstance(definition.get("enum"), list):
+            allowed = "、".join(str(item) for item in definition["enum"])
+            hints.append(f"{path} 必须是允许的枚举值：{allowed}。不要传视觉描述或 CSS 值。")
+        elif expected == "array":
             item_schema = definition.get("items")
             example = "[]"
             if isinstance(item_schema, dict):
@@ -336,6 +354,9 @@ def invalid_input_payload(
         "next_action": _invalid_input_next_action(bounded),
     }
     hints = _schema_repair_hints(schema, bounded)
+    if tool_name in {"note_create", "note_update"}:
+        payload["next_action"] = "笔记结构错误，请按 schema_hints 重建完整 blocks；不要沿用原来的嵌套结构或 item 包装。"
+        hints = [*hints, *_NOTE_SCHEMA_HINTS]
     if hints:
         payload["schema_hints"] = hints
     return payload

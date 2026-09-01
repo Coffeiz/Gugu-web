@@ -67,6 +67,26 @@ def test_phase2_calendar_and_file_semantics():
     assert _issues("save_uploaded_file", {"source": "attach_id"})
 
 
+def test_canvas_mutation_schemas_require_explicit_shape_and_types():
+    assert _issues("canvas_update_node", {"canvas_id": 7, "item_id": 12, "x": 10, "y": 20}) == []
+    assert _issues("canvas_update_node", {"canvas_id": 7, "item_id": "12", "x": "10"})
+    assert _issues("canvas_update_node", {"canvas_id": 7, "item_id": 12})
+    assert _issues("canvas_update_node", {
+        "canvas_id": 7,
+        "updates": [{"item_id": 12, "z": 3}],
+    }) == []
+    assert _issues("canvas_update_node", {
+        "canvas_id": 7,
+        "updates": [{"item_id": "12", "z": "3"}],
+    })
+    assert _issues("canvas_update_node", {"item_id": 12, "x": 10})
+
+    assert _issues("canvas_remove_node", {"canvas_id": 7, "item_id": 12}) == []
+    assert _issues("canvas_remove_node", {"canvas_id": 7, "item_id": 12, "item_ids": [12]})
+    assert _issues("canvas_disconnect", {"canvas_id": 7, "relation_ids": [3, 4]}) == []
+    assert _issues("canvas_disconnect", {"canvas_id": 7})
+
+
 def test_phase3_project_requires_explicit_date_range():
     assert _issues("create_project", {
         "name": "项目",
@@ -78,10 +98,10 @@ def test_phase3_project_requires_explicit_date_range():
 
 def test_phase8_migrated_tools_are_source_canonical_schema():
     for name in (
-        "create_project", "create_event", "update_event", "save_uploaded_file", "note_create",
+        "create_project", "create_event", "update_event", "save_uploaded_file",
         "list_events", "list_projects", "list_event_reminders", "remove_event_reminder",
         "list_folders", "add_todo", "remove_todo", "set_stages", "read_file",
-        "note_get", "note_update", "note_delete", "note_restore",
+        "note_get", "note_delete", "note_restore",
         "get_project", "read_conversation", "bind_web_session",
         "add_stage", "get_workspace", "get_upcoming", "create_client",
         "global_search", "canvas_search", "canvas_search_placeable",
@@ -95,6 +115,14 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
     ):
         tool = registry.get(name)
         assert tool.input_schema == _compact_schema(tool.input_schema), name
+
+
+def test_note_schemas_keep_structural_metadata_for_model_guidance():
+    for name in ("note_create", "note_update"):
+        tool = registry.get(name)
+        block_schema = tool.input_schema["properties"]["blocks" if name == "note_create" else "append_blocks"]["items"]
+        assert block_schema["additionalProperties"] is False
+        assert block_schema["properties"]["items"]["items"]["additionalProperties"] is False
 
 
 def test_phase8_compactor_keeps_reserved_parameter_names():
@@ -144,7 +172,8 @@ def test_phase8_document_project_location_is_structural():
 
 def test_phase8_edit_modes_are_structural():
     assert _issues("edit_file", {
-        "file_id": 1, "mode": "replace_all", "content": "新内容",
+        "file_id": 1, "mode": "line_edit",
+        "line_edits": [{"target_lines": "all", "content": "新内容"}],
     }) == []
     assert _issues("edit_file", {
         "file_id": 1, "mode": "append", "content": "追加内容",
@@ -152,7 +181,7 @@ def test_phase8_edit_modes_are_structural():
     assert _issues("edit_file", {
         "file_id": 1, "mode": "find_replace", "find": "旧", "replace": "新",
     }) == []
-    assert _issues("edit_file", {"file_id": 1, "mode": "replace_all"})
+    assert _issues("edit_file", {"file_id": 1, "mode": "line_edit"})
     assert _issues("edit_file", {"file_id": 1, "mode": "append", "find": "旧", "replace": "新"})
     assert _issues("edit_file", {"file_id": 1, "mode": "find_replace", "content": "新内容"})
 

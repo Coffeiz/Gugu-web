@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings, save_override
 from app.core.redaction import redact
 from app.db.session import create_all_tables, reset_engine, get_db
+from agent.sandbox.docker_runtime import sandbox_readiness
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
 
@@ -55,15 +56,34 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
     import traceback as _tb
     from app.api.v1.audit_log import write_log
     try:
+        agent_patch = body.patch.get("agent")
+        sandbox_patch = body.patch.get("sandbox")
+        if isinstance(agent_patch, dict) and any(
+            agent_patch.get(field) is True
+            for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled")
+        ):
+            sandbox_enabled = (
+                sandbox_patch.get("enabled")
+                if isinstance(sandbox_patch, dict) and "enabled" in sandbox_patch
+                else get_settings().sandbox.enabled
+            )
+            if not sandbox_enabled:
+                raise HTTPException(status_code=400, detail="开启 Shell 前必须先开启 Shell 沙盒")
+            sandbox_ready, sandbox_reason = sandbox_readiness(get_settings().sandbox)
+            if not sandbox_ready:
+                raise HTTPException(status_code=400, detail=f"当前 Shell 沙盒不可用：{sandbox_reason}")
         new_cfg = await save_override(body.patch)
         sections = "、".join(body.patch.keys())
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)
-        agent_patch = body.patch.get("agent")
         shell_fields = {
             "shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled",
         }
-        if isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch):
+        if (
+            isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch)
+        ) or (
+            isinstance(sandbox_patch, dict) and "enabled" in sandbox_patch
+        ):
             from app.core import events
             from app.models import User
             user_ids = (await db.execute(select(User.id))).scalars().all()
@@ -74,6 +94,8 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
             await invalidate_personality_snapshots(db)
             await db.commit()
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
         raise HTTPException(status_code=500, detail="操作失败，请查看服务端日志排查")

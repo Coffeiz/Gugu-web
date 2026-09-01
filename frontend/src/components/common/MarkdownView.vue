@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
 .md-view :deep(em) { font-style: italic; }
 .md-view :deep(del) { text-decoration: line-through; opacity: 0.6; }
 .md-view :deep(a) { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
-.md-view :deep(a:hover) { opacity: 0.8; }
+.md-view :deep(a:hover:not(.chat-object-card)) { opacity: 0.8; }
 
 .md-view :deep(ul), .md-view :deep(ol) { margin: 4px 0 7px; padding-left: 18px; }
 .md-view :deep(ul) { list-style: disc; }

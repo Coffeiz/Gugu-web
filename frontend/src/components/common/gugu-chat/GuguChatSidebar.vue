@@ -57,6 +57,7 @@ import Icon from '@/components/common/Icon.vue'
 import GuguChatImConnect from './GuguChatImConnect.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
+import { effectiveTimezone } from '@/utils/userTimezone'
 
 const { t, locale } = useI18n()
 
@@ -90,8 +91,9 @@ function formatSessionTime(raw?: string) {
   const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
   const now = new Date()
-  const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
-  if (sameDay) return date.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
+  const parts = (value: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: effectiveTimezone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+  const sameDay = parts(date) === parts(now)
+  if (sameDay) return date.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: effectiveTimezone() })
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
   if (date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()) return t('chatUi.yesterday')
   return new Intl.DateTimeFormat(locale.value, date.getFullYear() === now.getFullYear()
@@ -114,7 +116,8 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   -webkit-backdrop-filter: blur(24px);
 }
 .exp-sidebar-header {
-  min-height: 50px;
+  height: var(--gugu-chat-header-height);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -132,14 +135,14 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 .exp-group-divider { margin: var(--space-sm) var(--space-xs); }
 
 .exp-new-session-wrap {
-  min-height: 48px;
+  min-height: var(--gugu-chat-composer-height);
   box-sizing: border-box;
   padding: var(--space-sm);
   flex-shrink: 0;
 }
 .exp-new-session-btn {
   width: 100%;
-  height: var(--control-sm);
+  height: var(--control-height-md);
   display: flex;
   align-items: center;
   justify-content: center;

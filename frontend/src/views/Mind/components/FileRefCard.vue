@@ -23,7 +23,7 @@
         @error="($event.target as HTMLElement).style.display = 'none'" />
     </template>
     <template #meta>{{ file.projectName || t('filesUi.unlinked') }} · {{ file.size }}</template>
-    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
       <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
@@ -56,7 +56,7 @@
     @mouseleave="onLeave"
   >
     <template #meta>{{ t('common.status.loading') }}</template>
-    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
       <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
@@ -84,7 +84,7 @@
     @mouseleave="onLeave"
   >
     <template #meta>{{ t('filesUi.deletedSnapshot') }}</template>
-    <CardAffordances :hovering="isHovering && !isHoverSuppressed" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
       <button :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
@@ -126,7 +126,6 @@ const emit = defineEmits<{
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
 function onEnter() {
-  if (isHoverSuppressed.value) return
   isHovering.value = true
   emit('hover', props.item, true)
 }
@@ -176,7 +175,7 @@ function observeCard() {
 watch(file, () => nextTick(observeCard), { immediate: true })
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
-const { isHoverSuppressed, onPointerDown } = useMindRuntimeObject({
+const { onPointerDown } = useMindRuntimeObject({
   objectId: () => mindCanvasObjectId(props.item),
   element: () => fileCardRef.value?.rootEl ?? null,
 })

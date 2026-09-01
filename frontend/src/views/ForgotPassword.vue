@@ -4,6 +4,7 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
+      <AuthLanguageSwitcher />
       <AuthBrand />
 
       <template v-if="!sent">
@@ -47,6 +48,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import AuthBrand from '@/components/common/AuthBrand.vue'
+import AuthLanguageSwitcher from '@/components/common/AuthLanguageSwitcher.vue'
 import { useI18n } from 'vue-i18n'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
