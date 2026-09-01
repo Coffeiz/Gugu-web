@@ -88,7 +88,8 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
     expect(fileCard).toContain('var(--file-card-preselection-thumb-overlay)')
-    expect(fileCard).toContain(":global(html[data-theme='light'][data-family]) .fc-card.pre-selected:not(.selected)")
+    // 亮色预选不再由主题层复制 selector，FileCard 自己消费亮色 token 并拥有状态 paint。
+    expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) {')
     expect(fileCard).not.toContain(":global(html[data-theme='light'][data-family] .project-modal-root)")
     expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
