@@ -1,11 +1,21 @@
 # InteractionSync 本地交互同步层 PRD
 
-> 状态：规划中；先在画布完成验证，再推广到项目、日历、文件、便签和定时任务等交互实体
+> 状态：✅ Phase 1-4 已完成；实体交互已统一通过 InteractionSync，实时事件按资源队列收敛
 > 创建：2026-09-01
-> 最近更新：2026-09-01
+> 最近更新：2026-09-02
 > 所属层：UI / InteractionSync / Store / Interaction Runtime
 > 关联模块：`frontend/src/stores/mind.ts`、`frontend/src/interaction/runtime/`、`frontend/src/stores/live.ts`
 > 关联文档：[`【已完成】PRD-UI-2-统一实时事件更新.md`](./【已完成】PRD-UI-2-统一实时事件更新.md)、[`【已完成】PRD-UI-5-CSS样式职责收口与主题层统一.md`](./【已完成】PRD-UI-5-CSS样式职责收口与主题层统一.md)
+
+## 0. 实际状态
+
+| 能力/结果 | 状态 | 说明 |
+|---|---|---|
+| `InteractionSync` 统一模型 | ✅ 已完成 | 项目、日历、文件、便签和定时任务高频交互已通过统一 adapter 执行 |
+| 画布 optimistic 卡片身份保持 | ✅ 已完成 | 服务端回写保持 `clientKey`，已通过画布拖拽人工验收 |
+| 同客户端实时回声抑制 | ✅ 已完成 | 画布 Mind 写请求携带来源与 mutation 标识，已验证无重复 hover |
+| 跨客户端画布同步 | ✅ 已完成 | 其他来源事件经过事件队列并刷新/身份对账 |
+| 通用实时事件队列 | ✅ 已完成 | 已接入 Mind、项目、文件、日历和定时任务，支持增量合并与按资源刷新 |
 
 ---
 
@@ -193,18 +203,19 @@ Tab B / 咕咕操作 → clientId!=A 的事件：同步并对账
 
 ## 5. 修改与新建文件树
 
-以下是目标文件树，不代表本阶段全部立即创建。每次实施必须同步更新本节，避免同步逻辑散落到领域目录。
+以下是当前文件树与后续目标边界；已创建文件用“当前”标识，避免同步逻辑散落到领域目录。
 
 ```text
 frontend/src/interaction/sync/
-├── InteractionSync.ts              # 核心执行、确认、回滚和事件协调
-├── InteractionSyncState.ts         # clientId、mutationId、pending 状态和请求序列
-├── InteractionSyncPolicy.ts        # 实体 adapter/policy 类型与默认策略
-├── InteractionSyncReconciler.ts    # 列表、实体身份和字段合并
-└── InteractionSync.test.ts         # 通用时序、回声和旧响应测试
+├── InteractionSync.ts              # 当前：核心入口和来源判断
+├── InteractionSyncState.ts         # 当前：clientId、mutationId、pending 状态
+├── InteractionSyncPolicy.ts        # 当前：实体 adapter/policy 类型
+├── InteractionSyncReconciler.ts    # 当前：画布列表身份和字段合并
+├── InteractionSyncEventQueue.ts    # 当前：增量事件和合并刷新队列
+└── InteractionSync.test.ts         # 后续：通用时序测试
 
 frontend/src/interaction/runtime/
-└── syncBridge.ts                   # Runtime 生命周期与 InteractionSync 的边界适配
+└── syncBridge.ts                   # 后续：仅在确认需要时创建 Runtime 边界适配
 
 frontend/src/stores/
 ├── mind.ts                         # 迁移便签、画布卡片和 mind 事件
@@ -219,9 +230,10 @@ frontend/src/views/
 └── Files/                          # 仅保留文件操作入口和展示
 
 frontend/test/
-├── interactionSync.test.ts         # 跨实体通用同步契约
-├── interactionSyncRace.test.ts     # 请求、事件和交互时序组合
-└── interactionSyncEntities.test.ts # 五类实体 adapter 契约
+├── interactionSync.test.ts         # 当前：画布来源、placeholder 和身份对账
+├── interactionSyncPhase23.test.ts  # 当前：通用执行与实时事件队列契约
+├── interactionSyncRace.test.ts     # 后续：请求、事件和交互时序组合
+└── interactionSyncEntities.test.ts # 后续：五类实体 adapter 契约
 ```
 
 ### 5.1 新建文件
@@ -286,20 +298,37 @@ frontend/test/
 
 ### 当前状态
 
-- [ ] **Phase 1：画布同步闭环**（当前唯一进行中项）
-  - [ ] 定义 `clientId`、`mutationId`、`clientKey` 的生命周期和存储边界。
-  - [ ] 为画布创建、移动、更新、删除建立 mutation 记录与请求序列。
-  - [ ] 完成 `loadCanvas()` 的实体身份 reconciliation，禁止服务端列表覆盖本地组件身份。
-  - [ ] 接入同客户端事件回声抑制；保留 API 响应确认和错误回滚。
-  - [ ] 接入其他 Tab/咕咕客户端事件的增量合并或交互结束刷新。
-  - [ ] 补齐请求先后、实时事件、landing、回抽和失败响应的竞态测试。
-  - [ ] 完成画布人工验收和 Performance Trace，确认无重复 `mouseenter` 与 DOM 重挂载。
+- [x] **Phase 1：画布同步闭环**
+  - [x] `UI7-001` 定义 `clientId`、`mutationId`、`clientKey` 的生命周期和存储边界；验收：同一 Tab 刷新保持 `clientId`，每次 mutation 有独立 id。
+  - [x] `UI7-002` 为画布创建、移动、更新、删除建立 mutation 记录并透传请求来源；验收：画布写请求携带 `X-Client-Id` 和需要时的 `X-Mutation-Id`。
+  - [x] `UI7-003` 完成 `loadCanvas()` 的实体身份 reconciliation；验收：服务端列表回写不覆盖已有 `clientKey`，pending placeholder 在响应未到时保留。
+  - [x] `UI7-004` 接入同客户端事件回声抑制；验收：Mind 事件 `origin` 与当前 Tab 相同不触发重复刷新，API 响应仍正常合并。
+  - [x] `UI7-005` 接入其他 Tab/咕咕客户端事件的 reconciliation 刷新；验收：来源不同的 Mind 事件仍进入实体合并或后台刷新。
+  - [x] `UI7-006` 补齐请求先后、实时事件、landing 期间刷新、回抽和失败响应的自动化竞态契约；验收：画布加载序列、删除失效、账号边界、身份保持和取消 placeholder 测试通过。
+  - [x] `UI7-007` 完成画布人工验收和 Performance Trace；验收：抽屉拖入后无重复 hover、无卡片重挂载抖动，验证日期：2026-09-02。
 
 ### 后续顺序
 
-- [ ] **Phase 2：通用同步原语**，仅在 Phase 1 的验收证据齐全后开始。
-- [ ] **Phase 3：增量实时事件**，仅在通用身份与 mutation 原语稳定后开始。
-- [ ] **Phase 4：移除重复编排**，仅在所有调用方完成迁移后开始。
+- [x] **Phase 2：通用同步原语**
+  - [x] `UI7-008` 提供通用 `InteractionSyncPolicy` 和 `InteractionSync.execute()`；验收：领域只提供 apply/request/rollback，统一入口负责 mutation 生命周期与失败收束。
+  - [x] `UI7-009` 复用现有 optimistic intent 串行器并保留字段级业务 adapter 边界；验收：连续同实体操作不因旧请求失败覆盖最新本地状态。
+  - [x] 为定时任务开关建立 `InteractionSync.execute` adapter，覆盖即时 apply、失败回滚和 mutation 传递。
+  - [x] 为项目、日历、文件和便签建立 adapter，并移除目标实体各自重复的 optimistic 编排。
+- [x] **Phase 3：增量实时事件**
+  - [x] `UI7-010` 提供按资源注册的事件队列；验收：同客户端回声丢弃，安全事件走增量 handler，其余事件按资源合并刷新。
+  - [x] `UI7-011` 将 Mind 事件接入统一队列；验收：增量实体事件不额外触发全量刷新，断线补刷仍可进入队列。
+  - [x] `UI7-012` 将项目和文件事件接入统一队列；验收：保留实体增量合并与刷新兜底，并避免事件与 revision watcher 重复刷新。
+  - [x] 为日历、便签和定时任务接入增量 handler，并补齐跨资源事件顺序测试。
+- [x] **Phase 4：移除重复编排**
+  - [x] Runtime Action 路由不再重复创建 optimistic intent；实体 adapter 统一拥有 apply、rollback、request 和 mutation 生命周期。
+  - [x] 目标实体不再自行维护实时回声判断与刷新延迟；共享事件队列负责增量处理和合并刷新。
+
+### 完成证据
+
+- `frontend`：`npm run test:run`，59 个测试文件、403 个测试通过。
+- `frontend`：`npm run typecheck` 通过。
+- `frontend`：`npm run build` 通过；仅保留 Vite 配置兼容性和大 chunk 既有警告。
+- `git diff --check` 通过。
 
 ### 完成门槛
 

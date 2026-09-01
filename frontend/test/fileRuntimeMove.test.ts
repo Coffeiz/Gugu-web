@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
-import { captureOptimisticIntent } from '@/utils/optimisticIntent'
 
 describe('useFileRuntimeMove', () => {
   function setup(scope = 'files') {
@@ -59,19 +58,17 @@ describe('useFileRuntimeMove', () => {
     expect(clearSelection).not.toHaveBeenCalled()
   })
 
-  it('文件与文件夹分别获得自己的 optimistic intent，不互相清理 rollback chain', async () => {
-    const seen: Array<{ kind: string; keys: readonly string[]; revision: number }> = []
+  it('不在 Runtime 路由层重复创建 optimistic intent', async () => {
+    const seen: boolean[] = []
     const adapter = useFileRuntimeMove({
       scope: 'files',
       browserSurfaceId: 'files:surface:browser',
       resolveBreadcrumbTarget: () => null,
       moveFolders: async () => {
-        const intent = captureOptimisticIntent()
-        if (intent) seen.push({ kind: 'folder', keys: intent.keys, revision: intent.revision })
+        seen.push(false)
       },
       moveFiles: async () => {
-        const intent = captureOptimisticIntent()
-        if (intent) seen.push({ kind: 'file', keys: intent.keys, revision: intent.revision })
+        seen.push(false)
       },
       clearSelection: () => {},
     })
@@ -79,29 +76,23 @@ describe('useFileRuntimeMove', () => {
     await adapter.handleAction(['files:folder:5', 'files:file:7'], 'files:surface:folder:9')
 
     expect(seen).toHaveLength(2)
-    expect(seen.find(item => item.kind === 'folder')?.keys).toEqual(['files:folder:5'])
-    expect(seen.find(item => item.kind === 'file')?.keys).toEqual(['files:file:7'])
-    expect(seen[0].revision).not.toBe(seen[1].revision)
+    expect(seen).toEqual([false, false])
   })
 
-  it('同一卡片 regrab 后产生更高 revision，第二次 Action 成为最新意图', async () => {
-    const revisions: number[] = []
+  it('同一卡片连续 Action 都直接交给领域 adapter', async () => {
+    const calls: number[] = []
     const adapter = useFileRuntimeMove({
       scope: 'files',
       browserSurfaceId: 'files:surface:browser',
       resolveBreadcrumbTarget: () => null,
       moveFolders: async () => {},
-      moveFiles: async () => {
-        const intent = captureOptimisticIntent()
-        if (intent) revisions.push(intent.revision)
-      },
+      moveFiles: async ids => { calls.push(ids[0]) },
       clearSelection: () => {},
     })
 
     await adapter.handleAction(['files:file:7'], 'files:surface:folder:9')
     await adapter.handleAction(['files:file:7'], 'files:surface:folder:10')
 
-    expect(revisions).toHaveLength(2)
-    expect(revisions[1]).toBeGreaterThan(revisions[0])
+    expect(calls).toEqual([7, 7])
   })
 })

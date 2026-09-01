@@ -4,6 +4,7 @@
  */
 import type { components } from '@/types/api'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
+import { getInteractionClientId } from '@/interaction/sync/InteractionSyncState'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -39,21 +40,21 @@ export function getCsrfHeaders(cookieName = 'gugu_user_csrf_token'): Record<stri
 
 // 本标签页的 client-id：每次写操作作为 X-Client-Id 头发给后端，后端把它塞进 SSE 事件的 origin。
 // 前端收到「origin === 自己」的回声时跳过重拉（本页已乐观更新过），只让别的标签页/端刷新。
-// 每标签页独立（内存级、不持久化）——刷新页面换一个新 id 也无妨，回声抑制只是优化不影响正确性。
-export const CLIENT_ID: string =
-  (typeof crypto !== 'undefined' && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+// 每标签页独立并在 sessionStorage 中保持；刷新同一 Tab 不会改变来源身份。
+export const CLIENT_ID: string = getInteractionClientId()
+
+export interface RequestMeta { mutationId?: string }
 
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
-                                signal?: AbortSignal): Promise<T> {
+                                signal?: AbortSignal, meta?: RequestMeta): Promise<T> {
   const token = getToken()
   const headers: Record<string, string> = {
     'X-Client-Id': CLIENT_ID,
     ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? {} : getCsrfHeaders()),
   }
+  if (meta?.mutationId) headers['X-Mutation-Id'] = meta.mutationId
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers, signal, credentials: 'include' }
@@ -95,10 +96,10 @@ async function request<T = any>(method: string, path: string, body: any = null, 
 }
 
 const get    = <T = any>(path: string)             => request<T>('GET',    path)
-const post   = <T = any>(path: string, body?: any) => request<T>('POST',   path, body)
-const patch  = <T = any>(path: string, body?: any) => request<T>('PATCH',  path, body)
+const post   = <T = any>(path: string, body?: any, meta?: RequestMeta) => request<T>('POST',   path, body, false, undefined, meta)
+const patch  = <T = any>(path: string, body?: any, meta?: RequestMeta) => request<T>('PATCH',  path, body, false, undefined, meta)
 const put    = <T = any>(path: string, body?: any) => request<T>('PUT',    path, body)
-const del    = <T = any>(path: string)             => request<T>('DELETE', path)
+const del    = <T = any>(path: string, meta?: RequestMeta)             => request<T>('DELETE', path, null, false, undefined, meta)
 const upload = <T = any>(path: string, form: FormData) => request<T>('POST', path, form, true)
 
 export function uploadWithProgress(path: string, form: FormData, onProgress: (p: number) => void): Promise<any> {
@@ -155,7 +156,7 @@ export const projectsApi = {
   list:   (archived = false)                       => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : ''}`),
   get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
   create: (data: Schemas['ProjectCreate'])         => post<Schemas['ProjectResponse']>('/projects', data),
-  update: (id: number, data: Schemas['ProjectUpdate']) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data),
+  update: (id: number, data: Schemas['ProjectUpdate'], meta?: RequestMeta) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data, meta),
   delete: (id: number)                             => del(`/projects/${id}`),
 }
 
@@ -164,7 +165,7 @@ export const scheduledTasksApi = {
   list:         ()                  => get('/scheduled-tasks'),
   listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
   create:       (data: any)         => post('/scheduled-tasks', data),
-  update:       (id: number, data: any) => patch(`/scheduled-tasks/${id}`, data),
+  update:       (id: number, data: any, meta?: RequestMeta) => patch(`/scheduled-tasks/${id}`, data, meta),
   delete:       (id: number)        => del(`/scheduled-tasks/${id}`),
   run:          (id: number)        => post(`/scheduled-tasks/${id}/run`),
   testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
@@ -207,10 +208,10 @@ export const filesApi = {
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
-  update: (id: number, data: Schemas['FileUpdate']) => patch<Schemas['FileResponse']>(`/files/${id}`, data),
+  update: (id: number, data: Schemas['FileUpdate'], meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
   saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
-  delete:      (id: number)   => del(`/files/${id}`),
-  batchDelete: (ids: number[])  => post('/files/batch-delete', { ids }),
+  delete:      (id: number, meta?: RequestMeta)   => del(`/files/${id}`, meta),
+  batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
   copy: (id: number, body: Schemas['FileCopyBody']) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
   batchDownload: async (ids: number[], folderIds: number[] = [], filename = 'files.zip') => {
     const token = getToken()
@@ -306,8 +307,8 @@ export const eventsApi = {
   list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
   get:    (id: number) => get<Schemas['EventResponse']>(`/events/${id}`),
   create: (data: Schemas['EventCreate']) => post<Schemas['EventResponse']>('/events', data),
-  update: (id: number, data: Schemas['EventUpdate']) => patch<Schemas['EventResponse']>(`/events/${id}`, data),
-  delete: (id: number)          => del(`/events/${id}`),
+  update: (id: number, data: Schemas['EventUpdate'], meta?: RequestMeta) => patch<Schemas['EventResponse']>(`/events/${id}`, data, meta),
+  delete: (id: number, meta?: RequestMeta)          => del(`/events/${id}`, meta),
 }
 
 // ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────
@@ -408,8 +409,8 @@ export interface MindCanvasNoteCreate {
 export const mindApi = {
   listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
   createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
-  updateNote: (id: number, data: MindNoteUpdate) => patch<MindNote>(`/mind/notes/${id}`, data),
-  deleteNote: (id: number)                       => del(`/mind/notes/${id}`),
+  updateNote: (id: number, data: MindNoteUpdate, meta?: RequestMeta) => patch<MindNote>(`/mind/notes/${id}`, data, meta),
+  deleteNote: (id: number, meta?: RequestMeta)                       => del(`/mind/notes/${id}`, meta),
   refSuggest: (q: string, limit = 6) =>
     get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
   listCanvases: () => get<MindCanvas[]>('/mind/canvases'),
@@ -419,23 +420,23 @@ export const mindApi = {
     patch<MindCanvas>(`/mind/canvases/${id}`, data),
   deleteCanvas: (id: number) => del(`/mind/canvases/${id}`),
   listCanvasItems: (id: number) => get<MindCanvasItem[]>(`/mind/canvases/${id}/items`),
-  addCanvasItem: (id: number, data: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }) =>
-    post<MindCanvasItem>(`/mind/canvases/${id}/items`, data),
+  addCanvasItem: (id: number, data: { nodeId: number; x?: number; y?: number; w?: number | null; h?: number | null; z?: number; collapsed?: boolean; data?: Record<string, unknown> }, meta?: RequestMeta) =>
+    post<MindCanvasItem>(`/mind/canvases/${id}/items`, data, meta),
   createCanvasNote: (id: number, data: MindCanvasNoteCreate) =>
     post<MindCanvasItem>(`/mind/canvases/${id}/notes`, data),
-  updateCanvasNote: (id: number, data: { title?: string; contentMd?: string; color?: string | null; version: number }) =>
-    patch<MindNote>(`/mind/nodes/${id}`, data),
-  updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>) =>
-    patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data),
-  bringCanvasItemToFront: (canvasId: number, itemId: number, data: { x: number; y: number }) =>
-    post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data),
-  removeCanvasItem: (canvasId: number, itemId: number) => del(`/mind/canvases/${canvasId}/items/${itemId}`),
+  updateCanvasNote: (id: number, data: { title?: string; contentMd?: string; color?: string | null; version: number }, meta?: RequestMeta) =>
+    patch<MindNote>(`/mind/nodes/${id}`, data, meta),
+  updateCanvasItem: (canvasId: number, itemId: number, data: Partial<Pick<MindCanvasItem, 'x' | 'y' | 'w' | 'h' | 'z' | 'collapsed' | 'data'>>, meta?: RequestMeta) =>
+    patch<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}`, data, meta),
+  bringCanvasItemToFront: (canvasId: number, itemId: number, data: { x: number; y: number }, meta?: RequestMeta) =>
+    post<MindCanvasItem>(`/mind/canvases/${canvasId}/items/${itemId}/bring-to-front`, data, meta),
+  removeCanvasItem: (canvasId: number, itemId: number, meta?: RequestMeta) => del(`/mind/canvases/${canvasId}/items/${itemId}`, meta),
   listCanvasRelations: (id: number) => get<MindRelation[]>(`/mind/canvases/${id}/relations`),
   createRelation: (canvasId: number, srcNodeId: number, dstNodeId: number, allowParallel = false) =>
     post<MindRelation>('/mind/relations', { canvasId, srcNodeId, dstNodeId, allowParallel }),
   deleteRelation: (canvasId: number, id: number) => del(`/mind/canvases/${canvasId}/relations/${id}`),
-  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) =>
-    post<MindNote>('/mind/nodes/ref', { refType, refId }),
+  createRefNode: (refType: 'project' | 'file' | 'event', refId: number, meta?: RequestMeta) =>
+    post<MindNote>('/mind/nodes/ref', { refType, refId }, meta),
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
@@ -455,13 +456,13 @@ export const foldersApi = {
   }),
   // version：乐观锁，必传当前文件夹的 version（改名/移动即失效，见 stores/filesCache 的更新逻辑）；
   // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
-  rename: (id: number, name: string, version: number) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }),
-  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version, projectId }),
+  rename: (id: number, name: string, version: number, meta?: RequestMeta) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }, meta),
+  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta) =>
+    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version, projectId }, meta),
   copy:   (id: number, parentId: number | null, projectId: number | null) =>
     post<Schemas['FolderResponse']>(`/folders/${id}/copy`, { parentId, projectId }),
-  delete: (id: number)           => del(`/folders/${id}`),
+  delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
   download: async (id: number, name: string) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/folders/${id}/download`, {

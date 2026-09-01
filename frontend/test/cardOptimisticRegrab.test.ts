@@ -26,12 +26,12 @@ describe('card optimistic regrab contracts', () => {
 
     expect(mindStore).toContain('const pendingProjectRefCreates = new Map<number')
     const localOnlyGuard = mindStore.indexOf('if (pendingProjectRefCreates.has(itemId)) return')
-    const bringApi = mindStore.indexOf('mindApi.bringCanvasItemToFront(canvasId, itemId, { x, y })')
+    const bringApi = mindStore.indexOf('mindApi.bringCanvasItemToFront(canvasId, itemId, { x, y }, mutation)')
     expect(localOnlyGuard).toBeGreaterThan(-1)
     expect(bringApi).toBeGreaterThan(localOnlyGuard)
 
     expect(mindStore).toContain('if (pending) return Promise.resolve()')
-    expect(mindStore).toContain('await mindApi.removeCanvasItem(canvasId, created.id)')
+    expect(mindStore).toContain('await mindApi.removeCanvasItem(canvasId, created.id, mutation)')
   })
 
   it('抽屉临时卡落库后循环追平 placeholder 最新坐标，不假设只发生一次 regrab', () => {
@@ -39,7 +39,7 @@ describe('card optimistic regrab contracts', () => {
     expect(mindStore).toContain('if (current.x === persistedX && current.y === persistedY) break')
     expect(mindStore).toContain('const targetX = current.x')
     expect(mindStore).toContain('const targetY = current.y')
-    expect(mindStore).toContain('mindApi.bringCanvasItemToFront(canvasId, created.id, { x: targetX, y: targetY })')
+    expect(mindStore).toContain('mindApi.bringCanvasItemToFront(canvasId, created.id, { x: targetX, y: targetY }, mutation)')
     expect(mindStore).toContain('latestPending.cancelled')
   })
 })

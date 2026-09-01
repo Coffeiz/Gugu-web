@@ -19,6 +19,10 @@ import { useLiveStore } from '@/stores/live'
 import type { LiveEventPayload } from '@/types/live-events'
 import { isMindLandingActive, onMindLandingSettled } from '@/interaction/runtime/canvas'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { reconcileCanvasItems } from '@/interaction/sync/InteractionSyncReconciler'
+import type { InteractionMutation } from '@/interaction/sync/InteractionSyncState'
+import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
 
 export class MindConflictError extends Error {
   constructor() { super('便签已被其他端修改') }
@@ -78,7 +82,7 @@ export const useMindStore = defineStore('mind', () => {
   const canvasZSaves = new Map<number, Promise<void>>()
   // 抽屉→画布先创建负 id placeholder。regrab 可能发生在 createRefNode/addCanvasItem 完成前，
   // 此时不能拿负 id 调后端；只保留前端最新位置/取消意图，等真实 item id 到手后一次性交接。
-  const pendingProjectRefCreates = new Map<number, { clientKey: string; cancelled: boolean }>()
+  const pendingProjectRefCreates = new Map<number, InteractionMutation & { clientKey: string; cancelled: boolean }>()
   let pendingMindRefresh = false
 
   function refreshMindFromLiveEvent() {
@@ -184,6 +188,7 @@ export const useMindStore = defineStore('mind', () => {
     pendingCanvasDeletes.clear()
     locallyDeletedCanvasIds.clear()
     pendingProjectRefCreates.clear()
+    InteractionSync.reset()
     pendingMindRefresh = false
   }
 
@@ -215,19 +220,30 @@ export const useMindStore = defineStore('mind', () => {
     // 否则两次编辑离得很近时，后一次会拿着"还没被服务端确认过"的 version 去比对，
     // 平白撞出本不该有的 409（对不齐锁版本 ≠ 真的有冲突）。
     const optimisticIdx = notes.value.findIndex(n => n.id === id)
-    if (optimisticIdx !== -1) notes.value[optimisticIdx] = { ...notes.value[optimisticIdx], ...data }
-
-    let updated: MindNote
-    try {
-      updated = await mindApi.updateNote(id, data)
-    } catch (e: any) {
-      if (e?.status === 409) throw new MindConflictError()
-      throw e
-    }
-    const i = notes.value.findIndex(n => n.id === id)
-    if (i !== -1) notes.value[i] = updated
-    notes.value = [...notes.value].sort(byCapturedDesc)   // capturedAt 可能被改过
-    return updated
+    const previous = optimisticIdx !== -1 ? { ...notes.value[optimisticIdx] } : null
+    return InteractionSync.execute({
+      scope: 'mind.note.update',
+      entityKey: `mind-note:${id}`,
+      apply: () => {
+        if (optimisticIdx !== -1) notes.value[optimisticIdx] = { ...notes.value[optimisticIdx], ...data }
+      },
+      rollback: () => {
+        if (previous && optimisticIdx !== -1) notes.value[optimisticIdx] = previous
+      },
+      request: async mutation => {
+        try {
+          return await mindApi.updateNote(id, data, { mutationId: mutation.mutationId })
+        } catch (e: any) {
+          if (e?.status === 409) throw new MindConflictError()
+          throw e
+        }
+      },
+      onCommit: updated => {
+        const i = notes.value.findIndex(n => n.id === id)
+        if (i !== -1) notes.value[i] = updated
+        notes.value = [...notes.value].sort(byCapturedDesc)
+      },
+    })
   }
 
   /** 软删：后端只写 deleted_at（墓碑），这里从列表里摘掉即可 */
@@ -337,7 +353,10 @@ export const useMindStore = defineStore('mind', () => {
       const stillExists = canvases.value.some(canvas => canvas.id === id)
       if (!isCurrentRequest || requestSeq !== canvasLoadSeq || invalidatedCanvasLoads.has(id) || !stillExists) return false
       activeCanvasId.value = id
-      canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
+      const localItems = activeCanvasId.value === id ? canvasItems.value : []
+      const pending = InteractionSync.pending().filter(mutation => mutation.entityKey.startsWith(`canvas:${id}:`))
+      const reconciled = reconcileCanvasItems(items, localItems, pending)
+      canvasItems.value = normalizeCanvasZ(reconciled).map(({ item, z }) => ({ ...item, z }))
       canvasRelations.value = normalizeCanvasRelations(relations)
       return true
     } catch (error) {
@@ -382,6 +401,7 @@ export const useMindStore = defineStore('mind', () => {
   function addProjectRefOptimistic(canvasId: number, projectId: number, x: number, y: number) {
     const tempId = --optimisticSeq
     const clientKey = `optimistic-${tempId}`
+    const mutation = InteractionSync.begin('mind.canvas.ref.create', `canvas:${canvasId}:project:${projectId}`, clientKey)
     const now = new Date().toISOString()
     const z = nextCanvasZ()
     const placeholder: MindCanvasItem = {
@@ -399,15 +419,17 @@ export const useMindStore = defineStore('mind', () => {
       },
       createdAt: now, updatedAt: now,
     }
-    pendingProjectRefCreates.set(tempId, { clientKey, cancelled: false })
+    pendingProjectRefCreates.set(tempId, Object.assign(mutation, { clientKey, cancelled: false }))
     canvasItems.value.push(placeholder)
 
     const ready = (async () => {
       let persistedItemId: number | null = null
       try {
-        const node = await mindApi.createRefNode('project', projectId)
-        const created = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
+        const node = await mindApi.createRefNode('project', projectId, mutation)
+        mutation.nodeId = node.id
+        const created = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z }, mutation)
         persistedItemId = created.id
+        mutation.persistedItemId = created.id
         let resolved: MindCanvasItem = { ...created, clientKey }
         let persistedX = created.x
         let persistedY = created.y
@@ -418,15 +440,17 @@ export const useMindStore = defineStore('mind', () => {
           const pending = pendingProjectRefCreates.get(tempId)
           const currentIndex = canvasItems.value.findIndex(current => current.clientKey === clientKey)
           if (!pending || pending.cancelled || currentIndex === -1) {
-            await mindApi.removeCanvasItem(canvasId, created.id)
+            await mindApi.removeCanvasItem(canvasId, created.id, mutation)
             pendingProjectRefCreates.delete(tempId)
+            InteractionSync.cancel(mutation.mutationId)
+            InteractionSync.finish(mutation.mutationId)
             return resolved
           }
           const current = canvasItems.value[currentIndex]
           if (current.x === persistedX && current.y === persistedY) break
           const targetX = current.x
           const targetY = current.y
-          const moved = await mindApi.bringCanvasItemToFront(canvasId, created.id, { x: targetX, y: targetY })
+          const moved = await mindApi.bringCanvasItemToFront(canvasId, created.id, { x: targetX, y: targetY }, mutation)
           resolved = { ...moved, clientKey }
           persistedX = targetX
           persistedY = targetY
@@ -435,17 +459,21 @@ export const useMindStore = defineStore('mind', () => {
         const latestPending = pendingProjectRefCreates.get(tempId)
         const latestIndex = canvasItems.value.findIndex(item => item.clientKey === clientKey)
         if (!latestPending || latestPending.cancelled || latestIndex === -1) {
-          await mindApi.removeCanvasItem(canvasId, created.id)
+          await mindApi.removeCanvasItem(canvasId, created.id, mutation)
           pendingProjectRefCreates.delete(tempId)
+          InteractionSync.cancel(mutation.mutationId)
+          InteractionSync.finish(mutation.mutationId)
           return resolved
         }
         canvasItems.value[latestIndex] = resolved
         pendingProjectRefCreates.delete(tempId)
+        InteractionSync.finish(mutation.mutationId)
         return resolved
       } catch (error) {
         const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
         if (index !== -1) canvasItems.value.splice(index, 1)
         pendingProjectRefCreates.delete(tempId)
+        InteractionSync.finish(mutation.mutationId)
         // 创建已成功但后续最新位置 flush 失败时，不能在服务端留下一个本地已撤掉的孤儿卡。
         if (persistedItemId != null) await mindApi.removeCanvasItem(canvasId, persistedItemId).catch(() => {})
         throw error
@@ -469,19 +497,22 @@ export const useMindStore = defineStore('mind', () => {
     // spread 合并天然不会挪 version——等 PATCH 成功再用返回值（含递增 version）整体替换，
     // 跟 updateNote 同一套策略。这样画布便签改色 / 改正文能秒级响应，不再等 100-300ms
     // 网络往返才生效（跟纯笔记路径 NotesView 一致）。
-    item.node = { ...item.node, ...fields }
-
-    let updated: MindNote
-    try {
-      updated = await mindApi.updateCanvasNote(nodeId, { ...fields, version: item.node.version })
-    } catch (e: any) {
-      // 跟 updateNote 同一套乐观锁 409 处理（见其注释）——画布便签也是同一份 MindNode，
-      // 理论上一样可能撞并发编辑。
-      if (e?.status === 409) throw new MindConflictError()
-      throw e
-    }
-    item.node = updated
-    return updated
+    const previous = { ...item.node }
+    return InteractionSync.execute({
+      scope: 'mind.canvas-note.update',
+      entityKey: `mind-node:${nodeId}`,
+      apply: () => { item.node = { ...item.node, ...fields } },
+      rollback: () => { item.node = previous },
+      request: async mutation => {
+        try {
+          return await mindApi.updateCanvasNote(nodeId, { ...fields, version: previous.version }, { mutationId: mutation.mutationId })
+        } catch (e: any) {
+          if (e?.status === 409) throw new MindConflictError()
+          throw e
+        }
+      },
+      onCommit: updated => { item.node = updated },
+    })
   }
 
   function normalizeCanvasZ(items: MindCanvasItem[]) {
@@ -515,7 +546,13 @@ export const useMindStore = defineStore('mind', () => {
     const previous = canvasZSaves.get(canvasId) ?? Promise.resolve()
     const save = previous.catch(() => undefined).then(async () => {
       try {
-        const updated = await mindApi.bringCanvasItemToFront(canvasId, itemId, { x, y })
+      const mutation = InteractionSync.begin('mind.canvas.item.move', `canvas:${canvasId}:item:${itemId}`)
+      let updated: MindCanvasItem
+      try {
+        updated = await mindApi.bringCanvasItemToFront(canvasId, itemId, { x, y }, mutation)
+      } finally {
+        InteractionSync.finish(mutation.mutationId)
+      }
         const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
         if (currentIndex !== -1) {
           canvasItems.value = normalizeCanvasZ(canvasItems.value)
@@ -546,7 +583,13 @@ export const useMindStore = defineStore('mind', () => {
     const before = canvasItems.value[index]
     canvasItems.value[index] = { ...before, ...fields }
     try {
-      const updated = await mindApi.updateCanvasItem(canvasId, itemId, fields)
+      const mutation = InteractionSync.begin('mind.canvas.item.update', `canvas:${canvasId}:item:${itemId}`)
+      let updated: MindCanvasItem
+      try {
+        updated = await mindApi.updateCanvasItem(canvasId, itemId, fields, mutation)
+      } finally {
+        InteractionSync.finish(mutation.mutationId)
+      }
       const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
       if (currentIndex !== -1) {
         // 抽屉来源的乐观节点以 clientKey 作为 Vue 的稳定身份。首次落库后若把服务端响应
@@ -567,7 +610,12 @@ export const useMindStore = defineStore('mind', () => {
   async function removeCanvasItem(itemId: number) {
     const canvasId = activeCanvasId.value
     if (canvasId == null) return
-    await mindApi.removeCanvasItem(canvasId, itemId)
+    const mutation = InteractionSync.begin('mind.canvas.item.delete', `canvas:${canvasId}:item:${itemId}`)
+    try {
+      await mindApi.removeCanvasItem(canvasId, itemId, mutation)
+    } finally {
+      InteractionSync.finish(mutation.mutationId)
+    }
     canvasItems.value = canvasItems.value.filter(item => item.id !== itemId)
     const nodeIds = new Set(canvasItems.value.map(item => item.nodeId))
     canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
@@ -588,7 +636,11 @@ export const useMindStore = defineStore('mind', () => {
     // 首次 drawer→canvas 仍在落库时 regrab 回抽屉：本地移除就是最新乐观状态，不能向 API
     // 发送负 id。pending create 若随后拿到真实 id，会负责补偿删除那个真实 item。
     if (pending) return Promise.resolve()
-    return mindApi.removeCanvasItem(canvasId, itemId).catch(error => {
+    const mutation = InteractionSync.begin('mind.canvas.item.delete', `canvas:${canvasId}:item:${itemId}`, item.clientKey)
+    return mindApi.removeCanvasItem(canvasId, itemId, mutation).then(() => {
+      InteractionSync.finish(mutation.mutationId)
+    }).catch(error => {
+      InteractionSync.finish(mutation.mutationId)
       window.setTimeout(() => {
         if (activeCanvasId.value !== canvasId || canvasItems.value.some(current => current.id === item.id)) return
         canvasItems.value.splice(Math.min(index, canvasItems.value.length), 0, item)
@@ -683,6 +735,8 @@ export const useMindStore = defineStore('mind', () => {
   // （画布卡片渲染的是 loadCanvas 拉回来的快照，不是 notes 数组本身，两处都要刷）。
   // 画布列表也需要同步——跨标签页创建/删除画布后，抽屉列表才能实时反映最新状态。
   const live = useLiveStore()
+  const eventQueue = new InteractionSyncEventQueue()
+  let handledMindRevision = -1
   function applyCanonicalEvent(event: LiveEventPayload): boolean {
     const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
     const kind = payload?.kind
@@ -711,12 +765,13 @@ export const useMindStore = defineStore('mind', () => {
   }
   watch(() => live.resourceEvent, (event) => {
     if (!event || event.resource !== 'mind' || !loaded.value) return
-    if (!applyCanonicalEvent(event)) {
-      requestMindRefresh()
-    }
+    handledMindRevision = live.rev.mind
+    eventQueue.receive(event)
   })
+  eventQueue.register('mind', applyCanonicalEvent, requestMindRefresh)
   watch(() => live.rev.mind, () => {
-    requestMindRefresh()
+    if (live.rev.mind === handledMindRevision) return
+    eventQueue.enqueue('mind')
   })
 
   return {

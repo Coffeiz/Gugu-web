@@ -174,6 +174,8 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             }
     if origin:
         payload["origin"] = origin
+    if extra.get("mutation_id"):
+        payload["mutation_id"] = extra["mutation_id"]
     # 会话事件只写入 canonical payload，不再同时输出旧的顶层 session_id/appended。
     if res and payload.get("resource") == "sessions":
         if payload.get("entity_id") is None and extra.get("session_id") is not None:

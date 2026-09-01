@@ -10,6 +10,7 @@
 | Agent 与 IM | Python `backend/agent/`、Python worker 和 Python 网关，共用 Agent Loop、上下文、工具、记忆与渠道适配 |
 | 数据与任务 | PostgreSQL、SQLAlchemy、Alembic、Redis、APScheduler；用户数据按所有者隔离 |
 | 实时更新 | 业务写入发布 canonical event，经 Redis event bus 由 FastAPI SSE 推送到前端；聊天流和 Admin 日志流各自保持独立生命周期 |
+| 本地交互同步 | `InteractionSync` 协调本地即时状态、服务端响应和跨标签页事件；画布为 Phase 1 首个接入域，保留实体字段和 Runtime 视觉生命周期边界 |
 | 交互终端 | 真实 PTY 使用 WebSocket；它不是资源实时更新 SSE，也不是命令历史列表 |
 | TypeScript 边界 | 前端构建、独立 LoopScope 和 RAG lexical worker；不作为公开 API、Agent、IM 或 scheduler 的替代后端 |
 | Shell | 用户 Shell 经过沙盒执行器和 Docker 隔离；工作区只提供默认目录，系统范围能力和临时公网出口受权限控制 |
@@ -55,6 +56,7 @@
 - [Wishlist](product/WISHLIST.md)：尚未纳入当前基线的候选方向。
 - [文件预览历史方案](product/_archibe/FILE-PREVIEW.md)：文件预览、抽屉和浮动窗口的历史设计记录。
 - [思维面板归档资料](product/_archibe/思维面板/)：笔记、画布、数据模型和历史实现方案；当前行为以代码和 Agent 专题文档为准。
+- [本地交互与服务端同步一致性](prds/PRD-UI-7-本地交互与服务端同步一致性.md)：`InteractionSync` 统一交互同步模型，当前先完成画布闭环。
 - [前端 JS 转 TS 历史指南](product/_archibe/【已完成】前端-JS转TS迁移指南.md)：前端迁移记录。
 
 ## 运维与性能

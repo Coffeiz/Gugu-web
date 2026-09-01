@@ -101,6 +101,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { eventsApi } from '@/services/api'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useRouter } from 'vue-router'
@@ -201,15 +202,25 @@ async function saveEditForm() {
   const ev = editingEvent.value
   if (!ev?.name) return
   showEditForm.value = false
-  // 乐观更新 events.value + 模块缓存
-  events.value = events.value.map(e =>
-    e.id === ev.id ? { ...e, title: ev.name, date: ev.date, description: ev.description } : e
-  )
-  _eventsCache.set(`${year.value}-${month.value}`, events.value)
-  // 更新 store 中的 upcomingCalEvents
+  const previous = events.value.find(item => item.id === ev.id)
   const raw = projectStore.upcomingCalEvents.find(e => e.id === ev.id)
-  if (raw) { raw.title = ev.name; raw.date = ev.date; raw.description = ev.description }
-  try { await eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined }) } catch {}
+  const rawPrevious = raw ? { title: raw.title, date: raw.date, description: raw.description } : null
+  try {
+    await InteractionSync.execute({
+      scope: 'calendar.event.dashboard-update', entityKey: `calendar-event:${ev.id}`,
+      apply: () => {
+        events.value = events.value.map(e => e.id === ev.id ? { ...e, title: ev.name, date: ev.date, description: ev.description } : e)
+        _eventsCache.set(`${year.value}-${month.value}`, events.value)
+        if (raw) { raw.title = ev.name; raw.date = ev.date; raw.description = ev.description }
+      },
+      rollback: () => {
+        if (previous) events.value = events.value.map(e => e.id === ev.id ? previous : e)
+        _eventsCache.set(`${year.value}-${month.value}`, events.value)
+        if (raw && rawPrevious) Object.assign(raw, rawPrevious)
+      },
+      request: mutation => eventsApi.update(ev.id, { title: ev.name, date: ev.date, description: ev.description || undefined }, { mutationId: mutation.mutationId }),
+    })
+  } catch { /* 统一事务已回滚 */ }
 }
 
 function handleClickOutside(e: MouseEvent) {

@@ -54,15 +54,12 @@ describe('useScheduledTasks', () => {
     mocks.run.mockResolvedValue({ msg: '已发送' })
   })
 
-  it('加载任务并通过实时刷新回调再次加载', async () => {
+  it('加载任务', async () => {
     const state = useScheduledTasks()
     await state.load()
     expect(state.tasks.value).toEqual([task])
     expect(state.loading.value).toBe(false)
-    expect(mocks.refresh).toBeTypeOf('function')
-
-    await mocks.refresh?.('scheduled_tasks')
-    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(mocks.list).toHaveBeenCalledTimes(1)
   })
 
   it('保存时区分创建和更新，并在完成后刷新列表', async () => {
@@ -80,7 +77,7 @@ describe('useScheduledTasks', () => {
   it('支持启停、试运行和删除，并把失败转为提示', async () => {
     const state = useScheduledTasks()
     await state.toggle(task)
-    expect(mocks.update).toHaveBeenCalledWith(7, { enabled: false })
+    expect(mocks.update).toHaveBeenCalledWith(7, { enabled: false }, { mutationId: expect.any(String) })
 
     await state.runNow(task)
     expect(mocks.run).toHaveBeenCalledWith(7)
@@ -97,6 +94,7 @@ describe('useScheduledTasks', () => {
 
     mocks.update.mockRejectedValueOnce(new Error('网络失败'))
     await state.toggle(task)
+    expect(task.enabled).toBe(false)
     expect(mocks.showError).toHaveBeenCalledWith('更新任务失败：网络失败')
 
     mocks.run.mockRejectedValueOnce(new Error('执行失败'))

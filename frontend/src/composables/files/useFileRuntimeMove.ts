@@ -2,7 +2,6 @@ import {
   parseBreadcrumbSurfaceId,
   parseFolderSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
-import { beginOptimisticIntent, withOptimisticIntent } from '@/utils/optimisticIntent'
 
 type DropInfo = { droppedOn: 'folder' | 'breadcrumb' }
 
@@ -23,8 +22,8 @@ type ParsedObject = { id: number; isFolder: boolean; objectId: string }
  * Runtime 只提供对象 ID 和目标 Surface；文件 API、权限、乐观更新和回滚仍由调用方注入。
  * 文件库和项目文件区因此共享同一套 ID/Surface 解析，不再各自复制一份 Action handler。
  *
- * regrab 可能在上一笔持久化结束前再次产生 Action。这里仅登记“哪一笔是最新意图”，
- * optimisticMutation 据此阻止旧请求失败时覆盖新落点；实际缓存变更仍由调用方同步 apply。
+ * regrab 可能在上一笔持久化结束前再次产生 Action。最新意图与失败回滚由
+ * InteractionSync adapter 统一登记，这里只负责 Runtime Action 到领域动作的路由。
  */
 export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
   function parseObjects(objectIds: readonly string[]): ParsedObject[] {
@@ -65,19 +64,11 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
     // 拖拽落点已经确定后立即退出选择模式，避免持久化请求尚未返回时用户的
     // 下一次点击仍被选择协调器吞掉，尤其是紧接着点击目标文件夹导航的场景。
     options.clearSelection()
-    // 文件与文件夹分别进入各自的 optimisticMutation；intent 也必须分开，否则同一组拖拽里
-    // “文件请求成功、文件夹请求失败”会错误地把另一类对象的 rollback chain 一并清掉。
     const folderWork = folders.length > 0
-      ? withOptimisticIntent(
-          beginOptimisticIntent(folders.map(item => item.objectId)),
-          () => options.moveFolders(folders.map(item => item.id), targetFolderId),
-        )
+      ? options.moveFolders(folders.map(item => item.id), targetFolderId)
       : Promise.resolve()
     const fileWork = files.length > 0
-      ? withOptimisticIntent(
-          beginOptimisticIntent(files.map(item => item.objectId)),
-          () => options.moveFiles(files.map(item => item.id), targetFolderId, dropInfo),
-        )
+      ? options.moveFiles(files.map(item => item.id), targetFolderId, dropInfo)
       : Promise.resolve()
     await Promise.all([folderWork, fileWork])
   }
