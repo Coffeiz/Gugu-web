@@ -89,6 +89,29 @@ def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
 
 
 @pytest.mark.asyncio
+async def test_terminal_websocket_setup_failure_cleans_pty_resources():
+    from app.api.v1.terminals import _cleanup_terminal_websocket_resources
+
+    class _Manager:
+        def __init__(self):
+            self.actions = []
+
+        async def unsubscribe(self, terminal_id, queue):
+            self.actions.append(("unsubscribe", terminal_id, queue))
+
+        async def detach(self, terminal_id):
+            self.actions.append(("detach", terminal_id))
+
+    manager = _Manager()
+    await _cleanup_terminal_websocket_resources(manager, "term-setup-race", "queue", True)
+
+    assert manager.actions == [
+        ("unsubscribe", "term-setup-race", "queue"),
+        ("detach", "term-setup-race"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
     streams: list[_FakeStream] = []
 

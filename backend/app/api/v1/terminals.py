@@ -43,6 +43,22 @@ _terminal_tasks: dict[str, asyncio.Task] = {}
 _terminal_event_locks: dict[str, asyncio.Lock] = {}
 
 
+async def _cleanup_terminal_websocket_resources(manager, terminal_id: str, queue, attached: bool) -> None:
+    """统一释放 WebSocket setup/loop 持有的 PTY subscription 和 attachment。"""
+    if manager is None:
+        return
+    if queue is not None:
+        try:
+            await manager.unsubscribe(terminal_id, queue)
+        except (LookupError, RuntimeError):
+            logger.info("terminal_pty unsubscribe_cleanup_skipped")
+    if attached:
+        try:
+            await manager.detach(terminal_id)
+        except (LookupError, RuntimeError):
+            logger.info("terminal_pty detach_cleanup_skipped")
+
+
 class TerminalCreate(BaseModel):
     name: str = Field(default="终端", min_length=1, max_length=200)
     sessionId: int | None = None
@@ -203,23 +219,18 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         })
     except WebSocketDisconnect:
         logger.info("terminal_pty websocket_disconnected_during_setup")
-        if manager is not None:
-            try:
-                if queue is not None:
-                    await manager.unsubscribe(row_id, queue)
-                if attached:
-                    await manager.detach(row_id)
-            except (LookupError, RuntimeError):
-                logger.info("terminal_pty setup_cleanup_skipped")
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
         return
     except HTTPException as exc:
         logger.info("terminal_pty websocket_rejected status=%s", exc.status_code)
         await websocket.close(code=4401 if exc.status_code == 401 else 4403)
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
         return
     except (LookupError, RuntimeError, ValueError) as exc:
         reason = redact(str(exc))[:120]
         logger.warning("terminal_pty websocket_setup_failed error=%s reason=%s", type(exc).__name__, reason)
         await websocket.close(code=4409, reason=reason)
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
         return
 
     receive_task = asyncio.create_task(websocket.receive_json())
@@ -290,11 +301,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         output_task.cancel()
         status_task.cancel()
         await asyncio.gather(receive_task, output_task, status_task, return_exceptions=True)
-        await manager.unsubscribe(row_id, queue)
-        try:
-            await manager.detach(row_id)
-        except LookupError:
-            pass
+        await _cleanup_terminal_websocket_resources(manager, row_id, queue, attached)
 
 
 async def _wait_for_account_suspend(user_id):
