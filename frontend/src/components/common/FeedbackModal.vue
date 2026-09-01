@@ -123,9 +123,11 @@ async function submit() {
 .modal-mask {
   position: fixed; inset: 0;   /* z-index 由 :style 动态(打开时盖当前最顶窗口) */
   background: var(--scrim);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center;
 }
 .modal-card {
+  position: relative;
   width: 400px;
   background: var(--modal-card-bg);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
@@ -133,6 +135,13 @@ async function submit() {
   border-radius: 18px; padding: 28px 28px 24px;
   box-shadow: var(--modal-card-shadow),
               inset 0 1px 0 var(--modal-card-highlight);
+}
+/* 进入阶段不能给根节点加 opacity，否则卡片会成为 backdrop root，导致毛玻璃直到动画结束
+   才采样到弹窗外的页面。用卡片内部遮罩完成视觉渐显，保持 backdrop-filter 从第一帧生效。 */
+.modal-card::after {
+  content: ''; position: absolute; inset: 0; z-index: 10;
+  border-radius: inherit; background: var(--panel-bg);
+  opacity: 0; pointer-events: none;
 }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -216,6 +225,19 @@ async function submit() {
 .done-text { font-size: 15px; font-weight: 700; color: var(--content-primary); margin-bottom: 6px; }
 .done-sub  { font-size: 13px; color: var(--content-secondary); }
 
-.modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.18s; }
-.modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
+.modal-fade-enter-active {
+  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.modal-fade-enter-from {
+  background-color: transparent;
+  backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0);
+}
+.modal-fade-enter-active .modal-card::after {
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.modal-fade-enter-from .modal-card::after { opacity: 1; }
+.modal-fade-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
+.modal-fade-leave-to { opacity: 0; }
 </style>
