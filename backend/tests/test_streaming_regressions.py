@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from pathlib import Path
 from inspect import signature
 
+from fastapi.dependencies.utils import get_dependant
+
 import pytest
 
 from agent.im.replies import send_qq_stream_by_round
@@ -59,8 +61,25 @@ def test_collect_and_stream_share_im_preparation_rules():
 
 
 def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
-    from app.api.v1.agent import resume_stream
-    from app.api.v1.terminals import stream_terminal_events
+    from app.api.v1.agent import chat, resume_stream
+    from app.api.v1.terminals import stream_terminal_events, terminal_websocket
+    from app.db.session import get_db
+
+    def dependency_calls(callable_):
+        root = get_dependant(path="/test", call=callable_)
+        result = []
+
+        def walk(node):
+            if node.call is not None:
+                result.append(node.call)
+            for child in node.dependencies:
+                walk(child)
+
+        walk(root)
+        return result
+
+    for endpoint in (chat, resume_stream, stream_terminal_events, terminal_websocket):
+        assert get_db not in dependency_calls(endpoint), endpoint.__name__
 
     assert "db" not in signature(resume_stream).parameters
     assert "db" not in signature(stream_terminal_events).parameters
