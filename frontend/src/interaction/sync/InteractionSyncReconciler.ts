@@ -13,8 +13,10 @@ export function reconcileCanvasItems<T extends Identity>(
   const claimed = new Set<string>()
 
   const result = serverItems.map(serverItem => {
-    const mutation = pendingByPersistedId.get(serverItem.id) ?? pendingByNodeId.get(serverItem.nodeId)
-    const local = localById.get(serverItem.id) ?? localByNodeId.get(serverItem.nodeId)
+    const mutation = pendingByPersistedId.get(serverItem.id)
+      ?? (serverItem.nodeId == null ? undefined : pendingByNodeId.get(serverItem.nodeId))
+    const local = localById.get(serverItem.id)
+      ?? (serverItem.nodeId == null ? undefined : localByNodeId.get(serverItem.nodeId))
     const clientKey = local?.clientKey ?? mutation?.clientKey
     if (local) claimed.add(local.clientKey ?? `${local.id}`)
     return clientKey ? { ...serverItem, clientKey } : serverItem
