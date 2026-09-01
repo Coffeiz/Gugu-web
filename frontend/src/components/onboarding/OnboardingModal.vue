@@ -221,7 +221,7 @@ const mediaAlt = computed(() => t(`onboardingUi.demo.${step.value}.title`))
 const featureSlides: Record<string, string[]> = {
   project: ['/onboarding/kanban-drag-1.gif', '/onboarding/file-drag-1.gif'],
   calendar: ['/onboarding/calendar-1.gif'],
-  im: ['/onboarding/IM-messages-1.gif', '/onboarding/IM-messages-2.gif', '/onboarding/IM-messages-3.gif'],
+  im: ['/onboarding/IM-messages-2.gif', '/onboarding/IM-messages-3.gif'],
 }
 const featureSequence = ['project', 'calendar', 'im']
 const featureDurations: Record<string, number> = {
@@ -353,7 +353,7 @@ watch(step, (value) => {
     featureMode.value = value
     selectedFeature.value = value === 'features' ? 'project' : 'im'
     featureSlideIndex.value = 0
-    featureMediaCurrent.value = featureSlides.project[0]
+    featureMediaCurrent.value = featureSlides[selectedFeature.value][0]
     featureMediaPrevious.value = null
     featureMediaTransition.value = true
     startFeatureCycle()
