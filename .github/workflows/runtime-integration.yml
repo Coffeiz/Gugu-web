@@ -217,6 +217,11 @@ jobs:
         working-directory: frontend
         run: npm install --no-audit --no-fund
 
+      - name: Install LoopScope dependencies for affected tests
+        if: github.event_name == 'pull_request'
+        working-directory: loopscope
+        run: corepack pnpm install --frozen-lockfile
+
       - name: Create database schema
         working-directory: backend
         env:
