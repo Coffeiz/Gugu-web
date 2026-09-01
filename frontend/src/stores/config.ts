@@ -165,6 +165,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.ai)      Object.assign(cfg.ai,      sanitizeForEdit(data.ai))
       if (data.voice) { secretSet.voiceApiKey = data.voice.api_key === '****'; Object.assign(cfg.voice, sanitizeForEdit(data.voice)) }
       if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
+      if (data.sandbox) Object.assign(cfg.sandbox, data.sandbox)
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))

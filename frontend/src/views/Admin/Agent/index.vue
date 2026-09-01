@@ -20,7 +20,7 @@
         v-if="activeTab === 'permissions'"
         :agent="agentDraft"
         :byok="byokDraft"
-        :sandbox-enabled="configStore.cfg.sandbox.enabled === true"
+        :sandbox-enabled="sandboxRuntimeEnabled"
         :saving="permissionSaving"
         :saved="permissionSaved"
         :error="permissionError"
@@ -612,6 +612,7 @@ const byokDraft = reactive({ ...configStore.cfg.byok })
 const permissionSaving = ref(false)
 const permissionSaved = ref(false)
 const permissionError = ref('')
+const sandboxRuntimeEnabled = ref(false)
 
 const tabs = computed(() => [
   { key: 'llm',      label: t('agent.llm') },
@@ -1007,6 +1008,11 @@ async function probeVision(id: string | number | undefined, dim?: string) {
 // ── 初始化 ────────────────────────────────────────────────────────────────
 onMounted(async () => {
   await configStore.fetchConfig()
+  const sandboxResponse = await adminStore.authFetch('/api/v1/admin/sandbox/status')
+  if (sandboxResponse.ok) {
+    const sandboxStatus = await sandboxResponse.json()
+    sandboxRuntimeEnabled.value = sandboxStatus.enabled === true && sandboxStatus.executor_ready === true
+  }
   Object.assign(agentDraft, configStore.cfg.agent)
   Object.assign(byokDraft, configStore.cfg.byok)
   resetGeneralSearch()

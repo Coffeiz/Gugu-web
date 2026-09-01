@@ -85,13 +85,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import MarkdownView from './MarkdownView.vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
+import { useLiveStore } from '@/stores/live'
 import NavItem from './NavItem.vue'
 import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
@@ -106,6 +107,7 @@ const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 const { preference, resolved, setTheme } = useTheme()
+const liveStore = useLiveStore()
 const { t } = useI18n()
 
 const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || t('layout.unknownUser'))
@@ -184,6 +186,11 @@ function closeAll(e: MouseEvent) {
   if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target as Node) && !notifBtnRef.value?.contains(e?.target as Node)) notifOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeAll))
+watch(() => liveStore.resourceEvent, (event) => {
+  if (event?.resource === 'terminals' && event.operation === 'refresh') {
+    void refreshTerminalVisibility()
+  }
+})
 onMounted(() => {
   refreshTerminalVisibility()
   window.addEventListener('focus', refreshTerminalVisibility)

@@ -74,6 +74,7 @@ async def test_terminal_page_can_show_without_workspace_when_shell_is_enabled(db
             sandbox=SimpleNamespace(enabled=True),
         ),
     )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     decision = await page_access(db, user_a.id)
     assert decision.allowed
@@ -281,6 +282,7 @@ async def test_terminal_sse_replays_closed_terminal_until_end_marker(db, user_a,
             sandbox=SimpleNamespace(enabled=True),
         ),
     )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     terminal = TerminalSessionRecord(
         id="term-sse-replay", owner_id=user_a.id, name="SSE 终端",
@@ -361,6 +363,7 @@ async def test_terminal_input_allows_user_terminal_without_session(db, user_a, m
             sandbox=SimpleNamespace(enabled=True),
         ),
     )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     monkeypatch.setattr(terminal_access, "evaluate", _async_allowed_decision)
     terminal = TerminalSessionRecord(
