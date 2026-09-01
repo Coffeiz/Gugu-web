@@ -28,31 +28,6 @@ html[data-theme][data-family] .theme-mode-quick button:hover {
 }
 
 /* ── Real Topbar controls ─────────────────────────────────────────────────────────────── */
-html[data-theme][data-family] .topbar .btn-ghost-custom {
-  color: var(--control-fg) !important;
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border) !important;
-  box-shadow: none !important;
-}
-html[data-theme][data-family] .topbar .btn-ghost-custom:hover {
-  color: var(--control-fg-strong) !important;
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  box-shadow: none !important;
-}
-html[data-theme][data-family] .topbar .btn-primary-custom {
-  color: var(--content-on-accent) !important;
-  background: var(--action-primary-bg) !important;
-  filter: none !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-html[data-theme][data-family] .topbar .btn-primary-custom:hover {
-  background: var(--action-primary-bg) !important;
-  filter: brightness(1.05);
-  box-shadow: none !important;
-}
-
 /* ── Projects ───────────────────────────────────────────────────────────────────────────
    ProjectCard 自身是最终 paint / motion owner；本层只负责它内部旧 scoped 规则的语义映射。 */
 html[data-theme='dark'][data-family] .proj-card .proj-name,
