@@ -174,7 +174,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         await enforce_user_throttle(user_id)
         db_session.ensure_engine()
         async with db_session._SessionLocal() as auth_db:
-            user = await auth_db.get(User, user_id)  # ownership-exempt: user_id 已由 WebSocket token 解码
+            user = await auth_db.get(User, user_id)  # orm-exempt: user_id 已由 WebSocket token 解码
             row = await get_terminal(auth_db, user_id, terminal_id) if account_is_active(user) else None
             if row is None or row.mode != "interactive-pty":
                 raise HTTPException(status_code=404, detail="交互式终端不存在")

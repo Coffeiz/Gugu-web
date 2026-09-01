@@ -122,6 +122,10 @@ def scan_added_lines(base: str) -> list[str]:
         code = line[1:].strip()
         if not code or code.startswith("#"):
             continue
+        # 少数跨用户广播或协议层认证查询无法复用单用户 Service；豁免必须
+        # 写在新增代码行上并说明原因，便于审查和后续收口。
+        if "orm-exempt:" in code:
+            continue
         # Service 是规范要求承接 ORM 的边界；阶段 1 只禁止 API/Agent 绕过
         # Service 新增高风险 ORM，Service 自身的查询由后续领域迁移与测试约束。
         if not (current_file.startswith("backend/app/api/v1/")

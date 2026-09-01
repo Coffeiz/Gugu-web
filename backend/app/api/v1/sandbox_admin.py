@@ -153,7 +153,7 @@ def _egress_proxy_error(cfg) -> str | None:
 
 async def _publish_terminal_refresh(db: AsyncSession) -> None:
     """沙盒总开关变化后，让已登录页面立即重新计算终端入口可见性。"""
-    user_ids = (await db.execute(select(User.id))).scalars().all()
+    user_ids = (await db.execute(select(User.id))).scalars().all()  # orm-exempt: 管理员沙盒状态变更需要向所有用户广播刷新事件
     for user_id in user_ids:
         await publish(user_id, "terminals", operation="refresh")
 
