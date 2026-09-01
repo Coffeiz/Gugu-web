@@ -14,6 +14,7 @@ emoji: 📝
 - 搜索普通笔记或全局查找笔记/画布便签：使用固定工具名 `note_search`，传 `query`。
 - 读取搜索结果的完整正文：使用固定工具名 `note_get`，传 `node_id`。
 - 创建、更新或删除普通时间流笔记：使用本 Skill 的 `note_create`、`note_update`、`note_delete` 等工具。
+- 更新已有正文中的指定行：先用 `note_get` 读取最新的 `numbered_content`，它是原始 Markdown 物理行号，不是页面渲染行号；再用 `note_update` 的 `line_edits`，数字目标必须带对应的 `expected` 原文。`target_lines` 支持 `8`、`8-11`、`8,11`，整篇用 `all`，`content` 为空表示删除。校验失败就重新读取，不要猜行号；多个范围不能重叠；不要为删除旧内容继续追加“作废说明”。
 - 指定画布、搜索画布节点、创建画布便签、放置项目/文件、连接节点：改用 `canvas` Skill，不要用 `note_create` 代替 `canvas_create_note`。
 - `canvas_search` 只搜索指定画布内容，需要 `canvas_id`；它不是普通笔记搜索工具。
 - 工具名必须逐字使用 canonical name，不要把 `note_search` 改写成 `search_notes`，也不要猜测 `list_notes`、`read_note` 等别名。

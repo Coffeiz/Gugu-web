@@ -356,6 +356,36 @@ flowchart LR
 
 在简介模式下，系统默认向模型注入全部已授权工具的 `description_short` 和自动生成的可用字段签名，同时注入当前可用 Skills 的短简介。业务工具需要更复杂的结构时，可通过 `get_tool_schema` 按需获取完整 Schema，实际操作时通过 `call_tool` 调用；Skills 通过 `use_skill` 后，系统才会读取 Skill 文档中注册并选择的工具，将这些工具的 Schema 注入后继续完成任务。
 
+#### 正文编辑统一约定
+
+所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/line_edit.py`，不得重新引入独立的整篇覆盖模式。
+
+```json
+{
+  "mode": "line_edit",
+  "line_edits": [
+    {"target_lines": "8-11", "expected": "原始第八行\n原始第九行\n原始第十行\n原始第十一行", "content": "替换后的内容"},
+    {"target_lines": "15", "expected": "要删除的原始第十五行", "content": ""}
+  ]
+}
+```
+
+`target_lines` 使用 1-based 原始 Markdown 物理行号，支持单行（`8`）、范围（`8-11`）、Bash/`sed` 风格范围（`8,11`）和整篇（`all`）。数字目标必须同时提供读取结果中的 `expected` 原文，范围编辑时用换行连接；原文不匹配会拒绝修改，避免把渲染后的页面行号误当成 Markdown 行号。`content` 为空表示删除目标行；多个范围不得重叠，由工具从后往前应用。调用前必须先读取最新正文，修改后必须重新读取核对；整篇编辑只能使用 `target_lines: "all"`，不再使用 `replace_all`。笔记的追加仍使用 `append_blocks`，不应通过追加“作废说明”替代删除原内容。
+
+新增正文编辑工具时必须遵守同一套边界：读取接口返回原始正文和稳定的物理行号，编辑接口复用 `backend/agent/tools/line_edit.py`，不得依据 UI/HTML/Markdown 渲染后的可见行号；数字目标没有 `expected` 或校验失败时必须拒绝执行，不能猜测或静默改动。编辑成功后必须重新读取同一资源核对，测试至少覆盖行号偏移、过期正文、删除范围、`all` 整篇替换和多范围倒序应用；批量入口也必须逐项沿用这些规则。
+
+#### 工具 Schema 防错约定
+
+Schema 必须表达真实调用形状，而不是只声明一个宽泛的 `object`：
+
+- 单项和批量入口使用互斥分支（例如 `item_id` 与 `updates`），每个分支声明自己的必填字段；不能只在 handler 里事后判断。
+- ID 使用 `integer`，坐标使用 `number`，状态使用 `boolean`；不要让模型把数字放在字符串里后再依赖 handler 转换。
+- 批量数组的 `items` 必须声明完整字段、类型、必填条件和 `additionalProperties: false`，不能只写 `items: {}`。
+- 资源 ID 必须由读取工具返回或由用户提供；工具不得根据节点 ID、名称或当前上下文猜测所属资源，以免误操作或越权。
+- 同一字段不能同时支持两套含义；单项、批量、确认参数和危险操作都要在 Schema 中明确互斥关系。新增工具必须补“正确参数通过、缺字段失败、类型错误失败、单批混用失败”的 Schema 测试。
+
+例如画布节点移动必须明确区分：`canvas_id + item_id + (x/y/z/collapsed)`，或 `canvas_id + updates[]`；不能只传节点 ID，也不能把 `"1450"` 当作坐标。
+
 ```mermaid
 flowchart LR
     R[工具 / Skill 注册系统] --> D[能力目录]

@@ -73,6 +73,7 @@ async def test_note_get_returns_full_content_and_neighbor(db, user_a):
     result = await _note_get(db, user_a.id, {"node_id": node.id})
 
     assert result["node"]["content_md"] == "# 完整正文\n\n这是完整内容"
+    assert result["node"]["numbered_content"] == "1: # 完整正文\n2: \n3: 这是完整内容"
     assert result["related"][0]["node"]["node_id"] == neighbor.id
 
 

@@ -67,6 +67,26 @@ def test_phase2_calendar_and_file_semantics():
     assert _issues("save_uploaded_file", {"source": "attach_id"})
 
 
+def test_canvas_mutation_schemas_require_explicit_shape_and_types():
+    assert _issues("canvas_update_node", {"canvas_id": 7, "item_id": 12, "x": 10, "y": 20}) == []
+    assert _issues("canvas_update_node", {"canvas_id": 7, "item_id": "12", "x": "10"})
+    assert _issues("canvas_update_node", {"canvas_id": 7, "item_id": 12})
+    assert _issues("canvas_update_node", {
+        "canvas_id": 7,
+        "updates": [{"item_id": 12, "z": 3}],
+    }) == []
+    assert _issues("canvas_update_node", {
+        "canvas_id": 7,
+        "updates": [{"item_id": "12", "z": "3"}],
+    })
+    assert _issues("canvas_update_node", {"item_id": 12, "x": 10})
+
+    assert _issues("canvas_remove_node", {"canvas_id": 7, "item_id": 12}) == []
+    assert _issues("canvas_remove_node", {"canvas_id": 7, "item_id": 12, "item_ids": [12]})
+    assert _issues("canvas_disconnect", {"canvas_id": 7, "relation_ids": [3, 4]}) == []
+    assert _issues("canvas_disconnect", {"canvas_id": 7})
+
+
 def test_phase3_project_requires_explicit_date_range():
     assert _issues("create_project", {
         "name": "项目",
@@ -152,7 +172,8 @@ def test_phase8_document_project_location_is_structural():
 
 def test_phase8_edit_modes_are_structural():
     assert _issues("edit_file", {
-        "file_id": 1, "mode": "replace_all", "content": "新内容",
+        "file_id": 1, "mode": "line_edit",
+        "line_edits": [{"target_lines": "all", "content": "新内容"}],
     }) == []
     assert _issues("edit_file", {
         "file_id": 1, "mode": "append", "content": "追加内容",
@@ -160,7 +181,7 @@ def test_phase8_edit_modes_are_structural():
     assert _issues("edit_file", {
         "file_id": 1, "mode": "find_replace", "find": "旧", "replace": "新",
     }) == []
-    assert _issues("edit_file", {"file_id": 1, "mode": "replace_all"})
+    assert _issues("edit_file", {"file_id": 1, "mode": "line_edit"})
     assert _issues("edit_file", {"file_id": 1, "mode": "append", "find": "旧", "replace": "新"})
     assert _issues("edit_file", {"file_id": 1, "mode": "find_replace", "content": "新内容"})
 

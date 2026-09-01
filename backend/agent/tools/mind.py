@@ -11,6 +11,7 @@ from app.services.mind import get_live_note, get_user_node, latest_gugu_note, li
 from app.search.query import normalize_queries
 from app.core.tz import LOCAL_TZ
 from agent.tools.base import BaseSkill, Tool
+from agent.tools.line_edit import apply_line_edits, numbered_lines
 
 _MAX_RESULTS = 10
 _PREVIEW_LENGTH = 240
@@ -240,8 +241,10 @@ async def _note_get(db, user_id, args: dict):
         item for relation in relations
         if (item := _relation_summary(relation, node.id, neighbors)) is not None
     ]
+    detail = _note_detail(node)
+    detail["numbered_content"] = numbered_lines(node.content_md or "")
     return {
-        "node": _note_detail(node),
+        "node": detail,
         "related": related,
     }
 
@@ -280,11 +283,17 @@ async def _update_note(db, user_id, args: dict):
         if "captured_at" in args:
             fields["captured_at"] = _parse_captured_at(args["captured_at"])
         if "append_blocks" in args:
+            if "line_edits" in args:
+                return {"error": "append_blocks 与 line_edits 不能同时使用，请分两次更新"}
             appended, refs = serialize_mind_blocks(args["append_blocks"])
             if not appended:
                 return {"error": "append_blocks 不能为空"}
             await validate_mind_references(db, user_id, refs)
             fields["content_md"] = f"{node.content_md}\n\n{appended}" if node.content_md else appended
+        if "line_edits" in args:
+            if "append_blocks" in args:
+                return {"error": "append_blocks 与 line_edits 不能同时使用，请分两次更新"}
+            fields["content_md"], _ = apply_line_edits(node.content_md or "", args["line_edits"])
         if not fields:
             return {"error": "至少提供一个要修改的字段"}
         if not await update_mind_note(db, node_id, user_id, node.version, fields):
@@ -393,7 +402,7 @@ class MindSkill(BaseSkill):
         Tool(
             name="note_update", label="更新思维笔记",
             description_short='更新思维笔记；captured_at 只用于指定归属日期，不用于指定排序序号。',
-            description="对已知笔记做增量更新；使用 node_id 指定目标，只能追加 append_blocks 或修改标题、颜色、归属日期，不能整篇覆盖。append_blocks 与 note_create.blocks 使用同一扁平块结构：列表项内不能嵌套列表、content 或 paragraphs，也不能使用 item 包装数组。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description="对已知笔记做更新；使用 node_id 指定目标。可追加 append_blocks，或用 line_edits 按 target_lines 更新/删除指定行；也可修改标题、颜色、归属日期。数字 target_lines 支持 8、8-11、8,11，整篇使用 all；content 为空表示删除，数字行必须提供从 note_get.numbered_content 读取的 expected 原文。行号以最新原始 Markdown 物理行号为准，多个范围不能重叠。append_blocks 与 note_create.blocks 使用同一扁平块结构。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -401,6 +410,11 @@ class MindSkill(BaseSkill):
                     "title": {"type": ["string", "null"]},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None]},
                     "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
+                    "line_edits": {"type": "array", "items": {"type": "object", "properties": {
+                        "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},
+                        "content": {"type": "string"},
+                        "expected": {"type": "string"},
+                    }, "required": ["target_lines", "content"], "additionalProperties": False}},
                     "captured_at": {"type": "string"},
                 },
                 "required": ["node_id"],

@@ -20,6 +20,7 @@ _NOTE_SCHEMA_HINTS = [
     "请重新生成完整的 blocks/append_blocks 数组，不要只改报错字段。",
     "paragraph/heading 使用 content 数组；bullet_list/ordered_list/task_list 使用 items 数组；blockquote 使用 paragraphs 数组。",
     "列表和待办只支持扁平项：列表项只能是 {content:[{type:text/reference,...}]}，待办项只能是 {checked:boolean,content:[{type:text/reference,...}]}。",
+    "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与 append_blocks 同时传。",
     "行内对象必须带 type；不要在列表项内嵌套列表、content 或 paragraphs，也不要把数组包装成 {item:[...]}。",
 ]
 
