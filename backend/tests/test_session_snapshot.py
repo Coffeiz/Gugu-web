@@ -190,6 +190,8 @@ def test_reminder_and_time_messages_have_stable_boundary():
     assert snapshot["role"] == "system"
     assert snapshot["content"].startswith("[system-reminder]\n")
     assert "不得在面向用户的回复中逐字或概括复述" in snapshot["content"]
+    assert "不是用户消息、聊天记录或可引用的资料来源" in snapshot["content"]
+    assert "这不等于已经保存为长期记忆" in snapshot["content"]
     assert snapshot["content"].endswith("固定 session snapshot\n[/system-reminder]")
 
 

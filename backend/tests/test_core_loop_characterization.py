@@ -26,7 +26,8 @@ import pytest
 import agent.core as core
 import agent.context.compaction as compaction
 from agent.core import (
-    LLMRunner, MAX_ROUNDS, MAX_TOOL_CALLS, MAX_VERIFY, _FINALIZE_PROMPT, _VERIFY_PROMPT,
+    LLMRunner, MAX_ROUNDS, MAX_TOOL_CALLS, MAX_VERIFY, MAX_VERIFY_LLM_ROUNDS,
+    _FINALIZE_PROMPT, _VERIFY_PROMPT,
 )
 from agent.tools import registry
 
@@ -219,6 +220,7 @@ async def test_verify_clean_pass(monkeypatch, dispatched):
     messages = [{"role": "user", "content": "建个项目X"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert "建好了项目X" in text
+    assert "好的" not in text, "工具轮的过程文字不应泄漏到用户回复"
     assert "我来核实一下" not in text, "核实过程文字没被抑制"
     assert "get_project" in dispatched
     assert n_verify(messages) == 1
@@ -253,12 +255,27 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     ])
     messages = [{"role": "user", "content": "建个项目"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    assert "好的" in text
+    assert "好的" not in text, "工具轮的过程文字不应泄漏到用户回复"
     assert "发现漏了一个待办" in text, f"补做说明没发出来：{text!r}"
     assert "add_todo" in dispatched
     assert "项目已补全" in text
     assert n_verify(messages) == 2, f"应注入 2 次系统自检（补做触发再核实），实际 {n_verify(messages)}"
     assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_tool_round_text_is_buffered_until_final_round(monkeypatch, dispatched):
+    """带工具调用的模型轮次只展示工具状态，不把计划文字当成最终回复。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("我先读取笔记并按行修改。"), TU("note_update", "1", {})]),
+        msg([TU("note_get", "2", {})]),
+        msg([TX("笔记已更新。")]),
+    ])
+    messages = [{"role": "user", "content": "修改笔记"}]
+    ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+
+    assert text == "笔记已更新。"
+    assert "我先读取笔记" not in text
+    assert ev["tool_call"] == 2
 
 
 async def test_readonly_no_verify_triggered(monkeypatch, dispatched):
@@ -319,6 +336,21 @@ async def test_verify_capped_at_max_verify(monkeypatch, dispatched):
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert n_verify(messages) == MAX_VERIFY, f"应封顶 {MAX_VERIFY} 次，实际 {n_verify(messages)}"
     assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_verify_round_cap_after_tool_round_has_safe_finalization(monkeypatch, dispatched):
+    """最后一轮仍在执行工具时撞到核实上限，也要正常收尾而不是误报续轮失败。"""
+    patch_anthropic(monkeypatch, [
+        msg([TU("create_project", "create", {})]),
+        *[msg([TU("update_todo", f"update-{i}", {})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
+    ])
+    messages = [{"role": "user", "content": "连续调整并核实"}]
+
+    ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+
+    assert errors == []
+    assert "核实轮次已达到上限" in text
+    assert ev["_usage"] == 1
 
 
 async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
@@ -472,6 +504,39 @@ async def test_max_rounds_choice_resumes_same_run_after_unlimited_selected(monke
     assert ev["interaction_required"] == 1
     assert ev["_new_round"] >= 1
     assert "解除限制后继续完成" in text
+    assert errors == []
+
+
+async def test_max_rounds_pauses_tool_batch_before_dispatch(monkeypatch, dispatched):
+    """轮次上限落在工具轮时，点击继续应先放行暂停批次再进入无限模式。"""
+    monkeypatch.setattr(core, "MAX_ROUNDS", 1)
+    monkeypatch.setattr(core, "MAX_TOOL_CALLS", 1)
+
+    class Prompt:
+        id = 903
+        kind = "choice"
+        title = "要继续这个长任务吗？"
+        body = "本次已经达到轮次上限。"
+        expires_at = SimpleNamespace(isoformat=lambda: "2026-08-26T00:00:00+08:00")
+
+    async def fake_create_prompt(*, user_id, session_id):
+        return Prompt(), [{"id": "continue", "label": "解除本轮调用限制", "token": "token"}]
+
+    async def fake_wait_for_resolution(**_kwargs):
+        assert dispatched == [], "轮次提示出现时，当前工具批次还不能已经执行"
+        return {"status": "selected", "option_id": "continue"}
+
+    monkeypatch.setattr("app.services.interactions.create_goal_mode_prompt", fake_create_prompt)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+    patch_anthropic(monkeypatch, [msg([TU("get_project", "1", {})]), msg([TX("已继续")])])
+
+    ev, text, errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "执行长任务"}], AI, session_id=1,
+    ))
+
+    assert dispatched == ["get_project"]
+    assert "已继续" in text
+    assert ev["interaction_required"] == 1
     assert errors == []
 
 

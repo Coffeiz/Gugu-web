@@ -206,7 +206,7 @@ def _strip_goal_marker(text: str) -> str:
 _VERIFY_PROMPT = (
     "【内部核验 · 请执行】你刚才执行了增删改操作。现在用对应的查询工具检查结果是否生效且完整："
     "查询工具一般是 `list_*` / `get_*` / `read_*`（建项目用 `get_project` 看阶段待办、定时任务用 `list_scheduled_tasks` 看 cron/内容……照此类推）。"
-    "**尤其改了文件正文（`edit_file`/`create_document`）：必须用 `read_file` 把内容读回来逐字比对——`list_files` 只能看文件在不在、读不到正文，光看那个不算核实。**"
+    "**尤其改了文件正文（`edit_file`/`create_document`）：必须用 `read_file` 把内容读回来逐字比对；按行编辑还要确认目标行已更新/删除且其它行未被移动或覆盖——`list_files` 只能看文件在不在，光看那个不算核实。**"
     "**发现没做成或不完整 → 立刻补做，并简要说明补了什么**。"
     "核验过程属于内部步骤，不要把“核对完成”“复查完成”“已确认”等过程标签当成最终回复。"
     "核实后直接总结这次实际做了什么、哪些成功、哪些没做成及原因；数量、文件名、位置和失败原因只能来自工具回执。"
@@ -225,7 +225,7 @@ _FINALIZE_PROMPT = (
 _VERIFY_FORCE_PROMPT = (
     "【内部核验 · 需要查询】你上一条只回复了\"确认/没问题\"，没有调用查询工具查证。"
     "请调用 `read_file`（改了文件正文）/ `get_project` / `list_*` 等查询工具，把刚改的东西查出来，"
-    "对照确认：真生效、内容完整、**没把别的内容覆盖丢**（尤其 `edit_file` replace_all 容易冲掉其它段落）。"
+    "对照确认：真生效、内容完整、**没把别的内容覆盖丢**（尤其 `edit_file` 的整篇 `target_lines=all` 容易冲掉其它段落）。"
     "查证是内部步骤，不要只回复“核对完成/复查完成”；最后按用户当前的正式/活泼、简短/详细偏好，"
     "自然说明实际做了什么、成功了什么，以及仍失败或未完成的部分。"
 )
@@ -653,6 +653,12 @@ class LLMRunner:
                 **payload,
             )
 
+        def drain_round_text() -> list[str]:
+            """取出已确认可展示的普通轮文字，并清空本轮缓冲。"""
+            text = list(_round_text_buf)
+            _round_text_buf.clear()
+            return text
+
         async def compact_after_provider_overflow() -> bool:
             """仅在 provider overflow 后压缩旧 history，并让当前 round 重试。"""
             nonlocal messages, compaction_applied
@@ -812,6 +818,9 @@ class LLMRunner:
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             _progress_buf: list[str] = []
             _progress_pending = False
+            # 普通轮在 provider 流结束前无法确定是否包含工具调用。先缓冲文字，
+            # 避免工具轮的计划/自述先进入用户流，随后又被下一轮最终回复覆盖。
+            _round_text_buf: list[str] = []
             try:
                 # 每次 provider 请求前刷新 selected tools。工具调用/结果由驱动构造批次，
                 # 再由核心循环一次性提交到 history；这里仅更新原生 tools 参数。
@@ -840,16 +849,15 @@ class LLMRunner:
                             if _could_be_tool_progress(candidate):
                                 _progress_buf.append(_val)
                             else:
-                                for _pending in _progress_buf:
-                                    yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                                _round_text_buf.extend(_progress_buf)
                                 _progress_buf.clear()
                                 _progress_pending = False
-                                yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                                _round_text_buf.append(_val)
                         elif _could_be_tool_progress(_val):
                             _progress_pending = True
                             _progress_buf.append(_val)
                         else:
-                            yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                            _round_text_buf.append(_val)
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                     # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
@@ -975,10 +983,11 @@ class LLMRunner:
                     guard_retry_pending = False
                     guard_retry_buf.clear()
                 if _progress_pending:
-                    for _pending in _progress_buf:
-                        yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                    # 工具轮的所有普通文字都属于模型过程叙述，不能因为看起来像
+                    # “正在查询”就提前泄漏；真正的工具状态通过 tool_call 事件展示。
                     _progress_buf.clear()
                     _progress_pending = False
+                _round_text_buf.clear()
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(
@@ -993,20 +1002,39 @@ class LLMRunner:
                 remaining_tool_calls = (
                     None if (goal_mode or unlimited_mode) else max(0, MAX_TOOL_CALLS - tool_calls_used)
                 )
+                round_limit_exceeded = (
+                    not (goal_mode or unlimited_mode)
+                    and task_rounds >= MAX_ROUNDS
+                )
                 tool_budget_exceeded = (
                     remaining_tool_calls is not None
                     and len(result.tool_calls) > remaining_tool_calls
                 )
                 tool_budget_stop_requested = False
-                if tool_budget_exceeded:
-                    # 先暂停整批待执行请求，再询问用户。不能先把超额调用写成
-                    # skipped 的工具结果，否则用户点击继续后模型会误以为请求已经失败，
-                    # 直接输出最终报告。
-                    _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
-                    from app.services.interactions import create_tool_budget_prompt
-                    interaction = await create_tool_budget_prompt(user_id=user_id, session_id=session_id)
+                if round_limit_exceeded or tool_budget_exceeded:
+                    # 两种限制都必须在 dispatch 前暂停整批待执行请求。用户点击继续后，
+                    # 先放行这批请求，再解除对应的后续上限，避免模型看到“工具结果已失败”
+                    # 后直接总结，或把同一批工具重新规划一遍。
+                    if round_limit_exceeded:
+                        _log.warning("[core] LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, MAX_ROUNDS)
+                        from app.services.interactions import create_goal_mode_prompt
+                        interaction = await create_goal_mode_prompt(
+                            user_id=user_id, session_id=session_id,
+                        )
+                    else:
+                        _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
+                        from app.services.interactions import create_tool_budget_prompt
+                        interaction = await create_tool_budget_prompt(
+                            user_id=user_id, session_id=session_id,
+                        )
                     if interaction is None:
-                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
+                        detail = (
+                            "本次已达到 30 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。"
+                            if round_limit_exceeded
+                            else "这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。"
+                        )
+                        event_type = "token" if round_limit_exceeded else "error"
+                        yield f"data: {json.dumps({'type': event_type, 'content' if event_type == 'token' else 'detail': detail}, ensure_ascii=False)}\n\n"
                         return
                     prompt, options = interaction
                     yield stream_event(
@@ -1038,14 +1066,23 @@ class LLMRunner:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
                         return
                     if answer.get("option_id") == "continue":
-                        # 继续执行同一批原始 tool call，不重新交给模型判断是否总结。
+                        # 继续执行同一批原始 tool call，不重新交给模型判断是否总结；
+                        # 同时解除轮次和工具调用上限，保持“继续”语义一致。
                         unlimited_mode = True
+                        task_rounds = 0
                         remaining_tool_calls = None
+                        round_limit_exceeded = False
                         tool_budget_exceeded = False
+                    elif round_limit_exceeded:
+                        # 轮次限制下用户选择停止时，当前工具批次尚未写入历史，直接收尾；
+                        # 不再额外请求模型，避免把“停止”变成一次新的空续轮。
+                        yield f"data: {json.dumps({'type': 'token', 'content': '已先停在这里，前面成功执行的调整仍然有效。'}, ensure_ascii=False)}\n\n"
+                        return
                     else:
                         # 拒绝时阻止这整批尚未执行的请求，并让模型在无工具模式下
                         # 基于已取得的结果生成说明，而不是静默结束。
                         tool_budget_stop_requested = True
+                        task_rounds = 0
                         remaining_tool_calls = 0
                         tool_budget_exceeded = False
                         driver.update_tools(ctx, [])
@@ -1502,8 +1539,11 @@ class LLMRunner:
             # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
             # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
             if _progress_pending and not _is_tool_progress_only(_final_text):
-                for _pending in _progress_buf:
-                    yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                _round_text_buf.extend(_progress_buf)
+                _progress_buf.clear()
+                _progress_pending = False
+            elif _progress_pending:
+                _round_text_buf.clear()
                 _progress_buf.clear()
                 _progress_pending = False
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
@@ -1524,6 +1564,8 @@ class LLMRunner:
                 narration_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
+                for _text in drain_round_text():
+                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, _NARRATION_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1533,6 +1575,8 @@ class LLMRunner:
                 intent_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
+                for _text in drain_round_text():
+                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, _INTENT_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1544,6 +1588,8 @@ class LLMRunner:
                 tool_intent_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
+                for _text in drain_round_text():
+                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, _TOOL_REQUIRED_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1553,6 +1599,8 @@ class LLMRunner:
                 decision_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
+                for _text in drain_round_text():
+                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, _DECISION_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1571,7 +1619,18 @@ class LLMRunner:
                 if _event:
                     yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
 
+            for _text in drain_round_text():
+                yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
+
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
             return
 
-        # 没有提前命中轮次上限时不会走到这里；保留统一收尾出口。
+        # 核实预算耗尽时，最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾。
+        # 不能让 runner 把这个正常的安全停止误判成“工具结果已返回，但后续回复没有完成”。
+        # 核实阶段的过程文字仍然只留在缓冲区，不能在这里泄漏给用户。
+        if verify_rounds >= MAX_VERIFY_LLM_ROUNDS:
+            fallback = "已提交前面成功执行的调整；核实轮次已达到上限，未完成的步骤请重新发起。"
+            async for _line in genstream.typed_stream(fallback):
+                yield _line
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
+            return
