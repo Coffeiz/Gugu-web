@@ -588,6 +588,13 @@ onBeforeUnmount(() => {
 <style>
 .ne-body .ProseMirror { outline: none; min-height: 24px; }
 
+/* TipTap 生成的分割线没有 .np-hr 类，必须由编辑器自身明确覆盖主题默认的白色边框。 */
+.note-editor .ne-body .ProseMirror hr {
+  border: 0;
+  height: 1px;
+  background: var(--note-divider);
+}
+
 /* 占位符：空文档第一段显示 */
 .ne-body .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

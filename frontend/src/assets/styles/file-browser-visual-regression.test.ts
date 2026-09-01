@@ -94,6 +94,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card::after,')
+    expect(fileCard).toContain('linear-gradient(to bottom, black 72%, transparent 100%)')
     expect(componentRefinements).toContain('background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid));')
   })
 

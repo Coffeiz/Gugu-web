@@ -81,7 +81,7 @@ html[data-theme][data-family] .file-list-btn:hover { color: var(--action-primary
 html[data-theme][data-family] .file-list-btn.del:hover { color: var(--status-danger); background: var(--status-danger-bg); }
 html[data-theme][data-family] .file-card-btn { color: var(--content-secondary); background: var(--surface-raised); box-shadow: var(--elevation-card); }
 html[data-theme][data-family] .file-card-btn:hover { color: var(--content-primary); background: var(--surface-card-solid); }
-html[data-theme][data-family] .file-card-btn.del:hover { color: var(--status-danger); }
+html[data-theme][data-family] .file-card-btn.del:hover { color: var(--status-danger); background: var(--status-danger-bg); }
 
 /* ── GuguChat ───────────────────────────────────────────────────
    窗口根节点只负责边框、圆角和阴影；聊天主体继续沿用组件自己的背景与 blur，避免根节点
