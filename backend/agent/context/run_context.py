@@ -170,9 +170,6 @@ async def prepare_run(
         clean = sanitize.sanitize_messages(assembled.conversation)
         merged_cross_segment = merged_cross_segment and len(clean) < before
         assembled.replace_conversation(clean)
-        # 当前日期是 provider-only 动态尾缀：保留“现在”的语义，但不进入
-        # canonical history，也不污染跨 Run 的稳定前缀。
-        assembled.set_dynamic_tail([session_snapshot.time_message(user_tz)])
         audit.context_layout_audit(
             phase="assembled", session=session, snapshot=snapshot,
             history=effective_history, messages=assembled,
@@ -204,8 +201,6 @@ async def prepare_run(
         extra_reminder=extra_reminder,
     )
     assembled.append_batch(turn_batch)
-    # Web/IM 每次调用都需要当前日期；它必须只存在于本次 provider 请求。
-    assembled.set_dynamic_tail([session_snapshot.time_message(user_tz)])
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,
         history=effective_history, messages=assembled,

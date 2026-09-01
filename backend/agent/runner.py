@@ -395,17 +395,19 @@ async def _run_collect_unlocked(
                 "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory),
             }
 
-        async def _load_system_prompt():
+        async def _load_system_prompt(current_user_tz):
             style_prefs = await loaders.load_style_prefs(db, user_id)
             return builder.build_static_prompt(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 skills=profile.skills, style_prefs=style_prefs,
+                current_date=session_snapshot.current_date_text(current_user_tz),
             )
 
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot,
         )
-        snapshot["system_prompt"] = await _load_system_prompt()
+        snapshot_user_tz = snapshot["user_tz"]
+        snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
         # 兼容旧 snapshot：旧版本把群记忆放在动态尾部，命中旧快照时恢复到正文。
@@ -833,17 +835,19 @@ async def _run_stream_unlocked(
                     "im_memory": snapshot_im_memory,
                     "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory)}
 
-        async def _load_system_prompt():
+        async def _load_system_prompt(current_user_tz):
             style_prefs = await loaders.load_style_prefs(db, user_id)
             return builder.build_static_prompt(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 skills=profile.skills, style_prefs=style_prefs,
+                current_date=session_snapshot.current_date_text(current_user_tz),
             )
 
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot,
         )
-        snapshot["system_prompt"] = await _load_system_prompt()
+        snapshot_user_tz = snapshot["user_tz"]
+        snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
         from agent.im.context_loader import format_group_memory

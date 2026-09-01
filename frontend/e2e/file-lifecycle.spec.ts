@@ -25,6 +25,7 @@ test('文件库：上传文件出现卡片，删除后卡片消失', async ({ pa
 
   await card.hover()
   await card.locator('.file-card-btn.del[title="移到回收站"]').click()
+  await page.locator('.confirm-dialog-confirm').click()
 
   await expect(page.locator('.fc-card', { hasText: baseName })).toHaveCount(0)
 })

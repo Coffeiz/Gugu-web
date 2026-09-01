@@ -1,6 +1,17 @@
 <template>
   <div>
     <div class="pm-section">
+      <div class="pm-section-label">{{ t('common.language') }}</div>
+      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('common.language') }}</span><span class="pm-field-hint">{{ t('common.languageHint') }}</span></div><div class="pm-style-group"><button v-for="item in languages" :key="item.value" class="pm-style-chip" :class="{ active: currentLocale === item.value }" @click="prefsStore.saveLocale(item.value)">{{ item.label }}</button></div></div>
+      <div class="pm-field-row pm-timezone-row">
+        <div class="pm-field-desc"><span class="pm-field-name">{{ t('preferences.timezone') }}</span><span class="pm-field-hint">{{ t('preferences.timezoneHint') }}</span></div>
+        <div class="pm-timezone-control">
+          <AdminSelect :model-value="selectedTimezone" :options="timezoneSelectOptions" @update:model-value="onTimezoneChange" />
+        </div>
+      </div>
+    </div>
+    <div class="pm-sep"></div>
+    <div class="pm-section">
       <div class="pm-section-label">{{ t('preferences.appearance') }}</div>
       <div class="pm-field-row">
         <div class="pm-field-desc"><span class="pm-field-name">{{ t('preferences.theme') }}</span><span class="pm-field-hint">{{ t('preferences.themeHint') }}</span></div>
@@ -23,7 +34,6 @@
           </button>
         </div>
       </div>
-      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('common.language') }}</span><span class="pm-field-hint">{{ t('common.languageHint') }}</span></div><div class="pm-style-group"><button v-for="item in languages" :key="item.value" class="pm-style-chip" :class="{ active: currentLocale === item.value }" @click="prefsStore.saveLocale(item.value)">{{ item.label }}</button></div></div>
     </div>
     <div class="pm-sep"></div>
     <div class="pm-section">
@@ -56,8 +66,12 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/useTheme'
 import { useI18n } from 'vue-i18n'
 import { localeOptions } from '@/i18n'
+import { useAuthStore } from '@/stores/auth'
+import { detectedTimezone as getDetectedTimezone, timezoneOptions } from '@/utils/timezones'
+import AdminSelect from '@/components/AdminSelect.vue'
 
 const prefsStore = usePreferencesStore()
+const authStore = useAuthStore()
 const { preference, family, palette, setTheme, setFamily, setPalette } = useTheme()
 const { t, locale: currentLocale } = useI18n()
 const families: Array<{ value: ThemeFamily; label: string }> = [
@@ -84,4 +98,20 @@ const views = computed(() => [
 ])
 // 语言名称使用各自的原生写法，避免切换语言后选项本身被重新翻译，用户难以定位目标语言。
 const languages = localeOptions
+const timezones = timezoneOptions()
+const detectedTimezone = getDetectedTimezone()
+const selectedTimezone = computed(() => authStore.user?.timezone ?? '')
+const timezoneSelectOptions = [{ value: '', label: `${t('preferences.timezoneAuto')} · ${detectedTimezone}` }, ...timezones]
+
+function onTimezoneChange(value: string) {
+  void authStore.updateProfile({ timezone: value || null })
+}
 </script>
+
+<style scoped>
+.pm-timezone-control { display: flex; flex: 0 1 360px; flex-direction: column; gap: 5px; min-width: 220px; }
+.pm-timezone-control small { color: var(--content-tertiary); font-size: 11px; }
+:deep(.pm-timezone-control .asel-wrap), :deep(.pm-timezone-control .asel-trigger) { width: 100%; }
+:global(.asel-popup--model-list) { max-height: min(420px, calc(100vh - 32px)); overflow-y: auto; }
+@media (max-width: 720px) { .pm-timezone-row { align-items: stretch; flex-direction: column; gap: 10px; } .pm-timezone-control { max-width: none; } }
+</style>

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test('交互式终端可以创建、连接、输入并删除', async ({ page }) => {
+  await page.goto('/')
   const terminalId = await page.evaluate(async () => {
     const token = localStorage.getItem('user_token')
     const response = await fetch('/api/v1/terminals', {

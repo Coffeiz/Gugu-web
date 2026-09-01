@@ -76,10 +76,22 @@ def _personality_block(prefs: dict) -> str:
 
 def build_static_prompt(profile: str, user_name: str, *,
                         skills: list[str] | None = None,
-                        style_prefs: dict | None = None) -> str:
+                        style_prefs: dict | None = None,
+                        current_date: str | None = None) -> str:
     """组装稳定提示词；不包含项目、日历、文件等动态业务上下文。"""
     style_prefs = style_prefs or {}
-    parts = [_language_block(style_prefs)]
+    try:
+        profile_text = (_PROMPTS_DIR / f"{profile}.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        profile_text = ""
+    if "{today}" in profile_text:
+        if current_date is None:
+            from agent.context.session_snapshot import current_date_text
+            current_date = current_date_text()
+        profile_text = profile_text.replace("{today}", current_date)
+    profile_policy = profile_text.split("\n---", 1)[0].strip()
+    parts = [profile_policy] if profile_policy else []
+    parts.append(_language_block(style_prefs))
     persona = _personality_block(style_prefs)
     if not persona:
         try:
@@ -88,13 +100,6 @@ def build_static_prompt(profile: str, user_name: str, *,
             persona = ""
     if persona:
         parts.append(persona)
-    try:
-        profile_text = (_PROMPTS_DIR / f"{profile}.md").read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        profile_text = ""
-    profile_policy = profile_text.split("\n---", 1)[0].strip()
-    if profile_policy:
-        parts.append(profile_policy)
     for filename in ("skills.md", "policy.md"):
         try:
             text = (_PROMPTS_DIR / filename).read_text(encoding="utf-8").strip()

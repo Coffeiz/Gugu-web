@@ -35,6 +35,7 @@ _INLINE_ITEM_SCHEMA = {
                     "href": {"type": "string"},
                 },
                 "required": ["type"],
+                "additionalProperties": False,
             },
         },
         "ref_type": {"type": "string", "enum": ["project", "file", "event"]},
@@ -42,6 +43,7 @@ _INLINE_ITEM_SCHEMA = {
         "label": {"type": "string"},
     },
     "required": ["type"],
+    "additionalProperties": False,
 }
 # bullet_list/ordered_list/task_list 每项、blockquote 每段共用同一个扁平形状（不用 anyOf 挑
 # "带 checked 的 task 项" 还是 "纯 content 项"）——实测证明 anyOf 是另一种坑：模型面对两个
@@ -50,32 +52,42 @@ _INLINE_ITEM_SCHEMA = {
 # （mind_content.py）继续按 block 类型强制 task_list 必须带 checked，两边分工不冲突。
 _CONTENT_ITEM_SCHEMA = {
     "type": "object",
+    "description": "扁平列表项；content 只能放行内 text/reference，不能继续嵌套列表或 content 对象。",
     "properties": {
         "checked": {"type": "boolean"},
         "content": {"type": "array", "items": _INLINE_ITEM_SCHEMA},
     },
     "required": ["content"],
+    "additionalProperties": False,
 }
 _BLOCK_ITEM_SCHEMA = {
     "type": "object",
+    "description": "单个扁平内容块；列表项内禁止继续嵌套列表。",
     "properties": {
         "type": {"type": "string", "enum": [
             "paragraph", "heading", "bullet_list", "ordered_list",
             "task_list", "blockquote", "code_block", "horizontal_rule",
         ]},
-        "content": {"type": "array", "items": _INLINE_ITEM_SCHEMA},
+        "content": {
+            "type": "array",
+            "description": "仅用于 paragraph/heading，元素必须是带 type 的 text/reference 行内节点。",
+            "items": _INLINE_ITEM_SCHEMA,
+        },
         "items": {
             "type": "array",
+            "description": "仅用于 bullet_list/ordered_list/task_list；数组元素必须是扁平对象，不能使用 item 包装。",
             "items": _CONTENT_ITEM_SCHEMA,
         },
         "paragraphs": {
             "type": "array",
+            "description": "仅用于 blockquote；每项必须是 {content:[行内节点]}，不能嵌套段落对象。",
             "items": _CONTENT_ITEM_SCHEMA,
         },
         "code": {"type": "string"},
         "language": {"type": "string"},
     },
     "required": ["type"],
+    "additionalProperties": False,
 }
 
 # bullet_list/ordered_list/blockquote 的每一项都用 {"content":[行内...]} 对象包一层，不是行内
@@ -364,7 +376,7 @@ class MindSkill(BaseSkill):
         Tool(
             name="note_create", label="记录思维笔记",
             description_short='创建时间流笔记；可选 captured_at 指定日期，不填就是今天。',
-            description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。日记只按日期归档，同一天的先后顺序由系统按写入顺序自动决定。补录历史日记时传 captured_at 日期即可，支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。列表和待办只支持扁平结构，列表项内不能继续嵌套列表、content 或 paragraphs，也不能把数组包装成 item 对象。日记只按日期归档，同一天的先后顺序由系统按写入顺序自动决定。补录历史日记时传 captured_at 日期即可，支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -381,7 +393,7 @@ class MindSkill(BaseSkill):
         Tool(
             name="note_update", label="更新思维笔记",
             description_short='更新思维笔记；captured_at 只用于指定归属日期，不用于指定排序序号。',
-            description="对已知笔记做增量更新；使用 node_id 指定目标，只能追加 append_blocks 或修改标题、颜色、归属日期，不能整篇覆盖。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description="对已知笔记做增量更新；使用 node_id 指定目标，只能追加 append_blocks 或修改标题、颜色、归属日期，不能整篇覆盖。append_blocks 与 note_create.blocks 使用同一扁平块结构：列表项内不能嵌套列表、content 或 paragraphs，也不能使用 item 包装数组。日期支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {

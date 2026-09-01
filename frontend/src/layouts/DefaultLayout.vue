@@ -174,7 +174,9 @@ const fullBleed    = computed(() => !!route.meta.fullBleed)
 const isCanvasWorkspace = computed(() => route.path.startsWith('/mind/canvases'))
 
 const todayStr = computed(() => {
+  // 中文日期格式默认会把日期和星期连在一起，增加一个可见间隔。
   return formatDate(new Date(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
+    .replace(/日(?=星期)/, '日 ')
 })
 </script>
 

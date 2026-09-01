@@ -5,7 +5,12 @@
 import json
 import random
 
-from app.core.project_colors import PROJECT_COLOR_PRESETS
+from app.core.project_colors import (
+    PROJECT_COLOR_KEYS,
+    PROJECT_COLOR_PRESETS,
+    project_color_key,
+    project_color_value,
+)
 from app.core.projects import (
     build_project, find_project_stage, next_project_stage_key, next_project_todo_number,
     normalize_project_stages, replace_project_stages, update_project_atomic,
@@ -36,7 +41,7 @@ async def _list_projects(db, user_id, args: dict):
             "id": p.id,
             "name": p.name,
             "status": p.status,
-            "color": p.color,        # 给「同类项目同色系」用：建新项目前看现有同类的颜色好沿用
+            "color": project_color_key(p.color),  # 模型使用语义色名，CSS 渐变不出现在工具回执中
             "deadline": p.deadline,
             "start_date": p.start_date,
             "client": p.client,
@@ -110,7 +115,7 @@ async def _create_project(db, user_id, args: dict):
             "status": args.get("status", "pending"),
             "deadline": args["deadline"],
             "start_date": args["start_date"],
-            "color": args.get("color") or await _pick_unused_color(db, user_id),
+            "color": project_color_value(args.get("color")) or await _pick_unused_color(db, user_id),
             "priority": priority if priority in ("high", "medium", "low") else None,
             "stages": stages,
             "current_stage": stages[0]["key"],
@@ -184,13 +189,13 @@ async def _set_color(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
-    color = (args.get("color") or "").strip()
+    color = project_color_value((args.get("color") or "").strip())
     if not color:
-        return json.dumps({"error": "未提供颜色（color，需为预设色板中的渐变色字符串）"})
+        return json.dumps({"error": "未提供颜色（color，需为预设色名）"})
     error = await _commit_project_intent(db, p, user_id, {"color": color})
     if error:
         return error
-    return {"success": True, "project_id": p.id, "color": p.color}
+    return {"success": True, "project_id": p.id, "color": project_color_key(p.color)}
 
 
 async def _archive_project(db, user_id, args: dict):
@@ -525,7 +530,7 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short="创建项目；可带 stages/todos，后续用 add_stage/add_todo",
-            description="创建项目，必须填写开始日期和截止日期（日期字符串，系统统一归一为 YYYY-MM-DD），可一次设置颜色、优先级、阶段和待办。",
+            description="创建项目，必须填写开始日期和截止日期（日期字符串，系统统一归一为 YYYY-MM-DD），可一次设置颜色、优先级、阶段和待办。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或‘蓝色渐变’等视觉描述。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -534,7 +539,7 @@ class ProjectsSkill(BaseSkill):
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
                     "deadline":   {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
-                    "color":      {"type": "string", "enum": list(PROJECT_COLOR_PRESETS)},
+                    "color":      {"type": "string", "enum": list(PROJECT_COLOR_KEYS)},
                     "priority":   {"type": "string", "enum": ["high", "medium", "low"]},
                     "stages": {
                         "type": "array",
@@ -581,13 +586,13 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="set_color", label="设置项目颜色",
             description_short='设置项目颜色。',
-            description="设置项目的颜色，只能是预设色板中的渐变色字符串之一。",
+            description="设置项目的颜色。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或中文视觉描述。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "color": {"type": "string", "enum": list(PROJECT_COLOR_PRESETS)},
+                    "color": {"type": "string", "enum": list(PROJECT_COLOR_KEYS)},
                 },
                 "required": ["color"],
             },

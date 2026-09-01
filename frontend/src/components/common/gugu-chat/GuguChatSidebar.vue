@@ -57,6 +57,7 @@ import Icon from '@/components/common/Icon.vue'
 import GuguChatImConnect from './GuguChatImConnect.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
+import { effectiveTimezone } from '@/utils/userTimezone'
 
 const { t, locale } = useI18n()
 
@@ -90,8 +91,9 @@ function formatSessionTime(raw?: string) {
   const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
   const now = new Date()
-  const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
-  if (sameDay) return date.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
+  const parts = (value: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: effectiveTimezone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+  const sameDay = parts(date) === parts(now)
+  if (sameDay) return date.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: effectiveTimezone() })
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
   if (date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()) return t('chatUi.yesterday')
   return new Intl.DateTimeFormat(locale.value, date.getFullYear() === now.getFullYear()

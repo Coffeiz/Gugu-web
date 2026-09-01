@@ -662,6 +662,11 @@ export const searchApi = {
     for (const query of queries) params.append('queries', query)
     return request('GET', `/search?${params.toString()}`, null, false, signal)
   },
+  queryNotes: (query: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ mode: 'OR', per_type: '200', types: 'note' })
+    params.append('queries', query)
+    return request('GET', `/search?${params.toString()}`, null, false, signal)
+  },
 }
 
 export const authApi = {

@@ -5,7 +5,7 @@ system prompt 的组装位于 ``session_system.py``；本模块只组装项目�
 """
 from datetime import datetime
 from app.core.tz import LOCAL_TZ
-from agent.context.session_snapshot import date_boundary_note
+from agent.context.session_snapshot import current_date_text, date_boundary_note
 from agent.context.session_system import NON_STREAMING_BLOCK, build_static_prompt
 
 
@@ -90,6 +90,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     # 仍只在 snapshot 重建时读取。
     static_text = build_static_prompt(
         profile, user_name, skills=skills, style_prefs=style_prefs,
+        current_date=current_date_text(user_tz),
     )
 
     # === 动态部分（可能变化） ===

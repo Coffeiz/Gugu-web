@@ -196,17 +196,18 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     "locale": current_locale,
                     }
 
-        async def _load_system_prompt():
+        async def _load_system_prompt(current_user_tz):
             return builder.build_static_prompt(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 skills=profile.skills, style_prefs=style_prefs,
+                current_date=session_snapshot.current_date_text(current_user_tz),
             )
 
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot, locale=current_locale,
         )
-        snapshot["system_prompt"] = await _load_system_prompt()
         user_tz = snapshot["user_tz"]
+        snapshot["system_prompt"] = await _load_system_prompt(user_tz)
         set_ctx_tz(user_tz)
 
         # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。

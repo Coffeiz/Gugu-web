@@ -89,12 +89,37 @@ const emit = defineEmits<{
 // CardAffordances 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
+watch(isHovering, hovering => {
+  if (import.meta.env.DEV) console.log('[mind-hover-probe] project-state ' + JSON.stringify({
+    projectId: props.item.node.refId,
+    nodeId: props.item.nodeId,
+    clientKey: props.item.clientKey,
+    hovering,
+    phase: (cardEl.value ?? missingRef.value)?.dataset.runtimePhase,
+  }))
+})
 function onEnter() {
+  if (import.meta.env.DEV) console.log('[mind-hover-probe] project-enter ' + JSON.stringify({
+    projectId: props.item.node.refId,
+    nodeId: props.item.nodeId,
+    clientKey: props.item.clientKey,
+    phase: (cardEl.value ?? missingRef.value)?.dataset.runtimePhase,
+    suppressed: isHoverSuppressed.value,
+  }))
   if (isHoverSuppressed.value) return
   isHovering.value = true
   emit('hover', props.item, true)
 }
-function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
+function onLeave() {
+  if (import.meta.env.DEV) console.log('[mind-hover-probe] project-leave ' + JSON.stringify({
+    projectId: props.item.node.refId,
+    nodeId: props.item.nodeId,
+    clientKey: props.item.clientKey,
+    phase: (cardEl.value ?? missingRef.value)?.dataset.runtimePhase,
+  }))
+  isHovering.value = false
+  emit('hover', props.item, false)
+}
 
 const projectStore = useProjectStore()
 const project = computed(() => projectStore.projects.find(p => p.id === props.item.node.refId) || null)

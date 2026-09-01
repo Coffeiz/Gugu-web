@@ -10,7 +10,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import {
-  mindApi, type MindCanvas, type MindCanvasItem, type MindCanvasNoteCreate, type MindNote, type MindNoteCreate,
+  mindApi, searchApi, type MindCanvas, type MindCanvasItem, type MindCanvasNoteCreate, type MindNote, type MindNoteCreate,
   type MindNoteUpdate, type MindRelation,
 } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
@@ -58,6 +58,8 @@ export const useMindStore = defineStore('mind', () => {
   const loadingMore = ref(false)
   const hasMore = ref(true)
   const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
+  const languageFilterIds = ref<Set<number> | null>(null)
+  let languageFilterSeq = 0
   const jumpTarget = ref('')   // 顶部日历选中的日期：跨 index.vue/NotesView.vue 传递跳转意图
   const canvases = ref<MindCanvas[]>([])
   const canvasesLoaded = ref(false)
@@ -104,7 +106,10 @@ export const useMindStore = defineStore('mind', () => {
   const timeline = computed(() => {
     const q = filterQ.value.trim().toLowerCase()
     const pool = q
-      ? notes.value.filter(n => plainOf(n.contentMd).toLowerCase().includes(q))
+      ? notes.value.filter(n => {
+        const original = `${n.title || ''} ${plainOf(n.contentMd)}`.toLowerCase()
+        return original.includes(q) || !!languageFilterIds.value?.has(n.id)
+      })
       : notes.value
     const groups: { date: string; items: MindNote[] }[] = []
     // notes 始终由 store 按 capturedAt 保持有序；筛选只过滤，不再为每次输入复制并排序整份列表。
@@ -115,6 +120,33 @@ export const useMindStore = defineStore('mind', () => {
       else groups.push({ date, items: [n] })
     }
     return groups
+  })
+
+  watch(filterQ, (value, _oldValue, onCleanup) => {
+    const query = value.trim()
+    const seq = ++languageFilterSeq
+    languageFilterIds.value = null
+    if (!query || !/^[a-zA-Z]+(?:\s+[a-zA-Z]+)*$/.test(query)) return
+
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    const timer = setTimeout(async () => {
+      try {
+        const response = await searchApi.queryNotes(query, controller.signal) as {
+          groups?: Array<{ type?: string; items?: Array<{ id?: number }> }>
+        }
+        if (seq !== languageFilterSeq) return
+        const noteGroup = response.groups?.find(group => group.type === 'note')
+        languageFilterIds.value = new Set(
+          (noteGroup?.items || []).map(item => item.id).filter((id): id is number => typeof id === 'number'),
+        )
+      } catch (error) {
+        if ((error as { name?: string })?.name !== 'AbortError' && seq === languageFilterSeq) {
+          languageFilterIds.value = new Set()
+        }
+      }
+    }, 120)
+    onCleanup(() => clearTimeout(timer))
   })
 
   const NOTE_PAGE_SIZE = 100
@@ -142,6 +174,8 @@ export const useMindStore = defineStore('mind', () => {
     canvasesLoaded.value = false
     activeCanvasId.value = null
     filterQ.value = ''
+    languageFilterIds.value = null
+    languageFilterSeq += 1
     jumpTarget.value = ''
     canvasLoadSeq += 1
     pendingCanvasLoads.clear()
@@ -367,12 +401,24 @@ export const useMindStore = defineStore('mind', () => {
     }
     pendingProjectRefCreates.set(tempId, { clientKey, cancelled: false })
     canvasItems.value.push(placeholder)
+    if (import.meta.env.DEV) console.log('[mind-hover-probe] optimistic-insert ' + JSON.stringify({
+      canvasId, projectId, tempId, clientKey, x, y, z,
+    }))
 
     const ready = (async () => {
       let persistedItemId: number | null = null
       try {
+        if (import.meta.env.DEV) console.log('[mind-hover-probe] create-ref-start ' + JSON.stringify({
+          canvasId, projectId, tempId, clientKey,
+        }))
         const node = await mindApi.createRefNode('project', projectId)
+        if (import.meta.env.DEV) console.log('[mind-hover-probe] create-ref-end ' + JSON.stringify({
+          canvasId, projectId, tempId, clientKey, nodeId: node.id,
+        }))
         const created = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
+        if (import.meta.env.DEV) console.log('[mind-hover-probe] create-item-end ' + JSON.stringify({
+          canvasId, projectId, tempId, clientKey, itemId: created.id, nodeId: created.nodeId,
+        }))
         persistedItemId = created.id
         let resolved: MindCanvasItem = { ...created, clientKey }
         let persistedX = created.x
@@ -407,8 +453,14 @@ export const useMindStore = defineStore('mind', () => {
         }
         canvasItems.value[latestIndex] = resolved
         pendingProjectRefCreates.delete(tempId)
+        if (import.meta.env.DEV) console.log('[mind-hover-probe] optimistic-replaced ' + JSON.stringify({
+          canvasId, projectId, tempId, clientKey, itemId: resolved.id, nodeId: resolved.nodeId,
+        }))
         return resolved
       } catch (error) {
+        if (import.meta.env.DEV) console.log('[mind-hover-probe] optimistic-failed ' + JSON.stringify({
+          canvasId, projectId, tempId, clientKey, persistedItemId,
+        }))
         const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
         if (index !== -1) canvasItems.value.splice(index, 1)
         pendingProjectRefCreates.delete(tempId)

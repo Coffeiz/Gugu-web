@@ -78,10 +78,10 @@ def test_phase3_project_requires_explicit_date_range():
 
 def test_phase8_migrated_tools_are_source_canonical_schema():
     for name in (
-        "create_project", "create_event", "update_event", "save_uploaded_file", "note_create",
+        "create_project", "create_event", "update_event", "save_uploaded_file",
         "list_events", "list_projects", "list_event_reminders", "remove_event_reminder",
         "list_folders", "add_todo", "remove_todo", "set_stages", "read_file",
-        "note_get", "note_update", "note_delete", "note_restore",
+        "note_get", "note_delete", "note_restore",
         "get_project", "read_conversation", "bind_web_session",
         "add_stage", "get_workspace", "get_upcoming", "create_client",
         "global_search", "canvas_search", "canvas_search_placeable",
@@ -95,6 +95,14 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
     ):
         tool = registry.get(name)
         assert tool.input_schema == _compact_schema(tool.input_schema), name
+
+
+def test_note_schemas_keep_structural_metadata_for_model_guidance():
+    for name in ("note_create", "note_update"):
+        tool = registry.get(name)
+        block_schema = tool.input_schema["properties"]["blocks" if name == "note_create" else "append_blocks"]["items"]
+        assert block_schema["additionalProperties"] is False
+        assert block_schema["properties"]["items"]["items"]["additionalProperties"] is False
 
 
 def test_phase8_compactor_keeps_reserved_parameter_names():

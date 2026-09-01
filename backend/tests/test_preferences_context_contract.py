@@ -36,7 +36,8 @@ def test_locale_rule_is_first_and_uses_the_selected_language():
         "default", "测试用户", [], [], style_prefs={"locale": "en-US"}
     )
 
-    assert static.startswith("## 当前交流语言")
+    assert static.startswith("现在是 ")
+    assert static.index("现在是 ") < static.index("## 当前交流语言")
     assert "当前用户界面语言为「English」" in static
     assert "除非用户明确要求使用其他语言" in static
 
@@ -89,7 +90,8 @@ async def test_english_locale_reaches_the_session_prompt_used_for_reply():
 
     assert loaded == 1
     assert session.session_context["locale"] == "en-US"
-    assert snapshot["system_prompt"].startswith("## 当前交流语言")
+    assert snapshot["system_prompt"].startswith("现在是 ")
+    assert "## 当前交流语言" in snapshot["system_prompt"]
     assert "当前用户界面语言为「English」" in snapshot["system_prompt"]
     assert "请始终使用「English」与用户交流" in snapshot["system_prompt"]
 

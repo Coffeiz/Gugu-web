@@ -13,8 +13,11 @@ import { useProjectStore } from './projects'
 import { useMindStore } from './mind'
 import { onboardingGuideState } from '@/composables/useOnboardingGuide'
 import { onboardingProjectId, onboardingSeedState } from '@/composables/useOnboardingSeed'
+import { setUserTimezone } from '@/utils/userTimezone'
 
 type UserResponse = components['schemas']['UserResponse']
+// 后端已提供该字段；待下次从最新 OpenAPI 重新生成 api.ts 后可移除交叉类型。
+type UserWithTimezone = UserResponse & { timezone?: string | null }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
@@ -35,7 +38,7 @@ function resetAccountState() {
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
-  const user  = ref<UserResponse | null>(null)
+  const user  = ref<UserWithTimezone | null>(null)
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -44,8 +47,9 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem(TOKEN_KEY, t)
   }
 
-  function _setUser(u: UserResponse | null) {
+  function _setUser(u: UserWithTimezone | null) {
     user.value = u
+    setUserTimezone(u?.timezone)
   }
 
   function _extractDetail(body: { detail?: unknown } | null | undefined, fallback: string) {
@@ -96,25 +100,28 @@ export const useAuthStore = defineStore('auth', () => {
       if (res.status === 401) { logout(); return }
       if (!res.ok) return
       user.value = await res.json()
+      setUserTimezone(user.value.timezone)
       _syncTimezone()
     } catch {
       // 保留 token，等待下一次请求或用户主动重试。
     }
   }
 
-  // 把浏览器时区回写到 user.timezone——仅当探测到真实 tz 且与已存的不同才 PATCH（避免每次加载都写）。
+  // 仅在用户没有手动时区时，把浏览器探测结果回写到 user.timezone（避免每次加载都写）。
   // 后端据此让「今天 / 日期归属」按用户本地算；探测失败则不写，后端回退服务器 LOCAL_TZ。
   // 见 docs/backend/时区与时钟迁移方案.md Phase 3。
   function _syncTimezone() {
     let tz: string | undefined
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone } catch { return }
-    if (!tz || !user.value || (user.value as any).timezone === tz) return
+    // 已有值表示用户明确选择过时区；只有空值时才自动采用浏览器时区。
+    if (!tz || !user.value || user.value.timezone) return
     updateProfile({ timezone: tz }).catch(() => {})   // fire-and-forget，失败不影响主流程
   }
 
   async function updateProfile(fields: Record<string, unknown>) {
     const updated = await authApi.updateProfile(fields)
     user.value = updated
+    setUserTimezone(updated.timezone)
     return updated
   }
 
@@ -130,6 +137,7 @@ export const useAuthStore = defineStore('auth', () => {
     resetAccountState()
     token.value = ''
     user.value  = null
+    setUserTimezone(null)
     localStorage.removeItem(TOKEN_KEY)
   }
 

@@ -439,8 +439,8 @@ async function addProjectAtCenter(projectId: number) {
   await store.addRefToCanvas(activeCanvasId.value, 'project', projectId, x, y)
 }
 /** 抽屉项目松手后先本地乐观插入一张画布卡，立刻交给抽屉克隆做落地动画——不等
- * createRefNode/addCanvasItem 这两次串行请求（真实环境轻松上百毫秒），克隆体才不会
- * 在空中冻住顿一下。接口在背后跑，成功后原地换真实数据，失败则原地摘除并提示。 */
+ * createRefNode/addCanvasItem 这两次串行请求。接口在背后跑，成功后原地换真实数据，
+ * 失败则原地摘除并提示。 */
 async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) {
   const canvas = canvasRef.value
   const canvasId = activeCanvasId.value
@@ -451,8 +451,14 @@ async function addProjectAtScreen(projectId: number, center: { x: number; y: num
   const position = { x: world.x - width / 2, y: world.y - height / 2 }
   const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, position.x, position.y)
   ready.catch(() => showAppError(t('mindUi.addFailed')))
+  if (import.meta.env.DEV) console.log('[mind-hover-probe] landing-target-wait ' + JSON.stringify({
+    canvasId, projectId, tempId: item.id, clientKey: item.clientKey, optimistic: true, center, position,
+  }))
   await nextTick()
   const target = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+  if (import.meta.env.DEV) console.log('[mind-hover-probe] landing-target-ready ' + JSON.stringify({
+    canvasId, projectId, tempId: item.id, clientKey: item.clientKey, optimistic: true, found: !!target,
+  }))
   return target
 }
 async function onItemMoved(item: MindCanvasItem) {

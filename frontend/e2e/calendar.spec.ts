@@ -86,7 +86,7 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
       await chip.click()
     }
 
-    const editModal = page.locator('.eem-floating')
+    const editModal = page.locator('.eem-popup')
     await expect(editModal).toBeVisible()
     await editModal.locator('.dp-input').click()
     await expect(page.locator('.dp-popup')).toBeVisible()

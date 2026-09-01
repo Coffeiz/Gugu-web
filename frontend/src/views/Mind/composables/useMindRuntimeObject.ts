@@ -24,6 +24,7 @@ export function useMindRuntimeObject(options: {
   let stopResolver: (() => void) | null = null
   let stopAction: (() => void) | null = null
   let phaseObserver: MutationObserver | null = null
+  let affordanceObserver: MutationObserver | null = null
   let hoverSuppressionCleanup: (() => void) | null = null
   const hoverSuppressed = ref(false)
 
@@ -58,20 +59,52 @@ export function useMindRuntimeObject(options: {
 
   const observeLandingHover = (element: HTMLElement) => {
     phaseObserver?.disconnect()
+    affordanceObserver?.disconnect()
     clearHoverSuppression()
     let previousPhase = element.dataset.runtimePhase
     phaseObserver = new MutationObserver(() => {
       const phase = element.dataset.runtimePhase
+      if (import.meta.env.DEV) console.log('[mind-hover-probe] phase ' + JSON.stringify({
+        objectId: getObjectId(),
+        clientKey: element.closest<HTMLElement>('[data-canvas-item-id]')?.dataset.canvasItemId,
+        phase,
+        previousPhase,
+        hovered: element.matches(':hover'),
+        suppressed: element.dataset.runtimeHoverSuppressed === 'true',
+        hidden: !!element.querySelector('[data-card-affordances].runtime-affordances-hidden'),
+      }))
       if (phase !== 'idle') {
-        hoverSuppressed.value = true
-      } else if (previousPhase === 'revealing') {
-        // landing 在指针下揭示本体时，浏览器不会产生新的 pointerleave；若此时
-        // 直接恢复 hover，目标卡会在落地结束再播放一次抬起动画。
-        suppressHoverUntilLeave(element)
+        if (previousPhase === 'idle') suppressHoverUntilLeave(element)
+        else hoverSuppressed.value = true
+      } else if (previousPhase !== 'idle') {
+        // landing 在指针下揭示本体时，浏览器不会产生新的 mouseenter。落地结束
+        // 后若指针仍在卡片上，先解除抑制再补发一次事件，恢复正常 hover 状态。
+        if (element.matches(':hover')) {
+          clearHoverSuppression()
+          element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, view: window }))
+        } else {
+          clearHoverSuppression()
+        }
       }
       previousPhase = phase
     })
     phaseObserver.observe(element, { attributes: true, attributeFilter: ['data-runtime-phase'] })
+    affordanceObserver = new MutationObserver(() => {
+      if (!import.meta.env.DEV) return
+      const affordances = element.querySelector<HTMLElement>('[data-card-affordances]')
+      const actions = affordances?.querySelector<HTMLElement>('.card-actions')
+      const dot = affordances?.querySelector<HTMLElement>('.conn-dot')
+      console.log('[mind-hover-probe] affordances ' + JSON.stringify({
+        objectId: getObjectId(),
+        phase: element.dataset.runtimePhase,
+        hovered: element.matches(':hover'),
+        hidden: affordances?.classList.contains('runtime-affordances-hidden') ?? false,
+        affordancesOpacity: affordances ? getComputedStyle(affordances).opacity : null,
+        actionsOpacity: actions ? getComputedStyle(actions).opacity : null,
+        dotOpacity: dot ? getComputedStyle(dot, '::before').opacity : null,
+      }))
+    })
+    affordanceObserver.observe(element, { attributes: true, subtree: true, attributeFilter: ['class'] })
   }
 
   const getElement = () => typeof options.element === 'function' ? options.element() : options.element.value
@@ -165,6 +198,8 @@ export function useMindRuntimeObject(options: {
   onBeforeUnmount(() => {
     phaseObserver?.disconnect()
     phaseObserver = null
+    affordanceObserver?.disconnect()
+    affordanceObserver = null
     clearHoverSuppression()
     stopBinding?.()
     stopResolver?.()

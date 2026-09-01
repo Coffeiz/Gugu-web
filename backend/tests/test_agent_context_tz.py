@@ -9,15 +9,20 @@ from app.core.tz import LOCAL_TZ
 
 def test_build_today_uses_user_tz():
     sh = ZoneInfo("Asia/Shanghai")
-    _, dynamic, now_str = builder.build_split("default", "u", [], [], user_tz=sh)
+    static, dynamic, now_str = builder.build_split("default", "u", [], [], user_tz=sh)
     today = datetime.now(sh).strftime("%Y-%m-%d")
+    weekday = "一二三四五六日"[datetime.now(sh).weekday()]
+    assert static.splitlines()[0] == f"现在是 {today}（星期{weekday}）。"
+    assert ":" not in static.splitlines()[0]
     assert today in now_str
     assert today not in dynamic
 
 
 def test_build_default_falls_back_to_server_tz():
-    _, dynamic, now_str = builder.build_split("default", "u", [], [])
+    static, dynamic, now_str = builder.build_split("default", "u", [], [])
     today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    weekday = "一二三四五六日"[datetime.now(LOCAL_TZ).weekday()]
+    assert static.splitlines()[0] == f"现在是 {today}（星期{weekday}）。"
     assert today in now_str
     assert today not in dynamic
 

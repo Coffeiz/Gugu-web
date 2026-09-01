@@ -40,6 +40,12 @@ def current_time_text(user_tz=None) -> str:
     return text
 
 
+def current_date_text(user_tz=None) -> str:
+    """生成只按日期变化的当前日期文本，不包含时分秒。"""
+    current = datetime.now(user_tz or LOCAL_TZ)
+    return f"{current:%Y-%m-%d}（星期{'一二三四五六日'[current.weekday()]}）"
+
+
 def reminder_message(content: str) -> dict:
     """生成不带观测元数据的 reminder 消息。"""
     return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}

@@ -52,7 +52,7 @@ History 是已经持久化的会话事实，包含用户消息、助手消息、
 
 ### Current turn
 
-Current turn 是本轮尚未形成普通历史事实的输入和动态内容，包括当前用户消息、当前时间、必要的姿态变化和本轮 RAG 结果。它通过统一的 Batch/turn 组装进入本轮请求，不能由 Web、IM 或 Provider 各自追加一份。
+Current turn 是本轮尚未形成普通历史事实的输入和动态内容，包括当前用户消息、消息时间、必要的姿态变化和本轮 RAG 结果。system 开头另外保留按用户时区计算的当前日期和星期，不包含时分秒，因此只在跨日时变化。普通 Web/IM 请求通过统一的 Batch/turn 组装进入本轮请求；定时任务的当前时间也通过 Batch 注入，不能由 Web、IM 或 Provider 各自追加一份。
 
 ### Dynamic sources
 

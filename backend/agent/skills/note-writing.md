@@ -18,7 +18,11 @@ emoji: 📝
 - `canvas_search` 只搜索指定画布内容，需要 `canvas_id`；它不是普通笔记搜索工具。
 - 工具名必须逐字使用 canonical name，不要把 `note_search` 改写成 `search_notes`，也不要猜测 `list_notes`、`read_note` 等别名。
 
-`blocks` 由工具 Schema 和服务端共同严格校验。**照抄下面的正确示范，不要自行改变对象层级**，否则会被工具拒绝。
+`blocks` 由工具 Schema 和服务端共同严格校验。**只使用下面的对象层级，不要自行递归或包装数组**。
+
+硬性规则：列表和待办只支持扁平结构；列表项内不能继续出现列表、`content` 或 `paragraphs` 对象。`content` 数组里的每个行内对象都必须带 `type`。`blocks`、`items`、`paragraphs`、`content` 都必须保持数组，禁止改成 `{item:[...]}`。
+
+颜色参数只传语义值：`amber`、`coral`、`blue`、`teal` 或 `null`；不要传“青色渐变”、十六进制值或 CSS。
 
 ## 8 种块类型，照抄这几个形状
 
@@ -49,13 +53,13 @@ emoji: 📝
 - 文本：`{"type":"text","text":"...","marks":[{"type":"bold"}]}`（`marks` 可省略；可选 `bold`/`italic`/`strike`/`code`/`link`，`link` 要带 `{"type":"link","href":"https://..."}`）
 - 引用：`{"type":"reference","ref_type":"project"|"file"|"event","ref_id":123,"label":"显示名"}`——**`ref_id` 必填，三种 `ref_type` 都要**，漏传会被拦（`file`/`event` 类型尤其容易漏，因为用得少）。
 
-## ⚠️ 三个已知会写错的地方，务必照示范来
+## 最容易出错的地方
 
-1. **`bullet_list`/`ordered_list` 的 `items`、`blockquote` 的 `paragraphs`，每一项必须是 `{"content":[行内...]}` 这种对象，不能直接是 `[行内...]` 这种裸数组**（`items:[[...]]` 这种"数组套数组"的写法是错的，工具会报"行内内容只支持 text 或 reference"）。跟 `task_list` 的 `{"checked":...,"content":[...]}` 是同一个套路——都是"一层数组 + 对象包 content"，别为了省事写成嵌套数组。
+1. **`bullet_list`/`ordered_list` 的 `items`、`blockquote` 的 `paragraphs`，每一项必须是 `{"content":[行内...]}` 这种对象，不能直接是 `[行内...]` 这种裸数组**。跟 `task_list` 的 `{"checked":...,"content":[...]}` 是同一个套路。
 2. **`task_list` 的每一项必须带 `checked`（布尔值）**，漏了会报"待办项必须包含 checked 布尔值"。
 3. **`reference` 的 `ref_id` 必须是整数**，不能传字符串（`"60"` 不行，要 `60`）；`ref_type` 只能是小写的 `project`/`file`/`event`。
 
-一旦收到报错，**别猜、别绕远路排查**——直接对照上面的示范，逐字核对这次传的结构哪里跟示范不一样，通常是漏了 `checked`、把 `items` 写成了嵌套数组、或者 `reference` 漏了 `ref_id`。
+一旦收到 schema 报错，**重新生成完整的 `blocks`/`append_blocks`**，不要只给某个嵌套对象补字段，也不要把数组改成 `item` 对象。无法确定的内容不要猜，先向用户确认。
 
 ## 标题写在哪（重要）
 

@@ -273,6 +273,17 @@ const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
 const landingNodeIds = reactive(new Set<number>())
 function onRuntimeVisual(event: RuntimeEvent) {
+  if (import.meta.env.DEV && (
+    event.type === 'move-visual-update'
+    || event.type === 'move-visual-end'
+    || event.type === 'move-visual-settled'
+  )) {
+    console.log('[mind-hover-probe] canvas-runtime ' + JSON.stringify({
+      type: event.type,
+      objectId: event.objectId,
+      sessionId: event.sessionId,
+    }))
+  }
   if (event.type === 'move-visual-end' || event.type === 'move-visual-settled') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
