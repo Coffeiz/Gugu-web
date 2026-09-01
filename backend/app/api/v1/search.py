@@ -6,6 +6,8 @@
 `run_global_search` 是查询核心，路由和 agent 工具（`agent/tools/global_search.py`）
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
+import json
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +16,7 @@ from app.db.session import get_db
 from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
-    User, Project, File, Folder, CalendarEvent, Client,
+    User, UserPreferences, Project, File, Folder, CalendarEvent, Client,
     ConversationSession, ConversationMessage, MindNode,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
@@ -31,6 +33,18 @@ SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
 ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note"]
+
+# 所有参与全局搜索的文本字段统一在这里登记；新增字段只需补这一张表。
+ROMAJI_FIELDS = {
+    "project": ("name", "client", "current_stage"),
+    "file": ("display_name", "ext"),
+    "folder": ("name",),
+    "event": ("title", "description", "client"),
+    "client": ("name", "contact", "email", "phone", "notes"),
+    "note": ("title", "content_plain"),
+    "conversation": ("title",),
+    "message": ("content",),
+}
 
 
 def _snippet(text: str, q: str) -> str:
@@ -56,8 +70,16 @@ def _snippet_for_queries(text: str, queries: list[str]) -> str:
     return _snippet(text, queries[0]) if queries else (text or "")[:60].strip()
 
 
-def _romaji_matches_any(text: str, queries: list[str]) -> bool:
-    return any(romaji_match(text or "", query) for query in queries)
+def _romaji_matches_any(text: str, queries: list[str], language: str) -> bool:
+    return any(romaji_match(text or "", query, language) for query in queries)
+
+
+def _romaji_matches_object(obj, kind: str, queries: list[str], language: str) -> bool:
+    """按统一字段注册表匹配对象，避免各搜索分支遗漏可搜索文本。"""
+    return any(
+        _romaji_matches_any(getattr(obj, field, ""), queries, language)
+        for field in ROMAJI_FIELDS[kind]
+    )
 
 
 def _primary_rank(column, q: str):
@@ -72,7 +94,8 @@ def _primary_rank(column, q: str):
 
 async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                             per_type: int = PER_TYPE, types: list[str] | None = None,
-                            queries: list[str] | None = None, mode: str = "OR") -> dict:
+                            queries: list[str] | None = None, mode: str = "OR",
+                            language: str = "zh-CN") -> dict:
     """跨类型多关键词搜索核心逻辑。`types` 不传则搜全部，传了只搜指定类型
     （值域见 ALL_TYPES：project/file/folder/event/client/conversation）。"""
     original_query = (q or "").strip()
@@ -102,10 +125,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(Project.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for p in scan:
-                if p.id not in seen and (
-                    _romaji_matches_any(p.name, search_queries)
-                    or _romaji_matches_any(p.client or "", search_queries)
-                ):
+                if p.id not in seen and _romaji_matches_object(p, "project", search_queries, language):
                     rows.append(p); seen.add(p.id)
                     if len(rows) >= per_type:
                         break
@@ -132,7 +152,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(File.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for f in scan:
-                if f.id not in seen and _romaji_matches_any(f.display_name or "", search_queries):
+                if f.id not in seen and _romaji_matches_object(f, "file", search_queries, language):
                     rows.append(f); seen.add(f.id)
                     if len(rows) >= per_type:
                         break
@@ -159,7 +179,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(Folder.created_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for fo in scan:
-                if fo.id not in seen and _romaji_matches_any(fo.name or "", search_queries):
+                if fo.id not in seen and _romaji_matches_object(fo, "folder", search_queries, language):
                     rows.append(fo); seen.add(fo.id)
                     if len(rows) >= per_type:
                         break
@@ -186,10 +206,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(CalendarEvent.date.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for e in scan:
-                if e.id not in seen and (
-                    _romaji_matches_any(e.title or "", search_queries)
-                    or _romaji_matches_any(e.description or "", search_queries)
-                ):
+                if e.id not in seen and _romaji_matches_object(e, "event", search_queries, language):
                     rows.append(e); seen.add(e.id)
                     if len(rows) >= per_type:
                         break
@@ -218,10 +235,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(Client.created_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for c in scan:
-                if c.id not in seen and (
-                    _romaji_matches_any(c.name or "", search_queries)
-                    or _romaji_matches_any(c.contact or "", search_queries)
-                ):
+                if c.id not in seen and _romaji_matches_object(c, "client", search_queries, language):
                     rows.append(c); seen.add(c.id)
                     if len(rows) >= per_type:
                         break
@@ -262,8 +276,8 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 ).order_by(MindNode.captured_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for n in scan:
-                # 罗马音只匹标题：正文可能很长，逐字转拼音代价不划算
-                if n.id not in seen and _romaji_matches_any(n.title or "", search_queries):
+                # 便签正文通常较短；日记正文也应支持罗马音检索。
+                if n.id not in seen and _romaji_matches_object(n, "note", search_queries, language):
                     rows.append(n); seen.add(n.id)
                     if len(rows) >= per_type:
                         break
@@ -316,10 +330,29 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(ConversationSession.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for s in sess_scan:
-                if s.id not in conv and _romaji_matches_any(s.title or "", search_queries):
+                if s.id not in conv and _romaji_matches_object(s, "conversation", search_queries, language):
                     conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}
                     if len(conv) >= per_type:
                         break
+
+            if len(conv) < per_type:
+                message_scan = (await db.execute(
+                    select(ConversationMessage, ConversationSession.title)
+                    .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
+                    .where(ConversationSession.user_id == uid)
+                    .order_by(ConversationMessage.created_at.desc()).limit(ROMAJI_SCAN)
+                )).all()
+                for message, session_title in message_scan:
+                    if message.session_id not in conv and _romaji_matches_object(
+                        message, "message", search_queries, language,
+                    ):
+                        conv[message.session_id] = {
+                            "id": message.session_id, "title": session_title,
+                            "subtitle": _snippet_for_queries(message.content, search_queries),
+                            "message_id": message.id,
+                        }
+                        if len(conv) >= per_type:
+                            break
 
         if conv:
             groups.append({"type": "conversation", "label": "对话",
@@ -336,7 +369,7 @@ INDEXED_LABELS = {"project": "项目", "file": "文件", "note": "便签"}
 
 async def _run_index_search(
     db: AsyncSession, user_id, q: str, *, per_type: int,
-    types: list[str] | None, queries: list[str] | None, mode: str,
+    types: list[str] | None, queries: list[str] | None, mode: str, language: str,
 ) -> dict:
     """使用持久化索引搜索已完成建索引的来源，其余来源交给原 ILIKE 查询。"""
     original_query = (q or "").strip()
@@ -348,7 +381,7 @@ async def _run_index_search(
     if not indexed_types:
         return await _run_ilike_search(
             db, user_id, q, per_type=per_type, types=types,
-            queries=queries, mode=normalized_mode,
+            queries=queries, mode=normalized_mode, language=language,
         )
 
     # 没有任何索引行的来源仍走 ILIKE，避免索引尚未重建时静默丢结果。
@@ -428,7 +461,7 @@ async def _run_index_search(
     if ilike_types:
         ilike_result = await _run_ilike_search(
             db, user_id, q, per_type=per_type, types=sorted(ilike_types),
-            queries=queries, mode=normalized_mode,
+            queries=queries, mode=normalized_mode, language=language,
         )
         groups_by_type.update({group["type"]: group for group in ilike_result["groups"]})
     groups = [groups_by_type[source] for source in ALL_TYPES if source in groups_by_type]
@@ -439,14 +472,30 @@ async def _run_index_search(
 
 async def run_global_search(db: AsyncSession, user_id, q: str, *,
                             per_type: int = PER_TYPE, types: list[str] | None = None,
-                            queries: list[str] | None = None, mode: str = "OR") -> dict:
+                            queries: list[str] | None = None, mode: str = "OR",
+                            language: str | None = None) -> dict:
     """统一全局搜索入口；Admin 可在索引与 ILIKE 之间热切换。"""
+    search_queries = normalize_queries(q, queries)
+    if language not in {"zh-CN", "ja-JP", "en-US"}:
+        prefs = await db.execute(select(UserPreferences.data_json).where(UserPreferences.user_id == user_id))
+        try:
+            language = json.loads(prefs.scalar_one_or_none() or "{}").get("locale")
+        except (TypeError, ValueError):
+            language = None
+    language = language if language in {"zh-CN", "ja-JP", "en-US"} else "zh-CN"
+    # 持久化索引按原文检索，无法执行拼音/罗马音转换；这类查询必须走
+    # ILIKE 扫描分支，才能覆盖 SudachiPy/romkan2 的候选读音。
+    if any(is_romaji_query(query) for query in search_queries):
+        return await _run_ilike_search(
+            db, user_id, q, per_type=per_type, types=types,
+            queries=queries, mode=mode, language=language,
+        )
     if get_settings().search.global_search_backend == "ilike":
         return await _run_ilike_search(
-            db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode,
+            db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode, language=language,
         )
     return await _run_index_search(
-        db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode,
+        db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode, language=language,
     )
 
 
