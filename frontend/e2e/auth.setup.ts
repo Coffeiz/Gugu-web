@@ -33,5 +33,15 @@ setup('使用测试账号登录', async ({ page }) => {
   const response = await loginResponse
   expect(response.ok(), `登录接口返回 ${response.status()}: ${await response.text()}`).toBeTruthy()
   await expect(page).not.toHaveURL(/\/login/)
+
+  // 新测试用户默认会显示首次设置向导；稳定路径需要从实际业务页面开始，不能让
+  // 向导遮住后续页面。按钮文案随用户语言变化，因此按三种支持语言统一处理。
+  const onboarding = page.locator('.onboarding-modal')
+  await onboarding.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined)
+  const laterButton = onboarding.getByRole('button', { name: /^(稍后设置|Set up later|後で設定)$/ })
+  if (await laterButton.isVisible()) {
+    await laterButton.click()
+    await expect(onboarding).toBeHidden()
+  }
   await page.context().storageState({ path: authFile })
 })
