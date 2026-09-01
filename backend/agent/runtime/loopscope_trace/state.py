@@ -61,6 +61,62 @@ def record_canonical_batch(*, digest: str, round_id: str | None, message_count: 
         bucket["round_ids"] = sorted({*bucket.get("round_ids", []), str(round_id)})
 
 
+def _anthropic_structure(blocks: Any) -> tuple[dict[str, Any], str]:
+    """返回 Anthropic response 的结构摘要和脱敏摘要 digest，不记录正文。"""
+    values = _jsonable(blocks if isinstance(blocks, list) else [])
+    if not isinstance(values, list):
+        values = []
+    block_types = [str(item.get("type")) for item in values if isinstance(item, dict) and item.get("type")]
+    tool_names = [str(item.get("name")) for item in values
+                  if isinstance(item, dict) and item.get("type") == "tool_use" and item.get("name")]
+    payload = json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return {
+        "blocks": block_types,
+        "has_signature": any(isinstance(item, dict) and bool(item.get("signature")) for item in values),
+        "tool_names": tool_names,
+        "response_digest": digest,
+    }, digest
+
+
+def record_anthropic_structure_probe(
+    *,
+    provider: str,
+    model: str,
+    response_blocks: Any,
+    provider_messages: Any = None,
+) -> None:
+    """记录 Anthropic block round-trip 结构，禁止写入思考/消息正文。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    try:
+        summary, response_digest = _anthropic_structure(response_blocks)
+        same = None
+        if isinstance(provider_messages, list):
+            assistant = next((item for item in provider_messages
+                              if isinstance(item, dict) and item.get("role") == "assistant"), None)
+            if assistant is not None:
+                _, assistant_digest = _anthropic_structure(assistant.get("content"))
+                same = assistant_digest == response_digest
+        summary.update({
+            "schema_version": 1,
+            "provider": provider or "unknown",
+            "protocol": "anthropic",
+            "model": model or "",
+            "assistant_roundtrip_same": same,
+        })
+        bucket = _diagnostic_bucket(run, "anthropic_structure_probe", {
+            "count": 0, "last": {},
+        })
+        bucket["count"] = int(bucket.get("count", 0) or 0) + 1
+        bucket["last"] = summary
+    except Exception:
+        pass
+
+
 def record_context_compaction(
     *,
     phase: str,

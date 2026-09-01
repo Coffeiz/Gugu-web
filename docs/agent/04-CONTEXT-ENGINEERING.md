@@ -141,6 +141,17 @@ History(n) + Batch(n+1) = History(n+1)
 
 Round 1 不纳入稳定段结论：MiniMax/GLM 的 Round 1 继承了此前测试留下的热缓存，DeepSeek 的 Round 1 则是未额外预热的冷启动/边界重建样本。完整逐轮数据见 [MiniMax、GLM 与 DeepSeek 真实 Agent 20 轮对话/工具协议测试报告](../reports/2026-08-26-TEST-CACHE-MINIMAX-GLM-DEEPSEEK-20RUN.md)；缓存变化定位由 [11-LoopScope.md](./11-LOOPSCOPE.md) 的 Prefix Diff 和 Cache Diagnostics 提供。
 
+### 5.2 工具 Schema 模式的缓存取舍
+
+2026-09-01 的 5 工具连续会话复测显示，简介模式和全量模式都能形成稳定的可缓存前缀，但缓存率和上下文体积需要分开判断：
+
+| 模式 | Provider input 节省 | 缓存率范围 | 上下文工程含义 |
+|---|---:|---:|---|
+| 简介模式（默认） | 相对全量模式约 `20%–59%`，四模型平均约 `42%` | `98.47%–99.04%` | 用较小的稳定能力目录换取更低的每轮上下文成本；复杂工具按需补充 Schema |
+| 全量模式 | 基准 | `98.72%–99.41%` | 完整 Schema 更容易保持固定前缀，但被缓存的前缀本身更大，不能据此推断总消耗更低 |
+
+这里的缓存率定义为 `cache_read / provider_input`，不是缓存 Token 数占比，也不是 Provider 计费折扣。上下文工程应优先观察稳定前缀是否被重复利用，再结合 `provider input`、`fresh input`、上下文长度和首个 Prefix Diff 判断实际成本；不能只追求更高的缓存率。该轮完整数据见 [LLM-16 5 工具多模型 Schema 模式复测](../reports/2026-09-01-TEST-LLM-16-5TOOLS-MULTI-MODEL-RETEST.md)。
+
 ## 6. 压缩与 baseline
 
 压缩只处理超过当前 baseline、且允许被摘要替代的历史内容。系统提示词、Snapshot、当前用户消息和未完成工具事务不属于普通压缩对象。

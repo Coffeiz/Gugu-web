@@ -1287,6 +1287,17 @@ class LLMRunner:
                 provider_round = driver.build_tool_round(
                     result, dispatched, allow_images=allow_tool_images,
                 )
+                if getattr(driver, "api_format", "") == "anthropic":
+                    try:
+                        from agent.runtime.loopscope_trace.state import record_anthropic_structure_probe
+                        record_anthropic_structure_probe(
+                            provider=getattr(getattr(ctx, "adapter", None), "name", ""),
+                            model=getattr(ctx, "model", ""),
+                            response_blocks=getattr(result, "raw", []),
+                            provider_messages=provider_round,
+                        )
+                    except Exception:
+                        pass
                 batch = NewMessageBatch.from_canonical_messages(
                     canonical_tool_round(result, dispatched),
                     provider_messages=provider_round,
