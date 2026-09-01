@@ -22,13 +22,11 @@
           <input v-model="form.password" type="password" :placeholder="t('auth.passwordRule')"
             autocomplete="new-password" :disabled="loading" />
         </div>
-        <Checkbox v-model="acknowledged" class="ack-row">
-          <span class="ack-label">{{ t('auth.acknowledged') }}</span>
-        </Checkbox>
+
 
         <div v-if="error" class="error-msg">{{ error }}</div>
 
-        <button type="submit" class="btn-primary" :disabled="loading || !acknowledged">
+        <button type="submit" class="btn-primary" :disabled="loading">
           {{ loading ? t('auth.registering') : t('auth.register') }}
         </button>
       </form>
@@ -49,7 +47,6 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import Checkbox from '@/components/common/Checkbox.vue'
 import AuthBrand from '@/components/common/AuthBrand.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -58,7 +55,6 @@ const auth    = useAuthStore()
 const form    = reactive({ username: '', email: '', password: '' })
 const loading      = ref(false)
 const error        = ref('')
-const acknowledged = ref(false)
 const { t } = useI18n()
 
 async function handleRegister() {
