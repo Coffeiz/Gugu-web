@@ -60,6 +60,7 @@ emoji: 📝
 ## 标题写在哪（重要）
 
 - **用户可见的标题 = `blocks` 里第一个 `heading` 块**，它渲染成便签卡片正文首行的 `# 标题`，用户能看到。
+- 用户要查看或回到刚创建/查到的时间流笔记时，在回复中附 `[笔记标题](gugu://open-object/note/{node_id})`；ID 只使用本轮真实结果中的 `node_id`。
 - `note_create` / `note_update` 的 `title` 参数**用户看不到**——它只进搜索和列表索引。**不要**把标题只填在 `title` 参数里而不写 heading 块。
 - 正确示范：标题用 heading 块，正文用 paragraph 等块跟在后面：
 

@@ -20,6 +20,8 @@ emoji: ⏰
 - 如果只修改 `delivery_mode` 或 `enabled`，不要为了凑参数传空的 `channels`；不修改的字段直接省略。参数校验失败后先按 `issues` 和 schema hint 修正一次，不要原样重复提交。
 - 删除任务收到确认后，`confirm` 必须传 JSON 布尔值 `true`，不是字符串 `"true"`；同时保留 `confirm_token`。工具参数中的数组、布尔值和数字都不要包成字符串。
 
+用户要查看刚创建或查到的任务时，在回复中附 `[任务名](gugu://open-object/scheduled-task/{task_id})`；只使用本轮真实结果中的 `task_id`。
+
 ## 渠道
 - 设 `feishu` / `qq` / `wechat` 渠道前，先确认用户绑了对应 IM，否则到点投递不到、白设；**默认 `web` 站内通知最稳**。
 - QQ 投递目标按语义选择：**网页创建的任务固定私聊绑定用户**；QQ 私聊中默认私聊当前用户。在 QQ 群聊中，明确说“发当前群 / 在群里提醒”才用 `delivery_mode=current_group`，明确说“私聊提醒我”才用 `owner_private`；只说“提醒我”这类没有指明位置的话，先问清楚再创建或修改。

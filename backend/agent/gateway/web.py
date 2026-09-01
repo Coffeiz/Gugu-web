@@ -196,7 +196,16 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     "locale": current_locale,
                     }
 
-        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot, locale=current_locale)
+        async def _load_system_prompt():
+            return builder.build_static_prompt(
+                profile.prompt_file.removesuffix(".md"), req.user_name,
+                skills=profile.skills, style_prefs=style_prefs,
+            )
+
+        snapshot = await session_snapshot.ensure_snapshot(
+            db, session, load_context=_load_snapshot, locale=current_locale,
+        )
+        snapshot["system_prompt"] = await _load_system_prompt()
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
 

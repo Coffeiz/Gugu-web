@@ -15,17 +15,14 @@ env:
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    env:
+      VITE_USE_LOCAL_RUNTIME: '1'
     steps:
       - name: Checkout Gugu-web
         uses: actions/checkout@v4
         with:
           persist-credentials: false
           fetch-depth: 0
-
-      - name: Verify Runtime repository token
-        env:
-          RUNTIME_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
-        run: test -n "$RUNTIME_TOKEN" || { echo '::error::RUNTIME_REPO_TOKEN 未配置'; exit 1; }
 
       - name: Read pinned Runtime commit
         run: echo "RUNTIME_COMMIT=$(tr -d '[:space:]' < .runtime-version)" >> "$GITHUB_ENV"
@@ -36,7 +33,6 @@ jobs:
           repository: ${{ env.RUNTIME_REPOSITORY }}
           ref: ${{ env.RUNTIME_COMMIT }}
           path: gugu-interaction-runtime
-          token: ${{ secrets.RUNTIME_REPO_TOKEN }}
           persist-credentials: false
 
       - name: Recreate local sibling layout
@@ -97,11 +93,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify Runtime repository token
-        env:
-          RUNTIME_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
-        run: test -n "$RUNTIME_TOKEN" || { echo '::error::RUNTIME_REPO_TOKEN 未配置'; exit 1; }
-
       - name: Read pinned Runtime commit
         run: echo "RUNTIME_COMMIT=$(tr -d '[:space:]' < .runtime-version)" >> "$GITHUB_ENV"
 
@@ -111,7 +102,6 @@ jobs:
           repository: ${{ env.RUNTIME_REPOSITORY }}
           ref: ${{ env.RUNTIME_COMMIT }}
           path: gugu-interaction-runtime
-          token: ${{ secrets.RUNTIME_REPO_TOKEN }}
           persist-credentials: false
 
       - name: Setup Node
@@ -269,6 +259,8 @@ jobs:
   # 留在 backend/tests/ 的 pytest 里验证，不强行塞进浏览器测试。
   e2e:
     runs-on: ubuntu-latest
+    env:
+      VITE_USE_LOCAL_RUNTIME: '1'
     services:
       postgres:
         image: postgres:16-alpine
@@ -322,11 +314,6 @@ jobs:
       # npm 11 为 file: 依赖创建的 node_modules 符号链接可能断链，由 frontend 的
       # postinstall 脚本 scripts/fix-runtime-link.mjs 自动修复。三个 job 都需要
       # 相同的目录布局，e2e job 同样不能省略。
-      - name: Verify Runtime repository token
-        env:
-          RUNTIME_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
-        run: test -n "$RUNTIME_TOKEN" || { echo '::error::RUNTIME_REPO_TOKEN 未配置'; exit 1; }
-
       - name: Read pinned Runtime commit
         run: echo "RUNTIME_COMMIT=$(tr -d '[:space:]' < .runtime-version)" >> "$GITHUB_ENV"
 
@@ -336,7 +323,6 @@ jobs:
           repository: ${{ env.RUNTIME_REPOSITORY }}
           ref: ${{ env.RUNTIME_COMMIT }}
           path: gugu-interaction-runtime
-          token: ${{ secrets.RUNTIME_REPO_TOKEN }}
           persist-credentials: false
 
       - name: Recreate local sibling layout

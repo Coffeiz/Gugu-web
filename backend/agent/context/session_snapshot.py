@@ -339,7 +339,11 @@ async def ensure_snapshot(
     ttl: timedelta = DEFAULT_IDLE_TTL,
     locale: str | None = None,
 ) -> dict:
-    """返回本会话冻结的上下文；仅在首次/过期时调用业务 loader。
+    """返回本会话冻结的动态上下文。
+
+    仅在首次/过期时调用业务 loader；system prompt 不由本模块刷新，调用方应在
+    返回后从 ``agent.context.session_system`` 每轮组装。旧 snapshot 中的
+    ``system_prompt`` 字段仅为兼容历史数据保留。
 
     ``load_context`` 返回已经渲染好的 prompt 输入，避免 runner、Web 各自维护一套
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。

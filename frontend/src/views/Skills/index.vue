@@ -13,6 +13,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/Icon.vue'
 import ActionButton from '@/components/common/ActionButton.vue'
@@ -24,10 +25,16 @@ import SkillForm from './components/SkillForm.vue'
 
 const { skills, tools, loading, saving, error, load, save, toggle, remove } = useUserSkills()
 const { t, locale } = useI18n()
+const route = useRoute()
 const formOpen = ref(false)
 const formKey = ref(0)
 const editing = ref<UserSkillItem | null>(null)
-onMounted(load)
+onMounted(async () => {
+  await load()
+  const slug = typeof route.query.skill === 'string' ? route.query.skill : ''
+  const target = slug ? skills.value.find(skill => skill.slug === slug) : null
+  if (target) openEdit(target)
+})
 function openCreate() { editing.value = null; formKey.value++; formOpen.value = true }
 function openEdit(skill: UserSkillItem) { editing.value = skill; formKey.value++; formOpen.value = true }
 async function saveForm(data: UserSkillWrite) { await save(data, editing.value?.slug); formOpen.value = false }

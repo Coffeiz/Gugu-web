@@ -16,6 +16,8 @@ const CHAT_OBJECT_ICON_PATH: Record<string, string> = {
 const CHAT_OBJECT_TYPE_LABEL: Record<string, string> = {
   project: '项目', event: '活动', canvas: '画布', note: '笔记', 'scheduled-task': '定时任务',
 }
+const CHAT_SKILL_ICON_PATH = 'M12 2C6.477 2 2 6.477 2 12C2 17.523 6.477 22 12 22C17.523 22 22 17.523 22 12C22 6.477 17.523 2 12 2ZM12 4C16.418 4 20 7.582 20 12C20 16.418 16.418 20 12 20C7.582 20 4 16.418 4 12C4 7.582 7.582 4 12 4ZM11 7H13V11H17V13H13V17H11V13H7V11H11V7Z'
+const CHAT_SKILL_LABEL = '技能'
 const CHAT_PROJECT_ICON_PATH = 'M4 5V19H20V7H11.5858L9.58579 5H4ZM12.4142 5H21C21.5523 5 22 5.44772 22 6V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H10.4142L12.4142 5Z'
 const CHAT_OBJECT_LINK_PATH = 'M13.0607 8.11097L14.4749 9.52518C17.2086 12.2589 17.2086 16.691 14.4749 19.4247L14.1214 19.7782C11.3877 22.5119 6.95555 22.5119 4.22188 19.7782C1.48821 17.0446 1.48821 12.6124 4.22188 9.87874L5.6361 11.293C3.68348 13.2456 3.68348 16.4114 5.6361 18.364C7.58872 20.3166 10.7545 20.3166 12.7072 18.364L13.0607 18.0105C15.0133 16.0578 15.0133 12.892 13.0607 10.9394L11.6465 9.52518L13.0607 8.11097ZM19.7782 14.1214L18.364 12.7072C20.3166 10.7545 20.3166 7.58872 18.364 5.6361C16.4114 3.68348 13.2456 3.68348 11.293 5.6361L10.9394 5.98965C8.98678 7.94227 8.98678 11.1081 10.9394 13.0607L12.3536 14.4749L10.9394 15.8891L9.52518 14.4749C6.79151 11.7413 6.79151 7.30911 9.52518 4.57544L9.87874 4.22188C12.6124 1.48821 17.0446 1.48821 19.7782 4.22188C22.5119 6.95555 22.5119 11.3877 19.7782 14.1214Z'
 
@@ -38,6 +40,15 @@ marked.use({
       const iconPath = type === 'project' ? CHAT_PROJECT_ICON_PATH : (CHAT_OBJECT_ICON_PATH[type] || CHAT_PROJECT_ICON_PATH)
       const typeLabel = CHAT_OBJECT_TYPE_LABEL[type] || '对象'
       return `<a class="chat-object-card" href="gugu://open-object/${type}/${id}" data-object-type="${type}" data-object-id="${id}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(iconPath, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${typeLabel}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
+    }
+    const renderLinkAfterObject = r.link
+    r.link = function (this: unknown, token: Tokens.Link) {
+      const href = String(token.href || '')
+      const match = href.match(/^gugu:\/\/open-skill\/([a-z0-9][a-z0-9-]{0,79})$/i)
+      if (!match) return renderLinkAfterObject.call(this, token)
+      const slug = match[1].toLowerCase()
+      const label = String(token.text || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
+      return `<a class="chat-object-card chat-skill-card" href="gugu://open-skill/${slug}" data-skill-slug="${slug}" aria-label="${label}"><span class="chat-object-card-icon">${chatObjectIcon(CHAT_SKILL_ICON_PATH, 'chat-object-card-icon-svg')}</span><span class="chat-object-card-body"><strong>${label}</strong><small>${CHAT_SKILL_LABEL}</small></span><span class="chat-object-card-arrow">${chatObjectIcon(CHAT_OBJECT_LINK_PATH, 'chat-object-card-arrow-svg')}</span></a>`
     }
     // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
