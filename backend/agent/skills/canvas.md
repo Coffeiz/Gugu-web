@@ -114,6 +114,8 @@ bottom = y + height
 只有“创建便签 → 放置引用 → 调整布局 → 建立连接”这类相互依赖的多类型流程，才使用
 `canvas_batch`。
 
+调用 Canvas 修改工具时，`canvas_id` 必须来自 `canvas_list`/`canvas_get` 或用户明确提供，不能根据 `item_id` 猜测；ID 必须传 JSON 数字而不是字符串。单项与批量入口不能混用：移动节点使用 `canvas_id + item_id + 至少一个布局字段`，或 `canvas_id + updates[]`；删除节点/关系同样在单数 ID 与数组 ID 之间二选一。收到 Schema 错误后必须按全部 issues 修正，不要重复提交相同参数。
+
 ## 典型示例
 
 把项目放到文件右侧：先读取文件的 `position` 和 `layout.effective_size`，令项目的

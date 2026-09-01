@@ -1,6 +1,22 @@
 import { ref } from 'vue'
 import { describe, expect, it } from 'vitest'
-import { useMindCanvas } from './useMindCanvas'
+import { pickRelationAnchorSides, useMindCanvas } from './useMindCanvas'
+
+describe('mind canvas relation anchors', () => {
+  it('uses one outer side for vertically stacked cards', () => {
+    expect(pickRelationAnchorSides(
+      { x: 100, y: 0, w: 240, h: 120 },
+      { x: 100, y: 180, w: 240, h: 120 },
+    )).toEqual({ srcSide: 'right', dstSide: 'right' })
+  })
+
+  it('keeps opposite sides for horizontally separated cards', () => {
+    expect(pickRelationAnchorSides(
+      { x: 0, y: 0, w: 240, h: 120 },
+      { x: 300, y: 180, w: 240, h: 120 },
+    )).toEqual({ srcSide: 'right', dstSide: 'left' })
+  })
+})
 
 describe('useMindCanvas pan state', () => {
   it('reuses the same camera pan math without pointer capture', () => {
