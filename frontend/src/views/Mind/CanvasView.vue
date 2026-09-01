@@ -50,6 +50,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
@@ -73,6 +74,7 @@ import {
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
+const route = useRoute()
 const projectStore = useProjectStore()
 const { openMindRef } = useMindRefActions()
 
@@ -153,13 +155,16 @@ onMounted(async () => {
     !store.canvasesLoaded ? store.fetchCanvases() : Promise.resolve(),
     !projectStore.projectsLoaded && !projectStore.loading ? projectStore.fetchProjects() : Promise.resolve(),
   ])
-  await ensureCanvas()
+  const requestedId = Number(route.query.object_id)
+  await ensureCanvas(Number.isFinite(requestedId) ? requestedId : undefined)
 })
-async function ensureCanvas() {
+async function ensureCanvas(requestedId?: number) {
   const rememberedId = Number(localStorage.getItem('mind-last-canvas-id'))
-  const fallbackId = Number.isFinite(rememberedId) && store.canvases.some(canvas => canvas.id === rememberedId)
+  const requestedCanvas = Number.isFinite(requestedId) && store.canvases.some(canvas => canvas.id === requestedId)
+    ? requestedId : undefined
+  const fallbackId = requestedCanvas ?? (Number.isFinite(rememberedId) && store.canvases.some(canvas => canvas.id === rememberedId)
     ? rememberedId
-    : store.canvases[0]?.id
+    : store.canvases[0]?.id)
   let id = fallbackId
   if (id == null) {
     const canvas = await store.createCanvas()

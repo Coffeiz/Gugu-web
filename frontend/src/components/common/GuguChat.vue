@@ -154,6 +154,7 @@ watch(() => uiStore.pendingChatSession, async (id) => {
 const { refreshAfterTools, onChatActionClick } = useChatActions({
   router,
   onBindPlatform: (platform) => openChatImBind(platform),
+  onOpenObject: (type, id) => { void openChatObject(type, id) },
 })
 const { openMindRef } = useMindRefActions()
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
@@ -402,6 +403,18 @@ async function onReferenceClick(reference: ChatReference) {
   await openMindRef(reference.type, reference.id)
 }
 
+async function openChatObject(type: string, id: number) {
+  if (type === 'project' || type === 'event') {
+    await openMindRef(type, id)
+    return
+  }
+  const paths: Record<string, string> = {
+    canvas: '/mind/canvases', note: '/mind/notes', 'scheduled-task': '/schedules',
+  }
+  const path = paths[type]
+  if (path) await router.push({ path, query: { object_id: String(id) } })
+}
+
 watch(isTypingText, v => {
   if (v) { fabJumping.value = true; setTimeout(() => { fabJumping.value = false }, 350) }
 })
@@ -573,7 +586,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 /* .msg-bubble.md-body 本体现在渲染于 GuguChatMessageRow.vue（子组件，无 data-v-GuguChat
    属性），这里必须整条选择器都用 :deep() 才能穿透组件边界匹配到，光把内层 a 包 :deep()
    不够——外层 class 名同样带着父组件的 scope 校验。 */
-:deep(.msg-bubble.md-body a[href^="gugu://"]) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card)) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
@@ -589,11 +602,32 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:hover) {
+:deep(.msg-bubble.md-body a.chat-object-card) {
+  display: inline-flex; align-items: center; vertical-align: middle; gap: 9px;
+  min-width: 210px; max-width: min(340px, 100%); margin: 5px 6px 5px 0; padding: 9px 11px;
+  color: var(--content-primary); background: var(--surface-card-solid);
+  border: 1px solid var(--border-default); border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow); text-decoration: none; cursor: pointer;
+  transition: var(--card-motion);
+}
+:deep(.msg-bubble.md-body a.chat-object-card:hover) {
+  color: var(--content-primary); opacity: 1;
+  background-color: var(--card-surface-bg-hover); border-color: var(--card-surface-border-hover);
+  box-shadow: var(--card-shadow-hover); transform: translateY(-1px);
+}
+:deep(.msg-bubble.md-body a.chat-object-card:active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.chat-object-card-icon) { display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px; border-radius: var(--radius-sm); background: var(--surface-soft-hover); color: var(--action-primary); }
+:deep(.chat-object-card-icon-svg) { display: block; width: 16px; height: 16px; fill: currentColor; }
+:deep(.chat-object-card-body) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+:deep(.chat-object-card-body strong) { overflow: hidden; font-size: 12.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+:deep(.chat-object-card-body small) { color: var(--content-tertiary); font-size: 10.5px; }
+:deep(.chat-object-card-arrow) { display: grid; place-items: center; flex: 0 0 16px; color: var(--content-tertiary); }
+:deep(.chat-object-card-arrow-svg) { display: block; width: 14px; height: 14px; fill: currentColor; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):hover) {
   background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
   box-shadow: none; opacity: 1;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card):active) { transform: translateY(1px); opacity: 0.93; }
 
 /* .cb-* 扫码绑定弹窗样式已随 GuguChatBindDialog.vue 迁移 */
 /* .im-qr-cancel 已随 GuguChatImConnect.vue 迁移 */

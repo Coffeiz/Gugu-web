@@ -39,3 +39,25 @@ describe('聊天 Markdown 表格', () => {
     expect(html).not.toContain('<table>')
   })
 })
+
+describe('聊天业务对象卡片', () => {
+  it('把项目、活动、画布、笔记和定时任务链接统一渲染成卡片', () => {
+    const html = renderMd([
+      '[项目](gugu://open-object/project/1)',
+      '[活动](gugu://open-object/event/2)',
+      '[画布](gugu://open-object/canvas/3)',
+      '[笔记](gugu://open-object/note/4)',
+      '[任务](gugu://open-object/scheduled-task/5)',
+    ].join('\n'))
+
+    expect((html.match(/class="chat-object-card"/g) || []).length).toBe(5)
+    expect(html).toContain('data-object-type="canvas" data-object-id="3"')
+    expect(html).not.toContain('target="_blank"')
+  })
+
+  it('不把普通 gugu 动作链接误判为业务对象卡片', () => {
+    const html = renderMd('[打开文件](gugu://open-file/9)')
+    expect(html).not.toContain('chat-object-card')
+    expect(html).toContain('gugu://open-file/9')
+  })
+})

@@ -393,10 +393,17 @@ html[data-theme='dark'][data-family] .chat-window .rec-time { color: var(--statu
 html[data-theme='dark'][data-family] .chat-window .tool-spinner { border-color: var(--border-subtle); border-top-color: var(--action-primary); }
 html[data-theme='dark'][data-family] .chat-window .tool-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
-html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://'] {
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://']:not(.chat-object-card) {
   color: var(--content-on-accent);
   background: var(--gugu-chat-send-bg);
   box-shadow: none;
+}
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a.chat-object-card {
+  background-color: color-mix(in srgb, var(--surface-raised) 72%, var(--surface-card-solid));
+}
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a.chat-object-card:hover {
+  color: var(--content-primary);
+  background-color: var(--surface-raised);
 }
 html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,
 html[data-theme='dark'][data-family] .exp-session-title.is-header.is-editing {
