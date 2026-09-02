@@ -46,6 +46,10 @@ def _norm_channels(chs: list[str] | None) -> str:
     return ",".join(chs) if chs else "web"
 
 
+def _norm_authorized_tools(tools: list[str] | None) -> list[str]:
+    return ["send_email"] if tools and "send_email" in tools else []
+
+
 def _to_resp(t: ScheduledTask) -> dict:
     return {
         "id": t.id, "name": t.name,
@@ -125,7 +129,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
-        authorized_tools=["send_email"] if body.authorized_tools == ["send_email"] else [],
+        authorized_tools=_norm_authorized_tools(body.authorized_tools),
     )
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
@@ -159,9 +163,12 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.channels = _norm_channels(body.channels)
         from app.scheduled_tasks import owner_private_targets
         t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
-    # 页面上的保存动作是用户重新确认任务意图；内容或投递设置变更后重新授予邮件权限。
-    if body.payload is not None or body.cron is not None or body.channels is not None:
-        t.authorized_tools = ["send_email"] if body.authorized_tools == ["send_email"] else []
+    # 页面上的保存动作是用户重新确认任务意图；显式传授权时允许单独授予或撤销，
+    # 内容或投递设置变更但未传授权时则自动撤销旧的持久权限。
+    if body.authorized_tools is not None:
+        t.authorized_tools = _norm_authorized_tools(body.authorized_tools)
+    elif body.payload is not None or body.cron is not None or body.channels is not None:
+        t.authorized_tools = []
     if body.enabled is not None:
         t.enabled = body.enabled
     await db.commit()

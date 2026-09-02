@@ -33,6 +33,74 @@ async def test_email_delivery_failure_is_visible_and_not_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial", "requested", "expected"),
+    [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],
+)
+async def test_rest_task_update_can_change_authorized_tools_alone(
+    db, user_a, monkeypatch, initial, requested, expected
+):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="邮件授权任务",
+        payload="保持原指令",
+        cron="0 9 * * *",
+        channels="web",
+        authorized_tools=initial,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    monkeypatch.setattr(scheduled_api.events, "publish", AsyncMock())
+
+    result = await scheduled_api.update_task(
+        task.id,
+        scheduled_api.TaskUpdate(authorized_tools=requested),
+        user_a,
+        db,
+    )
+
+    assert result["authorized_tools"] == expected
+    assert result["payload"] == "保持原指令"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial", "requested", "expected"),
+    [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],
+)
+async def test_agent_task_update_can_change_authorized_tools_alone(
+    db, user_a, initial, requested, expected
+):
+    from app.models import ScheduledTask
+    from agent.tools.scheduled_tasks import _update_scheduled_task
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="Agent 邮件授权任务",
+        payload="保持原指令",
+        cron="0 9 * * *",
+        channels="web",
+        authorized_tools=initial,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    result = await _update_scheduled_task(
+        db,
+        user_a.id,
+        {"task_id": task.id, "authorized_tools": requested},
+    )
+
+    assert result["authorized_tools"] == expected
+    assert result["instruction"] == "保持原指令"
+
+
+@pytest.mark.asyncio
 async def test_group_delivery_mode_captures_current_qq_group():
     from agent.im import imctx
     from agent.tools.scheduled_tasks import _resolve_delivery_targets

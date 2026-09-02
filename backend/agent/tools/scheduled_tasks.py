@@ -195,8 +195,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
-    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "delivery_mode")):
-        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled），未改动。"})
+    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "delivery_mode", "authorized_tools")):
+        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled/authorized_tools），未改动。"})
     delivery_targets = None
     next_channels = t.channels
     if args.get("channels") is not None or args.get("delivery_mode") is not None:
