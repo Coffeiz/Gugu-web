@@ -22,6 +22,7 @@
     <Teleport to="body" :disabled="!floatToolbar">
       <div class="ne-toolbar" ref="toolbarRef" v-if="editor"
            :class="{ 'ne-toolbar-floating': floatToolbar, pending: floatToolbar && !editReady }">
+        <div class="ne-toolbar-main">
         <button class="ne-tool" :class="{ on: isFocused && editor.isActive('taskList') }"
                 @mousedown.prevent="editor.chain().focus().toggleTaskList().run()" :title="t('mindEditorUi.task')">
           <PhCheckSquare :size="13" weight="bold" />
@@ -83,20 +84,21 @@
              代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
         <div class="ne-drawer" :class="{ open: insertOpen }">
           <div class="ne-drawer-items">
+            <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" :title="t('mindEditorUi.divider')">
+              <PhMinus :size="13" weight="bold" />
+            </button>
             <button class="ne-style-item" @mousedown.prevent="insertCodeBlock" :title="t('mindEditorUi.codeBlock')">
               <PhCodeBlock :size="13" weight="bold" />
             </button>
             <button class="ne-style-item" @mousedown.prevent="insertBlockquote" :title="t('mindEditorUi.blockquote')">
               <PhQuotes :size="13" weight="bold" />
             </button>
-            <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" :title="t('mindEditorUi.divider')">
-              <PhMinus :size="13" weight="bold" />
-            </button>
           </div>
           <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
                   @mousedown.prevent="toggleInsertMenu" :title="t('mindEditorUi.insert')">
-            <PhPlus :size="13" weight="bold" />
+          <PhNoteBlank :size="13" weight="bold" />
           </button>
+        </div>
         </div>
         <span class="ne-toolbar-actions"><slot name="foot-actions" /></span>
       </div>
@@ -120,7 +122,7 @@ import { useI18n } from 'vue-i18n'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import {
   PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
-  PhMinus, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
+  PhMinus, PhNoteBlank, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/mind/useMindEditor'
 import { useMindObjectPicker } from '@/composables/mind/useMindObjectPicker'
@@ -467,6 +469,7 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 4px;
   padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
+.ne-toolbar-main { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; }
 /* 浮动态（画布便签）：脱出卡片本身悬在下方（或翻到上方，见 .flipped），不再是卡片纸面
    的一部分，得自己长一副独立的浮层皮——跟公共引用补全菜单同一套玻璃质感语言，
    两者本来就经常同时出现在屏幕上（点了 @ 工具栏按钮，下拉紧跟着弹出来），视觉上得是
@@ -504,8 +507,20 @@ onBeforeUnmount(() => {
 .ne-tool.on { background: rgba(123,127,178,0.16); color: var(--color-primary); }
 /* 消费方（便签卡的取消/保存等）塞进来的按钮，跟格式工具栏同一行——原来这里还兜着
    "输入 @ 引用…" 提示的 margin-left:auto，提示挪到 CaptureBar 自己的 cb-foot 里了 */
-.ne-toolbar-actions { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+.ne-toolbar-actions { margin-left: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .ne-toolbar-actions:empty { display: none; }
+
+/* 普通笔记卡片宽度有限：只压缩左侧工具，不压缩右侧完成按钮，保证它始终固定在最右侧。
+   画布工具栏是独立浮层，继续使用上面的默认尺寸。 */
+.ne-toolbar:not(.ne-toolbar-floating) .ne-toolbar-main { gap: 2px; }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-toolbar-main > .ne-tool,
+.ne-toolbar:not(.ne-toolbar-floating) .ne-toolbar-main .ne-drawer > .ne-tool {
+  min-width: 22px; padding: 0 4px;
+}
+.ne-toolbar:not(.ne-toolbar-floating) .ne-style-item { width: 22px; }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open { gap: 2px; }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer-items { gap: 2px; }
+.ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open .ne-drawer-items { max-width: 150px; }
 
 /* 跟 NoteCard.vue 里只读态用的 .md-preview 同一套字号/行高/间距，编辑和显示才是同一件事 */
 .ne-body { font-size: 13px; line-height: 1.6; color: var(--text-primary); }

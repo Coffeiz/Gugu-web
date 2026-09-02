@@ -177,6 +177,10 @@ function flushPanVisual(x: number, y: number) {
   pendingPanVisual = null
   applyCameraVisual(x, y)
 }
+function flushCurrentPanVisual() {
+  const visual = panPosition()
+  flushPanVisual(visual.x, visual.y)
+}
 watch(
   () => [camera.x, camera.y, camera.scale] as const,
   ([x, y, scale]) => applyCameraVisual(x, y, scale),
@@ -522,6 +526,8 @@ function onPointerUp(event: PointerEvent) {
 }
 function onWheelZoom(event: WheelEvent) {
   onWheel(event)
+  // 缩放会重建相机基线；取消缩放前已经排队的旧平移帧，避免旧坐标在下一帧写回。
+  flushCurrentPanVisual()
   emitViewChange()
 }
 function emitViewChange() {
@@ -534,11 +540,13 @@ function emitViewChange() {
 }
 function zoomAtCenterAndEmit(delta: number) {
   zoomAtCenter(delta)
+  flushCurrentPanVisual()
   emitViewChange()
 }
 function resetScaleAtCenterAndEmit() {
   const center = workspaceCenter()
   zoomAt(center.x, center.y, 1)
+  flushCurrentPanVisual()
   emitViewChange()
 }
 function centerViewAndEmit() {

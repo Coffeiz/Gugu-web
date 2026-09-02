@@ -143,9 +143,12 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     camera.x = screenX - worldX * scale
     camera.y = screenY - worldY * scale
     if (pan) {
-      // 保留 pointerdown 到当前指针的既有位移，避免缩放后下一次 panMove 跳回旧 origin。
-      pan.originX = camera.x - (pan.lastX - pan.startX)
-      pan.originY = camera.y - (pan.lastY - pan.startY)
+      // 缩放后以当前指针位置重新建立平移基线，避免下一次 panMove 把旧的
+      // pointerdown 位移再叠加一次，造成画面跳回旧 origin。
+      pan.startX = pan.lastX
+      pan.startY = pan.lastY
+      pan.originX = camera.x
+      pan.originY = camera.y
       pan.currentX = camera.x
       pan.currentY = camera.y
     }
@@ -214,6 +217,13 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     if (!pan) return false
     camera.x = pan.currentX
     camera.y = pan.currentY
+    // camera 已经提交后，必须把当前指针位置作为新的差值起点。
+    // 否则每次跨过窗口化缓冲区后，后续 pointermove 仍会用旧 origin
+    // 计算，导致反复 rebase 和视觉抖动。
+    pan.startX = pan.lastX
+    pan.startY = pan.lastY
+    pan.originX = camera.x
+    pan.originY = camera.y
     return true
   }
   function panEnd(event: PanInput, commitCamera = true) {

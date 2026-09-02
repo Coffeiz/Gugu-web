@@ -8,11 +8,14 @@
          （先补一次保存再退出）——但"点外面"这个出口不够显眼（画布上尤其容易让人以为
          点哪都在编辑器范围内，找不到退出的地方），补一个常驻的"完成"按钮兜底。 -->
     <template v-if="editing">
-      <input
-        ref="titleInputRef" @pointerdown.stop
-        v-model="draftTitle" class="nc-title-input" :placeholder="t('mindUi.optionalTitle')"
-        @keydown.enter.prevent="bodyEditorRef?.focus()"
-      />
+      <div class="nc-edit-head">
+        <input
+          ref="titleInputRef" @pointerdown.stop
+          v-model="draftTitle" class="nc-title-input" :placeholder="t('mindUi.optionalTitle')"
+          @keydown.enter.prevent="bodyEditorRef?.focus()"
+        />
+        <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
+      </div>
       <!-- pendingFocus 有具体目标（标题/某一行）时不让编辑器自己 autofocus:'end'——它内部的
            自动聚焦是异步触发的，晚于下面 watch 里 nextTick 后的手动定位，会把光标又抢回文档
            末尾。只有默认进编辑态（没有具体点击目标）才用它自己的 autofocus。
@@ -38,7 +41,6 @@
         <span class="nc-title" @click="startEditAt('title')">{{ title }}</span>
         <CardAffordances :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="inline" :node-id="null">
           <template #actions>
-          <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
           <button class="nc-icon" :title="t('mindUi.edit')" @pointerdown.stop @click.stop="startEditAt(null)">
             <PhPencilSimple :size="12" weight="bold" />
           </button>
@@ -50,7 +52,6 @@
       </div>
       <CardAffordances v-else :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="float" :node-id="null">
         <template #actions>
-        <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
         <button class="nc-icon" :title="t('mindUi.edit')" @pointerdown.stop @click.stop="startEditAt(null)">
           <PhPencilSimple :size="12" weight="bold" />
         </button>
@@ -512,6 +513,11 @@ defineExpose({ rootEl: cardRef })
   border-bottom: 1px solid rgba(80,90,110,0.1);
   font-size: 14px; font-weight: 600; line-height: 1.35;
   color: var(--text-primary); font-family: var(--font-sans);
+}
+.nc-edit-head { position: relative; flex-shrink: 0; }
+.nc-edit-head .nc-title-input { padding-right: 76px; }
+.nc-edit-head > :deep(.color-swatches) {
+  position: absolute; top: 1px; right: 0; margin-right: 0;
 }
 .nc-title-input::placeholder { color: var(--text-secondary); opacity: 0.5; font-weight: 400; }
 
