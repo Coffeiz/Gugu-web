@@ -5,7 +5,7 @@
 FROM node:latest
 
 WORKDIR /workspace
-RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
+RUN npm install --global pnpm@10.15.0
 
 # 依赖单独一层：workspace 元数据和 manifest 没变时改代码不用重装。
 COPY Gugu-web/package.json Gugu-web/pnpm-lock.yaml Gugu-web/pnpm-workspace.yaml Gugu-web/.npmrc ./
