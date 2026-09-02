@@ -98,6 +98,7 @@ class _AnthropicCtx:
     supports_active_cache: bool
     adapter: Any
     model: str
+    generation_param: dict
 
 
 def _contains_volatile_image(value: Any) -> bool:
@@ -329,6 +330,7 @@ class AnthropicDriver:
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             thinking_param=thinking_param, system_param=system_param,
             supports_active_cache=supports_active_cache, adapter=adapter, model=ai.model,
+            generation_param=adapter.build_anthropic_generation_params(ai),
         )
         return client, ctx
 
@@ -348,8 +350,9 @@ class AnthropicDriver:
         _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
-            tools=ctx.tools, max_tokens=ctx.max_tokens, temperature=ctx.temperature,
+            tools=ctx.tools, max_tokens=ctx.max_tokens,
             **ctx.thinking_param,
+            **ctx.generation_param,
         )
         final = None
         async for kind, val in _stream_round(client, kwargs, ctx.adapter):

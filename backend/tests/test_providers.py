@@ -176,6 +176,18 @@ def test_deepseek_thinking_uses_official_openai_parameter_split():
     }
 
 
+def test_minimax_temperature_uses_anthropic_extra_body():
+    adapter = adapter_for(_ai(provider="minimax"))
+    assert adapter.build_anthropic_generation_params(SimpleNamespace(temperature=0.3)) == {
+        "extra_body": {"temperature": 0.3},
+    }
+
+
+def test_anthropic_temperature_is_not_sent_to_sdk_stream():
+    adapter = adapter_for(_ai(provider="anthropic"))
+    assert adapter.build_anthropic_generation_params(SimpleNamespace(temperature=0.3)) == {}
+
+
 def test_adapter_for_ollama_local_and_cloud_defaults():
     adapter = adapter_for(_ai(provider="ollama", model="qwen3:8b"))
     assert adapter.name == "ollama"

@@ -187,6 +187,10 @@ class ProviderAdapter:
         """返回 Anthropic SDK 调用所需的思考参数。"""
         return self.build_thinking_params(ai, thinking=thinking)
 
+    def build_anthropic_generation_params(self, ai) -> dict:
+        """返回 Anthropic 兼容端点的额外生成参数。"""
+        return {}
+
     def build_structured_output(self, ai, schema: dict | None = None) -> dict:
         """返回结构化输出参数；默认不改变调用方行为。"""
         return {}
