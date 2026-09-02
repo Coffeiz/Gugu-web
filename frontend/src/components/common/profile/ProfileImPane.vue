@@ -43,7 +43,7 @@ import { optimisticMutation } from '@/utils/optimisticMutation'
 import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent } from '@/utils/optimisticIntent'
 import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
 
 interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }

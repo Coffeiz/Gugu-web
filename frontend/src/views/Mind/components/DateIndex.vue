@@ -17,7 +17,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localDayKey } from '@/utils/dateAttribution'
-import { useDateScrubberMotion } from '../composables/useDateScrubberMotion'
+import { useDateScrubberMotion } from '@/composables/mind/useDateScrubberMotion'
 import { clampScrubberPosition, pitchAt, positionForIndex, tickVisual } from '../utils/dateScrubberMath'
 
 const props = defineProps<{

@@ -211,7 +211,7 @@
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { ref, computed, watch, type PropType } from 'vue'
 import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
-import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/useFileUpload'
+import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/files/useFileUploadCore'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { useI18n } from 'vue-i18n'
 

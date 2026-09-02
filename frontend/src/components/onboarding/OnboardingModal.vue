@@ -199,8 +199,8 @@ import ProfileByokPane from '@/components/common/profile/ProfileByokPane.vue'
 import ThemeSwitcher from '@/views/Design/components/ThemeSwitcher.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { getLocale, type SupportedLocale } from '@/i18n'
-import { useTheme } from '@/composables/useTheme'
-import { onboardingGuideState, updateOnboardingGuide } from '@/composables/useOnboardingGuide'
+import { useTheme } from '@/composables/core/useTheme'
+import { onboardingGuideState, updateOnboardingGuide } from '@/composables/onboarding/useOnboardingGuide'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void }>()

@@ -46,7 +46,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ } from '@/composables/core/windowz'
 import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import Icon from '@/components/common/icons/Icon.vue'

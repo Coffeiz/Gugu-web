@@ -95,7 +95,7 @@ import ProviderSelect from '@/views/Admin/Agent/components/ProviderSelect.vue'
 import InterfaceTypeSelect from '@/views/Admin/Agent/components/InterfaceTypeSelect.vue'
 import MultimodalCapabilities from '@/components/common/controls/MultimodalCapabilities.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS, type ModelProvider } from '@/utils/modelProviders'
 

@@ -106,7 +106,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
-import { prefetchGreeting } from '@/composables/useGreeting'
+import { prefetchGreeting } from '@/composables/shared/useGreeting'
 import GuguChatFab from './GuguChatFab.vue'
 import GuguChatMiniPlayer from './GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './GuguChatSidebar.vue'
@@ -122,7 +122,7 @@ import { useChatActions } from './composables/useChatActions'
 import { useChatConversation } from './composables/useChatConversation'
 import { useChatImConnect } from './composables/useChatImConnect'
 import { useChatWindow } from './composables/useChatWindow'
-import { useMindRefActions } from '@/composables/useMindRefActions'
+import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 const { t } = useI18n()
 
 interface QuotaInfo {

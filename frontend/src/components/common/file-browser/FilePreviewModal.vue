@@ -109,7 +109,7 @@ import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
-import { nextZ, registerEsc } from '@/composables/windowz'
+import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({

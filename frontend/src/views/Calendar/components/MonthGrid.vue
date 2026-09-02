@@ -98,7 +98,7 @@
 import { toRefs } from 'vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import type { CalendarDragState } from '../composables/useCalendarDrag'
+import type { CalendarDragState } from '@/composables/calendar/useCalendarDrag'
 import type { CalendarMonthDay, CalendarRenderItem } from '../domain/calendarTypes'
 import type { DayLayoutResult } from '../utils/calendarLayout'
 import type { CalendarDateRange } from '../domain/calendarContext'

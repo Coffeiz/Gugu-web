@@ -103,7 +103,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t, tm, locale } = useI18n()
 const weekDays = computed(() => tm('sharedUi.weekdays') as string[])
-import { nextZ } from '@/composables/windowz'
+import { nextZ } from '@/composables/core/windowz'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 
 const props = defineProps({

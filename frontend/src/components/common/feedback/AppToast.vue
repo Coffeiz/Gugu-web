@@ -20,7 +20,7 @@
 
 <script setup lang="ts">
 import Icon from '@/components/common/icons/Icon.vue'
-import { useAppToast } from '@/composables/useAppToast'
+import { useAppToast } from '@/composables/core/useAppToast'
 import { useI18n } from 'vue-i18n'
 
 const { currentToast, dismissAppToast } = useAppToast()

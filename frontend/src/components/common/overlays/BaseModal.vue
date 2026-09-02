@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import { OVERLAY_Z, nextZ, raisePopoversAbove, registerEsc } from '@/composables/windowz'
+import { OVERLAY_Z, nextZ, raisePopoversAbove, registerEsc } from '@/composables/core/windowz'
 
 const props = defineProps({
   show:    { type: Boolean, default: false },

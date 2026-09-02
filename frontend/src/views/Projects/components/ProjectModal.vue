@@ -110,9 +110,9 @@ import { PROJECT_COLOR_PRESETS, extractProjectAccent } from '@/utils/projectColo
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { projectsApi } from '@/services/api'
-import { thumbLoadedIds } from '@/composables/useThumbCache'
+import { thumbLoadedIds } from '@/composables/shared/useThumbCache'
 import { isImageExt as isPmImageExt, fileIconColor } from '@/utils/fileTypes'
-import { useSorting } from '@/composables/useSorting'
+import { useSorting } from '@/composables/shared/useSorting'
 import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
 import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
@@ -432,7 +432,7 @@ const openPreview = (f: FileMeta) => previewStore.open(f, sortedCurrentFiles.val
 // ── 文件类型辅助 ──────────────────────────────────────────────────────────────
 
 // 文件类型助手（isImageExt→isPmImageExt / fileExtCategory / fileIconColor）与缩略图懒加载指令
-// vLazySrc 已统一到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
+// vLazySrc 已统一到 @/utils/fileTypes 和 @/composables/shared/useLazyThumb，见顶部 import。
 // 注：fileIconColor 改用共享版（pdf/doc 等单列颜色，不再统一灰）；isImageExt 含 svg（svg 现也显缩略图）。
 
 // ── 文件夹操作 ────────────────────────────────────────────────────────────────

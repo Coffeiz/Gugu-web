@@ -39,8 +39,8 @@ import Icon from '@/components/common/icons/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
 import { runtime } from '@/interaction/runtime'
-import { showAppError } from '@/composables/useAppToast'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },

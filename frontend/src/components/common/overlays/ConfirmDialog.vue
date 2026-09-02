@@ -26,7 +26,7 @@
 <script setup lang="ts">
 import BaseModal from './BaseModal.vue'
 import Icon from '@/components/common/icons/Icon.vue'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { useConfirmDialog } from '@/composables/core/useConfirmDialog'
 
 const { active, settle } = useConfirmDialog()
 </script>

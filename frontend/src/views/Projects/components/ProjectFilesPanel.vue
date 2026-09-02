@@ -288,7 +288,7 @@ import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vu
 import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.vue'
-import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
+import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()

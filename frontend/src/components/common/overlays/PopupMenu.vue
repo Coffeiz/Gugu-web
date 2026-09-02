@@ -11,7 +11,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
-import { nextZ, registerPopover, TOP_Z } from '@/composables/windowz'
+import { nextZ, registerPopover, TOP_Z } from '@/composables/core/windowz'
 
 const props = defineProps({
   show: { type: Boolean, default: false },

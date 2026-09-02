@@ -6,7 +6,7 @@ import { useFileContextMenu } from './useFileContextMenu'
 import { useFilePasteCore } from './useFilePasteCore'
 import type { useFileActions } from './useFileActions'
 import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
-import { clearThumbCache } from '@/composables/useThumbCache'
+import { clearThumbCache } from '@/composables/shared/useThumbCache'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 type ContextType = 'file' | 'multi-file' | 'folder' | 'empty'

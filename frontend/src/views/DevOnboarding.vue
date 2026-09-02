@@ -20,7 +20,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onboardingApi } from '@/services/api'
-import { reopenOnboarding } from '@/composables/useOnboardingGuide'
+import { reopenOnboarding } from '@/composables/onboarding/useOnboardingGuide'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const { t } = useI18n()

@@ -29,11 +29,11 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
-import { errorMessage } from '@/composables/useAppToast'
+import { errorMessage } from '@/composables/core/useAppToast'
 import { useAuthStore } from '@/stores/auth'
 import ScheduleCard from './components/ScheduleCard.vue'
 import ScheduleFormModal from './components/ScheduleFormModal.vue'
-import { useScheduledTasks } from './composables/useScheduledTasks'
+import { useScheduledTasks } from '@/composables/schedules/useScheduledTasks'
 
 const authStore = useAuthStore()
 const route = useRoute()

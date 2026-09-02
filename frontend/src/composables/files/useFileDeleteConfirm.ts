@@ -1,4 +1,4 @@
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { i18n } from '@/i18n'
 
 type DeleteConfirmKind = 'file' | 'folder' | 'selected' | 'permanent-file' | 'permanent-folder' | 'permanent-selected'

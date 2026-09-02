@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
 import Icon from '@/components/common/icons/Icon.vue'
-import type { SortOption } from '@/composables/useSortedList'
+import type { SortOption } from '@/composables/shared/useSortedList'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({

@@ -319,11 +319,11 @@
 <script setup lang="ts">
 import { h, ref } from 'vue'
 import { PhAddressBook, PhAlarm, PhBrowser, PhCalendarBlank, PhFolder, PhGraph, PhMagnifyingGlass, PhPlus, PhSidebarSimple, PhStack, PhTrash, PhUploadSimple } from '@phosphor-icons/vue'
-import { useTheme, type ThemePalette } from '@/composables/useTheme'
+import { useTheme, type ThemePalette } from '@/composables/core/useTheme'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import GuguChatMock from './GuguChatMock.vue'
 import GlassBg from '@/components/common/layout/GlassBg.vue'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 
 const { preference, resolved, family, palette, setTheme, setFamily, setPalette } = useTheme()
 const chatOpen = ref(false)

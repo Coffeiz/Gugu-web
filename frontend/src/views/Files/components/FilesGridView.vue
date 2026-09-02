@@ -44,7 +44,7 @@ import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vu
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
-import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
+import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
 import { useI18n } from 'vue-i18n'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()

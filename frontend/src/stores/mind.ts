@@ -14,7 +14,7 @@ import {
   type MindNoteUpdate, type MindRelation,
 } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
-import type { RelationAnchorSides } from '@/composables/useMindCanvas'
+import type { RelationAnchorSides } from '@/composables/mind/useMindCanvas'
 import { useLiveStore } from '@/stores/live'
 import type { LiveEventPayload } from '@/types/live-events'
 import { isMindLandingActive, onMindLandingSettled } from '@/interaction/runtime/canvas'

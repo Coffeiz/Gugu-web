@@ -61,7 +61,7 @@ import { agentApi, terminalsApi, workspacesApi } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useLiveStore } from '@/stores/live'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 
 type WorkspaceItem = {
   id: number

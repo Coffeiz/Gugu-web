@@ -122,9 +122,9 @@ import {
   PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
   PhMinus, PhPlus, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
 } from '@phosphor-icons/vue'
-import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
-import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
-import { useMindRefActions } from '@/composables/useMindRefActions'
+import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/mind/useMindEditor'
+import { useMindObjectPicker } from '@/composables/mind/useMindObjectPicker'
+import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMenu.vue'
 import type { MindRefSuggestItem } from '@/services/api'
 

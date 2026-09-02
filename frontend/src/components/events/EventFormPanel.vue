@@ -20,7 +20,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import Icon from '@/components/common/icons/Icon.vue'
 import EventFormFields from './EventFormFields.vue'
-import { type EventDraft, type useEventEditForm } from '@/composables/useEventEditForm'
+import { type EventDraft, type useEventEditForm } from '@/composables/calendar/useEventEditForm'
 
 withDefaults(defineProps<{
   event: EventDraft

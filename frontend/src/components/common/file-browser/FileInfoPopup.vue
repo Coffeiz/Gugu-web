@@ -54,7 +54,7 @@
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import { ref, watch, nextTick, onUnmounted } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ } from '@/composables/core/windowz'
 import Icon from '@/components/common/icons/Icon.vue'
 const props = defineProps({
   show: Boolean,

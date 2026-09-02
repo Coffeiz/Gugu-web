@@ -52,7 +52,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
-import { isNextDay } from '@/composables/useEventEditForm'
+import { isNextDay } from '@/composables/calendar/useEventEditForm'
 import { capBg, hexAlpha, darkenHex } from '../utils/calendarColors'
 import type { CalendarRenderItem } from '../domain/calendarTypes'
 

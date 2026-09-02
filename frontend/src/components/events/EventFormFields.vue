@@ -46,7 +46,7 @@ import TimeInput from '@/components/common/controls/TimeInput.vue'
 import {
   LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
   type EventDraft, type useEventEditForm,
-} from '@/composables/useEventEditForm'
+} from '@/composables/calendar/useEventEditForm'
 
 defineProps<{
   event: EventDraft

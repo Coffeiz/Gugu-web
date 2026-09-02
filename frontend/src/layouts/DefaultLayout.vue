@@ -75,7 +75,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { runOnboarding, shouldShowOnboarding } from '@/composables/useOnboarding'
+import { runOnboarding, shouldShowOnboarding } from '@/composables/onboarding/useOnboarding'
 import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
 import { useAuthStore } from '@/stores/auth'

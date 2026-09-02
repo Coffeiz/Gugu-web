@@ -90,7 +90,7 @@ import ProfileToolPermissionsPane from './ProfileToolPermissionsPane.vue'
 import ProfileWorkspacesPane from './ProfileWorkspacesPane.vue'
 import ProfileByokPane from './ProfileByokPane.vue'
 import { authApi } from '@/services/api'
-import { TOP_Z } from '@/composables/windowz'
+import { TOP_Z } from '@/composables/core/windowz'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 

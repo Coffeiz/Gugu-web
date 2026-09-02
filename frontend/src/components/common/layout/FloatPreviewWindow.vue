@@ -154,9 +154,9 @@ import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
-import { getCachedThumb, getThumb } from '@/composables/useThumbCache'
+import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { useLiveStore } from '@/stores/live'
-import { registerEsc, registerArrowNav } from '@/composables/windowz'
+import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })

@@ -8,7 +8,7 @@
  * 不堵住可见卡片的 card 请求。tiny 用更大的 rootMargin 先进入触发区 → 同一张卡 tiny 先入队，
  * blur 占位仍先于 card 出现。card 设 src 后预解码（el.decode），滚入视口零开销。
  */
-import { getThumb, getCachedThumb } from '@/composables/useThumbCache'
+import { getThumb, getCachedThumb } from '@/composables/shared/useThumbCache'
 
 // 指令挂在 <img> 上，额外记两个私有句柄用于断开/重试
 type LazyThumbEl = HTMLImageElement & { _lazyThumbObs?: IntersectionObserver | null; _lazyThumbRetry?: ReturnType<typeof setTimeout> | null }

@@ -50,7 +50,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, t
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
-import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/mind/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import { relationEnvelope } from '@/utils/canvasRelationGeometry'
 import EntitySticker from './EntitySticker.vue'

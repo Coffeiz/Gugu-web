@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ } from '@/composables/core/windowz'
 import type { FileMeta } from '@/stores/filesCache'
 
 // 预览窗口也承载聊天附件等非库文件，故用 Partial<FileMeta>（只需 id/ext，其余按需）

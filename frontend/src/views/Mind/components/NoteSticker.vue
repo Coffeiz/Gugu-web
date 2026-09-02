@@ -45,12 +45,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
-import { toggleTaskInMd } from '@/composables/useMindEditor'
-import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { toggleTaskInMd } from '@/composables/mind/useMindEditor'
+import { useMindRuntimeObject } from '@/composables/mind/useMindRuntimeObject'
 import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
-import { CANVAS_NOTE_SIZE, itemSize } from '@/composables/useMindCanvas'
+import { CANVAS_NOTE_SIZE, itemSize } from '@/composables/mind/useMindCanvas'
 import { MindConflictError, useMindStore } from '@/stores/mind'
-import { showAppError } from '@/composables/useAppToast'
+import { showAppError } from '@/composables/core/useAppToast'
 import type { MindCanvasItem } from '@/services/api'
 import NoteCard from './NoteCard.vue'
 

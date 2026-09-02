@@ -19,8 +19,8 @@ import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
 import { useLiveStore } from '@/stores/live'
-import { useEventEditForm, type EditingEvent } from '@/composables/useEventEditForm'
-import { showAppError, showAppNotice } from '@/composables/useAppToast'
+import { useEventEditForm, type EditingEvent } from '@/composables/calendar/useEventEditForm'
+import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import EventFormPanel from './EventFormPanel.vue'
 
 const eventModalStore = useEventModalStore()

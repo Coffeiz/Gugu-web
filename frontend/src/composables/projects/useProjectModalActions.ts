@@ -3,7 +3,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import type { Project, ProjectStage } from '@/types/project'
 import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { i18n } from '@/i18n'
 
 interface ProjectModalActionsOptions {

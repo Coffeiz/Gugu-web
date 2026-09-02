@@ -27,7 +27,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PhCalendarBlank, PhChatCircle, PhFile, PhStack } from '@phosphor-icons/vue'
 import type { MindRefSuggestItem } from '@/services/api'
-import { nextZ, registerPopover } from '@/composables/windowz'
+import { nextZ, registerPopover } from '@/composables/core/windowz'
 
 defineEmits<{ choose: [item: MindRefSuggestItem] }>()
 const { t } = useI18n()

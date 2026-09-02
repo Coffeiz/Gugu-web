@@ -91,7 +91,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { nextZ, registerPopover } from '@/composables/windowz'
+import { nextZ, registerPopover } from '@/composables/core/windowz'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { useI18n } from 'vue-i18n'
 

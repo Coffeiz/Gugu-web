@@ -49,7 +49,7 @@ import { computed, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PhCheck } from '@phosphor-icons/vue'
 import SegBar from '@/components/common/controls/SegBar.vue'
-import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
+import { useProjectCardBasics } from '@/composables/shared/useProjectCardBasics'
 import type { Project } from '@/types/project'
 import './project-card-visual.css'
 

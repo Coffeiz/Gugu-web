@@ -172,13 +172,13 @@ import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
-import { errorMessage, showAppError } from '@/composables/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import Icon from '@/components/common/icons/Icon.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/controls/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
-import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
+import { useProjectCardBasics } from '@/composables/shared/useProjectCardBasics'
 
 defineOptions({ inheritAttrs: false })
 

@@ -100,7 +100,7 @@ import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { runtime } from '@/interaction/runtime'
 import { MIND_CANVAS_DRAWER_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
-import { useMindFloatingSurface } from '../composables/useMindFloatingSurface'
+import { useMindFloatingSurface } from '@/composables/mind/useMindFloatingSurface'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
