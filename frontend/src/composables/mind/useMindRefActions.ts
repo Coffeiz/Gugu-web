@@ -9,8 +9,15 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { filesApi, agentApi, eventsApi } from '@/services/api'
+import { showAppNotice } from '@/composables/core/useAppToast'
+import { i18n } from '@/i18n'
 
 export type MindRefState = 'available' | 'missing' | 'unknown'
+
+// 同一批笔记可能同时解析多个文件引用；短时合并版本刷新，避免每个引用都单独请求文件列表。
+let fileRefreshPromise: Promise<void> | null = null
+let fileRefreshAt = 0
+const FILE_REFRESH_COOLDOWN_MS = 5000
 
 export function useMindRefActions() {
   const projectStore = useProjectStore()
@@ -21,6 +28,18 @@ export function useMindRefActions() {
 
   function isNotFound(error: unknown) {
     return (error as { status?: number }).status === 404
+  }
+
+  async function refreshFilesIfNeeded() {
+    const now = Date.now()
+    if (now - fileRefreshAt < FILE_REFRESH_COOLDOWN_MS) return
+    if (!fileRefreshPromise) {
+      fileRefreshPromise = filesCache.refresh().finally(() => {
+        fileRefreshAt = Date.now()
+        fileRefreshPromise = null
+      })
+    }
+    await fileRefreshPromise
   }
 
   /** 本体删除后保留标题快照；网络异常不能误标成「已删除」。 */
@@ -34,6 +53,7 @@ export function useMindRefActions() {
     if (refType === 'file') {
       if (!filesCache.loaded) await filesCache.load()
       if (!filesCache.loaded) return 'unknown'
+      await refreshFilesIfNeeded()
       return filesCache.getFile(refId) ? 'available' : 'missing'
     }
     if (refType === 'event') {
@@ -58,7 +78,10 @@ export function useMindRefActions() {
   async function openFile(id: number) {
     if (!filesCache.loaded) await filesCache.load()
     const file = filesCache.getFile(id)
-    if (!file) return   // 文件已被删除/不可见：静默忽略，不弹错误打扰阅读
+    if (!file) {
+      showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+      return
+    }
     if (isPreviewable(file.ext)) previewStore.open(file)
     else filesApi.download(file.id, `${file.displayName}.${file.ext}`).catch(() => {})
   }
@@ -75,7 +98,12 @@ export function useMindRefActions() {
   }
 
   async function openMindRef(refType: string, refId: number) {
-    if (await resolveMindRef(refType, refId) !== 'available') return false
+    const state = await resolveMindRef(refType, refId)
+    if (state === 'missing') {
+      showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+      return false
+    }
+    if (state !== 'available') return false
     if (refType === 'project') projectStore.openModal({ id: refId })
     else if (refType === 'file') await openFile(refId)
     else if (refType === 'event') eventModalStore.openModal(refId)

@@ -226,7 +226,7 @@
 .mind-ref:hover { background: rgba(123,127,178,0.26); }
 .mind-ref.mind-ref-missing {
   background: rgba(120,124,142,0.1); color: var(--text-secondary);
-  cursor: default; text-decoration: line-through; opacity: 0.72;
+  cursor: pointer; text-decoration: line-through; opacity: 0.72;
 }
 .mind-ref.mind-ref-missing:hover { background: rgba(120,124,142,0.1); }
 .mind-ref.mind-ref-missing::after {

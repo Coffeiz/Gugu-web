@@ -413,7 +413,6 @@ function onBodyClick(e: MouseEvent) {
   // 点链接就正常跳转，也不进编辑；点其他区域进编辑，光标定到点的那一行后面
   const refEl = t.closest<HTMLElement>('.mind-ref')
   if (refEl) {
-    if (refEl.classList.contains('mind-ref-missing')) return
     const refType = refEl.dataset.refType
     const refId = Number(refEl.dataset.refId)
     if (refType && Number.isFinite(refId)) openMindRef(refType, refId)
