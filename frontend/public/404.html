@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>404 · 咕咕</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-page: #eef0f6;
+      --surface-page-end: #d8dce8;
+      --surface-glass: rgba(255, 255, 255, .62);
+      --border-strong: rgba(255, 255, 255, .78);
+      --content-primary: #292a39;
+      --content-secondary: #686b7d;
+      --action-primary: #7b7fb2;
+      --action-primary-hover: #6e72a4;
+      --action-primary-bg: linear-gradient(to bottom, color-mix(in srgb, var(--action-primary) 94%, white), color-mix(in srgb, var(--action-primary) 94%, black));
+      --action-primary-bg-hover: linear-gradient(to bottom, color-mix(in srgb, var(--action-primary-hover) 94%, white), color-mix(in srgb, var(--action-primary-hover) 94%, black));
+      --content-on-accent: #fff;
+      --control-bg: transparent;
+      --control-bg-hover: rgba(255, 255, 255, .08);
+      --control-border: rgba(255, 255, 255, .28);
+      --control-fg: var(--content-primary);
+      --control-fg-strong: var(--content-primary);
+      --elevation-window: 0 18px 50px rgba(65, 68, 103, .16);
+    }
+
+    html[data-theme="dark"] {
+      --surface-page: #202132;
+      --surface-page-end: #151624;
+      --surface-glass: rgba(39, 41, 63, .78);
+      --border-strong: rgba(160, 165, 210, .24);
+      --content-primary: #f1f1f7;
+      --content-secondary: #b0b2c4;
+      --action-primary: #9094d0;
+      --action-primary-hover: #a1a5df;
+      --action-primary-bg: linear-gradient(to bottom, color-mix(in srgb, var(--action-primary) 94%, white), color-mix(in srgb, var(--action-primary) 94%, black));
+      --action-primary-bg-hover: linear-gradient(to bottom, color-mix(in srgb, var(--action-primary-hover) 94%, white), color-mix(in srgb, var(--action-primary-hover) 94%, black));
+      --control-bg: transparent;
+      --control-bg-hover: rgba(255, 255, 255, .08);
+      --control-border: rgba(160, 165, 210, .34);
+      --control-fg: var(--content-primary);
+      --control-fg-strong: var(--content-primary);
+      --elevation-window: 0 18px 50px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: linear-gradient(160deg, var(--surface-page) 0%, var(--surface-page-end) 100%); }
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: linear-gradient(160deg, var(--surface-page) 0%, var(--surface-page-end) 100%);
+      color: var(--content-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    }
+
+    .glow {
+      position: fixed;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      pointer-events: none;
+      filter: blur(78px);
+      opacity: .5;
+    }
+    .glow-a { top: -150px; left: -110px; background: color-mix(in srgb, var(--action-primary) 22%, transparent); }
+    .glow-b { right: -120px; bottom: -170px; background: color-mix(in srgb, var(--action-primary) 14%, transparent); }
+
+    .card {
+      position: relative;
+      z-index: 1;
+      width: min(420px, calc(100vw - 40px));
+      padding: 40px 36px;
+      text-align: center;
+      border: 1px solid var(--border-strong);
+      border-radius: 20px;
+      background: var(--surface-glass);
+      box-shadow: var(--elevation-window);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+    .code { margin: 0 0 14px; color: var(--action-primary); font-size: 84px; font-weight: 800; line-height: 1; letter-spacing: .02em; }
+    h1 { margin: 0 0 10px; color: var(--content-primary); font-size: 19px; }
+    p { margin: 0 0 26px; color: var(--content-secondary); font-size: 13.5px; line-height: 1.7; }
+    .actions { display: flex; justify-content: center; gap: 10px; }
+    a, button { padding: 10px 22px; border-radius: 11px; font: inherit; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; }
+    .primary { color: var(--content-on-accent); background: var(--action-primary-bg); border: 0; }
+    .primary:hover { background: var(--action-primary-bg-hover); }
+    .ghost { color: var(--control-fg); background: var(--control-bg); border: 1px solid var(--control-border); }
+    .ghost:hover { color: var(--control-fg-strong); background: var(--control-bg-hover); }
+    @media (prefers-color-scheme: dark) {
+      html:not([data-theme]) { --surface-page: #202132; --surface-page-end: #151624; --surface-glass: rgba(39, 41, 63, .78); --border-strong: rgba(160, 165, 210, .24); --content-primary: #f1f1f7; --content-secondary: #b0b2c4; --action-primary: #9094d0; --action-primary-hover: #a1a5df; --control-border: rgba(160, 165, 210, .34); --control-fg: #f1f1f7; --control-fg-strong: #f1f1f7; --elevation-window: 0 18px 50px rgba(0, 0, 0, .28); }
+    }
+    @media (max-width: 480px) { .card { padding: 32px 24px; } .code { font-size: 72px; } }
+  </style>
+</head>
+<body>
+  <div class="glow glow-a"></div>
+  <div class="glow glow-b"></div>
+  <main class="card">
+    <div class="code">404</div>
+    <h1 data-title>咕？这页面飞走了</h1>
+    <p><span data-description>你要找的页面不存在，或者已经被咕咕叼走了。</span><br><span data-hint>检查下网址，或者回首页重新出发。</span></p>
+    <div class="actions">
+      <a class="primary" href="/" data-home>回到首页</a>
+      <button class="ghost" type="button" data-back>返回上一页</button>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const root = document.documentElement
+      const theme = localStorage.getItem('gugu-theme')
+      if (theme === 'dark' || (theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) root.dataset.theme = 'dark'
+      const locale = localStorage.getItem('gugu-locale') || localStorage.getItem('locale') || navigator.language
+      const en = /^en/i.test(locale)
+      const ja = /^ja/i.test(locale)
+      const text = en
+        ? { lang: 'en', title: 'This page flew away', description: 'The page you requested does not exist, or Gugu carried it away.', hint: 'Check the URL or return to the home page.', home: 'Back to home', back: 'Go back' }
+        : ja
+          ? { lang: 'ja', title: 'このページは飛んでいきました', description: 'お探しのページは存在しないか、咕咕が持っていきました。', hint: 'URL を確認するか、ホームへ戻ってください。', home: 'ホームへ戻る', back: '前のページへ' }
+          : { lang: 'zh-CN', title: '咕？这页面飞走了', description: '你要找的页面不存在，或者已经被咕咕叼走了。', hint: '检查下网址，或者回首页重新出发。', home: '回到首页', back: '返回上一页' }
+      root.lang = text.lang
+      for (const [key, value] of Object.entries(text)) document.querySelectorAll('[data-' + key + ']').forEach((node) => { node.textContent = value })
+      document.querySelector('[data-back]').addEventListener('click', () => {
+        if (history.length > 1) history.back()
+        else location.assign('/')
+      })
+    })()
+  </script>
+</body>
+</html>
