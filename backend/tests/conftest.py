@@ -57,6 +57,16 @@ async def _reset_redis_client():
     await _redis.reset()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _close_rag_sidecars():
+    """每个测试结束前关闭 RAG worker，避免跨事件循环残留子进程。"""
+    yield
+    from agent.rag import ts_sidecar
+
+    await ts_sidecar.close_rank_clients()
+    await ts_sidecar.close_lexical_clients()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_local_configuration(monkeypatch, tmp_path):
     """测试不得读取工作区里的部署 override；需要配置的用例自行替换路径。"""
