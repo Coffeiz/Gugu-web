@@ -508,6 +508,10 @@ export const preferencesApi = {
   get:    ()                                  => get<Schemas['PreferencesResponse']>('/preferences'),
   update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
   uploadPersonality: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/personality/upload', form) },
+  getSmtp: () => get<{ host: string; port: number; user: string; fromAddr: string; useSsl: boolean; enabled: boolean; configured: boolean } | null>('/preferences/smtp'),
+  saveSmtp: (data: Record<string, unknown>) => request<{ host: string; port: number; user: string; fromAddr: string; useSsl: boolean; enabled: boolean; configured: boolean }>('PUT', '/preferences/smtp', data),
+  testSmtp: (data: Record<string, unknown>) => post<{ ok: boolean; message: string }>('/preferences/smtp/test', data),
+  previewEmail: (data: Record<string, unknown>) => post<{ html: string }>('/preferences/smtp/preview', data),
 }
 
 export const workspacesApi = {
