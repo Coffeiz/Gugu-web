@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from agent.core import LLMRunner
 
-SCHEDULED_MAX_ROUNDS = 2
+SCHEDULED_MAX_ROUNDS: int | None = None  # 外层 run 控制重试次数，单次 AgentLoop 不限模型轮次。
 SCHEDULED_MAX_TOOL_CALLS = 30
 
 
@@ -22,5 +22,7 @@ class ScheduledLLMRunner(LLMRunner):
             locale=locale,
             max_rounds=SCHEDULED_MAX_ROUNDS,
             max_tool_calls=SCHEDULED_MAX_TOOL_CALLS,
+            max_verify_rounds=None,
+            max_verify_cycles=None,
             stop_on_budget=True,
         )

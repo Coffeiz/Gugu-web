@@ -516,6 +516,8 @@ def test_scheduled_runner_policy_does_not_change_default_runner_budget():
     assert (scheduled_runner.max_rounds, scheduled_runner.max_tool_calls, scheduled_runner.stop_on_budget) == (
         SCHEDULED_MAX_ROUNDS, SCHEDULED_MAX_TOOL_CALLS, True,
     )
+    assert scheduled_runner.max_verify_rounds is None
+    assert scheduled_runner.max_verify_cycles is None
 
 
 async def test_max_rounds_choice_resumes_same_run_after_unlimited_selected(monkeypatch, dispatched):

@@ -153,6 +153,7 @@ _GOAL_POLICY = (
 )
 # 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
 MAX_TOOL_CALLS = 10
+_DEFAULT_BUDGET = object()
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
 # ── 自我核实：成功做了增删改后，立刻跑一轮核实（用查询工具查证真生效/完整），
@@ -432,14 +433,19 @@ class LLMRunner:
     """provider 无关的工具循环执行器。"""
 
     def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,
-                 max_rounds: int | None = None, max_tool_calls: int | None = None,
+                 max_rounds: int | None | object = _DEFAULT_BUDGET,
+                 max_tool_calls: int | None | object = _DEFAULT_BUDGET,
+                 max_verify_rounds: int | None | object = _DEFAULT_BUDGET,
+                 max_verify_cycles: int | None | object = _DEFAULT_BUDGET,
                  stop_on_budget: bool = False):
         self.tool_names = tool_names
         self.settings = settings
         self.capability_context = capability_context
         self.locale = locale
-        self.max_rounds = max_rounds if max_rounds is not None else MAX_ROUNDS
-        self.max_tool_calls = max_tool_calls if max_tool_calls is not None else MAX_TOOL_CALLS
+        self.max_rounds = MAX_ROUNDS if max_rounds is _DEFAULT_BUDGET else max_rounds
+        self.max_tool_calls = MAX_TOOL_CALLS if max_tool_calls is _DEFAULT_BUDGET else max_tool_calls
+        self.max_verify_rounds = MAX_VERIFY_LLM_ROUNDS if max_verify_rounds is _DEFAULT_BUDGET else max_verify_rounds
+        self.max_verify_cycles = MAX_VERIFY if max_verify_cycles is _DEFAULT_BUDGET else max_verify_cycles
         self.stop_on_budget = stop_on_budget
         # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
         # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
@@ -767,11 +773,11 @@ class LLMRunner:
             # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
             # 最后一轮额外留给模型输出核实后的收束文本。
             if verify_mode:
-                if verify_rounds >= MAX_VERIFY_LLM_ROUNDS:
+                if self.max_verify_rounds is not None and verify_rounds >= self.max_verify_rounds:
                     break
                 verify_rounds += 1
             else:
-                if task_rounds >= self.max_rounds:
+                if self.max_rounds is not None and task_rounds >= self.max_rounds:
                     if self.stop_on_budget:
                         _log.warning("[core] 自动任务 LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
                         yield f"data: {json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{self.max_rounds} 轮）'}, ensure_ascii=False)}\n\n"
@@ -1021,6 +1027,7 @@ class LLMRunner:
                 )
                 round_limit_exceeded = (
                     not (goal_mode or unlimited_mode)
+                    and self.max_rounds is not None
                     and task_rounds >= self.max_rounds
                 )
                 tool_budget_exceeded = (
@@ -1495,7 +1502,9 @@ class LLMRunner:
                     continue
                 # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
                 # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
-                if did_mutate and verify_count < MAX_VERIFY:
+                if did_mutate and (
+                    self.max_verify_cycles is None or verify_count < self.max_verify_cycles
+                ):
                     verify_count += 1
                     did_mutate = False
                     verify_mode = True
