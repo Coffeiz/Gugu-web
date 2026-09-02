@@ -64,7 +64,8 @@ command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
 command -v node >/dev/null || { echo '未找到 Node.js，无法校验 manifest' >&2; exit 1; }
 command -v cosign >/dev/null || { echo '未找到 Cosign，无法验证发布签名' >&2; exit 1; }
 [[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '未设置 GUGU_DB_PASSWORD，停止更新' >&2; exit 1; }
-[[ -n "${GUGU_ADMIN_PASSWORD:-}" ]] || { echo '未设置 GUGU_ADMIN_PASSWORD，停止更新' >&2; exit 1; }
+grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "$ROOT_DIR/backend/.env" \
+  || { echo 'backend/.env 未设置 ADMIN_PASSWORD，停止更新' >&2; exit 1; }
 
 VALIDATOR="$ROOT_DIR/scripts/release/validate-update-manifest.mjs"
 mapfile -t IMAGE_LINES < <(node "$VALIDATOR" --print-images "$MANIFEST")
