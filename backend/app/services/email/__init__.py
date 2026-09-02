@@ -35,7 +35,14 @@ _HTML_TAGS = {
     "hr", "i", "li", "ol", "p", "pre", "span", "strong", "table", "tbody",
     "td", "th", "thead", "tr", "u", "ul",
 }
-_HTML_ATTRS = {"a": {"href", "title", "target", "rel"}, "img": {"src", "alt", "width", "height"}, "*": {"style"}}
+_HTML_ATTRS = {
+    "a": {"href", "title", "target", "rel"},
+    "img": {"src", "alt", "width", "height"},
+    "table": {"role", "width", "cellpadding", "cellspacing", "align"},
+    "td": {"width", "align", "valign"},
+    "th": {"width", "align", "valign"},
+    "*": {"style"},
+}
 _SAFE_STYLE_PROPERTIES = {
     "background", "background-color", "border", "border-bottom", "border-left", "border-radius", "border-top", "color", "display",
     "color-scheme", "font-family", "font-size", "font-weight", "height", "line-height", "margin", "max-height",
@@ -73,6 +80,12 @@ class _EmailHtmlSanitizer(HTMLParser):
             if key == "href" and not value.lower().startswith(("https://", "http://", "mailto:")):
                 continue
             if key == "src" and not value.lower().startswith("data:image/png;base64,"):
+                continue
+            if key == "role" and value.lower() != "presentation":
+                continue
+            if key in {"align", "valign"} and value.lower() not in {"left", "center", "right", "top", "middle", "bottom"}:
+                continue
+            if key in {"width", "height", "cellpadding", "cellspacing"} and not re.fullmatch(r"\d{1,4}%?", value.strip()):
                 continue
             rendered_attrs.append(f' {key}="{escape(value, quote=True)}"')
         self.parts.append(f"<{tag}{''.join(rendered_attrs)}>")

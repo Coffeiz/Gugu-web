@@ -1,7 +1,7 @@
 ---
 name: 思维画布
-description_long: "用户要查看、搜索、创建、摆放、整理、连接、删除或批量编排思维画布节点时使用。"
-description_short: 用户要搜索、创建、整理或连接思维画布节点时使用。
+description_long: "用户要查看、搜索、创建、摆放、整理、连接、删除、调整便签尺寸或批量编排思维画布节点时使用。"
+description_short: 用户要管理画布节点、连接或便签尺寸时使用。
 category: canvas
 related_tools: canvas_list, canvas_get, canvas_search, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch
 emoji: 🧠
@@ -9,32 +9,39 @@ emoji: 🧠
 
 # 思维画布操作技能
 
+## 必须遵守
+
+- 不要猜 `canvas_id`：必须来自 `canvas_list`、`canvas_get` 或用户明确提供；不能根据 `item_id` 推导。
+- ID 必须传 JSON 数字，不要传字符串；单项入口和数组入口不能混用。
+- 查看、评估和搜索请求只能调用只读工具；用户确认前不得创建、移动、连接、改端点或删除。
+- 删除便签、关系或整张画布必须经过确认门；整张画布删除会清除其中的便签、引用节点和连接关系。
+- Schema 报错后按完整 `issues` 修正，不要用相同参数重复提交；写操作完成后以工具回执核验结果。
+
 ## 工具路由
 
-- 不要猜画布 ID：先用 `canvas_list`，已有明确画布时用 `canvas_get`。
 - 搜索画布中已经存在的节点用 `canvas_search`。
 - 搜索可以放入画布的项目、文件、活动用 `canvas_search_placeable`。
 - 普通时间流 `note` 不能放入画布；画布便签必须使用 `canvas_create_note`。
-- 删除整张画布使用 `canvas_delete`（含确认门，会清除画布内所有便签、引用节点和连接关系）。
 - 创建、放置、更新、移除和删除工具都支持单项或数组调用；数组一次最多 20 项。
 - 创建、移动、连接或批量编排后，以工具结果为准，不要只用文字声称成功。
 - “查看、评估、看看是否需要整理、再决定”等只读请求只能调用读取/搜索工具；在用户确认前不得调用任何创建、移动、连接、改端点或删除工具。
 
-## 画布便签的标题（重要）
+## 便签内容与标题
 
 - `canvas_create_note` / `canvas_update_note` 的 `title` 参数**用户看不到**——只进搜索和列表索引。
 - **用户可见的标题必须写在 `content` 的第一行，格式 `# 标题`**（渲染成卡片标题，其余行是正文）。
 - 正确示范：`content: "# 合肥\n安徽\n商合杭、京港\n主要客运站：合肥站、合肥南站、合肥西站"`
 - 反例：`title: "合肥"` 但 `content` 第一行是 `安徽` → 用户看到的是"安徽"，城市名丢了。
 
-## 坐标、尺寸和安全距离
+## 尺寸、坐标和安全距离
 
 画布节点是有尺寸的矩形，不是无尺寸的点。
 
 - `position.x/y` 是卡片**左上角**的世界坐标，不是中心坐标。
-- 节点实际占用尺寸优先使用 `layout.effective_size`；卡片尺寸由系统按节点类型统一管理，Agent 工具不能设置或修改 `w/h`。
+- 节点实际占用尺寸优先使用 `layout.effective_size`；读取尺寸用返回结果里的 `layout.effective_size`，设置画布便签尺寸使用 `width` / `height`，不要传内部字段 `w/h`。
 - 未显式设置尺寸时使用 `layout.default_size`。
-- 当前默认尺寸约定：画布便签 `244×148`、项目卡 `240×120`、文件卡 `156×140`、活动卡 `220×96`。
+- 当前默认尺寸约定：画布便签 `240×140`、项目卡 `240×120`、文件卡 `156×140`、活动卡 `220×96`。
+- 画布便签可设置宽 `180–520px`、高 `100–420px`；超出范围时系统会限制到边界。项目、文件和活动引用卡不支持设置尺寸。
 - 两个卡片在上、下、左、右任一方向相邻时，矩形边缘之间都必须至少保持 `150px` 安全距离；不能只满足横向间距。
 - 如果采用中心点排布，则两个卡片中心必须至少相隔 `750px`；不要把中心点距离规则误当成卡片左上角距离。
 - 两个规则满足其一即可，但优先使用边缘 `150px` 规则；除非用户明确要求紧凑排列，不得重叠或贴边。
@@ -48,7 +55,7 @@ bottom = y + height
 
 不能只比较两个节点的 `x/y`，也不能忽略不同卡片类型的宽高。
 
-## 摆放流程
+## 创建与摆放流程
 
 每次放置或移动遵循以下顺序：
 
@@ -66,7 +73,7 @@ bottom = y + height
 - `auto` 只适合没有指定位置的普通新增，不代表可以与已有卡片重叠。
 - 用户要查看或回到刚创建/查到的画布时，在回复中附 `[画布名](gugu://open-object/canvas/{canvas_id})`；ID 只使用本轮真实结果中的 `canvas_id`。
 
-## 连接方向
+## 连接与端点
 
 画布支持左右两侧的连接点（left/right）；同张卡片左右两个端口独立，同一个端口也允许连接多个不同节点。
 端口不是单连接插槽；只有完全相同的节点对和端点组合才应复用，不能为了避免多条线而擅自换端点。
@@ -93,7 +100,7 @@ bottom = y + height
 - 已有关系修改端点使用 `canvas_update_anchor`；移动节点后不要擅自重算已经确认的端点。
 - 删除便签或关系必须先走确认门。
 
-## 批量编排
+## 批量操作与回滚
 
 - 各 CRUD 工具优先直接使用数组参数完成同类操作：
   - `canvas_create_note.notes`
@@ -102,7 +109,7 @@ bottom = y + height
   - `canvas_update_note.updates`
   - `canvas_remove_node.item_ids`
   - `canvas_delete_note.notes`
-- 上述数组每次最多 20 项；单项调用继续使用原来的单数参数和返回格式。创建、放置和更新都只接受位置、层级和折叠状态，不要传 `w/h`；如果需要调整视觉尺寸，应由前端/Runtime 的布局策略处理。
+- 上述数组每次最多 20 项；单项调用继续使用原来的单数参数和返回格式。`canvas_create_note` 的单项参数或 `notes[]` 每项可传 `width` / `height`；`canvas_update_node` 的单项参数或 `updates[]` 每项可传 `width` / `height`，但只对画布便签生效。不要传内部字段 `w/h`，也不要把尺寸放进 `position`。
 - `canvas_batch` 用于需要跨类型、跨步骤保持原子性的事务，单次最多 20 个操作。支持 `create_note`、`add_node`、`update_item`、`remove_item`、`delete_note` 和 `connect`。
 - 批量事务使用稳定的 `request_id`；任一操作失败会整体回滚。
 - 批量连接默认由服务端按卡片中心自动选择相向端点；只有有意回环或明确端点时才指定两端连接点。
