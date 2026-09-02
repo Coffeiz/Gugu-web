@@ -1,8 +1,8 @@
 <template>
-  <main class="onb-dev">
+  <main class="onb-dev glass-card">
     <section class="hero-card">
       <div class="hero-copy"><span class="hero-mark">✦</span><div><h2>{{ state?.seed?.seeded ? t('devOnboarding.seeded') : t('devOnboarding.notSeeded') }}</h2><p>{{ state?.seed?.seeded ? t('devOnboarding.reseedHint') : t('devOnboarding.description') }}</p></div></div>
-      <div class="actions"><button class="button button-ghost" @click="refresh">{{ t('devOnboarding.refresh') }}</button><button class="button button-ghost" :disabled="busy" @click="resetGuide">{{ busy ? t('devOnboarding.resetGuideStarted') : t('devOnboarding.resetGuide') }}</button><button class="button button-primary" :disabled="busy" @click="reseed">{{ busy ? t('devOnboarding.reseedStarted') : t('devOnboarding.reseed') }}</button></div>
+      <div class="actions"><ActionButton variant="secondary" fit @click="refresh">{{ t('devOnboarding.refresh') }}</ActionButton><ActionButton variant="secondary" fit :disabled="busy" @click="resetGuide">{{ busy ? t('devOnboarding.resetGuideStarted') : t('devOnboarding.resetGuide') }}</ActionButton><ActionButton fit :disabled="busy" @click="reseed">{{ busy ? t('devOnboarding.reseedStarted') : t('devOnboarding.reseed') }}</ActionButton></div>
     </section>
 
     <section class="status-grid">
@@ -20,7 +20,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onboardingApi } from '@/services/api'
-import { reopenOnboarding } from '@/composables/useOnboardingGuide'
+import { reopenOnboarding } from '@/composables/onboarding/useOnboardingGuide'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const { t } = useI18n()
 const state = ref<Record<string, any> | null>(null)
@@ -44,7 +45,7 @@ onMounted(refresh)
 </script>
 
 <style scoped>
-.onb-dev { max-width: 1080px; margin: 0 auto; padding: clamp(24px, 4vw, 52px) clamp(18px, 4vw, 48px); color: var(--content-primary); }
+.onb-dev { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); --glass-card-border: var(--border-default); --glass-card-border-hover: var(--border-default); --glass-card-shadow: var(--elevation-card); --glass-card-shadow-hover: var(--elevation-card-hover); width:100%; height:100%; min-height:0; margin:0; padding:22px 24px; box-sizing:border-box; overflow:auto; color:var(--content-primary); }
 .hero-card, .section-head, .hero-copy, .actions, .status-card { display: flex; align-items: center; }
 h2, p { margin: 0; } h2 { font-size: 18px; } .eyebrow { color: var(--content-tertiary); font-size: 10px; font-weight: 750; letter-spacing: .14em; margin-bottom: 8px; }
 .hero-card, .status-card, .state-card { border: 1px solid var(--border-default); background: var(--surface-glass); box-shadow: var(--elevation-card); border-radius: var(--card-radius); } .hero-card { justify-content: space-between; gap: 24px; padding: 22px 24px; margin-bottom: 16px; } .hero-copy { gap: 14px; } .hero-mark, .status-icon { display: grid; place-items: center; color: var(--theme-action-primary); background: var(--theme-selection); border-radius: var(--radius-md); } .hero-mark { width: 42px; height: 42px; font-size: 20px; } .hero-copy p, .status-card small { display: block; color: var(--content-secondary); font-size: 12px; line-height: 1.55; margin-top: 5px; } .actions { gap: 8px; } .button { border: 1px solid var(--border-default); border-radius: var(--control-radius); padding: 9px 13px; font-size: 12px; cursor: pointer; transition: transform var(--motion-hover-control) var(--motion-ease-standard), background var(--motion-hover-control) var(--motion-ease-standard); } .button:hover:not(:disabled) { transform: translateY(-1px); } .button:active:not(:disabled) { transform: translateY(1px); } .button-ghost { color: var(--content-secondary); background: var(--control-bg); } .button-primary { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary); } .button:disabled { cursor: wait; opacity: .6; }

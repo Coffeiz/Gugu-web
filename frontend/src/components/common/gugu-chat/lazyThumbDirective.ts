@@ -1,4 +1,4 @@
-import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
+import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/shared/useThumbCache'
 import { API_BASE } from './chatConstants'
 
 // IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。

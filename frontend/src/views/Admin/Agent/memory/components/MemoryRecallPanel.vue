@@ -46,7 +46,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import AgentMemoryToggle from './AgentMemoryToggle.vue'
 import { useMemoryRecallConfig } from '../useMemoryRecallConfig'

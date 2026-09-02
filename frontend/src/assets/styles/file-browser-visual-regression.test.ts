@@ -30,10 +30,10 @@ const filesListView = load('../../views/Files/components/FilesListView.vue')
 const filesListRows = load('./filesListRows.css')
 const fileSelectionCheckbox = load('./fileSelectionCheckbox.css')
 const uploadGhost = load('../../components/common/file-browser/FileUploadGhostCard.vue')
-const boxSelection = load('../../composables/useBoxSelection.ts')
-const segmentedControl = load('../../components/common/SegmentedControl.vue')
+const boxSelection = load('../../composables/shared/useBoxSelection.ts')
+const segmentedControl = load('../../components/common/controls/SegmentedControl.vue')
 const runtimeSetup = load('../../interaction/runtime/setup.ts')
-const mindRuntimeObject = load('../../views/Mind/composables/useMindRuntimeObject.ts')
+const mindRuntimeObject = load('../../composables/mind/useMindRuntimeObject.ts')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {

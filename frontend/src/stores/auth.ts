@@ -4,20 +4,21 @@ import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
 import type { components } from '@/types/api'
 import { getLocale } from '@/i18n'
-import { clearGreeting } from '@/composables/useGreeting'
+import { clearGreeting } from '@/composables/shared/useGreeting'
 import { beginAccountBoundary } from '@/utils/accountBoundary'
 import { useUiStore } from './ui'
 import { useLiveStore } from './live'
 import { useFilesCacheStore } from './filesCache'
 import { useProjectStore } from './projects'
 import { useMindStore } from './mind'
-import { onboardingGuideState } from '@/composables/useOnboardingGuide'
-import { onboardingProjectId, onboardingSeedState } from '@/composables/useOnboardingSeed'
+import { onboardingGuideState } from '@/composables/onboarding/useOnboardingGuide'
+import { onboardingProjectId, onboardingSeedState } from '@/composables/onboarding/useOnboardingSeed'
 import { setUserTimezone } from '@/utils/userTimezone'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
 type UserResponse = components['schemas']['UserResponse']
 // 后端已提供该字段；待下次从最新 OpenAPI 重新生成 api.ts 后可移除交叉类型。
-type UserWithTimezone = UserResponse & { timezone?: string | null }
+type UserWithTimezone = UserResponse & { timezone?: string | null; emailSubscribed?: boolean }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TOKEN_KEY = 'user_token'
@@ -60,12 +61,12 @@ export const useAuthStore = defineStore('auth', () => {
     return fallback
   }
 
-  async function register(username: string, email: string, password: string) {
+  async function register(username: string, email: string, password: string, emailSubscribed = false) {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ username, email, password, locale: getLocale() }),
+      body: JSON.stringify({ username, email, password, locale: getLocale(), emailSubscribed }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))
@@ -126,6 +127,27 @@ export const useAuthStore = defineStore('auth', () => {
     return updated
   }
 
+  async function updateProfilePreference(fields: Record<string, unknown>, key: string) {
+    const previous = user.value ? { ...user.value } : null
+    try {
+      return await InteractionSync.execute({
+        scope: 'profile.user-preference.update',
+        entityKey: `profile:user:${key}`,
+        apply: () => {
+          if (user.value) user.value = { ...user.value, ...fields }
+        },
+        rollback: () => { user.value = previous },
+        request: () => authApi.updateProfile(fields),
+        onCommit: updated => {
+          user.value = updated
+          setUserTimezone(updated.timezone)
+        },
+      })
+    } catch {
+      return user.value
+    }
+  }
+
   async function uploadAvatar(file: File) {
     const updated = await authApi.uploadAvatar(file)
     user.value = updated
@@ -142,5 +164,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return { token, user, isLoggedIn, register, login, fetchMe, updateProfile, uploadAvatar, logout }
+  return { token, user, isLoggedIn, register, login, fetchMe, updateProfile, updateProfilePreference, uploadAvatar, logout }
 })

@@ -9,9 +9,7 @@
 
     <div class="toolbar">
       <AdminSelect v-model="filterLevel" :options="levelOptions" style="width:140px" />
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminLogs.refresh')" :aria-label="t('adminLogs.refresh')">
-        <Icon name="action.refresh" size="sm" />
-      </button>
+      <RefreshButton :loading="refreshing" @click="load(true)" :title="t('adminLogs.refresh')" />
       <span class="toolbar-count" v-if="filtered.length">{{ t('adminLogs.count', { count: filtered.length }) }}</span>
     </div>
 
@@ -82,6 +80,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 const { t } = useI18n()
 
 const adminStore = useAdminStore()

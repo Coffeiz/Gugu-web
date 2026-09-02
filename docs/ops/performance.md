@@ -54,7 +54,7 @@
 | 共享主循环 | Anthropic/OpenAI provider 差异收口到 `LoopDriver`，避免两套循环重复执行 | 已落地；减少维护分叉，不直接减少 provider token |
 | Prompt 缓存稳定性 | 静态 system prefix 固定；动态行为、记忆、时间等放到 conversation 的 system reminder | 已落地；目标是保护 provider 前缀缓存，动态尾部不设置缓存锚点 |
 | provider 缓存适配 | 按 provider/model 判断自动前缀缓存、显式 cache control、单锚点能力 | 已落地；DeepSeek、MiniMax 等行为不同，不能统一假设 |
-| 工具 Schema 注入 | 支持简介模式与全量模式，当前默认简介模式；简介模式为 `description_short + 紧凑字段签名` | 已落地；效果以 `docs/reports/schema-probes/` 和具体 A/B 报告为准 |
+| 工具 Schema 注入 | 支持全量模式与简介模式，当前默认全量模式；简介模式为 `description_short + 紧凑字段签名` | 已落地；效果以 `docs/reports/schema-probes/` 和具体 A/B 报告为准 |
 | 上下文读取限额 | 项目、事件、最近笔记、个人文件、RAG 结果均有数量/字符上限 | 已落地；控制 prompt 体积，也避免单条大数据拖慢请求 |
 | 会话历史限制 | 历史消息有 `HISTORY_MAX_MSGS=500`，上下文压缩有分支输入和摘要字符/token上限 | 已落地；压缩仍会产生一次额外 LLM 请求 |
 | 并行上下文加载 | 多来源 RAG、动态上下文等通过 `asyncio.gather` 并行读取 | 已落地；并行度和数据库连接池压力需要一起评估 |

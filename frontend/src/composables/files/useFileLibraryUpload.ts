@@ -1,6 +1,6 @@
 import { computed, ref, type Ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
-import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { useFileUpload } from './useFileUpload'
 
 export interface FileLibraryUploadOptions {
@@ -53,4 +53,3 @@ export function useFileLibraryUpload(options: FileLibraryUploadOptions) {
     isDragging: computed(() => upload.isDragging.value),
   }
 }
-

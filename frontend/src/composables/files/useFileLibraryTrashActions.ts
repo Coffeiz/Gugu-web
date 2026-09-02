@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta } from '@/stores/filesCache'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { i18n } from '@/i18n'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 

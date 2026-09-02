@@ -41,9 +41,7 @@
           </svg>
           {{ t('adminAudit.export') }}
         </button>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminAudit.refresh')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton :loading="refreshing" @click="load(true)" :title="t('adminAudit.refresh')" />
       </div>
     </div>
 
@@ -115,15 +113,8 @@
       <div class="security-toolbar">
         <AdminSelect v-model="securityFilter.action" :options="securityActionOptions" :placeholder="t('adminAudit.allActionsShort')" />
         <AdminSelect v-model="securityFilter.eventType" :options="securityEventOptions" :placeholder="t('adminAudit.allEvents')" />
-        <select v-model.number="securityFilter.sinceMinutes" class="filter-select">
-          <option :value="60">{{ t('adminAudit.lastHour') }}</option>
-          <option :value="1440">{{ t('adminAudit.lastDay') }}</option>
-          <option :value="10080">{{ t('adminAudit.last7Days') }}</option>
-          <option :value="129600">{{ t('adminAudit.last90Days') }}</option>
-        </select>
-        <button class="icon-btn" :class="{ spinning: securityLoading }" @click="loadSecurity" :title="t('adminAudit.refreshSecurity')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <AdminSelect v-model="securitySinceMinutes" :options="securitySinceOptions" />
+        <RefreshButton :loading="securityLoading" @click="loadSecurity" :title="t('adminAudit.refreshSecurity')" />
       </div>
       <div class="log-table-wrap">
         <div v-if="securityLoading" class="state-center"><div class="spinner" /></div>
@@ -151,6 +142,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { fmtLocalDateTime, localDayKey } from '@/utils/dateAttribution'
 import { useI18n } from 'vue-i18n'
 
@@ -174,6 +166,12 @@ const securityEventOptions = computed(() => [
   { value: '', label: t('adminAudit.allEvents') },
   { value: 'ownership.denied', label: t('adminAudit.ownershipDenied') },
 ])
+const securitySinceOptions = computed(() => [
+  { value: '60', label: t('adminAudit.lastHour') },
+  { value: '1440', label: t('adminAudit.lastDay') },
+  { value: '10080', label: t('adminAudit.last7Days') },
+  { value: '129600', label: t('adminAudit.last90Days') },
+])
 const auditTabs = computed(() => [
   { key: 'ops', label: t('adminAudit.operations') },
   { key: 'security', label: t('adminAudit.security') },
@@ -192,6 +190,10 @@ const view = ref<'ops' | 'security'>('ops')
 const securityRows = ref<any[]>([])
 const securityLoading = ref(false)
 const securityFilter = ref({ action: '', eventType: '', sinceMinutes: 1440 })
+const securitySinceMinutes = computed({
+  get: () => String(securityFilter.value.sinceMinutes),
+  set: value => { securityFilter.value.sinceMinutes = Number(value) },
+})
 
 watch(filter, () => { page.value = 1 }, { deep: true })
 watch(pageSize, () => { page.value = 1 })

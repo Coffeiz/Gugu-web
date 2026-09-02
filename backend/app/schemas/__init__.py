@@ -32,6 +32,7 @@ class UserRegister(CamelModel):
     email: str
     password: str
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
+    email_subscribed: bool = False
 
 
 class UserLogin(CamelModel):
@@ -48,6 +49,15 @@ class ResetPassword(CamelModel):
     new_password: str
 
 
+class EmailChangeRequestCreate(CamelModel):
+    new_email: str = Field(min_length=3, max_length=300)
+    current_password: str = Field(min_length=1, max_length=200)
+
+
+class EmailChangeVerify(CamelModel):
+    token: str = Field(min_length=1, max_length=512)
+
+
 class UserResponse(CamelModel):
     id: UUID
     username: str
@@ -58,6 +68,7 @@ class UserResponse(CamelModel):
     created_at: str = ""
     im_channels: list[str] = []
     timezone: Optional[str] = None   # IANA 时区；前端据此判断是否需要探测并回写
+    email_subscribed: bool = False
 
     @field_validator('created_at', mode='before')
     @classmethod
@@ -92,6 +103,7 @@ class UserResponse(CamelModel):
             "avatar_url": avatar_url,
             "im_channels": getattr(user, "_im_channels", []),
             "timezone": getattr(user, "timezone", None),
+            "email_subscribed": getattr(user, "email_subscribed", False),
         }
         return cls.model_validate(data)
 
@@ -101,6 +113,7 @@ class UpdateProfile(CamelModel):
     current_password: Optional[str] = None
     new_password: Optional[str] = None
     timezone: Optional[str] = None   # IANA 时区（前端首登探测 Intl…timeZone 回写）；"" 清空
+    email_subscribed: Optional[bool] = None
 
 
 class DeleteAccount(CamelModel):
@@ -598,6 +611,9 @@ class ClientResponse(CamelModel):
 
 class PreferencesResponse(CamelModel):
     locale:          Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None  # 用户显式选择的界面语言
+    theme:           Literal["light", "dark", "system"] = "light"
+    themeFamily:     Literal["glass", "mono"] = "glass"
+    palette:         Literal["mist", "cafe", "rose", "sky", "sage"] = "mist"
     lastStages:        list[str] = []
     stageTemplates:    list[dict] = []
     replyTone:         Optional[str] = None   # natural / formal / lively
@@ -610,15 +626,58 @@ class PreferencesResponse(CamelModel):
     shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
     shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
-    toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式
+    toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量
     personalityPreference: Optional[str] = None
     personalityPreferenceEnabled: bool = False
     personalityPreferenceRevision: int = 0
     personalityPreferenceUpdatedAt: Optional[str] = None
     personalityPreferenceAvailable: bool = True
+    emailChangeEnabled: bool = False
+
+
+class UserSmtpConfig(CamelModel):
+    host: str
+    port: int
+    user: str = ""
+    from_addr: str = ""
+    use_ssl: bool = False
+    enabled: bool = True
+    configured: bool = True
+
+
+class UserSmtpConfigUpdate(CamelModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    user: str = Field(default="", max_length=300)
+    password: Optional[str] = Field(default=None, max_length=1000)
+    from_addr: str = Field(default="", max_length=300)
+    use_ssl: bool = False
+    enabled: bool = True
+
+
+class UserSmtpTest(CamelModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    user: str = Field(default="", max_length=300)
+    password: str = Field(default="", max_length=1000)
+    from_addr: str = Field(default="", max_length=300)
+    to_addr: Optional[str] = Field(default=None, max_length=300)
+    use_ssl: bool = False
+    template: Literal["notification", "reminder", "report", "security", "test"] = "test"
+    theme: Literal["light", "dark"] = "light"
+    palette: Literal["mist", "cafe", "rose", "sky", "sage"] = "mist"
+
+
+class UserEmailPreview(CamelModel):
+    template: Literal["notification", "reminder", "report", "security", "test"] = "notification"
+    theme: Literal["light", "dark"] = "light"
+    palette: Literal["mist", "cafe", "rose", "sky", "sage"] = "mist"
 
 class PreferencesUpdate(CamelModel):
     locale:          Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
+    theme:           Optional[Literal["light", "dark", "system"]] = None
+    themeFamily:     Optional[Literal["glass", "mono"]] = None
+    palette:          Optional[Literal["mist", "cafe", "rose", "sky", "sage"]] = None
     lastStages:        Optional[list[str]]  = None
     stageTemplates:    Optional[list[dict]] = None
     replyTone:         Optional[str] = None

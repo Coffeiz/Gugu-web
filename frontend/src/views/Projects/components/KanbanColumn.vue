@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { runtime } from '@/interaction/runtime'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 import { projectStatusLabelKey } from '@/utils/projectStages'

@@ -32,7 +32,7 @@ import { useI18n } from 'vue-i18n'
 import { PhMinus, PhNotePencil, PhPlus, PhX } from '@phosphor-icons/vue'
 import type { MindRefSuggestItem } from '@/services/api'
 import { mindApi } from '@/services/api'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 

@@ -13,8 +13,8 @@ export interface RelationRect {
 }
 
 // 关系线和视口裁剪共用同一份曲率边界；不要在 RelationLayer/MindCanvas 各维护一个数字。
-export const RELATION_CURVE_MIN_EXTEND = 40
-export const RELATION_CURVE_MAX_EXTEND = 140
+export const RELATION_CURVE_MIN_EXTEND = 35
+export const RELATION_CURVE_MAX_EXTEND = 75
 
 function extend(point: RelationPoint, side: RelationAnchorSide, distance: number): RelationPoint {
   if (side === 'left') return { x: point.x - distance, y: point.y }
@@ -34,7 +34,7 @@ export function relationCurvePath(
   toSide: RelationAnchorSide,
 ): string {
   const distance = Math.min(
-    Math.max(Math.hypot(to.x - from.x, to.y - from.y) * 0.5, RELATION_CURVE_MIN_EXTEND),
+    Math.max(Math.hypot(to.x - from.x, to.y - from.y) * 0.3, RELATION_CURVE_MIN_EXTEND),
     RELATION_CURVE_MAX_EXTEND,
   )
   const c1 = extend(from, fromSide, distance)

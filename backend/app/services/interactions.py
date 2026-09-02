@@ -262,6 +262,16 @@ async def wait_for_resolution(
             if prompt.status in {"cancelled", "expired"}:
                 return None
         await asyncio.sleep(0.25)
+    # 超时后立即落库，避免刷新或其他客户端继续把它当成活动确认项。
+    async with db_session._SessionLocal() as db:
+        prompt = await db.scalar(select(InteractionPrompt).where(
+            InteractionPrompt.id == prompt_id,
+            InteractionPrompt.user_id == user_id,
+        ))
+        if prompt is not None and prompt.status == "active":
+            prompt.status = "expired"
+            prompt.resolved_at = now_utc()
+            await db.commit()
     return None
 
 
@@ -643,6 +653,7 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "options": options,
             "resolved": prompt.status != "active" or prompt.expires_at <= now,
             "selected_option_id": selected,
+            "expires_at": prompt.expires_at.isoformat(),
             "created_at": prompt.created_at.isoformat(),
         })
     if changed:

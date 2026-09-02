@@ -74,13 +74,13 @@ IM 还按 owner、platform、bot、group/member scope 保存群组和成员记�
 
 ## 5. daily 压缩与长期事件记忆
 
-`agent/memory/compress.py` 负责 daily 到 `memory.md` 的沉淀：
+`agent/memory/memory_compress.py` 负责 daily 到 `memory.md` 的追加沉淀：
 
 ```text
 daily 达到 100 条
         -> 取最老的 100 条
         -> 读取已有 memory.md、profile、pattern 和历史事件参考
-        -> 反思分支整理完整长期事件主档
+        -> 记忆模块直接调用 provider 整理完整长期事件主档
         -> 校验日期和非空结果
         -> 成功后才裁剪 daily，保留最近 50 条
 ```
@@ -162,7 +162,7 @@ RAG 召回不会自动写入 Memory 或 Knowledge；反思写入后通过事件�
 | Memory 存储与渲染 | `backend/agent/memory/store.py` |
 | Web/私聊反思 | `backend/agent/memory/reflection.py` |
 | IM 反思任务 | `backend/agent/memory/reflection_jobs.py`、`im_reflection.py` |
-| daily 压缩 | `backend/agent/memory/compress.py` |
+| daily 沉淀 | `backend/agent/memory/memory_compress.py` |
 | 周期 pattern 维护 | `backend/agent/memory/periodic.py` |
 | Knowledge 主数据 | `backend/agent/knowledge/models.py`、`store.py` |
 | Knowledge 反思 | `backend/agent/knowledge/reflection.py` |

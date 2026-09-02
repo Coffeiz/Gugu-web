@@ -107,7 +107,7 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
         "global_search", "canvas_search", "canvas_search_placeable",
         "copy_file", "delete_file", "send_file",
         "update_workspace",
-        "update_client", "create_workspace", "react",
+        "update_client", "create_workspace", "react", "send_email",
         "canvas_create_note", "canvas_update_note", "canvas_batch",
         "create_document",
         "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "remember",

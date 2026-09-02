@@ -253,6 +253,7 @@ export function useChatStream(options: {
                 existing.interaction.toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : existing.interaction.toolCallId
                 existing.interaction.title = String(evt.title || existing.interaction.title || i18n.global.t('chatUi.confirmRequired'))
                 existing.interaction.body = String(evt.body || existing.interaction.body || '')
+                existing.interaction.expiresAt = evt.expires_at ? String(evt.expires_at) : existing.interaction.expiresAt
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
                 messages.value.push({
@@ -264,6 +265,7 @@ export function useChatStream(options: {
                     toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
                     title: String(evt.title || i18n.global.t('chatUi.confirmRequired')), body: String(evt.body || ''),
                     options: evt.options,
+                    expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
                   },
                 })
                 sortLiveTimeline()

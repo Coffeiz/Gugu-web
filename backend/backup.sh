@@ -6,6 +6,7 @@
 #  备份内容:
 #    - config.override.json   （含 DB / Redis / OSS / AI 配置）
 #    - Gugu-data/users （用户文件、Shell 沙盒和 Agent 数据）
+#    - PostgreSQL 数据库 dump（可恢复的 custom format）
 #    - alembic 版本信息        （便于恢复时核对迁移）
 #  默认存到 .deploy-backups/，也可指定其他目录。
 # ============================================================
@@ -24,6 +25,48 @@ echo "[$(date '+%H:%M:%S')] 开始备份到：$BACKUP_PATH"
 # 构造临时目录，按结构打包
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+# 数据库备份必须成功，否则不能把备份误报成完整备份。
+# 密码只通过临时 PGPASSFILE 传给 pg_dump，不进入命令参数、日志或备份清单。
+if ! command -v pg_dump >/dev/null 2>&1; then
+    echo "[ERROR] 未找到 pg_dump，无法生成数据库备份。" >&2
+    exit 1
+fi
+VENV_BIN="${APP_DIR}/.venv/bin"
+[ -x "${APP_DIR}/venv/bin/python" ] && VENV_BIN="${APP_DIR}/venv/bin"
+if [ ! -x "${VENV_BIN}/python" ]; then
+    echo "[ERROR] 未找到后端 Python 环境，无法读取数据库配置。" >&2
+    exit 1
+fi
+mapfile -t DB_FIELDS < <("${VENV_BIN}/python" - <<'PY'
+from app.core.config import get_settings
+
+db = get_settings().db
+for value in (db.host, db.port, db.name, db.user, db.password):
+    print(value)
+PY
+)
+if [ "${#DB_FIELDS[@]}" -ne 5 ] || [ -z "${DB_FIELDS[4]}" ]; then
+    echo "[ERROR] 数据库配置不完整，拒绝生成不完整备份。" >&2
+    exit 1
+fi
+PGPASSFILE="${TMP_DIR}/.pgpass"
+chmod 600 "$PGPASSFILE"
+printf '%s:%s:%s:%s:%s\n' "${DB_FIELDS[0]}" "${DB_FIELDS[1]}" "${DB_FIELDS[2]}" "${DB_FIELDS[3]}" "${DB_FIELDS[4]}" > "$PGPASSFILE"
+DB_DUMP="${TMP_DIR}/database.dump"
+if ! PGPASSFILE="$PGPASSFILE" pg_dump \
+    --format=custom --no-owner --no-acl \
+    --host="${DB_FIELDS[0]}" --port="${DB_FIELDS[1]}" \
+    --username="${DB_FIELDS[3]}" --dbname="${DB_FIELDS[2]}" \
+    --file="$DB_DUMP"; then
+    echo "[ERROR] PostgreSQL 备份失败，已停止。" >&2
+    exit 1
+fi
+if ! pg_restore --list "$DB_DUMP" >/dev/null 2>&1; then
+    echo "[ERROR] PostgreSQL 备份校验失败，已停止。" >&2
+    exit 1
+fi
+echo "[OK] PostgreSQL dump 已生成并通过结构校验"
 
 # 备份 override 配置（脱敏可选，这里原样打包）
 if [ -f "${APP_DIR}/config.override.json" ]; then
@@ -52,6 +95,7 @@ Git commit: $(git -C "${APP_DIR}/.." log -1 --oneline 2>/dev/null || echo 'unkno
 包含内容:
   config/config.override.json  - $([ -f "${APP_DIR}/config.override.json" ] && echo "✓" || echo "✗")
   data/users                   - $([ -d "$DATA_STORAGE" ] && echo "✓" || echo "✗")
+  database.dump                - $(du -h "${DB_DUMP}" | cut -f1)
   alembic/versions             - $(ls "${APP_DIR}/alembic/versions" 2>/dev/null | wc -l) 个迁移文件
 EOF
 

@@ -31,7 +31,29 @@ global.css
 - `components/files.css` 负责文件卡、文件夹卡、文件操作按钮和行内重命名控件的共享结构样式。
 - `components/popups.css` 负责通用弹层结构、菜单项和过渡；Teleport 根节点由 `PopupMenu.vue` 负责，业务内容主题归属各自组件。
 - `components/forms.css` 负责标题编辑和基础输入控件的跨页面结构样式。
+- 多行输入框的可调整高度统一使用 `.control-resizable`；缩放柄只由 `adoption/forms.css` 的公共规则绘制，视觉值使用 `--control-resizer-bg`，页面组件不得自行添加 `::-webkit-resizer`、硬编码颜色或重复 `resize` 视觉规则。需要编辑器滚动行为时，再组合 `.scroll-surface scroll-surface--editor`。
 - `bridges/index.css` 只负责 Teleport、浮层根节点和拖拽跨 DOM 边界，不承接组件几何或业务状态。
 - `theme-refinements.css` 只提供主题/语义变量映射；具体组件的背景、边框、阴影和高光由组件文件消费。
 - 非 Runtime 主题层不得通过 `[data-runtime-*]` 选择器强制覆盖 Runtime 管理的 `transform`、`transition` 或 `opacity`；确有必要的代理 paint 覆盖必须保留在 Runtime adoption 域并按 phase 限定。
 - `adoption/` 和根目录旧 refinement 文件仍是迁移期兼容层，未完成域不得复制同名规则。
+
+## 多行输入框 resize 契约
+
+统一写法：
+
+```html
+<textarea class="control-resizable" />
+```
+
+需要编辑器级滚动条时：
+
+```html
+<textarea class="control-resizable scroll-surface scroll-surface--editor" />
+```
+
+约束：
+
+- 只允许通过 `--control-resizer-bg` 调整缩放柄颜色/图案；主题差异放在 token 层，不在页面 scoped CSS 中覆盖。
+- 不得在业务页面新增 `textarea::-webkit-resizer`、`::-webkit-scrollbar` 或另一套缩放柄背景。
+- `resize: vertical` 由 `.control-resizable` 公共类负责；组件只组合语义 class，不重复声明视觉样式。
+- 新增可缩放 textarea 后，同时在 `/design` 的 token catalog 中登记相关 token，并检查暗色主题下没有白色或黑色实心方块。

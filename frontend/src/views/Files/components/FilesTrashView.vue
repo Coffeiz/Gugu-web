@@ -53,9 +53,9 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
-import FlipChevron from '@/components/common/FlipChevron.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import type { PropType } from 'vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })

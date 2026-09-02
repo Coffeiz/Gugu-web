@@ -23,21 +23,21 @@ vi.mock('@/services/api', () => ({
     run: mocks.run,
   },
 }))
-vi.mock('@/composables/useAppToast', () => ({
+vi.mock('@/composables/core/useAppToast', () => ({
   errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
   showAppError: mocks.showError,
   showAppNotice: mocks.showNotice,
 }))
-vi.mock('@/composables/useLiveRefresh', () => ({
+vi.mock('@/composables/core/useLiveRefresh', () => ({
   useLiveRefresh: (_resource: string, callback: (resource?: string) => void) => {
     mocks.refresh = callback
   },
 }))
-vi.mock('@/composables/useConfirmDialog', () => ({
+vi.mock('@/composables/core/useConfirmDialog', () => ({
   confirmDialog: mocks.confirmDialog,
 }))
 
-import { useScheduledTasks } from '@/views/Schedules/composables/useScheduledTasks'
+import { useScheduledTasks } from '@/composables/schedules/useScheduledTasks'
 
 const task = { id: 7, name: '科技新闻', payload: '收集新闻', cron: '5 9 * * *', channels: ['web'], enabled: true }
 

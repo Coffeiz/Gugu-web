@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import ContextMenu from '@/components/ContextMenu.vue'
+import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
 
 defineProps({
   show: Boolean,

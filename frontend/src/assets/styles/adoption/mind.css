@@ -97,7 +97,6 @@ html[data-theme][data-family] .capture-bar.expanded { background: var(--capture-
 html[data-theme][data-family] .cb-kbd { border-color: var(--border-subtle); }
 html[data-theme][data-family] .cb-title-input { border-bottom-color: var(--note-divider); }
 html[data-theme][data-family] .cb-foot { border-top-color: var(--note-divider); }
-html[data-theme][data-family] .cb-hint code { background: var(--action-soft); }
 html[data-theme][data-family] .cb-min:hover { background: var(--control-bg-hover); }
 html[data-theme][data-family] .cb-save {
   color: var(--content-on-accent);

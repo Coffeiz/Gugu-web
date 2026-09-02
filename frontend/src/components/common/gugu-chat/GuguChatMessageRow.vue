@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 /**
  * 单条消息展示：只接收消息对象和展示回调，不直接读取全局 Store、不直接修改会话数组。
@@ -67,7 +67,7 @@ import { useI18n } from 'vue-i18n'
  * GuguChat.vue（这些动作牵涉共享的单实例状态——当前播放的语音、预览 Store、剪贴板——
  * 暂时仍由主组件持有，Phase 2/4 会把其中一部分收进对应 composable）。
  */
-import MarkdownView from '@/components/common/MarkdownView.vue'
+import MarkdownView from '@/components/common/content/MarkdownView.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import GuguChatInteraction from './GuguChatInteraction.vue'
 import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'

@@ -12,7 +12,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import AgentMemoryToggle from './AgentMemoryToggle.vue'
 import { useAgentRuntimeConfig } from '../../runtime-config/useAgentRuntimeConfig'
 const { configStore, agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior } = useAgentRuntimeConfig()

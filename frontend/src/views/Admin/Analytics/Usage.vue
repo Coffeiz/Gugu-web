@@ -15,9 +15,7 @@
           :aria-label="t('adminAnalyticsUi.range')"
           @update:model-value="setRange"
         />
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" :title="t('adminAnalyticsUi.refresh')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton class="data-header-control" :loading="refreshing" :disabled="loading" @click="load" :title="t('adminAnalyticsUi.refresh')" />
       </div>
     </div>
 
@@ -245,8 +243,9 @@ import {
   LineElement, BarElement, ArcElement, Tooltip, Filler
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
-import Checkbox from '@/components/common/Checkbox.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { browserTz } from '@/utils/dateAttribution'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,

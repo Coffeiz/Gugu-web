@@ -56,8 +56,8 @@ class _Db:
         ("catalog", "description"),
         ("compact_schema", "full"),
         ("full_schema", "full"),
-        ("unknown", "description"),
-        (None, "description"),
+        ("unknown", "full"),
+        (None, "full"),
     ],
 )
 def test_tool_injection_mode_response_uses_only_canonical_values(monkeypatch, stored, expected):
@@ -68,6 +68,16 @@ def test_tool_injection_mode_response_uses_only_canonical_values(monkeypatch, st
     result = preferences_api._to_response({"tool_injection_mode": stored})
 
     assert result.toolInjectionMode == expected
+
+
+def test_tool_injection_mode_defaults_to_full(monkeypatch):
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=False),
+    ))
+
+    result = preferences_api._to_response({})
+
+    assert result.toolInjectionMode == "full"
 
 
 @pytest.mark.asyncio

@@ -76,7 +76,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {

@@ -346,6 +346,7 @@ docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 ```
 
 访问地址为 `http://服务器地址:9595`。如需改端口，设置 `GUGU_HTTP_PORT`。
+同时在项目根目录 `.env` 设置 `GUGU_PUBLIC_APP_URL` 为用户实际访问的完整地址；域名部署示例为 `https://gugugu.site`。该值会注入后端，用于生成邮箱验证、密码重置等外部链接，不能填写 `localhost:8000` 或 Compose 服务名。
 生产 Compose 会自动执行数据库迁移，并持久化 PostgreSQL、用户文件、记忆、工作区和
 Admin 的 `config.override.json`；不要删除 `pgdata`、`gugu_data` 或 `gugu_config` 卷。
 
@@ -406,6 +407,7 @@ sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`
   ```
   > JWT（登录 Token）就是用 `SECRET_KEY` 签名的，**线上用默认值 = 任何人能伪造管理员/用户 Token**，必须换。改 `SECRET_KEY` 后所有已签发的 Token 失效（需重新登录），重启后端生效。
 - 其余（AI key、OSS、飞书凭据）登录 Admin 面板配，落到 `config.override.json`。
+- **公开站点地址**：在 `backend/.env` 设置 `PUBLIC_APP_URL=https://你的域名`。它是邮箱验证、密码重置等外部链接的唯一生成基址；若通过 Compose 启动，则用项目根目录 `.env` 的 `GUGU_PUBLIC_APP_URL` 注入同一值。
 - **存储**：默认本地为仓库根目录下的 `Gugu-data/users/`（与 `backend/` 同级）；运行时不再创建或维护 `backend/uploads/`。历史迁移只由 `migrate_storage_root.py` 读取旧目录。
 
 ### 4.3 数据库迁移
@@ -462,11 +464,13 @@ server {
         try_files $uri $uri/ /index.html;     # SPA 路由回退
     }
 
-    # 后端 API（主站 + 后台共用这一套反代）
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+# 后端 API（主站 + 后台共用这一套反代）
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         # SSE（咕咕聊天流式）：关缓冲
@@ -842,6 +846,8 @@ scripts/release/compose-update.sh \
 
 普通更新不带 `--profile sandbox`，因此不会因为更新业务镜像而拉取 egress proxy 或其他沙盒专用镜像。若当前已有 `sandboxd` 在运行，脚本只会同步使用中的业务镜像，不会自动改变沙盒开关。
 
+部署安全约束：Compose 文件统一固定 project name 为 `gugu-web-compose`，从而保证数据库始终使用同一个 `gugu-web-compose_pgdata` 卷。不要通过改 project name、`-p` 参数或 `docker compose down -v` 启动/清理生产环境；更新前应先确认 `docker inspect gugu-web-compose-postgres-1` 的挂载卷仍为该卷。systemd/源码部署使用 `backend/deploy.sh` 时，会在迁移前生成包含 PostgreSQL custom-format dump 的完整备份，并在迁移后检查关键表和 Alembic 版本；数据库备份失败会直接中止部署。
+
 更新脚本依赖环境中已有的 `GUGU_DB_PASSWORD` 和 `GUGU_ADMIN_PASSWORD`，不会从仓库文件或命令参数打印这些凭据。`COSIGN_IDENTITY_REGEXP` 和 `COSIGN_OIDC_ISSUER` 可用于企业部署时收紧签名发布者范围。
 
 ```bash
@@ -859,6 +865,8 @@ cd .. && corepack pnpm install --filter gugu-web... && corepack pnpm --filter gu
 > ⚠️ **务必 `make migrate`，别只 restart**：启动时的 `create_all` **只建缺失的表、不会给已有表加新列**。所以凡是新增了模型列（如 `conversation_messages.files` 文件卡片、`conversation_sessions.source` 会话来源、`conversation_sessions.summary` 会话总结），只重启不跑迁移 → 相关写入会因「列不存在」报错。`make update` / `make deploy` 已含 migrate；手动更新记得补 `make migrate`。
 >
 > 🔥 **scp / rsync 单传文件最易踩**（devserver 实战）：单传了带新列的模型代码、却忘了 `make migrate` → **每次对话一查 `conversation_sessions` 就崩，连带反思 / 感知遥测全不跑**。排查时表面像「某功能没数据」，根因其实在这。**传了模型改动 = 立刻补 `make migrate` + 重启。**
+
+`backend/backup.sh` 生成的归档包含 `database.dump`、`config.override.json`、用户持久目录和迁移文件。恢复数据库时使用 `pg_restore` 到确认过的目标库，禁止直接删除生产卷后重建；恢复前必须另做一次当前库备份。
 
 ### 7.1 数据库 Schema / 版本更新流程（改了模型后必看）
 

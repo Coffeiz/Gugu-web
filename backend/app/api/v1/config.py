@@ -1189,7 +1189,7 @@ async def test_smtp(body: SmtpTestParams):
         user      = body.user or cfg.smtp.user
         password  = body.password or cfg.smtp.password
         from_addr = body.from_addr or cfg.smtp.from_addr or user
-        to_addr   = body.to_addr or cfg.smtp.to_addr
+        to_addr   = body.to_addr or cfg.smtp.test_to_addr or cfg.smtp.to_addr
         use_ssl   = body.use_ssl
 
         if not host:

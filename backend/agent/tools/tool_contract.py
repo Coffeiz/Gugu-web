@@ -41,6 +41,20 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
     normalized = dict(instance)
     adaptations: list[str] = []
+    if tool_name == "send_email":
+        # 部分模型会把复杂 JSON 参数再次序列化成字符串；只对邮件工具已声明为
+        # 数组的字段做严格解析，解析结果仍需通过当前 Schema，不能借此放宽契约。
+        for field in ("sections", "actions"):
+            value = normalized.get(field)
+            if not isinstance(value, str):
+                continue
+            try:
+                decoded = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(decoded, list):
+                normalized[field] = decoded
+                adaptations.append(f"{tool_name}.{field}:json_string_to_array")
     if tool_name in {"create_project", "set_color"} and isinstance(normalized.get("color"), str):
         # 兼容旧版本已经生成的 CSS 渐变参数；新的模型 schema 只暴露语义色名。
         from app.core.project_colors import project_color_key

@@ -97,7 +97,7 @@ test('定时任务页面：自定义日期、间隔和渠道选项可切换', as
   const interval = page.locator('input[type=number]')
   await expect(interval).toBeVisible()
   await interval.fill('15')
-  await expect(page.locator('.app-checkbox')).toHaveCount(1)
+  await expect(page.locator('.chans .app-checkbox')).toHaveCount(2)
   await page.locator('.title-input').fill('间隔任务')
   await page.getByRole('button', { name: '创建', exact: true }).click()
   await expect(page.locator('.task-card', { hasText: '间隔任务' })).toContainText('每 15 分钟')

@@ -24,7 +24,15 @@ for (const file of files) {
   nativeDialog.lastIndex = 0
 }
 
-const byokPath = join(sourceRoot, 'components/common/ProfileModal/ProfileByokPane.vue')
+const byokRelativePaths = [
+  'components/common/profile/ProfileByokPane.vue',
+  'components/common/ProfileModal/ProfileByokPane.vue',
+]
+const byokPath = byokRelativePaths.map(path => join(sourceRoot, path)).find(existsSync)
+if (!byokPath) {
+  console.error('[提醒组件回归] 找不到 BYOK 面板组件，无法检查统一确认契约。')
+  process.exit(1)
+}
 const byokSource = readFileSync(byokPath, 'utf8')
 const requiredByokContracts = [
   'confirmDialog(',

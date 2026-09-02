@@ -48,6 +48,7 @@ from app.api.v1 import admin_analytics as admin_analytics_router
 from app.api.v1 import ops_admin as ops_admin_router
 from app.api.v1 import folder_doctor_admin as folder_doctor_admin_router
 from app.api.v1 import notifications_admin as notifications_admin_router
+from app.api.v1 import email_admin as email_admin_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import user_skills as user_skills_router
 from app.api.v1 import byok as byok_router
@@ -393,6 +394,11 @@ app.include_router(
 )
 app.include_router(
     notifications_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    email_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

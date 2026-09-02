@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { useMemoryMaintenance } from '../useMemoryMaintenance'
 import { useImMemoryMaintenance } from '../useImMemoryMaintenance'
 

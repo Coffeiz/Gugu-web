@@ -35,7 +35,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
-import AuthBrand from '@/components/common/AuthBrand.vue'
+import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()

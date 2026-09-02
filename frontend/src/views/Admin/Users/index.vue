@@ -25,9 +25,7 @@
         :placeholder="t('adminUsers.search')"
         @input="onSearch"
       />
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminUsers.refresh')">
-        <Icon name="action.refresh" size="sm" />
-      </button>
+      <RefreshButton :loading="refreshing" @click="load(true)" :title="t('adminUsers.refresh')" />
       <span class="toolbar-count" v-if="!loading">{{ t('adminUsers.userCount', { count: items.length }) }}</span>
     </div>
 
@@ -142,6 +140,7 @@ import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import RiskUsersPanel from './components/RiskUsersPanel.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
@@ -394,7 +393,7 @@ onMounted(load)
 .status-tag.active { background: rgba(80,180,140,0.12); color: rgba(100,200,160,0.9); }
 .status-tag.banned { background: rgba(220,80,80,0.12); color: rgba(240,120,120,0.9); }
 
-.col-action { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.col-action { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: nowrap; }
 .action-btn {
   padding: 3px 10px; border-radius: 7px; font-size: 12px; cursor: pointer;
   white-space: nowrap; flex-shrink: 0;

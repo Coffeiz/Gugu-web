@@ -7,8 +7,8 @@ import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import type { useFileActions } from './useFileActions'
 import { useFileBatchCore } from './useFileBatchCore'
 import { useFilePasteCore } from './useFilePasteCore'
-import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
-import { clearThumbCache } from '@/composables/useThumbCache'
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
+import { clearThumbCache } from '@/composables/shared/useThumbCache'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 export interface FileLibraryBatchActionOptions {

@@ -55,7 +55,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 const props = defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
 const expanded = ref(false)

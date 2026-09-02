@@ -22,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import type { ThemeFamily, ThemePalette, ThemePreference } from '@/composables/useTheme'
+import type { ThemeFamily, ThemePalette, ThemePreference } from '@/composables/core/useTheme'
 
 defineProps<{ modelValue: ThemePreference; family: ThemeFamily; palette: ThemePalette }>()
 defineEmits<{ 'update:modelValue': [value: ThemePreference]; 'update:family': [value: ThemeFamily]; 'update:palette': [value: ThemePalette] }>()

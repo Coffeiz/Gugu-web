@@ -61,8 +61,8 @@ AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
                      provider="anthropic", max_tokens=100, temperature=0.7, thinking="disabled")
 
 
-def make_runner():
-    return LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
+def make_runner(**kwargs):
+    return LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI), **kwargs)
 
 
 async def drain(gen):
@@ -471,6 +471,53 @@ async def test_max_rounds_exhausted_reports_friendly_error(monkeypatch, dispatch
     assert ev["_usage"] == 0   # 走的是轮次上限提示分支，不是正常收尾
     assert "/unlimited" in text and "30 轮" in text
     assert errors == []
+
+
+async def test_automatic_budget_stops_without_user_interaction(monkeypatch, dispatched):
+    """自动任务触达模型轮次上限时直接返回错误，不能创建等待用户选择的交互。"""
+    patch_anthropic(monkeypatch, [msg([TU("get_project", "1", {})]), msg([TX("不应执行")])])
+    ev, text, errors = await drain(
+        make_runner(max_rounds=1, max_tool_calls=30, stop_on_budget=True)
+        ._run_anthropic("u", "sys", [{"role": "user", "content": "自动执行"}], AI)
+    )
+    assert dispatched == []
+    assert ev["interaction_required"] == 0
+    assert errors == ["定时任务达到模型轮次上限（1 轮）"]
+    assert text == ""
+
+
+async def test_automatic_tool_budget_stops_before_dispatch(monkeypatch, dispatched):
+    """自动任务触达工具调用上限时结束本轮，不能暂停等待用户确认。"""
+    patch_anthropic(monkeypatch, [msg([TU("get_project", "1", {}), TU("get_project", "2", {})])])
+    ev, text, errors = await drain(
+        make_runner(max_rounds=30, max_tool_calls=1, stop_on_budget=True)
+        ._run_anthropic("u", "sys", [{"role": "user", "content": "自动执行"}], AI)
+    )
+    assert dispatched == []
+    assert ev["interaction_required"] == 0
+    assert errors == ["定时任务达到工具调用上限（1 次）"]
+    assert text == ""
+
+
+def test_scheduled_runner_policy_does_not_change_default_runner_budget():
+    """定时任务预算必须独立，Web/IM 默认 runner 仍使用通用限制。"""
+    from agent.scheduled import (
+        SCHEDULED_MAX_ROUNDS,
+        SCHEDULED_MAX_TOOL_CALLS,
+        ScheduledLLMRunner,
+    )
+
+    default_runner = make_runner()
+    scheduled_runner = ScheduledLLMRunner([], SimpleNamespace(ai=AI))
+
+    assert (default_runner.max_rounds, default_runner.max_tool_calls, default_runner.stop_on_budget) == (
+        MAX_ROUNDS, MAX_TOOL_CALLS, False,
+    )
+    assert (scheduled_runner.max_rounds, scheduled_runner.max_tool_calls, scheduled_runner.stop_on_budget) == (
+        SCHEDULED_MAX_ROUNDS, SCHEDULED_MAX_TOOL_CALLS, True,
+    )
+    assert scheduled_runner.max_verify_rounds is None
+    assert scheduled_runner.max_verify_cycles is None
 
 
 async def test_max_rounds_choice_resumes_same_run_after_unlimited_selected(monkeypatch, dispatched):

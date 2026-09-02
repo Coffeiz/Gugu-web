@@ -98,6 +98,37 @@ def record_security(event: str) -> None:
         pass
 
 
+def record_email(status: str, elapsed_ms: int, error_code: str | None = None) -> None:
+    """记录邮件投递的脱敏结果与耗时，不写入收件人、主题或正文。
+
+    ``status`` 只允许 ``sent``/``failed``，失败原因使用服务端定义的错误码。
+    统计旁路必须永远不影响实际发信。
+    """
+    if _DISABLED:
+        return
+
+    async def _run():
+        try:
+            from app.core.redis import get_redis
+            r = get_redis()
+            k = f"ops:email:{_day()}"
+            pipe = r.pipeline(transaction=False)
+            pipe.hincrby(k, "calls", 1)
+            pipe.hincrby(k, "sent" if status == "sent" else "failed", 1)
+            if error_code:
+                pipe.hincrby(k, f"error:{error_code}", 1)
+            pipe.hincrby(k, "ms_sum", max(0, int(elapsed_ms)))
+            pipe.expire(k, TTL)
+            await pipe.execute()
+        except Exception:
+            pass
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
+
+
 async def summary(days: int = 1) -> dict:
     """近 N 天聚合：每工具 调用量/失败数/失败率/平均耗时 + 全局延迟分布与 P99 近似。"""
     from datetime import timedelta
@@ -123,6 +154,19 @@ async def summary(days: int = 1) -> dict:
         sh = await r.hgetall(f"ops:sec:{day}") or {}
         for e, v in sh.items():
             sec[e] = sec.get(e, 0) + int(v)
+
+    email = {"calls": 0, "sent": 0, "failed": 0, "ms_sum": 0, "errors": {}}
+    for i in range(max(1, days)):
+        day = (now - timedelta(days=i)).strftime("%Y%m%d")
+        eh = await r.hgetall(f"ops:email:{day}") or {}
+        for key, value in eh.items():
+            value = int(value)
+            if key.startswith("error:"):
+                email["errors"][key[6:]] = email["errors"].get(key[6:], 0) + value
+            elif key in {"calls", "sent", "failed", "ms_sum"}:
+                email[key] += value
+    email["avg_ms"] = int(email["ms_sum"] / email["calls"]) if email["calls"] else 0
+    email["fail_rate"] = round(email["failed"] / email["calls"], 4) if email["calls"] else 0.0
 
     rows = []
     for tool, d in tools.items():
@@ -155,4 +199,5 @@ async def summary(days: int = 1) -> dict:
         "latency_buckets": {b: lat.get(b, 0) for b in [str(x) for x in BUCKETS] + ["inf"]},
         "tools": rows,
         "security": sec,           # 安全旁路计数：正常应恒为 0
+        "email_delivery": email,   # 只含计数/耗时/错误码，不含邮件内容或地址
     }

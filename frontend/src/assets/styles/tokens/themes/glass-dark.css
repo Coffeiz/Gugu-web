@@ -2,8 +2,8 @@
 :root[data-family='glass'][data-theme='dark'],
 :root:not([data-family])[data-theme='dark'] {
   color-scheme: dark;
-  --theme-page: linear-gradient(145deg,#0e101a 0%,#11131f 60%,#13152a 100%);
-  --theme-auth-page: linear-gradient(145deg,#0e101a 0%,#11131f 60%,#13152a 100%);
+  --theme-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%);
+  --theme-auth-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%);
   --theme-sidebar: rgba(20,22,35,.86); --theme-base: rgba(24,27,44,.86); --theme-glass: rgba(255,255,255,.05); --theme-glass-hover: rgba(255,255,255,.09);
   --theme-card-solid: rgba(30,33,51,.94); --theme-soft: rgba(255,255,255,.045); --theme-soft-hover: rgba(255,255,255,.075); --theme-raised: rgba(42,45,66,.92); --theme-floating: rgba(33,36,56,.92); --theme-scrim: rgba(0,0,0,.50); --theme-column: rgba(255,255,255,.018);
   --theme-content-primary: rgba(255,255,255,.92); --theme-content-secondary: rgba(255,255,255,.62); --theme-content-tertiary: rgba(255,255,255,.40); --theme-content-disabled: rgba(255,255,255,.24); --theme-content-inverse: #17151b;

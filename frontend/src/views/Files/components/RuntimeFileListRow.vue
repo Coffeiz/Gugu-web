@@ -10,9 +10,9 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
-import { runtime } from '@/interaction/runtime'
+import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import type { FileMeta } from '@/stores/filesCache'
 
 const props = defineProps({ item: { type: Object as PropType<FileMeta>, required: true }, context: { type: Object as PropType<Record<string, any>>, required: true }, runtimeId: { type: String, required: true }, runtimeSurfaceId: { type: String, required: true }, runtimeAbilities: { type: Array as PropType<readonly string[]>, default: () => ['move'] }, runtimeSelected: { type: Boolean, default: false } })
@@ -29,7 +29,7 @@ watch(elementRef, (element, previous) => {
   if (current?.generation !== generation) return
   if (element === null && current.element && current.element !== previous) return
   stopPointerBinding?.()
-  stopPointerBinding = element ? runtime.bindObjectPointer(props.runtimeId, element) : null
+  stopPointerBinding = element ? bindRuntimeObjectPointer(props.runtimeId, element) : null
   runtime.objects.setElement(props.runtimeId, element)
 }, { flush: 'post' })
 onUnmounted(() => {

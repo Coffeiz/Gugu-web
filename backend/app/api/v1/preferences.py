@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import User, UserPreferences
-from app.schemas import PreferencesResponse, PreferencesUpdate
+from app.models import User, UserPreferences, UserSmtpConfig
+from app.schemas import PreferencesResponse, PreferencesUpdate, UserEmailPreview, UserSmtpConfig as UserSmtpConfigSchema, UserSmtpConfigUpdate, UserSmtpTest
 from app.core.security import get_current_user
 from app.core.config import get_settings
 from app.services.personality_preferences import (
@@ -15,8 +15,64 @@ from app.services.personality_preferences import (
     read_personality_file,
     write_personality_file,
 )
+from app.services.email.capabilities import is_system_email_available
+from app.services.email.queries import get_user_smtp as get_user_smtp_record, save_user_smtp
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
+
+
+def _smtp_view(row: UserSmtpConfig | None) -> UserSmtpConfigSchema | None:
+    if row is None:
+        return None
+    return UserSmtpConfigSchema(host=row.host, port=row.port, user=row.user, from_addr=row.from_addr, use_ssl=row.use_ssl, enabled=row.enabled)
+
+
+@router.get("/smtp", response_model=UserSmtpConfigSchema | None)
+async def get_user_smtp(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return _smtp_view(await get_user_smtp_record(db, user.id))
+
+
+@router.put("/smtp", response_model=UserSmtpConfigSchema)
+async def update_user_smtp(body: UserSmtpConfigUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = await save_user_smtp(db, user.id, {
+        "host": body.host, "port": body.port, "user": body.user,
+        "from_addr": body.from_addr, "use_ssl": body.use_ssl, "enabled": body.enabled,
+    }, body.password)
+    await db.commit()
+    await db.refresh(row)
+    return _smtp_view(row)
+
+
+@router.post("/smtp/test")
+async def test_user_smtp(body: UserSmtpTest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from starlette.concurrency import run_in_threadpool
+    from app.services.email import send_test_email
+    saved = await get_user_smtp_record(db, user.id)
+    password = body.password or (saved.password if saved else "")
+    try:
+        await run_in_threadpool(send_test_email, host=body.host, port=body.port, user=body.user, password=password, from_addr=body.from_addr, to_addr=body.to_addr or user.email, use_ssl=body.use_ssl, template=body.template, theme=body.theme, palette=body.palette)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("user_smtp.test", exc)
+        return {"ok": False, "message": "SMTP 测试失败，请检查服务器、账号或密码"}
+    return {"ok": True, "message": "测试邮件已发送"}
+
+
+@router.post("/smtp/preview")
+async def preview_user_email(body: UserEmailPreview, user: User = Depends(get_current_user)):
+    # dev 预览页运行在不带 uvicorn --reload 的 devserver systemd 进程上；
+    # 每次手动刷新时重新载入模板模块，让模板/CSS 调整无需重启整个后端。
+    import importlib
+    from app.services.email import templates as email_templates
+    email_templates = importlib.reload(email_templates)
+    content = email_templates.render_email(
+        template=body.template, subject="咕咕 · 邮件样式测试", title="邮件样式测试",
+        preheader="咕咕为你整理了一封结构清晰的邮件",
+        body="这是来自咕咕开发页面的邮件样式测试，收到即表示 SMTP 配置和邮件模板均可用。",
+        sections=[{"heading": "模板预览", "text": f"当前模板：{body.template}"}],
+        theme=body.theme, palette=body.palette,
+    )
+    return {"html": content.preview_html()}
 
 _DEFAULT_VIEWS = {"projects", "calendar", "files", "mind"}
 _TOOL_INJECTION_MODES = {"description", "full"}
@@ -40,6 +96,9 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
     personality_available = bool(get_settings().agent.personality_preference_enabled)
     return PreferencesResponse(
         locale=data.get("locale") if data.get("locale") in _SUPPORTED_LOCALES else None,
+        theme=data.get("theme", "light") if data.get("theme", "light") in {"light", "dark", "system"} else "light",
+        themeFamily=data.get("theme_family", "glass") if data.get("theme_family", "glass") in {"glass", "mono"} else "glass",
+        palette=data.get("palette", "mist") if data.get("palette", "mist") in {"mist", "cafe", "rose", "sky", "sage"} else "mist",
         lastStages=data.get("last_stages", []),
         stageTemplates=data.get("stage_templates", []),
         replyTone=data.get("reply_tone"),
@@ -53,9 +112,9 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         shellAutopilotEnabled=bool(data.get("shell_autopilot_enabled", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
         toolInjectionMode=(
-            data.get("tool_injection_mode", "description")
-            if data.get("tool_injection_mode", "description") in _TOOL_INJECTION_MODES
-            else _LEGACY_TOOL_INJECTION_MODES.get(data.get("tool_injection_mode"), "description")
+            data.get("tool_injection_mode", "full")
+            if data.get("tool_injection_mode", "full") in _TOOL_INJECTION_MODES
+            else _LEGACY_TOOL_INJECTION_MODES.get(data.get("tool_injection_mode"), "full")
         ),
         personalityPreference=personality,
         personalityPreferenceEnabled=personality_enabled,
@@ -65,6 +124,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
             if preference_updated_at(data) else None
         ),
         personalityPreferenceAvailable=personality_available,
+        emailChangeEnabled=is_system_email_available(),
     )
 
 
@@ -148,6 +208,12 @@ async def update_preferences(
     if body.locale is not None:
         if body.locale in _SUPPORTED_LOCALES:
             data["locale"] = body.locale
+    if body.theme is not None:
+        data["theme"] = body.theme
+    if body.themeFamily is not None:
+        data["theme_family"] = body.themeFamily
+    if body.palette is not None:
+        data["palette"] = body.palette
     if "replyTone" in body.model_fields_set:
         style_changed = True
         if body.replyTone is None:

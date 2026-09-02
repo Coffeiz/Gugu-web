@@ -168,8 +168,8 @@ import { useI18n } from 'vue-i18n'
 import ProviderSelect from '../../components/ProviderSelect.vue'
 import InterfaceTypeSelect from '../../components/InterfaceTypeSelect.vue'
 import LocalCapabilityOverrides from '../../components/LocalCapabilityOverrides.vue'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
-import MultimodalCapabilities from '@/components/common/MultimodalCapabilities.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import MultimodalCapabilities from '@/components/common/controls/MultimodalCapabilities.vue'
 
 interface Provider { key: string; label: string; base_url: string; model: string }
 interface Option { key: string; label: string; hint?: string }

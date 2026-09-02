@@ -59,12 +59,14 @@ _CANVAS_LAYOUT_PROPERTIES = {
     "y": {"type": "number"},
     "z": {"type": "integer"},
     "collapsed": {"type": "boolean"},
+    "width": {"type": "number", "minimum": 180, "maximum": 520},
+    "height": {"type": "number", "minimum": 100, "maximum": 420},
 }
 _CANVAS_UPDATE_ITEM_SCHEMA = {
     "type": "object",
     "properties": _CANVAS_LAYOUT_PROPERTIES,
     "required": ["item_id"],
-    "anyOf": [{"required": [field]} for field in ("x", "y", "z", "collapsed")],
+    "anyOf": [{"required": [field]} for field in ("x", "y", "z", "collapsed", "width", "height")],
     "additionalProperties": False,
 }
 _CANVAS_UPDATE_NODE_SCHEMA = {
@@ -79,11 +81,11 @@ _CANVAS_UPDATE_NODE_SCHEMA = {
         {
             "required": ["item_id"],
             "not": {"required": ["updates"]},
-            "anyOf": [{"required": [field]} for field in ("x", "y", "z", "collapsed")],
+            "anyOf": [{"required": [field]} for field in ("x", "y", "z", "collapsed", "width", "height")],
         },
         {
             "required": ["updates"],
-            "not": {"anyOf": [{"required": [field]} for field in ("item_id", "x", "y", "z", "collapsed")]},
+            "not": {"anyOf": [{"required": [field]} for field in ("item_id", "x", "y", "z", "collapsed", "width", "height")]},
         },
     ],
 }
@@ -106,6 +108,8 @@ _CANVAS_NOTE_CREATE_ITEM_SCHEMA = {
         "content": {"type": "string"},
         "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
         "position": {"type": "object"},
+        "width": {"type": "number", "minimum": 180, "maximum": 520},
+        "height": {"type": "number", "minimum": 100, "maximum": 420},
     },
     "additionalProperties": False,
 }
@@ -200,13 +204,17 @@ def _mutation_entries(args: dict, plural_key: str) -> tuple[list[dict[str, Any]]
     return entries, True, None
 
 
-def _reject_card_size(entry: dict[str, Any]) -> None:
-    """Agent 不直接控制卡片尺寸，尺寸由系统按节点类型统一决定。"""
+def _card_size_fields(entry: dict[str, Any], *, allow: bool) -> dict[str, float]:
+    """读取 Agent 的便签尺寸参数；最终范围仍由后端统一裁剪。"""
     if "w" in entry or "h" in entry:
-        raise ValueError("画布卡片大小由系统管理，工具不支持修改 w/h")
+        raise ValueError("请使用 width 和 height 设置画布便签大小")
     position = entry.get("position")
     if isinstance(position, dict) and ("w" in position or "h" in position):
-        raise ValueError("画布卡片大小由系统管理，工具不支持在 position 中传入 w/h")
+        raise ValueError("请使用 width 和 height 设置画布便签大小")
+    if not allow and ("width" in entry or "height" in entry):
+        raise ValueError("只有画布便签支持设置卡片大小")
+    width, height = canvas_layout.clamp_canvas_note_size(entry.get("width"), entry.get("height"))
+    return {key: value for key, value in (("w", width), ("h", height)) if value is not None}
 
 
 def _view_summary(canvas: Any) -> dict[str, Any]:
@@ -540,7 +548,7 @@ async def _canvas_create_note(db, user_id, args: dict):
     results = []
     try:
         for entry in entries:
-            _reject_card_size(entry)
+            size = _card_size_fields(entry, allow=True)
             title = entry.get("title") or "新便签"
             content = entry.get("content") or ""
             if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
@@ -548,7 +556,8 @@ async def _canvas_create_note(db, user_id, args: dict):
             color = validate_note_color(entry.get("color", "amber"))
             x, y = await _resolve_canvas_position(db, user_id, canvas, None, entry.get("position"))
             node, item = await create_canvas_note(
-                db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y, commit=False,
+                db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y,
+                w=size.get("w"), h=size.get("h"), commit=False,
             )
             results.append({"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True})
     except (TypeError, ValueError) as exc:
@@ -569,7 +578,7 @@ async def _canvas_add_node(db, user_id, args: dict):
     results = []
     try:
         for entry in entries:
-            _reject_card_size(entry)
+            _card_size_fields(entry, allow=False)
             node_id = entry.get("node_id")
             if isinstance(node_id, int):
                 node = await get_canvas_reference_node(db, user_id, node_id)
@@ -604,12 +613,14 @@ async def _canvas_update_node(db, user_id, args: dict):
     results = []
     try:
         for entry in entries:
-            _reject_card_size(entry)
             item_id = entry.get("item_id")
             if not isinstance(item_id, int):
                 raise ValueError("需要提供 item_id")
-            if await get_canvas_item(db, user_id, canvas_id, item_id) is None:
+            item = await get_canvas_item(db, user_id, canvas_id, item_id)
+            if item is None:
                 raise ValueError("画布节点不存在")
+            node = await get_canvas_node(db, user_id, item.node_id)
+            size = _card_size_fields(entry, allow=node is not None and node.kind == "canvas_note")
             fields = {}
             for key in ("x", "y"):
                 if key in entry:
@@ -625,6 +636,7 @@ async def _canvas_update_node(db, user_id, args: dict):
                 if not isinstance(entry["collapsed"], bool):
                     raise ValueError("collapsed 必须是布尔值")
                 fields["collapsed"] = entry["collapsed"]
+            fields.update(size)
             if not fields:
                 raise ValueError("至少提供一个要修改的布局字段")
             item = await update_canvas_item(db, user_id, canvas_id, item_id, fields, commit=False)
@@ -1011,8 +1023,8 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_create_note", label="创建画布便签",
-            description_short='创建画布专属便签；不进入时间流 note',
-            description="在指定画布创建专属便签，不进入时间流 note；卡片大小由系统管理。单项传 title/content，批量传 notes。",
+            description_short='创建画布便签；可设置大小，不进入时间流 note',
+            description="在指定画布创建专属便签，不进入时间流 note；可选 width/height，范围由系统限制。单项传 title/content，批量传 notes。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1021,11 +1033,13 @@ class MindCanvasSkill(BaseSkill):
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
+                    "width": {"type": "number", "minimum": 180, "maximum": 520},
+                    "height": {"type": "number", "minimum": 100, "maximum": 420},
                     "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": _CANVAS_NOTE_CREATE_ITEM_SCHEMA},
                 },
                 "required": ["canvas_id"],
                 "oneOf": [
-                    {"required": ["notes"], "not": {"anyOf": [{"required": ["title"]}, {"required": ["content"]}, {"required": ["color"]}, {"required": ["position"]}]}},
+                    {"required": ["notes"], "not": {"anyOf": [{"required": ["title"]}, {"required": ["content"]}, {"required": ["color"]}, {"required": ["position"]}, {"required": ["width"]}, {"required": ["height"]}]}},
                     {"not": {"required": ["notes"]}},
                 ],
             },
@@ -1058,8 +1072,8 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="canvas_update_node", label="调整画布节点",
-            description_short='调整画布节点位置和层级。',
-            description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项必须传 canvas_id、item_id 和至少一个布局字段；批量必须传 canvas_id 和 updates，每项必须传 item_id 和至少一个布局字段；所有 ID 为整数，x/y 为数字，z 为整数；不支持修改 w/h。",
+            description_short='调整画布节点位置、层级或便签大小。',
+            description="调整画布节点的位置、层级、折叠状态或画布便签大小，不改变原项目、文件或活动。单项必须传 canvas_id、item_id 和至少一个布局字段；批量必须传 canvas_id 和 updates，每项必须传 item_id 和至少一个布局字段；width/height 只对画布便签生效，范围由系统限制。",
             input_schema=_CANVAS_UPDATE_NODE_SCHEMA,
             handler=_canvas_update_node,
             mutates=True,
@@ -1193,6 +1207,8 @@ class MindCanvasSkill(BaseSkill):
                             "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                             "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                             "x": {"type": "number"}, "y": {"type": "number"},
+                            "width": {"type": "number", "minimum": 180, "maximum": 520},
+                            "height": {"type": "number", "minimum": 100, "maximum": 420},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
                         },
                         "required": ["kind"],

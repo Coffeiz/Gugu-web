@@ -2,7 +2,7 @@ import { computed, ref, type Ref } from 'vue'
 import type { FileMeta } from '@/stores/filesCache'
 import type { TrashFolderMeta } from '@/services/api'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
-import { useBoxSelection } from '@/composables/useBoxSelection'
+import { useBoxSelection } from '@/composables/shared/useBoxSelection'
 import { useSelectionState, selectRange, resolveSelectionAnchor, type SelectableItem } from './useSelectionState'
 
 export interface FileLibrarySelectionOptions {

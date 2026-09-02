@@ -99,6 +99,7 @@ def needs_confirmation(
         return None
     return json.dumps(
         {
+            "status": "waiting_confirmation",
             "needs_confirm": True,
             "summary": summary,
             "confirm_token": _create_token(

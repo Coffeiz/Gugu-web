@@ -6,7 +6,7 @@ import hashlib
 import re
 
 EVENT_HEADING_PREFIX = "记录长期记忆："
-_HEADING_RE = re.compile(r"^##\s*(?P<title>.+?)\s*$")
+_HEADING_RE = re.compile(r"^##(?!#)\s*(?P<title>.+?)\s*$")
 _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 
 

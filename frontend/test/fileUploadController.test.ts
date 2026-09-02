@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { uploadFilesWithFolders } from '@/composables/useFileUpload'
+import { uploadFilesWithFolders } from '@/composables/files/useFileUploadCore'
 import { getTopLevelUploadGroups } from '@/composables/files/useFileUploadController'
 
-vi.mock('@/composables/useFileUpload', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/composables/useFileUpload')>()
+vi.mock('@/composables/files/useFileUploadCore', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/composables/files/useFileUploadCore')>()
   return { ...actual, uploadFilesWithFolders: vi.fn() }
 })
 

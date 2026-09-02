@@ -1,6 +1,6 @@
 import { runtime } from './index'
 import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_CANVAS_DRAG_Z_INDEX, MIND_CANVAS_LANDING_Z_INDEX, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
-import { TOP_Z } from '@/composables/windowz'
+import { TOP_Z } from '@/composables/core/windowz'
 
 let initialized = false
 let themeVisualObserver: MutationObserver | null = null

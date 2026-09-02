@@ -35,12 +35,12 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUpdate, onUpdated, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
 import { runtime } from '@/interaction/runtime'
-import { showAppError } from '@/composables/useAppToast'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },

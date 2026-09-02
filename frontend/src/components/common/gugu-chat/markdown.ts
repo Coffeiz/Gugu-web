@@ -1,7 +1,7 @@
 import { marked, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { i18n } from '@/i18n'
-import { MIND_REF_TYPE_ICON_PATH } from '@/composables/useMindEditor'
+import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
 import type { ChatReference } from './chatTypes'
 
 // Markdown 渲染器输出的是 HTML 字符串，不能直接挂载 Vue 图标组件；这里复用

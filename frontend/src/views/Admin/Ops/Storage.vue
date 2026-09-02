@@ -5,9 +5,7 @@
         <h2 class="ops-title">{{ t('adminStorageUi.title') }}</h2>
         <p class="ops-sub">{{ t('adminStorageUi.description') }}</p>
       </div>
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" :title="t('adminStorageUi.refresh')">
-        <Icon name="action.refresh" size="sm" />
-      </button>
+      <RefreshButton :loading="refreshing" :disabled="loading" @click="load(true)" :title="t('adminStorageUi.refresh')" />
     </div>
 
     <div v-if="err" class="ops-err">{{ err }}</div>
@@ -45,6 +43,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { buildStorageTrend, formatSnapshotDate, type StorageSnapshot } from './storageChart'
 
 interface Totals { object_count: number; total_bytes: number }

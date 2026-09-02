@@ -24,11 +24,11 @@
 <script setup lang="ts">
 import { nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import BaseModal from '@/components/common/BaseModal.vue'
-import ActionButton from '@/components/common/ActionButton.vue'
-import Checkbox from '@/components/common/Checkbox.vue'
-import CloseButton from '@/components/common/CloseButton.vue'
-import Icon from '@/components/common/Icon.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import type { SkillToolItem, UserSkillItem, UserSkillWrite } from '@/services/api'
 
 const props = defineProps<{ show: boolean; skill: UserSkillItem | null; tools: SkillToolItem[]; busy?: boolean; externalError?: string }>()

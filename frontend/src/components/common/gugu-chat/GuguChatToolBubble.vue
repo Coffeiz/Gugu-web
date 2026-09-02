@@ -36,7 +36,7 @@
 import { useI18n } from 'vue-i18n'
 const { t, te } = useI18n()
 import { computed, ref } from 'vue'
-import FlipChevron from '@/components/common/FlipChevron.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import type { ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()

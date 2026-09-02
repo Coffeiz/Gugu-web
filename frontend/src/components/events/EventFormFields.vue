@@ -38,15 +38,15 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
-import Checkbox from '@/components/common/Checkbox.vue'
-import DatePicker from '@/components/common/DatePicker.vue'
-import TimeInput from '@/components/common/TimeInput.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
+import TimeInput from '@/components/common/controls/TimeInput.vue'
 import {
   LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
   type EventDraft, type useEventEditForm,
-} from '@/composables/useEventEditForm'
+} from '@/composables/calendar/useEventEditForm'
 
 defineProps<{
   event: EventDraft

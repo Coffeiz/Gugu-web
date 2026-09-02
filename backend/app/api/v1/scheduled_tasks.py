@@ -24,7 +24,7 @@ router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 _TRIAL_WAIT_SECONDS = 180
 _trial_tasks: set[asyncio.Task] = set()
 
-_CHANNELS = {"web", "feishu", "qq", "wechat", "im", "chat"}   # web=站内通知、feishu/qq/wechat=各 IM；chat=web、im=全部 IM（历史别名）
+_CHANNELS = {"web", "email", "feishu", "qq", "wechat", "im", "chat"}   # email=注册邮箱；chat=web、im=全部 IM（历史别名）
 
 def _validate_cron(cron: str) -> None:
     if (cron or "").startswith("@once:"):
@@ -46,6 +46,10 @@ def _norm_channels(chs: list[str] | None) -> str:
     return ",".join(chs) if chs else "web"
 
 
+def _norm_authorized_tools(tools: list[str] | None) -> list[str]:
+    return ["send_email"] if tools and "send_email" in tools else []
+
+
 def _to_resp(t: ScheduledTask) -> dict:
     return {
         "id": t.id, "name": t.name,
@@ -56,6 +60,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
         "last_run_failed": bool(t.last_run_failed),   # 一次性任务触发过但没成功；前端可用来提示重试
         "delivery_targets": t.delivery_targets,
+        "authorized_tools": t.authorized_tools or [],
     }
 
 
@@ -66,6 +71,7 @@ class TaskCreate(BaseModel):
     channels: list[str] = ["web"]
     enabled: bool = True
     event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
+    authorized_tools: list[str] = Field(default_factory=list)
 
 
 class TaskUpdate(BaseModel):
@@ -74,6 +80,7 @@ class TaskUpdate(BaseModel):
     cron: str | None = None
     channels: list[str] | None = None
     enabled: bool | None = None
+    authorized_tools: list[str] | None = None
 
 
 @router.get("")
@@ -122,6 +129,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
+        authorized_tools=_norm_authorized_tools(body.authorized_tools),
     )
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
@@ -155,6 +163,12 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.channels = _norm_channels(body.channels)
         from app.scheduled_tasks import owner_private_targets
         t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+    # 页面上的保存动作是用户重新确认任务意图；显式传授权时允许单独授予或撤销，
+    # 内容或投递设置变更但未传授权时则自动撤销旧的持久权限。
+    if body.authorized_tools is not None:
+        t.authorized_tools = _norm_authorized_tools(body.authorized_tools)
+    elif body.payload is not None or body.cron is not None or body.channels is not None:
+        t.authorized_tools = []
     if body.enabled is not None:
         t.enabled = body.enabled
     await db.commit()

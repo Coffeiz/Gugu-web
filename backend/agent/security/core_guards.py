@@ -1,140 +1,37 @@
-"""防幻觉守卫：叙事/决策拒绝/意图播报/工具进度识别（PRD-LLM-1 FR-LLM-3）。
+"""Agent Loop 守卫编排。
 
-这几个正则守卫检测的是「模型声称完成但没有对应工具回执」这三种典型模式，跟 LLM provider 完全无关——
-不管走 anthropic 格式还是 openai 格式、不管哪家厂商，主循环里都是同一套判定 + 同一句
-提示语去逼它当场补做。原来跟 provider 判断/流式消费混在同一个 752 行的 `core.py` 里，
-纯代码搬家到这个文件，逻辑不变。
+判定流程保持在这里，语言相关规则统一由 ``guard_locales`` 注册表提供。
 """
+
 import re
 
-# narration 兜底：模型有时不调用工具，改用文字描述读/改文件的过程（「让我读一下…读到了…改好了」并
-# 编造内容），这段叙述进历史后还会自我强化。检测这类话术——若本轮没有工具调用，通常需要追问。
-_NARRATION_RE = re.compile(
-    # ① 读/改文件的过程叙述（「让我读…读到了…」）
-    r"让我(先|再|现在)?(读|看|查|改|滚动|翻)"
-    r"|我(来|先)?(读|看|查|改)一?下"
-    # 通用的「我看到了」是普通会话高频表达，只有带对象时才视为读文件叙事，避免
-    # 把「测试的事我看到了」这类正常回复误判成隐藏守卫重试。
-    r"|读到了(?:文件|内容|正文|结果|项目|目录|记录)"
-    r"|看到了(?:文件|内容|正文|结果|项目|目录|图片|记录)"
-    r"|改好了|改成了"
-    r"|文件里(是|有|写)"
-    # ② 完成断言（P2a）：**只收强 CRUD 动词**（建/创建/保存/删/发/移/归档/重命名）——
-    #    「记/整理/安排/确认/设置/修改」等口语高发词剔除（既能是工具、也常用于普通对话，单凭文字判不准 → 误触发）
-    r"|(?:(?:我|咕咕|已经替你|已替你|刚刚替你|为你)(?:已经?|刚刚)?\s*)"
-    r"(建好|建了|创建|新建|保存|存好|存进|删除|删了|删掉|发送|发出|发了|移好|移到|移了|归档|重命名|改名)"
-    #    「帮你/给你/这就」是邀约/意图高发区，必须跟完成信号才算，避免误伤「要不要帮你建一个？」
-    r"|(帮你|给你|这就)(建|创建|新建|保存|存|删除?|删掉|发送|发出|移|归档|重命名|改名)(了|啦|好了?|成功|完成)"
-    #    无前缀时要动词+完成信号，避免误伤「你想改成什么样」「都保存了吗？」
-    r"|(建好|创建好|新建好|保存好|存好|删掉|删除|发出去|移好|归档好)了"
-    r"|(?:(?:我|咕咕|已经替你|已替你|刚刚替你|为你)(?:已经?|刚刚)?\s*)"
-    r"(保存|创建|新建|删除|发送|发出|移动|归档)(成功|完成|了|啦|好了?)"
-    # ③ 假装「已是目标态」（实测漏网「已经是每行一个的格式了」）：只收「已经是…格式/样子/状态/结构…了」
-    r"|已经?是.{0,12}(格式|样子|状态|结构)了"
-)
+from agent.security.guard_patterns import GuardLocale, ZH_CN, get_guard_locale
+
+# 兼容旧的内部导入与测试：默认策略仍为简体中文。
+_NARRATION_NUDGE = ZH_CN.narration_nudge
+_DECISION_NUDGE = ZH_CN.decision_nudge
+_INTENT_NUDGE = ZH_CN.intent_nudge
+_TOOL_REQUIRED_NUDGE = ZH_CN.tool_required_nudge
+_TOOL_PROGRESS_PREFIXES = ZH_CN.tool_progress_prefixes
 
 
-def _looks_like_narration(text: str) -> bool:
-    """文本宣称在读/改/查文件，却（由调用方判断）本轮没有工具回执。"""
-    return bool(text) and bool(_NARRATION_RE.search(text))
+def _looks_like_narration(text: str, locale: str | None = None) -> bool:
+    return bool(text) and bool(get_guard_locale(locale).narration.search(text))
 
 
-_NARRATION_NUDGE = (
-    "【系统提醒 · 缺少工具回执】你刚才声称做了某个操作（读/改/建/删/发/存等），但本轮没有调用对应工具。"
-    "请不要在缺少回执时给出操作结果；现在调用对应工具执行。"
-    "若确实不需要动手或缺少信息，就直接说明原因，不要继续描述未发生的操作。"
-)
-
-# P3 · 决策守卫：用户明确命令改动（动词），但模型零工具 + 回复带「不用改/已合理」驳回语 → 「自作主张不做」。
-# 三信号齐备才拦（高精度优先），避免误伤「问句/已动手/在问清楚要改成什么」。
-_ACTION_REQ_RE = re.compile(
-    r"排序|重排|排个?序|重新排|置顶|归档|"
-    r"改成|改为|改一?下|调整|换成|换个|改名|重命名|设为|设成|标记为?|标为|分类|"
-    r"删掉|删除|加上|加个|添加|移到|移动|整理一?下|重新(排|命名|整理)"
-)
-_REFUSAL_RE = re.compile(
-    r"不需要|不用(改|调|动|排|加|删|整理)|没必要|无需(调整|改动|改|整理)|不必(改|调)?|"
-    r"已经(很|挺|够|蛮)?(合理|好了?|不错|可以|没问题|对了?|清晰|清楚)|"
-    r"保持(现状|原样|不变)|维持原样|现状.{0,4}(挺好|够好|合理|可以)|没什么(好|要)改|不建议(改|动)"
-)
+def _is_decision_dodge(user_req: str, reply: str, locale: str | None = None) -> bool:
+    policy = get_guard_locale(locale)
+    return bool(user_req and reply) and bool(policy.action_request.search(user_req)) and bool(policy.refusal.search(reply))
 
 
-def _is_decision_dodge(user_req: str, reply: str) -> bool:
-    """用户明确要改、模型却用「不用改/已合理」驳回（调用方再确认本轮零工具）→ 自作主张不做。"""
-    return bool(user_req and reply) and bool(_ACTION_REQ_RE.search(user_req)) and bool(_REFUSAL_RE.search(reply))
-
-
-_DECISION_NUDGE = (
-    "【系统提醒 · 不许擅自替用户决定不做】用户明确要求你做这个改动（排序/调整/改/删/加等），"
-    "你却判断「不用改/已经合理」并**没有调用任何工具**——这是不允许的，别替用户决定「不必做」。"
-    "现在要么**真去执行**（调对应工具完成它），要么**问清楚他想改成什么样**再做；"
-    "哪怕你觉得现状已合理，也先按他说的动手、或确认需求，而不是直接驳回。"
-)
-
-
-# 意图守卫（B · 防「说了要做却没动手」）：宣告"我这就去查/建/改…"的**将来式**，区别于 narration 的"假装已做完"。
-# 要求一个明确的"将要"引导词（我去 / 我来 / 这就 / 马上 / 稍等我 / 让我 / 接下来 / 那我…）+ 动作词，避免裸
-# "我+动词"误伤（如「我改天再看」）。命中即"宣告了要做"。
-# 实测漏网案例（2026-07-04，F1 战报纠错场景）：「马上重新查一下」——① 中文口语常见主语省略（"我"隐含在
-# 上一句里），"马上/现在/稍后"当时只在带"我"的分支里出现，裸着开头的"马上重新查一下"整句测不中；
-# ② 时间副词和动词之间常插「重新/再」这类修饰词，原正则只留了"帮你/帮您/给你"这几个空当，卡住了匹配。
-# 现在把"这就/马上/现在/稍后"都放开成可以不带"我"（前面不是"你"就行，避免误伤"你现在查一下"这种让用户
-# 自己去做的建议句），并把"重新/再"也纳入动词前的可选修饰词。
-_INTENT_RE = re.compile(
-    r"("
-    r"我(这就|马上|现在|先|稍后)?(去|来)"          # 我去 / 我来 / 我先去 / 我马上来
-    r"|我(先|这就|马上|现在|稍后)"                  # 我先 / 我这就 / 我现在（无去/来）
-    r"|(?<!你)(这就|马上|现在|稍后)(去|帮你|帮您|给你|来)?"   # 这就/马上/现在/稍后（可以不带"我"，前面不是"你"）
-    r"|稍等[，,]?\s*我?(去|来)?"                     # 稍等我去 / 稍等，我 / 稍等，去
-    r"|让我(去|来|先)?"                            # 让我 / 让我去
-    r"|接下来我?(去|来)?"                          # 接下来 / 接下来我去
-    r"|那我(去|来|就)"                             # 那我去 / 那我就
-    r")"
-    r"(帮你|帮您|给你|重新|再)?\s*"
-    r"(查|搜索?|找|看|读|翻|问|建|创建|新建|做|改|修改|删除?|发送?|存|保存|记录?|整理|安排|设置?|调取?|生成|算|统计)"
-)
-# 有些模型会把“准备执行的动作”停在冒号上，下一 token/轮本应继续工具调用，却直接收束成文字。
-# 不能仅按冒号拦截；要求句首有行动引导词、正文含明确动作词，并同时支持中英文句末冒号。
-_COLON_INTENT_RE = re.compile(
-    r"^(?:(?:先|然后|接下来|现在|让我|我先|我会)|(?:then|next|now|let me|i will))"
-    r".*(?:移|移动|复制|删除|删掉|修改|编辑|写入|创建|读取|查看|查|搜索|整理|重命名|保存|更新|"
-    r"move|copy|delete|edit|write|create|read|check|search|organize|rename|save|update)"
-    r".*[:：]\s*$",
-    re.IGNORECASE | re.DOTALL,
-)
-# 问句/征询硬排除：「要我去查吗?」是在等用户拍板，绝不能逼它执行（误逼=替用户做没同意的事，比卡住还糟）。
-_QUESTION_RE = re.compile(r"[?？]|吗|呢|要不要|需不需要|好不好|可不可以|行不行|是否|要我帮|需要我")
-
-
-def _announces_intent(text: str) -> bool:
-    """文字宣告"我这就去做某动作"（将来式），却（由调用方确认本轮零工具）没真动手 → 多半说完就停。
-    先排除问句/征询（要我去查吗?）——那是在等用户拍板，命中即返回 False、绝不逼。"""
-    if not text or _QUESTION_RE.search(text):
+def _announces_intent(text: str, locale: str | None = None) -> bool:
+    """判断模型是否宣告将执行动作，却没有实际调用工具。"""
+    if not text:
         return False
-    return bool(_INTENT_RE.search(text)) or bool(_COLON_INTENT_RE.search(text.strip()))
-
-
-_INTENT_NUDGE = (
-    "【系统提醒 · 你说了要做却没动手】你刚表示要去做某件事（查/搜/找/建/改/记/整理等），"
-    "但本轮没有调用对应工具。请现在完成工具调用，不要只停留在行动宣告。"
-    "若其实需要先问用户确认或缺少信息，就直接把问题问清楚，而不是继续描述尚未发生的操作。"
-)
-
-# 工具进度守卫：有些模型会输出“正在查询”占位话术，却没有真正发起 tool call。
-# 规则集中在守卫模块，主循环只负责根据判定决定是否重试。
-_TOOL_PROGRESS_PREFIXES = (
-    "正在为你查询最新信息",
-    "正在查询最新信息",
-    "正在为你搜索最新信息",
-    "我去查一下",
-    "我去搜索一下",
-    "我来查一下",
-    "我拿这张图找找相似结果",
-)
-_TOOL_REQUIRED_NUDGE = (
-    "你上一轮只输出了进度提示，没有实际调用工具。请立即调用合适的工具完成用户请求；"
-    "如果确实无法调用工具，请明确说明原因，不要只回复“正在查询/正在搜索”。"
-)
+    policy = get_guard_locale(locale)
+    if policy.question.search(text):
+        return False
+    return bool(policy.intent.search(text)) or bool(policy.colon_intent.search(text.strip()))
 
 
 def _guard_text(text: str) -> str:
@@ -142,12 +39,18 @@ def _guard_text(text: str) -> str:
     return re.sub(r"[\s\u3000，。！？、:：….!?]+", "", text or "")
 
 
-def _could_be_tool_progress(text: str) -> bool:
-    """判断当前已收到的流式片段是否仍可能是工具进度占位话术。"""
+def _could_be_tool_progress(text: str, locale: str | None = None) -> bool:
     normalized = _guard_text(text)
-    return bool(normalized) and any(prefix.startswith(normalized) for prefix in _TOOL_PROGRESS_PREFIXES)
+    prefixes = get_guard_locale(locale).tool_progress_prefixes
+    return bool(normalized) and any(_guard_text(prefix).startswith(normalized) for prefix in prefixes)
 
 
-def _is_tool_progress_only(text: str) -> bool:
+def _is_tool_progress_only(text: str, locale: str | None = None) -> bool:
     normalized = _guard_text(text)
-    return bool(normalized) and normalized in {_guard_text(p) for p in _TOOL_PROGRESS_PREFIXES}
+    prefixes = get_guard_locale(locale).tool_progress_prefixes
+    return bool(normalized) and normalized in {_guard_text(prefix) for prefix in prefixes}
+
+
+def guard_locale(locale: str | None = None) -> GuardLocale:
+    """公开统一入口，供 Loop 和其他运行模式取得同一份策略。"""
+    return get_guard_locale(locale)

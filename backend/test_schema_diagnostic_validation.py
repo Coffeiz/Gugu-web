@@ -38,6 +38,25 @@ def test_note_create_diagnostic_points_to_nested_content_type():
     }
 
 
+def test_note_create_diagnostic_points_to_block_type():
+    expected = {
+        "blocks": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "下周检查接口文档"}]}
+        ]
+    }
+    actual = {
+        "blocks": [
+            {"type": "text", "content": [{"type": "text", "text": "下周检查接口文档"}]}
+        ]
+    }
+
+    mismatch = schema_mismatch("note_create", actual, expected)
+
+    assert mismatch["mismatched"]["blocks[0].type"] == {
+        "expected": "paragraph", "actual": "text",
+    }
+
+
 def test_usage_aggregation_records_all_provider_requests_in_a_run():
     usage = aggregate_usage_rows(
         [

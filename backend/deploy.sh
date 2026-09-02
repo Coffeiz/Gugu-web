@@ -5,7 +5,7 @@
 #
 #  流程:
 #    1. 校验环境（venv、磁盘空间）
-#    2. 备份关键数据（config.override.json、Gugu-data/users/）
+#    2. 备份关键数据（config.override.json、Gugu-data/users/、PostgreSQL）
 #    3. 同步 Python 依赖（pip install -r requirements.txt）
 #    4. 跑数据库迁移（alembic upgrade head，DB 不通则跳过）
 #    5. 可选：构建 TS RAG 固定制品与前端（--no-build 跳过）
@@ -84,23 +84,8 @@ fi
 
 # ── 2. 备份 ──────────────────────────────────────────────
 hr; log "步骤 2/6 — 备份关键数据"
-mkdir -p "$BACKUP_DIR"
-
-backup_if_exists() {
-    local src="$1" name="$2"
-    if [ -e "$src" ]; then
-        tar -czf "${BACKUP_DIR}/${name}-${TS}.tar.gz" -C "$(dirname "$src")" "$(basename "$src")" 2>/dev/null \
-            && ok "备份 $name → ${BACKUP_DIR}/${name}-${TS}.tar.gz" \
-            || warn "备份 $name 失败"
-    fi
-}
-
-backup_if_exists "config.override.json" "config-override"
-backup_if_exists "../Gugu-data/users"  "users"
-
-# 只保留最近 10 个备份
-ls -t "$BACKUP_DIR"/*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
-ok "历史备份目录：$BACKUP_DIR（共 $(ls "$BACKUP_DIR" 2>/dev/null | wc -l) 个文件）"
+./backup.sh "$BACKUP_DIR"
+ok "完整备份已生成：$BACKUP_DIR"
 
 # ── 3. 安装依赖 ──────────────────────────────────────────
 hr; log "步骤 3/6 — 同步 Python 依赖"
@@ -128,6 +113,8 @@ asyncio.run(asyncio.wait_for(t(), timeout=3))
     ./start.sh stop
     "$VENV_BIN/alembic" upgrade head
     ok "迁移完成"
+    "$VENV_BIN/python" scripts/verify_database_integrity.py
+    ok "数据库完整性校验通过"
 else
     warn "数据库暂不可达（3s 超时），跳过迁移。服务起来后用 admin 后台配 DB，重启再跑迁移。"
 fi

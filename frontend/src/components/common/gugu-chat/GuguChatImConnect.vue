@@ -40,7 +40,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
 const { t } = useI18n()

@@ -151,7 +151,8 @@ async def finalize_run(
                 ))
 
         is_byok = bool(getattr(model_cfg, "is_byok", False))
-        cap_in, cap_out = (0, 0) if is_byok else await quota.cap_usage(
+        # BYOK 不参与平台配额封顶，但仍记录实际 token，供用户查看自己的模型用量。
+        cap_in, cap_out = await quota.cap_usage(
             db, user_id, settings, tokens_in, tokens_out,
         )
         if cap_in or cap_out:

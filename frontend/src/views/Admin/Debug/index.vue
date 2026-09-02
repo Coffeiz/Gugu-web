@@ -57,7 +57,8 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import { classifyLogLevel } from '@/utils/logLevel'
 const { t } = useI18n()
 
 const adminStore = useAdminStore()
@@ -88,11 +89,8 @@ const levelOptions = [
 ]
 
 function rowLevel(line: any) {
-  const u = line.toUpperCase()
-  if (u.includes('ERROR') || u.includes('EXCEPTION') || u.includes('TRACEBACK')) return 'lvl-error'
-  if (u.includes('WARNING') || u.includes('WARN')) return 'lvl-warning'
-  if (u.includes('INFO')) return 'lvl-info'
-  return ''
+  const level = classifyLogLevel(String(line))
+  return level ? `lvl-${level}` : ''
 }
 
 const filtered = computed(() => {
@@ -219,7 +217,7 @@ onUnmounted(() => {
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); }
 .debug-search {
-  width: 280px; height: 30px; padding: 0 11px;
+  width: 280px; height: 34px; padding: 0 11px; box-sizing: border-box;
   border-radius: 8px; font-size: 12px;
   font-family: var(--font-mono, monospace); outline: none;
 }

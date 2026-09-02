@@ -6,16 +6,20 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.redis import get_redis
 from app.core.security import get_current_user_id, is_user_active
 
 router = APIRouter(prefix="/live", tags=["live"])
+logger = logging.getLogger(__name__)
 
 BROADCAST_CHANNEL = "events:__broadcast__"
 LIVE_RESOURCES = {
@@ -62,8 +66,8 @@ async def _event_stream(request: Request, user_id: Any, active_check=None) -> As
     redis = get_redis()
     pubsub = redis.pubsub()
     channels = (f"events:{user_id}", BROADCAST_CHANNEL)
-    await pubsub.subscribe(*channels)
     try:
+        await pubsub.subscribe(*channels)
         yield ": connected\n\n"
         while not await request.is_disconnected():
             if active_check is not None and not await active_check(user_id):
@@ -79,9 +83,17 @@ async def _event_stream(request: Request, user_id: Any, active_check=None) -> As
                     yield frame
             else:
                 yield ": ping\n\n"
+    except (RedisConnectionError, RedisTimeoutError):
+        # Redis 重启或网络抖动会使 Pub/Sub 长连接失效；结束当前 SSE，前端会按退避策略重连。
+        if not await request.is_disconnected():
+            yield ": live connection reset; client will reconnect\n\n"
+        logger.debug("实时事件流的 Redis 连接已断开，结束当前 SSE")
+        return
     finally:
         try:
             await pubsub.unsubscribe(*channels)
+        except (RedisConnectionError, RedisTimeoutError):
+            pass
         finally:
             close = getattr(pubsub, "aclose", None)
             if close is not None:

@@ -43,12 +43,12 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, onUpdated, ref, watch, type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
-import CloseButton from '@/components/common/CloseButton.vue'
-import SortMenu from '@/components/common/SortMenu.vue'
-import FilePasteButton from '@/components/common/FilePasteButton.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import GlassBg from '@/components/common/GlassBg.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import SortMenu from '@/components/common/controls/SortMenu.vue'
+import FilePasteButton from '@/components/common/file-browser/FilePasteButton.vue'
+import SegmentedControl from '@/components/common/controls/SegmentedControl.vue'
+import GlassBg from '@/components/common/layout/GlassBg.vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()

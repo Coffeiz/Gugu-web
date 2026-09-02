@@ -6,9 +6,7 @@ body {
   font-family: var(--font-sans);
   font-size: var(--font-size-md);
   color: var(--content-primary);
-  background:
-    radial-gradient(circle at 15% 0%, rgba(190,182,218,.28), transparent 34rem),
-    var(--surface-page);
+  background: var(--surface-page);
 }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }

@@ -22,10 +22,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import GlassBg from '@/components/common/GlassBg.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import Icon from '@/components/common/Icon.vue'
-import FlipChevron from '@/components/common/FlipChevron.vue'
+import GlassBg from '@/components/common/layout/GlassBg.vue'
+import SegmentedControl from '@/components/common/controls/SegmentedControl.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 defineProps<{ periodLabel: string; viewMode: 'month' | 'week'; pickerOpen: boolean }>()
 defineEmits<{
   prev: []

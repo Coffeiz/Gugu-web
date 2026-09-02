@@ -221,6 +221,7 @@ export function useChatSessions(options: {
                 title: String(item.title || i18n.global.t('chatUi.confirmRequired')), body: String(item.body || ''),
                 options: Array.isArray(item.options) ? item.options : [],
                 resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
+                expiresAt: item.expires_at ? String(item.expires_at) : undefined,
               },
             })
           }

@@ -8,8 +8,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import type { CalendarContext } from '../domain/calendarContext'
 
 defineProps<{

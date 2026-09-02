@@ -57,7 +57,7 @@
       <table v-else class="tv-table" cellspacing="0">
         <tbody>
           <tr v-for="(line, i) in lines" :key="i">
-            <td class="tv-ln">{{ i + 1 }}</td>
+            <td class="tv-ln">{{ Number(i) + 1 }}</td>
             <td class="tv-code">{{ line }}</td>
           </tr>
         </tbody>
@@ -70,7 +70,7 @@
 import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBeforeUnmount, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
@@ -261,7 +261,6 @@ async function ensureCm() {
 async function loadCmExtensions(ext: string, source = '') {
   const cm = await ensureCm()
   const { acceptCompletion } = await import('@codemirror/autocomplete')
-  const isMarkdown = (ext || '').toUpperCase() === 'MD'
   const theme = cm.EditorView.theme({
     '&': { height: '100%', fontSize: 'var(--tv-font-size, 13px)' },
     '&.cm-focused': { outline: 'none' },

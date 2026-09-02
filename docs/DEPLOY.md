@@ -73,6 +73,9 @@ GUGU_REDIS_PASSWORD=
 # Web 入口端口
 GUGU_HTTP_PORT=9595
 
+# 用户可访问的公开站点根地址；域名部署时改为 https://你的域名
+GUGU_PUBLIC_APP_URL=http://localhost:9595
+
 # Shell 沙盒
 # 只有执行 `docker compose --profile sandbox up -d` 时才会启动 sandboxd
 GUGU_SANDBOX_ENABLED=true
@@ -86,6 +89,8 @@ GUGU_SANDBOX_NETWORK_PROFILE=egress
 生产 Compose 还要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。镜像可以使用 `latest` 作为公开体验版本，正式部署建议改成明确版本号。
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`.env.example`](../.env.example)。
+
+`GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:8000` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
 
 ## 启用 Shell 沙盒
 

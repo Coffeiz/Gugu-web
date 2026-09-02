@@ -156,8 +156,8 @@ importers:
         specifier: ^3.4.11
         version: 3.4.14
       gugu-interaction-runtime:
-        specifier: ^3.0.3
-        version: 3.0.3(vue@3.5.41(typescript@5.6.3))
+        specifier: ^3.0.4
+        version: 3.0.4(vue@3.5.41(typescript@5.6.3))
       highlight.js:
         specifier: ^11.11.1
         version: 11.12.0
@@ -2435,8 +2435,8 @@ packages:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
     engines: {node: '>= 0.4'}
 
-  gugu-interaction-runtime@3.0.3:
-    resolution: {integrity: sha512-H/h30FlqFndniAIV1udtk6lABIhy0qvLEeVkSJCtMd1hno7O8P+rK7HUT7vbV97kF0q6aJ51+Cpe8Z7nk3FK3w}
+  gugu-interaction-runtime@3.0.4:
+    resolution: {integrity: sha512-oyiClEexYY4ZbTF01nX5mPNC59ftjM2E5osFjCIXODWP1aZsA+VAGo8CPV6ym02adZVb9LnU9jFxV1xbG7OvXg==}
     peerDependencies:
       vue: ^3.5.0
 
@@ -5390,7 +5390,7 @@ snapshots:
 
   gopd@1.2.0: {}
 
-  gugu-interaction-runtime@3.0.3(vue@3.5.41(typescript@5.6.3)):
+  gugu-interaction-runtime@3.0.4(vue@3.5.41(typescript@5.6.3)):
     dependencies:
       vue: 3.5.41(typescript@5.6.3)
 

@@ -64,11 +64,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
-import Icon from '@/components/common/Icon.vue'
-import ReferenceSuggestMenu from '@/components/common/ReferenceSuggestMenu.vue'
-import { useReferenceSuggest } from '@/composables/useReferenceSuggest'
+import Icon from '@/components/common/icons/Icon.vue'
+import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMenu.vue'
+import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
-import { mindExtensions, type MindDocNode } from '@/composables/useMindEditor'
+import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEditor'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。

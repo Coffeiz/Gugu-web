@@ -43,6 +43,8 @@ export interface ChatMessage {
     options: Array<{ id: string; label: string; token: string }>
     resolved?: boolean
     selectedOptionId?: string | null
+    expiresAt?: string
+    expired?: boolean
   }
 }
 

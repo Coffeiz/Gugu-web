@@ -52,11 +52,9 @@ function scheduleMindLandingSettled(): void {
     queueMicrotask(notifyMindLandingSettled)
     return
   }
-  // regrab 的新 session 会在下一帧注册 active；再多等一帧，避免旧 session
-  // settled 与新 optimistic 节点首帧之间触发一次过早的画布刷新。
-  mindLandingSettlingFrame = requestAnimationFrame(() => {
-    mindLandingSettlingFrame = requestAnimationFrame(notifyMindLandingSettled)
-  })
+  // 留出一帧让 regrab 的新 session 注册 active，避免旧 session settled
+  // 与新 optimistic 节点首帧之间触发过早的画布刷新。
+  mindLandingSettlingFrame = requestAnimationFrame(notifyMindLandingSettled)
 }
 
 /**

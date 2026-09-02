@@ -4,32 +4,62 @@
     <div class="interaction-body">{{ msg.interaction?.body }}</div>
     <div class="interaction-actions">
       <button v-for="option in (msg.interaction?.options || [])" :key="option.id" type="button"
-              :disabled="resolved" @click="selectOption(option)">
+              :disabled="resolved || expired" @click="selectOption(option)">
         {{ option.label }}
       </button>
     </div>
-    <div v-if="resolved" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
+    <div v-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
+    <div v-else-if="resolved" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()
 const resolved = ref(Boolean(props.msg.interaction?.resolved))
+const initiallyExpired = Boolean(
+  props.msg.interaction?.expired
+  || (!props.msg.interaction?.selectedOptionId
+    && props.msg.interaction?.expiresAt
+    && new Date(props.msg.interaction.expiresAt).getTime() <= Date.now()),
+)
+const expired = ref(initiallyExpired)
+let expiryTimer: ReturnType<typeof setTimeout> | undefined
 const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
 }>()
 function selectOption(option: { id: string; label: string; token: string }) {
-  if (resolved.value) return
+  if (resolved.value || expired.value) return
   emit('select', props.msg, option)
+}
+function markExpired() {
+  if (resolved.value) return
+  expired.value = true
+  resolved.value = true
+  if (props.msg.interaction) {
+    props.msg.interaction.expired = true
+    props.msg.interaction.resolved = true
+  }
+}
+function scheduleExpiry() {
+  if (expiryTimer) clearTimeout(expiryTimer)
+  const value = props.msg.interaction?.expiresAt
+  if (!value || resolved.value) return
+  const remaining = new Date(value).getTime() - Date.now()
+  if (remaining <= 0) { markExpired(); return }
+  expiryTimer = setTimeout(markExpired, remaining)
 }
 watch(() => props.msg.interaction?.resolved, (value) => {
   resolved.value = Boolean(value)
+  scheduleExpiry()
 })
+watch(() => props.msg.interaction?.expiresAt, scheduleExpiry)
+onMounted(scheduleExpiry)
+onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 </script>
 
 <style scoped>

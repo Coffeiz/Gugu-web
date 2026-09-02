@@ -141,6 +141,7 @@ export const useConfigStore = defineStore('config', () => {
       password: '',
       from_addr: '',
       to_addr: '',
+      test_to_addr: '',
       feedback_email_enabled: true,
       use_ssl: true,
     },

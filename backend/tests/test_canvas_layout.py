@@ -9,9 +9,15 @@ def test_effective_size_uses_explicit_dimensions_and_type_defaults():
     engine = CanvasLayoutEngine()
     note = SimpleNamespace(kind="canvas_note", ref_type=None)
     item = SimpleNamespace(w=None, h=None)
-    assert engine.effective_size(note, item) == (244, 148)
+    assert engine.effective_size(note, item) == (240, 140)
     item.w, item.h = 300, 180
     assert engine.effective_size(note, item) == (300, 180)
+
+
+def test_canvas_note_size_is_clamped_to_safe_bounds():
+    engine = CanvasLayoutEngine()
+    assert engine.clamp_canvas_note_size(100, 999) == (180.0, 420.0)
+    assert engine.clamp_canvas_note_size(None, 160) == (None, 160.0)
 
 
 def test_relation_sides_use_card_centers_not_node_ids():

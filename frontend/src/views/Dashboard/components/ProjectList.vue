@@ -69,7 +69,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import SegBar from '@/components/common/SegBar.vue'
+import SegBar from '@/components/common/controls/SegBar.vue'
 import { useI18n } from 'vue-i18n'
 
 const projectStore = useProjectStore()

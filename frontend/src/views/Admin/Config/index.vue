@@ -207,6 +207,7 @@
           <ConfigField :label="t('configUi.account')" v-model="draft.smtp.user" placeholder="noreply@example.com" />
           <ConfigField :label="t('configUi.loginPassword')" v-model="draft.smtp.password" type="password" :placeholder="t('configUi.keepUnchanged')" />
           <ConfigField :label="t('configUi.sender')" v-model="draft.smtp.from_addr" :placeholder="t('configUi.senderKeep')" />
+          <ConfigField :label="t('configUi.testRecipient')" v-model="draft.smtp.test_to_addr" placeholder="test@example.com" type="email" />
         </div>
 
         <div class="card-footer">
@@ -464,7 +465,7 @@ async function testSmtp() {
         user:      draft.smtp.user,
         password:  draft.smtp.password,
         from_addr: draft.smtp.from_addr,
-        to_addr:   draft.smtp.to_addr,
+        to_addr:   draft.smtp.test_to_addr,
         use_ssl:   draft.smtp.use_ssl,
       }),
     })

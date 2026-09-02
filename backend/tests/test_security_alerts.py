@@ -34,6 +34,11 @@ async def test_alert_sends_only_to_valid_configured_recipients(monkeypatch):
     monkeypatch.setattr(alerts.asyncio, "to_thread", capture)
     await alerts.notify_risk_action(action="suspended", user_count=10, reason_code="ownership_mismatch")
     assert len(calls) == 1
-    assert calls[0][2] == {"to_addr": "alerts@example.com"}
+    assert calls[0][2] == {
+        "to_addr": "alerts@example.com",
+        "template": "security",
+        "title": "咕咕安全告警 · suspended",
+        "sections": [{"heading": "事件摘要", "text": calls[0][1]}],
+    }
     assert "IP" in calls[0][1]
     assert "Token" in calls[0][1]

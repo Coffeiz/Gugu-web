@@ -16,7 +16,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, type ComputedRef, type Ref } from 'vue'
 import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
-import { nextZ, raisePopoversAbove } from '@/composables/windowz'
+import { nextZ, raisePopoversAbove } from '@/composables/core/windowz'
 import { playGuguSfx } from '@/services/sfx'
 import { SMALL_W, SMALL_H, SIDEBAR_W, SESSION_KEY, LAST_SESSION_KEY, MINI_PINNED_KEY, REOPEN_RESUME_KEY } from '../chatConstants'
 

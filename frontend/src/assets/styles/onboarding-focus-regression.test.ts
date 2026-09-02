@@ -7,7 +7,7 @@ function load(relativePath: string) {
 
 const onboarding = load('../../components/onboarding/OnboardingModal.vue')
 const onboardingImSetup = load('../../components/onboarding/OnboardingImSetup.vue')
-const profileByokPane = load('../../components/common/ProfileModal/ProfileByokPane.vue')
+const profileByokPane = load('../../components/common/profile/ProfileByokPane.vue')
 const themePreview = load('../../components/onboarding/OnboardingThemePreview.vue')
 const themeSwitcher = load('../../views/Design/components/ThemeSwitcher.vue')
 const fileCard = load('../../components/common/file-browser/FileCard.vue')

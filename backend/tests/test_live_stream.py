@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.api.v1 import live
 from app.core import events
@@ -67,6 +68,11 @@ class _PubSub:
         self.closed = True
 
 
+class _DisconnectingPubSub(_PubSub):
+    async def get_message(self, **_kwargs):
+        raise RedisConnectionError("Connection closed by server")
+
+
 class _Redis:
     def __init__(self, pubsub):
         self.pubsub_instance = pubsub
@@ -101,6 +107,18 @@ async def test_event_stream_stops_after_account_is_suspended(monkeypatch):
 
     frames = [frame async for frame in live._event_stream(request, "user-1", active_check=inactive)]
     assert frames == [": connected\n\n", "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"]
+    assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_event_stream_ends_cleanly_when_redis_disconnects(monkeypatch):
+    request = _Request()
+    pubsub = _DisconnectingPubSub(request)
+    monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
+
+    frames = [frame async for frame in live._event_stream(request, "user-1")]
+
+    assert frames == [": connected\n\n", ": live connection reset; client will reconnect\n\n"]
     assert pubsub.closed is True
 
 

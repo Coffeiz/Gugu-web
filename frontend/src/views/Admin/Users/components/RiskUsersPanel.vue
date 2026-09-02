@@ -2,9 +2,7 @@
   <section class="risk-panel">
     <div class="risk-toolbar">
       <span class="risk-summary">{{ t('adminExtraUi.riskSummary', { hours: windowMinutes }) }}</span>
-      <button class="icon-btn" :class="{ spinning: loading }" :title="t('adminExtraUi.refreshRisk')" @click="load">
-        <Icon name="action.refresh" size="sm" />
-      </button>
+      <RefreshButton :loading="loading" @click="load" :title="t('adminExtraUi.refreshRisk')" />
     </div>
 
     <div v-if="loading && !items.length" class="state-empty">{{ t('adminExtraUi.loading') }}</div>
@@ -60,6 +58,7 @@ import { onMounted, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import { useI18n } from 'vue-i18n'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()

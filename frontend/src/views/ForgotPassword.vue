@@ -4,7 +4,6 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
-      <AuthLanguageSwitcher />
       <AuthBrand />
 
       <template v-if="!sent">
@@ -18,9 +17,9 @@
 
           <div v-if="error" class="error-msg">{{ error }}</div>
 
-          <button type="submit" class="btn-primary" :disabled="loading">
+          <ActionButton type="submit" class="auth-submit-button" :disabled="loading">
             {{ loading ? t('auth.sendingReset') : t('auth.sendReset') }}
-          </button>
+          </ActionButton>
         </form>
       </template>
 
@@ -42,13 +41,15 @@
         <router-link to="/login">{{ t('auth.backToLogin') }}</router-link>
       </div>
     </div>
+    <AuthPageFooter />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import AuthBrand from '@/components/common/AuthBrand.vue'
-import AuthLanguageSwitcher from '@/components/common/AuthLanguageSwitcher.vue'
+import AuthBrand from '@/components/common/auth/AuthBrand.vue'
+import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
@@ -72,7 +73,7 @@ async function handleSubmit() {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(body?.detail || t('errors.requestFailed'))
-    message.value = body.message || t('auth.resetSent')
+    message.value = t('auth.resetSent')
     sent.value = true
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')
@@ -122,7 +123,7 @@ async function handleSubmit() {
   text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px;
 }
 .field input {
-  width: 100%; padding: 10px 14px;
+  box-sizing: border-box; width: 100%; height: 40px; padding: 10px 14px; line-height: 18px;
   background: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.76);
   border-radius: 10px; font-size: 14px; color: #1e2028;
   font-family: var(--font-sans); outline: none;
@@ -142,16 +143,7 @@ async function handleSubmit() {
   background: rgba(200,80,80,0.08); border: 1px solid rgba(200,80,80,0.15);
 }
 
-.btn-primary {
-  width: 100%; padding: 11px; margin-top: 4px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  border: none; border-radius: 11px;
-  font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: background-color 0.15s;
-  box-shadow: none;
-}
-.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
-.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.auth-submit-button { width: 100%; min-width: 0; height: 38px; min-height: 38px; flex-basis: auto; margin-top: 4px; }
 
 .done-box { text-align: center; padding: 8px 0 4px; }
 .done-icon {

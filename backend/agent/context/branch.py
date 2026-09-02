@@ -8,6 +8,7 @@ from typing import Any
 from .assembler import assemble_branch_user_input
 from .branch_types import BranchInput, BranchPolicy, BranchResult
 from . import provider_runner
+from app.core.redaction import diag_log
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ class ContextBranch:
         output: Any = None
         reason = "provider_error"
         validated_ok = False
+        error_type = "-"
+        error_status = "-"
         for attempts in range(1, max(0, policy.max_retries) + 2):
             call_failed = False
             try:
@@ -50,11 +53,16 @@ class ContextBranch:
                         thinking=policy.thinking,
                     )
                     ok = isinstance(output, dict) and bool(output)
-            except Exception:
+            except Exception as exc:
                 output = None
                 ok = False
                 call_failed = True
                 reason = "provider_error"
+                error_type = type(exc).__name__
+                response = getattr(exc, "response", None)
+                status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
+                error_status = str(status) if isinstance(status, int) else "-"
+                diag_log("agent.context.branch.provider", exc)
             validated_ok = ok
             if ok:
                 reason = "completed"
@@ -83,7 +91,7 @@ class ContextBranch:
             },
         )
         logger.info(
-            "[context-branch] branch=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s input_fp=%s output_fp=%s",
+            "[context-branch] branch=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s error_type=%s error_status=%s input_fp=%s output_fp=%s",
             policy.name,
             branch_input.scope or "-",
             branch_input.scope_revision or "-",
@@ -91,6 +99,8 @@ class ContextBranch:
             result.attempts,
             result.ok,
             result.return_reason,
+            error_type,
+            error_status,
             result.input_fingerprint,
             result.output_fingerprint or "-",
         )

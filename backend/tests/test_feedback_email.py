@@ -16,7 +16,7 @@ def _settings(enabled=True):
 def test_notify_feedback_sends_when_enabled(monkeypatch):
     sent = []
     monkeypatch.setattr(email, "get_settings", lambda: _settings())
-    monkeypatch.setattr(email, "send_email", lambda subject, body: sent.append((subject, body)) or True)
+    monkeypatch.setattr(email, "send_email", lambda subject, body, **kwargs: sent.append((subject, body)) or True)
 
     email.notify_feedback("moon_xiaobei", "bug", "page unavailable")
 

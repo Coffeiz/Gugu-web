@@ -24,4 +24,23 @@ describe('reconcileCanvasItems', () => {
 
     expect(result).toEqual([{ id: 42, nodeId: 42, clientKey: 'optimistic--1' }])
   })
+
+  it('取消态 optimistic create 不会被中途刷新重新复活', () => {
+    const result = reconcileCanvasItems(
+      [{ id: 42, nodeId: 42 }],
+      [{ id: -1, nodeId: -1, clientKey: 'optimistic--1' }],
+      [{
+        mutationId: 'mutation-1',
+        clientId: 'client-1',
+        scope: 'mind.canvas.ref.create',
+        entityKey: 'canvas:1:project:2',
+        clientKey: 'optimistic--1',
+        persistedItemId: 42,
+        nodeId: 42,
+        cancelled: true,
+      }],
+    )
+
+    expect(result).toEqual([])
+  })
 })

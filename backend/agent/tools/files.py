@@ -1659,7 +1659,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
-            description_short='查询文件夹路径。',
+            description_short='查询个人或项目文件夹路径；用于确认文件位置和落点。',
             description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={

@@ -50,3 +50,12 @@ CI 目前只跑：`file-lifecycle`、`scheduled-task-run`、`chat`、`calendar`�
 
 - 有 `title`/文本的交互元素：`page.getByRole('button', { name: '登录' })`。
 - 没有语义信息的容器：直接用现有 CSS class（如 `.chat-window`），改了要跟着改测试。
+
+### CI 语言与多语言测试
+
+- CI 主 E2E 流程固定使用简体中文 `zh-CN`。Playwright 配置必须显式设置 `use.locale = 'zh-CN'`，测试用户的语言偏好也必须显式初始化，不能依赖 runner 或 devserver 的系统语言。
+- 中文是主流程的稳定基线；英文和日文使用独立的 locale matrix 或 smoke 测试，不要让主 CI 同时依赖三套可见文案。
+- 选择器优先使用 `data-testid`、ARIA role/name、`aria-label`、表单 `name`、稳定 CSS class 和 URL。可见中文文案不能作为唯一选择器；文案断言也不应承担元素定位职责。
+- 必须断言用户可见文案时，主 CI 断言 `zh-CN` 资源；其他语言单独检查翻译缺失、长文本溢出、按钮尺寸和关键路径可用性。
+- 测试夹具、seed 数据、快照标题和测试用户可见内容统一使用合成中文数据，不读取真实用户的语言偏好。
+- 新增页面或组件时，先补 `zh-CN` 主流程和稳定选择器，再补英文/日文专项；不要为了让多语言测试通过而放宽断言或复制三套业务流程。

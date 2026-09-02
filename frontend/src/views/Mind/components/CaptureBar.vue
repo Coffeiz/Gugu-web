@@ -21,13 +21,9 @@
           />
           <div class="cb-foot">
             <!-- 补录：日期可以往回选，落进它「发生」的那天，而不是今天 -->
-            <label class="cb-backfill" :class="{ on: backfill }">
-              <input type="checkbox" v-model="backfill" />
-              {{ t('mind.backfill') }}
-            </label>
+            <Checkbox v-model="backfill" class="cb-backfill" :class="{ on: backfill }">{{ t('mind.backfill') }}</Checkbox>
             <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" :placeholder="t('mind.chooseDateShort')" />
             <div class="cb-right">
-              <span class="cb-hint">{{ t('mind.referenceHint') }}</span>
               <button class="cb-min" :title="t('mind.collapseKeep')" @click="collapse">
                 <PhCaretDown :size="13" weight="bold" />
               </button>
@@ -53,8 +49,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
-import DatePicker from '@/components/common/DatePicker.vue'
-import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
+import { combineTitleBody, mdToPreviewHtml } from '@/composables/mind/useMindEditor'
 import NoteEditor from './NoteEditor.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -239,15 +236,8 @@ async function save() {
    勾上补录后这条 foot 行整体变高，捕捉条展开高度跟着抖一下。缩小到跟这排其它元素齐平。 */
 .cb-date :deep(.dp-input) { padding: 6px 10px; box-sizing: border-box; font-size: 12px; }
 
-/* 提示文字 + 收起 + 记录三个一组贴右边——提示挪到这（原来在 NoteEditor 自己的工具栏里，
-   现在紧挨着收起按钮）。这一行跟编辑器的「样式」「插入」抽屉不在同一行，抽屉展开也不用
-   让位，常驻显示。 */
+/* 收起和记录按钮始终贴右边，避免底部操作区被编辑提示文案挤压。 */
 .cb-right { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
-.cb-hint { font-size: 11px; color: var(--text-secondary); opacity: 0.65; white-space: nowrap; }
-.cb-hint code {
-  padding: 0 3px; border-radius: 3px;
-  background: rgba(123,127,178,0.12); font-size: 10.5px;
-}
 .cb-min {
   flex-shrink: 0; display: inline-flex; padding: 5px;
   border: none; border-radius: 6px; background: none;

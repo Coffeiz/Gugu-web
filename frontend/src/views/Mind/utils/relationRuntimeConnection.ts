@@ -1,5 +1,5 @@
 import type { NodeConnectionEndpoint } from '@/interaction/runtime'
-import type { RelationAnchorSides } from '@/composables/useMindCanvas'
+import type { RelationAnchorSides } from '@/composables/mind/useMindCanvas'
 
 export function createRelationRuntimeConnection(
   sides: RelationAnchorSides | undefined,

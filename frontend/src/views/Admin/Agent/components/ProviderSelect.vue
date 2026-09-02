@@ -32,8 +32,8 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, type PropType } from 'vue'
-import FlipChevron from '@/components/common/FlipChevron.vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { useI18n } from 'vue-i18n'
 
 interface ChildOption { key: string; label: string }

@@ -10,13 +10,15 @@ from typing import Any
 
 class CanvasLayoutEngine:
     DEFAULT_ITEM_SIZES = {
-        "canvas_note": (244, 148),
+        "canvas_note": (240, 140),
         "project": (240, 120),
         "file": (156, 140),
         "event": (220, 96),
     }
     SAFE_EDGE_GAP = 150
     SAFE_CENTER_DISTANCE = 750
+    CANVAS_NOTE_MIN_SIZE = (180, 100)
+    CANVAS_NOTE_MAX_SIZE = (520, 420)
 
     @staticmethod
     def finite_number(value: Any) -> bool:
@@ -29,6 +31,19 @@ class CanvasLayoutEngine:
             "canvas_note" if node_kind == "canvas_note" else node_ref_type,
             self.DEFAULT_ITEM_SIZES["event"],
         )
+
+    def clamp_canvas_note_size(self, width: Any = None, height: Any = None) -> tuple[float | None, float | None]:
+        """限制画布便签尺寸；None 表示继续使用默认尺寸。"""
+        values = []
+        for value, axis in zip((width, height), (0, 1)):
+            if value is None:
+                values.append(None)
+                continue
+            if not self.finite_number(value):
+                raise ValueError("画布便签尺寸必须是有效数字")
+            minimum, maximum = self.CANVAS_NOTE_MIN_SIZE[axis], self.CANVAS_NOTE_MAX_SIZE[axis]
+            values.append(float(min(max(value, minimum), maximum)))
+        return values[0], values[1]
 
     def effective_size(self, node: Any, item: Any = None) -> tuple[int | float, int | float]:
         default_w, default_h = self.default_size(node)

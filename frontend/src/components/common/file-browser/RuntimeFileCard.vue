@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, useAttrs, watch, type PropType } from 'vue'
 import FileCard from './FileCard.vue'
-import { runtime, type TargetItem } from '@/interaction/runtime'
+import { runtime, bindRuntimeObjectPointer, type TargetItem } from '@/interaction/runtime'
 
 defineOptions({ inheritAttrs: false })
 
@@ -46,7 +46,7 @@ watch(elementRef, (element, previous) => {
   if (current?.generation !== generation) return
   if (element === null && current.element && current.element !== previous) return
   stopPointerBinding?.()
-  stopPointerBinding = element ? runtime.bindObjectPointer(props.runtimeId, element) : null
+  stopPointerBinding = element ? bindRuntimeObjectPointer(props.runtimeId, element) : null
   runtime.objects.setElement(props.runtimeId, element)
 }, { flush: 'post' })
 

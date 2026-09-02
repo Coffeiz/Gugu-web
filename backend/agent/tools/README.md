@@ -19,7 +19,7 @@ Tool(
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
 
-生产环境只保留两种注入模式：简介模式（`description`）是默认模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema；全量模式（`full`）是可选的准确性优先模式，向 provider 发送工具源码中的规范 Schema。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
+生产环境只保留两种注入模式：全量模式（`full`）是默认模式，向 provider 发送工具源码中的规范 Schema；简介模式（`description`）是可选的低成本模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
 
 Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`anyOf`、`allOf`、`if/then` 和边界约束表达机器可校验事实；字段级 `description`、`title`、`default`、`example/examples` 默认不写。只有日期格式、清空语义、资源边界等无法可靠结构化表达的信息，才保留一句短说明。注册期 lint 负责拒绝不合规范的新增定义，不在运行时悄悄删除字段说明。
 
@@ -35,6 +35,59 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 
 `_compact_schema` 仅作为 Phase 8 迁移审计辅助，不参与 provider 输出；所有新工具必须直接声明源码规范结构。简介模式的字段签名由该结构自动生成，不得另写一份字段目录。修改后运行
 `PYTHONPATH=. .venv/bin/python scripts/audit_tool_schemas.py`，并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
+
+## 正文编辑统一约定
+
+所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/line_edit.py`，不得重新引入独立的整篇覆盖模式。
+
+```json
+{
+  "mode": "line_edit",
+  "line_edits": [
+    {"target_lines": "8-11", "expected": "原始第八行\n原始第九行\n原始第十行\n原始第十一行", "content": "替换后的内容"},
+    {"target_lines": "15", "expected": "要删除的原始第十五行", "content": ""}
+  ]
+}
+```
+
+`target_lines` 使用 1-based 原始 Markdown 物理行号，支持单行（`8`）、范围（`8-11`）、Bash/`sed` 风格范围（`8,11`）和整篇（`all`）。数字目标必须同时提供读取结果中的 `expected` 原文，范围编辑时用换行连接；原文不匹配会拒绝修改，避免把渲染后的页面行号误当成 Markdown 行号。`content` 为空表示删除目标行；多个范围不得重叠，由工具从后往前应用。调用前必须先读取最新正文，修改后必须重新读取核对；整篇编辑只能使用 `target_lines: "all"`，不再使用 `replace_all`。笔记的追加仍使用 `append_blocks`，不应通过追加“作废说明”替代删除原内容。
+
+新增正文编辑工具时必须遵守同一套边界：读取接口返回原始正文和稳定的物理行号，编辑接口复用 `backend/agent/tools/line_edit.py`，不得依据 UI/HTML/Markdown 渲染后的可见行号；数字目标没有 `expected` 或校验失败时必须拒绝执行，不能猜测或静默改动。编辑成功后必须重新读取同一资源核对，测试至少覆盖行号偏移、过期正文、删除范围、`all` 整篇替换和多范围倒序应用；批量入口也必须逐项沿用这些规则。
+
+## 工具 Schema 防错约定
+
+Schema 必须表达真实调用形状，而不是只声明一个宽泛的 `object`：
+
+- 单项和批量入口使用互斥分支（例如 `item_id` 与 `updates`），每个分支声明自己的必填字段；不能只在 handler 里事后判断。
+- ID 使用 `integer`，坐标使用 `number`，状态使用 `boolean`；不要让模型把数字放在字符串里后再依赖 handler 转换。
+- 批量数组的 `items` 必须声明完整字段、类型、必填条件和 `additionalProperties: false`，不能只写 `items: {}`。
+- 资源 ID 必须由读取工具返回或由用户提供；工具不得根据节点 ID、名称或当前上下文猜测所属资源，以免误操作或越权。
+- 同一字段不能同时支持两套含义；单项、批量、确认参数和危险操作都要在 Schema 中明确互斥关系。新增工具必须补“正确参数通过、缺字段失败、类型错误失败、单批混用失败”的 Schema 测试。
+
+例如画布节点移动必须明确区分：`canvas_id + item_id + (x/y/z/collapsed)`，或 `canvas_id + updates[]`；不能只传节点 ID，也不能把 `"1450"` 当作坐标。
+
+```mermaid
+flowchart LR
+    R[工具 / Skill 注册系统] --> D[能力目录]
+    D --> S[按需选择能力]
+    S --> P[注入简介与紧凑 Schema]
+    P --> L[LLM 提供商]
+    L --> Q{选择调用方式}
+    Q --> CT[call_tool]
+    Q --> US[use_skill]
+    CT --> E[权限、参数与执行校验]
+    US --> ST[注入 Skill 文档注册的工具]
+    ST --> E
+```
+
+| 环节 | 作用 |
+| --- | --- |
+| 注册系统 | 用统一定义快速注册工具和 Skills，声明名称、用途、参数与执行入口 |
+| 能力目录 | 先向 Agent 展示可用能力，避免每轮发送所有完整 Schema |
+| 按需注入 | 根据任务注入相关能力的简介和字段信息，在保持可调用性的同时减少 Token 消耗 |
+| 工具调用 | 模型根据任务选择工具并生成 `call_tool` 请求，由 Runtime 解析参数后执行 |
+| Skills 调用 | 模型通过 `use_skill` 加载对应 Skill；系统再注入该 Skill 文档中注册并选择的工具 Schema |
+| 执行校验 | 由代码最终校验权限、参数和危险操作；群聊中按群组、成员和发起者隔离数据访问与工具权限，再执行实际能力 |
 
 ## 新增工具检查清单
 

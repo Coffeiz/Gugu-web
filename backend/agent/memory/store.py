@@ -12,7 +12,7 @@
 - memory.md  长期记忆：daily 老条目压缩沉淀的长期叙述（compress 生成）
 
 daily 不再"满了直接丢"，而是**按累积条数压缩**：攒到 DAILY_COMPACT_AT 触发，
-最老的并入 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 compress.py）。
+最老的追加进 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 memory_compress.py）。
 DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留数据并等待下次成功压缩。
 
 本模块是 owner（Web）与 IM group/member 记忆共用的"通用共享层"：IM 记忆合并逻辑
@@ -415,8 +415,7 @@ async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
 
 
 # ── memory.md（长期记忆）向量检索：切块 + 逐块缓存 + 语义挑相关段 ──
-# pattern 天生离散，memory.md 是 compress 融合的一整篇叙述——先切块再 embed；且 compress 每次
-# **重写全文**，块文本随之变，用「块文本哈希」当 key：一压，旧哈希 GC、新块补嵌（= 自动重嵌）。
+# pattern 天生离散，memory.md 按事件章节切块；块文本哈希保持追加后的旧向量可复用。
 MEMORY_VEC_FILE = "memory_vec.json"
 
 
@@ -425,21 +424,69 @@ def _chunk_key(text: str) -> str:
 
 
 def _memory_chunks(text: str) -> list[str]:
-    """把 memory.md 切成可 embed 的段：先按空行分段，超长段再按句子边界切到 MEMORY_CHUNK_MAX。"""
+    """按事件章节切块，长章节拆分时保留标题和事件元信息。"""
     text = (text or "").strip()
     if not text:
         return []
+
+    headings = list(re.finditer(r"(?m)^##\s+记录长期记忆：.+$", text))
+    if headings:
+        out: list[str] = []
+        # 兼容章节前的旧式无标题内容，避免迁移期间丢失可检索文本。
+        if headings[0].start() > 0:
+            out.extend(_split_memory_block(text[:headings[0].start()].strip()))
+        for index, match in enumerate(headings):
+            section_end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+            section = text[match.start():section_end].strip()
+            out.extend(_split_memory_section(section))
+        return [chunk for chunk in out if chunk]
+
+    return _split_memory_block(text)
+
+
+def _split_memory_section(section: str) -> list[str]:
+    """短事件整章入片；长事件按小节拆分，并为子片补回事件上下文。"""
+    if len(section) <= MEMORY_CHUNK_MAX:
+        return [section]
+    title, _, body = section.partition("\n")
+    context = "\n".join(
+        line.strip() for line in body.splitlines()
+        if line.strip().startswith(("- 时间：", "- 类型：", "- 状态："))
+    )
+    prefix = "\n".join(line for line in (title.strip(), context) if line).strip()
+    blocks = [block.strip() for block in re.split(r"\n\s*\n|(?=^###\s+)", body, flags=re.MULTILINE) if block.strip()]
+    chunks: list[str] = []
+    content_limit = max(1, MEMORY_CHUNK_MAX - len(prefix) - 2)
+    for block in blocks:
+        if len(f"{prefix}\n\n{block}") <= MEMORY_CHUNK_MAX:
+            chunks.append(f"{prefix}\n\n{block}".strip())
+            continue
+        chunks.extend(
+            f"{prefix}\n\n{part}".strip()
+            for part in _split_memory_block(block, limit=content_limit)
+        )
+    return chunks
+
+
+def _split_memory_block(block: str, *, limit: int = MEMORY_CHUNK_MAX) -> list[str]:
+    """按段落和句子切分普通文本，并保持单块不超过向量输入上限。"""
     out: list[str] = []
-    for para in re.split(r"\n\s*\n", text):
+    for para in re.split(r"\n\s*\n", block):
         para = para.strip()
         if not para:
             continue
-        if len(para) <= MEMORY_CHUNK_MAX:
+        if len(para) <= limit:
             out.append(para)
             continue
         buf = ""
         for sent in re.split(r"(?<=[。！？!?\n])", para):
-            if buf and len(buf) + len(sent) > MEMORY_CHUNK_MAX:
+            while len(sent) > limit:
+                if buf:
+                    out.append(buf.strip())
+                    buf = ""
+                out.append(sent[:limit].strip())
+                sent = sent[limit:]
+            if buf and len(buf) + len(sent) > limit:
                 out.append(buf.strip())
                 buf = sent
             else:
@@ -719,6 +766,17 @@ async def read_memory_doc(user_id) -> str:
 
 async def write_memory_doc(user_id, text: str) -> None:
     await _write(_key(user_id, "memory.md"), text.strip() + "\n")
+
+
+async def append_memory_doc(user_id, additions: str) -> str:
+    """追加长期记忆章节，保留已有正文不重写；返回追加后的全文。"""
+    current = await read_memory_doc(user_id)
+    additions = (additions or "").strip()
+    if not additions:
+        return current
+    combined = f"{current}\n\n{additions}".strip() if current else additions
+    await write_memory_doc(user_id, combined)
+    return combined
 
 
 # ── daily.md（按日期分组渲染；内部仍按「一条记录」计数/压缩）──

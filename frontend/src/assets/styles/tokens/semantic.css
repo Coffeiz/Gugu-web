@@ -47,7 +47,7 @@
   --action-primary: var(--theme-action-primary);
   --action-primary-hover: var(--theme-action-hover);
   --action-primary-pressed: var(--theme-action-pressed);
-  /* Action fills use a restrained vertical gradient: slightly lighter at the top and deeper at the bottom. */
+  /* Primary actions share one restrained gradient; theme-specific contrast is supplied by fill tokens. */
   --action-primary-fill: var(--action-primary);
   --action-primary-fill-hover: var(--action-primary-hover);
   --action-primary-bg: linear-gradient(to bottom,
@@ -64,12 +64,8 @@
      derives a surface-based fill in theme-refinements.css. */
   --action-secondary-fill: rgba(255,255,255,.66);
   --action-secondary-fill-hover: rgba(255,255,255,.82);
-  --action-secondary-bg: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-secondary-fill) 94%, white),
-    color-mix(in srgb, var(--action-secondary-fill) 98%, black));
-  --action-secondary-bg-hover: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-secondary-fill-hover) 94%, white),
-    color-mix(in srgb, var(--action-secondary-fill-hover) 98%, black));
+  --action-secondary-bg: var(--action-secondary-fill);
+  --action-secondary-bg-hover: var(--action-secondary-fill-hover);
   --action-secondary-border: rgba(255,255,255,.78);
   --action-secondary-border-hover: rgba(255,255,255,.88);
   --action-secondary-fg: var(--content-secondary);
@@ -140,6 +136,15 @@
   --layer-modal: 200;
   --layer-drag: 300;
   --layer-chat: 400;
+}
+
+/* cafe 保留原有暖色对比；其他配色的辅助状态色统一收一点饱和度，避免成功/警告/危险/信息
+   在日历、项目状态和徽标中抢过主色。这里放在 semantic 层，所有消费者共享同一条规则。 */
+:root[data-palette]:not([data-palette='cafe']) {
+  --status-success: color-mix(in srgb, var(--theme-success) 82%, var(--content-secondary) 18%);
+  --status-warning: color-mix(in srgb, var(--theme-warning) 82%, var(--content-secondary) 18%);
+  --status-danger: color-mix(in srgb, var(--theme-danger) 82%, var(--content-secondary) 18%);
+  --status-info: color-mix(in srgb, var(--theme-info) 82%, var(--content-secondary) 18%);
 }
 
 /* 暗色导航只保留很轻的提亮，避免 10% 白色混入把侧栏抬成灰亮面板；同时继续

@@ -49,6 +49,7 @@ class User(Base):
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
     is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
     timezone:             Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)   # IANA 时区（如 Asia/Shanghai）；前端首登探测写入，日期归属/展示按它换算（见 docs/backend/时区与时钟迁移方案.md）
+    email_subscribed:    Mapped[bool]          = mapped_column(Boolean, nullable=False, default=False, server_default="false", index=True)  # 是否订阅产品更新邮件
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -65,7 +66,13 @@ class User(Base):
     provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+    smtp_config: Mapped[Optional["UserSmtpConfig"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan", uselist=False
+    )
     security_events: Mapped[list["SecurityEvent"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    email_change_requests: Mapped[list["EmailChangeRequest"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -94,6 +101,31 @@ class SecurityEvent(Base):
     __table_args__ = (
         Index("ix_security_events_user_occurred", "user_id", "occurred_at"),
         Index("ix_security_events_type_occurred", "event_type", "occurred_at"),
+    )
+
+
+class EmailChangeRequest(Base):
+    """待验证邮箱变更；token 只保存不可逆摘要。"""
+
+    __tablename__ = "email_change_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    new_email: Mapped[str] = mapped_column(String(300), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(32), default="email_change", server_default="email_change")
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    request_ip_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="email_change_requests")
+
+    __table_args__ = (
+        Index("ix_email_change_requests_user_created", "user_id", "created_at"),
+        Index("ix_email_change_requests_user_active", "user_id", "used_at", "revoked_at"),
     )
 
 
@@ -150,6 +182,24 @@ class UserProviderCredential(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="provider_credentials")
+
+
+class UserSmtpConfig(Base):
+    """用户自定义 SMTP；密码使用服务端静态加密，永不通过 API 回显。"""
+    __tablename__ = "user_smtp_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer, default=587)
+    user: Mapped[str] = mapped_column(String(300), default="")
+    password: Mapped[str] = mapped_column(EncryptedString, default="")
+    from_addr: Mapped[str] = mapped_column(String(300), default="")
+    use_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="smtp_config")
 
 
 class UserSkill(Base):
@@ -1117,6 +1167,8 @@ class ScheduledTask(Base):
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
     # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时仅沿用 owner 私聊地址，拒绝群聊最近地址。
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    # 用户创建任务时明确授权的自动工具；当前仅允许 send_email，空值表示不自动授权。
+    authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     # 只对一次性任务（cron 形如 "@once:..."）有意义：last_run_at 非空但这个是 True，
     # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；

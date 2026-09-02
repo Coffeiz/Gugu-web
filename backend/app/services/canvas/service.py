@@ -9,6 +9,7 @@ from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from app.models import CalendarEvent, File
+from app.services.canvas.layout_engine import canvas_layout
 from app.search.query import keyword_condition
 
 _RELATION_SIDES = frozenset(("left", "right"))
@@ -133,6 +134,7 @@ async def delete_canvas(db, user_id, canvas_id, *, commit=False):
 async def create_canvas_note(
     db, user_id, canvas_id, title, content, color, x, y, *, w=None, h=None, z=0, commit=False,
 ):
+    w, h = canvas_layout.clamp_canvas_note_size(w, h)
     node = MindNode(
         user_id=user_id, kind="canvas_note", title=title, content_md=content,
         content_plain=to_plain_text(content), color=validate_note_color(color),

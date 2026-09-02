@@ -55,7 +55,7 @@ test('框选日期后可以从侧栏创建带日期范围的项目', async ({ pa
 test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', async ({ page }) => {
   const now = new Date()
   const pad = (value: number) => String(value).padStart(2, '0')
-  const initialDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`
+  const initialDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
   const title = `E2E 活动 ${Date.now()}`
   await page.goto('/calendar')
   const created = await page.evaluate(async ({ title: eventTitle, date }) => {

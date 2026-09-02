@@ -1,7 +1,7 @@
 import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
-import { getGreeting } from '@/composables/useGreeting'
+import { getGreeting } from '@/composables/shared/useGreeting'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'

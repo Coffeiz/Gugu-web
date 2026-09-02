@@ -31,6 +31,9 @@ _log = logging.getLogger("agent.tools")
 _dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
 _dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
 _dispatch_run_id: ContextVar[str | None] = ContextVar("agent_dispatch_run_id", default=None)
+_automation_allowed_tools: ContextVar[frozenset[str]] = ContextVar(
+    "agent_automation_allowed_tools", default=frozenset()
+)
 
 
 def set_dispatch_session_id(session_id: int | None):
@@ -67,6 +70,19 @@ def current_dispatch_session():
 
 def current_dispatch_run_id() -> str | None:
     return _dispatch_run_id.get()
+
+
+def set_automation_allowed_tools(tool_names: set[str] | frozenset[str]):
+    """为明确授权的自动任务设置工具范围；默认没有自动授权。"""
+    return _automation_allowed_tools.set(frozenset(tool_names))
+
+
+def reset_automation_allowed_tools(token) -> None:
+    _automation_allowed_tools.reset(token)
+
+
+def automation_tool_allowed(name: str) -> bool:
+    return name in _automation_allowed_tools.get()
 
 # 脱敏逻辑（连接串/密钥/路径/UUID/traceback）已迁到 app.core.redaction.redact——
 # app.*（API/存储/core）不得反向依赖 agent.*，放这儿会逼它们反依赖 agent；
@@ -397,7 +413,8 @@ class SkillRegistry:
         if issues:
             payload = invalid_input_payload(name, issues, schema=tool.input_schema)
             first_rule = issues[0].get("rule", "invalid")
-            _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}", t0)
+            first_path = issues[0].get("path", "$")
+            _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}:{first_path}", t0)
             return json.dumps(payload, ensure_ascii=False), None
 
         await _maybe_announce_progress(tool, args)
@@ -452,7 +469,9 @@ class SkillRegistry:
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
         if isinstance(result, dict):
-            _ok, _note = (not result.get("error")), str(result.get("error") or "")
+            _pending = bool(result.get("needs_confirm")) or result.get("status") == "waiting_confirmation"
+            _ok = not _pending and not result.get("error") and result.get("status") != "failed"
+            _note = "等待确认" if _pending else str(result.get("message") or result.get("error") or "")
         elif isinstance(result, str):
             _ok = not result.lstrip().startswith('{"error"')
             _note = "" if _ok else result[:120]
@@ -465,7 +484,8 @@ class SkillRegistry:
         # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
         from agent.security import confirm as _confirm
-        if tool.destructive and _ok and not _confirm.is_confirmed(args) and not _confirm.is_block(result):
+        if (tool.destructive and _ok and not automation_tool_allowed(name)
+                and not _confirm.is_confirmed(args) and not _confirm.is_block(result)):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
             _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])
             from app.core import opsmetrics
