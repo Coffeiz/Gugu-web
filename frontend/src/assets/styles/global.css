@@ -229,4 +229,16 @@ body {
    区域时才临时关闭，而不是整段拖拽期间全程关闭）。 */
 /* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
 
+/* Runtime 绑定对象的统一 Safari 拖拽契约。selectstart 由唯一绑定入口拦截，编辑控件显式恢复文本选择。 */
+[data-runtime-draggable] {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+[data-runtime-draggable] :is(input, textarea, [contenteditable='true'], [contenteditable='plaintext-only']) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-user-drag: auto;
+}
+
 /* 多文件拖拽数量徽章（右上角圆形数字） */

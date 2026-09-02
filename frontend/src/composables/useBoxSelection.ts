@@ -108,6 +108,8 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
 
   function _onMouseMove(e: MouseEvent) {
     if (!_cRect || !containerRef.value) return
+    // Safari 会在 document.mousemove 阶段继续扩展原生文字选区；框选已经接管了这次拖动。
+    e.preventDefault()
     const st = containerRef.value.scrollTop
     boxEnd.value = { x: e.clientX - _cRect.left, y: e.clientY - _cRect.top + st }
     _updatePreview()
@@ -136,6 +138,9 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
     if (e.button !== 0) return
     if (excludeSelector && (e.target as HTMLElement | null)?.closest(excludeSelector)) return
     if (!containerRef.value) return
+    // 框选不是文本拖拽；在起点就阻止 Safari 建立选区，并清掉此前残留的文字选中态。
+    e.preventDefault()
+    window.getSelection()?.removeAllRanges()
     _cRect = containerRef.value.getBoundingClientRect()
     const st = containerRef.value.scrollTop
     boxStart.value = { x: e.clientX - _cRect.left, y: e.clientY - _cRect.top + st }

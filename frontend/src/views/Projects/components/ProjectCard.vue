@@ -171,7 +171,7 @@ import { useI18n } from 'vue-i18n'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { runtime } from '@/interaction/runtime'
+import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import Icon from '@/components/common/Icon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -205,7 +205,7 @@ watch(cardRef, (element, previous) => {
   if (current?.generation !== projectGeneration) return
   if (element === null && current.element && current.element !== previous) return
   stopPointerBinding?.()
-  stopPointerBinding = element ? runtime.bindObjectPointer(projectId, element) : null
+  stopPointerBinding = element ? bindRuntimeObjectPointer(projectId, element) : null
   runtime.objects.setElement(projectId, element)
 }, { flush: 'post' })
 watch(() => props.project.status, status => {

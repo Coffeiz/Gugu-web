@@ -1,5 +1,5 @@
 import { onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
-import { runtime } from '@/interaction/runtime'
+import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import type { MoveAction } from '@/interaction/runtime'
 import {
   MIND_CANVAS_OBJECT_TYPE,
@@ -78,7 +78,7 @@ export function useMindRuntimeObject(options: {
     }
     if (boundElement === element) return
     stopBinding?.()
-    stopBinding = runtime.bindObjectPointer(objectId, element)
+    stopBinding = bindRuntimeObjectPointer(objectId, element)
     boundElement = element
     stopResolver?.()
     stopAction?.()
