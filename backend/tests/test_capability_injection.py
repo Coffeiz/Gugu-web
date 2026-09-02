@@ -26,7 +26,7 @@ def test_catalog_contains_short_descriptions_only():
     assert "call_tool" in block
     assert "get_tool_schema" in block
     assert "紧凑字段签名" in block
-    assert "字段签名只展示类型、必填状态和一层结构" in block
+    assert "字段签名只展示类型、简单枚举、必填状态和一层结构" in block
     assert "权限和执行校验由代码完成" in block
 
 
@@ -50,7 +50,7 @@ def test_catalog_exposes_nested_note_content_shape_without_full_schema():
         skills={},
     )
     block = catalog_block(snapshot)
-    assert "blocks(array<object:type:string,content:array<object:type:string,text:string" in block
+    assert "blocks(array<object:type:string[paragraph|heading|bullet_list|ordered_list|task_list|blockquote|code_block|horizontal_rule],content:array<object:type:string[text|reference]" in block
     assert "input_schema" not in block
 
 
