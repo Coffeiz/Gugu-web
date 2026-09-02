@@ -24,6 +24,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const personalityPreference = ref('')
   const personalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
+  const emailChangeEnabled = ref(false)
   const personalityPreferenceRevision = ref(0)
   const locale = ref<SupportedLocale | null>(null)
   const loaded            = ref(false)
@@ -62,6 +63,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       personalityPreference.value = data.personalityPreference ?? ''
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+      emailChangeEnabled.value = (data as any).emailChangeEnabled ?? false
       personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
       applyServerTheme((data as any).theme, (data as any).themeFamily, (data as any).palette)
       locale.value = isSupportedLocale(data.locale) ? data.locale : null
@@ -185,7 +187,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, locale,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
     loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

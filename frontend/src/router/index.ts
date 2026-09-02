@@ -11,6 +11,12 @@ const routes: RouteRecordRaw[] = [
     meta: { authPublic: true },
   },
   {
+    path: '/verify-email-change',
+    name: 'VerifyEmailChange',
+    component: () => import('@/views/VerifyEmailChange.vue'),
+    meta: { authPublic: true },
+  },
+  {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/Register.vue'),

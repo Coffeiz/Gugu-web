@@ -2753,6 +2753,8 @@ export interface components {
             personalityPreferenceUpdatedAt?: string | null;
             /** Personalitypreferenceavailable */
             personalityPreferenceAvailable: boolean;
+            /** Emailchangeenabled */
+            emailChangeEnabled: boolean;
             /**
              * Pmstagesexpanded
              * @default false

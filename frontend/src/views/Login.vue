@@ -18,7 +18,7 @@
             autocomplete="current-password" :disabled="loading" />
         </div>
 
-        <div class="forgot-row">
+        <div v-if="passwordResetEnabled" class="forgot-row">
           <router-link to="/forgot-password">{{ t('auth.forgotPassword') }}</router-link>
         </div>
 
@@ -40,19 +40,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
 import { useI18n } from 'vue-i18n'
+import { fetchSiteConfig } from '@/services/api'
 
 const router   = useRouter()
 const auth     = useAuthStore()
 const form     = reactive({ username: '', password: '' })
 const loading  = ref(false)
 const error    = ref('')
+const passwordResetEnabled = ref(false)
 const { t } = useI18n()
+
+async function loadPasswordResetAvailability() {
+  try {
+    passwordResetEnabled.value = (await fetchSiteConfig()).passwordResetEnabled === true
+  } catch {
+    // 公开配置不可用时保持隐藏，避免展示当前不可用的找回入口。
+    passwordResetEnabled.value = false
+  }
+}
+
+onMounted(() => { void loadPasswordResetAvailability() })
 
 async function handleLogin() {
   if (!form.username || !form.password) { error.value = t('auth.fillCredentials'); return }

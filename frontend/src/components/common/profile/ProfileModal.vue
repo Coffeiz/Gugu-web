@@ -104,7 +104,7 @@ const initial = computed<string>(() => (displayLabel.value.charAt(0) || '?').toU
 
 const navItems = [
   { key: 'info', label: 'sharedUi.personalInfo', icon: 'user.default' },
-  { key: 'account', label: 'sharedUi.account', icon: 'user.security' },
+  { key: 'account', label: 'sharedUi.accountSecurity', icon: 'user.security' },
   { key: 'prefs', label: 'sharedUi.preferences', icon: 'user.settings' },
   { divider: true },
   { key: 'gugu', label: 'sharedUi.guguSettings', icon: 'user.gugu' },

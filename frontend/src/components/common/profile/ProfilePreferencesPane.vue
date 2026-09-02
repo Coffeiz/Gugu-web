@@ -63,10 +63,10 @@
         <div class="pm-coming">{{ t('preferences.unavailable') }}</div>
       </div>
       <div class="pm-field-row">
-        <div class="pm-field-desc"><span class="pm-field-name">{{ t('subscriptionUi.subscribe') }}</span><span class="pm-field-hint">{{ t('subscriptionUi.hint') }}</span></div>
+        <div class="pm-field-desc"><span class="pm-field-name">{{ t('subscriptionUi.preferenceLabel') }}</span><span class="pm-field-hint">{{ t('subscriptionUi.hint') }}</span></div>
         <ToggleSwitch
           :model-value="!!authStore.user?.emailSubscribed"
-          :aria-label="t('subscriptionUi.subscribe')"
+          :aria-label="t('subscriptionUi.preferenceLabel')"
           @update:model-value="onEmailSubscriptionChange"
         />
       </div>
