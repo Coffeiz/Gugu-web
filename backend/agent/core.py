@@ -431,11 +431,16 @@ async def _im_set_tool_state(tool_name: str) -> None:
 class LLMRunner:
     """provider 无关的工具循环执行器。"""
 
-    def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None):
+    def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,
+                 max_rounds: int | None = None, max_tool_calls: int | None = None,
+                 stop_on_budget: bool = False):
         self.tool_names = tool_names
         self.settings = settings
         self.capability_context = capability_context
         self.locale = locale
+        self.max_rounds = max_rounds if max_rounds is not None else MAX_ROUNDS
+        self.max_tool_calls = max_tool_calls if max_tool_calls is not None else MAX_TOOL_CALLS
+        self.stop_on_budget = stop_on_budget
         # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
         # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
         _ov = getattr(getattr(settings, "state_labels", None), "overrides", None) or {}
@@ -766,14 +771,18 @@ class LLMRunner:
                     break
                 verify_rounds += 1
             else:
-                if task_rounds >= MAX_ROUNDS:
+                if task_rounds >= self.max_rounds:
+                    if self.stop_on_budget:
+                        _log.warning("[core] 自动任务 LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
+                        yield f"data: {json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{self.max_rounds} 轮）'}, ensure_ascii=False)}\n\n"
+                        return
                     from app.services.interactions import create_goal_mode_prompt
 
                     interaction = await create_goal_mode_prompt(
                         user_id=user_id, session_id=session_id,
                     )
                     if interaction is None:
-                        yield f"data: {json.dumps({'type': 'token', 'content': '本次已达到 30 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。'}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'token', 'content': f'本次已达到 {self.max_rounds} 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。'}, ensure_ascii=False)}\n\n"
                         return
                     prompt, options = interaction
                     yield stream_event(
@@ -1008,11 +1017,11 @@ class LLMRunner:
                 dispatched = []
                 pending_interaction = None
                 remaining_tool_calls = (
-                    None if (goal_mode or unlimited_mode) else max(0, MAX_TOOL_CALLS - tool_calls_used)
+                    None if (goal_mode or unlimited_mode) else max(0, self.max_tool_calls - tool_calls_used)
                 )
                 round_limit_exceeded = (
                     not (goal_mode or unlimited_mode)
-                    and task_rounds >= MAX_ROUNDS
+                    and task_rounds >= self.max_rounds
                 )
                 tool_budget_exceeded = (
                     remaining_tool_calls is not None
@@ -1020,17 +1029,26 @@ class LLMRunner:
                 )
                 tool_budget_stop_requested = False
                 if round_limit_exceeded or tool_budget_exceeded:
+                    if self.stop_on_budget:
+                        reason = (
+                            f"定时任务达到模型轮次上限（{self.max_rounds} 轮）"
+                            if round_limit_exceeded
+                            else f"定时任务达到工具调用上限（{self.max_tool_calls} 次）"
+                        )
+                        _log.warning("[core] 自动任务预算达到上限：%s", reason)
+                        yield f"data: {json.dumps({'type': 'error', 'detail': reason}, ensure_ascii=False)}\n\n"
+                        return
                     # 两种限制都必须在 dispatch 前暂停整批待执行请求。用户点击继续后，
                     # 先放行这批请求，再解除对应的后续上限，避免模型看到“工具结果已失败”
                     # 后直接总结，或把同一批工具重新规划一遍。
                     if round_limit_exceeded:
-                        _log.warning("[core] LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, MAX_ROUNDS)
+                        _log.warning("[core] LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
                         from app.services.interactions import create_goal_mode_prompt
                         interaction = await create_goal_mode_prompt(
                             user_id=user_id, session_id=session_id,
                         )
                     else:
-                        _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
+                        _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, self.max_tool_calls)
                         from app.services.interactions import create_tool_budget_prompt
                         interaction = await create_tool_budget_prompt(
                             user_id=user_id, session_id=session_id,

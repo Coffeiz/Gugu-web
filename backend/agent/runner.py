@@ -1418,7 +1418,13 @@ async def _run_scheduled_once(
         if capability_context is not None:
             from agent.capabilities.injector import catalog_block
             snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
-        runner = LLMRunner(tool_names, settings, capability_context=capability_context)
+        from agent.scheduled import ScheduledLLMRunner
+
+        runner = ScheduledLLMRunner(
+            tool_names,
+            settings,
+            capability_context=capability_context,
+        )
 
         from app.core.chat_attach import build_user_content
 
