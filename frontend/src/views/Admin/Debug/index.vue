@@ -58,6 +58,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import { classifyLogLevel } from '@/utils/logLevel'
 const { t } = useI18n()
 
 const adminStore = useAdminStore()
@@ -88,11 +89,8 @@ const levelOptions = [
 ]
 
 function rowLevel(line: any) {
-  const u = line.toUpperCase()
-  if (u.includes('ERROR') || u.includes('EXCEPTION') || u.includes('TRACEBACK')) return 'lvl-error'
-  if (u.includes('WARNING') || u.includes('WARN')) return 'lvl-warning'
-  if (u.includes('INFO')) return 'lvl-info'
-  return ''
+  const level = classifyLogLevel(String(line))
+  return level ? `lvl-${level}` : ''
 }
 
 const filtered = computed(() => {
