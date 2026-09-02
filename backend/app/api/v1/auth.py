@@ -160,8 +160,7 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     link = f"{origin}/reset-password?token={token}"
     # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
     try:
-        prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
-        preference_data = prefs.data if prefs else {}
+        preference_data = await get_user_email_preferences(db, user.id)
         await run_in_threadpool(
             email_svc.send_reset_email,
             to_addr=user.email, username=user.display_name or user.username, link=link,
