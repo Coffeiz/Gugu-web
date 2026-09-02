@@ -3,7 +3,7 @@
     <div class="feedback-modal">
           <div class="modal-header">
             <span class="modal-title">{{ t('feedback.title') }}</span>
-            <button class="modal-close" @click="$emit('close')">✕</button>
+            <CloseButton :title="t('common.actions.close')" @click="emit('close')" />
           </div>
 
           <template v-if="!done">
@@ -32,9 +32,11 @@
 
             <div v-if="error" class="error-msg">{{ error }}</div>
 
-            <button class="submit-btn" :disabled="submitting || !content.trim()" @click="submit">
-              {{ submitting ? t('feedback.submitting') : t('feedback.submit') }}
-            </button>
+            <div class="feedback-actions">
+              <ActionButton class="submit-btn" :disabled="submitting || !content.trim()" @click="submit">
+                {{ submitting ? t('feedback.submitting') : t('feedback.submit') }}
+              </ActionButton>
+            </div>
           </template>
 
           <!-- 成功态 -->
@@ -51,10 +53,12 @@
 import { ref, computed, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ show: Boolean })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 const { t } = useI18n()
 
 async function apiFeedback(category: string, content: string) {
@@ -110,18 +114,12 @@ async function submit() {
 </script>
 
 <style scoped>
-.feedback-modal { padding: 28px 28px 24px; }
+.feedback-modal { padding: 20px 28px 24px; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 .modal-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
-.modal-close {
-  background: none; border: none; font-size: 14px;
-  color: var(--content-secondary); cursor: pointer; padding: 2px 6px;
-  border-radius: 6px; transition: background 0.15s;
-}
-.modal-close:hover { background: var(--action-soft); color: var(--content-primary); }
 
 .cat-row { display: flex; gap: 8px; margin-bottom: 14px; }
 .cat-btn {
@@ -169,15 +167,8 @@ async function submit() {
   background: var(--status-danger-bg); border: 1px solid color-mix(in srgb,var(--status-danger) 22%,transparent);
 }
 
-.submit-btn {
-  width: 100%; padding: 10px;
-  background: var(--action-primary-bg);
-  border: none; border-radius: 10px;
-  font-size: 13px; font-weight: 600; color: var(--content-on-accent);
-  cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: var(--elevation-card);
-}
-.submit-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.feedback-actions { display: flex; width: 100%; }
+.submit-btn { width: 100%; min-width: 0; flex: 1 1 auto; }
 .submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .done-state {
