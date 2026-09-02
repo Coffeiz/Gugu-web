@@ -34,3 +34,14 @@ def test_timestamped_stream_flushes_partial_line():
     stream.flush()
 
     assert re.match(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2} partial$", target.getvalue())
+
+
+def test_timestamped_stream_mirrors_to_optional_log_file(tmp_path):
+    target = io.StringIO()
+    log_path = tmp_path / "worker.log"
+    stream = _TimestampedStream(target, str(log_path))
+
+    stream.write("worker message\n")
+    stream.flush()
+
+    assert log_path.read_text() == target.getvalue()

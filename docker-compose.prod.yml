@@ -96,6 +96,7 @@ services:
     environment:
       PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DOCKER_HOST: unix:///run/gugu/docker.sock
+      GUGU_LOG_FILE: /app/logs/gugu.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -127,6 +128,7 @@ services:
       - gugu_config:/config
       - sandbox_socket:/run/gugu
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+      - gugu_logs:/app/logs
     restart: unless-stopped
 
   worker:
@@ -136,6 +138,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      GUGU_LOG_FILE: /app/logs/gugu-worker.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -163,6 +166,7 @@ services:
       - gugu_data:/data
       - gugu_config:/config
       - sandbox_socket:/run/gugu
+      - gugu_logs:/app/logs
     restart: unless-stopped
 
   # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
@@ -173,6 +177,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      GUGU_LOG_FILE: /app/logs/gugu-gateway.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -193,6 +198,7 @@ services:
     volumes:
       - gugu_data:/data
       - gugu_config:/config
+      - gugu_logs:/app/logs
     restart: unless-stopped
 
   sandboxd:
@@ -255,6 +261,7 @@ volumes:
   gugu_data:
   gugu_config:
   sandbox_socket:
+  gugu_logs:
 
 networks:
   egress_internal:

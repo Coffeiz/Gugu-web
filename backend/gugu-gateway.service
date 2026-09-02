@@ -30,7 +30,7 @@ StandardError=append:__APP_DIR__/logs/gugu-gateway.log
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=__DATA_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
+ReadWritePaths=__DATA_DIR__ __APP_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
 
 [Install]
 WantedBy=multi-user.target

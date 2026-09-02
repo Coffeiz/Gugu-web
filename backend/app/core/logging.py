@@ -8,6 +8,8 @@
 import asyncio
 from app.core.tz import now_utc
 import logging
+import os
+from pathlib import Path
 import queue
 import re
 import sys
@@ -26,8 +28,17 @@ class _TimestampedStream:
     业务日志调用的前提下，让文件日志和 Admin tail 都保留真实 emit 时间。
     """
 
-    def __init__(self, stream):
+    def __init__(self, stream, log_path: str | None = None):
         self._stream = stream
+        self._file = None
+        if log_path:
+            try:
+                path = Path(log_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self._file = path.open("a", encoding="utf-8", buffering=1)
+            except OSError:
+                # 文件日志是 Docker Debug 面板的增强能力，不能阻塞原有 stdout/stderr。
+                self._file = None
         self._pending = ""
 
     def write(self, data: str) -> int:
@@ -43,6 +54,8 @@ class _TimestampedStream:
             if line.strip() and not _LINE_TIMESTAMP_RE.match(line):
                 line = f"{datetime.now().strftime('%m-%d %H:%M:%S')} {line}"
             self._stream.write(line)
+            if self._file is not None:
+                self._file.write(line)
         return len(data)
 
     def flush(self) -> None:
@@ -52,7 +65,11 @@ class _TimestampedStream:
             if line.strip() and not _LINE_TIMESTAMP_RE.match(line):
                 line = f"{datetime.now().strftime('%m-%d %H:%M:%S')} {line}"
             self._stream.write(line)
+            if self._file is not None:
+                self._file.write(line)
         self._stream.flush()
+        if self._file is not None:
+            self._file.flush()
 
     def __getattr__(self, name):
         return getattr(self._stream, name)
@@ -60,10 +77,11 @@ class _TimestampedStream:
 
 def setup_process_output() -> None:
     """为独立 worker/gateway/网关进程的标准输出补时间戳。"""
+    log_path = os.environ.get("GUGU_LOG_FILE") or None
     if not isinstance(sys.stdout, _TimestampedStream):
-        sys.stdout = _TimestampedStream(sys.stdout)
+        sys.stdout = _TimestampedStream(sys.stdout, log_path)
     if not isinstance(sys.stderr, _TimestampedStream):
-        sys.stderr = _TimestampedStream(sys.stderr)
+        sys.stderr = _TimestampedStream(sys.stderr, log_path)
 
 
 class DbLogHandler(logging.Handler):
@@ -146,6 +164,18 @@ def setup_logging():
         console.setFormatter(console_fmt)
         console._gugu_console = True
         root.addHandler(console)
+
+    log_path = os.environ.get("GUGU_LOG_FILE")
+    if log_path and not any(getattr(h, "_gugu_file", False) for h in root.handlers):
+        try:
+            path = logging.FileHandler(log_path, encoding="utf-8")
+            path.setLevel(logging.INFO)
+            path.setFormatter(console_fmt)
+            path._gugu_file = True
+            root.addHandler(path)
+        except OSError:
+            # Docker 文件日志不可用时仍保留 stdout/stderr 和数据库日志。
+            pass
 
     # 抑制第三方库噪声
     for noisy in ("httpx", "httpcore", "openai", "anthropic", "uvicorn.access"):
