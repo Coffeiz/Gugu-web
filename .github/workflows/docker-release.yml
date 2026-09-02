@@ -167,7 +167,7 @@ jobs:
           cosign sign --yes "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
 
       - name: Scan published images
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REPOSITORY }}-backend@${{ steps.backend-image.outputs.digest }}
           format: table
@@ -176,7 +176,7 @@ jobs:
           exit-code: '1'
 
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REPOSITORY }}-frontend@${{ steps.frontend-image.outputs.digest }}
           format: table
