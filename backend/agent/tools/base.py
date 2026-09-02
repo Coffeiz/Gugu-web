@@ -413,7 +413,8 @@ class SkillRegistry:
         if issues:
             payload = invalid_input_payload(name, issues, schema=tool.input_schema)
             first_rule = issues[0].get("rule", "invalid")
-            _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}", t0)
+            first_path = issues[0].get("path", "$")
+            _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}:{first_path}", t0)
             return json.dumps(payload, ensure_ascii=False), None
 
         await _maybe_announce_progress(tool, args)
