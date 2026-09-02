@@ -61,6 +61,7 @@ Lower layers must not depend on higher layers. Business components must not depe
 
 - Foundation scales use --space-*, --font-size-*, --radius-*, --font-family-*, --elevation-*, and --motion-*.
 - Semantic surfaces use --surface-*, text uses --content-*, edges use --border-*, actions use --action-*, and state uses --status-*.
+- **Canvas background and grid**: `--mind-canvas-bg` must compose semantic surfaces with the active `--action-primary`. A restrained low-saturation same-hue gradient is allowed, but hard-coded grey-blue mixes are forbidden because they pull every palette toward one shared tint; `--mind-canvas-dot` must also reference the active palette action token.
 - Component contracts use prefixes such as --control-*, --input-*, --choice-chip-*, --modal-card-*, --danger-button-*, --project-card-*, and --gugu-*.
 - Define rest, hover, active/selected, focus-visible, disabled, and danger states together where applicable.
 - Keep one public token for one meaning. Do not create parallel aliases such as --text-main, --text-primary, and --content-primary.
@@ -147,6 +148,7 @@ Page-specific event forms, Admin controls, and one-page business cards stay unde
 - Use unframed page sections; reserve cards for repeated items, modals, and genuinely framed tools.
 - Use glass only for a meaningful panel or floating layer, with readable contrast in dark mode.
 - Hover, focus, and pressed states must transition with one owner. Do not stack overlays, pseudo-elements, and component state for one effect.
+- **Note top highlight**: A note card's border and `::after` inset top highlight must have one visual owner. Light notes use a neutral white highlight; do not layer a palette-colored `--border-highlight` line inside the white highlight. If dark mode needs stronger contrast, map it separately in the same component token.
 - Canvas nodes, drag proxies, and landing nodes must follow Runtime ownership of transform, opacity, and visibility.
 - Respect prefers-reduced-motion without removing necessary state or drag feedback.
 

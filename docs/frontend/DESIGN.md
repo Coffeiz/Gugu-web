@@ -76,6 +76,7 @@ Token 必须沿着“基础值 -> 主题/色板 -> 语义角色 -> 组件契约�
 `
 
 - 页面背景、面板、浮层分别使用 `surface-page`、`surface-base/raised`、`surface-floating/glass` 等语义角色。
+- **画布背景与点阵**：`--mind-canvas-bg` 必须使用语义 surface 与当前 `--action-primary` 组合，允许保留低饱和同色系渐变，但禁止写死灰蓝等混合色，否则会把所有 palette 拉向同一种色调；`--mind-canvas-dot` 也必须引用当前 palette 的 action token。
 - 正文、辅助信息、时间和禁用态分别使用 `content-primary/secondary/tertiary/disabled`。
 - 主操作使用 `action-primary-*`；次要操作使用 `action-secondary-*`；选择态使用 `selection-*`；错误/删除使用 `danger-*` 或 `status-danger-*`。
 - hover 要改变卡片/控件本体的 token，不要在文字或图标上盖一层遮罩。背景、边框、阴影和文字状态应属于同一个组件契约。
@@ -145,6 +146,7 @@ Token 必须沿着“基础值 -> 主题/色板 -> 语义角色 -> 组件契约�
 - 页面章节使用无框架布局；卡片只用于重复条目、弹窗和真正需要边界的工具，不要卡片套卡片。
 - 玻璃效果只用于有明确层级的面板/浮层；背景、边框和内容对比度必须在暗色模式下可读。
 - hover/focus/pressed 必须淡入淡出且只有一个 owner。不要叠加 overlay、伪元素和组件状态来模拟同一个效果。
+- **便签顶部高光**：卡片边框和 `::after` 顶部 inset 高光只能保留一层视觉 owner。亮色便签使用中性白色高光，不要在白色高光内部再叠加 `--border-highlight` 等 palette 色线；暗色模式如需增强对比度，必须在同一个组件 token 中单独映射。
 - 画布节点、拖拽代理和 landing 节点必须遵守 Runtime 的 transform/opacity/visibility 所有权；业务 CSS 不得根据 phase 猜测 hover。
 - 使用 `prefers-reduced-motion` 时降低或关闭非必要动画，但不能破坏状态变化和拖拽反馈。
 
