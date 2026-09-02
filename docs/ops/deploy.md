@@ -137,7 +137,7 @@ python3 -m venv .venv                 # 建虚拟环境（脚本/Makefile 默认
 
 ### 3.3 配置
 
-两层：`.env`（基础值）+ Admin 面板写的 `config.override.json`（优先级最高，运行时热合并）。
+Compose 部署使用两份环境文件：项目根目录 `.env` 仅保存 Compose 编排变量，`backend/.env` 保存后端应用运行配置；两者都由 Admin 面板写入的 `config.override.json`（优先级最高，运行时热合并）补充或覆盖。
 
 最小可跑：建 `backend/.env`（嵌套用双下划线 `__`）：
 
@@ -163,7 +163,7 @@ REDIS__PORT=6379
 # AI / 存储 / 飞书等：建议启动后在 Admin 面板配（写入 config.override.json）
 ```
 
-> `.env` 和 `config.override.json` 都已 gitignore，不入库。AI key、飞书凭据等敏感配置**优先用 Admin 面板**填。
+> 根目录 `.env`、`backend/.env` 和 `config.override.json` 都已 gitignore，不入库。AI key、飞书凭据等敏感配置**优先用 Admin 面板**填。
 
 ### 3.4 数据库
 
@@ -861,7 +861,7 @@ scripts/release/compose-update.sh \
 
 部署安全约束：Compose 文件统一固定 project name 为 `gugu-web-compose`，从而保证数据库始终使用同一个 `gugu-web-compose_pgdata` 卷。不要通过改 project name、`-p` 参数或 `docker compose down -v` 启动/清理生产环境；更新前应先确认 `docker inspect gugu-web-compose-postgres-1` 的挂载卷仍为该卷。systemd/源码部署使用 `backend/deploy.sh` 时，会在迁移前生成包含 PostgreSQL custom-format dump 的完整备份，并在迁移后检查关键表和 Alembic 版本；数据库备份失败会直接中止部署。
 
-更新脚本依赖环境中已有的 `GUGU_DB_PASSWORD` 和 `GUGU_ADMIN_PASSWORD`，不会从仓库文件或命令参数打印这些凭据。`COSIGN_IDENTITY_REGEXP` 和 `COSIGN_OIDC_ISSUER` 可用于企业部署时收紧签名发布者范围。
+更新脚本依赖环境中已有的 `GUGU_DB_PASSWORD`，并从 `backend/.env` 校验 `ADMIN_PASSWORD`，不会从仓库文件或命令参数打印这些凭据。`COSIGN_IDENTITY_REGEXP` 和 `COSIGN_OIDC_ISSUER` 可用于企业部署时收紧签名发布者范围。
 
 ```bash
 # scp/rsync 传新代码后：
@@ -1090,7 +1090,8 @@ MemoryMax=512M
 | 路径                             | 内容                                |
 | ------------------------------ | --------------------------------- |
 | `backend/.venv/`               | Python 虚拟环境                       |
-| `backend/.env`                 | 基础配置（gitignore）                   |
+| `.env`                         | Compose 编排配置（gitignore）           |
+| `backend/.env`                 | 后端应用配置（gitignore）               |
 | `backend/config.override.json` | Admin 写入的配置，含频道/AI 凭据（gitignore）  |
 | `backend/logs/gugu.log`        | web 日志                            |
 | `Gugu-data/users/`             | 用户文件 + Shell 沙盒 + 咕咕 `.agent/` 记忆（gitignore） |

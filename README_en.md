@@ -144,10 +144,10 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.example backend/.env
-# Edit backend/.env and set SECRET_KEY and model configuration.
-# Preview Compose also requires explicit admin and database passwords.
-export GUGU_ADMIN_PASSWORD="$(openssl rand -base64 32)"
+cp .env.example .env
+cp backend/.env.example backend/.env
+# Edit backend/.env and set SECRET_KEY, admin, and model configuration.
+# Edit the root .env and set the Compose database password.
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
 docker compose up -d --build
 ```
@@ -160,9 +160,10 @@ SECRET_KEY=replace-with-a-long-random-string
 AI__PROVIDER=qwen
 AI__API_KEY=your-provider-api-key
 
-# Project-root .env: Compose and admin configuration
-GUGU_ADMIN_USERNAME=admin
-GUGU_ADMIN_PASSWORD=replace-with-an-admin-password
+# backend/.env: admin configuration
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=replace-with-an-admin-password
+# Project-root .env: Compose configuration only
 GUGU_DB_PASSWORD=replace-with-a-database-password
 # Public site origin used in email verification and password-reset links
 GUGU_PUBLIC_APP_URL=http://localhost:9595
@@ -177,9 +178,9 @@ Open:
 - Gugu: <http://localhost:9595>
 - Admin: <http://localhost:9595/admin/>
 
-The first run initializes the database and applies migrations. `GUGU_ADMIN_USERNAME` and `GUGU_ADMIN_PASSWORD` control the Admin account; there is no public default admin password.
+The first run initializes the database and applies migrations. `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `backend/.env` control the Admin account; there is no public default admin password.
 
-You can also set `GUGU_ADMIN_PASSWORD=...` temporarily with `export` before starting Compose. See the [Deployment Guide](docs/DEPLOY.md) for the complete Compose parameters and configuration locations.
+See the [Deployment Guide](docs/DEPLOY.md) for the complete Compose parameters and configuration locations.
 
 To enable the Shell sandbox:
 

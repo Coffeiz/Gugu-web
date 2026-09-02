@@ -16,7 +16,8 @@
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.example backend/.env
+cp .env.example .env
+cp backend/.env.example backend/.env
 ```
 
 编辑 `backend/.env`，至少修改 `SECRET_KEY`：
@@ -25,13 +26,14 @@ cp .env.example backend/.env
 SECRET_KEY=请替换为随机长字符串
 ```
 
-管理员账号和密码通过 Compose 环境变量设置：
+管理员账号和密码统一写入 `backend/.env`：
 
-```bash
-export GUGU_ADMIN_USERNAME=admin
-export GUGU_ADMIN_PASSWORD='请替换为管理员密码'
-export GUGU_DB_PASSWORD='请替换为数据库密码'
+```dotenv
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=请替换为管理员密码
 ```
+
+根目录 `.env` 只放 Compose 编排变量，例如 `GUGU_DB_PASSWORD`、端口和镜像地址；不要在根目录重复配置管理员账号密码。
 
 构建并启动服务：
 
@@ -47,15 +49,11 @@ docker compose up -d --build
 
 ## Compose 配置
 
-Compose 会读取项目根目录的 `.env` 和当前 Shell 环境变量。`backend/.env` 由后端容器读取，主要放应用配置；数据库、Redis、端口、镜像和管理员账号等 Compose 参数建议放在项目根目录 `.env`，或在启动前用 `export` 设置。
+Compose 会读取项目根目录的 `.env` 和当前 Shell 环境变量。`backend/.env` 是唯一的应用运行配置，容器通过 `env_file` 读取；根目录 `.env` 只用于 Compose 变量替换和基础设施配置。
 
 可以直接在项目根目录创建 `.env`，按需填写下面的 Compose 配置：
 
 ```dotenv
-# Admin 账号
-GUGU_ADMIN_USERNAME=admin
-GUGU_ADMIN_PASSWORD=请替换为强密码
-
 # PostgreSQL
 # Preview Compose 默认使用容器名 postgres；跨主机部署时改成实际地址
 GUGU_DB_HOST=postgres
@@ -88,7 +86,7 @@ GUGU_SANDBOX_NETWORK_PROFILE=egress
 
 生产 Compose 仍要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。根目录 Preview Compose 默认使用本地 `:local` 镜像。
 
-完整的应用配置仍放在 `backend/.env`，模板见 [`.env.example`](../.env.example)。
+完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
 
 `GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:8000` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
 
@@ -122,12 +120,11 @@ docker compose --profile sandbox up -d
 ```bash
 export GUGU_BACKEND_IMAGE='请填写后端镜像地址:latest'
 export GUGU_FRONTEND_IMAGE='请填写前端镜像地址:latest'
-export GUGU_ADMIN_PASSWORD='请设置强密码'
 export GUGU_DB_PASSWORD='请设置数据库密码'
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-也可以把这些变量写入项目根目录的 `.env`，再执行启动命令。镜像地址和标签请替换为实际发布版本。
+数据库、镜像地址和标签等 Compose 变量可以写入项目根目录的 `.env`，管理员密码仍只写入 `backend/.env`。
 
 需要沙盒时：
 
