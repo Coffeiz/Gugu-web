@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       # 集成 job 通过 VITE_USE_LOCAL_RUNTIME=1 显式验证 pinned Runtime 构建产物；
       # 普通/生产构建使用 frontend/package.json 中的 npm Runtime 包。
@@ -106,7 +106,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 26
           cache: npm
           cache-dependency-path: gugu-interaction-runtime/package-lock.json
 
@@ -131,7 +131,7 @@ jobs:
     # 后端完整 pytest 覆盖依赖真实 PostgreSQL/Redis；RAG 测试另行构建 TS worker。
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:latest
         env:
           POSTGRES_USER: pm
           POSTGRES_PASSWORD: pm123
@@ -144,7 +144,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -172,7 +172,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             backend/requirements.txt
@@ -189,7 +189,7 @@ jobs:
       - name: Setup Node and build RAG worker
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Install RAG worker dependencies
         run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --frozen-lockfile
@@ -290,7 +290,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:latest
         env:
           POSTGRES_USER: pm
           POSTGRES_PASSWORD: pm123
@@ -303,7 +303,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -355,7 +355,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             backend/requirements.txt
@@ -396,7 +396,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Install Runtime dependencies for integration alias
         working-directory: gugu-interaction-runtime
@@ -482,7 +482,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Install LoopScope dependencies
         working-directory: loopscope

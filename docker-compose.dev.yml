@@ -23,7 +23,7 @@ x-json-file-logging: &json-file-logging
 services:
   postgres:
     logging: *json-file-logging
-    image: postgres:16-alpine
+    image: postgres:latest
     environment:
       POSTGRES_USER: ${GUGU_DB_USER:-gugu}
       POSTGRES_PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
@@ -40,7 +40,7 @@ services:
 
   redis:
     logging: *json-file-logging
-    image: redis:7-alpine
+    image: redis:latest
     environment:
       GUGU_REDIS_PASSWORD: ${GUGU_REDIS_PASSWORD:-}
     command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server; fi"]

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # 咕咕前端生产镜像：构建 dist 后只保留 Nginx 静态站点。
-FROM node:22-slim AS build
+FROM node:latest AS build
 
 WORKDIR /workspace
 RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
@@ -14,7 +14,7 @@ COPY frontend/ ./frontend/
 WORKDIR /workspace/frontend
 RUN pnpm build
 
-FROM nginx:1-alpine
+FROM nginx:alpine
 RUN apk upgrade --no-cache
 COPY --from=build /workspace/frontend/dist /usr/share/nginx/html
 COPY frontend/nginx.prod.conf /etc/nginx/conf.d/default.conf

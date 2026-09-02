@@ -4,7 +4,7 @@
 ## 见 start.sh install），原因是 IM 网关（飞书/QQ/微信）常驻长连接 + 语音/文档转码要调
 ## libreoffice/ffmpeg 等系统工具，装进容器体积和运维复杂度都不划算；这个镜像只覆盖
 ## web（uvicorn）和 worker（IM 队列消费）两个进程，够本地跑通全栈、验证功能。
-FROM python:3.12-slim
+FROM python:latest
 
 # poppler-utils → pdftotext（文件预览正文提取）；fonts-noto-cjk → LibreOffice 中文 PDF 字形；
 # ffmpeg → IM 语音消息转码；curl → HEALTHCHECK
