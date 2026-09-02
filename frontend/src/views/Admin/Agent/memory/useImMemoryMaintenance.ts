@@ -14,7 +14,7 @@ export function useImMemoryMaintenance(adminStore: AdminStore) {
     summary: { total_scopes: 0, groups: 0, members: 0, total_entries: 0, pending_jobs: 0, needs_maintenance: 0, failed_jobs: 0, platforms: [] } as Summary,
     applying: false,
   })
-  const preview = reactive({ hasRun: false, running: false, message: '', done: 0, total: 0, needsReview: 0, failed: 0, planReady: false })
+  const preview = reactive({ hasRun: false, running: false, message: '', done: 0, total: 0, needsReview: 0, failed: 0, totalBatches: 0, completedBatches: 0, truncatedBatches: 0, planReady: false })
   let timer: ReturnType<typeof setInterval> | null = null
   const stop = () => { if (timer !== null) { clearInterval(timer); timer = null } }
 
@@ -38,11 +38,12 @@ export function useImMemoryMaintenance(adminStore: AdminStore) {
       const data = await res.json(); if (!res.ok) throw new Error(data.detail || data.message || '读取模型预览失败')
       preview.running = data.status === 'running'; preview.done = Number(data.done || 0); preview.total = Number(data.total || 0)
       preview.needsReview = Number(data.needs_review || 0); preview.failed = Number(data.failed || 0)
+      preview.totalBatches = Number(data.total_batches || 0); preview.completedBatches = Number(data.completed_batches || 0); preview.truncatedBatches = Number(data.truncated_batches || 0)
       preview.planReady = data.plan_ready === undefined ? data.status === 'done' && preview.needsReview > 0 : Boolean(data.plan_ready)
-      if (preview.running) preview.message = `模型预览中 ${preview.done}/${preview.total}`
+      if (preview.running) preview.message = `模型预览中 ${preview.done}/${preview.total} 个作用域，${preview.completedBatches}/${preview.totalBatches} 批次`
       else if (data.status === 'done') {
         preview.hasRun = true
-        preview.message = `模型预览完成：${preview.needsReview} 个作用域有可提炼内容${preview.failed ? `，失败 ${preview.failed} 个` : ''}`
+        preview.message = `模型预览完成：${preview.needsReview} 个作用域，${preview.completedBatches}/${preview.totalBatches} 批次${preview.failed ? `，失败 ${preview.failed} 个` : ''}${preview.truncatedBatches ? `，超长 ${preview.truncatedBatches} 批` : ''}`
         stop(); await loadScopes()
       }
     } catch (error) { preview.running = false; preview.message = error instanceof Error ? error.message : '读取模型预览失败'; stop() }

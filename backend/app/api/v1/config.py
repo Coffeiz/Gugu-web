@@ -8,6 +8,7 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import time
@@ -1013,6 +1014,24 @@ _MEM_CLEANUP_KEY = "mem_cleanup:plan"
 _MEM_CLEANUP_STALE_SECONDS = 600
 
 
+async def _memory_cleanup_revision(user_id: str, storage) -> str:
+    """只对维护涉及的文件内容做哈希，不把记忆正文写入计划或日志。"""
+    from agent.memory.store import _key
+
+    digest = hashlib.sha256()
+    for name in (
+        "pattern.json", "profile.json", "daily.md", "memory.md",
+        "facts.json", "facts.md", "facts_vec.json",
+    ):
+        key = _key(user_id, name)
+        digest.update(name.encode("utf-8"))
+        if not await storage.exists(key):
+            digest.update(b"<missing>")
+            continue
+        digest.update(await storage.get(key))
+    return digest.hexdigest()
+
+
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
     from scripts.refresh_memory import _migrate_daily, _migrate_profile_events, _review_patterns, _split_profile
     from agent.memory.store import _key, PATTERN_FILE
@@ -1023,12 +1042,20 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
     storage = get_storage()
     plan: dict = {}
     done = 0
+    total_batches = 0
+    completed_batches = 0
+    failed_users = 0
     for uid in user_ids:
         try:
             review = await _review_patterns(uid, settings, dry_run=True, trials=3, temperature=0.1)
             split = await _split_profile(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            if review.get("error") or split.get("error"):
+                failed_users += 1
             profile_events = await _migrate_profile_events(uid, settings, dry_run=True)
             daily = await _migrate_daily(uid, settings, dry_run=True)
+            source_revision = await _memory_cleanup_revision(uid, storage)
+            total_batches += int(review.get("batch_count") or 0) + int(split.get("batch_count") or 0)
+            completed_batches += int(review.get("successful_batches") or 0) + int(split.get("successful_batches") or 0)
             legacy_files = []
             if await storage.exists(_key(uid, PATTERN_FILE)):
                 for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
@@ -1044,14 +1071,21 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
                     "daily_texts": daily.get("migrated_texts", []),
                     "legacy_files": legacy_files,
                     "total": review.get("total", 0),
+                    "source_revision": source_revision,
+                    "batch_count": int(review.get("batch_count") or 0) + int(split.get("batch_count") or 0),
                 }
         except Exception as e:
             plan[uid] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
         done += 1
+        # 批次计数用于 Admin 进度展示；不记录记忆正文。
         await r.set(_MEM_CLEANUP_KEY, json.dumps(
-            {"status": "running", "done": done, "total": len(user_ids), "plan": plan, "ts": time.time()}))
+            {"status": "running", "done": done, "total": len(user_ids), "plan": plan,
+             "total_batches": total_batches, "completed_batches": completed_batches,
+             "failed_users": failed_users, "plan_ready": failed_users == 0, "ts": time.time()}))
     await r.set(_MEM_CLEANUP_KEY, json.dumps(
-        {"status": "done", "done": done, "total": len(user_ids), "plan": plan, "ts": time.time()}), ex=3600)
+        {"status": "done", "done": done, "total": len(user_ids), "plan": plan,
+         "total_batches": total_batches, "completed_batches": completed_batches,
+         "failed_users": failed_users, "plan_ready": failed_users == 0, "ts": time.time()}), ex=3600)
 
 
 @router.post("/memory-cleanup/preview")
@@ -1113,8 +1147,13 @@ async def memory_cleanup_apply():
     data = json.loads(raw if isinstance(raw, str) else raw.decode())
     if data.get("status") != "done":
         raise HTTPException(400, "预览还没跑完，等它跑完再确认")
+    if not data.get("plan_ready", False):
+        raise HTTPException(400, "记忆维护预览包含失败用户，请重新生成预览")
     applied_users, applied_total, moved_total, profile_event_total, daily_total, legacy_total = 0, 0, 0, 0, 0, 0
     for uid, p in (data.get("plan") or {}).items():
+        expected_revision = p.get("source_revision")
+        if not expected_revision or expected_revision != await _memory_cleanup_revision(uid, storage):
+            raise HTTPException(409, "记忆维护预览已过期，源数据发生变化，请重新生成预览")
         remove_ids = set(p.get("removed_ids") or [])
         move_ids = set(p.get("moved_ids") or [])
         moved_texts = p.get("moved_texts") or []

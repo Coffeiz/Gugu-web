@@ -11,6 +11,8 @@ export interface MemCleanupPlanItem {
   daily_texts?: string[]
   legacy_files?: string[]
   total?: number
+  batch_count?: number
+  source_revision?: string
   error?: string
 }
 
@@ -43,11 +45,11 @@ export function useMemoryMaintenance(adminStore: AdminStore) {
       state.status = data.status ?? 'idle'
       if (data.status === 'running') {
         state.running = true; state.done = data.done || 0; state.total = data.total || 0
-        state.msg = `预览中 ${state.done}/${state.total}`; state.error = false
+        state.msg = `预览中 ${state.done}/${state.total} 用户，${data.completed_batches || 0}/${data.total_batches || 0} 批次`; state.error = false
         if (!timer) timer = setInterval(() => void poll(), 2000)
       } else if (data.status === 'done') {
         state.running = false; state.error = false; state.plan = data.plan || {}
-        state.msg = `预览完成（共 ${data.total || 0} 个用户）`; stop()
+        state.msg = `预览完成（${data.total || 0} 个用户，${data.completed_batches || 0}/${data.total_batches || 0} 批次）`; stop()
       } else {
         state.running = false; stop()
       }
