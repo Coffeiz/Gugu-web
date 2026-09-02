@@ -56,19 +56,34 @@
       </div>
     </div>
     <div class="pm-sep"></div>
-    <div class="pm-section"><div class="pm-section-label">{{ t('preferences.notifications') }}</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('preferences.deadlineNotice') }}</span><span class="pm-field-hint">{{ t('preferences.deadlineNoticeHint') }}</span></div><div class="pm-coming">{{ t('preferences.unavailable') }}</div></div></div>
+    <div class="pm-section">
+      <div class="pm-section-label">{{ t('preferences.notifications') }}</div>
+      <div class="pm-field-row">
+        <div class="pm-field-desc"><span class="pm-field-name">{{ t('preferences.deadlineNotice') }}</span><span class="pm-field-hint">{{ t('preferences.deadlineNoticeHint') }}</span></div>
+        <div class="pm-coming">{{ t('preferences.unavailable') }}</div>
+      </div>
+      <div class="pm-field-row">
+        <div class="pm-field-desc"><span class="pm-field-name">{{ t('subscriptionUi.subscribe') }}</span><span class="pm-field-hint">{{ t('subscriptionUi.hint') }}</span></div>
+        <ToggleSwitch
+          :model-value="!!authStore.user?.emailSubscribed"
+          :aria-label="t('subscriptionUi.subscribe')"
+          @update:model-value="onEmailSubscriptionChange"
+        />
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { usePreferencesStore } from '@/stores/preferences'
-import { useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/useTheme'
+import { useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/core/useTheme'
 import { useI18n } from 'vue-i18n'
 import { localeOptions } from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
 import { detectedTimezone as getDetectedTimezone, timezoneOptions } from '@/utils/timezones'
 import AdminSelect from '@/components/AdminSelect.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 
 const prefsStore = usePreferencesStore()
 const authStore = useAuthStore()
@@ -104,7 +119,11 @@ const selectedTimezone = computed(() => authStore.user?.timezone ?? '')
 const timezoneSelectOptions = [{ value: '', label: `${t('preferences.timezoneAuto')} · ${detectedTimezone}` }, ...timezones]
 
 function onTimezoneChange(value: string) {
-  void authStore.updateProfile({ timezone: value || null })
+  void authStore.updateProfilePreference({ timezone: value || null }, 'timezone')
+}
+
+function onEmailSubscriptionChange(value: boolean) {
+  void authStore.updateProfilePreference({ emailSubscribed: value }, 'emailSubscribed')
 }
 </script>
 

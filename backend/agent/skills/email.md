@@ -16,7 +16,7 @@ emoji: ✉️
 ## 必须遵守
 
 1. `subject` 和 `body` 必填。`body` 始终写完整纯文本，作为所有客户端的降级版本。
-2. 默认使用 `notification`，需要排版时传语义字段，不要自行拼接 HTML。
+2. 默认使用 `notification`，需要常规排版时传语义字段；用户明确要求自定义邮件排版时，可以使用受控的 `html` 字段。
 3. 工具返回 `status=sent` 后才能说“已发送”；这只表示 SMTP 接受，不代表最终送达。
 4. 用户未指定收件人时省略 `to`，由服务端发送到当前用户注册邮箱；不要因为看不到邮箱地址而向用户索要。
 
@@ -37,13 +37,15 @@ emoji: ✉️
 ## 内容与排版
 
 - 使用 `title`、`preheader`、`sections`（`heading`/`text`）和 `actions`（`label`/`url`）表达结构化内容。
+- `theme` 和 `palette` 默认使用 `auto`，跟随用户偏好；用户明确要求时可指定 `light`/`dark` 和 `mist`/`cafe`/`rose`/`sky`/`sage`。
 - 需要间距、分隔线、强调块或按钮时，使用上述语义字段，由标准模板负责表格布局和兼容样式。
-- 不要把 HTML 标签塞进 `body`；不要依赖自定义 CSS、外部字体、flex/grid、背景图片或复杂定位。
-- 不要传 `html`，除非是受控的内部兼容调用且 HTML 来源可信；普通用户请求一律使用标准模板。
+- 不要把 HTML 标签塞进 `body`；使用 `html` 时仍必须提供完整的纯文本 `body`。
+- `html` 仅允许基础邮件标签：`a`、`b`、`blockquote`、`br`、`code`、`div`、`em`、`h1`-`h3`、`hr`、`i`、`img`、`li`、`ol`、`p`、`pre`、`span`、`strong`、`table`、`tbody`、`td`、`th`、`thead`、`tr`、`u`、`ul`；样式只能使用有限的内联 CSS，不使用自定义 CSS、外部字体、flex/grid、背景图片或复杂定位。
+- `html` 最多 40000 个字符；服务端会再次清洗，不要依赖被清洗的标签、属性或样式。
 
 ## 安全边界
 
-- 禁止脚本、事件处理器、表单、iframe、SVG、外部 CSS、外部图片、追踪像素和未经用户要求的敏感信息。
+- 禁止脚本、事件处理器、表单、iframe、SVG、外部 CSS、外部图片、追踪像素和未经用户要求的敏感信息。图片仅可使用受控的内嵌 PNG；链接只使用完整的 `https`、`http` 或 `mailto` 链接。
 - 操作链接只使用完整的 `https`、`http` 或 `mailto` 链接；不要使用 `javascript:`、数据脚本或未验证的重定向。
 - 所有动态文案作为文本字段传入，不要把用户输入拼进 HTML 或 URL；服务端会负责转义和安全清洗。
 - 不能通过 Skill 绕过服务端 sanitizer；如果排版依赖被清洗的标签或属性，应改用标准模板字段。

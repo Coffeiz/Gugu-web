@@ -3224,6 +3224,10 @@ export interface components {
             currentPassword?: string | null;
             /** Newpassword */
             newPassword?: string | null;
+            /** Email subscription preference */
+            emailSubscribed?: boolean | null;
+            /** Timezone */
+            timezone?: string | null;
         };
         /** UserLogin */
         UserLogin: {
@@ -3242,6 +3246,8 @@ export interface components {
             password: string;
             /** Locale */
             locale?: "zh-CN" | "ja-JP" | "en-US" | null;
+            /** Email subscription preference */
+            emailSubscribed?: boolean;
         };
         /** UserResponse */
         UserResponse: {
@@ -3256,6 +3262,8 @@ export interface components {
             displayName?: string | null;
             /** Email */
             email: string;
+            /** Email subscription preference */
+            emailSubscribed: boolean;
             /** Isactive */
             isActive: boolean;
             /** Avatarurl */

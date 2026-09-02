@@ -32,6 +32,7 @@ class UserRegister(CamelModel):
     email: str
     password: str
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
+    email_subscribed: bool = False
 
 
 class UserLogin(CamelModel):
@@ -58,6 +59,7 @@ class UserResponse(CamelModel):
     created_at: str = ""
     im_channels: list[str] = []
     timezone: Optional[str] = None   # IANA 时区；前端据此判断是否需要探测并回写
+    email_subscribed: bool = False
 
     @field_validator('created_at', mode='before')
     @classmethod
@@ -92,6 +94,7 @@ class UserResponse(CamelModel):
             "avatar_url": avatar_url,
             "im_channels": getattr(user, "_im_channels", []),
             "timezone": getattr(user, "timezone", None),
+            "email_subscribed": getattr(user, "email_subscribed", False),
         }
         return cls.model_validate(data)
 
@@ -101,6 +104,7 @@ class UpdateProfile(CamelModel):
     current_password: Optional[str] = None
     new_password: Optional[str] = None
     timezone: Optional[str] = None   # IANA 时区（前端首登探测 Intl…timeZone 回写）；"" 清空
+    email_subscribed: Optional[bool] = None
 
 
 class DeleteAccount(CamelModel):

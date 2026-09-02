@@ -12,6 +12,7 @@
           <input v-model="form.username" type="text" :placeholder="t('auth.usernameRule')"
             autocomplete="username" :disabled="loading" />
         </div>
+
         <div class="field">
           <label>{{ t('auth.email') }}</label>
           <input v-model="form.email" type="email" placeholder="your@email.com"
@@ -23,6 +24,9 @@
             autocomplete="new-password" :disabled="loading" />
         </div>
 
+        <Checkbox v-model="form.emailSubscribed" class="subscribe-row" :disabled="loading">
+          {{ t('subscriptionUi.subscribe') }}
+        </Checkbox>
 
         <div v-if="error" class="error-msg">{{ error }}</div>
 
@@ -51,11 +55,12 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { useI18n } from 'vue-i18n'
 
 const router  = useRouter()
 const auth    = useAuthStore()
-const form    = reactive({ username: '', email: '', password: '' })
+const form    = reactive({ username: '', email: '', password: '', emailSubscribed: false })
 const loading      = ref(false)
 const error        = ref('')
 const { t } = useI18n()
@@ -72,7 +77,7 @@ async function handleRegister() {
   }
   loading.value = true; error.value = ''
   try {
-    await auth.register(form.username, form.email, form.password)
+    await auth.register(form.username, form.email, form.password, form.emailSubscribed)
     router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')
@@ -133,6 +138,8 @@ async function handleRegister() {
 }
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
+
+.subscribe-row { width:100%; box-sizing:border-box; justify-content:center; margin:2px 0 14px; color:#8a8fa8; font-size:12px; line-height:1.45; text-align:center; }
 
 .error-msg {
   font-size: 12px; color: #c05050; margin-bottom: 12px;

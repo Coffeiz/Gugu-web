@@ -49,6 +49,7 @@ class User(Base):
     last_active_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
     is_developer:         Mapped[bool]          = mapped_column(Boolean, default=False)   # 开发者标记：数据面板可一键排除，看真实用户数据
     timezone:             Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)   # IANA 时区（如 Asia/Shanghai）；前端首登探测写入，日期归属/展示按它换算（见 docs/backend/时区与时钟迁移方案.md）
+    email_subscribed:    Mapped[bool]          = mapped_column(Boolean, nullable=False, default=False, server_default="false", index=True)  # 是否订阅产品更新邮件
 
     projects:      Mapped[list["Project"]]             = relationship(back_populates="owner", cascade="all, delete-orphan")
     files:         Mapped[list["File"]]                = relationship(back_populates="owner", cascade="all, delete-orphan")

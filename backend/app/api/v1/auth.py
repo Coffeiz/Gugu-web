@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 import secrets
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
@@ -47,9 +48,12 @@ async def register(body: UserRegister, request: Request, response: Response, db:
         email=body.email,
         hashed_password=hash_password(body.password),
         display_name=body.username,
+        email_subscribed=body.email_subscribed,
     )
     db.add(user)
     await db.flush()
+    if body.locale:
+        db.add(UserPreferences(user_id=user.id, data_json=json.dumps({"locale": body.locale}, ensure_ascii=False)))
 
     await db.commit()
     await db.refresh(user)
@@ -218,6 +222,9 @@ async def update_profile(
             except (ZoneInfoNotFoundError, ValueError):
                 raise HTTPException(400, "无效的时区")
             current_user.timezone = tz
+
+    if body.email_subscribed is not None:
+        current_user.email_subscribed = body.email_subscribed
 
     if body.new_password:
         if not body.current_password:

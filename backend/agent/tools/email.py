@@ -11,7 +11,7 @@ from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool, automation_tool_allowed
 from app.models import Client, User, UserPreferences, UserSmtpConfig
 from app.services.email import send_email_with_status
-from app.services.email.templates import TEMPLATES
+from app.services.email.templates import EMAIL_PALETTES, EMAIL_THEMES, TEMPLATES
 
 
 _EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
@@ -39,6 +39,12 @@ async def _send_email(db, user_id, args: dict):
     preheader = args.get("preheader")
     sections = args.get("sections")
     actions = args.get("actions")
+    requested_theme = str(args.get("theme") or "auto").strip().lower()
+    requested_palette = str(args.get("palette") or "auto").strip().lower()
+    if requested_theme not in {"auto", *EMAIL_THEMES}:
+        return {"error": "不支持的邮件主题，仅支持 auto、light 或 dark"}
+    if requested_palette not in {"auto", *EMAIL_PALETTES}:
+        return {"error": "不支持的邮件配色，仅支持 auto、mist、cafe、rose、sky 或 sage"}
     if not subject:
         return {"error": "邮件主题不能为空"}
     if len(subject) > _MAX_SUBJECT_LENGTH:
@@ -89,13 +95,13 @@ async def _send_email(db, user_id, args: dict):
     smtp_config = await db.scalar(select(UserSmtpConfig).where(UserSmtpConfig.user_id == user_id, UserSmtpConfig.enabled.is_(True)))
     preferences = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
     preference_data = preferences.data if preferences else {}
-    theme = preference_data.get("theme", "light")
-    palette = preference_data.get("palette", "mist")
+    theme = requested_theme if requested_theme != "auto" else preference_data.get("theme", "light")
+    palette = requested_palette if requested_palette != "auto" else preference_data.get("palette", "mist")
     try:
         send_kwargs = {"to_addr": recipient, "smtp_config": smtp_config}
         if html is not None:
             send_kwargs["html"] = html
-        elif any(key in args for key in ("template", "title", "preheader", "sections", "actions")) or theme != "light" or palette != "mist":
+        elif any(key in args for key in ("template", "title", "preheader", "sections", "actions", "theme", "palette")) or theme != "light" or palette != "mist":
             send_kwargs.update(
                 template=template, title=title, preheader=preheader,
                 sections=sections, actions=actions, theme=theme, palette=palette,
@@ -129,8 +135,8 @@ class EmailSkill(BaseSkill):
     tools = [
         Tool(
             name="send_email", label="发送邮件",
-            description_short="使用咕咕标准模板发送 HTML+纯文本邮件；交互式发送前确认并返回 SMTP 状态。",
-            description="发送邮件。subject 和 body 必填，body 是所有客户端的纯文本降级内容。默认使用 notification 模板，由服务端生成咕咕标准排版；可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容。test 仅用于 SMTP 测试场景。不要自行拼接 HTML；html 仅保留给受控的内部兼容调用。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的客户邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
+            description_short="发送标准或受控 HTML+纯文本邮件；发送前确认并返回 SMTP 状态。",
+            description="发送邮件。subject 和 body 必填，body 是所有客户端的纯文本降级内容。默认使用 notification 模板，由服务端生成咕咕标准排版；可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 mist/cafe/rose/sky/sage。用户明确要求自定义邮件排版时，也可以传 html，但必须同时提供完整 body；html 只能使用基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接，不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。test 仅用于 SMTP 测试场景。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的客户邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -155,6 +161,8 @@ class EmailSkill(BaseSkill):
                             "url": {"type": "string", "minLength": 1, "maxLength": 2048},
                         }, "required": ["label", "url"], "additionalProperties": False},
                     },
+                    "theme": {"type": "string", "enum": ["auto", "light", "dark"]},
+                    "palette": {"type": "string", "enum": ["auto", "mist", "cafe", "rose", "sky", "sage"]},
                     "html": {"type": "string", "minLength": 1, "maxLength": _MAX_HTML_LENGTH},
                     "confirm": {"type": "boolean"},
                     "confirm_token": {"type": "string"},
