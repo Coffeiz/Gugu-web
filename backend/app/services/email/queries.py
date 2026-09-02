@@ -37,3 +37,29 @@ async def get_user_email_preferences(db, user_id) -> dict:
     except (TypeError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+async def get_active_recipient_rows(db):
+    return (await db.execute(
+        select(User.email, UserPreferences.data_json)
+        .outerjoin(UserPreferences, UserPreferences.user_id == User.id)
+        .where(User.is_active.is_(True), User.account_status == "active", User.email_subscribed.is_(True))
+    )).all()
+
+
+async def get_user_smtp(db, user_id):
+    return await db.scalar(select(UserSmtpConfig).where(UserSmtpConfig.user_id == user_id))
+
+
+async def save_user_smtp(db, user_id, values: dict, password: str | None = None):
+    row = await get_user_smtp(db, user_id)
+    if row is None:
+        row = UserSmtpConfig(user_id=user_id, password=password or "", **values)
+        db.add(row)
+    else:
+        for field, value in values.items():
+            setattr(row, field, value)
+        if password is not None:
+            row.password = password
+    await db.flush()
+    return row

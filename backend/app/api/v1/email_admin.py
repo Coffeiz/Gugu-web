@@ -15,7 +15,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import User, UserPreferences
+from app.models import User
+from app.services.email.queries import get_active_recipient_rows
 from app.services.email import render_email, send_email_with_status
 
 logger = logging.getLogger(__name__)
@@ -151,11 +152,7 @@ def _content_for_locale(draft: EmailDraft, locale: str) -> LocalizedEmailContent
 
 
 async def _active_recipient_emails(db: AsyncSession) -> dict[str, list[str]]:
-    rows = (await db.execute(
-        select(User.email, UserPreferences.data_json)
-        .outerjoin(UserPreferences, UserPreferences.user_id == User.id)
-        .where(User.is_active.is_(True), User.account_status == "active", User.email_subscribed.is_(True))
-    )).all()
+    rows = await get_active_recipient_rows(db)
     grouped: dict[str, list[str]] = {"zh-CN": [], "ja-JP": [], "en-US": []}
     for email, data_json in rows:
         value = (email or "").strip()

@@ -31,6 +31,17 @@ from app.services import email as email_svc
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.email_change import create_email_change_request, hash_email_change_token, normalize_email
 from app.services.email.queries import get_user_email_preferences
+from app.services.account_queries import (
+    byok_usage_stats,
+    create_user_preferences,
+    get_active_email_change,
+    get_email_change_for_token,
+    get_user_by_id,
+    is_email_occupied,
+    lock_user,
+    revoke_other_email_changes,
+    usage_sum,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -62,7 +73,7 @@ async def register(body: UserRegister, request: Request, response: Response, db:
     db.add(user)
     await db.flush()
     if body.locale:
-        db.add(UserPreferences(user_id=user.id, data_json=json.dumps({"locale": body.locale}, ensure_ascii=False)))
+        await create_user_preferences(db, user.id, {"locale": body.locale})
 
     await db.commit()
     await db.refresh(user)
@@ -174,7 +185,7 @@ async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)
     uid = await r.get(f"pwdreset:tok:{token}")
     if not uid:
         raise HTTPException(400, "链接已失效或已被使用，请重新申请")
-    user = await db.get(User, UUID(uid))
+    user = await get_user_by_id(db, UUID(uid))
     if not user:
         raise HTTPException(400, "账号不存在")
     user.hashed_password = hash_password(pw)
@@ -207,8 +218,7 @@ async def request_email_change(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if new_email == current_user.email.strip().lower():
         raise HTTPException(status_code=400, detail="新邮箱不能与当前邮箱相同")
-    occupied = await db.scalar(select(User.id).where(func.lower(User.email) == new_email, User.id != current_user.id))
-    if occupied:
+    if await is_email_occupied(db, new_email, current_user.id):
         raise HTTPException(status_code=409, detail="该邮箱已被使用")
 
     row, token = await create_email_change_request(db, current_user, new_email)
@@ -248,10 +258,7 @@ async def resend_email_change(
     await rate_limit(request, "email-change-resend", 3, 3600, extra=str(current_user.id))
     if not is_system_email_available():
         raise HTTPException(status_code=503, detail="邮箱变更功能当前不可用")
-    row = await db.scalar(select(EmailChangeRequest).where(
-        EmailChangeRequest.user_id == current_user.id,
-        EmailChangeRequest.used_at.is_(None), EmailChangeRequest.revoked_at.is_(None),
-    ))
+    row = await get_active_email_change(db, current_user.id)
     if not row or row.expires_at <= now_utc():
         raise HTTPException(status_code=400, detail="没有可重新发送的邮箱变更申请")
     new_email = row.new_email
@@ -286,26 +293,18 @@ async def cancel_email_change(
 @router.post("/email-change/verify")
 async def verify_email_change(body: EmailChangeVerify, db: AsyncSession = Depends(get_db)):
     token = body.token.strip()
-    row = await db.scalar(select(EmailChangeRequest).where(
-        EmailChangeRequest.token_hash == hash_email_change_token(token),
-        EmailChangeRequest.purpose == "email_change",
-    ).with_for_update())
+    row = await get_email_change_for_token(db, hash_email_change_token(token))
     if not row or row.used_at is not None or row.revoked_at is not None or row.expires_at <= now_utc():
         raise HTTPException(status_code=400, detail="链接已失效或已被使用，请重新申请")
-    user = await db.scalar(select(User).where(User.id == row.user_id).with_for_update())
+    user = await lock_user(db, row.user_id)
     if not user:
         raise HTTPException(status_code=400, detail="账号不存在")
-    occupied = await db.scalar(select(User.id).where(func.lower(User.email) == row.new_email, User.id != user.id))
-    if occupied:
+    if await is_email_occupied(db, row.new_email, user.id):
         raise HTTPException(status_code=409, detail="该邮箱已被使用")
     user.email = row.new_email
     user.security_version += 1
     row.used_at = now_utc()
-    await db.execute(update(EmailChangeRequest).where(
-        EmailChangeRequest.user_id == user.id,
-        EmailChangeRequest.id != row.id,
-        EmailChangeRequest.used_at.is_(None), EmailChangeRequest.revoked_at.is_(None),
-    ).values(revoked_at=now_utc()))
+    await revoke_other_email_changes(db, user.id, row.id, now_utc())
     await db.commit()
     theme, palette = await _email_preference_theme(db, user.id)
     try:
@@ -446,11 +445,7 @@ async def get_quota(
     now = now_utc()
 
     async def _used(since: datetime, is_byok: bool) -> int:
-        r = await db.execute(
-            select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
-            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(is_byok)))
-        )
-        return r.scalar() or 0
+        return await usage_sum(db, current_user.id, since, is_byok)
 
     # 6h 用户窗口 + 周窗口：与 quota.is_exhausted（硬拦）共用同一套口径。
     from agent import quota as _quota
@@ -465,17 +460,7 @@ async def get_quota(
     used_weekly = await _used(week_start, has_byok)
 
     async def _byok_stats(since: datetime) -> dict[str, int]:
-        result = await db.execute(select(
-            func.coalesce(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out), 0),
-            func.coalesce(func.sum(AgentUsage.tokens_in), 0),
-            func.coalesce(func.sum(AgentUsage.cache_read), 0),
-        ).where(and_(
-            AgentUsage.user_id == current_user.id,
-            AgentUsage.created_at >= since,
-            AgentUsage.is_byok.is_(True),
-        )))
-        total, tokens_in, cache_read = result.one()
-        return {"tokens": int(total), "tokens_in": int(tokens_in), "cache_read": int(cache_read)}
+        return await byok_usage_stats(db, current_user.id, since)
 
     byok_today = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
     byok_month = {"tokens": 0, "tokens_in": 0, "cache_read": 0}

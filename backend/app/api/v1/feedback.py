@@ -4,9 +4,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import Feedback, User, UserPreferences
+from app.models import Feedback, User
 from app.core.security import get_current_user
 from app.services.email import notify_feedback
+from app.services.email.queries import get_user_email_preferences
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 admin_router = APIRouter(prefix="/admin/feedback", tags=["admin"])
@@ -42,8 +43,7 @@ async def submit_feedback(
     db.add(fb)
     await db.commit()
 
-    prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == current_user.id))
-    preference_data = prefs.data if prefs else {}
+    preference_data = await get_user_email_preferences(db, current_user.id)
     background_tasks.add_task(
         notify_feedback,
         username=fb.username,

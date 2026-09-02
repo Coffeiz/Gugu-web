@@ -16,6 +16,7 @@ from app.services.personality_preferences import (
     write_personality_file,
 )
 from app.services.email.capabilities import is_system_email_available
+from app.services.email.queries import get_user_smtp, save_user_smtp
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -28,20 +29,15 @@ def _smtp_view(row: UserSmtpConfig | None) -> UserSmtpConfigSchema | None:
 
 @router.get("/smtp", response_model=UserSmtpConfigSchema | None)
 async def get_user_smtp(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return _smtp_view(await db.scalar(select(UserSmtpConfig).where(UserSmtpConfig.user_id == user.id)))
+    return _smtp_view(await get_user_smtp(db, user.id))
 
 
 @router.put("/smtp", response_model=UserSmtpConfigSchema)
 async def update_user_smtp(body: UserSmtpConfigUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    row = await db.scalar(select(UserSmtpConfig).where(UserSmtpConfig.user_id == user.id))
-    if row is None:
-        row = UserSmtpConfig(user_id=user.id, host=body.host, port=body.port, user=body.user, password=body.password or "", from_addr=body.from_addr, use_ssl=body.use_ssl, enabled=body.enabled)
-        db.add(row)
-    else:
-        for field in ("host", "port", "user", "from_addr", "use_ssl", "enabled"):
-            setattr(row, field, getattr(body, field))
-        if body.password is not None:
-            row.password = body.password
+    row = await save_user_smtp(db, user.id, {
+        "host": body.host, "port": body.port, "user": body.user,
+        "from_addr": body.from_addr, "use_ssl": body.use_ssl, "enabled": body.enabled,
+    }, body.password)
     await db.commit()
     await db.refresh(row)
     return _smtp_view(row)
@@ -51,7 +47,7 @@ async def update_user_smtp(body: UserSmtpConfigUpdate, user: User = Depends(get_
 async def test_user_smtp(body: UserSmtpTest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from starlette.concurrency import run_in_threadpool
     from app.services.email import send_test_email
-    saved = await db.scalar(select(UserSmtpConfig).where(UserSmtpConfig.user_id == user.id))
+    saved = await get_user_smtp(db, user.id)
     password = body.password or (saved.password if saved else "")
     try:
         await run_in_threadpool(send_test_email, host=body.host, port=body.port, user=body.user, password=password, from_addr=body.from_addr, to_addr=body.to_addr or user.email, use_ssl=body.use_ssl, template=body.template, theme=body.theme, palette=body.palette)
