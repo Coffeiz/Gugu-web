@@ -633,7 +633,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   cursor: grab;
   user-select: none;
-  background-color: var(--mind-canvas-bg);
+  background: var(--mind-canvas-bg);
 }
 .mind-canvas:active { cursor: grabbing; }
 .canvas-grid {
