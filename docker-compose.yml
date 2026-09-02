@@ -1,6 +1,6 @@
-# Preview Compose：默认使用公开的 latest 构建镜像，不挂载源码，不运行 Vite/Uvicorn reload。
+# 本地 Preview Compose：默认构建并使用本地 :local 镜像，不挂载源码，不运行 Vite/Uvicorn reload。
 # 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用。
-# 正式部署请改用 docker-compose.prod.yml，并固定镜像版本或 digest。
+# 运行：docker compose up -d --build。正式部署请改用 docker-compose.prod.yml。
 
 name: gugu-web-compose
 
@@ -63,7 +63,10 @@ services:
 
   migrate:
     logging: *json-file-logging
-    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
+    image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
     command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
     env_file:
       - ./backend/.env
@@ -90,7 +93,10 @@ services:
 
   backend:
     logging: *json-file-logging
-    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
+    image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
     env_file:
       - ./backend/.env
     environment:
@@ -131,7 +137,10 @@ services:
 
   worker:
     logging: *json-file-logging
-    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
+    image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
     command: ["python", "-m", "worker"]
     env_file:
       - ./backend/.env
@@ -170,7 +179,10 @@ services:
   # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
   gateway:
     logging: *json-file-logging
-    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
+    image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
     command: ["python", "-m", "agent.gateway.gateway"]
     env_file:
       - ./backend/.env
@@ -203,7 +215,10 @@ services:
     profiles: [sandbox]
     logging: *json-file-logging
     # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
-    image: ${GUGU_BACKEND_IMAGE:-ghcr.io/coffeiz/gugu-web-backend:latest}
+    image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
     env_file:
       - ./backend/.env
@@ -230,7 +245,10 @@ services:
 
   frontend:
     logging: *json-file-logging
-    image: ${GUGU_FRONTEND_IMAGE:-ghcr.io/coffeiz/gugu-web-frontend:latest}
+    image: ${GUGU_FRONTEND_IMAGE:-gugu-web-frontend:local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
     depends_on:
       - backend
 

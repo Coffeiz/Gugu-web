@@ -149,7 +149,7 @@ cp .env.example backend/.env
 # Preview Compose also requires explicit admin and database passwords.
 export GUGU_ADMIN_PASSWORD="$(openssl rand -base64 32)"
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
-docker compose up -d
+docker compose up -d --build
 ```
 
 Basic variables:
@@ -170,7 +170,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8000`.
 
-The default Compose setup uses prebuilt `latest` images. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
+The default Compose setup builds local `:local` application images from the checked-out source. It does not mount source code or run a development server, and it does not require GHCR login. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
 
 Open:
 

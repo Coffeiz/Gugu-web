@@ -33,13 +33,13 @@ export GUGU_ADMIN_PASSWORD='请替换为管理员密码'
 export GUGU_DB_PASSWORD='请替换为数据库密码'
 ```
 
-启动服务：
+构建并启动服务：
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-默认 Compose 使用已经构建好的 `latest` 镜像，不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
+默认 Compose 会从当前目录构建 `:local` 应用镜像，不要求登录 GHCR；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
 
 打开：<http://localhost:9595>
 
@@ -81,12 +81,12 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 GUGU_SANDBOX_ENABLED=true
 GUGU_SANDBOX_NETWORK_PROFILE=egress
 
-# 仅生产 Compose 需要：替换为实际发布的镜像地址和标签
+# 可选：覆盖本地 Compose 的应用镜像，改为已发布镜像
 # GUGU_BACKEND_IMAGE=你的镜像仓库/gugu-backend:latest
 # GUGU_FRONTEND_IMAGE=你的镜像仓库/gugu-frontend:latest
 ```
 
-生产 Compose 还要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。镜像可以使用 `latest` 作为公开体验版本，正式部署建议改成明确版本号。
+生产 Compose 仍要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。根目录 Preview Compose 默认使用本地 `:local` 镜像。
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`.env.example`](../.env.example)。
 
@@ -158,11 +158,10 @@ docker compose ps
 docker compose logs -f backend
 ```
 
-更新 Preview 镜像后：
+更新本地 Preview 构建后：
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose up -d --build
 ```
 
 开发环境更新源码后，请改用：
