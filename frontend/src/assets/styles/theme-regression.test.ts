@@ -139,6 +139,17 @@ describe('主题 CSS 回归契约', () => {
     expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
   })
 
+  it('暗色玻璃页面渐变从较亮端向较暗端收束', () => {
+    expect(materialCompositionCss).toContain(
+      '--theme-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
+    )
+    expect(materialCompositionCss).toContain(
+      '--theme-auth-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
+    )
+    expect(themeCss).toContain('--theme-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%)')
+    expect(themeCss).toContain('--theme-auth-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%)')
+  })
+
   it('通知气泡使用统一浮层材质，暗色不继承亮色纯白高光', () => {
     expect(notificationBubbleVue).toContain('background: var(--popup-surface-bg);')
     expect(notificationBubbleVue).toContain('box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);')
