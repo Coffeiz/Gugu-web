@@ -143,7 +143,7 @@
 
 ### 国内网络环境
 
-国内用户进行源码开发、重新构建镜像或安装依赖时，可以按需使用镜像源。Preview Compose 默认直接拉取已经构建好的镜像，不需要先安装 Python 或 Node 依赖。
+国内用户进行源码开发、重新构建镜像或安装依赖时，可以按需使用镜像源。Preview Compose 默认在本地构建 `:local` 镜像，不需要先安装 Python 或 Node 依赖。
 
 ```bash
 # pnpm / npm 依赖
@@ -169,7 +169,7 @@ cp .env.example backend/.env
 # Preview Compose 还要显式设置不会写入仓库的管理员和数据库密码
 export GUGU_ADMIN_PASSWORD="$(openssl rand -base64 32)"
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
-docker compose up -d
+docker compose up -d --build
 ```
 
 基础变量可以这样配置：
@@ -192,7 +192,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 也可以在启动前使用 `export GUGU_ADMIN_PASSWORD=...` 临时设置管理员密码。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
 
-默认 Compose 使用已经构建好的 `latest` 镜像，不挂载源码，也不运行开发服务器。它会同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务，不需要另外安装联网搜索后端。
+默认 Compose 会从当前目录构建 `:local` 应用镜像，不挂载源码，也不运行开发服务器。它会同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务，不需要登录 GHCR 或另外安装联网搜索后端。
 
 启动后访问：
 
