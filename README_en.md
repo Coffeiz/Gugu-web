@@ -178,6 +178,8 @@ Open:
 
 The first run initializes the database and applies migrations. `GUGU_ADMIN_USERNAME` and `GUGU_ADMIN_PASSWORD` control the Admin account; there is no public default admin password.
 
+You can also set `GUGU_ADMIN_PASSWORD=...` temporarily with `export` before starting Compose. See the [Deployment Guide](docs/DEPLOY.md) for the complete Compose parameters and configuration locations.
+
 To enable the Shell sandbox:
 
 ```bash
@@ -209,7 +211,6 @@ The README keeps configuration at index level. See [Deployment Guide](docs/DEPLO
 | Search | Bundled SearXNG web search and in-app search |
 | Mail | Admin system SMTP and personal SMTP; proactive Agent email and scheduled-task reports; Admin templates, previews, test sends, and Chinese/Japanese/English update emails with subscription controls |
 | IM | QQ, WeChat, and Feishu connections |
-| Internationalization | Chinese, English, and Japanese UI support with centralized frontend translations |
 | LoopScope | Agent traces and performance observability |
 | Sandbox | Shell execution environment and network egress |
 
@@ -436,6 +437,8 @@ Because Gugu's Agent can read and modify real projects, files, calendars, and ex
 - API keys, tokens, database passwords, and channel credentials are not written to URLs, Git, or ordinary logs. Visible errors are redacted and diagnostic logs use restricted outputs.
 - Logs and security events use fingerprints for correlation instead of raw user content or identity values.
 - LoopScope is a development diagnostic tool and does not execute tools or make business decisions. An unavailable Collector does not block the Agent's main path.
+
+For implementation details, see the [Tools and Skills docs](docs/agent/05-TOOLS-AND-SKILLS.md), [Context Engineering docs](docs/agent/04-CONTEXT-ENGINEERING.md), [workspace Shell sandbox design](docs/prds/【已完成】PRD-SHELL-1-工作区SHELL沙盒.md), and [LoopScope docs](docs/agent/11-LOOPSCOPE.md).
 
 ## Project Structure
 
