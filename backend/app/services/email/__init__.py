@@ -15,7 +15,7 @@ from email.message import EmailMessage
 from email.utils import formataddr
 
 from app.core.config import get_settings
-from .templates import render_email
+from .templates import EmailInlineImage, render_email
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,17 @@ class _EmailHtmlSanitizer(HTMLParser):
                     continue
             if key == "href" and not value.lower().startswith(("https://", "http://", "mailto:")):
                 continue
-            if key == "src" and not value.lower().startswith("data:image/png;base64,"):
-                continue
+            if key == "src":
+                lowered = value.lower()
+                parsed = value.split(":", 1)
+                if lowered.startswith("cid:"):
+                    if len(parsed) != 2 or not re.fullmatch(r"[A-Za-z0-9._-]+", parsed[1]):
+                        continue
+                else:
+                    from urllib.parse import urlparse
+                    image_url = urlparse(value)
+                    if image_url.scheme.lower() != "https" or not image_url.netloc:
+                        continue
             if key == "role" and value.lower() != "presentation":
                 continue
             if key in {"align", "valign"} and value.lower() not in {"left", "center", "right", "top", "middle", "bottom"}:
@@ -163,7 +172,8 @@ def _resolve_from(from_field: str, user: str) -> tuple[str, str]:
     return name, addr
 
 
-def _build_msg(subject: str, body: str, from_name: str, from_addr: str, to_addr: str, html: str | None = None) -> EmailMessage:
+def _build_msg(subject: str, body: str, from_name: str, from_addr: str, to_addr: str,
+               html: str | None = None, inline_images: tuple[EmailInlineImage, ...] = ()) -> EmailMessage:
     """构建一封邮件。EmailMessage 默认策略会自动把非 ASCII 头编成 =?utf-8?…?=。"""
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -175,6 +185,17 @@ def _build_msg(subject: str, body: str, from_name: str, from_addr: str, to_addr:
         clean_html = sanitize_email_html(html)
         if clean_html:
             msg.add_alternative(clean_html, subtype="html")
+            if inline_images:
+                html_part = msg.get_payload()[-1]
+                for image in inline_images:
+                    html_part.add_related(
+                        image.data,
+                        maintype="image",
+                        subtype=image.subtype,
+                        cid=f"<{image.content_id}>",
+                        filename=image.filename,
+                        disposition="inline",
+                    )
     return msg
 
 
@@ -210,17 +231,20 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
         _record_email("failed", started_at, "smtp_not_configured")
         return {"status": "failed", "error_code": "smtp_not_configured", "message": "SMTP 未配置"}
     from_name, from_addr = _resolve_from(cfg.from_addr, cfg.user)
+    inline_images: tuple[EmailInlineImage, ...] = ()
     if html is None:
         try:
-            html = render_email(
+            content = render_email(
                 template=template, subject=subject, body=body, title=title,
                 preheader=preheader, sections=sections, actions=actions,
                 theme=theme, palette=palette,
-            ).html
+            )
+            html = content.html
+            inline_images = content.inline_images
         except ValueError as exc:
             _record_email("failed", started_at, "email_template_invalid")
             return {"status": "failed", "error_code": "email_template_invalid", "message": str(exc)}
-    msg = _build_msg(subject, body, from_name, from_addr, to, html)
+    msg = _build_msg(subject, body, from_name, from_addr, to, html, inline_images)
     try:
         _deliver(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password,
                  use_ssl=cfg.use_ssl, msg=msg)
@@ -264,7 +288,7 @@ def send_test_email(*, host: str, port: int, user: str, password: str,
         theme=theme, palette=palette,
     )
     msg = _build_msg(
-        "咕咕 · 邮件样式测试", content.plain, from_name, real_from, to_addr, content.html,
+        "咕咕 · 邮件样式测试", content.plain, from_name, real_from, to_addr, content.html, content.inline_images,
     )
     _deliver(host=host, port=port, user=user, password=password, use_ssl=use_ssl, msg=msg)
 
@@ -280,6 +304,41 @@ def send_reset_email(*, to_addr: str, username: str, link: str, theme: str = "li
     return send_email(subject, body, to_addr=to_addr, template="security", title="咕咕 · 重置密码",
                       sections=[{"heading": "操作说明", "text": f"点击下面的按钮设置新密码，链接 30 分钟内有效。\n{link}"}],
                       actions=[{"label": "重置密码", "url": link}], theme=theme, palette=palette)
+
+
+def send_email_change_verification(*, to_addr: str, username: str, link: str,
+                                   theme: str = "light", palette: str = "mist") -> bool:
+    """发送新邮箱确认邮件；link 只由服务端生成。"""
+    subject = "咕咕 · 确认新邮箱"
+    body = (
+        f"你正在为咕咕账号「{username}」设置新的登录邮箱。\n\n"
+        f"点击下面的按钮确认邮箱（30 分钟内有效）：\n{link}\n\n"
+        "如果这不是你本人操作，请忽略此邮件。"
+    )
+    return send_email(
+        subject, body, to_addr=to_addr, template="security", title=subject,
+        sections=[{"heading": "确认邮箱变更", "text": "确认后，新邮箱将用于登录、找回密码和账户安全通知。链接 30 分钟内有效。"}],
+        actions=[{"label": "确认新邮箱", "url": link}], theme=theme, palette=palette,
+    )
+
+
+def send_email_change_notice(*, to_addr: str, username: str, kind: str,
+                             theme: str = "light", palette: str = "mist") -> bool:
+    """发送邮箱变更安全通知，不在正文中回显新邮箱或令牌。"""
+    if kind == "requested":
+        subject = "咕咕 · 邮箱变更申请提醒"
+        body = (
+            f"咕咕账号「{username}」刚刚发起了邮箱变更申请。\n\n"
+            "如果这不是你本人操作，请尽快登录并修改密码。"
+        )
+    else:
+        subject = "咕咕 · 邮箱已变更"
+        body = (
+            f"咕咕账号「{username}」的登录邮箱已完成变更。\n\n"
+            "如果这不是你本人操作，请尽快使用新邮箱登录并修改密码。"
+        )
+    return send_email(subject, body, to_addr=to_addr, template="security", title=subject,
+                      theme=theme, palette=palette)
 
 
 def notify_feedback(username: str, category: str, content: str, *, theme: str = "light", palette: str = "mist") -> None:

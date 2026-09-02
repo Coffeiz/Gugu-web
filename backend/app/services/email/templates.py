@@ -38,29 +38,53 @@ _MAX_ACTIONS = 3
 
 
 @lru_cache(maxsize=32)
-def _asset_data_uri(name: str, tint: str | None = None) -> str:
+def _asset_payload(name: str, tint: str | None = None) -> bytes:
     path = Path(__file__).with_name("assets") / name
     if tint is None:
-        payload = path.read_bytes()
-    else:
-        image = Image.open(path).convert("RGBA")
-        color = ImageColor.getrgb(tint)
-        pixels = image.load()
-        for y in range(image.height):
-            for x in range(image.width):
-                _, _, _, alpha = pixels[x, y]
-                if alpha:
-                    pixels[x, y] = (*color, alpha)
-        output = BytesIO()
-        image.save(output, format="PNG", optimize=True)
-        payload = output.getvalue()
+        return path.read_bytes()
+    image = Image.open(path).convert("RGBA")
+    color = ImageColor.getrgb(tint)
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            _, _, _, alpha = pixels[x, y]
+            if alpha:
+                pixels[x, y] = (*color, alpha)
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+@lru_cache(maxsize=32)
+def _asset_data_uri(name: str, tint: str | None = None) -> str:
+    """兼容旧调用方；邮件正文不再直接使用 data URI。"""
+    payload = _asset_payload(name, tint)
     return "data:image/png;base64," + b64encode(payload).decode("ascii")
+
+
+@dataclass(frozen=True)
+class EmailInlineImage:
+    """邮件 HTML 使用的 inline 资源，Content-ID 不来自用户输入。"""
+
+    content_id: str
+    data: bytes
+    subtype: str = "png"
+    filename: str = "image.png"
 
 
 @dataclass(frozen=True)
 class EmailContent:
     plain: str
     html: str
+    inline_images: tuple[EmailInlineImage, ...] = ()
+
+    def preview_html(self) -> str:
+        """为浏览器预览内联资源；真实邮件仍使用 CID，避免 Gmail 过滤 data URI。"""
+        result = self.html
+        for image in self.inline_images:
+            data_uri = f"data:image/{image.subtype};base64,{b64encode(image.data).decode('ascii')}"
+            result = result.replace(f"cid:{image.content_id}", data_uri)
+        return result
 
 
 def _text(value: object, field: str, limit: int) -> str:
@@ -154,8 +178,10 @@ def render_email(*, template: str = "notification", subject: str, body: str,
         f'</style>'
         if theme == "dark" else ""
     )
-    logo_mark = _asset_data_uri("logo-large2.png", token["brand"])
-    logo_wordmark = _asset_data_uri("logo-text2.png", token["brand"])
+    logo_mark_cid = "gugu-logo-mark"
+    logo_wordmark_cid = "gugu-logo-wordmark"
+    logo_mark = f"cid:{logo_mark_cid}"
+    logo_wordmark = f"cid:{logo_wordmark_cid}"
     logo_header = (
         f'<div style="text-align:center;padding:0 0 24px;margin:0;'
         f'border-bottom:1px solid {token["border"]}">'
@@ -204,4 +230,11 @@ def render_email(*, template: str = "notification", subject: str, body: str,
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{token["canvas"]};padding:28px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:760px;background:{token["surface"]};border:1px solid {token["border"]};border-radius:14px"><tr><td style="padding:40px">{''.join(rows)}
 <p style="margin:28px 0 0;padding:16px 0 0;border-top:1px solid {token["border"]};color:{token["muted"]};font-size:12px">由咕咕发送 · SMTP 已接受不代表最终送达</p></td></tr></table></td></tr></table></body></html>'''
-    return EmailContent(plain=plain, html=html)
+    return EmailContent(
+        plain=plain,
+        html=html,
+        inline_images=(
+            EmailInlineImage(logo_mark_cid, _asset_payload("logo-large2.png", token["brand"]), filename="logo-mark.png"),
+            EmailInlineImage(logo_wordmark_cid, _asset_payload("logo-text2.png", token["brand"]), filename="logo-wordmark.png"),
+        ),
+    )

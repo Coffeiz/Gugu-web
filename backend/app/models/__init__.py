@@ -72,6 +72,9 @@ class User(Base):
     security_events: Mapped[list["SecurityEvent"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    email_change_requests: Mapped[list["EmailChangeRequest"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class SecurityEvent(Base):
@@ -98,6 +101,31 @@ class SecurityEvent(Base):
     __table_args__ = (
         Index("ix_security_events_user_occurred", "user_id", "occurred_at"),
         Index("ix_security_events_type_occurred", "event_type", "occurred_at"),
+    )
+
+
+class EmailChangeRequest(Base):
+    """待验证邮箱变更；token 只保存不可逆摘要。"""
+
+    __tablename__ = "email_change_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    new_email: Mapped[str] = mapped_column(String(300), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(32), default="email_change", server_default="email_change")
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    request_ip_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="email_change_requests")
+
+    __table_args__ = (
+        Index("ix_email_change_requests_user_created", "user_id", "created_at"),
+        Index("ix_email_change_requests_user_active", "user_id", "used_at", "revoked_at"),
     )
 
 

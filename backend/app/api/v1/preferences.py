@@ -15,6 +15,7 @@ from app.services.personality_preferences import (
     read_personality_file,
     write_personality_file,
 )
+from app.services.email.capabilities import is_system_email_available
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -75,7 +76,7 @@ async def preview_user_email(body: UserEmailPreview, user: User = Depends(get_cu
         sections=[{"heading": "模板预览", "text": f"当前模板：{body.template}"}],
         theme=body.theme, palette=body.palette,
     )
-    return {"html": content.html}
+    return {"html": content.preview_html()}
 
 _DEFAULT_VIEWS = {"projects", "calendar", "files", "mind"}
 _TOOL_INJECTION_MODES = {"description", "full"}
@@ -127,6 +128,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
             if preference_updated_at(data) else None
         ),
         personalityPreferenceAvailable=personality_available,
+        emailChangeEnabled=is_system_email_available(),
     )
 
 

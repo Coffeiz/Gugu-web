@@ -8,7 +8,8 @@ import pytest
 from agent.tools.email import _mask_email, _send_email
 from agent.tools.base import reset_automation_allowed_tools, set_automation_allowed_tools
 from app.models import Client, UserSmtpConfig
-from app.services.email import _build_msg
+from app.services.email import _build_msg, sanitize_email_html
+from app.services.email.templates import EmailInlineImage
 
 
 @pytest.mark.asyncio
@@ -240,3 +241,32 @@ def test_email_sanitizer_keeps_safe_layout_attributes_and_drops_unsafe_values():
     assert 'valign="middle"' in html
     assert 'role="alert"' not in html
     assert 'javascript:alert' not in html
+
+
+def test_email_images_allow_cid_and_https_only():
+    html = sanitize_email_html(
+        '<img src="cid:logo" alt="logo">'
+        '<img src="https://cdn.example.com/logo.png" alt="remote">'
+        '<img src="data:image/png;base64,AAAA" alt="data">'
+        '<img src="http://example.com/logo.png" alt="http">'
+    )
+
+    assert 'src="cid:logo"' in html
+    assert 'src="https://cdn.example.com/logo.png"' in html
+    assert "data:image" not in html
+    assert 'src="http://example.com/logo.png"' not in html
+
+
+def test_build_msg_attaches_cid_images_as_inline_related_parts():
+    image = EmailInlineImage("test-logo", b"png-data")
+    msg = _build_msg(
+        "主题", "纯文本", "咕咕", "sender@example.com", "user@example.com",
+        '<p><img src="cid:test-logo" alt="logo"></p>', (image,),
+    )
+
+    html_part = next(part for part in msg.walk() if part.get_content_type() == "text/html")
+    image_parts = [part for part in msg.walk() if part.get_content_type() == "image/png"]
+    assert 'src="cid:test-logo"' in html_part.get_content()
+    assert len(image_parts) == 1
+    assert image_parts[0]["Content-ID"] == "<test-logo>"
+    assert image_parts[0].get_content_disposition() == "inline"

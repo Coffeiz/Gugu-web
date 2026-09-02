@@ -49,6 +49,15 @@ class ResetPassword(CamelModel):
     new_password: str
 
 
+class EmailChangeRequestCreate(CamelModel):
+    new_email: str = Field(min_length=3, max_length=300)
+    current_password: str = Field(min_length=1, max_length=200)
+
+
+class EmailChangeVerify(CamelModel):
+    token: str = Field(min_length=1, max_length=512)
+
+
 class UserResponse(CamelModel):
     id: UUID
     username: str
@@ -623,6 +632,7 @@ class PreferencesResponse(CamelModel):
     personalityPreferenceRevision: int = 0
     personalityPreferenceUpdatedAt: Optional[str] = None
     personalityPreferenceAvailable: bool = True
+    emailChangeEnabled: bool = False
 
 
 class UserSmtpConfig(CamelModel):

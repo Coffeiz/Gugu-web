@@ -20,6 +20,19 @@ def test_notification_renders_standard_html_and_plain_fallback():
     assert "<script" not in content.html
 
 
+def test_builtin_images_use_cid_inline_resources_for_mail_clients():
+    content = render_email(subject="图片测试", body="正文")
+
+    assert 'src="cid:gugu-logo-mark"' in content.html
+    assert 'src="cid:gugu-logo-wordmark"' in content.html
+    assert [image.content_id for image in content.inline_images] == [
+        "gugu-logo-mark", "gugu-logo-wordmark",
+    ]
+    assert all(image.data.startswith(b"\x89PNG\r\n\x1a\n") for image in content.inline_images)
+    assert "data:image/png;base64," in content.preview_html()
+    assert "cid:gugu-logo-mark" not in content.preview_html()
+
+
 def test_actions_use_email_compatible_standard_button_shell():
     content = render_email(
         subject="操作", body="请继续", actions=[{"label": "立即处理", "url": "https://example.com"}],
