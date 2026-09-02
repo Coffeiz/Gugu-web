@@ -39,6 +39,10 @@
     />
     <div class="canvas-note-resize-handles">
       <span v-for="handle in resizeHandles" :key="handle" class="canvas-note-resize-handle" :class="`is-${handle}`" @pointerdown.stop.prevent="startResize($event, handle)" />
+      <template v-for="handle in resizeSideHandles" :key="handle">
+        <span class="canvas-note-resize-handle" :class="[`is-${handle}`, `is-${handle}-top`]" @pointerdown.stop.prevent="startResize($event, handle)" />
+        <span class="canvas-note-resize-handle" :class="[`is-${handle}`, `is-${handle}-bottom`]" @pointerdown.stop.prevent="startResize($event, handle)" />
+      </template>
     </div>
   </div>
 </template>
@@ -75,7 +79,8 @@ const store = useMindStore()
 // 画布便签始终使用明确的有效尺寸，避免拖拽落地动画隐藏卡片时，wrap 因 auto 高度塌陷，
 // 让连接点或缩放手柄瞬间跳位。尺寸由默认值、Agent 参数或边缘拖拽共同决定。
 type ResizeHandle = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw'
-const resizeHandles: ResizeHandle[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
+const resizeHandles: ResizeHandle[] = ['n', 'ne', 'se', 's', 'sw', 'nw']
+const resizeSideHandles: Array<'e' | 'w'> = ['e', 'w']
 const resizePreview = ref<{ x: number; y: number; w: number; h: number } | null>(null)
 const isResizing = ref(false)
 const renderedSize = computed(() => resizePreview.value ?? { ...itemSize(props.item), x: props.item.x, y: props.item.y })
@@ -228,9 +233,11 @@ const { onPointerDown } = useMindRuntimeObject({
 .canvas-note-resize-handle.is-n, .canvas-note-resize-handle.is-s { left: 12px; right: 12px; height: 8px; cursor: ns-resize; }
 .canvas-note-resize-handle.is-n { top: -4px; }
 .canvas-note-resize-handle.is-s { bottom: -4px; }
-.canvas-note-resize-handle.is-e, .canvas-note-resize-handle.is-w { top: 12px; bottom: 12px; width: 8px; cursor: ew-resize; }
+.canvas-note-resize-handle.is-e, .canvas-note-resize-handle.is-w { width: 8px; cursor: ew-resize; }
 .canvas-note-resize-handle.is-e { right: -4px; }
 .canvas-note-resize-handle.is-w { left: -4px; }
+.canvas-note-resize-handle.is-e-top, .canvas-note-resize-handle.is-w-top { top: 12px; bottom: calc(50% + 20px); }
+.canvas-note-resize-handle.is-e-bottom, .canvas-note-resize-handle.is-w-bottom { top: calc(50% + 20px); bottom: 12px; }
 .canvas-note-resize-handle.is-ne, .canvas-note-resize-handle.is-se, .canvas-note-resize-handle.is-sw, .canvas-note-resize-handle.is-nw { width: 12px; height: 12px; }
 .canvas-note-resize-handle.is-ne { top: -6px; right: -6px; cursor: nesw-resize; }
 .canvas-note-resize-handle.is-se { right: -6px; bottom: -6px; cursor: nwse-resize; }
