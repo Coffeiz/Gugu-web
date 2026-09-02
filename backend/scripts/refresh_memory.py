@@ -125,37 +125,78 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
     if not patterns:
         return {"total": 0, "removed": 0}
 
+    from agent.memory.maintenance_batches import pattern_batches
+
+    batches = pattern_batches(patterns)
+    if any(batch.has_oversized_item for batch in batches):
+        return {
+            "total": len(patterns), "removed": 0,
+            "error": "存在超过维护单条预算的 pattern，已跳过自动维护，请人工拆分后重试",
+            "batch_count": len(batches), "oversized_batches": sum(
+                1 for batch in batches if batch.has_oversized_item
+            ),
+        }
+
+    index_by_id = {str(pattern.get("id")): index for index, pattern in enumerate(patterns)}
     remove_votes: dict[int, int] = {}
     merge_votes: dict[tuple[int, ...], dict] = {}
+    unstable: dict[int, int] = {}
     ok_trials = 0
-    for _ in range(trials):
-        r = await _review_once(patterns, settings, temperature)
-        if r is None:
+    successful_batches = 0
+    for batch in batches:
+        batch_remove_votes: dict[int, int] = {}
+        batch_merge_votes: dict[tuple[int, ...], dict] = {}
+        batch_ok = 0
+        batch_items = list(batch.items)
+        for _ in range(trials):
+            r = await _review_once(batch_items, settings, temperature)
+            if r is None:
+                continue
+            batch_ok += 1
+            ok_trials += 1
+            for local_index in r["remove"]:
+                if 0 <= local_index < len(batch_items):
+                    global_index = index_by_id[str(batch_items[local_index].get("id"))]
+                    batch_remove_votes[global_index] = batch_remove_votes.get(global_index, 0) + 1
+            for group in r["merge"]:
+                local_indexes = [group["keep"], *group["merge"]]
+                if not all(0 <= index < len(batch_items) for index in local_indexes):
+                    continue
+                key = tuple(sorted(
+                    index_by_id[str(batch_items[index].get("id"))]
+                    for index in local_indexes
+                ))
+                entry = batch_merge_votes.setdefault(key, {"votes": 0, "texts": []})
+                entry["votes"] += 1
+                if group["text"]:
+                    entry["texts"].append(group["text"])
+        if batch_ok == 0:
             continue
-        ok_trials += 1
-        for i in r["remove"]:
-            remove_votes[i] = remove_votes.get(i, 0) + 1
-        for group in r["merge"]:
-            key = tuple(sorted({group["keep"], *group["merge"]}))
-            entry = merge_votes.setdefault(key, {"votes": 0, "texts": []})
-            entry["votes"] += 1
-            if group["text"]:
-                entry["texts"].append(group["text"])
+        successful_batches += 1
+        majority = batch_ok / 2
+        for index, votes in batch_remove_votes.items():
+            if votes > majority:
+                remove_votes[index] = votes
+            elif votes > 0:
+                unstable[index] = votes
+        for key, value in batch_merge_votes.items():
+            if value["votes"] > majority:
+                merge_votes[key] = value
     if ok_trials == 0:
         return {"total": len(patterns), "removed": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
 
-    majority = ok_trials / 2
     valid_remove = sorted(
         i for i, v in remove_votes.items()
-        if v > majority and not _protected_pattern(patterns[i])
+        if not _protected_pattern(patterns[i])
     )
     valid_merges = {
-        key: value for key, value in merge_votes.items() if value["votes"] > majority
+        key: value for key, value in merge_votes.items()
     }
     if not valid_remove and not valid_merges:
         return {"total": len(patterns), "removed": 0, "trials_ok": ok_trials,
                 "merged": 0,
-                "unstable": {i: v for i, v in remove_votes.items() if v <= majority}}
+                "batch_count": len(batches), "successful_batches": successful_batches,
+                "unstable": unstable}
 
     remove_set = {patterns[i]["id"] for i in valid_remove}
     merged_ids: set[str] = set()
@@ -189,7 +230,8 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
         "removed_ids": [patterns[i]["id"] for i in valid_remove],
         "merged_ids": sorted(merged_ids),
         "trials_ok": ok_trials,
-        "unstable": {i: v for i, v in remove_votes.items() if v <= majority and v > 0},
+        "batch_count": len(batches), "successful_batches": successful_batches,
+        "unstable": unstable,
     }
 
 
@@ -249,15 +291,45 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
     if not patterns:
         return {"total": 0, "moved": 0}
 
+    from agent.memory.maintenance_batches import pattern_batches
+
+    batches = pattern_batches(patterns)
+    if any(batch.has_oversized_item for batch in batches):
+        return {
+            "total": len(patterns), "moved": 0,
+            "error": "存在超过维护单条预算的 pattern，已跳过自动维护，请人工拆分后重试",
+            "batch_count": len(batches), "oversized_batches": sum(
+                1 for batch in batches if batch.has_oversized_item
+            ),
+        }
+    index_by_id = {str(pattern.get("id")): index for index, pattern in enumerate(patterns)}
     votes: dict[int, int] = {}
+    unstable: dict[int, int] = {}
     ok_trials = 0
-    for _ in range(trials):
-        r = await _split_once(patterns, settings, temperature)
-        if r is None:
+    successful_batches = 0
+    for batch in batches:
+        batch_items = list(batch.items)
+        batch_votes: dict[int, int] = {}
+        batch_ok = 0
+        for _ in range(trials):
+            r = await _split_once(batch_items, settings, temperature)
+            if r is None:
+                continue
+            batch_ok += 1
+            ok_trials += 1
+            for local_index in r:
+                if 0 <= local_index < len(batch_items):
+                    index = index_by_id[str(batch_items[local_index].get("id"))]
+                    batch_votes[index] = batch_votes.get(index, 0) + 1
+        if batch_ok == 0:
             continue
-        ok_trials += 1
-        for i in r:
-            votes[i] = votes.get(i, 0) + 1
+        successful_batches += 1
+        majority = batch_ok / 2
+        for index, count in batch_votes.items():
+            if count > majority:
+                votes[index] = count
+            elif count > 0:
+                unstable[index] = count
     if ok_trials == 0:
         return {"total": len(patterns), "moved": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
 
@@ -265,7 +337,8 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
     valid = sorted(i for i, v in votes.items() if v > majority)
     if not valid:
         return {"total": len(patterns), "moved": 0, "trials_ok": ok_trials,
-                "unstable": {i: v for i, v in votes.items() if v <= majority}}
+                "batch_count": len(batches), "successful_batches": successful_batches,
+                "unstable": unstable}
 
     moved_texts = [patterns[i]["text"] for i in valid]
     moved_ids = {patterns[i]["id"] for i in valid}
@@ -280,7 +353,8 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
         "total": len(patterns), "moved": len(valid),
         "moved_texts": moved_texts, "moved_ids": sorted(moved_ids),
         "trials_ok": ok_trials,
-        "unstable": {i: v for i, v in votes.items() if v <= majority and v > 0},
+        "batch_count": len(batches), "successful_batches": successful_batches,
+        "unstable": unstable,
     }
 
 

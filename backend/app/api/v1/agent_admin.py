@@ -191,6 +191,34 @@ _IM_MODEL_PREVIEW_KEY = "im_memory:maintenance:model_preview"
 _IM_MODEL_PREVIEW_PLAN_KEY = "im_memory:maintenance:model_preview:plan"
 
 
+def _merge_im_preview_outputs(outputs: list[dict]) -> dict:
+    """合并同一 scope 各消息批次的增量结果，不让后一个批次覆盖前一个批次。"""
+    merged: dict = {}
+    members: dict[str, dict] = {}
+    for output in outputs:
+        for key, value in output.items():
+            if key == "members" and isinstance(value, list):
+                for item in value:
+                    if not isinstance(item, dict) or not item.get("platform_user_id"):
+                        continue
+                    member_id = str(item["platform_user_id"])
+                    target = members.setdefault(member_id, {"platform_user_id": member_id})
+                    for field, field_value in item.items():
+                        if field == "platform_user_id":
+                            continue
+                        if isinstance(field_value, list):
+                            target.setdefault(field, []).extend(field_value)
+                        elif field_value:
+                            target[field] = field_value
+            elif isinstance(value, list):
+                merged.setdefault(key, []).extend(value)
+            elif value:
+                merged[key] = value
+    if members:
+        merged["members"] = list(members.values())
+    return merged
+
+
 async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     """逐 scope 调用 IM 反思模型，只保存汇总进度，不保存正文或 scope 标识。"""
     from types import SimpleNamespace
@@ -198,6 +226,9 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     from agent.context.branch import ContextBranch
     from agent.context.branch_types import BranchInput, BranchPolicy
     from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job, _scope_prompt
+    from agent.memory.maintenance_batches import (
+        MaintenanceBatch, bounded_scope_memory, message_batches, scope_revision,
+    )
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
     from app.core.redis import get_redis
@@ -205,6 +236,9 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     redis = get_redis()
     done = needs_review = failed = 0
     total = len(cursors)
+    total_batches = 0
+    completed_batches = 0
+    truncated_batches = 0
     plans: list[dict] = []
     for item in cursors:
         try:
@@ -220,35 +254,64 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
             async with await _db_session() as db:
                 messages = await _messages_for_job(db, job)
             current = await read_scope(scope)
-            payload = "\n".join(
+            batches = message_batches(
+                messages,
+                lambda message: f"[{message.created_at.isoformat() if message.created_at else '未知时间'}] {_message_text(message)}",
+                lambda message: str(message.id),
+            )
+            if not batches:
+                batches = [MaintenanceBatch(items=tuple(), source_ids=tuple(), estimated_input_tokens=0)]
+            total_batches += len(batches)
+            source_text = "\n".join(
                 f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
                 for m in messages
             )
-            prompt_input = (
-                f"已有群组/用户记忆：\n{json.dumps(current, ensure_ascii=False)}\n\n"
-                f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
-            )
-            branch = await ContextBranch().run(
-                BranchInput(
-                    stable_system=_scope_prompt(scope),
-                    delta=prompt_input,
-                    scope=scope.scope_type,
-                ),
-                BranchPolicy(
-                    name="reflection-preview",
-                    output_mode="json",
-                    max_tokens=2500,
-                    thinking="disabled",
-                ),
-                settings,
-            )
-            output = branch.output if branch.ok and isinstance(branch.output, dict) else {}
-            if output:
+            revision = scope_revision(current, [m.id for m in messages], source_text)
+            if any(batch.has_oversized_item for batch in batches):
+                truncated_batches += sum(1 for batch in batches if batch.has_oversized_item)
+                failed += 1
+                done += 1
+                continue
+            outputs: list[dict] = []
+            for batch in batches:
+                payload = "\n".join(
+                    f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
+                    for m in batch.items
+                )
+                prompt_input = (
+                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current)}\n\n"
+                    f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
+                )
+                branch = await ContextBranch().run(
+                    BranchInput(
+                        stable_system=_scope_prompt(scope),
+                        delta=prompt_input,
+                        scope=scope.scope_type,
+                    ),
+                    BranchPolicy(
+                        name="reflection-preview",
+                        output_mode="json",
+                        max_tokens=2500,
+                        thinking="disabled",
+                    ),
+                    settings,
+                )
+                if not branch.ok or not isinstance(branch.output, dict):
+                    failed += 1
+                    break
+                outputs.append(branch.output)
+                completed_batches += 1
+            if len(outputs) == len(batches):
+                output = _merge_im_preview_outputs(outputs)
                 needs_review += 1
                 plans.append({
                     "owner_user_id": str(scope.owner_user_id), "platform": scope.platform,
                     "bot_id": scope.bot_id, "scope_type": scope.scope_type, "scope_id": scope.scope_id,
-                    "output": output,
+                    "output": output, "source_revision": revision,
+                    "source_message_ids": [str(m.id) for m in messages],
+                    "first_message_id": int(messages[0].id) if messages else 0,
+                    "last_message_id": int(messages[-1].id) if messages else 0,
+                    "batch_count": len(batches),
                 })
         except Exception:
             failed += 1
@@ -256,6 +319,8 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
         await redis.set(_IM_MODEL_PREVIEW_KEY, json.dumps({
             "status": "running", "done": done, "total": total,
             "needs_review": needs_review, "failed": failed,
+            "total_batches": total_batches, "completed_batches": completed_batches,
+            "truncated_batches": truncated_batches,
             "plan_ready": bool(plans), "ts": time.time(),
         }, ensure_ascii=False), ex=3600)
         await redis.set(_IM_MODEL_PREVIEW_PLAN_KEY, json.dumps(plans, ensure_ascii=False), ex=3600)
@@ -264,7 +329,9 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     await redis.set(_IM_MODEL_PREVIEW_KEY, json.dumps({
         "status": "done", "done": done, "total": total,
         "needs_review": needs_review, "failed": failed,
-        "plan_ready": bool(plans), "ts": time.time(),
+        "total_batches": total_batches, "completed_batches": completed_batches,
+        "truncated_batches": truncated_batches,
+        "plan_ready": bool(plans) and failed == 0 and truncated_batches == 0, "ts": time.time(),
     }, ensure_ascii=False), ex=3600)
 
 
@@ -1459,6 +1526,8 @@ async def apply_im_memory_maintenance(
     if not body.confirm:
         raise HTTPException(400, "执行 IM 记忆维护需要 confirm=true")
     from agent.memory.im_reflection import _apply_output
+    from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job
+    from agent.memory.maintenance_batches import scope_revision
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
     from app.core.redis import get_redis
@@ -1470,15 +1539,42 @@ async def apply_im_memory_maintenance(
     state = json.loads(raw_state if isinstance(raw_state, str) else raw_state.decode())
     if state.get("status") != "done":
         raise HTTPException(400, "模型预览尚未完成")
+    if not state.get("plan_ready"):
+        raise HTTPException(400, "模型预览包含失败或超长批次，请处理后重新生成预览")
     plans = json.loads(raw_plan if isinstance(raw_plan, str) else raw_plan.decode())
     applied = 0
     settings = get_settings()
+    validated: list[tuple[object, dict]] = []
     for item in plans:
         scope = MemoryScope(
             _uuid.UUID(item["owner_user_id"]), item["platform"], item["bot_id"],
             item["scope_type"], item["scope_id"],
         )
         current = await read_scope(scope)
+        from types import SimpleNamespace
+        job = SimpleNamespace(
+            owner_user_id=scope.owner_user_id,
+            platform=scope.platform,
+            bot_id=scope.bot_id,
+            scope_type=scope.scope_type,
+            scope_id=scope.scope_id,
+            task_type="member-batch" if scope.scope_type == "platform-user" else "group",
+            from_message_id=item.get("first_message_id") or 0,
+            to_message_id=item.get("last_message_id") or 0,
+        )
+        async with await _db_session() as db:
+            messages = await _messages_for_job(db, job)
+        source_text = "\n".join(
+            f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
+            for m in messages
+        )
+        actual_revision = scope_revision(
+            current, [m.id for m in messages], source_text,
+        )
+        if actual_revision != item.get("source_revision"):
+            raise HTTPException(409, "记忆预览已过期，源数据发生变化，请重新生成预览")
+        validated.append((scope, current))
+    for (scope, current), item in zip(validated, plans):
         await _apply_output(scope, current, item.get("output") or {}, [], settings)
         applied += 1
     await get_redis().delete(_IM_MODEL_PREVIEW_PLAN_KEY)
