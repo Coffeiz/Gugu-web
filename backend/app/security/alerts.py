@@ -36,6 +36,10 @@ async def notify_risk_action(*, action: str, user_count: int, reason_code: str) 
     )
     for recipient in recipients:
         try:
-            await asyncio.to_thread(send_email, subject, body, to_addr=recipient)
+            await asyncio.to_thread(
+                send_email, subject, body, to_addr=recipient,
+                template="security", title=subject,
+                sections=[{"heading": "事件摘要", "text": body}],
+            )
         except Exception:
             _log.warning("安全告警发送失败 error_type=%s", "delivery_error")

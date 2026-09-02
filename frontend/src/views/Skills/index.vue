@@ -15,12 +15,12 @@
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
-import ActionButton from '@/components/common/ActionButton.vue'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import type { UserSkillItem, UserSkillWrite } from '@/services/api'
-import { confirmDialog } from '@/composables/useConfirmDialog'
-import { useUserSkills } from './composables/useUserSkills'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { useUserSkills } from '@/composables/skills/useUserSkills'
 import SkillForm from './components/SkillForm.vue'
 
 const { skills, tools, loading, saving, error, load, save, toggle, remove } = useUserSkills()

@@ -1,39 +1,33 @@
 <template>
   <div class="dev-home glass-card">
-    <header class="dev-header">
-      <div>
-        <span class="dev-kicker">GUGU / DEVELOPMENT</span>
-        <h1>Dev 工具</h1>
-        <p>只在本地开发构建注册。工具入口使用当前设计令牌，不进入生产路由。</p>
-      </div>
-      <span class="dev-badge">DEV</span>
-    </header>
-
     <section class="tool-grid">
       <article v-for="tool in devToolRegistry" :key="tool.path ?? tool.href" class="tool-card glass-card">
-        <span class="tool-eyebrow">{{ tool.eyebrow ?? 'TOOL' }}</span>
+        <span class="tool-eyebrow">{{ t(tool.eyebrowKey ?? 'devHome.tool') }}</span>
         <div class="tool-row">
           <div>
-            <h2>{{ tool.label }}</h2>
-            <p>{{ tool.description }}</p>
+            <h2>{{ t(tool.labelKey) }}</h2>
+            <p>{{ t(tool.descriptionKey) }}</p>
           </div>
           <button v-if="tool.external" class="tool-open" @click="openExternal(tool)"><Icon name="action.next" :size="16" /></button>
           <router-link v-else-if="tool.path" class="tool-open" :to="tool.path"><Icon name="action.next" :size="16" /></router-link>
         </div>
         <div class="tool-footer">
           <code>{{ tool.external ? tool.href : tool.path }}</code>
-          <span>{{ tool.external ? 'Standalone' : 'Gugu Dev' }}</span>
+          <span>{{ t(tool.external ? 'devHome.standalone' : 'devHome.guguDev') }}</span>
         </div>
       </article>
     </section>
 
-    <p class="dev-note">LoopScope 是独立应用。这里仅负责启动并通过 postMessage 传递当前开发会话连接信息。</p>
+    <p class="dev-note">{{ t('devHome.note') }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { devToolRegistry, type DevToolEntry } from './devRegistry'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 function absoluteApiBase() {
   // 让 LoopScope 通过自己的 Vite 代理访问 Gugu，避免 4319 -> 5173/8000 的跨源 CORS。
@@ -97,45 +91,23 @@ function openExternal(tool: DevToolEntry) {
   color: var(--content-primary);
   box-sizing: border-box;
 }
-.dev-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-xl);
-  padding-bottom: var(--space-xl);
-  border-bottom: 1px solid var(--dev-divider);
-}
-.dev-kicker, .tool-eyebrow {
+.tool-eyebrow {
   font-size: var(--font-size-xs);
   letter-spacing: var(--tracking-label);
   color: var(--content-tertiary);
   font-weight: var(--font-weight-semibold);
 }
-.dev-header h1 {
-  margin: var(--space-xs) 0 var(--space-sm);
-  font-size: var(--font-size-xl);
-  line-height: var(--line-height-tight);
-}
-.dev-header p, .tool-card p, .dev-note {
+.tool-card p, .dev-note {
   margin: 0;
   color: var(--content-secondary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-body);
 }
-.dev-header p { max-width: 580px; }
-.dev-badge {
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-pill);
-  background: var(--status-warning-bg);
-  color: var(--status-warning);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-}
 .tool-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-md);
-  margin-top: var(--space-xl);
+  margin-top: 0;
 }
 .tool-card {
   min-height: 176px;

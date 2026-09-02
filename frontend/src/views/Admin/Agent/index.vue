@@ -585,7 +585,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useRoute } from 'vue-router'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import PermissionSettings from './components/PermissionSettings.vue'

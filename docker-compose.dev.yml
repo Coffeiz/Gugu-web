@@ -1,5 +1,7 @@
 # 本地/开发一键起全栈用的 Compose 文件；普通用户请使用根目录的 Preview Compose。
 # 生产环境请使用 docker-compose.prod.yml 或独立的生产部署方案。
+
+name: gugu-web-compose
 #
 # 用法：
 #   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
@@ -114,6 +116,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -146,6 +149,7 @@ services:
       # 不冲突——environment 优先级更高，专门覆盖成 compose 网络里的服务名。
       - ./backend/.env
     environment:
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}

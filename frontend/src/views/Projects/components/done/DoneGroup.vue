@@ -14,7 +14,7 @@
   <template v-else-if="group.type === 'month'">
     <div class="done-group-layout-node" :data-layout-key="group.key" data-layout-role="group" data-layout-group>
       <button class="month-row" @click="$emit('toggle', `${group.year}${group.month}`)">
-        <Icon name="file.folder-open" v-if="group.open" :size="13" style="color:#5a9e88; opacity:0.85; flex-shrink:0" /><Icon name="file.folder" v-else :size="13" style="flex-shrink:0; opacity:0.6" />
+        <Icon name="file.folder-open" v-if="group.open" :size="13" style="color:#5a9e88; opacity:0.85; flex-shrink:0" /><Icon name="project.month-folder" v-else :size="13" style="flex-shrink:0; opacity:0.6" />
         <span class="month-name">{{ group.label }}</span><span class="month-cnt">{{ group.items.length }}</span><FlipChevron :open="group.open" :size="8" />
       </button>
       <div :key="`${group.key}-cards`" class="month-folder" data-layout-content :data-layout-key="`${group.year}${group.month}`" :data-layout-open="group.open ? 'true' : 'false'">
@@ -37,8 +37,8 @@
 
 <script setup lang="ts">
 import { type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
-import FlipChevron from '@/components/common/FlipChevron.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import type { DoneGroup } from './doneTypes'
 import DoneCardList from './DoneCardList.vue'
 

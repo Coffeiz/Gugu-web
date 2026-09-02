@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
-import { showAppError } from '@/composables/useAppToast'
+import { showAppError } from '@/composables/core/useAppToast'
 import { i18n } from '@/i18n'
 
 export interface StateLabelRow { key: string; default: string; custom: string }

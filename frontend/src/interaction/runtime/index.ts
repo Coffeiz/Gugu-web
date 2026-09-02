@@ -5,4 +5,27 @@
  * Runtime 版本由 frontend/package.json 和 pnpm-lock.yaml 共同锁定。
  * 此文件只负责模块边界，不承担任何对象、指针或视觉生命周期编排。
  */
+import { runtime } from 'gugu-interaction-runtime'
+
 export * from 'gugu-interaction-runtime'
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && Boolean(target.closest('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]'))
+}
+
+/** Runtime 对象统一使用的拖拽绑定入口，避免 Safari 在拖拽阈值前建立文字选区。 */
+export function bindRuntimeObjectPointer(objectId: string, element: HTMLElement): () => void {
+  element.dataset.runtimeDraggable = 'true'
+  const swallowSelection = (event: Event) => {
+    if (isEditableTarget(event.target)) return
+    event.preventDefault()
+  }
+  element.addEventListener('selectstart', swallowSelection, true)
+  const dispose = runtime.bindObjectPointer(objectId, element)
+  return () => {
+    dispose()
+    element.removeEventListener('selectstart', swallowSelection, true)
+    delete element.dataset.runtimeDraggable
+  }
+}

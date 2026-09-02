@@ -74,9 +74,7 @@
       <div class="history-card">
         <div class="history-header">
           <span class="compose-title">{{ t('adminNotifications.history') }}</span>
-          <button class="icon-btn" :class="{ spinning: refreshingHistory }" @click="loadHistory" :disabled="loadingHistory" :title="t('adminNotifications.refresh')">
-            <Icon name="action.refresh" size="sm" />
-          </button>
+          <RefreshButton :loading="refreshingHistory" :disabled="loadingHistory" @click="loadHistory" :title="t('adminNotifications.refresh')" />
         </div>
 
         <div v-if="!history.length && !loadingHistory" class="empty-hint">{{ t('adminNotifications.empty') }}</div>
@@ -105,9 +103,10 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
-import { showAppNotice } from '@/composables/useAppToast'
+import { showAppNotice } from '@/composables/core/useAppToast'
 import { renderMarkdown } from '@/utils/markdown'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 
 const admin = useAdminStore()
 const { t } = useI18n()

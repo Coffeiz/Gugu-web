@@ -339,6 +339,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
             session=session, history_stats=history_stats, model_cfg=model_cfg,
+            locale=current_locale,
             strip_thinking=strip_thinking,
         ))
         _gen_tasks.add(task)
@@ -376,7 +377,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None) -> None:
+                    history_stats=None, model_cfg=None, locale=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -433,7 +434,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = run_config.use_anthropic if run_config is not None else use_anthropic_for(model_cfg)
 
-    runner = LLMRunner(tool_names, settings, capability_context=capability_context)
+    runner_locale = locale or snapshot.get("locale") or req.locale or "zh-CN"
+    runner = LLMRunner(tool_names, settings, capability_context=capability_context, locale=runner_locale)
     full_reply = ""
     display_timeline: list[dict] = []
     active_segment: dict | None = None
@@ -718,7 +720,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None) -> None:
+                    history_stats=None, model_cfg=None, locale=None) -> None:
     """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。"""
     from agent.context import compress_conv
 
@@ -730,5 +732,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             user_tz=user_tz, sent_at=sent_at, user_message=user_message,
             resume_interaction=resume_interaction, strip_thinking=strip_thinking,
             session=session, history_stats=history_stats, model_cfg=model_cfg,
+            locale=locale,
         )
         await compress_conv.wait_for_baseline_update(session_id)

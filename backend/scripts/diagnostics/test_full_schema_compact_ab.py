@@ -296,16 +296,26 @@ def schema_mismatch(tool_name: str, actual: Any, expected: dict[str, Any]) -> di
     mismatched = {
         key: {"expected_type": type(value).__name__, "actual_type": type(actual[key]).__name__}
         for key, value in expected.items()
-        if key in actual and actual[key] != value
+        if key in actual and actual[key] != value and not (tool_name == "note_create" and key == "blocks")
     }
     if tool_name == "note_create":
         expected_text = _text_in_blocks(expected.get("blocks"))
         actual_blocks = actual.get("blocks")
+        expected_block = (
+            expected.get("blocks", [])[0]
+            if isinstance(expected.get("blocks"), list) and expected.get("blocks")
+            and isinstance(expected.get("blocks")[0], dict)
+            else None
+        )
+        actual_block = actual_blocks[0] if isinstance(actual_blocks, list) and actual_blocks and isinstance(actual_blocks[0], dict) else None
+        if expected_block and actual_block and expected_block.get("type") != actual_block.get("type"):
+            mismatched["blocks[0].type"] = {
+                "expected": expected_block.get("type"),
+                "actual": actual_block.get("type"),
+            }
         actual_content = (
-            actual_blocks[0].get("content")
-            if isinstance(actual_blocks, list)
-            and actual_blocks
-            and isinstance(actual_blocks[0], dict)
+            actual_block.get("content")
+            if actual_block
             else None
         )
         if actual_content is not None and not isinstance(actual_content, list):

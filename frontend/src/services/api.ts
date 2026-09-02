@@ -14,6 +14,7 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 export interface SiteConfig {
   icpNumber: string
   icpUrl: string
+  passwordResetEnabled: boolean
 }
 
 export async function fetchSiteConfig(): Promise<SiteConfig> {
@@ -508,6 +509,10 @@ export const preferencesApi = {
   get:    ()                                  => get<Schemas['PreferencesResponse']>('/preferences'),
   update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
   uploadPersonality: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/personality/upload', form) },
+  getSmtp: () => get<{ host: string; port: number; user: string; fromAddr: string; useSsl: boolean; enabled: boolean; configured: boolean } | null>('/preferences/smtp'),
+  saveSmtp: (data: Record<string, unknown>) => request<{ host: string; port: number; user: string; fromAddr: string; useSsl: boolean; enabled: boolean; configured: boolean }>('PUT', '/preferences/smtp', data),
+  testSmtp: (data: Record<string, unknown>) => post<{ ok: boolean; message: string }>('/preferences/smtp/test', data),
+  previewEmail: (data: Record<string, unknown>) => post<{ html: string }>('/preferences/smtp/preview', data),
 }
 
 export const workspacesApi = {
@@ -672,7 +677,11 @@ export const searchApi = {
 
 export const authApi = {
   updateProfile: (data: any)     => request('PATCH',  '/auth/profile', data),
-  getQuota:      ()              => request('GET',    '/auth/quota'),
+  requestEmailChange: (data: { newEmail: string; currentPassword: string }) => request('POST', '/auth/email-change/request', data),
+  resendEmailChange: () => request('POST', '/auth/email-change/resend'),
+  cancelEmailChange: () => request('POST', '/auth/email-change/cancel'),
+  verifyEmailChange: (token: string) => request('POST', '/auth/email-change/verify', { token }),
+  getQuota:      ()              => request<{ used_6h: number; limit_6h: number | null; reset_6h_at: string | null; used_weekly: number; limit_weekly: number | null; usage_kind: 'platform' | 'byok'; is_byok: boolean; byok_tokens_today: number; byok_tokens_month: number; byok_cache_rate: number }>('GET', '/auth/quota'),
   deleteAccount: (password: string) => request('DELETE', '/auth/me', { password }),
   uploadAvatar:  (file: File) => {
     const fd = new FormData()

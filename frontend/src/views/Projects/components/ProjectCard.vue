@@ -171,14 +171,14 @@ import { useI18n } from 'vue-i18n'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { runtime } from '@/interaction/runtime'
-import { errorMessage, showAppError } from '@/composables/useAppToast'
-import Icon from '@/components/common/Icon.vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import Icon from '@/components/common/icons/Icon.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
-import SegBar from '@/components/common/SegBar.vue'
+import SegBar from '@/components/common/controls/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
-import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
+import { useProjectCardBasics } from '@/composables/shared/useProjectCardBasics'
 
 defineOptions({ inheritAttrs: false })
 
@@ -205,7 +205,7 @@ watch(cardRef, (element, previous) => {
   if (current?.generation !== projectGeneration) return
   if (element === null && current.element && current.element !== previous) return
   stopPointerBinding?.()
-  stopPointerBinding = element ? runtime.bindObjectPointer(projectId, element) : null
+  stopPointerBinding = element ? bindRuntimeObjectPointer(projectId, element) : null
   runtime.objects.setElement(projectId, element)
 }, { flush: 'post' })
 watch(() => props.project.status, status => {

@@ -1,5 +1,5 @@
 import { reactive, ref } from 'vue'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { i18n } from '@/i18n'
 
 type AdminStore = { authFetch: (url: string, options?: RequestInit) => Promise<Response> }

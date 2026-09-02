@@ -9,9 +9,7 @@
         <div class="ops-range">
           <button v-for="d in ranges" :key="d.v" class="range-btn" :class="{ active: days === d.v }" @click="days = d.v; load()">{{ d.label }}</button>
         </div>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" :title="t('adminOps.refresh')">
-      <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton :loading="refreshing" :disabled="loading" @click="load(true)" :title="t('adminOps.refresh')" />
       </div>
     </div>
 
@@ -99,6 +97,7 @@ interface OpsSummary {
 }
 
 import { useI18n } from 'vue-i18n'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()

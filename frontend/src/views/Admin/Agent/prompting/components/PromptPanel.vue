@@ -9,7 +9,7 @@
     </div>
     <div v-if="cautions[activeProfile]" class="persona-caution" :class="`persona-caution--${activeProfile}`">{{ cautions[activeProfile] }}</div>
     <div class="prompt-editor-wrap">
-      <textarea ref="textarea" v-model="promptContent" class="prompt-textarea scroll-surface scroll-surface--editor" :placeholder="t('adminAgentPrompt.inputPlaceholder')" spellcheck="false" />
+      <textarea ref="textarea" v-model="promptContent" class="prompt-textarea control-resizable scroll-surface scroll-surface--editor" :placeholder="t('adminAgentPrompt.inputPlaceholder')" spellcheck="false" />
       <div class="placeholder-panel"><div class="placeholder-title">{{ t('adminAgentPrompt.placeholders') }}</div><div v-for="placeholder in placeholders" :key="placeholder.key" class="placeholder-item" :title="t('adminAgentPrompt.insert')" @click="insertPlaceholder(placeholder.key, textarea)"><code>{{ placeholder.key }}</code><span>{{ placeholder.desc }}</span></div></div>
     </div>
     <div class="card-actions"><span class="save-hint" :class="{ error: !!promptError, muted: !promptSaved && !promptError }"><template v-if="promptSaved">{{ t('adminAgentPrompt.saved') }}</template><template v-else-if="promptError">{{ promptError }}</template><template v-else>{{ t('adminAgentPrompt.saveHint') }}</template></span><button class="btn-primary" :class="{ loading: promptSaving }" :disabled="promptSaving" @click="savePrompt">{{ promptSaving ? t('adminAgentPrompt.saving') : t('adminAgentPrompt.save') }}</button></div>

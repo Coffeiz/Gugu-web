@@ -78,9 +78,11 @@ def _inject_pending_confirmation(tool_input: Any, adapter_target: str | None,
         return tool_input, False
     confirm_value = original.get("confirm")
     explicitly_denied = isinstance(confirm_value, str) and confirm_value.strip().lower() in {"false", "0", "no"}
-    if explicitly_denied or original.get("confirm_token"):
+    if explicitly_denied:
         return tool_input, True
 
+    # 模型可能会把上一次结果里的 token 原样带回，也可能生成/截断一个同名字段。
+    # 服务端刚通过交互确认签发的 token 才是唯一可信凭证，必须覆盖模型传入值。
     merged = {**original, "confirm": True, "confirm_token": confirmation["confirm_token"]}
     if adapter_target:
         if isinstance(tool_input, dict) and isinstance(tool_input.get("arguments"), dict):
@@ -151,6 +153,7 @@ _GOAL_POLICY = (
 )
 # 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
 MAX_TOOL_CALLS = 10
+_DEFAULT_BUDGET = object()
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
 # ── 自我核实：成功做了增删改后，立刻跑一轮核实（用查询工具查证真生效/完整），
@@ -261,6 +264,7 @@ from agent.security.core_guards import (
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
     _could_be_tool_progress, _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
+    guard_locale,
 )
 
 
@@ -295,7 +299,11 @@ def _is_successful_tool_result(result: str) -> bool:
         payload = json.loads(result)
     except (TypeError, json.JSONDecodeError):
         return True
-    return not isinstance(payload, dict) or not payload.get("error")
+    if not isinstance(payload, dict):
+        return True
+    if payload.get("needs_confirm") or payload.get("status") == "waiting_confirmation":
+        return False
+    return not payload.get("error") and payload.get("status") != "failed"
 
 
 def _loaded_skill_slugs(messages) -> dict[str, str]:
@@ -424,10 +432,21 @@ async def _im_set_tool_state(tool_name: str) -> None:
 class LLMRunner:
     """provider 无关的工具循环执行器。"""
 
-    def __init__(self, tool_names: list[str], settings, capability_context=None):
+    def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,
+                 max_rounds: int | None | object = _DEFAULT_BUDGET,
+                 max_tool_calls: int | None | object = _DEFAULT_BUDGET,
+                 max_verify_rounds: int | None | object = _DEFAULT_BUDGET,
+                 max_verify_cycles: int | None | object = _DEFAULT_BUDGET,
+                 stop_on_budget: bool = False):
         self.tool_names = tool_names
         self.settings = settings
         self.capability_context = capability_context
+        self.locale = locale
+        self.max_rounds = MAX_ROUNDS if max_rounds is _DEFAULT_BUDGET else max_rounds
+        self.max_tool_calls = MAX_TOOL_CALLS if max_tool_calls is _DEFAULT_BUDGET else max_tool_calls
+        self.max_verify_rounds = MAX_VERIFY_LLM_ROUNDS if max_verify_rounds is _DEFAULT_BUDGET else max_verify_rounds
+        self.max_verify_cycles = MAX_VERIFY if max_verify_cycles is _DEFAULT_BUDGET else max_verify_cycles
+        self.stop_on_budget = stop_on_budget
         # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
         # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
         _ov = getattr(getattr(settings, "state_labels", None), "overrides", None) or {}
@@ -754,18 +773,22 @@ class LLMRunner:
             # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
             # 最后一轮额外留给模型输出核实后的收束文本。
             if verify_mode:
-                if verify_rounds >= MAX_VERIFY_LLM_ROUNDS:
+                if self.max_verify_rounds is not None and verify_rounds >= self.max_verify_rounds:
                     break
                 verify_rounds += 1
             else:
-                if task_rounds >= MAX_ROUNDS:
+                if self.max_rounds is not None and task_rounds >= self.max_rounds:
+                    if self.stop_on_budget:
+                        _log.warning("[core] 自动任务 LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
+                        yield f"data: {json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{self.max_rounds} 轮）'}, ensure_ascii=False)}\n\n"
+                        return
                     from app.services.interactions import create_goal_mode_prompt
 
                     interaction = await create_goal_mode_prompt(
                         user_id=user_id, session_id=session_id,
                     )
                     if interaction is None:
-                        yield f"data: {json.dumps({'type': 'token', 'content': '本次已达到 30 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。'}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'token', 'content': f'本次已达到 {self.max_rounds} 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。'}, ensure_ascii=False)}\n\n"
                         return
                     prompt, options = interaction
                     yield stream_event(
@@ -846,14 +869,14 @@ class LLMRunner:
                         # 变成正常句子则原样 flush，只有确认是纯占位且无 tool call 时丢弃。
                         if _progress_pending:
                             candidate = "".join(_progress_buf) + _val
-                            if _could_be_tool_progress(candidate):
+                            if _could_be_tool_progress(candidate, self.locale):
                                 _progress_buf.append(_val)
                             else:
                                 _round_text_buf.extend(_progress_buf)
                                 _progress_buf.clear()
                                 _progress_pending = False
                                 _round_text_buf.append(_val)
-                        elif _could_be_tool_progress(_val):
+                        elif _could_be_tool_progress(_val, self.locale):
                             _progress_pending = True
                             _progress_buf.append(_val)
                         else:
@@ -1000,11 +1023,12 @@ class LLMRunner:
                 dispatched = []
                 pending_interaction = None
                 remaining_tool_calls = (
-                    None if (goal_mode or unlimited_mode) else max(0, MAX_TOOL_CALLS - tool_calls_used)
+                    None if (goal_mode or unlimited_mode) else max(0, self.max_tool_calls - tool_calls_used)
                 )
                 round_limit_exceeded = (
                     not (goal_mode or unlimited_mode)
-                    and task_rounds >= MAX_ROUNDS
+                    and self.max_rounds is not None
+                    and task_rounds >= self.max_rounds
                 )
                 tool_budget_exceeded = (
                     remaining_tool_calls is not None
@@ -1012,17 +1036,26 @@ class LLMRunner:
                 )
                 tool_budget_stop_requested = False
                 if round_limit_exceeded or tool_budget_exceeded:
+                    if self.stop_on_budget:
+                        reason = (
+                            f"定时任务达到模型轮次上限（{self.max_rounds} 轮）"
+                            if round_limit_exceeded
+                            else f"定时任务达到工具调用上限（{self.max_tool_calls} 次）"
+                        )
+                        _log.warning("[core] 自动任务预算达到上限：%s", reason)
+                        yield f"data: {json.dumps({'type': 'error', 'detail': reason}, ensure_ascii=False)}\n\n"
+                        return
                     # 两种限制都必须在 dispatch 前暂停整批待执行请求。用户点击继续后，
                     # 先放行这批请求，再解除对应的后续上限，避免模型看到“工具结果已失败”
                     # 后直接总结，或把同一批工具重新规划一遍。
                     if round_limit_exceeded:
-                        _log.warning("[core] LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, MAX_ROUNDS)
+                        _log.warning("[core] LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
                         from app.services.interactions import create_goal_mode_prompt
                         interaction = await create_goal_mode_prompt(
                             user_id=user_id, session_id=session_id,
                         )
                     else:
-                        _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
+                        _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, self.max_tool_calls)
                         from app.services.interactions import create_tool_budget_prompt
                         interaction = await create_tool_budget_prompt(
                             user_id=user_id, session_id=session_id,
@@ -1469,7 +1502,9 @@ class LLMRunner:
                     continue
                 # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
                 # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
-                if did_mutate and verify_count < MAX_VERIFY:
+                if did_mutate and (
+                    self.max_verify_cycles is None or verify_count < self.max_verify_cycles
+                ):
                     verify_count += 1
                     did_mutate = False
                     verify_mode = True
@@ -1538,7 +1573,7 @@ class LLMRunner:
                 return
             # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
             # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
-            if _progress_pending and not _is_tool_progress_only(_final_text):
+            if _progress_pending and not _is_tool_progress_only(_final_text, self.locale):
                 _round_text_buf.extend(_progress_buf)
                 _progress_buf.clear()
                 _progress_pending = False
@@ -1560,48 +1595,48 @@ class LLMRunner:
             # narration 兜底：整段生成一个工具都没真调，但文字在"假装"读/改文件 → 追一轮逼它真调。
             # 只追一次；核实阶段不算（那是另一套）。
             if (not any_tool_called and not verify_mode and narration_retry < 1
-                    and _looks_like_narration(_final_text)):
+                    and _looks_like_narration(_final_text, self.locale)):
                 narration_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
                 for _text in drain_round_text():
                     yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
-                messages.append_batch(driver.build_guard_followup(result, _NARRATION_NUDGE))
+                messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).narration_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
             if (not any_tool_called and not verify_mode and intent_retry < 1
-                    and _announces_intent(_final_text)):
+                    and _announces_intent(_final_text, self.locale)):
                 intent_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
                 for _text in drain_round_text():
                     yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
-                messages.append_batch(driver.build_guard_followup(result, _INTENT_NUDGE))
+                messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).intent_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
             # 本轮都不能作为最终回复结束。当前内置驱动的 requires_tools 由 tool_calls
             # 推导，保留该分支供支持显式决策的 provider 适配器使用。
             if (not any_tool_called and not verify_mode and tool_intent_retry < 1
-                    and (_requires_tools is True or _is_tool_progress_only(_final_text))):
+                    and (_requires_tools is True or _is_tool_progress_only(_final_text, self.locale))):
                 tool_intent_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
                 for _text in drain_round_text():
                     yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
-                messages.append_batch(driver.build_guard_followup(result, _TOOL_REQUIRED_NUDGE))
+                messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).tool_required_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
             if (not any_tool_called and not verify_mode and decision_retry < 1
-                    and _is_decision_dodge(_user_req, _final_text)):
+                    and _is_decision_dodge(_user_req, _final_text, self.locale)):
                 decision_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
                 for _text in drain_round_text():
                     yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
-                messages.append_batch(driver.build_guard_followup(result, _DECISION_NUDGE))
+                messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).decision_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 即时复查时，前面还没有生成过最终说明；保留最终收束轮的确认给用户，

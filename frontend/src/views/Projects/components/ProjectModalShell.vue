@@ -7,7 +7,7 @@
 </template>
 
 <script setup lang="ts">
-import BaseModal from '@/components/common/BaseModal.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
 
 defineProps({
   show: { type: Boolean, required: true },

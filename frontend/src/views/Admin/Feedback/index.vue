@@ -5,9 +5,7 @@
         <h2 class="page-title">{{ t('adminFeedback.title') }}</h2>
         <p class="page-desc">{{ t('adminFeedback.description') }}</p>
       </div>
-      <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :title="t('adminFeedback.refresh')" :aria-label="t('adminFeedback.refresh')">
-        <Icon name="action.refresh" size="sm" />
-      </button>
+      <RefreshButton :loading="refreshing" @click="load" :title="t('adminFeedback.refresh')" />
     </div>
 
     <AdminSegmentTabs
@@ -44,6 +42,7 @@ import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 const { t } = useI18n()
 
 const categoryTabs = computed(() => [

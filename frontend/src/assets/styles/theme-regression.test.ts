@@ -37,7 +37,7 @@ const runtimeCss = load('./adoption/runtime.css')
 const componentCss = load('./tokens/components.css')
 const componentSurfacesCss = load('./tokens/components/surfaces.css')
 const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
-const fileSelectionToolbarVue = load('../../components/common/FileSelectionToolbar.vue')
+const fileSelectionToolbarVue = load('../../components/common/file-browser/FileSelectionToolbar.vue')
 const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
 const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
@@ -77,7 +77,7 @@ const paletteTokens = [
   '--theme-scrollbar-thumb',
   '--theme-scrollbar-thumb-hover',
 ]
-const notificationBubbleVue = load('../../components/common/NotificationBubble.vue')
+const notificationBubbleVue = load('../../components/common/feedback/NotificationBubble.vue')
 const designOverridesCss = load('./design-overrides.css')
 const lightPaletteCss = [
   load('./tokens/palettes/aero.css'),
@@ -86,7 +86,7 @@ const lightPaletteCss = [
   load('./tokens/palettes/sky.css'),
   load('./tokens/palettes/sage.css'),
 ]
-const guguChatVue = load('../../components/common/GuguChat.vue')
+const guguChatVue = load('../../components/common/gugu-chat/GuguChat.vue')
 const usagePanelVue = load('../../views/Admin/Agent/observability/components/UsagePanel.vue')
 const promptPanelVue = load('../../views/Admin/Agent/prompting/components/PromptPanel.vue')
 const stateLabelsPanelVue = load('../../views/Admin/Agent/prompting/components/StateLabelsPanel.vue')
@@ -139,6 +139,17 @@ describe('主题 CSS 回归契约', () => {
     expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
   })
 
+  it('暗色玻璃页面渐变从较亮端向较暗端收束', () => {
+    expect(materialCompositionCss).toContain(
+      '--theme-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
+    )
+    expect(materialCompositionCss).toContain(
+      '--theme-auth-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
+    )
+    expect(themeCss).toContain('--theme-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%)')
+    expect(themeCss).toContain('--theme-auth-page: linear-gradient(145deg,#13152a 0%,#11131f 60%,#0e101a 100%)')
+  })
+
   it('通知气泡使用统一浮层材质，暗色不继承亮色纯白高光', () => {
     expect(notificationBubbleVue).toContain('background: var(--popup-surface-bg);')
     expect(notificationBubbleVue).toContain('box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);')
@@ -172,8 +183,8 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('todo popup 由通用容器负责 surface，业务组件负责内容主题', () => {
-    expect(load('../../components/common/PopupMenu.vue')).toContain('background: var(--popup-surface-bg)')
-    expect(load('../../components/common/PopupMenu.vue')).toContain('border: 1px solid var(--popup-surface-border)')
+    expect(load('../../components/common/overlays/PopupMenu.vue')).toContain('background: var(--popup-surface-bg)')
+    expect(load('../../components/common/overlays/PopupMenu.vue')).toContain('border: 1px solid var(--popup-surface-border)')
     expect(themeAdoptionCss).not.toContain('.todo-pop-popup')
     expect(projectCardVue).toContain('html[data-theme][data-family] .todo-pop-popup')
   })
@@ -186,8 +197,8 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('导航选中项直接复用调色板 surface，通知 active paint 不重复', () => {
-    expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
-    expect(load('../../components/common/NavItem.vue')).not.toContain('.nav-item.active {')
+    expect(load('../../components/common/layout/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
+    expect(load('../../components/common/layout/NavItem.vue')).not.toContain('.nav-item.active {')
     expect(componentCss).toContain('--sidebar-item-active: var(--theme-sidebar-active-bg, var(--surface-raised))')
     expect(componentSurfacesCss).not.toContain('--sidebar-item-active-light-bg')
     expect(componentSurfacesCss).not.toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')

@@ -24,7 +24,7 @@ import {
   registerMindLandingTargetResolver,
 } from '@/interaction/runtime/canvas'
 import ProjectCardBody from './ProjectCardBody.vue'
-import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { useMindRuntimeObject } from '@/composables/mind/useMindRuntimeObject'
 
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },

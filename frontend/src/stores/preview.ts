@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ } from '@/composables/core/windowz'
 import type { FileMeta } from '@/stores/filesCache'
 
 // 预览窗口也承载聊天附件等非库文件，故用 Partial<FileMeta>（只需 id/ext，其余按需）
@@ -41,7 +41,7 @@ export const usePreviewStore = defineStore('preview', () => {
   const singleFile = ref<PreviewFile | null>(null)
 
   let _nextId = 1
-  // z 统一走 windowz.nextZ()（窗口带 20000+，点谁谁上；见 composables/windowz.ts）
+  // z 统一走 windowz.nextZ()（窗口带 20000+，点谁谁上；见 composables/core/windowz.ts）
 
   // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
   // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。

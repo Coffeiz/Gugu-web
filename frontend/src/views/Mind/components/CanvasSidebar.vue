@@ -89,18 +89,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'
-import SearchInput from '@/components/common/SearchInput.vue'
+import SearchInput from '@/components/common/controls/SearchInput.vue'
 import DrawerShell from './drawer/DrawerShell.vue'
 import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { runtime } from '@/interaction/runtime'
 import { MIND_CANVAS_DRAWER_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
-import { useMindFloatingSurface } from '../composables/useMindFloatingSurface'
+import { useMindFloatingSurface } from '@/composables/mind/useMindFloatingSurface'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },

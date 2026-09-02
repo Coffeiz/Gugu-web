@@ -12,7 +12,6 @@
         </span>
         <span class="tl-count">{{ g.items.length }}</span>
       </div>
-
       <div class="tl-col-body" @scroll="onColumnScroll">
         <div class="note-stack">
           <NoteCard
@@ -155,8 +154,8 @@ const todayIso = localDayKey(new Date())   // 本地今天（不是 UTC）
 
 /** 月份小字：同年只显「7月」，跨年带年份「25年12月」 */
 function monthLabel(iso: string) {
-  const [y, m] = iso.split('-')
-  return y === todayIso.slice(0, 4) ? `${+m}月` : `${y.slice(2)}年${+m}月`
+  const [year, month] = iso.split('-')
+  return year === todayIso.slice(0, 4) ? `${+month}月` : `${year.slice(2)}年${+month}月`
 }
 function weekdayOf(iso: string) { return '周' + WEEK[new Date(iso + 'T00:00:00').getDay()] }
 
@@ -185,58 +184,43 @@ defineExpose({
      松手后的回弹由 NotesView 的同一套阻尼弹簧逐帧驱动，不能在这里再叠一层 CSS 缓动。 */
 }
 
-/* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 由共享 Glass token 统一处理。 */
+/* 深度效果的平滑现在完全交给 NotesView.vue 的 timelineVisualFrac 低通滤波（每帧直接
+   算出目标 transform）；这里不再叠一层 CSS transition——continuously 变化的值用 transition
+   会变成「一直在追一个每帧都挪的目标」，反而比单纯的 JS 平滑更容易看着发飘、跟不上。 */
+/* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */
+
 .tl-col {
   --surface-glass: rgba(255,255,255,0.25);
-  /* isolation:isolate 给每张卡一个独立、稳定的合成层边界，不被页面其它地方（比如日历
-     弹层里跟卡片重叠的那一角）的重绘牵连——本仓库处理 backdrop-filter 玻璃层怪异重绘
-     早就用过这招（topbar/GuguChat 悬浮球），这里同样的坑先按同样的方子试一次。 */
   isolation: isolate;
   border-radius: 40px;
   corner-shape: squircle;
   width: 440px; flex-shrink: 0; box-sizing: border-box;
   display: flex; flex-direction: column; min-height: 0; position: relative;
   padding: 14px 12px 10px;
-  scroll-snap-align: center;   /* 滚列时磁吸：列中心吸到 scroll-padding 调整后的中线（=contentCenter，#4）*/
+  scroll-snap-align: center;
   transform-origin: center center;
+  /* 每日玻璃列是横向滚动的性能边界；列外内容不参与绘制，但列宽/列高仍保持稳定。 */
+  content-visibility: auto;
+  contain-intrinsic-size: 440px 560px;
 }
-/* 深度效果的平滑现在完全交给 NotesView.vue 的 timelineVisualFrac 低通滤波（每帧直接
-   算出目标 transform）；这里不再叠一层 CSS transition——continuously 变化的值用 transition
-   会变成「一直在追一个每帧都挪的目标」，反而比单纯的 JS 平滑更容易看着发飘、跟不上。 */
-/* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */
 .tl-col-head {
   display: flex; align-items: center; gap: 8px;
   flex-shrink: 0; padding: 0 4px 10px;
 }
-.tl-day {
-  font-size: 26px; font-weight: 700; line-height: 1;
-  color: var(--text-primary); font-variant-numeric: tabular-nums;
-}
+.tl-day { font-size: 26px; font-weight: 700; line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .tl-day.today { color: var(--color-primary); }
 .tl-day-side { display: flex; flex-direction: column; gap: 1px; }
 .tl-month { font-size: 11px; font-weight: 600; color: var(--text-secondary); line-height: 1.1; }
-.tl-week  { font-size: 10.5px; color: var(--text-secondary); opacity: 0.75; line-height: 1.1; }
-.tl-count {
-  margin-left: auto; font-size: 10.5px; color: var(--text-secondary);
-  background: rgba(123,127,178,0.1); border-radius: 99px; padding: 1px 7px;
-}
+.tl-week { font-size: 10.5px; color: var(--text-secondary); opacity: 0.75; line-height: 1.1; }
+.tl-count { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); background: rgba(123,127,178,0.1); border-radius: 99px; padding: 1px 7px; }
 
 /* 列内溢出自己竖滚（横向翻历史、纵向翻当天，互不打架） */
 .tl-col-body {
   flex: 1; min-height: 0; overflow-y: auto;
-  /* 横向视口外的便签堆不参与绘制；列框与宽度仍保留，日期滑杆的定位几何不会改变。 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 560px;
-  /* 滚动条贴列右边缘、无底色，跟 AppSidebar.vue .nav 同一套技巧：右侧额外让出的 margin
-     跟 padding 等值抵消，滚动条浮在内容层上，不为它额外预留空间——出不出滚动条，
-     .note-stack 都不会跟着左右移动。左侧维持原来的 -4px/4px（横向视口裁切用，跟滚动条无关）。 */
-  /* 滚动视口会裁切子元素阴影，左右和上下都留出 hover 阴影的安全区，避免卡片贴边时被截断。 */
-  margin: 0 -4px 0 -4px; padding: 8px 10px 14px 10px;
-  /* 右侧滚动条占用 gutter 时，左侧也预留同宽空间，保持便签卡片左右对称。 */
+  margin: 0 -4px; padding: 8px 10px 14px;
   scrollbar-gutter: auto;
 }
 .note-stack { display: flex; flex-direction: column; gap: 10px; }
-
 .tl-empty {
   align-self: flex-start;
   padding: 48px 24px; font-size: 12.5px; color: var(--text-secondary);

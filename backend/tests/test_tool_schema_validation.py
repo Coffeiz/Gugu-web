@@ -42,6 +42,22 @@ def _make_registry(schema, handler=_ok_handler, *, mutates=False):
     return reg, tool
 
 
+def test_send_email_normalizes_json_string_arrays_without_widening_schema():
+    normalized, adaptations = normalize_legacy_input("send_email", {
+        "sections": '[{"heading":"状态","text":"执行中"}]',
+        "actions": '[{"label":"打开项目","url":"https://example.com"}]',
+        "confirm": "true",
+    })
+
+    assert normalized["sections"] == [{"heading": "状态", "text": "执行中"}]
+    assert normalized["actions"] == [{"label": "打开项目", "url": "https://example.com"}]
+    assert normalized["confirm"] == "true"
+    assert adaptations == [
+        "send_email.sections:json_string_to_array",
+        "send_email.actions:json_string_to_array",
+    ]
+
+
 @pytest.mark.parametrize("bad_input", [[], "query", 7, None])
 async def test_dispatch_rejects_non_object_before_handler(bad_input, monkeypatch):
     called = False

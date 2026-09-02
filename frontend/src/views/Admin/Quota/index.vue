@@ -97,12 +97,10 @@
       <div class="section-head">
         <span class="section-label">{{ t('adminQuota.userOverrides') }}</span>
         <span class="section-desc">{{ t('adminQuota.userOverridesHint') }}</span>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="loadUsers(true)" :title="t('adminQuota.refresh')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton :loading="refreshing" @click="loadUsers(true)" :title="t('adminQuota.refresh')" />
       </div>
 
-      <div class="users-card">
+      <div class="users-card override-card">
         <div v-if="loading" class="state-empty">{{ t('adminQuota.loading') }}</div>
         <div v-else-if="!overrideUsers.length" class="state-empty">
           {{ t('adminQuota.emptyOverrides') }}
@@ -156,7 +154,7 @@
         <span class="section-desc">{{ t('adminQuota.allUsersHint') }}</span>
         <input v-model="search" class="search-input" :placeholder="t('adminQuota.search')" @input="onSearch" />
       </div>
-      <div class="users-card">
+      <div class="users-card all-users-card">
         <div v-if="loading" class="state-empty">{{ t('adminQuota.loading') }}</div>
         <div v-else-if="!allUsers.length" class="state-empty">{{ t('adminQuota.emptyUsers') }}</div>
         <template v-else>
@@ -281,6 +279,7 @@ import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/stores/config'
 import { useQuotaAdmin } from './useQuotaAdmin'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 
 const adminStore  = useAdminStore()
 const { t } = useI18n()
@@ -559,6 +558,7 @@ PHASE7_QUOTA_OLD_END */
 }
 .ut-row:last-child { border-bottom: none; }
 .ut-row:hover { background: rgba(255,255,255,0.03); }
+.override-card .ut-head, .override-card .ut-row { grid-template-columns: 200px 1fr 1fr 120px; }
 
 .col-user { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .avatar-circle {
@@ -591,7 +591,7 @@ PHASE7_QUOTA_OLD_END */
 .quota-badge.custom  { background: rgba(140,100,200,0.12); color: rgba(170,130,230,0.9); }
 .quota-badge.default { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); }
 
-.col-action { display: flex; align-items: center; gap: 6px; }
+.col-action { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .action-btn {
   height: 28px; padding: 0 12px; border-radius: 8px; font-size: 12px; cursor: pointer;
   border: 1px solid rgba(255,255,255,0.12);

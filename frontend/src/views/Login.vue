@@ -18,7 +18,7 @@
             autocomplete="current-password" :disabled="loading" />
         </div>
 
-        <div class="forgot-row">
+        <div v-if="passwordResetEnabled" class="forgot-row">
           <router-link to="/forgot-password">{{ t('auth.forgotPassword') }}</router-link>
         </div>
 
@@ -35,21 +35,7 @@
       </div>
     </div>
 
-    <div class="page-footer">
-      <div class="language-switcher" role="group" :aria-label="t('common.language')">
-        <button v-for="option in localeOptions" :key="option.value" type="button"
-          :class="{ active: locale === option.value }" @click="changeLocale(option.value)">
-          {{ option.label }}
-        </button>
-      </div>
-      <div class="footer-copy">
-        <span>Create with agents and love</span>
-        <template v-if="siteConfig.icpNumber">
-          <span class="footer-sep">·</span>
-          <a :href="siteConfig.icpUrl" target="_blank" rel="noopener">{{ siteConfig.icpNumber }}</a>
-        </template>
-      </div>
-    </div>
+    <AuthPageFooter />
   </div>
 </template>
 
@@ -57,32 +43,29 @@
 import { onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import AuthBrand from '@/components/common/AuthBrand.vue'
+import AuthBrand from '@/components/common/auth/AuthBrand.vue'
+import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
 import { useI18n } from 'vue-i18n'
 import { fetchSiteConfig } from '@/services/api'
-import { localeOptions, setLocale, type SupportedLocale } from '@/i18n'
 
 const router   = useRouter()
 const auth     = useAuthStore()
 const form     = reactive({ username: '', password: '' })
 const loading  = ref(false)
 const error    = ref('')
-const { t, locale: i18nLocale } = useI18n()
-const locale   = ref(i18nLocale.value as SupportedLocale)
-const siteConfig = reactive({ icpNumber: '', icpUrl: '' })
+const passwordResetEnabled = ref(false)
+const { t } = useI18n()
 
-function changeLocale(value: SupportedLocale) {
-  setLocale(value, true)
-  locale.value = value
+async function loadPasswordResetAvailability() {
+  try {
+    passwordResetEnabled.value = (await fetchSiteConfig()).passwordResetEnabled === true
+  } catch {
+    // 公开配置不可用时保持隐藏，避免展示当前不可用的找回入口。
+    passwordResetEnabled.value = false
+  }
 }
 
-onMounted(async () => {
-  try {
-    Object.assign(siteConfig, await fetchSiteConfig())
-  } catch {
-    // 公开配置不可用时保持默认隐藏，不影响登录。
-  }
-})
+onMounted(() => { void loadPasswordResetAvailability() })
 
 async function handleLogin() {
   if (!form.username || !form.password) { error.value = t('auth.fillCredentials'); return }
@@ -129,19 +112,6 @@ async function handleLogin() {
     inset 0 1px 0 rgba(255,255,255,0.95),
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
-
-.language-switcher {
-  display: flex; justify-content: center; gap: 4px;
-  pointer-events: auto;
-}
-.language-switcher button {
-  border: 0; border-radius: 6px; padding: 4px 7px;
-  background: transparent; color: var(--content-tertiary);
-  font: 11px var(--font-sans); cursor: pointer;
-  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
-}
-.language-switcher button:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
-.language-switcher button.active { background: var(--selection-bg); color: var(--action-primary); font-weight: 600; }
 
 .field { margin-bottom: 14px; }
 .field label {
@@ -210,16 +180,4 @@ async function handleLogin() {
 .card-footer a { color: var(--sidebar-item-active-fg); font-weight: 600; text-decoration: none; }
 .card-footer a:hover { text-decoration: underline; }
 
-.page-footer {
-  position: absolute; bottom: 24px; left: 0; right: 0;
-  text-align: center; font-size: 11px; color: rgba(100,108,130,0.55);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-  pointer-events: none;
-}
-.footer-copy { display: flex; align-items: center; justify-content: center; gap: 6px; }
-.page-footer a {
-  color: rgba(100,108,130,0.55); text-decoration: none; pointer-events: auto;
-}
-.page-footer a:hover { color: rgba(100,108,130,0.85); }
-.footer-sep { opacity: 0.5; }
 </style>

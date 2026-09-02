@@ -105,8 +105,8 @@ import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useRouter } from 'vue-router'
-import DatePicker from '@/components/common/DatePicker.vue'
-import { useHolidays } from '@/composables/useHolidays'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
+import { useHolidays } from '@/composables/shared/useHolidays'
 import { projectProgress } from '@/utils/projectProgress'
 
 

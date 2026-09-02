@@ -1,10 +1,10 @@
 import { computed, ref, type Ref } from 'vue'
 import { uploadWithProgress } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
-import { clearThumbCache } from '@/composables/useThumbCache'
-import { filesToItems, readDroppedEntries, type UploadItem } from '@/composables/useFileUpload'
-import { useUploadQueue } from '@/composables/useUploadQueue'
-import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import { clearThumbCache } from '@/composables/shared/useThumbCache'
+import { filesToItems, readDroppedEntries, type UploadItem } from '@/composables/files/useFileUploadCore'
+import { useUploadQueue } from '@/composables/shared/useUploadQueue'
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { executeUploadLifecycle, prepareUploadBatch, type UploadConflictContext } from './useFileUploadController'
 
 export interface FileUploadCache {

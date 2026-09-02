@@ -270,11 +270,13 @@ class BYOKSettings(BaseModel):
 
 class SmtpSettings(BaseModel):
     host:     str           = Field("", description="SMTP 服务器地址")
+    enabled:  bool          = Field(True, description="是否启用系统 SMTP 邮件能力")
     port:     int           = Field(465, description="SMTP 端口（465=SSL，587=STARTTLS）")
     user:     str           = Field("", description="SMTP 登录账号")
     password: str           = Field("", description="SMTP 登录密码")
     from_addr: str          = Field("", description="发件人地址（默认同 user）")
     to_addr:  str           = Field("", description="反馈通知收件人地址")
+    test_to_addr: str       = Field("", description="SMTP 测试邮件收件人地址")
     feedback_email_enabled: bool = Field(True, description="是否发送用户反馈邮件提醒")
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
 
@@ -334,6 +336,7 @@ class AppSettings(BaseSettings):
     )
 
     app_name: str = "Gugu"
+    public_app_url: str = Field("", description="用户可访问的站点根地址，用于生成邮件等外部链接")
     gugu_site_icp_number: str = Field("", description="站点备案号；为空时前端不显示备案信息")
     gugu_site_icp_url: str = Field("https://beian.miit.gov.cn/", description="站点备案信息链接")
     debug: bool = False

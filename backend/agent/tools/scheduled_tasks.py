@@ -63,6 +63,7 @@ def _to_dict(t: Any) -> dict:
         "enabled": t.enabled,
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
         "delivery_targets": t.delivery_targets,
+        "authorized_tools": t.authorized_tools or [],
     }
 
 
@@ -125,6 +126,11 @@ def _delivery_mode_confirmation_error() -> str:
     }, ensure_ascii=False)
 
 
+def _authorized_tools(value) -> list[str]:
+    """只接受用户明确勾选的危险工具；默认不授予任何自动权限。"""
+    return ["send_email"] if isinstance(value, list) and "send_email" in value else []
+
+
 async def _resolve_task(db, user_id, args):
     """按 task_id 或任务名 task 定位；返回 (task|None, 错误JSON|None)。少调用：可直接按名字操作。"""
     # 日程提醒（event_id 非空）归日历管，咕咕的定时任务工具一律视作「不存在」、不可解析/改/删
@@ -179,6 +185,7 @@ async def _create_scheduled_task(db, user_id, args: dict):
         channels=channels,
         enabled=args.get("enabled", True),
         delivery_targets=delivery_targets,
+        authorized_tools=_authorized_tools(args.get("authorized_tools")),
     )
     return {"success": True, "task_id": t.id, **_to_dict(t),
             "note": "最多 30 秒后开始按时触发"}
@@ -188,8 +195,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
-    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "delivery_mode")):
-        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled），未改动。"})
+    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "delivery_mode", "authorized_tools")):
+        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled/authorized_tools），未改动。"})
     delivery_targets = None
     next_channels = t.channels
     if args.get("channels") is not None or args.get("delivery_mode") is not None:
@@ -223,6 +230,10 @@ async def _update_scheduled_task(db, user_id, args: dict):
         fields["delivery_targets"] = delivery_targets
     if args.get("enabled") is not None:
         fields["enabled"] = bool(args["enabled"])
+    if args.get("authorized_tools") is not None:
+        fields["authorized_tools"] = _authorized_tools(args["authorized_tools"])
+    elif any(args.get(field) is not None for field in ("instruction", "cron", "channels", "delivery_mode")):
+        fields["authorized_tools"] = []
     t = await update_task(db, t, fields)
     return {"success": True, **_to_dict(t)}
 
@@ -273,18 +284,19 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description_short='创建定时任务；支持周期执行和 QQ 私聊或群聊投递。',
-            description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
+            description_short='创建定时任务；支持邮件、站内通知和 QQ 私聊或群聊投递。',
+            description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组，email 表示发送到当前用户注册邮箱并使用 reminder 模板。只有用户明确授权时才传 authorized_tools=[send_email]，否则到点调用邮件工具仍需确认。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name":        {"type": "string"},
                     "instruction": {"type": "string"},
                     "cron":        {"type": "string"},
-                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
+                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "email", "feishu", "qq"]},
                                     "minItems": 1, "uniqueItems": True},
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
+                    "authorized_tools": {"type": "array", "items": {"type": "string", "enum": ["send_email"]}, "uniqueItems": True},
                 },
                 "required": ["name", "instruction", "cron"],
             },
@@ -294,7 +306,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="update_scheduled_task", label="更新定时任务",
             description_short='修改定时任务；可调整执行计划和 QQ 投递范围。',
-            description="修改定时任务内容、投递渠道或启停；按 task_id 或 task 定位。只改 delivery_mode 时省略 channels，改时间用 cron/@once。",
+            description="修改定时任务内容、投递渠道或启停；按 task_id 或 task 定位。只改 delivery_mode 时省略 channels，改时间用 cron/@once。只有用户明确授权时才传 authorized_tools=[send_email]。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -303,10 +315,11 @@ class ScheduledTasksSkill(BaseSkill):
                     "name":        {"type": "string"},
                     "instruction": {"type": "string"},
                     "cron":        {"type": "string"},
-                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
+                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "email", "feishu", "qq"]},
                                     "minItems": 1, "uniqueItems": True},
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
+                    "authorized_tools": {"type": "array", "items": {"type": "string", "enum": ["send_email"]}, "uniqueItems": True},
                 },
                 "required": [],
             },

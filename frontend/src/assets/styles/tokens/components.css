@@ -39,6 +39,7 @@
   --control-border: var(--border-default);
   --control-border-hover: var(--border-hover);
   --control-radius: var(--radius-sm);
+  --control-resizer-bg: linear-gradient(135deg, transparent 0 50%, var(--input-border) 51% 58%, transparent 59% 100%);
   --control-checkbox-size: 16px;
   --control-checkbox-radius: 5px;
   --control-checkbox-border-width: 1.5px;

@@ -6,6 +6,14 @@ html[data-theme][data-family] input[type='number']::-webkit-outer-spin-button {
   -webkit-appearance: none;
 }
 
+/* 多行输入框的原生缩放柄使用公共契约，避免 Chromium 默认绘制白色方块。 */
+html[data-theme][data-family] .control-resizable {
+  resize: vertical;
+}
+html[data-theme][data-family] .control-resizable::-webkit-resizer {
+  background: var(--control-resizer-bg);
+}
+
 html[data-theme][data-family] :is(
   .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
   .field-input, .stage-input, .tpl-name-input, .np-todo-input,

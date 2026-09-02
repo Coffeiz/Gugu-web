@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 import secrets
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import Response
@@ -22,13 +23,33 @@ from app.core.security import (
     set_auth_cookies,
     verify_password,
 )
-from app.core.tz import now_utc, iso_utc
+from app.core.tz import now_utc, iso_utc, LOCAL_TZ
 from app.db.session import get_db
-from app.models import User, AgentUsage, FrontendEvent
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
+from app.models import User, UserPreferences, AgentUsage, FrontendEvent, EmailChangeRequest
+from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount, EmailChangeRequestCreate, EmailChangeVerify
 from app.services import email as email_svc
+from app.services.email.capabilities import is_system_email_available
+from app.services.email.email_change import create_email_change_request, hash_email_change_token, normalize_email
+from app.services.email.queries import get_user_email_preferences
+from app.services.account_queries import (
+    byok_usage_stats,
+    create_user_preferences,
+    get_active_email_change,
+    get_email_change_for_token,
+    get_user_by_id,
+    is_email_occupied,
+    lock_user,
+    revoke_other_email_changes,
+    usage_sum,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _public_app_url(request: Request) -> str:
+    """优先使用部署配置，避免把容器内部地址写入外发邮件。"""
+    configured = get_settings().public_app_url.strip().rstrip("/")
+    return configured or str(request.base_url).rstrip("/")
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
@@ -47,9 +68,12 @@ async def register(body: UserRegister, request: Request, response: Response, db:
         email=body.email,
         hashed_password=hash_password(body.password),
         display_name=body.username,
+        email_subscribed=body.email_subscribed,
     )
     db.add(user)
     await db.flush()
+    if body.locale:
+        await create_user_preferences(db, user.id, {"locale": body.locale})
 
     await db.commit()
     await db.refresh(user)
@@ -105,6 +129,8 @@ _RESET_TOKEN_TTL = 30 * 60   # 重置链接有效期 30 分钟
 _RESET_COOLDOWN  = 60        # 同一邮箱 60s 内只发一封，防刷
 _RESET_GENERIC   = {"ok": True, "message": "若该邮箱已注册，重置链接已发送，请查收邮箱（含垃圾箱）。"}
 
+_EMAIL_CHANGE_TTL = 30 * 60
+
 
 @router.post("/forgot-password")
 async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSession = Depends(get_db)):
@@ -129,15 +155,16 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
     await r.set(cd_key, "1", ex=_RESET_COOLDOWN)
 
-    # 重置链接基址：用服务端自身 base_url（经 nginx 固定为真实域名），**不信任可被任意伪造的 Origin 头**
-    # ——否则攻击者伪造 Origin 即可把受害者邮件里的重置链接域名换成钓鱼站。
-    origin = str(request.base_url).rstrip("/")
+    # 重置链接使用部署声明的公开地址，不把容器内部地址写入邮件。
+    origin = _public_app_url(request)
     link = f"{origin}/reset-password?token={token}"
     # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
     try:
+        preference_data = await get_user_email_preferences(db, user.id)
         await run_in_threadpool(
             email_svc.send_reset_email,
             to_addr=user.email, username=user.display_name or user.username, link=link,
+            theme=preference_data.get("theme", "light"), palette=preference_data.get("palette", "mist"),
         )
     except Exception:
         pass
@@ -157,13 +184,134 @@ async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)
     uid = await r.get(f"pwdreset:tok:{token}")
     if not uid:
         raise HTTPException(400, "链接已失效或已被使用，请重新申请")
-    user = await db.get(User, UUID(uid))
+    user = await get_user_by_id(db, UUID(uid))
     if not user:
         raise HTTPException(400, "账号不存在")
     user.hashed_password = hash_password(pw)
     await db.commit()
     await r.delete(f"pwdreset:tok:{token}")   # 一次性：用完即焚
     return {"ok": True}
+
+
+async def _email_preference_theme(db: AsyncSession, user_id) -> tuple[str, str]:
+    data = await get_user_email_preferences(db, user_id)
+    return data.get("theme", "light"), data.get("palette", "mist")
+
+
+@router.post("/email-change/request")
+async def request_email_change(
+    body: EmailChangeRequestCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """创建邮箱变更申请；提交申请不会立即修改正式邮箱。"""
+    await rate_limit(request, "email-change", 3, 3600, extra=str(current_user.id))
+    if not is_system_email_available():
+        raise HTTPException(status_code=503, detail="邮箱变更功能当前不可用")
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="当前密码错误")
+    try:
+        new_email = normalize_email(body.new_email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if new_email == current_user.email.strip().lower():
+        raise HTTPException(status_code=400, detail="新邮箱不能与当前邮箱相同")
+    if await is_email_occupied(db, new_email, current_user.id):
+        raise HTTPException(status_code=409, detail="该邮箱已被使用")
+
+    row, token = await create_email_change_request(db, current_user, new_email)
+    await db.commit()
+    theme, palette = await _email_preference_theme(db, current_user.id)
+    link = f"{_public_app_url(request)}/verify-email-change?token={token}"
+    try:
+        sent = await run_in_threadpool(
+            email_svc.send_email_change_verification,
+            to_addr=new_email, username=current_user.display_name or current_user.username,
+            link=link, theme=theme, palette=palette,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("email_change.verification_delivery", exc)
+        sent = False
+    if not sent:
+        raise HTTPException(status_code=503, detail="验证邮件发送失败，请稍后重试")
+    try:
+        await run_in_threadpool(
+            email_svc.send_email_change_notice,
+            to_addr=current_user.email, username=current_user.display_name or current_user.username,
+            kind="requested", theme=theme, palette=palette,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("email_change.request_notice_delivery", exc)
+    return {"ok": True, "email": f"{new_email[:2]}***{new_email[new_email.rfind('@'):]}"}
+
+
+@router.post("/email-change/resend")
+async def resend_email_change(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await rate_limit(request, "email-change-resend", 3, 3600, extra=str(current_user.id))
+    if not is_system_email_available():
+        raise HTTPException(status_code=503, detail="邮箱变更功能当前不可用")
+    row = await get_active_email_change(db, current_user.id)
+    if not row or row.expires_at <= now_utc():
+        raise HTTPException(status_code=400, detail="没有可重新发送的邮箱变更申请")
+    new_email = row.new_email
+    token = secrets.token_urlsafe(32)
+    row.token_hash = hash_email_change_token(token)
+    row.expires_at = now_utc() + timedelta(seconds=_EMAIL_CHANGE_TTL)
+    await db.commit()
+    theme, palette = await _email_preference_theme(db, current_user.id)
+    link = f"{_public_app_url(request)}/verify-email-change?token={token}"
+    try:
+        sent = await run_in_threadpool(email_svc.send_email_change_verification, to_addr=new_email, username=current_user.display_name or current_user.username, link=link, theme=theme, palette=palette)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("email_change.resend_delivery", exc)
+        sent = False
+    if not sent:
+        raise HTTPException(status_code=503, detail="验证邮件发送失败，请稍后重试")
+    return {"ok": True}
+
+
+@router.post("/email-change/cancel")
+async def cancel_email_change(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.email.email_change import revoke_active_requests
+    await revoke_active_requests(db, current_user.id)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/email-change/verify")
+async def verify_email_change(body: EmailChangeVerify, db: AsyncSession = Depends(get_db)):
+    token = body.token.strip()
+    row = await get_email_change_for_token(db, hash_email_change_token(token))
+    if not row or row.used_at is not None or row.revoked_at is not None or row.expires_at <= now_utc():
+        raise HTTPException(status_code=400, detail="链接已失效或已被使用，请重新申请")
+    user = await lock_user(db, row.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="账号不存在")
+    if await is_email_occupied(db, row.new_email, user.id):
+        raise HTTPException(status_code=409, detail="该邮箱已被使用")
+    user.email = row.new_email
+    user.security_version += 1
+    row.used_at = now_utc()
+    await revoke_other_email_changes(db, user.id, row.id, now_utc())
+    await db.commit()
+    theme, palette = await _email_preference_theme(db, user.id)
+    try:
+        await run_in_threadpool(email_svc.send_email_change_notice, to_addr=row.new_email, username=user.display_name or user.username, kind="completed", theme=theme, palette=palette)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("email_change.completed_notice_delivery", exc)
+    return {"ok": True, "message": "邮箱已变更"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -215,6 +363,9 @@ async def update_profile(
             except (ZoneInfoNotFoundError, ValueError):
                 raise HTTPException(400, "无效的时区")
             current_user.timezone = tz
+
+    if body.email_subscribed is not None:
+        current_user.email_subscribed = body.email_subscribed
 
     if body.new_password:
         if not body.current_password:
@@ -292,12 +443,8 @@ async def get_quota(
     settings = get_settings()
     now = now_utc()
 
-    async def _used(since: datetime) -> int:
-        r = await db.execute(
-            select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
-            .where(and_(AgentUsage.user_id == current_user.id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False)))
-        )
-        return r.scalar() or 0
+    async def _used(since: datetime, is_byok: bool) -> int:
+        return await usage_sum(db, current_user.id, since, is_byok)
 
     # 6h 用户窗口 + 周窗口：与 quota.is_exhausted（硬拦）共用同一套口径。
     from agent import quota as _quota
@@ -305,12 +452,25 @@ async def get_quota(
     window_active = stored_window_start is not None and now < stored_window_start + timedelta(hours=6)
     window_start = stored_window_start if window_active else None
     reset_6h_at = window_start + timedelta(hours=6) if window_start else None
-    used_6h = await _used(window_start) if window_start else 0
+    has_byok = await _quota.has_active_byok_llm(db, current_user.id, settings)
+    used_6h = await _used(window_start, has_byok) if window_start else 0
 
     week_start = _quota._week_start(now)
-    used_weekly = await _used(week_start)
+    used_weekly = await _used(week_start, has_byok)
 
-    has_byok = await _quota.has_active_byok_llm(db, current_user.id, settings)
+    async def _byok_stats(since: datetime) -> dict[str, int]:
+        return await byok_usage_stats(db, current_user.id, since)
+
+    byok_today = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
+    byok_month = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
+    if has_byok:
+        local_now = now.astimezone(LOCAL_TZ)
+        today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        byok_today = await _byok_stats(today_start)
+        byok_month = await _byok_stats(month_start)
+    cache_rate = byok_month["cache_read"] / byok_month["tokens_in"] if byok_month["tokens_in"] else 0
+
     limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
     limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
 
@@ -320,6 +480,11 @@ async def get_quota(
         "reset_6h_at":  iso_utc(reset_6h_at) if reset_6h_at else None,   # 当前窗口结束时刻
         "used_weekly":  used_weekly,
         "limit_weekly": limit_weekly,
+        "usage_kind": "byok" if has_byok else "platform",
+        "is_byok": has_byok,
+        "byok_tokens_today": byok_today["tokens"],
+        "byok_tokens_month": byok_month["tokens"],
+        "byok_cache_rate": round(cache_rate, 6),
     }
 
 

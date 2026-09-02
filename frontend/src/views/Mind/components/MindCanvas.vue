@@ -50,7 +50,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, t
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
-import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/mind/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import { relationEnvelope } from '@/utils/canvasRelationGeometry'
 import EntitySticker from './EntitySticker.vue'
@@ -176,6 +176,10 @@ function flushPanVisual(x: number, y: number) {
   panVisualRaf = 0
   pendingPanVisual = null
   applyCameraVisual(x, y)
+}
+function flushCurrentPanVisual() {
+  const visual = panPosition()
+  flushPanVisual(visual.x, visual.y)
 }
 watch(
   () => [camera.x, camera.y, camera.scale] as const,
@@ -522,6 +526,8 @@ function onPointerUp(event: PointerEvent) {
 }
 function onWheelZoom(event: WheelEvent) {
   onWheel(event)
+  // 缩放会重建相机基线；取消缩放前已经排队的旧平移帧，避免旧坐标在下一帧写回。
+  flushCurrentPanVisual()
   emitViewChange()
 }
 function emitViewChange() {
@@ -534,11 +540,13 @@ function emitViewChange() {
 }
 function zoomAtCenterAndEmit(delta: number) {
   zoomAtCenter(delta)
+  flushCurrentPanVisual()
   emitViewChange()
 }
 function resetScaleAtCenterAndEmit() {
   const center = workspaceCenter()
   zoomAt(center.x, center.y, 1)
+  flushCurrentPanVisual()
   emitViewChange()
 }
 function centerViewAndEmit() {
@@ -625,7 +633,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   cursor: grab;
   user-select: none;
-  background-color: var(--mind-canvas-bg);
+  background: var(--mind-canvas-bg);
 }
 .mind-canvas:active { cursor: grabbing; }
 .canvas-grid {

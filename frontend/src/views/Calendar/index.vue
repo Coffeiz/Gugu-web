@@ -142,9 +142,9 @@ import { useEventModalStore } from '@/stores/eventModal'
 import { eventsApi } from '@/services/api'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
-import { useHolidays } from '@/composables/useHolidays'
-import { showAppError } from '@/composables/useAppToast'
-import { defaultTimeRange } from '@/composables/useEventEditForm'
+import { useHolidays } from '@/composables/shared/useHolidays'
+import { showAppError } from '@/composables/core/useAppToast'
+import { defaultTimeRange } from '@/composables/calendar/useEventEditForm'
 import CalendarToolbar from './components/CalendarToolbar.vue'
 import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
@@ -155,12 +155,12 @@ import MonthGrid from './components/MonthGrid.vue'
 import WeekTimeline from './components/WeekTimeline.vue'
 
 const { t, tm, locale } = useI18n()
-import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
-import { useCalendarNav } from './composables/useCalendarNav'
-import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
-import { useCalendarData } from './composables/useCalendarData'
-import { useCalendarWeekInteraction } from './composables/useCalendarWeekInteraction'
-import { useCalendarEventForm } from './composables/useCalendarEventForm'
+import { useCalendarUpcoming } from '@/composables/calendar/useCalendarUpcoming'
+import { useCalendarNav } from '@/composables/calendar/useCalendarNav'
+import { useCalendarDrag, type CalendarDragState } from '@/composables/calendar/useCalendarDrag'
+import { useCalendarData } from '@/composables/calendar/useCalendarData'
+import { useCalendarWeekInteraction } from '@/composables/calendar/useCalendarWeekInteraction'
+import { useCalendarEventForm } from '@/composables/calendar/useCalendarEventForm'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -173,7 +173,7 @@ import {
   timedLayoutFor as calculateTimedLayout,
   type CalendarLayoutConstants,
 } from './utils/calendarLayout'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。

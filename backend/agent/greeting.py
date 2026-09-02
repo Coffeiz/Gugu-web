@@ -2,11 +2,14 @@
 
 不走完整 agent 循环（参照 gateway/web._generate_title）；模型用默认 `settings.ai`。
 **不计入精力/配额**：本调用不经 web.stream / runner 那条记 AgentUsage 的路，token 不写 AgentUsage、不扣配额。
-失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。问候**不自我介绍、不报功能菜单、emoji 极简**。
+同一用户同一语言十分钟内复用 Redis 中的结果，并发请求合并；失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。
+问候**不自我介绍、不报功能菜单、emoji 极简**。
 """
+import asyncio
 import logging
 from datetime import timedelta
 
+from app.core import redis as redis_core
 from app.core.tz import now_ctx, now_utc
 
 from sqlalchemy import select
@@ -17,6 +20,10 @@ from agent.context.loaders import project_sort_key
 from agent.memory import store as mem_store
 
 logger = logging.getLogger("agent.greeting")
+
+_CACHE_TTL_SECONDS = 600
+_CACHE_LOCK_TIMEOUT_SECONDS = 30
+_CACHE_LOCK_WAIT_SECONDS = 15
 
 _PROMPT = (
     "你是「咕咕」，用户的长期伙伴。用户刚打开对话框，请像熟人 / 老朋友那样跟他打个招呼。\n"
@@ -41,6 +48,12 @@ _LOCALE_INSTRUCTIONS = {
     "ja-JP": "挨拶は自然な日本語で直接出力してください。中国語を混ぜないでください。",
     "en-US": "Output the greeting directly in natural English. Do not mix in Chinese or Japanese.",
 }
+
+
+def _current_time_part() -> str:
+    now = now_ctx()
+    weekdays = "一二三四五六日"
+    return f"【当前日期和时间】{now:%Y-%m-%d} 星期{weekdays[now.weekday()]} {now:%H:%M}（按用户时区）"
 
 
 async def _last_seen_part(db: AsyncSession, user_id) -> str:
@@ -121,7 +134,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     except Exception:
         pass
     # 优先级：项目、summary、daily、长期画像；不注入 pattern 或日程，避免问候上下文过载。
-    parts: list[str] = []
+    parts: list[str] = [_current_time_part()]
     if seen:
         parts.append(seen)
     if stance_hint:
@@ -145,8 +158,12 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     return ("\n近期上下文（仅供你自然带一句，别照念）：\n" + "\n\n".join(parts) + "\n\n") if parts else "\n"
 
 
-async def generate(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
-    """生成一句问候；失败 / 空 → ''（前端兜底）。"""
+def _cache_key(user_id, locale: str) -> str:
+    return f"agent:greeting:{user_id}:{locale}"
+
+
+async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
+    """不读写缓存地生成一句问候；失败 / 空 → ''（前端兜底）。"""
     try:
         language_instruction = _LOCALE_INSTRUCTIONS.get(locale, _LOCALE_INSTRUCTIONS["zh-CN"])
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id)) + "\n" + language_instruction
@@ -174,3 +191,50 @@ async def generate(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN"
     except Exception as e:
         logger.warning("greeting 生成失败（前端兜底）: %s", e)
         return ""
+
+
+async def generate(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
+    """生成问候；同一用户同一语言十分钟内复用结果，失败 / 空 → ''。"""
+    locale = locale if locale in _LOCALE_INSTRUCTIONS else "zh-CN"
+    cache_key = _cache_key(user_id, locale)
+    try:
+        redis = redis_core.get_redis()
+        cached = await redis.get(cache_key)
+        if cached:
+            return str(cached)
+
+        # 跨进程合并并发请求：拿锁后必须再次读缓存，避免两个请求同时生成。
+        lock = redis.lock(
+            f"{cache_key}:lock",
+            timeout=_CACHE_LOCK_TIMEOUT_SECONDS,
+            thread_local=False,
+        )
+        acquired = await lock.acquire(
+            blocking=True,
+            blocking_timeout=_CACHE_LOCK_WAIT_SECONDS,
+        )
+        if not acquired:
+            return ""
+        try:
+            cached = await redis.get(cache_key)
+            if cached:
+                return str(cached)
+            text = await _generate_uncached(db, user_id, settings, locale=locale)
+            if text:
+                try:
+                    await redis.set(cache_key, text, ex=_CACHE_TTL_SECONDS)
+                except Exception:
+                    # 生成已经成功时，缓存写入失败不应再次触发一次模型调用。
+                    logger.warning("greeting 缓存写入失败", exc_info=True)
+            return text
+        finally:
+            try:
+                await lock.release()
+            except Exception:
+                logger.debug("greeting 缓存锁释放失败", exc_info=True)
+    except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        # Redis 不可用时保留原有能力；服务恢复后会自动重新启用限频。
+        logger.warning("greeting 缓存不可用，降级为直接生成", exc_info=True)
+        return await _generate_uncached(db, user_id, settings, locale=locale)

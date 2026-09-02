@@ -1,9 +1,9 @@
 export interface DevToolEntry {
   path?: string
   href?: string
-  label: string
-  description: string
-  eyebrow?: string
+  labelKey: string
+  descriptionKey: string
+  eyebrowKey?: string
   external?: boolean
 }
 
@@ -16,15 +16,21 @@ function loopScopeUrl() {
 export const devToolRegistry: DevToolEntry[] = [
   {
     href: loopScopeUrl(),
-    label: 'LoopScope',
-    eyebrow: 'AGENT LOOP',
-    description: '多 Session 对话、完整 AgentLoop trace、Prompt / LLM draft / Tool / Guard 节点检查。',
+    labelKey: 'devHome.tools.loopScope.label',
+    eyebrowKey: 'devHome.tools.loopScope.eyebrow',
+    descriptionKey: 'devHome.tools.loopScope.description',
     external: true,
   },
   {
     path: '/dev/onboarding',
-    label: '新手引导 Demo',
-    eyebrow: 'ONBOARDING',
-    description: '检查并重建当前登录用户的播种项目与 MP3 分发。',
+    labelKey: 'devHome.tools.onboarding.label',
+    eyebrowKey: 'devHome.tools.onboarding.eyebrow',
+    descriptionKey: 'devHome.tools.onboarding.description',
+  },
+  {
+    path: '/dev/email',
+    labelKey: 'devHome.tools.email.label',
+    eyebrowKey: 'devHome.tools.email.eyebrow',
+    descriptionKey: 'devHome.tools.email.description',
   },
 ]

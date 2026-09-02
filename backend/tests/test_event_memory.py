@@ -57,6 +57,27 @@ def test_merge_event_memory_keeps_existing_sections_and_deduplicates_increment()
     assert result.count("已确认方案") == 1
 
 
+def test_memory_chunks_keep_event_context_when_long_section_is_split():
+    from agent.memory import store
+
+    section = (
+        "## 记录长期记忆：长事件\n\n"
+        "- 时间：2026-08-20 至 2026-09-02\n"
+        "- 类型：项目工作\n"
+        "- 状态：进行中\n\n"
+        "### 事件经过\n" + "过程记录。" * 180 + "\n\n"
+        "### 未解决与后续\n" + "仍需继续处理。" * 80
+    )
+
+    chunks = store._memory_chunks(section)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= store.MEMORY_CHUNK_MAX for chunk in chunks)
+    assert all("## 记录长期记忆：长事件" in chunk for chunk in chunks)
+    assert all("- 时间：2026-08-20 至 2026-09-02" in chunk for chunk in chunks)
+    assert any("### 未解决与后续" in chunk for chunk in chunks)
+
+
 @pytest.mark.asyncio
 async def test_memory_vectors_reuse_unchanged_chunks_and_gc_removed_chunks(tmp_path, monkeypatch):
     from agent.memory import embedding, store

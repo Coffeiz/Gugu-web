@@ -87,11 +87,11 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_finalize_run_does_not_record_byok_usage(monkeypatch):
+async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypatch):
     db = _Db()
 
     async def cap_usage(*args):
-        raise AssertionError("BYOK 不应进入咕咕精力封顶")
+        return 100, 20
 
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     async def trim(_):
@@ -117,6 +117,9 @@ async def test_finalize_run_does_not_record_byok_usage(monkeypatch):
         tokens_out=20,
     )
 
-    assert result.tokens_in == 0
-    assert result.tokens_out == 0
-    assert not any(item.__class__.__name__ == "AgentUsage" for item in db.items)
+    assert result.tokens_in == 100
+    assert result.tokens_out == 20
+    usage = next(item for item in db.items if item.__class__.__name__ == "AgentUsage")
+    assert usage.is_byok is True
+    assert usage.tokens_in == 100
+    assert usage.tokens_out == 20

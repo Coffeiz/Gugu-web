@@ -1,0 +1,10 @@
+type LocaleMessages = Record<string, any>
+
+export function applyCanvasSection(messages: Record<'zh-CN' | 'ja-JP' | 'en-US', LocaleMessages>) {
+  Object.assign((messages['zh-CN'] as Record<string, any>).mindUi, { newCanvas: '新建画布', rename: '重命名', confirm: '确认', deleteCanvas: '删除画布', deleteCanvasMessage: '删除画布「{name}」？', unnamedCanvas: '未命名画布', renameCanvasFailed: '画布重命名失败，已恢复为「{name}」', deletedSnapshot: '已删除，仅保留快照', removeFromCanvas: '从画布移除', completed: '完成', defaultColor: '默认（无颜色）', colors: { amber: '橙', coral: '红', blue: '蓝', teal: '青' }, stage: '阶段', allDay: '全天', stages: { active: '进行中', pending: '待开始', done: '已完成' } })
+  Object.assign((messages['ja-JP'] as Record<string, any>).mindUi, { newCanvas: 'キャンバスを新規作成', rename: '名前を変更', confirm: '確認', deleteCanvas: 'キャンバスを削除', deleteCanvasMessage: 'キャンバス「{name}」を削除しますか？', unnamedCanvas: '無題のキャンバス', renameCanvasFailed: 'キャンバス名の変更に失敗しました。「{name}」に戻しました', deletedSnapshot: '削除済み。スナップショットのみ保持', removeFromCanvas: 'キャンバスから削除', completed: '完了', defaultColor: 'デフォルト（色なし）', colors: { amber: 'オレンジ', coral: '赤', blue: '青', teal: 'ティール' }, stage: 'ステージ', allDay: '終日', stages: { active: '進行中', pending: '未着手', done: '完了' } })
+  Object.assign((messages['en-US'] as Record<string, any>).mindUi, { newCanvas: 'New canvas', rename: 'Rename', confirm: 'Confirm', deleteCanvas: 'Delete canvas', deleteCanvasMessage: 'Delete canvas “{name}”?', unnamedCanvas: 'Untitled canvas', renameCanvasFailed: 'Could not rename the canvas; restored “{name}”', deletedSnapshot: 'Deleted; snapshot retained', removeFromCanvas: 'Remove from canvas', completed: 'Completed', defaultColor: 'Default (no color)', colors: { amber: 'Amber', coral: 'Coral', blue: 'Blue', teal: 'Teal' }, stage: 'Stage', allDay: 'All day', stages: { active: 'In progress', pending: 'Not started', done: 'Completed' } })
+  Object.assign((messages['zh-CN'] as Record<string, any>).mindUi, { unnamedFile: '未命名文件' })
+  Object.assign((messages['ja-JP'] as Record<string, any>).mindUi, { unnamedFile: '無題のファイル' })
+  Object.assign((messages['en-US'] as Record<string, any>).mindUi, { unnamedFile: 'Unnamed file' })
+}

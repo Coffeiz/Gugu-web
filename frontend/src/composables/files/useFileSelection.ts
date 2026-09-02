@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
-import { useBoxSelection } from '@/composables/useBoxSelection'
+import { useBoxSelection } from '@/composables/shared/useBoxSelection'
 import { useSelectionState, selectRange, type SelectableItem, type SelectionState } from './useSelectionState'
 
 export { selectRange }

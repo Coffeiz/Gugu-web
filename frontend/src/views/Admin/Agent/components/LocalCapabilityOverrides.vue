@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
-import Checkbox from '@/components/common/Checkbox.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { useI18n } from 'vue-i18n'
 
 interface CapabilityResult {

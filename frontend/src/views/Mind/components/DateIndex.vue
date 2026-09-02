@@ -17,7 +17,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localDayKey } from '@/utils/dateAttribution'
-import { useDateScrubberMotion } from '../composables/useDateScrubberMotion'
+import { useDateScrubberMotion } from '@/composables/mind/useDateScrubberMotion'
 import { clampScrubberPosition, pitchAt, positionForIndex, tickVisual } from '../utils/dateScrubberMath'
 
 const props = defineProps<{
@@ -74,7 +74,7 @@ function barStyle(index: number) {
     height: `${value.barHeight}px`, width: `${value.barWidth}px`,
     opacity: `${value.barOpacity}`,
     // alpha 只交给 opacity 一次；此前 background 和 opacity 都带同一份 alpha，非选中条被平方后过淡。
-    background: 'rgb(123,127,178)',
+    background: 'var(--action-primary)',
   }
 }
 function tipStyle(index: number) {
@@ -82,7 +82,7 @@ function tipStyle(index: number) {
   return {
     opacity: `${value.tipOpacity}`,
     top: value.tipOffsetY ? `calc(100% + ${value.tipOffsetY}px)` : '',
-    color: value.emphasized ? `rgba(90,94,134,${value.emphasisAlpha})` : 'var(--text-secondary)',
+    color: value.emphasized ? 'var(--action-primary)' : 'var(--text-secondary)',
     fontWeight: value.emphasized ? '600' : '400',
   }
 }

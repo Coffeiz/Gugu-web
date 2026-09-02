@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { preferencesApi } from '@/services/api'
 import { isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
+import { applyServerTheme } from '@/composables/core/useTheme'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
 
 export const usePreferencesStore = defineStore('preferences', () => {
   // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
@@ -18,13 +20,28 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellDangerousEnabled = ref(false)
   const shellAutopilotEnabled = ref(false)
   const showToolInteractions = ref(false)
-  const toolInjectionMode = ref<'description' | 'full'>('description')
+  const toolInjectionMode = ref<'description' | 'full'>('full')
   const personalityPreference = ref('')
   const personalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
+  const emailChangeEnabled = ref(false)
   const personalityPreferenceRevision = ref(0)
   const locale = ref<SupportedLocale | null>(null)
   const loaded            = ref(false)
+
+  async function saveOptimistically<T>(key: string, payload: Record<string, unknown>, apply: () => void, rollback: () => void): Promise<void> {
+    try {
+      await InteractionSync.execute({
+        scope: 'profile.preference.update',
+        entityKey: `profile:preference:${key}`,
+        apply,
+        rollback,
+        request: () => preferencesApi.update(payload as any),
+      })
+    } catch {
+      // 保持原有偏好 API 的静默失败行为；本地状态已经由统一层回滚。
+    }
+  }
 
   async function fetch() {
     try {
@@ -42,11 +59,13 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
       shellAutopilotEnabled.value = (data as any).shellAutopilotEnabled ?? false
       showToolInteractions.value = (data as any).showToolInteractions ?? false
-      toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
+      toolInjectionMode.value = (data as any).toolInjectionMode === 'description' ? 'description' : 'full'
       personalityPreference.value = data.personalityPreference ?? ''
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
+      emailChangeEnabled.value = (data as any).emailChangeEnabled ?? false
       personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+      applyServerTheme((data as any).theme, (data as any).themeFamily, (data as any).palette)
       locale.value = isSupportedLocale(data.locale) ? data.locale : null
       if (locale.value) setLocale(locale.value, true)
       localStorage.setItem('gugu-default-view', defaultView.value)
@@ -55,60 +74,73 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function saveLocale(value: SupportedLocale) {
-    setLocale(value, true)
-    locale.value = value
-    try { await preferencesApi.update({ locale: value }) } catch {}
+    const previous = locale.value
+    const rollback = () => {
+      locale.value = previous
+      if (previous) setLocale(previous, true)
+    }
+    await saveOptimistically('locale', { locale: value }, () => {
+      setLocale(value, true)
+      locale.value = value
+    }, rollback)
   }
 
   async function savePmStagesExpanded(v: boolean) {
-    pmStagesExpanded.value = v
-    try { await preferencesApi.update({ pmStagesExpanded: v }) } catch {}
+    const previous = pmStagesExpanded.value
+    await saveOptimistically('pmStagesExpanded', { pmStagesExpanded: v }, () => { pmStagesExpanded.value = v }, () => { pmStagesExpanded.value = previous })
   }
 
   async function saveCalendarDoneMode(v: string) {
-    calendarDoneMode.value = v
-    try { await preferencesApi.update({ calendarDoneMode: v } as any) } catch {}
+    const previous = calendarDoneMode.value
+    await saveOptimistically('calendarDoneMode', { calendarDoneMode: v }, () => { calendarDoneMode.value = v }, () => { calendarDoneMode.value = previous })
   }
 
   async function saveCalendarWeekStart(v: string) {
-    calendarWeekStart.value = v === 'sunday' ? 'sunday' : 'monday'
-    try { await preferencesApi.update({ calendarWeekStart: calendarWeekStart.value } as any) } catch {}
+    const next = v === 'sunday' ? 'sunday' : 'monday'
+    const previous = calendarWeekStart.value
+    await saveOptimistically('calendarWeekStart', { calendarWeekStart: next }, () => { calendarWeekStart.value = next }, () => { calendarWeekStart.value = previous })
   }
 
   async function saveDefaultView(v: string) {
-    defaultView.value = v
-    localStorage.setItem('gugu-default-view', v)
-    try { await preferencesApi.update({ defaultView: v } as any) } catch {}
+    const previous = defaultView.value
+    await saveOptimistically('defaultView', { defaultView: v }, () => {
+      defaultView.value = v
+      localStorage.setItem('gugu-default-view', v)
+    }, () => {
+      defaultView.value = previous
+      localStorage.setItem('gugu-default-view', previous)
+    })
   }
 
   async function saveShellEnabled(v: boolean) {
-    shellEnabled.value = v
-    try { await preferencesApi.update({ shellEnabled: v } as any) } catch {}
+    const previous = shellEnabled.value
+    await saveOptimistically('shellEnabled', { shellEnabled: v }, () => { shellEnabled.value = v }, () => { shellEnabled.value = previous })
   }
 
   async function saveShellSystemEnabled(v: boolean) {
-    shellSystemEnabled.value = v
-    try { await preferencesApi.update({ shellSystemEnabled: v } as any) } catch {}
+    const previous = shellSystemEnabled.value
+    await saveOptimistically('shellSystemEnabled', { shellSystemEnabled: v }, () => { shellSystemEnabled.value = v }, () => { shellSystemEnabled.value = previous })
   }
 
   async function saveShellDangerousEnabled(v: boolean) {
-    shellDangerousEnabled.value = v
-    try { await preferencesApi.update({ shellDangerousEnabled: v } as any) } catch {}
+    const previous = shellDangerousEnabled.value
+    await saveOptimistically('shellDangerousEnabled', { shellDangerousEnabled: v }, () => { shellDangerousEnabled.value = v }, () => { shellDangerousEnabled.value = previous })
   }
 
   async function saveShellAutopilotEnabled(v: boolean) {
-    shellAutopilotEnabled.value = v
-    try { await preferencesApi.update({ shellAutopilotEnabled: v } as any) } catch {}
+    const previous = shellAutopilotEnabled.value
+    await saveOptimistically('shellAutopilotEnabled', { shellAutopilotEnabled: v }, () => { shellAutopilotEnabled.value = v }, () => { shellAutopilotEnabled.value = previous })
   }
 
   async function saveShowToolInteractions(v: boolean) {
-    showToolInteractions.value = v
-    try { await preferencesApi.update({ showToolInteractions: v } as any) } catch {}
+    const previous = showToolInteractions.value
+    await saveOptimistically('showToolInteractions', { showToolInteractions: v }, () => { showToolInteractions.value = v }, () => { showToolInteractions.value = previous })
   }
 
   async function saveToolInjectionMode(v: 'description' | 'full') {
-    toolInjectionMode.value = v === 'full' ? 'full' : 'description'
-    try { await preferencesApi.update({ toolInjectionMode: toolInjectionMode.value } as any) } catch {}
+    const next = v === 'full' ? 'full' : 'description'
+    const previous = toolInjectionMode.value
+    await saveOptimistically('toolInjectionMode', { toolInjectionMode: next }, () => { toolInjectionMode.value = next }, () => { toolInjectionMode.value = previous })
   }
 
   async function savePersonalityPreference(text: string, enabled: boolean) {
@@ -143,18 +175,19 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function saveStyle({ tone, length }: { tone?: string | null; length?: string | null }) {
-    if (tone      !== undefined) replyTone.value   = tone
-    if (length    !== undefined) replyLength.value = length
-    try {
-      await preferencesApi.update({
-        replyTone:   replyTone.value,
-        replyLength: replyLength.value,
-      })
-    } catch {}
+    const previous = { tone: replyTone.value, length: replyLength.value }
+    const next = { tone: tone !== undefined ? tone : replyTone.value, length: length !== undefined ? length : replyLength.value }
+    await saveOptimistically('style', { replyTone: next.tone, replyLength: next.length }, () => {
+      replyTone.value = next.tone
+      replyLength.value = next.length
+    }, () => {
+      replyTone.value = previous.tone
+      replyLength.value = previous.length
+    })
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, locale,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
     loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

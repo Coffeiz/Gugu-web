@@ -239,6 +239,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 return {"错误": "任务不存在或已停用"}
             payload, uid, name = t.payload or "", t.user_id, t.name
             target_map = t.delivery_targets
+            authorized_tools = t.authorized_tools or []
             chans = {c for c in (t.channels or "").split(",") if c}
             is_once = (t.cron or "").startswith("@once:")
             # last_run_failed=True：上次触发过但失败了，允许再触发一次；只有"已经成功"
@@ -264,7 +265,10 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 "不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，"
                 "图片必须靠 send_file 实际发送。"
             )
-            text, files, status = await _run_agent(uid, prompt, target_map=target_map, trial=is_trial)
+            text, files, status = await _run_agent(
+                uid, prompt, target_map=target_map, trial=is_trial,
+                authorized_tools=authorized_tools,
+            )
             result = await deliver_to_channels(uid, name, text, chans, target_map, files=files, status=status)
             if not is_trial and is_once:
                 if _delivery_succeeded(result):
@@ -343,6 +347,13 @@ async def deliver_to_channels(
     （⏰ 任务名（部分完成）），正文保持干净。"""
     result: dict = {}
     title = f"{name}{_STATUS_PREFIX.get(status, '')}"
+    if "email" in chans:
+        try:
+            _sent, email_status = await _deliver_email(uid, title, text)
+            result["邮件"] = email_status
+        except Exception as e:
+            result["邮件"] = f"发送失败（{type(e).__name__}）"
+            diag_log("app.scheduled_tasks.deliver_email", e)
     if {"web", "chat"} & chans:
         from app.core import events as _ev
         await _ev.publish(uid, notification={"title": title, "content": text})
@@ -652,6 +663,7 @@ async def _run_agent(
     *,
     target_map: dict | None = None,
     trial: bool = False,
+    authorized_tools: list[str] | None = None,
 ) -> tuple[str, list, str]:
     """编排定时任务的 execution + report schema 解析（PRD-SCHEDULE-2）。
 
@@ -685,7 +697,7 @@ async def _run_agent(
         uname = (u.display_name or u.username) if u else ""
 
     try:
-        return await _run_agent_execution(user_id, uname, prompt, trial)
+        return await _run_agent_execution(user_id, uname, prompt, trial, authorized_tools or [])
     finally:
         # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
         # 到 execute_task 协程结束（P2 生命周期债务）。私聊/Web 未 set_im，无需清理。
@@ -694,7 +706,7 @@ async def _run_agent(
             imctx.clear()
 
 
-async def _run_agent_execution(user_id, uname, prompt, trial) -> tuple[str, list, str]:
+async def _run_agent_execution(user_id, uname, prompt, trial, authorized_tools: list[str] | None = None) -> tuple[str, list, str]:
     """_run_agent 的 execution + schema 解析主体（独立函数便于 try/finally 清理 imctx）。"""
     from agent.security import sanitize
     from agent.runner import run_scheduled_execution
@@ -708,9 +720,14 @@ async def _run_agent_execution(user_id, uname, prompt, trial) -> tuple[str, list
             "[scheduled-phase] %s",
             json.dumps({"event": "execution-start", "round": round_no, "trial": trial}, ensure_ascii=False),
         )
-        execution_text, execution_failed, meta = await run_scheduled_execution(
-            user_id, uname, prompt
-        )
+        if authorized_tools:
+            execution_text, execution_failed, meta = await run_scheduled_execution(
+                user_id, uname, prompt, allowed_tools=authorized_tools
+            )
+        else:
+            execution_text, execution_failed, meta = await run_scheduled_execution(
+                user_id, uname, prompt
+            )
         meta = meta or {}
         last_text = execution_text or last_text
         files = meta.get("files") or files
@@ -815,6 +832,8 @@ def _scheduled_delivery_targets(chans: set) -> str:
     labels = []
     if {"web", "chat"} & chans:
         labels.append("网页通知")
+    if "email" in chans:
+        labels.append("注册邮箱")
     for channel, platform in _CHAN_PLATFORM.items():
         if channel in chans:
             labels.append(_PLAT_LABEL[platform])
@@ -897,6 +916,44 @@ async def _deliver_im(
     }
     from agent.im.replies import send_text
     return await send_text(payload, text)
+
+
+async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
+    """把定时任务正文投递到用户注册邮箱。
+
+    每次执行只调用一次 SMTP，不在这里自动重试：SMTP 发送不是可安全假设幂等的
+    操作，失败交给一次性任务的失败状态/用户手动重试；周期任务等下一次计划触发。
+    """
+    import app.db.session as ss
+    from app.models import User, UserPreferences, UserSmtpConfig
+    async with ss._SessionLocal() as db:
+        user = await db.get(User, _as_uuid(user_id))
+        if user is None or not user.email:
+            return False, "收件人邮箱不存在"
+        smtp = await db.scalar(select(UserSmtpConfig).where(
+            UserSmtpConfig.user_id == user.id, UserSmtpConfig.enabled.is_(True),
+        ))
+        prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
+        data = prefs.data if prefs else {}
+        theme, palette = data.get("theme", "light"), data.get("palette", "mist")
+    from app.services.email import send_email_with_status
+    subject = f"咕咕 · {name}"
+    delivery = await asyncio.to_thread(
+        send_email_with_status,
+        subject,
+        text,
+        to_addr=user.email,
+        smtp_config=smtp,
+        template="reminder",
+        title=name,
+        preheader="咕咕定时任务提醒",
+        sections=[{"heading": "任务内容", "text": text}],
+        theme=theme,
+        palette=palette,
+    )
+    if delivery.get("status") == "sent":
+        return True, "已发送"
+    return False, f"发送失败（{delivery.get('error_code', 'smtp_delivery_error')}）"
 
 
 async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> tuple[int, int]:

@@ -8,6 +8,7 @@ from agent.tools.projects import ProjectsSkill
 from agent.tools.calendar import CalendarSkill
 from agent.tools.files import FilesSkill
 from agent.tools.clients import ClientsSkill
+from agent.tools.email import EmailSkill
 from agent.tools.overview import OverviewSkill
 from agent.tools.trash import TrashSkill
 from agent.tools.memory import MemorySkill
@@ -26,7 +27,7 @@ from agent.tools.workspaces import WorkspacesSkill
 
 __all__ = [
     "BaseSkill", "registry",
-    "ProjectsSkill", "CalendarSkill", "FilesSkill", "ClientsSkill",
+    "ProjectsSkill", "CalendarSkill", "FilesSkill", "ClientsSkill", "EmailSkill",
     "OverviewSkill", "TrashSkill", "MemorySkill", "SearchSkill",
     "GlobalSearchSkill",
     "MindSkill",

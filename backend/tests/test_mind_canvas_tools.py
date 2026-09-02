@@ -188,17 +188,18 @@ async def test_update_and_remove_canvas_item_only_change_view(db, user_a):
     item = await _item(db, user_a, canvas, node)
     item_id = item.id
 
-    rejected_size = await _canvas_update_node(db, user_id, {
-        "canvas_id": canvas_id, "item_id": item_id, "w": 320,
+    updated_size = await _canvas_update_node(db, user_id, {
+        "canvas_id": canvas_id, "item_id": item_id, "width": 320, "height": 200,
     })
-    assert "不支持修改 w/h" in rejected_size["error"]
+    assert updated_size["updated"] is True
+    assert updated_size["node"]["size"] == {"w": 320.0, "h": 200.0}
     updated = await _canvas_update_node(db, user_id, {
         "canvas_id": canvas_id, "item_id": item_id, "x": 120, "y": 240,
         "collapsed": True,
     })
     assert updated["updated"] is True
     assert updated["node"]["position"] == {"x": 120.0, "y": 240.0}
-    assert updated["node"]["size"] == {"w": None, "h": None}
+    assert updated["node"]["size"] == {"w": 320.0, "h": 200.0}
     removed = await _canvas_remove_node(db, user_id, {"canvas_id": canvas_id, "item_id": item_id})
     assert removed["node_preserved"] is True
     assert await db.get(MindNode, node.id) is not None
@@ -282,7 +283,7 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
 
     canvas_view = await _canvas_get(db, user_a.id, {"canvas_id": canvas.id})
     first_node = next(node for node in canvas_view["nodes"] if node["node_id"] == first.id)
-    assert first_node["layout"]["effective_size"] == {"w": 244, "h": 148}
+    assert first_node["layout"]["effective_size"] == {"w": 240, "h": 140}
     assert first_node["layout"]["recommended_gap"] == 150
     assert first_node["layout"]["recommended_center_distance"] == 750
     assert canvas_view["relations"][0]["source_side"] == "right"
@@ -290,8 +291,8 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     audit = canvas_view["relation_audit"][0]
     assert audit["recommended"] == {"source_side": "right", "target_side": "left"}
     assert audit["status"] == "aligned"
-    assert audit["source"]["center"] == {"x": 132.0, "y": 94.0}
-    assert audit["target"]["center"] == {"x": 522.0, "y": 94.0}
+    assert audit["source"]["center"] == {"x": 130.0, "y": 90.0}
+    assert audit["target"]["center"] == {"x": 520.0, "y": 90.0}
 
     updated = await _canvas_update_anchor(db, user_a.id, {
         "canvas_id": canvas.id,

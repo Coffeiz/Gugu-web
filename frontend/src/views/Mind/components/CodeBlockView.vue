@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NodeViewContent, NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
-import { resolveCodeLanguage } from '@/composables/useMindEditor'
+import { resolveCodeLanguage } from '@/composables/mind/useMindEditor'
 
 const props = defineProps(nodeViewProps)
 

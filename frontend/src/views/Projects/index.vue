@@ -27,7 +27,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { runtime, type MoveAction } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
-import { showAppError } from '@/composables/useAppToast'
+import { showAppError } from '@/composables/core/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'

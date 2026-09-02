@@ -42,10 +42,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropTy
 import { useI18n } from 'vue-i18n'
 import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { eventsApi, type MindCanvasItem } from '@/services/api'
-import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { useMindRuntimeObject } from '@/composables/mind/useMindRuntimeObject'
 import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
-import { itemSize } from '@/composables/useMindCanvas'
-import CardAffordances from '@/components/common/CardAffordances.vue'
+import { itemSize } from '@/composables/mind/useMindCanvas'
+import CardAffordances from '@/components/common/mind/CardAffordances.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },

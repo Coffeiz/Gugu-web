@@ -36,7 +36,18 @@ def _field_signature_type(schema: dict, *, depth: int = 0) -> str:
         )
         return f"object:{','.join(map(str, names))}" if names else "object"
     if schema_type:
-        return str(schema_type)
+        result = str(schema_type)
+        enum = schema.get("enum")
+        if (
+            isinstance(enum, list)
+            and enum
+            and len(enum) <= 8
+            and all(isinstance(item, (str, int, float, bool)) for item in enum)
+        ):
+            values = "|".join(str(item) for item in enum)
+            if len(values) <= 140:
+                result = f"{result}[{values}]"
+        return result
     choices = schema.get("anyOf") or schema.get("oneOf")
     if isinstance(choices, list):
         types = tuple(_field_signature_type(item, depth=depth) for item in choices if isinstance(item, dict))
@@ -167,7 +178,7 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
         "固定 Adapter 模式下使用 `call_tool({name: 工具名, arguments: 业务参数对象})` 调用业务工具；"
         "禁止只传 name，也不要把目标工具参数省略成空对象。"
         "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
-        "字段签名只展示类型、必填状态和一层结构，嵌套细节及枚举值必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
+        "字段签名只展示类型、简单枚举、必填状态和一层结构，复杂嵌套约束仍必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
         "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
         "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
         "`use_skill` 只用于加载技能正文及其关联工具 Schema。",

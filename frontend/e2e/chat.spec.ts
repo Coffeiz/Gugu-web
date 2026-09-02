@@ -25,8 +25,11 @@ import { test, expect } from '@playwright/test'
  */
 
 const AI_REPLY = '.msg-virtual-row .msg.ai .msg-bubble'
+const remoteE2e = Boolean(process.env.PLAYWRIGHT_BASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.PLAYWRIGHT_BASE_URL))
+const aiReplyTimeout = remoteE2e ? 60000 : 15000
 
 test.describe('GuguChat 悬浮窗', () => {
+  test.describe.configure({ timeout: remoteE2e ? 90000 : 30000 })
   test('发消息收到回复，刷新页面后会话内容还在', async ({ page }) => {
     await page.goto('/')
 
@@ -40,7 +43,7 @@ test.describe('GuguChat 悬浮窗', () => {
     await chatWindow.locator('.send-btn').click()
 
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: text })).toBeVisible()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(aiBubblesBefore + 1, { timeout: 15000 })
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(aiBubblesBefore + 1, { timeout: aiReplyTimeout })
     await expect(chatWindow.locator(AI_REPLY).last()).not.toBeEmpty()
 
     // 会话 id 存在 sessionStorage，刷新同一标签页应该接续，不是新对话——
@@ -62,7 +65,7 @@ test.describe('GuguChat 悬浮窗', () => {
     const text = `e2e-chat-expand-${Date.now()}`
     await chatWindow.locator('.chat-input-editor .ProseMirror').fill(text)
     await chatWindow.locator('.send-btn').click()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(aiBubblesBefore + 1, { timeout: 15000 })
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(aiBubblesBefore + 1, { timeout: aiReplyTimeout })
 
     await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
     const sidebar = page.locator('.exp-sidebar')
@@ -122,7 +125,7 @@ test.describe('GuguChat 悬浮窗', () => {
     const newSessionText = `e2e-queue-new-session-${Date.now()}`
     await textarea.fill(newSessionText)
     await sendBtn.click()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: aiReplyTimeout })
 
     // 等一小段时间，确认没有排队消息延迟冒出来（真出问题时会多一条 user 气泡）。
     await page.waitForTimeout(1500)
@@ -189,7 +192,7 @@ test.describe('GuguChat 悬浮窗', () => {
     //  因为消费时 null !== realId 把它丢弃了）
     await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(2, { timeout: 15000 })
     const aiBubbles = chatWindow.locator(AI_REPLY)
-    await expect(aiBubbles).toHaveCount(2, { timeout: 30000 })
+    await expect(aiBubbles).toHaveCount(2, { timeout: aiReplyTimeout * 2 })
     await expect(aiBubbles.nth(0)).not.toBeEmpty()
     await expect(aiBubbles.nth(1)).not.toBeEmpty()
     // AI 回复可能复述用户输入；这里验证用户气泡本身，避免把回复里的同名文本也算进去。
@@ -225,7 +228,7 @@ test.describe('GuguChat 悬浮窗', () => {
     await textarea.fill(textA)
     await sendBtn.click()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: aiReplyTimeout })
     // 发完 A 后当前激活的就是 A，直接从侧栏 active item 取 session id（不依赖后端 API）
     await expect(sidebar.locator('.exp-session-item.active')).toHaveAttribute('data-session-id', /^\d+$/, { timeout: 10000 })
     const sessionAId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
@@ -238,7 +241,7 @@ test.describe('GuguChat 悬浮窗', () => {
     await textarea.fill(textB)
     await sendBtn.click()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toBeVisible()
-    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: aiReplyTimeout })
     // 发完 B 后当前激活的就是 B
     await expect(sidebar.locator('.exp-session-item.active')).toHaveAttribute('data-session-id', /^\d+$/, { timeout: 10000 })
     const sessionBId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')

@@ -450,9 +450,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
             await store.write_summary(user_id, summary)
         if daily_note:
             await store.append_daily(user_id, datetime.now().strftime("%Y-%m-%d"), daily_note)
-            # 写完 daily 顺带检查压缩：攒够则把最老的沉淀进 memory.md
-            from agent.memory import compress
-            await compress.compact(user_id, settings)
+            # 写完 daily 顺带检查沉淀：攒够则把最老的追加进 memory.md
+            from agent.memory import memory_compress
+            await memory_compress.compact(user_id, settings)
             from agent import events
             events.publish(events.types.RagIndexUpdated(
                 user_id=user_id, source_type="memory", source_id="daily", operation="upsert",

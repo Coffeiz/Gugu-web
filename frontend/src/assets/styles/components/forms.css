@@ -17,12 +17,19 @@
 }
 
 .form-input {
-  width: 100%; padding: 8px 12px; border-radius: 9px;
+  width: 100%; padding: 6px 12px; border-radius: 9px;
   border: 1px solid var(--input-border);
   background: var(--input-bg);
-  font-size: 13px; font-family: var(--font-sans);
+  min-height: var(--control-height-md); box-sizing: border-box;
+  font-size: 13px; line-height: var(--line-height-ui); font-family: var(--font-sans);
   color: var(--text-primary); outline: none;
-  box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* 所有普通文本输入共享同一行高，避免固定高度与默认 padding 叠加后裁切字母下沿。 */
+:where(input[type='text'], input[type='email'], input[type='password'], input[type='number'], input[type='search'], input[type='url'], input:not([type]), select) {
+  line-height: var(--line-height-ui);
+  vertical-align: middle;
 }
 .form-input:focus {
   border-color: var(--input-border-focus);

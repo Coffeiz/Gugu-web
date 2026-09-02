@@ -19,7 +19,7 @@
 
 <script setup lang="ts">
 import { cronLabel } from '../utils/scheduleCron'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useI18n } from 'vue-i18n'
 import { effectiveTimezone } from '@/utils/userTimezone'
 
@@ -34,7 +34,7 @@ defineEmits<{
 const { t, locale } = useI18n()
 
 function channelLabel(channels: any) {
-  const map = { web: t('schedules.webNotice'), chat: t('schedules.webNotice'), feishu: t('schedules.feishu'), qq: t('schedules.qq'), wechat: t('schedules.wechat'), im: `${t('schedules.feishu')}/${t('schedules.qq')}/${t('schedules.wechat')}` }
+  const map = { web: t('schedules.webNotice'), email: t('schedules.email'), chat: t('schedules.webNotice'), feishu: t('schedules.feishu'), qq: t('schedules.qq'), wechat: t('schedules.wechat'), im: `${t('schedules.feishu')}/${t('schedules.qq')}/${t('schedules.wechat')}` }
   return (channels || []).map((channel: string) => map[channel as keyof typeof map] || channel).join(' + ') || '—'
 }
 

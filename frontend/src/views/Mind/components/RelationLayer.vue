@@ -24,7 +24,7 @@
  */
 import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { itemSize, pickAnchorSide, pickRelationAnchorSides, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, pickAnchorSide, pickRelationAnchorSides, type AnchorSide, type RelationAnchorSides } from '@/composables/mind/useMindCanvas'
 import { relationCurvePath } from '@/utils/canvasRelationGeometry'
 
 const props = defineProps({

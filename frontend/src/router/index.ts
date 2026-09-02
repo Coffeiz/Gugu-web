@@ -11,6 +11,12 @@ const routes: RouteRecordRaw[] = [
     meta: { authPublic: true },
   },
   {
+    path: '/verify-email-change',
+    name: 'VerifyEmailChange',
+    component: () => import('@/views/VerifyEmailChange.vue'),
+    meta: { authPublic: true },
+  },
+  {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/Register.vue'),
@@ -133,7 +139,7 @@ const routes: RouteRecordRaw[] = [
         path: 'dev',
         name: 'DevHome',
         component: () => import('@/views/DevHome.vue'),
-        meta: { title: 'Dev 工具' },
+        meta: { title: 'navigation.devTools' },
       }] : []),
       // 新手引导 demo 面板：仅 dev 注册；prod build 时 import.meta.env.DEV=false，
       // 整个三元分支（含 import() 动态导入）被 tree-shake 掉，DevOnboarding.vue 不进生产包。
@@ -142,6 +148,12 @@ const routes: RouteRecordRaw[] = [
         name: 'DevOnboarding',
         component: () => import('@/views/DevOnboarding.vue'),
         meta: { title: 'devOnboarding.title' },
+      }] : []),
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/email',
+        name: 'DevEmail',
+        component: () => import('@/views/DevEmail.vue'),
+        meta: { title: 'devEmail.title' },
       }] : []),
     ],
   },

@@ -409,7 +409,7 @@ backend/agent/
 │   └── models.py             # PlatformMessage、ActorContext 和消息元数据
 └── prompts/
     ├── reflection.md         # owner 反思 prompt
-    ├── compress.md           # owner 压缩 prompt
+    ├── memory_compress.md    # owner 记忆沉淀 prompt
     └── im/                   # group/member 专用 prompt（实现阶段新增）
         ├── group_reflection.md
         ├── group_compress.md
@@ -428,7 +428,7 @@ backend/agent/
 - `scoped_store.py` 是唯一将逻辑 scope 转成存储 key 的入口。
 - `compress.py` 只实现通用压缩生命周期、写入保护和向量同步，不决定内容取舍。
 - `compression_policy.py` 负责选择 scope 对应的 Prompt、输入字段、可保留信息和禁止写入的信息。
-- owner 继续由 `reflection.py + prompts/reflection.md + prompts/compress.md` 驱动；group/member 由 `im_reflection.py + prompts/im/*` 驱动，共享底层引擎但不共享业务策略。
+- owner 继续由 `reflection.py + prompts/reflection.md + prompts/memory_compress.md` 驱动；group/member 由 `im_reflection.py + prompts/im/*` 驱动，共享底层引擎但不共享业务策略。
 - `loop.py` 只负责编排和投递异步任务，不能复制 owner reflection。
 
 ## 7. 数据生命周期与隐私

@@ -28,6 +28,7 @@
 - `frontend/src/composables/useTheme.ts` 主题状态与首屏初始化配合。
 - `/design` 运行时令牌实验室与主题/状态预览。
 - `.scroll-surface`、`compact`、`editor`、`hidden` 滚动容器契约。
+- 多行输入框 `.control-resizable` 与 `--control-resizer-bg` 缩放柄契约，供 Admin、前台和 Dev 页面复用。
 - Admin `.admin-theme` 独立语义作用域。
 
 ## 验收
@@ -36,6 +37,7 @@
 - `/design` 显示的值来自 `getComputedStyle`，catalog 不保存第二份实际值。
 - 四档间距、字号、圆角由自动化测试锁定。
 - 前端源码中的局部滚动条规则收敛到全局语义类；横向笔记区和编辑器保留明确特例。
+- 可缩放 textarea 统一使用 `.control-resizable`；不得在业务页面重复实现 `::-webkit-resizer`，缩放柄 token 必须能在 `/design` 页面观察并适配主题。
 - `npm run typecheck:strict`、`npm run test:run`、`npm run build` 通过。
 
 ## 关联工程方案

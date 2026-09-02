@@ -39,7 +39,7 @@
         <span>{{ t('schedules.sendTo') }}</span>
         <div class="chans">
           <template v-for="channel in CHANNELS" :key="channel.value">
-            <Checkbox v-if="channel.value === 'web' || props.imChannels.includes(channel.value)"
+            <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value)"
               :model-value="form.channels.includes(channel.value)"
               @update:model-value="toggleChannel(channel.value, $event)">
               {{ channel.label }}
@@ -60,11 +60,11 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import BaseModal from '@/components/common/BaseModal.vue'
-import ActionButton from '@/components/common/ActionButton.vue'
-import Checkbox from '@/components/common/Checkbox.vue'
-import DatePicker from '@/components/common/DatePicker.vue'
-import TimeInput from '@/components/common/TimeInput.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
+import TimeInput from '@/components/common/controls/TimeInput.vue'
 import { buildCron, parseCron, type RepeatMode } from '../utils/scheduleCron'
 
 const props = defineProps({
@@ -88,6 +88,7 @@ const REPEAT_OPTS = computed<{ v: RepeatMode; label: string }[]>(() => [
 const INTERVAL_PRESETS = [1, 5, 10, 30, 60]
 const CHANNELS = computed(() => [
   { value: 'web', label: t('schedules.webNotice') },
+  { value: 'email', label: t('schedules.email') },
   { value: 'feishu', label: t('schedules.feishu') },
   { value: 'qq', label: t('schedules.qq') },
   { value: 'wechat', label: t('schedules.wechat') },
@@ -108,7 +109,7 @@ function todayIso() {
 }
 function blankForm() { return { name: '', payload: '', time: '09:00', channels: ['web'] as string[] } }
 function filterChannels(channels: string[]) {
-  const allowed = ['web', ...props.imChannels]
+  const allowed = ['web', 'email', ...props.imChannels]
   const filtered = channels.filter(channel => allowed.includes(channel))
   return filtered.length ? filtered : ['web']
 }
@@ -189,7 +190,9 @@ function submit() {
 .interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
 .interval-preset:hover { border-color: var(--option-border-hover); }
 .interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
-.chans { display: flex; gap: 18px; }
+.chans { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.chans :deep(.app-checkbox) { min-width: 0; }
+.chans :deep(.app-checkbox__label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 .modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }

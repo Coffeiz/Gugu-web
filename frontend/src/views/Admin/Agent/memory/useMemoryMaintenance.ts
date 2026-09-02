@@ -1,5 +1,5 @@
 import { computed, onUnmounted, reactive } from 'vue'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 export interface MemCleanupPlanItem {
   removed_ids?: string[]
   removed_texts?: string[]
