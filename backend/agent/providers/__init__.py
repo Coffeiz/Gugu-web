@@ -98,6 +98,10 @@ def build_anthropic_client(ai, timeout):
     from anthropic import AsyncAnthropic
 
     from app.core.credentials import normalize_ascii_api_key
+    # 生产环境的新版 SDK 使用 httpx2；不能直接接收由 httpx 创建的
+    # Timeout 对象，否则请求阶段会出现 float 与 Timeout 相加的 TypeError。
+    if timeout is not None and not isinstance(timeout, (int, float)):
+        timeout = getattr(timeout, "read", timeout)
     return AsyncAnthropic(
         api_key=normalize_ascii_api_key(getattr(ai, "api_key", "") or "dummy", label="模型 API Key"),
         base_url=adapter_for(ai).resolve_base_url(ai),

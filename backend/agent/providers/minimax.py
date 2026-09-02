@@ -24,5 +24,10 @@ class MiniMaxAdapter(ProviderAdapter):
     def stream_sanitize_markers(self) -> tuple[str, ...]:
         return self._MARKERS
 
+    def build_anthropic_generation_params(self, ai) -> dict:
+        # 新版 Anthropic SDK 的 stream() 不再接受顶层 temperature；MiniMax
+        # 仍支持该请求体字段，因此通过 extra_body 传给兼容端点。
+        return {"extra_body": {"temperature": ai.temperature}}
+
     def video_limits(self) -> MediaLimits:
         return MediaLimits()
