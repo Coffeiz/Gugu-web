@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
-
-from sqlalchemy import select
 
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool, automation_tool_allowed
-from app.models import Client, User, UserPreferences, UserSmtpConfig
 from app.services.email import send_email_with_status
 from app.services.email.templates import EMAIL_PALETTES, EMAIL_THEMES, TEMPLATES
+from app.services.email.queries import (
+    get_enabled_user_smtp,
+    get_owned_client,
+    get_user_email,
+    get_user_email_preferences,
+)
 
 
 _EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
@@ -26,6 +30,17 @@ def _mask_email(value: str) -> str:
     local, _, domain = value.partition("@")
     masked = local if len(local) <= 2 else f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}"
     return f"{masked}@{domain}"
+
+
+def _confirmation_identity(*, recipient, subject, body, html, template, title,
+                           preheader, sections, actions, theme, palette) -> str:
+    payload = {
+        "recipient": recipient, "subject": subject, "body": body, "html": html,
+        "template": template, "title": title, "preheader": preheader,
+        "sections": sections, "actions": actions, "theme": theme, "palette": palette,
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"send_email:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
 async def _send_email(db, user_id, args: dict):
@@ -64,7 +79,7 @@ async def _send_email(db, user_id, args: dict):
     recipient = explicit_to
     recipient_source = "用户指定"
     if client_id is not None:
-        client = await db.scalar(select(Client).where(Client.id == client_id, Client.user_id == user_id))
+        client = await get_owned_client(db, user_id, client_id)
         if client is None:
             return {"error": "客户不存在"}
         recipient = (client.email or "").strip()
@@ -72,7 +87,7 @@ async def _send_email(db, user_id, args: dict):
         if not recipient:
             return {"error": "该客户没有邮箱地址"}
     elif not recipient:
-        recipient = (await db.scalar(select(User.email).where(User.id == user_id)) or "").strip()
+        recipient = await get_user_email(db, user_id)
         recipient_source = "当前用户注册邮箱"
 
     if not _EMAIL_RE.fullmatch(recipient):
@@ -80,23 +95,23 @@ async def _send_email(db, user_id, args: dict):
 
     format_label = "咕咕标准 HTML + 纯文本" if not html else "纯文本 + HTML"
     summary = f"将发送{format_label}邮件至 {_mask_email(recipient)}（{recipient_source}），主题：{subject}。正文共 {len(body)} 个字符。"
+    preferences = await get_user_email_preferences(db, user_id)
+    theme = requested_theme if requested_theme != "auto" else preferences.get("theme", "light")
+    palette = requested_palette if requested_palette != "auto" else preferences.get("palette", "mist")
     if not automation_tool_allowed("send_email"):
         blocked = confirm.needs_confirmation(
             args, summary, user_id,
-            identity=(
-                f"send_email:{recipient}:{subject}:{len(body)}:{hashlib.sha256(body.encode('utf-8')).hexdigest()}"
-                f":{hashlib.sha256((html or '').encode('utf-8')).hexdigest()}"
+            identity=_confirmation_identity(
+                recipient=recipient, subject=subject, body=body, html=html,
+                template=template, title=title, preheader=preheader,
+                sections=sections, actions=actions, theme=theme, palette=palette,
             ),
             instruction="邮件发送不可撤回。请确认收件人、主题和正文后，带 confirm=true 与本次 confirm_token 再次调用。",
         )
         if blocked is not None:
             return blocked
 
-    smtp_config = await db.scalar(select(UserSmtpConfig).where(UserSmtpConfig.user_id == user_id, UserSmtpConfig.enabled.is_(True)))
-    preferences = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
-    preference_data = preferences.data if preferences else {}
-    theme = requested_theme if requested_theme != "auto" else preference_data.get("theme", "light")
-    palette = requested_palette if requested_palette != "auto" else preference_data.get("palette", "mist")
+    smtp_config = await get_enabled_user_smtp(db, user_id)
     try:
         send_kwargs = {"to_addr": recipient, "smtp_config": smtp_config}
         if html is not None:

@@ -38,10 +38,8 @@
 </template>
 
 <script setup lang="ts">
-// @ts-ignore 当前环境未解析到 vue 类型声明（依赖未安装或 tsconfig 未配置时忽略）
 import { ref, watch, onUnmounted } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
-// @ts-ignore 当前环境未解析到 vue-i18n 类型声明
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const props = defineProps({

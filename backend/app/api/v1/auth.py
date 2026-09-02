@@ -30,6 +30,7 @@ from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, Up
 from app.services import email as email_svc
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.email_change import create_email_change_request, hash_email_change_token, normalize_email
+from app.services.email.queries import get_user_email_preferences
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -183,8 +184,7 @@ async def reset_password(body: ResetPassword, db: AsyncSession = Depends(get_db)
 
 
 async def _email_preference_theme(db: AsyncSession, user_id) -> tuple[str, str]:
-    prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
-    data = prefs.data if prefs else {}
+    data = await get_user_email_preferences(db, user_id)
     return data.get("theme", "light"), data.get("palette", "mist")
 
 

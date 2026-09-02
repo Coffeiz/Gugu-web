@@ -97,6 +97,25 @@ async def test_send_email_passes_semantic_template_fields(db, user_a, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_send_email_confirmation_binds_structured_payload(db, user_a, monkeypatch):
+    identities = []
+    monkeypatch.setattr(
+        "agent.tools.email.confirm.needs_confirmation",
+        lambda *args, **kwargs: identities.append(kwargs["identity"]) or "blocked",
+    )
+
+    first = await _send_email(db, user_a.id, {
+        "subject": "报告", "body": "正文", "actions": [{"label": "打开", "url": "https://a.example"}],
+    })
+    second = await _send_email(db, user_a.id, {
+        "subject": "报告", "body": "正文", "actions": [{"label": "打开", "url": "https://b.example"}],
+    })
+
+    assert first == second == "blocked"
+    assert identities[0] != identities[1]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("template", ["notification", "reminder", "report", "security", "test"])
 async def test_send_email_accepts_every_standard_template(db, user_a, template, monkeypatch):
     monkeypatch.setattr("agent.tools.email.confirm.needs_confirmation", lambda *args, **kwargs: None)
@@ -243,7 +262,7 @@ def test_email_sanitizer_keeps_safe_layout_attributes_and_drops_unsafe_values():
     assert 'javascript:alert' not in html
 
 
-def test_email_images_allow_cid_and_https_only():
+def test_email_images_allow_only_controlled_cid():
     html = sanitize_email_html(
         '<img src="cid:logo" alt="logo">'
         '<img src="https://cdn.example.com/logo.png" alt="remote">'
@@ -252,7 +271,7 @@ def test_email_images_allow_cid_and_https_only():
     )
 
     assert 'src="cid:logo"' in html
-    assert 'src="https://cdn.example.com/logo.png"' in html
+    assert 'src="https://cdn.example.com/logo.png"' not in html
     assert "data:image" not in html
     assert 'src="http://example.com/logo.png"' not in html
 

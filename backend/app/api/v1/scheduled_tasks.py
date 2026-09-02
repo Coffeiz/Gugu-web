@@ -67,6 +67,7 @@ class TaskCreate(BaseModel):
     channels: list[str] = ["web"]
     enabled: bool = True
     event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
+    authorized_tools: list[str] = Field(default_factory=list)
 
 
 class TaskUpdate(BaseModel):
@@ -75,6 +76,7 @@ class TaskUpdate(BaseModel):
     cron: str | None = None
     channels: list[str] | None = None
     enabled: bool | None = None
+    authorized_tools: list[str] | None = None
 
 
 @router.get("")
@@ -123,7 +125,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
-        authorized_tools=["send_email"],
+        authorized_tools=["send_email"] if body.authorized_tools == ["send_email"] else [],
     )
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
@@ -159,7 +161,7 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     # 页面上的保存动作是用户重新确认任务意图；内容或投递设置变更后重新授予邮件权限。
     if body.payload is not None or body.cron is not None or body.channels is not None:
-        t.authorized_tools = ["send_email"]
+        t.authorized_tools = ["send_email"] if body.authorized_tools == ["send_email"] else []
     if body.enabled is not None:
         t.enabled = body.enabled
     await db.commit()

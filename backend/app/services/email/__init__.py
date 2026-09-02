@@ -86,10 +86,7 @@ class _EmailHtmlSanitizer(HTMLParser):
                     if len(parsed) != 2 or not re.fullmatch(r"[A-Za-z0-9._-]+", parsed[1]):
                         continue
                 else:
-                    from urllib.parse import urlparse
-                    image_url = urlparse(value)
-                    if image_url.scheme.lower() != "https" or not image_url.netloc:
-                        continue
+                    continue
             if key == "role" and value.lower() != "presentation":
                 continue
             if key in {"align", "valign"} and value.lower() not in {"left", "center", "right", "top", "middle", "bottom"}:
