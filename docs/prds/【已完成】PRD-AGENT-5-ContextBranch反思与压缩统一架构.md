@@ -3,6 +3,8 @@
 状态：Phase 0–5 已完成
 负责人：Agent Runtime  版本：v1
 
+> 架构修订（2026-09-02）：`ContextBranch` 只负责对话上下文压缩和记忆反思等需要独立分支生命周期的任务。`daily/event memory` 沉淀属于记忆领域后台整理，不进入 `ContextBranch`，由 `memory/memory_compress.py` 直接调用共享 `provider_runner`，只生成新增章节并追加写入 `memory.md`；重试、输出校验和持久化保护由领域模块负责。
+
 ## 1. 背景与目标
 
 当前 Agent 有两类后台上下文任务：
@@ -10,9 +12,9 @@
 1. **对话压缩**：把 baseline 之前的旧 history 合并为 summary，降低下一轮上下文体积；
 2. **记忆反思**：从当前对话或 IM scope 批次中提炼 profile、pattern、daily、summary 和事件记忆。
 
-两者都需要“从稳定上下文快照分支、追加本次增量、调用 provider、校验结果、持久化”的流程，但目前只有 provider/JSON 调用在 `agent/memory/_llm.py` 中复用，预算、输入组装、超限处理、重试和审计仍分散在 `agent/context/` 与 `agent/memory/`。这会带来重复代码、不同预算口径、输入前缀抖动以及失败行为不一致。
+对话压缩和记忆反思都需要“从稳定上下文快照分支、追加本次增量、调用 provider、校验结果、持久化”的流程，但 daily/event memory 压缩是独立的记忆文档整理任务，不依赖主对话 snapshot、scope 或 branch 生命周期。此前把两者都纳入同一公共分支，导致记忆压缩携带无关的分支元数据和审计语义。
 
-本 PRD 的目标是建立一个唯一的公共组件 `ContextBranch`，统一反思与压缩的执行基础，同时保留两者不同的业务 Prompt、输出 schema 和持久化策略。
+本 PRD 的目标是让 `ContextBranch` 统一反思与对话上下文压缩的公共执行基础，同时保留记忆文档压缩的领域独立性；三者继续共享 provider runner，但不共享不必要的生命周期、输入和审计语义。
 
 目标生命周期：
 
@@ -28,11 +30,13 @@
                          │
               ┌──────────┴──────────┐
               ▼                     ▼
-       CompactionBranch       ReflectionBranch
-       输出 summary            输出 memory delta
+       ConversationBranch       ReflectionBranch
+       输出 summary               输出 memory delta
               │                     │
               ▼                     ▼
        更新 session baseline    更新 memory/RAG
+
+daily/event memory 沉淀：memory/memory_compress.py → provider_runner → memory.md/RAG
 ```
 
 ## 2. 设计原则
@@ -61,7 +65,7 @@
 
 ### 3.2 当前重复或不一致
 
-- `reflection.py`、`im_reflection.py`、`compress.py` 各自组装 provider 用户输入。
+- `reflection.py`、`im_reflection.py`、`memory_compress.py` 各自组装 provider 用户输入。
 - 反思输入没有统一的 `ContextBudget` 分项和超限处理。
 - owner 反思、IM 反思和 daily 压缩各自维护不同的输入截断/输出上限。
 - provider 调用虽然共享 `_llm.py`，但调用前后的审计、错误原因和重试语义不统一。
@@ -85,7 +89,7 @@ backend/agent/context/
 backend/agent/memory/
 ├── reflection.py             # owner 反思业务与 Memory delta writer
 ├── im_reflection.py          # group/member scope 业务与 writer
-├── compress.py               # daily/event memory 业务与 writer
+├── memory_compress.py        # daily/event memory 业务与 writer
 └── ...                       # scope、存储、RAG 等业务模块
 ```
 
@@ -140,7 +144,7 @@ BranchResult {
 | 分支 | 输入 | 输出 | 持久化责任 |
 |---|---|---|---|
 | `CompactionBranch` | baseline 之后的旧 history + 当前保护窗口 + 压缩 Prompt | summary / canonical history | `run_finalize.py`、baseline coordinator |
-| `ReflectionBranch` | baseline/scope snapshot + 当前 turn 或 reflection batch | profile/pattern/daily/summary/event delta | `memory/reflection.py`、`im_reflection.py`、`compress.py` |
+| `ReflectionBranch` | baseline/scope snapshot + 当前 turn 或 reflection batch | profile/pattern/daily/summary/event delta | `memory/reflection.py`、`im_reflection.py`、`memory_compress.py` |
 | Knowledge reflection | Memory 反思明确产生的候选 + RAG candidates | Knowledge operations | `knowledge/reflection.py` |
 
 两者都调用 `ContextBranch`，但不得共享业务输出解析器或 writer。Knowledge 反思是否作为独立分支由后续阶段决定；第一阶段至少必须使用同一 provider runner 和预算审计。
@@ -200,7 +204,7 @@ provider system / stable prompt
 - [x] 确认 `ContextBudget` 为唯一预算来源，禁止新增第二套预算名称。
 
 完成记录（2026-08-28）：确认 `compaction.py`、`reflection.py`、`im_reflection.py`、
-`compress.py` 的领域输入与 writer 保持独立；provider 路由和 JSON 解析原先集中在
+`memory_compress.py` 的领域输入与 writer 保持独立；provider 路由和 JSON 解析原先集中在
 `memory/_llm.py`，但缺少统一的分支输入、结果和审计边界。当前基线不改变业务触发、
 预算或持久化策略。
 
@@ -227,14 +231,13 @@ provider system / stable prompt
 
 - [x] owner 反思改为通过 `ContextBranch` 执行，保留当前 Prompt 与 turn payload。
 - [x] group/member 反思改为通过 `ContextBranch` 执行，保留 scope batch payload。
-- [x] daily/event memory 压缩改为通过 `ContextBranch` 的 compaction 策略执行，不改变事件章节和 RAG 去重规则。
+- [x] daily/event memory 压缩保持记忆领域独立，直接调用共享 `provider_runner`，不改变事件章节和 RAG 去重规则。
 - [x] 保留各 Prompt、输出 schema、profile/pattern/daily/event writer，不把领域字段写入公共组件。
 - [x] 反思分支统一记录 branch、scope、session/run 标识及 input/output fingerprint；持久化状态仍由领域 writer 负责。
 
-完成记录（2026-08-28）：压缩、owner 反思、IM 群/成员反思和 daily/event 压缩均已切换
-到 `ContextBranch`。为保持既有 Prompt 的 cache 与语义，领域适配器将原本的完整业务 payload
-作为单一 delta 传入；公共组件统一负责 provider 调用、结果分类和脱敏审计，后续可在不改
-Prompt 的前提下继续拆分结构化 baseline/snapshot。
+完成记录（2026-08-28，后于 2026-09-02 修订）：对话压缩、owner 反思和 IM 群/成员反思切换到
+`ContextBranch`。daily/event memory 沉淀改由 `memory/memory_compress.py` 直接调用共享
+`provider_runner`，重试、事件日期校验和持久化保护由记忆领域负责。
 
 ### Phase 4：Knowledge 与跨 scope 收口
 
@@ -266,7 +269,7 @@ devserver 全量测试共 1601 项，其中 1584 项通过，17 项为当前工�
 完成迁移后必须审查并清理：
 
 - `agent/memory/_llm.py` 中被 `provider_runner.py` 完全替代的实现；
-- `reflection.py`、`im_reflection.py`、`compress.py` 中重复的 provider client 创建、JSON 提取、异常吞并和 max token 计算；
+- `reflection.py`、`im_reflection.py`、`memory_compress.py` 中重复的 provider client 创建、JSON 提取、异常吞并和 max token 计算；
 - 任何基于本地 token 估算触发反思/压缩的旧分支；
 - 任何把反思结果伪装成普通 history/tool result 的兼容包装；
 - 任何只在单 worker 内存中维护 baseline、cursor 或“正在处理”状态的实现；
@@ -277,7 +280,8 @@ devserver 全量测试共 1601 项，其中 1584 项通过，17 项为当前工�
 
 ## 10. 验收标准
 
-- 反思与压缩都通过 `ContextBranch` 调用 provider，公共执行逻辑只有一份。
+- 对话压缩与反思通过 `ContextBranch` 调用 provider；daily/event memory 压缩直接调用共享 `provider_runner`。
+- 三类任务共享 provider 路由和 JSON 解析基础，但不共享不必要的 branch 生命周期或领域输出 writer。
 - 两类分支均能从 baseline/snapshot + delta 组装输入，不加载无界全量 history。
 - provider usage、overflow、重试、错误原因和持久化状态可用同一日志结构对照。
 - 压缩不会改变反思业务结果；反思不会改变主 session 的压缩 baseline。

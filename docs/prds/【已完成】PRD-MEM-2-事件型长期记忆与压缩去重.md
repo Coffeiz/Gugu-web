@@ -2,7 +2,7 @@
 
 > 状态：Phase 0–4 已完成，Phase 5 待实施
 
-> 执行边界：记忆反思与事件压缩的 provider 分支、稳定前缀组装、重试和审计统一由 [PRD-AGENT-5：ContextBranch 反思与压缩统一架构](PRD-AGENT-5-ContextBranch反思与压缩统一架构.md) 维护；本 PRD 只定义事件记忆的领域规则与持久化。
+> 执行边界：记忆反思使用 [PRD-AGENT-5：ContextBranch 反思与压缩统一架构](PRD-AGENT-5-ContextBranch反思与压缩统一架构.md) 的独立分支执行；事件沉淀由 `memory/memory_compress.py` 直接调用共享 `provider_runner`，只追加新增章节，不重写 `memory.md`，重试、输出校验和持久化保护由记忆领域维护。本 PRD 定义事件记忆的领域规则与持久化。
 > 创建：2026-08-24
 > 关联文档：[`docs/agent/07-MEMORY-AND-REFLECTION.md`](../agent/07-MEMORY-AND-REFLECTION.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)
 > 目标：明确 profile、pattern、memory 的边界，把 memory.md 收敛为事件/对话记忆，并在 daily 压缩时用少量 RAG 历史参考减少重复。
@@ -152,8 +152,8 @@ RAG 结果只用于辅助识别重复、补全背景和发现冲突，不能替�
 |---|---|---|
 | profile | reflection.py 输出增量 profile_add/profile_remove，store.py 去重后写入 profile.json | 保持现状，不并入事件 memory |
 | pattern | reflection.py 输出增量 pattern_add/pattern_remove，store.py 按相似度和置信度合并 | 保持现状，不并入事件 memory |
-| daily | reflection.py 追加带日期条目；达到条数水位后由 compress.compact 批量处理 | 作为事件缓冲，不在本阶段改变阈值 |
-| memory | compress.py 读取旧主档、profile、pattern 和 daily 批次后调用维护模型重写 | 接入事件章节规范化和输出校验 |
+| daily | reflection.py 追加带日期条目；达到条数水位后由 memory_compress.compact 批量处理 | 作为事件缓冲，不在本阶段改变阈值 |
+| memory | memory_compress.py 读取 daily 批次并调用维护模型生成新增章节，再追加到主档 | 接入事件章节规范化和输出校验 |
 | 向量 | store.sync_memory_vecs 在 memory 重写后同步章节/块缓存 | 生命周期与增量 hash 留给 Phase 3 |
 | scope | owner 与 IM scope 复用 scoped_store/im_reflection | 本阶段只固定公共事件契约，不改变 IM 归因 |
 
@@ -162,7 +162,7 @@ RAG 结果只用于辅助识别重复、补全背景和发现冲突，不能替�
 ### 7.1 预计修改
 
 - `backend/agent/memory/reflection.py`：明确 daily 提取为事件记录，减少把 profile/pattern 内容写入 daily；
-- `backend/agent/memory/compress.py`：增加事件章节输出约束、历史 RAG 参考注入和异常校验；
+- `backend/agent/memory/memory_compress.py`：增加事件章节输出约束、历史 RAG 参考注入和异常校验；
 - `backend/agent/memory/store.py`：补充事件章节解析、稳定 chunk/hash 和 memory 向量同步边界；
 - `backend/agent/memory/prompts/` 或对应压缩 Prompt：增加事件型 memory 写入规则；
 - `backend/agent/rag/`：复用统一 RAG 的 source、scope、chunk、retriever 和注入协议；

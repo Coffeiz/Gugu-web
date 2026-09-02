@@ -371,8 +371,8 @@ async def test_migrate_profile_events_dedupes_existing_memory(storage):
     assert await store.read_memory_doc(UID) == "用户最近刚换了新空调"
 
 
-async def test_compress_includes_profile_and_pattern_context(storage, monkeypatch):
-    from agent.memory import compress, store
+async def test_memory_compaction_uses_daily_batch_and_rag_only(storage, monkeypatch):
+    from agent.memory import memory_compress as compress, store
 
     for i in range(store.DAILY_COMPACT_AT):
         date = "2026-07-10" if i < store.DAILY_KEEP_RECENT else "2026-07-09"
@@ -387,7 +387,7 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
     async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3, **kwargs):
         captured["user"] = user
         captured["max_tokens"] = max_tokens
-        return {"memory": "2026-07-09\n2026-07-10\n保留事件背景，不复写稳定结论"}
+        return {"entries": "## 记录长期记忆：近期事件\n\n2026-07-09\n2026-07-10\n保留事件背景，不复写稳定结论"}
 
     async def fake_sync_memory_vecs(user_id, memory_text, force=False):
         captured["synced"] = (user_id, memory_text, force)
@@ -397,10 +397,10 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
 
     ok = await compress.compact(UID, SimpleNamespace())
     assert ok is True
-    assert "已有的长期记忆" in captured["user"]
-    assert "已结构化的用户画像" in captured["user"]
-    assert "用户住南京" in captured["user"]
-    assert "已结构化的行为模式" in captured["user"]
-    assert "用户做决定前会先核实事实" in captured["user"]
-    assert "别在长期记忆里原句复写" in captured["user"]
+    assert "已有的长期记忆" not in captured["user"]
+    assert "已结构化的用户画像" not in captured["user"]
+    assert "用户住南京" not in captured["user"]
+    assert "已结构化的行为模式" not in captured["user"]
+    assert "用户做决定前会先核实事实" not in captured["user"]
+    assert "要追加的近期记录" in captured["user"]
     assert captured["max_tokens"] == 10000
