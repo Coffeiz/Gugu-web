@@ -51,8 +51,7 @@ html[data-theme='dark'][data-family] {
   --topbar-shadow-hover: var(--topbar-shadow);
   --gugu-chat-session-hover: transparent;
 
-  /* Dark primary fills remain quieter than the foreground accent, with the same restrained
-     vertical gradient as light mode. */
+  /* Dark primary fills remain quieter than the foreground accent while staying solid. */
   --action-primary-fill: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));
   --action-primary-fill-hover: color-mix(in srgb,var(--action-primary) 54%,var(--surface-base));
 

@@ -1,7 +1,15 @@
 <template>
   <label class="fub" :class="[mode, { dragging }]">
-    <Icon name="action.upload" :size="mode === 'grid' ? 22 : 13" />
-    <span class="fub-text">{{ t('common.actions.upload') }}</span>
+    <template v-if="mode === 'list'">
+      <span class="fub-name-cell">
+        <Icon name="action.upload" :size="13" />
+        <span class="fub-text">{{ t('common.actions.upload') }}</span>
+      </span>
+    </template>
+    <template v-else>
+      <Icon name="action.upload" :size="22" />
+      <span class="fub-text">{{ t('common.actions.upload') }}</span>
+    </template>
     <input type="file" hidden multiple @change="emit('select', $event)" />
   </label>
 </template>
@@ -44,10 +52,13 @@ const { t } = useI18n()
 }
 
 .fub.list {
-  display: flex; align-items: center; gap: 7px; padding: 9px 10px;
+  display: grid; grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
+  column-gap: 8px; align-items: center; padding: 9px 14px;
   min-height: 42px; box-sizing: border-box;
   font-size: 12px; border-radius: var(--radius-sm);
   border: 1px dashed transparent; transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
+.fub.list .fub-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.fub.list .app-icon { flex-shrink: 0; }
 .fub.list .fub-text { font-weight: 600; }
 </style>

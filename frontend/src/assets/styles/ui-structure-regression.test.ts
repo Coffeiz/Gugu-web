@@ -102,8 +102,8 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   })
 
   it('后台未开启 Shell 时隐藏个人设置中的 Shell 区块', () => {
-    expect(profileWorkspacesPane).toContain('<template v-if="shellLoading || globalEnabled">')
-    expect(profileWorkspacesPane).toContain('v-else-if="sandboxEnabled && globalEnabled"')
+    expect(profileWorkspacesPane).toContain('<template v-if="shellLoading || (globalEnabled && sandboxEnabled)">')
+    expect(profileWorkspacesPane).toContain('<template v-else>')
   })
 
   it('项目阶段待办循环不遮蔽 i18n 翻译函数', () => {

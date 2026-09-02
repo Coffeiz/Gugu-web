@@ -82,7 +82,7 @@
         </div>
         <div class="nav-item" :class="{ active: isActive('/email') }" role="link" tabindex="0" @click="go('/email')">
           <Icon name="admin.mail" size="sm" />
-          邮件发布
+          {{ t('adminEmailUi.title') }}
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />

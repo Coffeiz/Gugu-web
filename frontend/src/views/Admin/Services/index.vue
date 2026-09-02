@@ -10,9 +10,7 @@
           <span class="dep" :class="deps.redis ? 'ok' : 'bad'">Redis {{ deps.redis ? t('adminServices.connected') : t('adminServices.disconnected') }}</span>
           <span class="dep" :class="deps.db ? 'ok' : 'bad'">DB {{ deps.db ? t('adminServices.connected') : t('adminServices.disconnected') }}</span>
         </span>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" :title="t('adminServices.refresh')">
-        <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton :loading="refreshing" :disabled="loading" @click="load(true)" :title="t('adminServices.refresh')" />
       </div>
     </div>
 
@@ -71,8 +69,9 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
-import { confirmDialog } from '@/composables/useConfirmDialog'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()

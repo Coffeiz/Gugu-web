@@ -41,9 +41,7 @@
           </svg>
           {{ t('adminAudit.export') }}
         </button>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :title="t('adminAudit.refresh')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton :loading="refreshing" @click="load(true)" :title="t('adminAudit.refresh')" />
       </div>
     </div>
 
@@ -121,9 +119,7 @@
           <option :value="10080">{{ t('adminAudit.last7Days') }}</option>
           <option :value="129600">{{ t('adminAudit.last90Days') }}</option>
         </select>
-        <button class="icon-btn" :class="{ spinning: securityLoading }" @click="loadSecurity" :title="t('adminAudit.refreshSecurity')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton :loading="securityLoading" @click="loadSecurity" :title="t('adminAudit.refreshSecurity')" />
       </div>
       <div class="log-table-wrap">
         <div v-if="securityLoading" class="state-center"><div class="spinner" /></div>
@@ -151,6 +147,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { fmtLocalDateTime, localDayKey } from '@/utils/dateAttribution'
 import { useI18n } from 'vue-i18n'
 

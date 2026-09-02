@@ -123,7 +123,7 @@ const routes: RouteRecordRaw[] = [
         path: 'email',
         name: 'AdminEmail',
         component: () => import('@/views/Admin/Email/index.vue'),
-        meta: { title: '邮件发布' },
+        meta: { title: 'adminEmailUi.title' },
       },
     ],
   },

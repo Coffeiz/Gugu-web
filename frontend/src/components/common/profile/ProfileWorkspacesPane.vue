@@ -1,11 +1,11 @@
 <template>
   <div class="pm-workspaces-pane">
-    <template v-if="shellLoading || globalEnabled">
+    <template v-if="shellLoading || (globalEnabled && sandboxEnabled)">
     <div class="pm-section pm-shell-section">
       <div class="pm-section-label">{{ t('profileWorkspacesUi.shellAccess') }}</div>
       <p class="pm-workspaces-intro">{{ t('profileWorkspacesUi.shellIntro') }}</p>
       <div v-if="shellLoading" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.loadingShell') }}</div>
-      <template v-else-if="sandboxEnabled && globalEnabled">
+      <template v-else>
         <div class="pm-tool-rows">
           <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.shellSandbox') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.shellSandboxHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellEnabled" :aria-label="t('profileWorkspacesUi.toggleShellSandbox')" @update:model-value="prefsStore.saveShellEnabled($event)" /></div>
           <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.systemShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.systemShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellSystemEnabled" :aria-label="t('profileWorkspacesUi.toggleSystemShell')" @update:model-value="prefsStore.saveShellSystemEnabled($event)" /></div>
@@ -21,7 +21,6 @@
         </div>
         <p v-if="shellMessage" class="pm-msg" :class="shellMessageType">{{ shellMessage }}</p>
       </template>
-      <div v-else class="pm-workspaces-empty">{{ t('profileWorkspacesUi.shellDisabled') }}</div>
     </div>
     <div class="pm-sep"></div>
     </template>

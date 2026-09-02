@@ -219,7 +219,7 @@ onUnmounted(() => {
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); }
 .debug-search {
-  width: 280px; height: 30px; padding: 0 11px;
+  width: 280px; height: 34px; padding: 0 11px; box-sizing: border-box;
   border-radius: 8px; font-size: 12px;
   font-family: var(--font-mono, monospace); outline: none;
 }

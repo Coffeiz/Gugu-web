@@ -23,8 +23,8 @@
         <input v-model="smtp.toAddr" class="form-input" :placeholder="t('profileToolUi.smtpTo')" autocomplete="email" />
       </div>
       <div class="smtp-actions">
-        <label class="smtp-enabled"><input v-model="smtp.enabled" type="checkbox" /> {{ t('profileToolUi.smtpEnabled') }}</label>
-        <label class="smtp-ssl"><input v-model="smtp.useSsl" type="checkbox" /> {{ t('profileToolUi.smtpSsl') }}</label>
+        <Checkbox v-model="smtp.enabled" class="smtp-enabled">{{ t('profileToolUi.smtpEnabled') }}</Checkbox>
+        <Checkbox v-model="smtp.useSsl" class="smtp-ssl">{{ t('profileToolUi.smtpSsl') }}</Checkbox>
         <button class="pm-style-chip" :disabled="smtp.testing || !smtp.host" @click="testSmtp">{{ smtp.testing ? t('profileToolUi.testing') : t('profileToolUi.smtpTest') }}</button>
         <button class="pm-style-chip" :disabled="smtp.saving || !smtp.host" @click="saveSmtp">{{ smtp.saving ? t('sharedUi.saving') : t('sharedUi.save') }}</button>
       </div>
@@ -47,6 +47,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { byokApi, preferencesApi } from '@/services/api'
 import { pickByokCredential } from '@/utils/byokCredentials'
 import AdminSelect from '@/components/AdminSelect.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useI18n } from 'vue-i18n'
 
@@ -108,10 +109,10 @@ async function testSmtp() { if (!smtp.host || smtp.testing) return; smtp.testing
 .capability-editor .pm-style-chip { flex: 0 0 auto; white-space: nowrap; }
 .smtp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: 12px; }
 .smtp-grid .form-input { min-width: 0; height: 34px; box-sizing: border-box; }
-.smtp-ssl { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
 .smtp-actions { display: flex; gap: 8px; justify-content: flex-start; margin-top: 0; }
 .smtp-actions button:first-of-type { margin-left: auto; }
-.smtp-enabled { margin-right: 0; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.smtp-enabled { margin-right: 0; color: var(--text-secondary); font-size: 12px; }
+.smtp-ssl { color: var(--text-secondary); font-size: 12px; }
 @media (max-width: 620px) {
   .smtp-grid { grid-template-columns: minmax(0, 1fr); }
 }

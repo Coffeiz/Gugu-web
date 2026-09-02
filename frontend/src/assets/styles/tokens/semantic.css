@@ -47,15 +47,11 @@
   --action-primary: var(--theme-action-primary);
   --action-primary-hover: var(--theme-action-hover);
   --action-primary-pressed: var(--theme-action-pressed);
-  /* Action fills use a restrained vertical gradient: slightly lighter at the top and deeper at the bottom. */
+  /* Action fills stay solid; theme-specific contrast is supplied by the resolved fill tokens. */
   --action-primary-fill: var(--action-primary);
   --action-primary-fill-hover: var(--action-primary-hover);
-  --action-primary-bg: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-primary-fill) 94%, white),
-    color-mix(in srgb, var(--action-primary-fill) 94%, black));
-  --action-primary-bg-hover: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-primary-fill-hover) 94%, white),
-    color-mix(in srgb, var(--action-primary-fill-hover) 94%, black));
+  --action-primary-bg: var(--action-primary-fill);
+  --action-primary-bg-hover: var(--action-primary-fill-hover);
   --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
   --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
   --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
@@ -64,12 +60,8 @@
      derives a surface-based fill in theme-refinements.css. */
   --action-secondary-fill: rgba(255,255,255,.66);
   --action-secondary-fill-hover: rgba(255,255,255,.82);
-  --action-secondary-bg: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-secondary-fill) 94%, white),
-    color-mix(in srgb, var(--action-secondary-fill) 98%, black));
-  --action-secondary-bg-hover: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-secondary-fill-hover) 94%, white),
-    color-mix(in srgb, var(--action-secondary-fill-hover) 98%, black));
+  --action-secondary-bg: var(--action-secondary-fill);
+  --action-secondary-bg-hover: var(--action-secondary-fill-hover);
   --action-secondary-border: rgba(255,255,255,.78);
   --action-secondary-border-hover: rgba(255,255,255,.88);
   --action-secondary-fg: var(--content-secondary);

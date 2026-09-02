@@ -22,13 +22,13 @@ function changeLocale(value: SupportedLocale) {
 </script>
 
 <style scoped>
-.language-switcher { display: flex; justify-content: center; gap: 4px; pointer-events: auto; }
+.language-switcher { display: flex; justify-content: center; gap: 5px; pointer-events: auto; }
 .language-switcher button {
-  border: 0; border-radius: 6px; padding: 4px 7px;
+  border: 1px solid transparent; border-radius: 6px; padding: 4px 7px;
   background: transparent; color: var(--content-tertiary);
   font: 11px var(--font-sans); cursor: pointer;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .language-switcher button:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
-.language-switcher button.active { background: var(--selection-bg); color: var(--action-primary); font-weight: 600; }
+.language-switcher button.active { border-color: var(--action-outline); background: var(--action-soft-hover); color: var(--action-primary); font-weight: 600; }
 </style>

@@ -16,9 +16,7 @@
           @update:model-value="setRange"
         />
         <button class="dl-btn data-header-control" @click="exportData" :disabled="exporting">{{ exporting ? t('perception.exporting') : t('perception.export') }}</button>
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" :title="t('perception.refresh')" :aria-label="t('perception.refresh')">
-          <Icon name="action.refresh" size="sm" />
-        </button>
+        <RefreshButton class="data-header-control" :loading="refreshing" :disabled="loading" @click="load" :title="t('perception.refresh')" />
       </div>
     </div>
 
@@ -148,6 +146,7 @@ import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
+import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import IntentDistribution from './components/IntentDistribution.vue'
 const { t } = useI18n()
 

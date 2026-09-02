@@ -593,6 +593,7 @@ async function cleanupLegacy(keys: string[]) {
   border-radius: 16px; padding: 20px 22px; margin-bottom: 20px;
 }
 .sa-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.sa-card-head:last-child { margin-bottom: 0; }
 .sa-card-title { font-size: 15px; font-weight: 700; margin: 0; }
 .sa-card-sub { font-size: 12px; color: rgba(255,255,255,0.4); margin: 4px 0 0; max-width: 560px; }
 .sa-card-head-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }

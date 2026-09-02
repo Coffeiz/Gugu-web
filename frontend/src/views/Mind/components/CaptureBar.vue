@@ -21,10 +21,7 @@
           />
           <div class="cb-foot">
             <!-- 补录：日期可以往回选，落进它「发生」的那天，而不是今天 -->
-            <label class="cb-backfill" :class="{ on: backfill }">
-              <input type="checkbox" v-model="backfill" />
-              {{ t('mind.backfill') }}
-            </label>
+            <Checkbox v-model="backfill" class="cb-backfill" :class="{ on: backfill }">{{ t('mind.backfill') }}</Checkbox>
             <DatePicker v-if="backfill" class="cb-date" v-model="date" :max="todayIso" :show-clear="false" :placeholder="t('mind.chooseDateShort')" />
             <div class="cb-right">
               <span class="cb-hint">{{ t('mind.referenceHint') }}</span>
@@ -54,7 +51,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
-import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
+import { combineTitleBody, mdToPreviewHtml } from '@/composables/mind/useMindEditor'
 import NoteEditor from './NoteEditor.vue'
 import { useI18n } from 'vue-i18n'
 
