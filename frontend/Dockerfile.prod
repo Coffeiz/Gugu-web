@@ -3,7 +3,7 @@
 FROM node:latest AS build
 
 WORKDIR /workspace
-RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
+RUN npm install --global pnpm@10.15.0
 
 # 先复制稳定的 workspace 元数据，保证依赖层可复用。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
