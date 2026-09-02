@@ -346,6 +346,7 @@ docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 ```
 
 访问地址为 `http://服务器地址:9595`。如需改端口，设置 `GUGU_HTTP_PORT`。
+同时在项目根目录 `.env` 设置 `GUGU_PUBLIC_APP_URL` 为用户实际访问的完整地址；域名部署示例为 `https://gugugu.site`。该值会注入后端，用于生成邮箱验证、密码重置等外部链接，不能填写 `localhost:8000` 或 Compose 服务名。
 生产 Compose 会自动执行数据库迁移，并持久化 PostgreSQL、用户文件、记忆、工作区和
 Admin 的 `config.override.json`；不要删除 `pgdata`、`gugu_data` 或 `gugu_config` 卷。
 
@@ -406,6 +407,7 @@ sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`
   ```
   > JWT（登录 Token）就是用 `SECRET_KEY` 签名的，**线上用默认值 = 任何人能伪造管理员/用户 Token**，必须换。改 `SECRET_KEY` 后所有已签发的 Token 失效（需重新登录），重启后端生效。
 - 其余（AI key、OSS、飞书凭据）登录 Admin 面板配，落到 `config.override.json`。
+- **公开站点地址**：在 `backend/.env` 设置 `PUBLIC_APP_URL=https://你的域名`。它是邮箱验证、密码重置等外部链接的唯一生成基址；若通过 Compose 启动，则用项目根目录 `.env` 的 `GUGU_PUBLIC_APP_URL` 注入同一值。
 - **存储**：默认本地为仓库根目录下的 `Gugu-data/users/`（与 `backend/` 同级）；运行时不再创建或维护 `backend/uploads/`。历史迁移只由 `migrate_storage_root.py` 读取旧目录。
 
 ### 4.3 数据库迁移
@@ -462,11 +464,13 @@ server {
         try_files $uri $uri/ /index.html;     # SPA 路由回退
     }
 
-    # 后端 API（主站 + 后台共用这一套反代）
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+# 后端 API（主站 + 后台共用这一套反代）
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         # SSE（咕咕聊天流式）：关缓冲

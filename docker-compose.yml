@@ -68,6 +68,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -93,6 +94,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}

@@ -32,7 +32,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 | Multi-user and tenancy | User accounts, account-level data isolation, and independent configuration |
 | Permissions and security | Identity, resource ownership, session permissions, an admin console, and confirmation gates for dangerous operations |
 | Messaging | QQ, WeChat, and Feishu integrations with direct messages, group chats, normalized messages, shared context, and notifications |
-| Admin console | Models, BYOK, search, mail notifications, file storage, logs, and system services |
+| Admin console | Models, BYOK, search, mail notifications and subscription publishing, file storage, logs, and system services; users can also configure personal SMTP for proactive mail and scheduled-task reports |
 | Internationalization | Chinese, English, and Japanese UI support with centralized frontend translations |
 | Observability | LoopScope views for Agent Loops, tokens, cache, tool calls, and performance diagnostics |
 | Deployment | Docker Compose deployment with a unified entry point, health checks, logs, volumes, and backup support |
@@ -112,6 +112,24 @@ Try it at [gugugu.site](https://gugugu.site), or deploy it locally using the ins
   </tr>
 </table>
 
+## Tool Groups
+
+Gugu's tools are organized by capability groups. The Agent selects the appropriate combination for each task, so users do not need to remember individual tool names.
+
+| Tool group | What it can do | Example |
+| --- | --- | --- |
+| Projects and tasks | Create projects, stages, and tasks; track progress and deadlines | “Build my release plan for this week” |
+| Calendar and reminders | Create events, set reminders, and check schedules | “Remind me to follow up tomorrow afternoon” |
+| Files and knowledge | Read, organize, and search files; retrieve project knowledge | “Find the relevant proposal in the project files” |
+| Notes and memory | Capture ideas, maintain long-term memory, and carry context forward | “Remember how I prefer to work” |
+| Search and information | Search the web and workspace, and extract webpage content | “Look up the latest documentation for this library” |
+| Canvas and relationships | Create notes and organize relationships between projects, files, and events | “Turn these ideas into a relationship map” |
+| Scheduled tasks | Run recurring work on a schedule and report the results | “Send me a project progress email every Monday” |
+| Messaging | Talk through QQ, WeChat, Feishu, and other channels; receive notifications | “Check the project status in the group” |
+| Email | Send proactive mail through personal SMTP and deliver scheduled-task reports | “Email this summary to the client” |
+| Shell and sandbox | Run commands, process files, and execute scripts within permission and resource boundaries | “Check the build and generate a report” |
+| Images and media | Analyze images and work with visual information | “Find the issue in this screenshot” |
+
 ## Quick Start
 
 ### Requirements
@@ -145,7 +163,11 @@ AI__API_KEY=your-provider-api-key
 GUGU_ADMIN_USERNAME=admin
 GUGU_ADMIN_PASSWORD=replace-with-an-admin-password
 GUGU_DB_PASSWORD=replace-with-a-database-password
+# Public site origin used in email verification and password-reset links
+GUGU_PUBLIC_APP_URL=http://localhost:9595
 ```
+
+When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8000`.
 
 The default Compose setup uses prebuilt `latest` images. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
 
@@ -185,7 +207,7 @@ The README keeps configuration at index level. See [Deployment Guide](docs/DEPLO
 | Redis | Messages, sessions, and Runtime state |
 | LLM / BYOK | Model providers and personal API keys |
 | Search | Bundled SearXNG web search and in-app search |
-| Mail | User feedback and system email notifications |
+| Mail | Admin system SMTP and personal SMTP; proactive Agent email and scheduled-task reports; Admin templates, previews, test sends, and Chinese/Japanese/English update emails with subscription controls |
 | IM | QQ, WeChat, and Feishu connections |
 | Internationalization | Chinese, English, and Japanese UI support with centralized frontend translations |
 | LoopScope | Agent traces and performance observability |

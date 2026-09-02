@@ -116,6 +116,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -148,6 +149,7 @@ services:
       # 不冲突——environment 优先级更高，专门覆盖成 compose 网络里的服务名。
       - ./backend/.env
     environment:
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
