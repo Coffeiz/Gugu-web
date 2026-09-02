@@ -193,23 +193,6 @@ const todayStr = computed(() => {
   overflow: hidden;
 }
 
-/* 顶部背景色渐变遮罩：让卡片顶部"溶"进背景，降低视觉重心 */
-.layout-main::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100px;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.08) 0%,
-    rgba(0, 0, 0, 0.0) 100%
-  );
-  pointer-events: none;
-  z-index: 5; /* 低于顶栏(40)，高于内容 */
-}
-
 .topbar {
   --gb-tint: var(--glass-bg);
   position: absolute;

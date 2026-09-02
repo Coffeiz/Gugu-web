@@ -127,10 +127,14 @@ html[data-theme][data-family='mono'] .chat-window .msg.ai .msg-bubble {
 
 /* Mono is the public name; mono remains the compatibility data-family id.
    Content .glass-card surfaces disable blur through the component token rather than a hard final
-   `backdrop-filter:none`. Floating chrome can then remap --glass-card-blur locally without fighting
-   this higher-specificity selector; chat/sidebar keep their independent surface contracts. */
+   `backdrop-filter:none`. Floating chrome, including the primary navigation, keeps its own glass
+   material so the sidebar remains translucent without changing content-card elevation. */
 html[data-family='mono'] { --glass-card-blur: none; }
-html[data-family='mono'] .sidebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-theme][data-family='mono'] .sidebar {
+  background: var(--chrome-glass-bg);
+  backdrop-filter: var(--chrome-glass-blur);
+  -webkit-backdrop-filter: var(--chrome-glass-blur);
+}
 html[data-family='mono'] .glass-card:not(.topbar) {
   backdrop-filter: var(--glass-card-blur);
   -webkit-backdrop-filter: var(--glass-card-blur);
