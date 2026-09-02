@@ -119,7 +119,7 @@
 ### 前置要求
 
 - Docker 20+ 和 Docker Compose v2
-- 可访问的模型提供商或 BYOK 配置
+- 模型提供商 API Key（BYOK）
 - 首次启动需要 PostgreSQL、Redis 和网络访问
 
 ### 国内网络环境

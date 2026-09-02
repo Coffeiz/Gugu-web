@@ -20,6 +20,23 @@
 
 - [COMMANDS.md](./COMMANDS.md)：统一斜杠命令、会话控制和目标命令。
 
+## English Documentation
+
+English companions for the current documents are kept in `en/` with the same filenames:
+
+- [Agent overview](./en/01-OVERVIEW.md)
+- [Architecture](./en/02-ARCHITECTURE.md)
+- [Agent loop](./en/03-AGENT-LOOP.md)
+- [Context engineering](./en/04-CONTEXT-ENGINEERING.md)
+- [Tools and skills](./en/05-TOOLS-AND-SKILLS.md)
+- [RAG and Knowledge](./en/06-RAG-AND-KNOWLEDGE.md)
+- [Memory and reflection](./en/07-MEMORY-AND-REFLECTION.md)
+- [Channels](./en/08-CHANNELS.md)
+- [Message protocol](./en/09-MESSAGE-PROTOCOL.md)
+- [Reliability](./en/10-RELIABILITY.md)
+- [LoopScope](./en/11-LOOPSCOPE.md)
+- [Commands](./en/COMMANDS.md)
+
 ## 领域文档
 
 按具体业务域补充实现细节（当前目录中的专题仍以代码为准）：
