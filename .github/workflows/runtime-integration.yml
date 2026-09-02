@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          node-version: 22
 
       # 集成 job 通过 VITE_USE_LOCAL_RUNTIME=1 显式验证 pinned Runtime 构建产物；
       # 普通/生产构建使用 frontend/package.json 中的 npm Runtime 包。
@@ -106,7 +106,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          node-version: 22
           cache: npm
           cache-dependency-path: gugu-interaction-runtime/package-lock.json
 
@@ -189,7 +189,7 @@ jobs:
       - name: Setup Node and build RAG worker
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          node-version: 22
 
       - name: Install RAG worker dependencies
         run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --frozen-lockfile
@@ -396,7 +396,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          node-version: 22
 
       - name: Install Runtime dependencies for integration alias
         working-directory: gugu-interaction-runtime
@@ -482,7 +482,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          node-version: 22
 
       - name: Install LoopScope dependencies
         working-directory: loopscope

@@ -214,7 +214,7 @@ class PtyManager:
                 terminal_id for terminal_id, session in self._sessions.items()
                 if session.attached_clients == 0
                 and session.detached_at is not None
-                and current - session.detached_at >= self.detached_ttl_seconds
+                and current >= session.detached_at + self.detached_ttl_seconds
             ]
         for terminal_id in expired:
             await self.terminate(terminal_id, force=True)
