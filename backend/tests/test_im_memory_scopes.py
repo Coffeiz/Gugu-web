@@ -21,6 +21,13 @@ def test_memory_scope_separates_bot_group_and_user():
     assert group_a.key("summary.json").endswith("/summary.json")
 
 
+def test_admin_im_preview_maps_scope_to_reflection_task_type():
+    from app.api.v1.agent_admin import _im_preview_task_type
+
+    assert _im_preview_task_type("group") == "group"
+    assert _im_preview_task_type("platform-user") == "member-batch"
+
+
 def test_memory_scope_rejects_path_traversal():
     from agent.memory.scopes import MemoryScope
 

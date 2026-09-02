@@ -191,6 +191,11 @@ _IM_MODEL_PREVIEW_KEY = "im_memory:maintenance:model_preview"
 _IM_MODEL_PREVIEW_PLAN_KEY = "im_memory:maintenance:model_preview:plan"
 
 
+def _im_preview_task_type(scope_type: str) -> str:
+    """将存储作用域映射到反思查询和 Prompt 使用的任务类型。"""
+    return "group" if scope_type == "group" else "member-batch"
+
+
 def _merge_im_preview_outputs(outputs: list[dict]) -> dict:
     """合并同一 scope 各消息批次的增量结果，不让后一个批次覆盖前一个批次。"""
     merged: dict = {}
@@ -231,6 +236,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     )
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
+    from app.core.redaction import diag_log
     from app.core.redis import get_redis
 
     redis = get_redis()
@@ -246,10 +252,12 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                 _uuid.UUID(item["owner_user_id"]), item["platform"], item["bot_id"],
                 item["scope_type"], item["scope_id"],
             )
+            task_type = _im_preview_task_type(scope.scope_type)
             job = SimpleNamespace(
                 owner_user_id=scope.owner_user_id, platform=scope.platform,
                 bot_id=scope.bot_id, scope_type=scope.scope_type, scope_id=scope.scope_id,
                 from_message_id=item["first_message_id"], to_message_id=item["last_message_id"],
+                task_type=task_type,
             )
             async with await _db_session() as db:
                 messages = await _messages_for_job(db, job)
@@ -284,7 +292,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                 )
                 branch = await ContextBranch().run(
                     BranchInput(
-                        stable_system=_scope_prompt(scope),
+                        stable_system=_scope_prompt(scope, task_type=task_type),
                         delta=prompt_input,
                         scope=scope.scope_type,
                     ),
@@ -313,7 +321,8 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     "last_message_id": int(messages[-1].id) if messages else 0,
                     "batch_count": len(batches),
                 })
-        except Exception:
+        except Exception as exc:
+            diag_log("admin.im_memory_model_preview.scope", exc)
             failed += 1
         done += 1
         await redis.set(_IM_MODEL_PREVIEW_KEY, json.dumps({
