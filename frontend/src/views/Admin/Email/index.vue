@@ -20,28 +20,31 @@
         </div>
         <div class="field-grid">
           <label>{{ t('adminEmailUi.template') }}<AdminSelect v-model="form.template" :options="templates" class="template-select" /></label>
-          <label>{{ t('adminEmailUi.subject') }}<input v-model="form.subject" maxlength="200" :placeholder="t('adminEmailUi.subjectPlaceholder')" /></label>
-          <label>{{ t('adminEmailUi.titleLabel') }}<input v-model="form.title" maxlength="200" :placeholder="t('adminEmailUi.titlePlaceholder')" /></label>
-          <label>{{ t('adminEmailUi.preheader') }}<input v-model="form.preheader" maxlength="180" :placeholder="t('adminEmailUi.preheaderPlaceholder')" /></label>
+          <label>{{ t('adminEmailUi.subject') }}<input v-model="form.subject" class="form-input" maxlength="200" :placeholder="t('adminEmailUi.subjectPlaceholder')" /></label>
+          <label>{{ t('adminEmailUi.titleLabel') }}<input v-model="form.title" class="form-input" maxlength="200" :placeholder="t('adminEmailUi.titlePlaceholder')" /></label>
+          <label>{{ t('adminEmailUi.preheader') }}<input v-model="form.preheader" class="form-input" maxlength="180" :placeholder="t('adminEmailUi.preheaderPlaceholder')" /></label>
         </div>
         <div class="toggle-row">
           <div class="toggle-group"><span>{{ t('adminEmailUi.theme') }}</span><div class="toggle-options"><button v-for="item in themes" :key="item" class="chip" :class="{ active: form.theme === item }" @click="form.theme = item">{{ item === 'light' ? t('adminEmailUi.light') : t('adminEmailUi.dark') }}</button></div></div>
           <div class="toggle-group"><span>{{ t('adminEmailUi.palette') }}</span><div class="toggle-options"><button v-for="item in palettes" :key="item" class="chip" :class="{ active: form.palette === item }" @click="form.palette = item">{{ item }}</button></div></div>
         </div>
-        <label class="field-block">{{ t('adminEmailUi.body') }}<textarea v-model="form.body" class="control-resizable scroll-surface scroll-surface--editor" rows="7" maxlength="20000" :placeholder="t('adminEmailUi.bodyPlaceholder')" /></label>
+        <div class="field-block">
+          <span class="field-label">{{ t('adminEmailUi.body') }}</span>
+          <textarea v-model="form.body" class="form-input control-resizable scroll-surface scroll-surface--editor body-editor" rows="7" maxlength="20000" :placeholder="t('adminEmailUi.bodyPlaceholder')" />
+        </div>
 
         <div class="subhead">{{ t('adminEmailUi.contentBlocks') }} <button class="small-btn" @click="addSection">{{ t('adminEmailUi.add') }}</button></div>
         <div v-for="(section, index) in form.sections" :key="index" class="repeat-row">
-          <input v-model="section.heading" :placeholder="t('adminEmailUi.sectionHeadingPlaceholder')" /><input v-model="section.text" :placeholder="t('adminEmailUi.sectionTextPlaceholder')" /><button class="remove-btn" @click="form.sections.splice(index, 1)">{{ t('adminEmailUi.delete') }}</button>
+          <input v-model="section.heading" class="form-input" :placeholder="t('adminEmailUi.sectionHeadingPlaceholder')" /><input v-model="section.text" class="form-input" :placeholder="t('adminEmailUi.sectionTextPlaceholder')" /><button class="remove-btn" @click="form.sections.splice(index, 1)">{{ t('adminEmailUi.delete') }}</button>
         </div>
         <div class="subhead">{{ t('adminEmailUi.actions') }} <button class="small-btn" :disabled="form.actions.length >= 3" @click="addAction">{{ t('adminEmailUi.add') }}</button></div>
         <div v-for="(action, index) in form.actions" :key="index" class="repeat-row">
-          <input v-model="action.label" :placeholder="t('adminEmailUi.actionLabelPlaceholder')" /><input v-model="action.url" :placeholder="t('adminEmailUi.urlPlaceholder')" /><button class="remove-btn" @click="form.actions.splice(index, 1)">{{ t('adminEmailUi.delete') }}</button>
+          <input v-model="action.label" class="form-input" :placeholder="t('adminEmailUi.actionLabelPlaceholder')" /><input v-model="action.url" class="form-input" :placeholder="t('adminEmailUi.urlPlaceholder')" /><button class="remove-btn" @click="form.actions.splice(index, 1)">{{ t('adminEmailUi.delete') }}</button>
         </div>
 
         <div class="send-panel">
           <div class="subhead">{{ t('adminEmailUi.sendTest') }}</div>
-          <div class="send-row"><input v-model="testRecipient" type="email" :placeholder="t('adminEmailUi.testRecipient')" /><ActionButton variant="secondary" fit :disabled="testing" @click="sendTest">{{ testing ? t('adminEmailUi.sending') : t('adminEmailUi.sendTest') }}</ActionButton></div>
+          <div class="send-row"><input v-model="testRecipient" class="form-input" type="email" :placeholder="t('adminEmailUi.testRecipient')" /><ActionButton variant="secondary" fit :disabled="testing" @click="sendTest">{{ testing ? t('adminEmailUi.sending') : t('adminEmailUi.sendTest') }}</ActionButton></div>
           <p class="hint">{{ t('adminEmailUi.testHint') }}</p>
           <div class="publish-row"><span>{{ t('adminEmailUi.publishHint', { count: recipientCount ?? '—' }) }}</span><ActionButton fit :disabled="publishing || !recipientCount" @click="publish">{{ publishing ? t('adminEmailUi.queued') : t('adminEmailUi.publish') }}</ActionButton></div>
         </div>
@@ -205,9 +208,9 @@ onMounted(() => { void Promise.all([refreshPreview(), loadCount()]) })
 .editor-card,.preview-card { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:22px; min-width:0; }
 .section-title,.subhead { font-size:13px; font-weight:700; color:rgba(255,255,255,.72); margin-bottom:16px; } .subhead { display:flex; align-items:center; gap:8px; margin-top:22px; margin-bottom:9px; } .subhead > button { margin-left:auto; } .locale-row { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin:-4px 0 16px; } .locale-row :deep(.app-action-button) { margin-left:auto; }
 .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px; } label { display:flex; flex-direction:column; gap:7px; color:rgba(255,255,255,.42); font-size:11px; }
-input,textarea { box-sizing:border-box; width:100%; border:1px solid var(--input-border); border-radius:9px; background:var(--input-bg); color:var(--input-fg); padding:10px 11px; font:13px/1.45 var(--font-sans); outline:none; } textarea { resize:vertical; min-height:130px; } input:focus,textarea:focus { border-color:var(--input-border-focus); }
+.field-block { display:flex; flex-direction:column; gap:7px; margin-top:15px; } .field-label { color:rgba(255,255,255,.42); font-size:11px; } .body-editor { min-height:130px; }
 .template-select { display:block; width:100%; } :deep(.template-select .asel-trigger) { width:100%; height:41px; box-sizing:border-box; }
-.field-block { margin-top:15px; } .toggle-row { display:flex; flex-direction:column; gap:12px; width:100%; margin:17px 0 2px; color:rgba(255,255,255,.4); font-size:11px; } .toggle-group { display:flex; min-width:0; flex-direction:column; gap:7px; } .toggle-options { display:flex; gap:7px; min-width:0; width:100%; } .toggle-options .chip { flex:1 1 0; min-width:0; }
+.toggle-row { display:flex; flex-direction:column; gap:12px; width:100%; margin:17px 0 2px; color:rgba(255,255,255,.4); font-size:11px; } .toggle-group { display:flex; min-width:0; flex-direction:column; gap:7px; } .toggle-options { display:flex; gap:7px; min-width:0; width:100%; } .toggle-options .chip { flex:1 1 0; min-width:0; }
 .chip,.small-btn,.remove-btn { box-sizing:border-box; min-height:34px; border:1px solid rgba(255,255,255,.13); border-radius:8px; background:rgba(255,255,255,.05); color:rgba(255,255,255,.62); padding:8px 10px; cursor:pointer; font:12px/1.2 var(--font-sans); } .chip { display:inline-flex; align-items:center; justify-content:center; text-align:center; } .chip.active { border-color:rgba(123,127,178,.58); color:var(--content-on-accent); background:var(--action-primary-bg); }
 .repeat-row { display:grid; grid-template-columns:1fr 1.4fr auto; gap:8px; margin-bottom:8px; } .remove-btn { color:#d49494; }
 .send-panel { border-top:1px solid rgba(255,255,255,.1); margin-top:23px; padding-top:17px; } .send-row input { flex:1; } :deep(.send-row .app-action-button) { height:41px; min-height:41px; } .hint { margin:8px 0 17px; font-size:11px; } .publish-row { align-items:center; flex-wrap:wrap; padding-top:15px; border-top:1px solid rgba(255,255,255,.1); font-size:12px; color:rgba(255,255,255,.5); } .publish-row > span { min-width:0; flex:1 1 180px; line-height:1.45; }
