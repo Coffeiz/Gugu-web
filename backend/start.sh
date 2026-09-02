@@ -303,6 +303,28 @@ cmd_status() {
 
 cmd_logs() { tail -f "$LOG_FILE"; }
 
+suggest_run_user() {
+    local candidate runtime_dir uid
+
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] && id "${SUDO_USER}" >/dev/null 2>&1; then
+        printf '%s\n' "${SUDO_USER}"
+        return 0
+    fi
+
+    # 优先选择已配置 Rootless Docker 的普通用户，确保 sandboxd 与 daemon 属于同一用户。
+    for runtime_dir in /run/user/*; do
+        [ -S "$runtime_dir/docker.sock" ] || continue
+        uid="${runtime_dir##*/}"
+        candidate="$(getent passwd "$uid" | cut -d: -f1)"
+        if [ -n "$candidate" ] && [ "$candidate" != "root" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1; exit }'
+}
+
 cmd_foreground() {
     detect_venv
     cd "$APP_DIR"
@@ -321,11 +343,12 @@ cmd_install() {
     # 必须显式指定服务运行用户，避免安装脚本擅自改变项目归属。
     local run_user="${RUN_USER:-}"
     if [ -z "$run_user" ]; then
-        local suggested_user="${SUDO_USER:-$(id -un)}"
-        if [ "$suggested_user" = "root" ] && [ -z "${SUDO_USER:-}" ]; then
-            err "请显式指定非 root 服务运行用户，例如：RUN_USER=coffeiz ./start.sh install"
+        local suggested_user
+        suggested_user="$(suggest_run_user || true)"
+        if [ -n "$suggested_user" ] && [ "$suggested_user" != "root" ]; then
+            err "请显式指定非 root 服务运行用户，例如：RUN_USER=${suggested_user} ./start.sh install"
         else
-            err "请显式指定服务运行用户，例如：RUN_USER=${suggested_user} ./start.sh install"
+            err "未找到可用的非 root 服务用户，请先创建用户后再执行 RUN_USER=xxx ./start.sh install"
         fi
         exit 1
     fi
@@ -362,8 +385,23 @@ cmd_install() {
             exit 1
         fi
     fi
+    # systemd 的 WorkingDirectory 是 backend；应用只从这里读取唯一的运行时 .env。
+    if [ ! -f "${APP_DIR}/.env" ]; then
+        err "缺少 ${APP_DIR}/.env；管理员账号和密码必须配置在 backend/.env。"
+        err "项目根目录 .env 只用于 Docker Compose，systemd 不会读取它。"
+        exit 1
+    fi
+    if ! grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "${APP_DIR}/.env"; then
+        err "${APP_DIR}/.env 未配置 ADMIN_PASSWORD；请先设置管理员密码。"
+        exit 1
+    fi
     chmod 600 "${APP_DIR}/config.override.json"
+    chmod 600 "${APP_DIR}/.env"
+    # Admin 配置使用同目录临时文件原子替换；目录需允许服务用户创建临时文件。
+    chown root:"$run_user" "${APP_DIR}"
+    chmod 775 "${APP_DIR}"
     chown -R "$run_user":"$run_user" "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
+    chown "$run_user":"$run_user" "${APP_DIR}/.env"
 
     # 按实际安装目录 / 用户填占位符，生成四个核心单元
     for s in $services; do
