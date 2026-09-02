@@ -128,11 +128,21 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
 
   function zoomAt(screenX: number, screenY: number, nextScale: number) {
     const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, nextScale))
-    const worldX = (screenX - camera.x) / camera.scale
-    const worldY = (screenY - camera.y) / camera.scale
+    // Pan 进行中 camera.x/y 可能还没 rebase；缩放必须围绕当前屏幕上真实显示的相机位置计算。
+    const cameraX = pan?.currentX ?? camera.x
+    const cameraY = pan?.currentY ?? camera.y
+    const worldX = (screenX - cameraX) / camera.scale
+    const worldY = (screenY - cameraY) / camera.scale
     camera.scale = scale
     camera.x = screenX - worldX * scale
     camera.y = screenY - worldY * scale
+    if (pan) {
+      // 保留 pointerdown 到当前指针的既有位移，避免缩放后下一次 panMove 跳回旧 origin。
+      pan.originX = camera.x - (pan.lastX - pan.startX)
+      pan.originY = camera.y - (pan.lastY - pan.startY)
+      pan.currentX = camera.x
+      pan.currentY = camera.y
+    }
   }
   function workspaceCenter() {
     const viewport = viewportRef.value
@@ -163,6 +173,8 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     originY: number
     currentX: number
     currentY: number
+    lastX: number
+    lastY: number
     captured: boolean
   } | null = null
   function startPan(event: PanInput, capturePointer = true) {
@@ -174,6 +186,8 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
       originY: camera.y,
       currentX: camera.x,
       currentY: camera.y,
+      lastX: event.clientX,
+      lastY: event.clientY,
       captured: capturePointer,
     }
     if (capturePointer) viewportRef.value?.setPointerCapture(event.pointerId)
@@ -182,6 +196,8 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     if (pan?.pointerId !== event.pointerId) return false
     pan.currentX = pan.originX + event.clientX - pan.startX
     pan.currentY = pan.originY + event.clientY - pan.startY
+    pan.lastX = event.clientX
+    pan.lastY = event.clientY
     if (commitCamera) commitPan()
     return true
   }
