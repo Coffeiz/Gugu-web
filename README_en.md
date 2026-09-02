@@ -24,6 +24,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 | Area | Capabilities |
 | --- | --- |
 | Agent | Multi-turn conversations, tool calling, web search, scheduled tasks, and streaming responses |
+| Custom Skills | Create and maintain your own task knowledge and operating procedures, so Gugu can load your workflows on demand |
 | Workspace | Projects, stages, tasks, calendars, reminders, files, notes, terminals, and an infinite canvas |
 | Information access | Web search, full-text search, Knowledge / RAG, file retrieval, and similar-image search |
 | Long-term context | User habits, recent state, knowledge, and behavior patterns across conversations |
