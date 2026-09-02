@@ -36,3 +36,11 @@ Run the smallest set for the changed area, but always run typecheck before commi
 - Check both light and dark themes. For drag, Teleport, or animation changes, check pointer retention, rapid repeated actions, and failure rollback.
 - Performance traces, console probes, and temporary diagnostics are for investigation only and must be removed before commit.
 - Failed-test test-results/, traces, and screenshots are diagnostic artifacts and must not be added to product commits.
+
+## CI Language Convention
+
+- Playwright E2E in CI uses Simplified Chinese as the default locale (`zh-CN`) and explicitly sets the test user's language preference. The main flow must not depend on the browser or devserver system language.
+- Prefer stable `data-testid`, role, aria-label, form name, and URL selectors. Do not use visible Chinese copy as the only selector.
+- When text must be asserted, the main CI flow asserts Chinese resources. English and Japanese run in a separate locale matrix or smoke suite instead of sharing fragile text selectors.
+- For every new page, component, or visible string, make the `zh-CN` E2E path pass first, then add overflow, missing-translation, and critical-path checks for other locales.
+- Test fixtures, seed data, snapshot titles, and test-user-visible content use Chinese consistently and must not depend on a real user's language preference.

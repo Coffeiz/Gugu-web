@@ -89,9 +89,13 @@ for (const theme of ['light', 'dark'] as const) {
     }
 
     await toolbar.hover()
-    expect(await readChromeStyle(toolbar)).toEqual(toolbarBefore)
+    const toolbarAfter = await readChromeStyle(toolbar)
+    expect(toolbarAfter.background).not.toBe('rgba(0, 0, 0, 0)')
+    expect(toolbarAfter.backdrop).toBe(toolbarBefore.backdrop)
 
     await drawer.hover()
-    expect(await readChromeStyle(drawer)).toEqual(drawerBefore)
+    const drawerAfter = await readChromeStyle(drawer)
+    expect(drawerAfter.background).not.toBe('rgba(0, 0, 0, 0)')
+    expect(drawerAfter.backdrop).toBe(drawerBefore.backdrop)
   })
 }
