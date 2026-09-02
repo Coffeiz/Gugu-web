@@ -36,8 +36,8 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
-import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
-import Icon from '@/components/common/Icon.vue'
+import DateSpanPicker from '@/components/common/controls/DateSpanPicker.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const props = defineProps({

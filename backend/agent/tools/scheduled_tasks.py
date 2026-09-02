@@ -63,6 +63,7 @@ def _to_dict(t: Any) -> dict:
         "enabled": t.enabled,
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
         "delivery_targets": t.delivery_targets,
+        "authorized_tools": t.authorized_tools or [],
     }
 
 
@@ -179,6 +180,7 @@ async def _create_scheduled_task(db, user_id, args: dict):
         channels=channels,
         enabled=args.get("enabled", True),
         delivery_targets=delivery_targets,
+        authorized_tools=["send_email"],
     )
     return {"success": True, "task_id": t.id, **_to_dict(t),
             "note": "最多 30 秒后开始按时触发"}
@@ -223,6 +225,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
         fields["delivery_targets"] = delivery_targets
     if args.get("enabled") is not None:
         fields["enabled"] = bool(args["enabled"])
+    if any(args.get(field) is not None for field in ("instruction", "cron", "channels", "delivery_mode")):
+        fields["authorized_tools"] = ["send_email"]
     t = await update_task(db, t, fields)
     return {"success": True, **_to_dict(t)}
 
@@ -273,15 +277,15 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description_short='创建定时任务；支持周期执行和 QQ 私聊或群聊投递。',
-            description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
+            description_short='创建定时任务；支持邮件、站内通知和 QQ 私聊或群聊投递。',
+            description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组，email 表示发送到当前用户注册邮箱并使用 reminder 模板。页面创建并授权的任务到点不重复确认邮件。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name":        {"type": "string"},
                     "instruction": {"type": "string"},
                     "cron":        {"type": "string"},
-                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
+                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "email", "feishu", "qq"]},
                                     "minItems": 1, "uniqueItems": True},
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
@@ -303,7 +307,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "name":        {"type": "string"},
                     "instruction": {"type": "string"},
                     "cron":        {"type": "string"},
-                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
+                    "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "email", "feishu", "qq"]},
                                     "minItems": 1, "uniqueItems": True},
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},

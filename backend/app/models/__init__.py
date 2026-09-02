@@ -65,6 +65,9 @@ class User(Base):
     provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+    smtp_config: Mapped[Optional["UserSmtpConfig"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan", uselist=False
+    )
     security_events: Mapped[list["SecurityEvent"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -150,6 +153,24 @@ class UserProviderCredential(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
     owner: Mapped["User"] = relationship(back_populates="provider_credentials")
+
+
+class UserSmtpConfig(Base):
+    """用户自定义 SMTP；密码使用服务端静态加密，永不通过 API 回显。"""
+    __tablename__ = "user_smtp_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer, default=587)
+    user: Mapped[str] = mapped_column(String(300), default="")
+    password: Mapped[str] = mapped_column(EncryptedString, default="")
+    from_addr: Mapped[str] = mapped_column(String(300), default="")
+    use_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="smtp_config")
 
 
 class UserSkill(Base):
@@ -1117,6 +1138,8 @@ class ScheduledTask(Base):
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
     # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时仅沿用 owner 私聊地址，拒绝群聊最近地址。
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    # 用户创建任务时明确授权的自动工具；当前仅允许 send_email，空值表示不自动授权。
+    authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     # 只对一次性任务（cron 形如 "@once:..."）有意义：last_run_at 非空但这个是 True，
     # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；

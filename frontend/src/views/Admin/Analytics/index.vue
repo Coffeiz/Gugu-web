@@ -229,7 +229,7 @@ import {
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
-import Checkbox from '@/components/common/Checkbox.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { browserTz } from '@/utils/dateAttribution'
 import {

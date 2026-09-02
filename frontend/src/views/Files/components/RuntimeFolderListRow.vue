@@ -10,7 +10,7 @@
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import { onUnmounted, ref, watch, type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import { runtime, bindRuntimeObjectPointer, type TargetItem } from '@/interaction/runtime'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'

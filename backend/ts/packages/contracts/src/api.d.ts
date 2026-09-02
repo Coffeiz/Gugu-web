@@ -5343,7 +5343,7 @@ export interface components {
             showToolInteractions: boolean;
             /**
              * Toolinjectionmode
-             * @default description
+             * @default full
              */
             toolInjectionMode: string;
             /** Personalitypreference */

@@ -102,7 +102,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { getThumb, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
 import { itemSize } from '@/composables/useMindCanvas'
-import CardAffordances from '@/components/common/CardAffordances.vue'
+import CardAffordances from '@/components/common/mind/CardAffordances.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 const { t } = useI18n()
 import { mindCanvasObjectId } from '@/interaction/runtime/canvas'

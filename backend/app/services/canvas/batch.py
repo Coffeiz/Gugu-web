@@ -117,18 +117,21 @@ async def batch_canvas_operations(
             if not isinstance(operation, dict):
                 raise ValueError(f"第 {index + 1} 个操作格式不正确")
             if any(key in operation for key in ("w", "h")):
-                raise ValueError(f"第 {index + 1} 个操作不能修改画布卡片大小")
+                raise ValueError(f"第 {index + 1} 个操作不能修改画布卡片大小，请使用 width/height 设置画布便签大小")
             position = operation.get("position")
             if isinstance(position, dict) and any(key in position for key in ("w", "h")):
-                raise ValueError(f"第 {index + 1} 个操作不能在 position 中传入卡片大小")
+                raise ValueError(f"第 {index + 1} 个操作不能在 position 中传入卡片大小，请使用 width/height")
 
             kind = operation.get("kind")
+            if kind not in {"create_note", "update_item"} and ("width" in operation or "height" in operation):
+                raise ValueError(f"第 {index + 1} 个操作只有画布便签支持设置大小")
             if kind == "create_note":
                 title = operation.get("title") or "新便签"
                 content = operation.get("content") or ""
                 if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
                     raise ValueError(f"第 {index + 1} 个便签操作格式不正确")
                 x, y = await resolve_position(db, user_id, canvas, None, operation.get("position"))
+                width, height = canvas_layout.clamp_canvas_note_size(operation.get("width"), operation.get("height"))
                 node, item = await create_canvas_note(
                     db,
                     user_id,
@@ -138,6 +141,7 @@ async def batch_canvas_operations(
                     operation.get("color", "amber"),
                     x,
                     y,
+                    w=width, h=height,
                     commit=False,
                 )
                 results.append({
@@ -176,6 +180,15 @@ async def batch_canvas_operations(
                 if item is None:
                     raise ValueError(f"第 {index + 1} 个布局操作找不到节点")
                 fields: dict[str, Any] = {}
+                node = await get_canvas_node(db, user_id, item.node_id)
+                if "width" in operation or "height" in operation:
+                    if node is None or node.kind != "canvas_note":
+                        raise ValueError(f"第 {index + 1} 个布局操作只有画布便签支持设置大小")
+                    width, height = canvas_layout.clamp_canvas_note_size(operation.get("width"), operation.get("height"))
+                    if "width" in operation:
+                        fields["w"] = width
+                    if "height" in operation:
+                        fields["h"] = height
                 for key in ("x", "y"):
                     if key in operation:
                         if not _finite_number(operation[key]):

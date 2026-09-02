@@ -275,6 +275,7 @@ class SmtpSettings(BaseModel):
     password: str           = Field("", description="SMTP 登录密码")
     from_addr: str          = Field("", description="发件人地址（默认同 user）")
     to_addr:  str           = Field("", description="反馈通知收件人地址")
+    test_to_addr: str       = Field("", description="SMTP 测试邮件收件人地址")
     feedback_email_enabled: bool = Field(True, description="是否发送用户反馈邮件提醒")
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
 

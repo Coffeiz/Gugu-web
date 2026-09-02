@@ -24,7 +24,7 @@ router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 _TRIAL_WAIT_SECONDS = 180
 _trial_tasks: set[asyncio.Task] = set()
 
-_CHANNELS = {"web", "feishu", "qq", "wechat", "im", "chat"}   # web=站内通知、feishu/qq/wechat=各 IM；chat=web、im=全部 IM（历史别名）
+_CHANNELS = {"web", "email", "feishu", "qq", "wechat", "im", "chat"}   # email=注册邮箱；chat=web、im=全部 IM（历史别名）
 
 def _validate_cron(cron: str) -> None:
     if (cron or "").startswith("@once:"):
@@ -56,6 +56,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
         "last_run_failed": bool(t.last_run_failed),   # 一次性任务触发过但没成功；前端可用来提示重试
         "delivery_targets": t.delivery_targets,
+        "authorized_tools": t.authorized_tools or [],
     }
 
 
@@ -122,6 +123,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
+        authorized_tools=["send_email"],
     )
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
@@ -155,6 +157,9 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.channels = _norm_channels(body.channels)
         from app.scheduled_tasks import owner_private_targets
         t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+    # 页面上的保存动作是用户重新确认任务意图；内容或投递设置变更后重新授予邮件权限。
+    if body.payload is not None or body.cron is not None or body.channels is not None:
+        t.authorized_tools = ["send_email"]
     if body.enabled is not None:
         t.enabled = body.enabled
     await db.commit()

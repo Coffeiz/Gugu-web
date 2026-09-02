@@ -67,8 +67,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import Icon from '@/components/common/Icon.vue'
-import BaseModal from '@/components/common/BaseModal.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'
 import type { Project } from '@/types/project'

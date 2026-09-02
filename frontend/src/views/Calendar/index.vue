@@ -173,7 +173,7 @@ import {
   timedLayoutFor as calculateTimedLayout,
   type CalendarLayoutConstants,
 } from './utils/calendarLayout'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。

@@ -459,7 +459,9 @@ async def get_greeting(
 ):
     """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
     from app.core.config import get_settings
+    from app.core.tz import set_ctx_tz, user_tz
     from agent import greeting
+    set_ctx_tz(user_tz(current_user))
     text = await greeting.generate(db, current_user.id, get_settings(), locale=locale)
     return {"text": text}
 

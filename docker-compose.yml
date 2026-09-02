@@ -2,6 +2,8 @@
 # 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用。
 # 正式部署请改用 docker-compose.prod.yml，并固定镜像版本或 digest。
 
+name: gugu-web-compose
+
 x-json-file-logging: &json-file-logging
   driver: json-file
   options:

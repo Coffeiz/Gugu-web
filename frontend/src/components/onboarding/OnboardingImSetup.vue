@@ -36,8 +36,8 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import { RiChat1Fill, RiQqFill, RiWechatFill } from '@remixicon/vue'
-import BaseModal from '@/components/common/BaseModal.vue'
-import Icon from '@/components/common/Icon.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
 import { useI18n } from 'vue-i18n'
 

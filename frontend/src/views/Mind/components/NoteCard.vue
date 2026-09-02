@@ -1,8 +1,8 @@
 <template>
   <div ref="cardRef" class="note-card"
        :class="{ editing, 'search-highlight': highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, ['tint-' + (note.color || '')]: !!note.color }"
-       :style="{ height: cardHeight }"
-       @mouseenter="isHovering = true" @mouseleave="isHovering = false">
+       :style="{ height: canvasMode && canvasHeight != null ? `${canvasHeight}px` : cardHeight }"
+       @mouseenter="isHovering = true" @mouseleave="isHovering = false" @wheel.stop>
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
          就地展开（跨两列由父级 grid-column 控制）；自动保存，主要退出方式是点卡外面
          （先补一次保存再退出）——但"点外面"这个出口不够显眼（画布上尤其容易让人以为
@@ -21,7 +21,7 @@
            不影响原有行为。 -->
       <NoteEditor ref="bodyEditorRef" v-model="draftBody" :autofocus="pendingFocus === null"
                   :float-toolbar="canvasMode" :edit-ready="editReady"
-                  @submit="finishEditing" @pointerdown.stop>
+                  @submit="finishEditing" @pointerdown.stop @wheel.stop>
         <template #foot-actions>
           <span v-if="conflict" class="nc-conflict">{{ t('mindUi.conflictRefreshed') }}</span>
           <button class="nc-done-btn" @pointerdown.stop @click.stop="finishEditing" :title="t('mindUi.editDone')">
@@ -61,7 +61,7 @@
       </CardAffordances>
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
            @click="onBodyClick" v-html="previewHtml"></div>
-      <button v-if="clamped" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
+      <button v-if="clamped && !canvasMode" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
         {{ expanded ? t('mindUi.collapseContent') : t('mindUi.expandContent') }}
       </button>
     </template>
@@ -84,7 +84,7 @@ import { PhCheck, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import type { MindNote } from '@/services/api'
-import CardAffordances from '@/components/common/CardAffordances.vue'
+import CardAffordances from '@/components/common/mind/CardAffordances.vue'
 import ColorSwatches from './ColorSwatches.vue'
 import NoteEditor from './NoteEditor.vue'
 
@@ -122,6 +122,7 @@ const props = defineProps<{
   // getBoundingClientRect 量出的屏幕像素差值换回世界坐标像素，见该函数内的换算注释。
   // 笔记页时间流没有缩放祖先，不传按 1 处理，换算是 no-op。
   scale?: number
+  canvasHeight?: number
   // 建立关联相关——只有画布模式会用（笔记页时间流不支持连线），见下面 CardAffordances 的
   // v-if="canvasMode"。NoteSticker.vue 原样转发 MindCanvas.vue 给它的同名 prop。
   connecting?: boolean
@@ -499,6 +500,7 @@ defineExpose({ rootEl: cardRef })
 .note-card.editing :deep(.ne-body) {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
 }
+.note-card.canvas-mode.editing :deep(.ne-body) { overflow: auto; }
 .note-card.editing :deep(.ne-body .ProseMirror) {
   flex: 1; min-height: 0;
 }
@@ -540,7 +542,7 @@ defineExpose({ rootEl: cardRef })
    的颜色重新盖回纸色，画布便签的静止态（没在拖）就只会显示纸色、看不出选的颜色——只有拖起来
    那一刻的克隆体会由 runtime 复制样式。这里必须补一份三个类
    的 .canvas-mode.tint-* 稳赢，不能只留这条两个类的默认纸色声明。 */
-.note-card.canvas-mode { background: rgba(255,252,238,0.97); }
+.note-card.canvas-mode { background: rgba(255,252,238,0.97); min-height: 0; }
 .note-card.canvas-mode.tint-amber { background: rgb(255,246,231); }
 .note-card.canvas-mode.tint-coral { background: rgb(255,236,233); }
 .note-card.canvas-mode.tint-blue  { background: rgb(224,239,251); }
@@ -552,6 +554,10 @@ defineExpose({ rootEl: cardRef })
    /ProjectRefCard.vue 的 .pr-card 都是 overflow:visible），便签只在画布模式才需要，不影响
    笔记页时间流原有的裁剪需要。 */
 .note-card.canvas-mode { overflow: visible; }
+.note-card.canvas-mode:not(.editing) { display: flex; flex-direction: column; }
+.note-card.canvas-mode:not(.editing) .nc-head { flex-shrink: 0; }
+.note-card.canvas-mode:not(.editing) .nc-body { flex: 1; min-height: 0; overflow: auto; margin-right: -10px; padding-right: 10px; box-sizing: border-box; }
+.note-card.canvas-mode:not(.editing) .nc-expand { flex-shrink: 0; }
 
 .nc-head {
   display: flex; align-items: center; gap: 6px;

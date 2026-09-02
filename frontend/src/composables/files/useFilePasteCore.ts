@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type { useClipboardStore } from '@/stores/clipboard'
-import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 
 export interface FilePasteDestination {
   folderId: number | null

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { preferencesApi } from '@/services/api'
 import { isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
+import { applyServerTheme } from '@/composables/useTheme'
 
 export const usePreferencesStore = defineStore('preferences', () => {
   // 偏好里的松结构数组（阶段/模板元素类型待后端入 OpenAPI 后 gen:types 收紧），暂 any[]
@@ -18,7 +19,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellDangerousEnabled = ref(false)
   const shellAutopilotEnabled = ref(false)
   const showToolInteractions = ref(false)
-  const toolInjectionMode = ref<'description' | 'full'>('description')
+  const toolInjectionMode = ref<'description' | 'full'>('full')
   const personalityPreference = ref('')
   const personalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
@@ -42,11 +43,12 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
       shellAutopilotEnabled.value = (data as any).shellAutopilotEnabled ?? false
       showToolInteractions.value = (data as any).showToolInteractions ?? false
-      toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
+      toolInjectionMode.value = (data as any).toolInjectionMode === 'description' ? 'description' : 'full'
       personalityPreference.value = data.personalityPreference ?? ''
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true
       personalityPreferenceRevision.value = data.personalityPreferenceRevision ?? 0
+      applyServerTheme((data as any).theme, (data as any).themeFamily, (data as any).palette)
       locale.value = isSupportedLocale(data.locale) ? data.locale : null
       if (locale.value) setLocale(locale.value, true)
       localStorage.setItem('gugu-default-view', defaultView.value)

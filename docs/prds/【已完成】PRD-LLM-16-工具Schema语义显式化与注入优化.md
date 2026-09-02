@@ -89,7 +89,7 @@
 
 ### 2.2 Schema 是机器契约，description 是解释
 
-生产默认使用简介模式（`description`）；全量模式（`full`）保留为用户可选的准确性优先模式。
+生产默认使用全量模式（`full`）；简介模式（`description`）保留为用户可选的低成本模式。
 
 - 类型、枚举、`required`、`oneOf`、`if/then`、`null` 和边界约束表达可校验事实。
 - description 只补充短语义和操作边界，不承担唯一的业务分支定义。
@@ -309,7 +309,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 | 缓存读取 | `853,120` | `1,509,248` |
 | 缓存率 | `98.34%` | `99.38%` |
 
-两组测试不是同一轮请求的逐请求对照，数字用于说明成本与准确率取舍，不作为所有模型和业务场景的绝对排名。当前默认简介模式，全量模式作为准确性优先和排障开关。完整测试口径、失败 case 和原始报告见 [工具 Schema 优化实施报告](../reports/2026-08-29-OPT-LLM-16-TOOL-SCHEMA-BASELINE.md)。
+两组测试不是同一轮请求的逐请求对照，数字用于说明成本与准确率取舍，不作为所有模型和业务场景的绝对排名。当前默认全量模式，简介模式作为低成本和排障场景的可选模式。最新多模型复测见 [LLM-16 5 工具多模型 Schema 模式复测](../reports/2026-09-02-TEST-LLM-16-5TOOLS-MULTI-MODEL-RETEST.md)；原始实施报告见 [工具 Schema 优化实施报告](../reports/2026-08-29-OPT-LLM-16-TOOL-SCHEMA-BASELINE.md)。
 
 ### 5.4 灰度与回滚
 

@@ -72,7 +72,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({

@@ -74,7 +74,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick, watch, onUnmounted, type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
 import { useProjectTodos } from '@/composables/projects/useProjectTodos'

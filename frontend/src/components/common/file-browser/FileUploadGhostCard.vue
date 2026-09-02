@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 
 const props = defineProps({

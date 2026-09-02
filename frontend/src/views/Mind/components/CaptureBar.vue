@@ -53,7 +53,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { PhCaretDown, PhPencilSimple } from '@phosphor-icons/vue'
-import DatePicker from '@/components/common/DatePicker.vue'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
 import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import NoteEditor from './NoteEditor.vue'
 import { useI18n } from 'vue-i18n'

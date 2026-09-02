@@ -48,8 +48,8 @@ import { useRoute } from 'vue-router'
 import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
 import { useMindStore } from '@/stores/mind'
 import { localDayKey } from '@/utils/dateAttribution'
-import DatePicker from '@/components/common/DatePicker.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import DatePicker from '@/components/common/controls/DatePicker.vue'
+import SegmentedControl from '@/components/common/controls/SegmentedControl.vue'
 import { useI18n } from 'vue-i18n'
 
 const route = useRoute()

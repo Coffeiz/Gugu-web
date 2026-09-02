@@ -4,6 +4,7 @@ from agent.security.core_guards import (
     _looks_like_narration,
     _announces_intent,
 )
+from agent.security.guard_patterns import get_guard_locale
 from agent.loop_drivers import RoundResult
 
 
@@ -42,3 +43,14 @@ def test_colon_ended_file_action_is_guarded_in_chinese_and_english():
 def test_colon_ended_explanation_is_not_treated_as_action_intent():
     assert not _announces_intent("下面是本次测试的说明：")
     assert not _announces_intent("Here is the explanation:")
+
+
+def test_guard_locale_selects_japanese_and_english_rules():
+    assert _looks_like_narration("ファイルを確認しました。", "ja-JP")
+    assert _announces_intent("Let me move the file to the target folder.", "en-US")
+    assert not _announces_intent("ファイルを確認しますか？", "ja-JP")
+    assert get_guard_locale("en-US").intent_nudge.startswith("[System reminder")
+
+
+def test_unknown_guard_locale_falls_back_to_chinese():
+    assert get_guard_locale("fr-FR") is get_guard_locale("zh-CN")

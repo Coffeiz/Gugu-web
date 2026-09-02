@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import EventFormFields from './EventFormFields.vue'
 import { type EventDraft, type useEventEditForm } from '@/composables/useEventEditForm'
 

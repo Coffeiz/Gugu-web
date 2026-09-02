@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import type { PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import FileBrowserToolbar from '@/components/common/file-browser/FileBrowserToolbar.vue'

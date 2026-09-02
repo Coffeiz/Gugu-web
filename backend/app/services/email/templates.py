@@ -191,7 +191,13 @@ def render_email(*, template: str = "notification", subject: str, body: str,
     if action_items:
         buttons = []
         for label, url in action_items:
-            buttons.append(f'<a href="{escape(url, quote=True)}" style="display:inline-block;margin:20px 8px 0 0;padding:10px 18px;background:{token["brand"]};color:#fff;text-decoration:none;border-radius:10px;font-weight:600">{escape(label)}</a>')
+            buttons.append(
+                f'<table role="presentation" cellpadding="0" cellspacing="0" style="display:inline-table;margin:20px 8px 0 0">'
+                f'<tr><td style="padding:9px 13px;background:{token["brand"]};border:1px solid transparent;'
+                f'border-radius:8px;text-align:center;white-space:nowrap">'
+                f'<a href="{escape(url, quote=True)}" style="display:block;color:#fff;text-decoration:none;'
+                f'font-size:12px;line-height:1.3;font-weight:600">{escape(label)}</a></td></tr></table>'
+            )
         rows.append("".join(buttons))
     html = f'''<!doctype html><html><head>{scrollbar_style}</head><body style="margin:0;background:{token["canvas"]};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:{token["text"]};color-scheme:{"dark" if theme == "dark" else "light"}">
 <div style="display:none;max-height:0;overflow:hidden">{escape(preheader)}</div>

@@ -119,6 +119,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Admin/Notifications/index.vue'),
         meta: { title: 'admin.publishNotifications' },
       },
+      {
+        path: 'email',
+        name: 'AdminEmail',
+        component: () => import('@/views/Admin/Email/index.vue'),
+        meta: { title: '邮件发布' },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/login' },

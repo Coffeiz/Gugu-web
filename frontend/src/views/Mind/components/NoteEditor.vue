@@ -125,7 +125,7 @@ import {
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
 import { useMindRefActions } from '@/composables/useMindRefActions'
-import ReferenceSuggestMenu from '@/components/common/ReferenceSuggestMenu.vue'
+import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMenu.vue'
 import type { MindRefSuggestItem } from '@/services/api'
 
 const { openMindRef } = useMindRefActions()

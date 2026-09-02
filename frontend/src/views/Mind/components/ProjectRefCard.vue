@@ -63,7 +63,7 @@ import type { Project } from '@/types/project'
 import { itemSize } from '@/composables/useMindCanvas'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import { useProjectStore } from '@/stores/projects'
-import CardAffordances from '@/components/common/CardAffordances.vue'
+import CardAffordances from '@/components/common/mind/CardAffordances.vue'
 const { t } = useI18n()
 import ProjectCardBody from './ProjectCardBody.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'

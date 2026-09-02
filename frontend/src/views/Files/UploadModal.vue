@@ -208,11 +208,11 @@
 </template>
 
 <script setup lang="ts">
-import CloseButton from '@/components/common/CloseButton.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { ref, computed, watch, type PropType } from 'vue'
 import { uploadWithProgress, uploadDirectWithProgress, filesApi, foldersApi } from '@/services/api'
 import { readDroppedEntries, filesToItems, resolveFolderTree } from '@/composables/useFileUpload'
-import BaseModal from '@/components/common/BaseModal.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()

@@ -14,8 +14,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import BaseModal from '@/components/common/BaseModal.vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
 import { useLiveStore } from '@/stores/live'

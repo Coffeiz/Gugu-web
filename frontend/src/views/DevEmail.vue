@@ -44,10 +44,11 @@ import { useAuthStore } from '@/stores/auth'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 type TemplateName = 'notification' | 'reminder' | 'report' | 'security' | 'test'
+type EmailTheme = 'light' | 'dark'
 const { t } = useI18n()
 const authStore = useAuthStore()
 const template = ref<TemplateName>('notification')
-const theme = ref<'light' | 'dark'>('light')
+const theme = ref<EmailTheme>('light')
 const palette = ref('mist')
 const smtpConfig = ref<Record<string, unknown> | null>(null)
 const smtpConfigured = ref(false)
@@ -67,7 +68,7 @@ const templates = [
   { value: 'security' as TemplateName, label: t('devEmail.templates.security.label'), hint: t('devEmail.templates.security.hint'), eyebrow: 'SECURITY', title: t('devEmail.templates.security.title'), section: t('devEmail.templates.security.section'), body: t('devEmail.templates.security.body') },
   { value: 'test' as TemplateName, label: t('devEmail.templates.test.label'), hint: t('devEmail.templates.test.hint'), eyebrow: 'TEST', title: t('devEmail.templates.test.title'), section: t('devEmail.templates.test.section'), body: t('devEmail.templates.test.body') },
 ]
-const themes = [{ value: 'light', label: t('devEmail.light') }, { value: 'dark', label: t('devEmail.dark') }]
+const themes: Array<{ value: EmailTheme; label: string }> = [{ value: 'light', label: t('devEmail.light') }, { value: 'dark', label: t('devEmail.dark') }]
 const palettes = [{ value: 'mist', label: t('devEmail.palettes.mist') }, { value: 'cafe', label: t('devEmail.palettes.cafe') }, { value: 'rose', label: t('devEmail.palettes.rose') }, { value: 'sky', label: t('devEmail.palettes.sky') }, { value: 'sage', label: t('devEmail.palettes.sage') }]
 async function loadPreview() {
   previewLoading.value = true

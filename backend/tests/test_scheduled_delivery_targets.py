@@ -5,6 +5,34 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_email_delivery_uses_reminder_template_and_is_not_retried(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=(True, "已发送"))
+    monkeypatch.setattr(scheduled, "_deliver_email", send)
+
+    result = await scheduled.deliver_to_channels("user-1", "每日汇总", "正文", {"email"})
+
+    assert result == {"邮件": "已发送"}
+    send.assert_awaited_once_with("user-1", "每日汇总", "正文")
+    assert scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_email_delivery_failure_is_visible_and_not_success(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=(False, "发送失败（smtp_timeout）"))
+    monkeypatch.setattr(scheduled, "_deliver_email", send)
+
+    result = await scheduled.deliver_to_channels("user-1", "每日汇总", "正文", {"email"})
+
+    assert result == {"邮件": "发送失败（smtp_timeout）"}
+    assert not scheduled._delivery_succeeded(result)
+    send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_group_delivery_mode_captures_current_qq_group():
     from agent.im import imctx
     from agent.tools.scheduled_tasks import _resolve_delivery_targets

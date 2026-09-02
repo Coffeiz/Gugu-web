@@ -268,7 +268,7 @@ import { ref, computed } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/useConfirmDialog'
-import Checkbox from '@/components/common/Checkbox.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { RiCheckFill } from '@remixicon/vue'
 
 const adminStore = useAdminStore()

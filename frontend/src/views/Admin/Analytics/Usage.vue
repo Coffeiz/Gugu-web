@@ -245,7 +245,7 @@ import {
   LineElement, BarElement, ArcElement, Tooltip, Filler
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
-import Checkbox from '@/components/common/Checkbox.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { browserTz } from '@/utils/dateAttribution'
 import {

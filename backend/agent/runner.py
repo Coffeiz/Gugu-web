@@ -77,7 +77,7 @@ def _proactive_lead_for(req: AgentRequest, history: list) -> str:
 
 
 async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
-    """创建固定 Adapter 能力上下文。业务工具不再回退到全量原生 Schema。"""
+    """按用户偏好创建能力上下文；全量模式返回 None，由 Runner 直接使用完整 Schema。"""
     from agent.capabilities.injector import build_fixed_adapter_context, build_fixed_adapter_context_for_user
     async def _full_schema_preference(session):
         if owner_id is None:
@@ -87,8 +87,8 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
         row = await session.scalar(select(UserPreferences).where(UserPreferences.user_id == owner_id))
         stored_mode = (row.data or {}).get("tool_injection_mode") if row else None
         if stored_mode is None:
-            return False
-        return stored_mode in {"full", "compact_schema", "full_schema"}
+            return True
+        return stored_mode not in {"description", "catalog"}
 
     if db is None and owner_id is not None:
         import app.db.session as _sess
@@ -573,7 +573,7 @@ async def _run_collect_unlocked(
         _snapshot_injection = session_snapshot.snapshot_message(
             f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
         )
-    runner = LLMRunner(tool_names, settings, capability_context=capability_context)
+    runner = LLMRunner(tool_names, settings, capability_context=capability_context, locale=req.locale)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
     im_used_tools = False
 
@@ -1361,6 +1361,7 @@ async def _run_scheduled_once(
     include_meta: bool = False,
     tool_names_override: list[str] | None = None,
     minimal_context: bool = False,
+    allowed_tools: list[str] | None = None,
 ):
     """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
     run_config = resolve_run_config(settings, None)
@@ -1446,11 +1447,18 @@ async def _run_scheduled_once(
                 model_cfg=model_cfg,
             )
 
-        collected = await _collect(
-            gen,
-            model_cfg=model_cfg,
-            include_meta=include_meta,
-        )
+        # 定时任务由用户创建并明确授权其指令执行；只给邮件工具自动授权，
+        # 其它 destructive 工具仍必须经过各自安全门，不能借任务上下文扩大权限。
+        from agent.tools.base import set_automation_allowed_tools, reset_automation_allowed_tools
+        automation_token = set_automation_allowed_tools(set(allowed_tools or []))
+        try:
+            collected = await _collect(
+                gen,
+                model_cfg=model_cfg,
+                include_meta=include_meta,
+            )
+        finally:
+            reset_automation_allowed_tools(automation_token)
         text, errored, meta = _scheduled_collect_result(collected)
         return (text, errored, meta) if include_meta else (text, errored)
     finally:
@@ -1491,8 +1499,8 @@ def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
     return messages
 
 
-async def run_scheduled_execution(user_id, user_name: str, prompt: str):
-    """执行阶段适配器，始终使用完整 AgentLoop 上下文和工具集。"""
+async def run_scheduled_execution(user_id, user_name: str, prompt: str, *, allowed_tools: list[str] | None = None):
+    """执行阶段适配器；自动工具权限来自任务持久化授权，不默认放行。"""
     return await _run_scheduled_once(
         user_id,
         user_name,
@@ -1500,4 +1508,5 @@ async def run_scheduled_execution(user_id, user_name: str, prompt: str):
         DefaultProfile(),
         get_settings(),
         include_meta=True,
+        allowed_tools=allowed_tools,
     )

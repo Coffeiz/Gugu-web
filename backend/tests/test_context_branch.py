@@ -64,10 +64,13 @@ async def test_context_branch_retries_empty_output(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_context_branch_classifies_provider_error(monkeypatch):
+    captured = []
+
     async def fake_complete_json(*args, **kwargs):
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(provider_runner, "complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.branch.diag_log", lambda where, exc: captured.append((where, exc)))
     result = await ContextBranch().run(
         BranchInput(stable_system="stable"),
         BranchPolicy(name="reflection"),
@@ -77,6 +80,8 @@ async def test_context_branch_classifies_provider_error(monkeypatch):
     assert result.ok is False
     assert result.output is None
     assert result.return_reason == "provider_error"
+    assert captured[0][0] == "agent.context.branch.provider"
+    assert isinstance(captured[0][1], RuntimeError)
 
 
 @pytest.mark.asyncio

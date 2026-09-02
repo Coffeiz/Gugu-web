@@ -70,8 +70,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import ActionButton from '@/components/common/ActionButton.vue'
-import Icon from '@/components/common/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import InteractivePtyTerminal from './components/InteractivePtyTerminal.vue'
 import { replaceOrAppendTerminalEvent, type TerminalEventView } from './terminalEvents'
 import { confirmDialog } from '@/composables/useConfirmDialog'

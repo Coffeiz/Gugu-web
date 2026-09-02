@@ -1,6 +1,6 @@
 import type { UploadItem } from '@/composables/useFileUpload'
 import { checkUploadConflicts, uploadFilesWithFolders } from '@/composables/useFileUpload'
-import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { splitName } from '@/utils/fileParse'
 
 export interface UploadGroup {

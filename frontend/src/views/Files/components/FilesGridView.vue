@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import type { PropType } from 'vue'
 import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'

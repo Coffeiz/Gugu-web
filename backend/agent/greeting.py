@@ -43,6 +43,12 @@ _LOCALE_INSTRUCTIONS = {
 }
 
 
+def _current_time_part() -> str:
+    now = now_ctx()
+    weekdays = "一二三四五六日"
+    return f"【当前日期和时间】{now:%Y-%m-%d} 星期{weekdays[now.weekday()]} {now:%H:%M}（按用户时区）"
+
+
 async def _last_seen_part(db: AsyncSession, user_id) -> str:
     """「上次和你说话是多久前」——用最近一条对话消息的时间算。喂给模型定问候口吻
     （刚聊过别说『好久不见』）。"""
@@ -121,7 +127,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     except Exception:
         pass
     # 优先级：项目、summary、daily、长期画像；不注入 pattern 或日程，避免问候上下文过载。
-    parts: list[str] = []
+    parts: list[str] = [_current_time_part()]
     if seen:
         parts.append(seen)
     if stance_hint:

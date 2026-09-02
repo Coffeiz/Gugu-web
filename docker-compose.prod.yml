@@ -2,6 +2,8 @@
 # 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用
 # 使用前设置 GUGU_BACKEND_IMAGE、GUGU_FRONTEND_IMAGE、GUGU_DB_PASSWORD。
 
+name: gugu-web-compose
+
 x-json-file-logging: &json-file-logging
   driver: json-file
   options:

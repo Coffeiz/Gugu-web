@@ -92,7 +92,7 @@ import { isImageExt } from '@/utils/fileTypes'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 
 const panelRef      = ref<HTMLElement | null>(null)

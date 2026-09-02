@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { preferencesApi } from '@/services/api'
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
@@ -90,18 +91,32 @@ export function initializeTheme(forcedTheme?: ResolvedTheme, forcedFamily?: Them
   watchSystem()
 }
 
+export function applyServerTheme(nextTheme: unknown, nextFamily: unknown, nextPalette: unknown) {
+  hydrate()
+  preference.value = nextTheme === 'dark' || nextTheme === 'system' ? nextTheme : 'light'
+  family.value = nextFamily === 'mono' ? 'mono' : 'glass'
+  palette.value = normalizePalette(nextPalette)
+  localStorage.setItem('gugu-theme', preference.value)
+  localStorage.setItem('gugu-theme-family', family.value)
+  localStorage.setItem('gugu-palette', palette.value)
+  apply()
+  watchSystem()
+}
+
 export function useTheme() {
   function setTheme(value: ThemePreference) {
     preference.value = value
     localStorage.setItem('gugu-theme', value)
     apply()
     watchSystem()
+    void preferencesApi.update({ theme: value } as any).catch(() => {})
   }
 
   function setFamily(value: ThemeFamily) {
     family.value = value
     localStorage.setItem('gugu-theme-family', value)
     apply()
+    void preferencesApi.update({ themeFamily: value } as any).catch(() => {})
   }
 
   function setPalette(value: ThemePalette) {
@@ -109,6 +124,7 @@ export function useTheme() {
     palette.value = next
     localStorage.setItem('gugu-palette', next)
     apply()
+    void preferencesApi.update({ palette: next } as any).catch(() => {})
   }
 
   return {

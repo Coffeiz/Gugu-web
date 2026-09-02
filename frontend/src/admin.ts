@@ -9,7 +9,7 @@ import AdminApp from './AdminApp.vue'
 import router from './router/admin'
 import { installEnterDirective } from '@/directives/enter'
 import { initializeTheme } from '@/composables/useTheme'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { i18n } from '@/i18n'
 
 initializeTheme('dark', 'glass')

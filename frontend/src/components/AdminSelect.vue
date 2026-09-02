@@ -18,8 +18,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, type PropType } from 'vue'
-import FlipChevron from '@/components/common/FlipChevron.vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },

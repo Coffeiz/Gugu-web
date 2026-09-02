@@ -322,7 +322,7 @@ import { PhAddressBook, PhAlarm, PhBrowser, PhCalendarBlank, PhFolder, PhGraph, 
 import { useTheme, type ThemePalette } from '@/composables/useTheme'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import GuguChatMock from './GuguChatMock.vue'
-import GlassBg from '@/components/common/GlassBg.vue'
+import GlassBg from '@/components/common/layout/GlassBg.vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
 const { preference, resolved, family, palette, setTheme, setFamily, setPalette } = useTheme()

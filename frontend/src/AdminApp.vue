@@ -4,7 +4,7 @@
 </template>
 
 <script setup lang="ts">
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import ConfirmDialog from '@/components/common/overlays/ConfirmDialog.vue'
 </script>
 
 <style>

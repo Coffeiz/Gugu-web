@@ -21,7 +21,7 @@ import { computed } from 'vue'
 import { marked } from 'marked'
 import { sanitizeHtml } from '@/utils/markdown'
 import { useI18n } from 'vue-i18n'
-import AuthLanguageSwitcher from '@/components/common/AuthLanguageSwitcher.vue'
+import AuthLanguageSwitcher from '@/components/common/auth/AuthLanguageSwitcher.vue'
 import { privacyPolicy } from '@/i18n/privacyPolicy'
 
 const { t, locale } = useI18n()

@@ -8,7 +8,7 @@
 
 咕咕的想法：把散落的看板、日历、笔记、文件和画布放到一起，让用户和 Agent 在同一个地方做事。
 
-*这是一个 Vibe Coding 项目，欢迎通过 Issue 和 PR 参与改进。*
+*这是一个个人的 Vibe Coding 项目，欢迎通过 Issue 和 PR 参与改进。*
 
 [![status](https://img.shields.io/badge/status-active-success?style=flat)](https://gugugu.site)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
@@ -119,7 +119,7 @@
 ### 前置要求
 
 - Docker 20+ 和 Docker Compose v2
-- 可访问的模型 Provider 或 BYOK 配置
+- 可访问的模型提供商或 BYOK 配置
 - 首次启动需要 PostgreSQL、Redis 和网络访问
 
 ### 国内网络环境
@@ -205,7 +205,7 @@ README 只保留配置索引，完整变量和运行规则将在 `docs/configura
 | --- | --- |
 | Database | 主数据存储，默认使用 PostgreSQL |
 | Redis | 消息、会话和 Runtime 状态 |
-| LLM / BYOK | 模型 Provider 和个人 API Key |
+| LLM / BYOK | 模型提供商和个人 API Key |
 | Search | 内置 SearXNG Web Search 与站内搜索后端 |
 | Mail | 用户反馈和系统邮件通知 |
 | IM | QQ、微信、飞书连接 |
@@ -293,7 +293,7 @@ Runtime 统一处理上下文、模型 Round、工具选择、工具执行和受
 flowchart LR
     C[Web / QQ / 微信 / 飞书] --> A[Agent Loop]
     A --> X[上下文工程]
-    X --> L[LLM Provider]
+    X --> L[LLM 提供商]
     L --> A
     A --> T[工具和 Skills]
     T --> W[Workspace]
@@ -306,20 +306,20 @@ flowchart LR
 
 把系统提示、能力目录、对话历史、工具结果、Memory 和 RAG 组织成稳定、可恢复的上下文，并区分可缓存的稳定内容和每轮更新的动态内容。相关设计见[上下文工程文档](docs/agent/04-CONTEXT-ENGINEERING.md)。
 
-咕咕将一次 Agent 请求的上下文分成几个边界清晰的区域：稳定规则放在 `system`，会话级且可复用的能力和状态放在 `snapshot`，已封存的对话与工具往返放在 `history`，本轮新增内容由 `batch` 组织；只有确实需要 provider 临时信息时才使用 `dynamic tail`。这样既方便多轮恢复，也能让稳定前缀参与 Provider 缓存。
+咕咕将一次 Agent 请求的上下文分成几个边界清晰的区域：稳定规则放在 `system`，会话级且可复用的能力和状态放在 `snapshot`，已封存的对话与工具往返放在 `history`，本轮新增内容由 `batch` 组织；只有确实需要提供商临时信息时才使用 `dynamic tail`。这样既方便多轮恢复，也能让稳定前缀参与提供商缓存。
 
-这套架构的一个明确目标是：**第一轮完成上下文预热后，从第二轮开始保持可复用的稳定前缀**。`system`、稳定 `snapshot` 和已封存的 `history` 按固定顺序组装；`batch` 会先稳定地并入当前请求，确认后再进入 `history`。`system` 开头只注入按用户时区计算的当前日期和星期（每天最多变化一次，不包含时分秒）；用户消息时间、RAG 结果、群聊身份和工具续轮等本轮事实进入 `batch`。普通 Web/IM 请求不再额外注入当前时间 `dynamic tail`。只有明确需要 provider-only 临时信息的路径才使用 `dynamic tail`，避免每轮产生无意义的重复上下文。
+这套架构的一个明确目标是：**从第二轮对话开始保持可复用的稳定前缀**。`system`、稳定 `snapshot` 和已封存的 `history` 按固定顺序组装；`batch` 会先稳定地并入当前请求，确认后再进入 `history`。`system` 开头只注入按用户时区计算的当前日期和星期（每天最多变化一次，不包含时分秒）；用户消息时间、RAG 结果、群聊身份和工具续轮等本轮事实进入 `batch`。普通 Web/IM 请求不再额外注入当前时间 `dynamic tail`。只有明确需要提供商专属临时信息的路径才使用 `dynamic tail`，避免每轮产生无意义的重复上下文。
 
-这项设计在 2026-09-01 的连续会话复测中得到验证：4 个模型分别预热 1 轮后连续执行 20 个 case，简介模式的累计 Provider input 比全量模式低约 **20%–59%**，平均约 **42%**。这说明稳定前缀可以在多轮请求中持续复用；全量模式略高的缓存率来自更大的 Schema 前缀，不能抵消其更高的总上下文成本。
+这项设计在 2026-09-02 的连续会话复测中得到验证：4 个模型分别预热 1 轮后连续执行 20 个 case，8 组测试均完成且没有记录 history compaction。四个模型合计，简介模式的累计提供商输入比全量模式低 **25.72%**；但 MiniMax 因额外续轮较多，简介模式单独比全量模式高 **3.98%**，说明稳定前缀的收益还需要结合续轮次数判断。
 
 **缓存率与上下文稳定性**
 
-| Schema 模式 | Provider input 变化 | 缓存率 | 上下文工程含义 |
+| Schema 模式 | 提供商输入变化 | 缓存率 | 上下文工程含义 |
 | --- | ---: | ---: | --- |
-| 简介模式（默认） | 相比全量模式节省约 **20%–59%**，平均约 **42%** | **98.47%–99.04%** | 用更小的稳定能力目录保持第二轮起的可复用前缀，复杂工具按需补充 Schema |
-| 全量模式 | 基准 | **98.72%–99.41%** | 完整 Schema 形成更大的稳定前缀，缓存率略高但总上下文成本更高 |
+| 全量模式（默认） | 基准 | **99.28%–99.50%** | 完整 Schema 形成更大的稳定前缀，准确性优先但总上下文成本更高 |
+| 简介模式 | 四模型合计节省 **25.72%**；单模型范围为节省 **30.25%–45.47%**，MiniMax 增加 **3.98%** | **98.46%–98.99%** | 用更小的稳定能力目录降低上下文成本，复杂工具按需补充 Schema |
 
-缓存率定义为 `cache_read / provider_input`，实际命中率仍由 Provider 的缓存策略决定，不能把架构保证的前缀稳定性等同于服务商的命中承诺。详见 [Schema 模式复测报告](docs/reports/2026-09-01-TEST-LLM-16-5TOOLS-MULTI-MODEL-RETEST.md)。
+缓存率定义为 `cache_read / provider_input`，实际命中率仍由提供商的缓存策略决定，不能把架构保证的前缀稳定性等同于服务商的命中承诺。详见 [Schema 模式复测报告](docs/reports/2026-09-02-TEST-LLM-16-5TOOLS-MULTI-MODEL-RETEST.md)。
 
 ```mermaid
 flowchart LR
@@ -329,7 +329,7 @@ flowchart LR
     I[本轮用户输入与上下文] --> B[NewMessageBatch]
     C --> R[固定上下文 + 本轮 batch]
     B --> R
-    R --> L[LLM Provider]
+    R --> L[LLM 提供商]
     T[定时任务当前时间] --> B
     L --> Q{是否需要工具续轮}
     Q -- 是 --> B
@@ -344,70 +344,19 @@ flowchart LR
 | `snapshot` | 会话信息、长期上下文摘要、能力目录、工具短简介与字段签名 | 会话级持久化，变化时重新生成 |
 | `history` | 已持久化的用户消息、模型回复、工具调用、工具结果、Skill 使用和关键上下文事件 | 支持多轮恢复、压缩和回放 |
 | `batch` | 当前用户消息、姿态、消息时间、RAG 结果、IM/工作区提醒，以及本轮模型与工具往返 | 先保证本轮连续提交；成功收尾后封存为 canonical history |
-| `dynamic tail` | 特定 Provider 请求才需要的实时临时信息 | 可选；只对本次请求有效，不进入 history，也不污染稳定前缀 |
+| `dynamic tail` | 特定提供商请求才需要的实时临时信息 | 可选；只对本次请求有效，不进入 history，也不污染稳定前缀 |
 
-`batch` 不会把 Provider 返回的消息直接散落追加到上下文中。每轮先由统一组装器生成一个 `NewMessageBatch`，固定本轮消息顺序和元数据；提交时同时保留 provider 投影与 canonical 投影，封存后再追加到 `history`，收尾阶段将 canonical batch 持久化。下一次请求从已持久化的 history 恢复，而不是从 Provider wire 格式反推历史。
+`batch` 不会把提供商返回的消息直接散落追加到上下文中。每轮先由统一组装器生成一个 `NewMessageBatch`，固定本轮消息顺序和元数据；提交时同时保留提供商投影与 canonical 投影，封存后再追加到 `history`，收尾阶段将 canonical batch 持久化。下一次请求从已持久化的 history 恢复，而不是从提供商 wire 格式反推历史。
 
-上下文的组装顺序保持稳定：`system` 提供跨会话规则，`snapshot` 放在 history 之前形成固定前缀，已封存的 `history` 后接当前 `batch`。普通 Web/IM 请求的消息时间、RAG 和群聊运行上下文都在 `batch` 内；定时任务的当前时间也通过 `batch` 注入。`dynamic tail` 只作为可选的 provider-only 边界，新增消息始终插在它之前；因此工具续轮、压缩和跨 Provider 转换时都不会把临时信息误写进历史或打乱稳定前缀。
+上下文的组装顺序保持稳定：`system` 提供跨会话规则，`snapshot` 放在 history 之前形成固定前缀，已封存的 `history` 后接当前 `batch`。普通 Web/IM 请求的消息时间、RAG 和群聊运行上下文都在 `batch` 内；定时任务的当前时间也通过 `batch` 注入。`dynamic tail` 只作为可选的提供商专属边界，新增消息始终插在它之前；因此工具续轮、压缩和跨提供商转换时都不会把临时信息误写进历史或打乱稳定前缀。
 
 ### 工具和 Skills
 
 工具负责读取和修改工作空间，Skills 负责提供可复用的任务知识和操作流程。咕咕为工具和 Skills 制作了一套注册系统，可以快速注册、组织和接入新的能力；能力目录按需注入工具 Schema，在保持可用性的同时减少不必要的 Token 消耗。执行时仍由代码校验权限、参数和危险操作；在群聊中还会按群组、成员和发起者隔离数据与工具权限，避免同群成员互相越权访问。相关设计见[工具与 Skill 文档](docs/agent/05-TOOLS-AND-SKILLS.md)。
 
-在简介模式下，系统默认向模型注入全部已授权工具的 `description_short` 和自动生成的可用字段签名，同时注入当前可用 Skills 的短简介。业务工具需要更复杂的结构时，可通过 `get_tool_schema` 按需获取完整 Schema，实际操作时通过 `call_tool` 调用；Skills 通过 `use_skill` 后，系统才会读取 Skill 文档中注册并选择的工具，将这些工具的 Schema 注入后继续完成任务。
+在简介模式下，系统向模型注入全部已授权工具的 `description_short` 和自动生成的可用字段签名，同时注入当前可用 Skills 的短简介。业务工具需要更复杂的结构时，可通过 `get_tool_schema` 按需获取完整 Schema，实际操作时通过 `call_tool` 调用；Skills 通过 `use_skill` 后，系统才会读取 Skill 文档中注册并选择的工具，将这些工具的 Schema 注入后继续完成任务。当前默认使用全量模式。
 
-#### 正文编辑统一约定
-
-所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/line_edit.py`，不得重新引入独立的整篇覆盖模式。
-
-```json
-{
-  "mode": "line_edit",
-  "line_edits": [
-    {"target_lines": "8-11", "expected": "原始第八行\n原始第九行\n原始第十行\n原始第十一行", "content": "替换后的内容"},
-    {"target_lines": "15", "expected": "要删除的原始第十五行", "content": ""}
-  ]
-}
-```
-
-`target_lines` 使用 1-based 原始 Markdown 物理行号，支持单行（`8`）、范围（`8-11`）、Bash/`sed` 风格范围（`8,11`）和整篇（`all`）。数字目标必须同时提供读取结果中的 `expected` 原文，范围编辑时用换行连接；原文不匹配会拒绝修改，避免把渲染后的页面行号误当成 Markdown 行号。`content` 为空表示删除目标行；多个范围不得重叠，由工具从后往前应用。调用前必须先读取最新正文，修改后必须重新读取核对；整篇编辑只能使用 `target_lines: "all"`，不再使用 `replace_all`。笔记的追加仍使用 `append_blocks`，不应通过追加“作废说明”替代删除原内容。
-
-新增正文编辑工具时必须遵守同一套边界：读取接口返回原始正文和稳定的物理行号，编辑接口复用 `backend/agent/tools/line_edit.py`，不得依据 UI/HTML/Markdown 渲染后的可见行号；数字目标没有 `expected` 或校验失败时必须拒绝执行，不能猜测或静默改动。编辑成功后必须重新读取同一资源核对，测试至少覆盖行号偏移、过期正文、删除范围、`all` 整篇替换和多范围倒序应用；批量入口也必须逐项沿用这些规则。
-
-#### 工具 Schema 防错约定
-
-Schema 必须表达真实调用形状，而不是只声明一个宽泛的 `object`：
-
-- 单项和批量入口使用互斥分支（例如 `item_id` 与 `updates`），每个分支声明自己的必填字段；不能只在 handler 里事后判断。
-- ID 使用 `integer`，坐标使用 `number`，状态使用 `boolean`；不要让模型把数字放在字符串里后再依赖 handler 转换。
-- 批量数组的 `items` 必须声明完整字段、类型、必填条件和 `additionalProperties: false`，不能只写 `items: {}`。
-- 资源 ID 必须由读取工具返回或由用户提供；工具不得根据节点 ID、名称或当前上下文猜测所属资源，以免误操作或越权。
-- 同一字段不能同时支持两套含义；单项、批量、确认参数和危险操作都要在 Schema 中明确互斥关系。新增工具必须补“正确参数通过、缺字段失败、类型错误失败、单批混用失败”的 Schema 测试。
-
-例如画布节点移动必须明确区分：`canvas_id + item_id + (x/y/z/collapsed)`，或 `canvas_id + updates[]`；不能只传节点 ID，也不能把 `"1450"` 当作坐标。
-
-```mermaid
-flowchart LR
-    R[工具 / Skill 注册系统] --> D[能力目录]
-    D --> S[按需选择能力]
-    S --> P[注入简介与紧凑 Schema]
-    P --> L[LLM Provider]
-    L --> Q{选择调用方式}
-    Q --> CT[call_tool]
-    Q --> US[use_skill]
-    CT --> E[权限、参数与执行校验]
-    US --> ST[注入 Skill 文档注册的工具]
-    ST --> E
-```
-
-| 环节 | 作用 |
-| --- | --- |
-| 注册系统 | 用统一定义快速注册工具和 Skills，声明名称、用途、参数与执行入口 |
-| 能力目录 | 先向 Agent 展示可用能力，避免每轮发送所有完整 Schema |
-| 按需注入 | 根据任务注入相关能力的简介和字段信息，在保持可调用性的同时减少 Token 消耗 |
-| 工具调用 | 模型根据任务选择工具并生成 `call_tool` 请求，由 Runtime 解析参数后执行 |
-| Skills 调用 | 模型通过 `use_skill` 加载对应 Skill；系统再注入该 Skill 文档中注册并选择的工具 Schema |
-| 执行校验 | 由代码最终校验权限、参数和危险操作；群聊中按群组、成员和发起者隔离数据访问与工具权限，再执行实际能力 |
+正文编辑契约和工具 Schema 的详细约定见[工具注册与开发文档](backend/agent/tools/README.md)。
 
 #### Schema 模式取舍
 
@@ -415,10 +364,10 @@ flowchart LR
 
 | 模式 | 首轮注入内容 | 适合场景 |
 | --- | --- | --- |
-| 简介模式（默认） | 全部已授权工具的 `description_short`、自动生成的可用字段签名和 Skills 短简介；复杂工具再按需获取完整 Schema | 日常任务、工具较多或更关注 Token 成本 |
-| 全量模式 | 开始时直接注入全部已授权工具的完整 Schema | 参数结构复杂、准确性优先且上下文预算充足 |
+| 全量模式（默认） | 开始时直接注入全部已授权工具的完整 Schema | 参数结构复杂、准确性优先的日常使用 |
+| 简介模式 | 全部已授权工具的 `description_short`、自动生成的可用字段签名和 Skills 短简介；复杂工具再按需获取完整 Schema | 工具较多或更关注 Token 成本 |
 
-在 2026-09-01 的 4 个模型、5 个目标工具、每组预热 1 轮并连续测试 20 轮的复测中，简介模式的累计 Provider input 比全量模式低约 **20%–59%**，四个模型平均约 **42%**；固定能力声明本身约减少 **43%–63%**。这组数据用于说明两种模式的 Token 成本取舍；缓存率和稳定前缀属于上方上下文工程区域的[缓存率与上下文稳定性](#缓存率与上下文稳定性)。完整测试口径见 [Schema 模式复测报告](docs/reports/2026-09-01-TEST-LLM-16-5TOOLS-MULTI-MODEL-RETEST.md)。
+在 2026-09-02 的 4 个模型、5 个目标工具、每组预热 1 轮并连续测试 20 轮的复测中，简介模式的固定注入成本比全量模式少约 **51.86%–54.13%**；四个模型合计的 provider input 少 **25.72%**、总 Token 少 **25.51%**。本轮全量模式四个模型均为 20/20，简介模式为 16/20–20/20；MiniMax 因简介模式额外触发更多续轮，实际 input 比全量模式高 **3.98%**。这组数据用于说明两种模式的 Token 成本和准确率取舍；缓存率和稳定前缀属于上方上下文工程区域的[缓存率与上下文稳定性](#缓存率与上下文稳定性)。完整测试口径见 [Schema 模式复测报告](docs/reports/2026-09-02-TEST-LLM-16-5TOOLS-MULTI-MODEL-RETEST.md)。
 
 ### 记忆系统
 
@@ -444,13 +393,13 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 | Conversation / Monitor | 在同一 Session 内进行真实对话，或切换到 Run/Span 监控视图 |
 | Run / Session | 按会话查看一次 Agent Run 的状态、来源、耗时、输入输出摘要和跨进程关联信息；Run 列表支持分页 |
 | Round | 查看每一轮 LLM 请求、模型输出、工具调用、续轮和最终结果 |
-| Context / Assembly | 查看 `system`、`snapshot`、`history`、`batch` 和动态尾部如何组成 Provider 输入，以及每部分的来源和长度 |
+| Context / Assembly | 查看 `system`、`snapshot`、`history`、`batch` 和动态尾部如何组成提供商输入，以及每部分的来源和长度 |
 | Token Usage | 查看 input、output、cache read/write、fresh input、total 和缓存率 |
-| Prefix Diff | 对比相邻 Round 或 Run 的 Provider 输入，定位稳定前缀最早从哪里发生变化 |
+| Prefix Diff | 对比相邻 Round 或 Run 的提供商输入，定位稳定前缀最早从哪里发生变化 |
 | Tool Call | 查看工具名称、参数形状、结果摘要、耗时、父子关系和执行状态 |
 | Schema 诊断 | 查看实际注入的工具 Schema 数量、字节/token 估算、digest，以及 Schema 错误和恢复原因 |
 | Skill 诊断 | 查看 Skill 正文是否加载、加载耗时、内容长度和关联工具 Schema 注入情况 |
-| 性能与错误 | 定位 Prompt、Memory、RAG、数据库、工具、Provider、渠道和输出阶段的耗时、失败或取消 |
+| 性能与错误 | 定位 Prompt、Memory、RAG、数据库、工具、提供商、渠道和输出阶段的耗时、失败或取消 |
 | 导出与辅助页面 | 多选导出 `loopscope-run-export` v2 JSON，并使用 `/tokens`、`/changelog`、`/settings` |
 
 #### 如何进入
@@ -546,23 +495,20 @@ cd backend && PYTHONPATH=. .venv/bin/pytest
 
 前端复杂拖拽和画布交互依赖已发布的 `gugu-interaction-runtime` npm package。Runtime 本身是独立仓库，不在咕咕 workspace 中直接编译。
 
-## 项目状态
+## 项目状态与 Roadmap
 
-咕咕当前仍处于快速迭代阶段，适合个人部署、体验和参与开发。
+咕咕当前仍处于快速迭代阶段，下面同时列出已经具备的能力和接下来的重点方向。
 
-| 状态 | 含义 |
-| --- | --- |
-| ✅ Stable | 已有持续使用和回归验证的能力 |
-| 🚧 In Development | 主要流程可用，仍在快速调整 |
-| 🧪 Experimental | 设计或实现仍可能发生较大变化 |
+| 状态 | 能力 / 方向 | 说明 |
+| --- | --- | --- |
+| ✅ 稳定 | Workspace | 项目、日历、文件系统、笔记、画布和定时任务已经形成完整的个人工作空间。 |
+| ✅ 稳定 | Agent | Agent Loop、工具和 Skills、联网搜索、Memory、Knowledge / RAG 以及多平台消息能力持续可用。 |
+| ✅ 稳定 | 开发与观测 | Interaction Runtime 和 LoopScope 已用于复杂交互、运行链路观测与性能排查。 |
+| 🚧 开发中 | 桌面端 | 更方便地编辑本地文件，操作系统功能。 |
+| 🚧 开发中 | 手机端 | 随时查看项目进展和日程安排。 |
+| 🧪 实验性 | 子 Agent 系统 | 提升上下文质量和任务执行效率。 |
 
-### Roadmap
-
-- 持续提升 Agent 工具调用准确性和可观测性
-- 完善 Memory 与 Knowledge 的长期使用体验
-- 扩展文件、画布和项目之间的协同操作
-- 完善 QQ、微信、飞书等外部连接
-- 补充安装、部署和备份文档
+状态说明：“稳定”表示已有持续使用和回归验证，“开发中”表示主要流程可用但仍在快速调整，“实验性”表示设计或实现仍可能发生较大变化。
 
 ## 贡献
 

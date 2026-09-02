@@ -83,7 +83,7 @@
 
 <script setup lang="ts">
 import type { PropType } from 'vue'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()

@@ -276,8 +276,8 @@
 <script setup lang="ts">
 import { type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
-import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import RuntimeListRow from '@/components/common/file-browser/RuntimeListRow.vue'

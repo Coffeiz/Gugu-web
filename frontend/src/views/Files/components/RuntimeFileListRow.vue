@@ -10,7 +10,7 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import type { FileMeta } from '@/stores/filesCache'

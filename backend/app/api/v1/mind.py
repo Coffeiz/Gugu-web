@@ -46,6 +46,7 @@ from app.services.canvas.service import (
     update_canvas_note as update_canvas_note_service,
     update_canvas as update_canvas_service,
 )
+from app.services.canvas.layout_engine import canvas_layout
 from app.services.mind import (
     create_note as create_note_service,
     delete_note as delete_note_service,
@@ -516,6 +517,11 @@ async def update_canvas_item(
         raise HTTPException(404, "节点不存在")
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
+    if node.kind == "canvas_note":
+        if "w" in data:
+            data["w"] = canvas_layout.clamp_canvas_note_size(data["w"])[0]
+        if "h" in data:
+            data["h"] = canvas_layout.clamp_canvas_note_size(None, data["h"])[1]
     if "data" in data:
         data["data_json"] = json.dumps(data.pop("data"), ensure_ascii=False)
     item = await update_canvas_item_service(

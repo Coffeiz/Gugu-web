@@ -145,7 +145,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
-import Checkbox from '@/components/common/Checkbox.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import IntentDistribution from './components/IntentDistribution.vue'

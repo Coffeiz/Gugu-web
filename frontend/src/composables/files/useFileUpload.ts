@@ -4,7 +4,7 @@ import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { clearThumbCache } from '@/composables/useThumbCache'
 import { filesToItems, readDroppedEntries, type UploadItem } from '@/composables/useFileUpload'
 import { useUploadQueue } from '@/composables/useUploadQueue'
-import type { ConflictDecision, ConflictItem } from '@/components/common/UploadConflictDialog.vue'
+import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
 import { executeUploadLifecycle, prepareUploadBatch, type UploadConflictContext } from './useFileUploadController'
 
 export interface FileUploadCache {

@@ -24,7 +24,7 @@ from app.core.security import (
 )
 from app.core.tz import now_utc, iso_utc
 from app.db.session import get_db
-from app.models import User, AgentUsage, FrontendEvent
+from app.models import User, UserPreferences, AgentUsage, FrontendEvent
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount
 from app.services import email as email_svc
 
@@ -135,9 +135,12 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     link = f"{origin}/reset-password?token={token}"
     # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
     try:
+        prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
+        preference_data = prefs.data if prefs else {}
         await run_in_threadpool(
             email_svc.send_reset_email,
             to_addr=user.email, username=user.display_name or user.username, link=link,
+            theme=preference_data.get("theme", "light"), palette=preference_data.get("palette", "mist"),
         )
     except Exception:
         pass

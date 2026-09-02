@@ -31,7 +31,7 @@ const filesListRows = load('./filesListRows.css')
 const fileSelectionCheckbox = load('./fileSelectionCheckbox.css')
 const uploadGhost = load('../../components/common/file-browser/FileUploadGhostCard.vue')
 const boxSelection = load('../../composables/useBoxSelection.ts')
-const segmentedControl = load('../../components/common/SegmentedControl.vue')
+const segmentedControl = load('../../components/common/controls/SegmentedControl.vue')
 const runtimeSetup = load('../../interaction/runtime/setup.ts')
 const mindRuntimeObject = load('../../views/Mind/composables/useMindRuntimeObject.ts')
 

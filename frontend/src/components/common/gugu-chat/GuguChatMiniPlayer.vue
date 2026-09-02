@@ -45,7 +45,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/common/Icon.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 /**
  * 迷你播放器卡片：纯展示 + 交互转发。真正的 <audio> 元素和播放机制仍在
  * GuguChat.vue（useChatAudio 的 audioEl 需要在同一处声明模板 ref 才能绑定

@@ -9,15 +9,21 @@ import type { MindCanvasItem } from '@/services/api'
 
 export interface CanvasCamera { x: number; y: number; scale: number }
 
+export const CANVAS_NOTE_SIZE = {
+  default: { w: 240, h: 140 },
+  min: { w: 180, h: 100 },
+  max: { w: 520, h: 420 },
+} as const
+
 /** 各类型贴纸没存 w/h 时的默认渲染尺寸——四种贴纸组件（NoteSticker/EntitySticker/
  *  FileRefCard/ProjectRefCard）自己的 stickerStyle 和这里必须是同一份数字，任何一处单独
  *  改了数字都会导致「贴纸实际渲染多大」和「连线/连接点该画在哪」对不上：连接点是 CSS
  *  `top:50%` 相对贴纸自己的真实渲染盒定的，天然准确；连线端点/拖拽落点却是靠这份表算的，
  *  一旦表里的数字跟贴纸实际尺寸不一致，连线就会画到贴纸外面、松手落点也会偏——踩过这个坑
- *  （之前 itemAnchor/itemCenter 统一写死 244×148，实际只有便签是这个尺寸），全挪到这一处
+ *  （之前 itemAnchor/itemCenter 统一写死一组尺寸，实际只有便签与引用卡不同），全挪到这一处
  *  单一数据源，四个贴纸组件也从这里导入，不再各自维护一份数字。 */
 export function defaultItemSize(item: MindCanvasItem): { w: number; h: number } {
-  if (item.node.kind === 'canvas_note') return { w: 244, h: 148 }
+  if (item.node.kind === 'canvas_note') return CANVAS_NOTE_SIZE.default
   // 120 是 ProjectCard.vue 在 240 宽下的自然渲染高度估算（卡体上下内边距 24 + 三行内容各自
   // 的 gap 24 + 名称/星级行 18 + 客户/阶段行 ~13 + 日期/进度行 ~13 + 阶段进度条 5 + 边框 2，
   // 单行文案不换行时约 95~120px），不是随手取的 150——之前的 150 明显偏大：ProjectRefCard.vue

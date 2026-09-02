@@ -80,6 +80,10 @@
           <Icon name="admin.bell" size="sm" />
           {{ t('admin.publishNotifications') }}
         </div>
+        <div class="nav-item" :class="{ active: isActive('/email') }" role="link" tabindex="0" @click="go('/email')">
+          <Icon name="admin.mail" size="sm" />
+          邮件发布
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">{{ t('admin.logsGroup') }}</div>
@@ -130,7 +134,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
-import Brand from '@/components/common/Brand.vue'
+import Brand from '@/components/common/layout/Brand.vue'
 import { useI18n } from 'vue-i18n'
 import { getLocale, localeOptions, setLocale, type SupportedLocale } from '@/i18n'
 

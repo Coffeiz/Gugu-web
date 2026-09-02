@@ -45,7 +45,7 @@ import { eventsApi, type MindCanvasItem } from '@/services/api'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import { itemSize } from '@/composables/useMindCanvas'
-import CardAffordances from '@/components/common/CardAffordances.vue'
+import CardAffordances from '@/components/common/mind/CardAffordances.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },

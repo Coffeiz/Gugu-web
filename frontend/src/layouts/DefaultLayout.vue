@@ -3,7 +3,7 @@
     <AppSidebar />
     <main class="layout-main" :class="{ 'full-bleed': fullBleed, 'canvas-workspace': isCanvasWorkspace }">
       <!-- 顶栏（fullBleed 页隐藏：思维面板等「工作台」视图自己管头部，见 router meta） -->
-      <header v-if="!fullBleed" class="topbar glass-card">
+      <header v-if="!fullBleed" class="topbar glass-card" :class="{ 'locale-ja': locale === 'ja-JP' }">
         <GlassBg />
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
@@ -82,21 +82,21 @@ import { useAuthStore } from '@/stores/auth'
 import { useLiveStore } from '@/stores/live'
 import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
-import AppSidebar from '@/components/common/AppSidebar.vue'
-import Icon from '@/components/common/Icon.vue'
-import ActionButton from '@/components/common/ActionButton.vue'
-import GuguChat from '@/components/common/GuguChat.vue'
-import GlobalSearch from '@/components/common/GlobalSearch.vue'
-import GlassBg from '@/components/common/GlassBg.vue'
+import AppSidebar from '@/components/common/layout/AppSidebar.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import GuguChat from '@/components/common/gugu-chat/GuguChat.vue'
+import GlobalSearch from '@/components/common/layout/GlobalSearch.vue'
+import GlassBg from '@/components/common/layout/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import EventEditModal  from '@/components/events/EventEditModal.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
-import FilePreviewModal    from '@/components/common/FilePreviewModal.vue'
-import ProfileModal        from '@/components/common/ProfileModal.vue'
+import FilePreviewModal    from '@/components/common/file-browser/FilePreviewModal.vue'
+import ProfileModal        from '@/components/common/profile/ProfileModal.vue'
 import OnboardingModal     from '@/components/onboarding/OnboardingModal.vue'
-import FloatPreviewWindow    from '@/components/common/FloatPreviewWindow.vue'
-import NotificationBubble   from '@/components/common/NotificationBubble.vue'
+import FloatPreviewWindow    from '@/components/common/layout/FloatPreviewWindow.vue'
+import NotificationBubble   from '@/components/common/feedback/NotificationBubble.vue'
 import { usePreviewStore, isAudioExt } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -121,7 +121,7 @@ const projectStore   = useProjectStore()
 const authStore      = useAuthStore()
 const liveStore      = useLiveStore()
 const prefsStore     = usePreferencesStore()
-const { t }          = useI18n()
+const { t, locale }  = useI18n()
 
 const uploadDialogOpen = ref(false)
 const uploadProjects   = ref([])
@@ -302,6 +302,16 @@ const todayStr = computed(() => {
   flex-basis: 100px;
   height: var(--control-height-md);
   min-height: var(--control-height-md);
+}
+.topbar.locale-ja .topbar-upload-button {
+  width: 120px;
+  min-width: 120px;
+  flex-basis: 120px;
+}
+.topbar.locale-ja .topbar-create-button {
+  width: 120px;
+  min-width: 120px;
+  flex-basis: 120px;
 }
 
 .page-content {
