@@ -1,4 +1,5 @@
-// 对话框默认问候：进入「全新对话（无可恢复会话）」时后台生成一次（内存 ref，不跨刷新缓存）。
+// 对话框默认问候：进入「全新对话（无可恢复会话）」时后台预取一次。
+// 后端按用户和语言做 10 分钟 Redis 缓存；这里的内存状态只负责页面内去重和账号切换隔离。
 // 由 GuguChat onMounted 据 SESSION_KEY 决定——刷新停在老会话时不生成（问候那时根本不显示）。
 // 打开对话框时以打字机动画显示；生成没好/失败 → 从兜底池随机取一条（兜底同样走打字机）。文案不自我介绍、不报菜单。
 import { ref } from 'vue'
@@ -10,7 +11,7 @@ function pickFallback() {
   return fallbacks[Math.floor(Math.random() * fallbacks.length)] || ''
 }
 
-// 生成好的问候（响应式，仅本次页面生命周期；刷新即重置 → 每次刷新重新生成）
+// 生成好的问候（响应式，仅本次页面生命周期；跨刷新复用由后端缓存负责）
 export const greeting = ref('')
 let greetingOwnerToken = ''
 let greetingRequestVersion = 0
