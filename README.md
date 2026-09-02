@@ -164,10 +164,10 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.example backend/.env
-# 编辑 backend/.env，填写 SECRET_KEY 和模型配置
-# Preview Compose 还要显式设置不会写入仓库的管理员和数据库密码
-export GUGU_ADMIN_PASSWORD="$(openssl rand -base64 32)"
+cp .env.example .env
+cp backend/.env.example backend/.env
+# 编辑 backend/.env，填写 SECRET_KEY、管理员密码和模型配置
+# 编辑根目录 .env，填写数据库密码等 Compose 编排变量
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
 docker compose up -d --build
 ```
@@ -180,9 +180,10 @@ SECRET_KEY=请替换为随机长字符串
 AI__PROVIDER=qwen
 AI__API_KEY=请填写模型服务商密钥
 
-# 项目根目录 .env：Compose 和管理员配置
-GUGU_ADMIN_USERNAME=admin
-GUGU_ADMIN_PASSWORD=请替换为管理员密码
+# backend/.env：管理员配置（Compose 和 systemd 共用，唯一来源）
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=请替换为管理员密码
+# 项目根目录 .env：仅 Compose 编排配置
 GUGU_DB_PASSWORD=请替换为数据库密码
 # 用户可访问的公开站点根地址，用于邮箱验证和密码重置链接
 GUGU_PUBLIC_APP_URL=http://localhost:9595
@@ -190,7 +191,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8000` 等容器内部地址写入邮件。
 
-也可以在启动前使用 `export GUGU_ADMIN_PASSWORD=...` 临时设置管理员密码。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
+管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
 
 默认 Compose 会从当前目录构建 `:local` 应用镜像，不挂载源码，也不运行开发服务器。它会同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务，不需要登录 GHCR 或另外安装联网搜索后端。
 
@@ -199,7 +200,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 - 咕咕：<http://localhost:9595>
 - Admin：<http://localhost:9595/admin/>
 
-首次运行会初始化数据库并执行迁移。Admin 账号由 `GUGU_ADMIN_USERNAME` 和 `GUGU_ADMIN_PASSWORD` 控制；普通 Compose 要求显式设置 `GUGU_ADMIN_PASSWORD` 作为容器运行时密码，不会使用公开默认密码。
+首次运行会初始化数据库并执行迁移。Admin 账号由 `backend/.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 控制，不会使用公开默认密码。
 
 需要 Shell 沙盒时，再显式启用：
 

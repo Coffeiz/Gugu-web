@@ -4,7 +4,8 @@
 name: gugu-web-compose
 #
 # 用法：
-#   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
+#   cp .env.example .env
+#   cp backend/.env.example backend/.env   # 按需填写 SECRET_KEY / AI__* 等
 #   docker compose -f docker-compose.dev.yml up -d                    # 默认轻量模式；不启动 Shell 沙盒
 #   docker compose -f docker-compose.dev.yml --profile sandbox up -d  # 额外启用 sandboxd 和受控 egress
 #   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
@@ -155,8 +156,6 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
-      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -205,8 +204,6 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
-      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -253,8 +250,6 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
-      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:?请设置 GUGU_ADMIN_PASSWORD}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
