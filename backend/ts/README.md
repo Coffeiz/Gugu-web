@@ -4,7 +4,7 @@
 
 ## 固定约定
 
-- Node.js：推荐 `>=22 <23`；devserver 当前使用 Node 20，由 `tsx` 负责运行 TypeScript。
+- Node.js：推荐使用当前 LTS/稳定版；devserver 当前使用的 Node 版本以运行环境为准，由 `tsx` 负责运行 TypeScript。
 - TypeScript：使用仓库现有 `frontend/node_modules/typescript` 做无输出类型检查，配置见 `tsconfig.json`。
 - lint：Phase 0 以 TypeScript 类型检查作为基线，命令为 `pnpm --filter @gugu/backend-ts typecheck`；引入独立 lint 规则前不得伪造通过结果。
 - test：使用 Node 内置 test runner 和 `tsx` loader，命令为 `pnpm --filter @gugu/backend-ts test`。

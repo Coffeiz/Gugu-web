@@ -72,7 +72,7 @@
 | Python          | 3.11+ | 后端                                                                  |
 | Node.js         | 18+   | 前端构建                                                                |
 | PostgreSQL      | 15+   | 数据库                                                                 |
-| Redis           | 7+    | IM 队列（接 IM 才需）                                                      |
+| Redis           | 8+    | IM 队列（接 IM 才需）                                                      |
 | **LibreOffice** | 任意    | 咕咕生成 Word/PDF/Excel（`create_document`）靠 `libreoffice --headless` 转换 |
 | **CJK 字体** | `fonts-noto-cjk` | LibreOffice 生成 PDF 时提供中文/日文/韩文字形；浏览器字体另由前端构建产物提供 |
 | **ffmpeg**      | 任意    | IM 语音理解：把 QQ/飞书语音（SILK/opus）转成 mp3 喂 mimo（配合 pip 的 `pilk` 解 SILK）。只装在跑 IM 网关的机器；没装则语音退文字提示 |
@@ -351,7 +351,8 @@ docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 Admin 的 `config.override.json`；不要删除 `pgdata`、`gugu_data` 或 `gugu_config` 卷。
 
 生产部署目录仍需要提供 `backend/.env`（非代码构建物，用于 AI/IM 等运行配置）和
-`searxng/settings.yml`。镜像标签应使用 Git SHA 或版本号，不要依赖 `latest`。
+`searxng/settings.yml`。当前项目统一使用 `latest` 跟随基础服务和应用镜像的最新版本；
+如需可复现发布，再通过环境变量覆盖应用镜像为具体版本或 Git SHA。
 Shell 沙盒仍需额外提供宿主机 Rootless Docker Socket，并通过 `--profile sandbox` 启用。Compose 会同时启动受控 `egress-proxy` 和内部网络 `gugu-sandbox-egress`：
 
 ```bash
