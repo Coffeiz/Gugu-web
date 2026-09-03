@@ -11,7 +11,10 @@ const ART = [
 ].join('\n')
 
 export function printConsoleBanner() {
-  const brand = 'color:#7b7fb2;font-weight:bold'
+  // %c 不解析 var(--token)，打印时从当前主题读令牌值——横幅跟随用户主题配色
+  const token = (name: string, fallback: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+  const brand = `color:${token('--action-primary', '#7b7fb2')};font-weight:bold`
   console.info('%c' + ART, brand)
   const isDev = import.meta.env.DEV
   const runtime = __RUNTIME_VERSION__ || 'unknown'
