@@ -1,7 +1,9 @@
 name: Runtime integration
 
+# PR 不自动触发（省 Actions usage）：合并前人工用 workflow_dispatch 跑一次
+# （Actions 页选 PR 分支，或 gh workflow run），全绿再合并，见 docs/ops/release.md §1。
+# push main 保留：合并提交进 main 后自动复验。
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:

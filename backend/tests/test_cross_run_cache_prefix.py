@@ -229,3 +229,55 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     next_run_prefix = _provider_wire(restored)
 
     assert next_run_prefix == previous_conversation_wire
+
+
+def test_replayed_knowledge_context_keeps_standalone_boundary_across_runs():
+    """回放的 RAG canonical event 必须保持独立消息边界。
+
+    回归背景：_anthropic_history_blocks 曾把 knowledge-context 提前摊平成
+    text block，sanitize 认不出 canonical boundary，把它合并进相邻 user
+    消息；注入时是独立消息、下一轮回放变成合并消息，跨 run 字节前缀在该
+    消息处断裂，缓存命中从 2 万+ token 跌到几十 token。
+    """
+    sent_at = datetime(2026, 8, 27, 17, 8, tzinfo=timezone.utc)
+    rag_block = {
+        "type": "knowledge-context",
+        "scope": "owner-rag",
+        "text": "[owner-rag]\n以下是已检索知识片段。\n[/owner-rag]",
+    }
+    history = [
+        _history_row(
+            row_id=1, role="user", content="上一条问题",
+            content_json=[{"type": "text", "text": "上一条问题"}],
+            sent_at=sent_at,
+        ),
+        _history_row(
+            row_id=2, role="user", content_json=[dict(rag_block)],
+            sent_at=sent_at,
+        ),
+        _history_row(
+            row_id=3, role="assistant",
+            content_json=[{"type": "text", "text": "上一轮的回答"}],
+            sent_at=sent_at,
+        ),
+    ]
+
+    restored = build_history_parts(
+        history,
+        SimpleNamespace(source="web", chat_id=None),
+        use_anthropic=True,
+        user_tz=timezone.utc,
+    )
+    clean = sanitize.sanitize_messages(restored)
+
+    # 时间 reminder、用户正文、RAG、回答都保持独立边界，RAG 没有被合并进相邻 user 消息
+    assert len(clean) == 4
+    assert clean[2]["content"] == [rag_block]
+
+    # provider wire 上与注入形状一致：canonical event 原位渲染成独立 user 消息
+    wire = _provider_wire(restored)
+    assert len(wire) == 4
+    assert wire[2] == {
+        "role": "user",
+        "content": [{"type": "text", "text": rag_block["text"]}],
+    }

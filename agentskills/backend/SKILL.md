@@ -55,7 +55,7 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 3. 更新 devlog 和本节
 4. 在 LoopScope 验证 cache_ratio 提升
 
-## PR 前本地 CI（GitHub Actions 已禁用）
+## PR 前本地 CI + 手动触发 GitHub CI
 
 提交 PR 前必须在本地完成以下检查，确保不引入回归：
 
@@ -67,4 +67,7 @@ python scripts/check_confirm_gate.py                 # 确认门校验
 python -m compileall -q app agent                    # 语法检查
 ```
 
-全部通过后再提交 PR。不需要等待 GitHub CI——本地通过即可。
+本地通过后再提交 PR。**GitHub CI 不随 PR 自动运行**（省 Actions usage）：PR 决定合并前，
+人工对 `runtime-integration.yml` 和 `docker-release.yml` 各手动触发一次（Actions 页
+Run workflow 选 PR 分支，或 `gh workflow run <name> --ref <分支>`），全绿后才合并，
+详见 `docs/ops/release.md` §1。

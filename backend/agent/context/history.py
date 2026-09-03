@@ -6,7 +6,7 @@ import re
 from typing import Iterable
 
 from .tokens import content_text
-from .canonical_tool_history import ToolCall, ToolResult, event_text
+from .canonical_tool_history import ToolCall, ToolResult
 from .canonical_context import (
     HistoryEnvelope,
     canonicalize_time_context_blocks,
@@ -300,7 +300,13 @@ def _anthropic_history_blocks(content_json, *, strip_thinking: bool = False) -> 
             "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
             "stance-context", "time-context", "runtime-context",
         ):
-            converted.append({"type": "text", "text": event_text(block)})
+            # canonical event 保持原类型交给 sanitize 与 provider boundary：
+            # 若在这里提前摊平成 text block，sanitize 的 canonical boundary 豁免
+            # 认不出它，会把回放的 RAG/reminder 合并进相邻 user 消息——注入时是
+            # 独立消息、下一轮回放变成合并消息，跨 run 字节前缀在第一个 event
+            # 处断裂，缓存从全量命中跌到几十 token。渲染统一由
+            # render_events_for_provider 在 provider 边界原位完成。
+            converted.append(block)
         else:
             converted.append(block)
     return converted

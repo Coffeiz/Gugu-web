@@ -154,7 +154,10 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     base = config.model
     updates = {"provider": row.provider, "api_format": row.api_format,
                "api_key": decrypt_value(row), "base_url": row.base_url or getattr(base, "base_url", ""),
-               "model": row.model or getattr(base, "model", "")}
+               "model": row.model or getattr(base, "model", ""),
+               # is_byok 必须落在模型副本上随 run 走：finalize_run 拿到的是 run_config.model，
+               # 只读 ModelRunConfig.is_byok 会在落库时丢失标记（历史 bug：BYOK 用量全记成平台用量）。
+               "is_byok": True}
     if getattr(row, "context_tokens", None) is not None:
         updates["context_tokens"] = row.context_tokens
     if getattr(row, "max_tokens", None) is not None:

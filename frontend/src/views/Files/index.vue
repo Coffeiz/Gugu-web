@@ -202,7 +202,8 @@ import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryF
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
-import { workspacesApi } from '@/services/api'
+import { workspacesApi, CLIENT_ID } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/shared/useSorting'
 import { projectStatusLabelKey } from '@/utils/projectStages'
@@ -242,6 +243,7 @@ function navSegmentLabel(segment: NavSeg): string {
 const viewMode    = ref<'grid' | 'list'>('grid')
 const loading     = ref(false)
 const mainRef     = ref<HTMLElement | null>(null)
+const live        = useLiveStore()
 let directoryLoader: () => void = () => {}
 function loadContents() { directoryLoader() }
 
@@ -411,6 +413,16 @@ watch(uploadSignal, () => {
 watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
   loadContents()
   fetchStorage()
+})
+
+// 回收站列表不在 filesCache 里（filesCache 只装未删除文件），files 事件触发 cacheStore
+// refresh 后缓存通常无变化、上面的 watch 不会触发 → 回收站视图停在旧数据（咕咕清空/
+// 还原回收站后网页要手动刷新才能看到的根因）。这里对 files 事件补一次回收站重拉；
+// 本标签页自己发起的改动（origin 回声）已由对应 action 调过 loadContents，跳过免重复。
+watch(() => live.resourceEvent, (event) => {
+  if (!event || event.resource !== 'files') return
+  if (event.origin && event.origin === CLIENT_ID) return
+  loadContents()
 })
 
 // ── 统一选择、多选与框选 ──

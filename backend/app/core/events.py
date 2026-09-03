@@ -43,7 +43,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "create_scheduled_task": "scheduled_tasks", "update_scheduled_task": "scheduled_tasks",
     "delete_scheduled_task": "scheduled_tasks",
     # 回收站（恢复/彻底删都影响文件库）
-    "restore_file": "files", "permanent_delete": "files",
+    "restore_file": "files", "restore_folder": "files", "permanent_delete": "files",
     # 思维画布便签
     "note_create": "mind", "note_update": "mind", "note_delete": "mind",
     "note_restore": "mind", "note_undo": "mind",

@@ -48,7 +48,7 @@ import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 const rootEl = ref<HTMLElement | null>(null)
 defineExpose({ rootEl })
 
-defineProps({
+const props = defineProps({
   ext: { type: String, required: true },
   displayName: { type: String, required: true },
   hasThumb: { type: Boolean, default: false },
@@ -180,4 +180,7 @@ defineProps({
   border-color: var(--file-card-checkbox-border-checked, var(--color-primary,#7b7fb2));
 }
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
+/* leave 只走 opacity（同 filesListRows.css 的注释）：退出多选时 clearSelection 同帧移除
+   .checked，若背景/边框也过渡，选中填充会先变色再淡完，暗色下结尾明显闪一下。 */
+.fc-card .sel-cb-leave-active { transition: opacity 0.15s ease; }
 </style>

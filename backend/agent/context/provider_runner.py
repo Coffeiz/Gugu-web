@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 
-async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) -> str:
+async def complete_text(sys: str, user: str, settings, max_tokens: int | None = 800) -> str:
     from agent.llm.llm_select import use_anthropic_for
 
     use_anthropic = use_anthropic_for(settings.ai)
@@ -24,7 +24,7 @@ async def complete_json(
     sys: str,
     user: str,
     settings,
-    max_tokens: int = 1500,
+    max_tokens: int | None = 1500,
     thinking: str | None = None,
 ) -> dict:
     from agent.llm.llm_select import use_anthropic_for
@@ -46,7 +46,7 @@ async def _anthropic(
     sys: str,
     user: str,
     settings,
-    max_tokens: int,
+    max_tokens: int | None,
     thinking: str | None = None,
 ) -> str:
     import httpx
@@ -54,6 +54,9 @@ async def _anthropic(
 
     client = providers.build_anthropic_client(
         settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
+    # Anthropic API 必填 max_tokens，无法真正不限；None 时给高预算。
+    if max_tokens is None:
+        max_tokens = 32768
     # temperature 已全局下线（anthropic SDK 1.x 不再接受该参数）。
     kwargs = dict(
         model=settings.ai.model,
@@ -71,7 +74,7 @@ async def _openai(
     sys: str,
     user: str,
     settings,
-    max_tokens: int,
+    max_tokens: int | None,
     json_mode: bool = False,
     thinking: str | None = None,
 ) -> str:
@@ -80,11 +83,13 @@ async def _openai(
 
     client = providers.build_openai_client(
         settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
+    # max_tokens 为 None 表示不限制输出预算，交给 provider 使用模型默认上限。
     kwargs = dict(
         model=settings.ai.model,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
-        max_tokens=max_tokens,
     )
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     adapter = providers.adapter_for(settings.ai)
     if json_mode:
         kwargs.update(adapter.build_structured_output(settings.ai))

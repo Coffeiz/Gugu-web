@@ -42,6 +42,10 @@
   --border-focus: var(--theme-focus);
   /* 文档内容需要在亮色玻璃表面保持可读的表格分隔线；通用玻璃边框可能是白色。 */
   --border-document-table: color-mix(in srgb, var(--theme-content-primary) 18%, transparent);
+  /* Canvas 图表（chart.js）的网格线与刻度：玻璃主题的通用边框 token 在亮色下接近纯白
+     （设计给毛玻璃表面），落在实心表面的画布上会不可见，因此从内容色派生、随主题明暗反转。 */
+  --chart-grid-line: color-mix(in srgb, var(--theme-content-secondary) 16%, transparent);
+  --chart-tick: var(--theme-content-tertiary);
 
   /* Actions / selection */
   --action-primary: var(--theme-action-primary);
@@ -71,6 +75,10 @@
   --action-secondary-fg: var(--content-secondary);
   --action-secondary-fg-hover: var(--content-primary);
   --selection-bg: var(--theme-selection);
+  /* 文字选区（编辑器/正文 ::selection）需要比 UI 高亮更实的底色，14~18% 的 --selection-bg
+     在卡片底色上几乎不可见。亮色用主色直接半透明铺上（混黑会发灰发暗），是常见的
+     「浅色主题色选区带」；浓度要明显强于编辑器 activeLine 的 5% 高亮。 */
+  --selection-text-bg: color-mix(in srgb, var(--action-primary) 25%, transparent);
   --selection-fg: var(--theme-action-hover);
   --focus-ring: var(--theme-focus);
 
@@ -151,4 +159,12 @@
    让主题底色影响导航，保持它与页面背景的层次关系。 */
 :root[data-theme='dark'] {
   --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 96%, #fff 4%);
+}
+
+/* 文字选区暗色专用值：暗色底色深，半透明叠加明度差太小会与底色融合；
+   改用不透明的饱和中深主色（VS Code 深色选区思路：靠色度差而不是明度差），
+   近白文字在其上仍有足够对比。必须写成顶层规则——嵌套在 :root 里的 & 会被
+   构建管线丢弃（实测 stylesheets 里根本没有这条规则）。 */
+:root[data-theme='dark'] {
+  --selection-text-bg: color-mix(in srgb, var(--action-primary) 55%, black);
 }

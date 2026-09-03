@@ -100,6 +100,9 @@ class AISettings(BaseModel):
     capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
     capability_checked_at: str = Field("", description="最近一次能力检测时间")
     capability_fingerprint: str = Field("", description="能力检测绑定的地址/模型指纹")
+    # 内部运行时标记：resolve_run_config_for_user 在每轮 run 开始时注入到模型副本上，
+    # 随 run 落到 agent_usage.is_byok。exclude=True 保证不会序列化进配置文件或 API 响应。
+    is_byok: bool = Field(False, exclude=True, description="内部标记：本轮是否使用用户 BYOK 凭据")
 
 
 class VoiceSettings(BaseModel):
@@ -123,6 +126,11 @@ class SandboxSettings(BaseModel):
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
     enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
+    host_data_root: str | None = Field(
+        None,
+        description="宿主 Docker daemon 视角的数据根目录（compose 注入 GUGU_DATA_HOST_DIR/users）；"
+                    "bind src 需把容器内逻辑路径翻译成它。本机直跑不注入即不翻译",
+    )
     image: str = Field("debian:bookworm-slim", description="Shell 沙盒基础镜像")
     image_digest: str = Field(
         "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
@@ -177,6 +185,8 @@ class AIPresetItem(BaseModel):
     capability_checked_at: str = ""
     capability_fingerprint: str = ""
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
+    # 内部运行时标记（同 AISettings.is_byok）：resolve_run_config_for_user 每轮注入，exclude 不落盘。
+    is_byok: bool = Field(False, exclude=True)
 
 
 class AIPresets(BaseModel):

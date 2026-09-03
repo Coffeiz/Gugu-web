@@ -325,7 +325,9 @@ const {
   position: absolute; left: -7px; top: 50%; transform: translateY(-50%);
   z-index: 12; width: 12px; height: 48px; border-radius: 7px;
   border: 1px solid rgba(0,0,0,0.08);
-  background: var(--panel-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  /* 实体按钮：control 色整层叠在实底卡色上合成不透光，不用毛玻璃。
+     玻璃主题的 --control-bg 自带透明度，单用会透出面板内容。 */
+  background: linear-gradient(var(--control-bg), var(--control-bg)), var(--surface-card-solid);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; color: var(--text-secondary);
   box-shadow: 0 2px 10px rgba(30,40,80,0.12);
@@ -336,7 +338,8 @@ const {
   content: ''; position: absolute; left: -2px; right: -2px; top: -2px; bottom: -2px;
 }
 .col-toggle-btn:hover {
-  color: var(--color-primary); background: rgba(255,255,255,0.92);
+  color: var(--color-primary);
+  background: linear-gradient(var(--control-bg-hover), var(--control-bg-hover)), var(--surface-card-solid);
   box-shadow: 0 3px 14px rgba(123,127,178,0.25);
 }
 

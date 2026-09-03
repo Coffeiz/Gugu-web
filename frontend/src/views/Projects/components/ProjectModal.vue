@@ -177,6 +177,7 @@ const {
   localCurrentStage,
   localStatus,
   reset: resetProjectDraft,
+  syncExternal: syncProjectDraft,
 } = useProjectDraft()
 const projectStages = useProjectStages({
   stages: localStages,
@@ -460,9 +461,12 @@ const { initializing } = useProjectFileProjectSync({
   fileCacheStore,
 })
 
-// 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
-watch(() => props.project?.startDate, (v) => { if (!initializing.value) localStartDate.value = v ?? '' })
-watch(() => props.project?.deadline,  (v) => { if (!initializing.value) localDeadline.value  = v ?? '' })
+// 外部（Agent/IM）修改项目时实时同步进打开中的草稿：store 的 live 事件会整体
+// 替换 projects 里的对象，props.project 引用随之更新；按字段合并，用户已编辑的
+// 字段不被覆盖（见 useProjectDraft.syncExternal）。
+watch(() => props.project, (p) => {
+  if (p && !initializing.value) syncProjectDraft(p)
+})
 
 
 

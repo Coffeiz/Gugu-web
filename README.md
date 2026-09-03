@@ -15,7 +15,7 @@
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [在线预览](https://gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [在线预览](https://www.gugugu.site)
 
 </div>
 
@@ -168,6 +168,8 @@ cp .env.example .env
 cp backend/.env.example backend/.env
 # 编辑 backend/.env，填写 SECRET_KEY、管理员密码和模型配置
 # 编辑根目录 .env，填写数据库密码等 Compose 编排变量
+# 用户数据目录默认在宿主机 /data，启动前必须先创建（bind source 不存在会启动失败）：
+sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
 docker compose up -d --build
 ```

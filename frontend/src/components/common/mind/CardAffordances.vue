@@ -131,6 +131,10 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   right: 13px;
 }
 
+/* 卡片悬浮操作按钮消费 components/card-actions.css 的跨域契约（.file-card-btn
+   同款：实底控制面 + 毛玻璃 + 卡片投影，背景/前景 0.15s 淡入淡出）。文件域按钮
+   直接挂类；画布四类卡和 Runtime 克隆的插槽按钮经这里的 :deep 统一取样式，
+   两个位置的声明需保持一致，改动契约时两处同步。 */
 .card-affordances__actions > :deep(button) {
   display: inline-flex;
   align-items: center;
@@ -140,14 +144,25 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   padding: 0;
   border: 0;
   border-radius: 5px;
-  background: transparent;
-  color: var(--content-secondary);
+  background: var(--control-bg);
+  color: var(--control-fg);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: var(--elevation-card);
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
 
 .card-affordances__actions > :deep(button:hover) {
-  background: var(--action-soft-hover);
-  color: var(--action-primary);
+  background: var(--control-bg-hover);
+  color: var(--control-fg-strong);
+}
+
+/* 破坏性操作（删除/从画布移除）：与 .file-card-btn.del 同一口径 */
+.card-affordances__actions > :deep(button.del:hover),
+.card-affordances__actions > :deep(button.danger:hover) {
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
 }
 
 .card-affordances__connect {

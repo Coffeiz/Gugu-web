@@ -12,7 +12,8 @@ global.css
     │   ├── theme-adoption.css      # 旧组件主题兼容，含日历工具栏和 GuguChat 过渡规则
     │   ├── component-theme-refinements.css
     │   ├── calendar.css             # 日历共享组件结构与 hover
-    │   ├── files.css                # 文件卡、列表操作按钮和行内重命名
+    │   ├── files.css                # 文件卡和行内重命名
+    │   ├── card-actions.css         # 卡片悬浮/行内操作按钮契约（文件卡与画布卡共用）
     │   ├── popups.css               # 通用弹层结构与交互
     │   ├── forms.css                # 跨页面基础输入控件
     │   └── file-toolbar-theme-refinements.css
@@ -28,7 +29,11 @@ global.css
 - `variables.css` 是全局唯一样式入口；组件覆盖和 bridge 不得被页面直接重复引入。
 - `components/index.css` 负责最终组件 paint 的编排，日历工具栏、GuguChat 和文件工具栏的主题覆盖先保持原文件 owner。
 - `components/calendar.css` 负责日历页与 Dashboard 共用的近期节点胶囊和条目 hover；日历 Teleport 内容主题归 `EventFormPanel.vue` 等业务组件。
-- `components/files.css` 负责文件卡、文件夹卡、文件操作按钮和行内重命名控件的共享结构样式。
+- `components/files.css` 负责文件卡、文件夹卡和行内重命名控件的共享结构样式。
+- `components/card-actions.css` 负责卡片悬浮/行内操作按钮的跨域契约（`.file-card-btn` /
+  `.file-list-btn`，类名保留 file- 前缀仅为兼容）。文件库、Dashboard、ProjectModal 直接用类；
+  画布卡片经 `CardAffordances.vue` 的 `:deep(button)` 复用同一 token/过渡口径，破坏性操作
+  统一加 `del`（或 `danger`）类取红色 hover。新卡片类型一律消费这里，不得另画透明底按钮。
 - `components/popups.css` 负责通用弹层结构、菜单项和过渡；Teleport 根节点由 `PopupMenu.vue` 负责，业务内容主题归属各自组件。
 - `components/forms.css` 负责标题编辑和基础输入控件的跨页面结构样式。
 - 多行输入框的可调整高度统一使用 `.control-resizable`；缩放柄只由 `adoption/forms.css` 的公共规则绘制，视觉值使用 `--control-resizer-bg`，页面组件不得自行添加 `::-webkit-resizer`、硬编码颜色或重复 `resize` 视觉规则。需要编辑器滚动行为时，再组合 `.scroll-surface scroll-surface--editor`。

@@ -43,9 +43,18 @@ def test_context_threshold_uses_cache_tokens_for_anthropic():
     assert _provider_context_usage(SimpleNamespace(api_format="anthropic"), result) == 76536
 
 
-def test_context_threshold_does_not_double_count_openai_cache_tokens():
-    result = SimpleNamespace(usage_in=76536, cache_tokens=75456)
-    assert _provider_context_usage(SimpleNamespace(api_format="openai"), result) == 76536
+def test_context_threshold_adds_openai_cache_tokens_after_usage_normalization():
+    """driver 已把 OpenAI usage 归一成「未命中输入」：usage_in=20k + cache=80k
+    → 真实上下文 100k，不能再按旧口径只取 usage_in（会漏掉缓存命中的 80k）。"""
+    result = SimpleNamespace(usage_in=20, cache_tokens=80)
+    assert _provider_context_usage(SimpleNamespace(api_format="openai"), result) == 100
+
+
+def test_context_threshold_adds_anthropic_cache_write_tokens():
+    """Anthropic 总输入 = input + cache_creation + cache_read；首次建大缓存时
+    （input=1k, creation=80k, read=0）漏记 creation 会把 81k 上下文看成 1k。"""
+    result = SimpleNamespace(usage_in=1, cache_tokens=0, cache_write_tokens=80)
+    assert _provider_context_usage(SimpleNamespace(api_format="anthropic"), result) == 81
 
 
 @pytest.fixture(autouse=True)

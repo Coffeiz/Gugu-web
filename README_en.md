@@ -15,7 +15,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [Live Demo](https://gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [Live Demo](https://www.gugugu.site)
 
 </div>
 
@@ -148,6 +148,9 @@ cp .env.example .env
 cp backend/.env.example backend/.env
 # Edit backend/.env and set SECRET_KEY, admin, and model configuration.
 # Edit the root .env and set the Compose database password.
+# The user-data directory defaults to /data on the host and must exist before
+# startup (compose fails when the bind source is missing):
+sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
 docker compose up -d --build
 ```

@@ -151,8 +151,9 @@ def test_canonical_events_do_not_split_user_turn_timestamp_boundary():
     assert result[0]["content"][0]["text"] == (
         "[system-reminder]\n消息时间：2026-08-25 08:26\n[/system-reminder]"
     )
-    assert result[2]["content"][0]["type"] == "text"
-    assert result[3]["content"][0]["type"] == "text"
+    # 回放保留 canonical 类型，渲染推迟到 provider boundary（与注入形状一致）
+    assert result[2]["content"][0]["type"] == "knowledge-context"
+    assert result[3]["content"][0]["type"] == "skill-schema"
 
 
 def test_anthropic_history_keeps_native_tool_blocks():

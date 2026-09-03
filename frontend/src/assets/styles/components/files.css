@@ -1,29 +1,6 @@
 /* 文件卡片与行内重命名控件的共享组件样式。
- * 文件库、Dashboard FilePanel 与 ProjectModal 共用；主题颜色由各自 token/refinement 提供。 */
-
-/* 文件操作按钮（卡片悬浮，默认 20×20） */
-.file-card-btn {
-  position: relative;
-  width: 20px; height: 20px; border-radius: 5px; border: none;
-  background: var(--control-bg); color: var(--control-fg);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-  box-shadow: var(--elevation-card);
-}
-.file-card-btn::after { content: ''; position: absolute; inset: -2px; }
-.file-card-btn:hover { background: var(--control-bg-hover); color: var(--control-fg-strong); }
-.file-card-btn.del:hover { color: var(--status-danger); background: var(--status-danger-bg); }
-
-/* 文件操作按钮（列表行，默认 24×24，父行 hover 才可见） */
-.file-list-btn {
-  width: 24px; height: 24px; border-radius: 6px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
-}
-.file-list-btn:hover { background: var(--action-soft); color: var(--action-primary); }
-.file-list-btn.del:hover { background: var(--status-danger-bg); color: var(--status-danger); }
+ * 文件库、Dashboard FilePanel 与 ProjectModal 共用；主题颜色由各自 token/refinement 提供。
+ * 卡片悬浮/行内操作按钮契约已上收 components/card-actions.css（画布卡也在用）。 */
 
 /* 文件/文件夹卡片（grid 视图，Dashboard FilePanel、文件库、ProjectModal 共用） */
 .fc-card, .folder-card {

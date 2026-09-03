@@ -346,6 +346,10 @@ class ShellSkill(BaseSkill):
             },
             handler=_shell,
             mutates=True,
+            # destructive 才会桥接到网页/IM 确认按钮（create_tool_confirmation），
+            # 由用户点击后服务端注入 confirm 凭证；缺了它确认只能靠模型复述
+            # 长 token，复制坏一个字符就死循环重签。
+            destructive=True,
         ),
     ]
 

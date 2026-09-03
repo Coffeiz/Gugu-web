@@ -209,7 +209,7 @@
         <div class="section-label">{{ t('adminAnalyticsUi.modelDistribution') }}</div>
         <div class="model-section">
           <div class="model-donut-wrap">
-            <Doughnut :data="donutChart" :options="donutOpts" />
+            <Doughnut :data="donutChart" :options="donutOpts()" />
           </div>
           <div class="model-table">
             <div class="model-head">
@@ -247,6 +247,7 @@ import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { browserTz } from '@/utils/dateAttribution'
+import { barChartOptions, chartThemeKey, cssVar } from '@/utils/chartKit'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
   BLUE, AMBER, TEAL, fmtTok, sumArr, dailyAvg,
@@ -324,45 +325,21 @@ const depthChart = computed(() => {
     labels: buckets.map((b: any) => t('adminAnalyticsUi.rounds', { value: b.label })),
     datasets: [{
       data: buckets.map((b: any) => b.users),
-      backgroundColor: 'rgba(123,127,178,0.55)',
-      hoverBackgroundColor: 'rgba(123,127,178,0.8)',
+      // 主题信号建立响应式依赖：主题/调色板切换时重算柱色令牌
+      backgroundColor: colorMix(chartThemeKey.value, 55),
+      hoverBackgroundColor: colorMix(chartThemeKey.value, 80),
       borderRadius: 5,
       maxBarThickness: 44,
     }],
   }
 })
 
-const barOpts = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false as const,
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      displayColors: false,
-      backgroundColor: 'rgba(10,10,22,0.92)',
-      borderColor: 'rgba(255,255,255,0.08)',
-      borderWidth: 1,
-      titleColor: 'rgba(255,255,255,0.45)',
-      bodyColor: 'rgba(255,255,255,0.85)',
-      padding: 10,
-      callbacks: { label: (ctx: any) => `${ctx.raw} 人` },
-    },
-  },
-  scales: {
-    x: {
-      grid:   { display: false },
-      border: { color: 'transparent' },
-      ticks:  { color: 'rgba(255,255,255,0.35)', font: { size: 11 } },
-    },
-    y: {
-      grid:   { color: 'rgba(255,255,255,0.04)' },
-      border: { color: 'transparent' },
-      ticks:  { color: 'rgba(255,255,255,0.25)', font: { size: 10 }, precision: 0 },
-      beginAtZero: true,
-    },
-  },
-}
+const colorMix = (_sig: string, alpha: number) =>
+  `color-mix(in srgb, ${cssVar('--action-primary', 'rgba(123,127,178,1)')} ${alpha}%, transparent)`
+
+const barOpts = computed(() => barChartOptions({
+  tooltipLabel: (ctx: any) => `${ctx.raw} ${t('adminAnalyticsUi.person')}`,
+}))
 
 async function load() {
   loading.value = true

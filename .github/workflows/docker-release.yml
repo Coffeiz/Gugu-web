@@ -1,19 +1,9 @@
 name: Docker release
 
+# PR 不再自动触发（省 Actions usage）：合并前人工用 workflow_dispatch 跑一次
+# （Actions 页选 PR 分支，或 gh workflow run），全绿再合并，见 docs/ops/release.md §1。
+# push main / tags 保留：main 构建部署镜像，tag 触发正式发布（publish job）。
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/docker-release.yml'
-      - 'backend/**'
-      - 'frontend/**'
-      - 'docker-compose.prod.yml'
-      - 'backend/Dockerfile.prod'
-      - 'frontend/Dockerfile.prod'
-      - 'deploy/**'
-      - 'scripts/release/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
   push:
     branches: [main]
     tags: ['v*.*.*']

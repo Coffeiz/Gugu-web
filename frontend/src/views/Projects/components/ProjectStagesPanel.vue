@@ -31,7 +31,6 @@
                 v-model="stage.label"
                 class="stage-input"
                 @blur="handleSaveStages" v-enter="handleSaveStages" @keydown.esc="editingStage = null" @click.stop
-                ref="stageInputRef"
               />
               <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
               <span class="todo-count" v-if="stage.todos?.length">{{ stage.todos.filter(t=>t.done).length }}/{{ stage.todos.length }}</span>
@@ -131,7 +130,6 @@ const lockedStageIndices = computed(() => {
 const editingStage = ref<string | null>(null)
 const editingTodo = projectTodos.editingTodo
 const expandedStages = ref(new Set<string>())
-const stageInputRef = ref<HTMLInputElement | null>(null)
 const stageFlowRef = ref<HTMLElement | null>(null)
 
 const todoDrag = ref<{ stageKey: string; index: number } | null>(null)
@@ -267,7 +265,12 @@ function todoDragOver(stage: ProjectStage, ti: number, e: DragEvent) {
 
 function startEdit(stageKey: string) {
   editingStage.value = stageKey
-  nextTick(() => stageInputRef.value?.focus())
+  // 不用模板 ref：stage-input 在 v-for 里，ref 收到的是数组、focus 落空，
+  // 输入框拿不到焦点会导致点击任何地方都不触发 blur 退出。
+  nextTick(() => {
+    const input = document.querySelector('.stages-section .stage-input') as HTMLInputElement | null
+    input?.focus()
+  })
 }
 function startEditTodo(todoId: string) {
   projectTodos.startEditing(todoId)

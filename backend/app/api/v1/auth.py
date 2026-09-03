@@ -23,7 +23,7 @@ from app.core.security import (
     set_auth_cookies,
     verify_password,
 )
-from app.core.tz import now_utc, iso_utc, LOCAL_TZ
+from app.core.tz import now_utc, iso_utc, user_tz
 from app.db.session import get_db
 from app.models import User, UserPreferences, AgentUsage, FrontendEvent, EmailChangeRequest
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount, EmailChangeRequestCreate, EmailChangeVerify
@@ -464,12 +464,17 @@ async def get_quota(
     byok_today = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
     byok_month = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
     if has_byok:
-        local_now = now.astimezone(LOCAL_TZ)
+        # 今日/本月边界按用户时区算，而不是服务器 LOCAL_TZ：海外用户的「今天」
+        # 与服务器时区可能差出整天。
+        tz = user_tz(current_user)
+        local_now = now.astimezone(tz)
         today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         byok_today = await _byok_stats(today_start)
         byok_month = await _byok_stats(month_start)
-    cache_rate = byok_month["cache_read"] / byok_month["tokens_in"] if byok_month["tokens_in"] else 0
+    # 命中率分母用完整输入（新增 + 命中 + 本轮新写入），与 /usage/trends 同一口径。
+    effective_in = byok_month["tokens_in"] + byok_month["cache_read"] + byok_month["cache_write"]
+    cache_rate = byok_month["cache_read"] / effective_in if effective_in else 0
 
     limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
     limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
@@ -485,6 +490,72 @@ async def get_quota(
         "byok_tokens_today": byok_today["tokens"],
         "byok_tokens_month": byok_month["tokens"],
         "byok_cache_rate": round(cache_rate, 6),
+    }
+
+
+@router.get("/usage/trends")
+async def get_usage_trends(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """当前用户 BYOK 用量的按天序列（近 N 天，默认 30），供个人面板趋势图。
+
+    口径与 agent_usage 落库一致：tokens_in 为未命中缓存的新增输入，
+    cache_read 为缓存命中，tokens_out 为输出；按用户本地时区归日。
+    """
+    from app.services.account_queries import byok_usage_detail
+
+    days = max(1, min(days, 90))
+    now = now_utc()
+    # 归日用用户时区（User.timezone，缺省回退服务器 LOCAL_TZ），与 /quota 的今日口径一致。
+    tz = user_tz(current_user)
+    local_now = now.astimezone(tz)
+    start_local = (local_now - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    start_utc = start_local.astimezone(timezone.utc)
+    labels = [(start_local + timedelta(days=i)).strftime("%m/%d") for i in range(days)]
+    date_keys = [(start_local + timedelta(days=i)).date().isoformat() for i in range(days)]
+
+    # 单用户近 N 天的行数有限，一次取回明细后按本地日聚合，避免依赖数据库时区函数；
+    # 汇总值直接从按天结果求和，保证与序列口径一致。cache_write（Anthropic 本轮
+    # 新写入缓存的输入）也计入总 Token，否则建缓存当天总量会明显少算。
+    detail = await byok_usage_detail(db, current_user.id, start_utc)
+    by_day: dict[str, list[int]] = {k: [0, 0, 0, 0] for k in date_keys}
+    for created_at, tin, cache_read, cache_write, tout in detail:
+        key = created_at.astimezone(tz).date().isoformat()
+        if key in by_day:
+            by_day[key] = [
+                by_day[key][0] + (tin or 0),
+                by_day[key][1] + (cache_read or 0),
+                by_day[key][2] + (cache_write or 0),
+                by_day[key][3] + (tout or 0),
+            ]
+
+    tokens_in = [by_day[k][0] for k in date_keys]
+    cache_read = [by_day[k][1] for k in date_keys]
+    cache_write = [by_day[k][2] for k in date_keys]
+    tokens_out = [by_day[k][3] for k in date_keys]
+    total_in = sum(tokens_in)
+    total_cache = sum(cache_read)
+    total_cache_write = sum(cache_write)
+    total_out = sum(tokens_out)
+    total = total_in + total_cache + total_cache_write + total_out
+    return {
+        "labels": labels,
+        "tokens_in": tokens_in,
+        "cache_read": cache_read,
+        "cache_write": cache_write,
+        "tokens_out": tokens_out,
+        "total": total,
+        "daily_avg": round(total / days),
+        "today": tokens_in[-1] + cache_read[-1] + cache_write[-1] + tokens_out[-1],
+        # 命中率分母用完整输入（新增 + 命中 + 本轮新写入），只算 in+read 会把
+        # 首次建缓存当天的分母算小、命中率虚高。
+        "cache_rate": (
+            total_cache / (total_in + total_cache + total_cache_write)
+            if (total_in + total_cache + total_cache_write) else 0
+        ),
     }
 
 

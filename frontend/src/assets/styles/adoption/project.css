@@ -230,7 +230,8 @@ html[data-theme][data-family] .color-chip.active {
 /* Project files panel collapsed-column control. */
 html[data-theme][data-family] .col-toggle-btn {
   color: var(--control-fg);
-  background: var(--control-bg);
+  /* 实体按钮：control 色整层叠在实底卡色上合成不透光（与亮色 base 规则同一做法） */
+  background: linear-gradient(var(--control-bg), var(--control-bg)), var(--surface-card-solid);
   border-color: var(--control-border);
   box-shadow: var(--elevation-card);
   transition:
@@ -241,7 +242,7 @@ html[data-theme][data-family] .col-toggle-btn {
 }
 html[data-theme][data-family] .col-toggle-btn:hover {
   color: var(--action-primary);
-  background: var(--control-bg-hover);
+  background: linear-gradient(var(--control-bg-hover), var(--control-bg-hover)), var(--surface-card-solid);
   border-color: var(--control-border-hover);
   box-shadow: var(--elevation-card-hover);
 }

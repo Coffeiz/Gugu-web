@@ -87,7 +87,9 @@
   /* ── Typography ────────────────────────────────────────────────
      Five sizes only. Role aliases below keep existing components source-compatible. */
   --font-system-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-system-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /* macOS 网页拿不到 SFMono-Regular/SF Mono（系统字体不对网页开放），Consolas/Liberation 是
+     Win/Linux 字体——不加 Menlo/Monaco 的话 mac 会落到 Courier，看起来像衬线体。 */
+  --font-system-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --font-family-body: "Gugu Noto Sans SC", var(--font-system-sans);
   --font-family-ui: var(--font-family-body);
   --font-family-heading: var(--font-family-body);
