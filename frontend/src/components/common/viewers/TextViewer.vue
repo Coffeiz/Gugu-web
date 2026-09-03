@@ -747,6 +747,13 @@ onBeforeUnmount(() => {
 .tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: var(--surface-card-solid); color: var(--content-primary); }
 .tv-edit-cm-wrap :deep(.cm-scroller),
 .tv-edit-cm-wrap :deep(.cm-content) { background: var(--surface-card-solid); color: var(--content-primary); }
+/* 行号槽令牌化：CodeMirror 默认主题的 gutter 是亮色（白底灰字），暗色模式下是刺眼白条，
+   必须在所有 CodeMirror 场景（代码文件 + Markdown 编辑）覆盖，不能只写在 md-wrap 上。 */
+.tv-edit-cm-wrap :deep(.cm-gutters) {
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--content-tertiary);
+}
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
   color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
@@ -755,11 +762,6 @@ onBeforeUnmount(() => {
   padding: 20px 24px;
   font-family: var(--font-family-mono);
   line-height: 1.7;
-}
-.tv-edit-md-wrap :deep(.cm-gutters) {
-  background: var(--surface-panel);
-  border-right: 1px solid var(--border-subtle);
-  color: var(--content-tertiary);
 }
 .tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
 /* CodeMirror 的活动行会单独给左侧行号加 cm-activeLineGutter，覆盖默认亮色主题。 */
