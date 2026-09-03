@@ -63,7 +63,9 @@
 ## 发版与 PR 规范
 
 - 发版流程与前置检查以 `docs/ops/release.md` 为准。
-- PR 合并前 CI 必须全绿（docker-release 的 PR 运行已含镜像构建 + trivy 安全门）。
+- PR 合并前 CI 必须全绿。GitHub CI **不随 PR 自动触发**（省 Actions usage），合并前必须人工手动触发：
+  Actions 页对两个 workflow（Runtime integration、Docker release）各 Run workflow 一次并选 PR 分支
+  （或 `gh workflow run <name> --ref <分支>`），全部全绿后才允许合并；docker-release 已含镜像构建 + trivy 安全门。
 - **打版本 tag 前必须先过本地预检**：前端回归脚本 + 后端测试 + 本地构建生产镜像并 trivy 预扫，
   全部通过后 tag 才允许指向 main 的合并提交；发布失败的 tag 重打规则见 `docs/ops/release.md` §4。
 

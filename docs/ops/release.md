@@ -7,8 +7,15 @@
 ## 1. PR 规范（dev → main）
 
 - 任何进入 main 的代码必须走 dev → main 的 PR，禁止直接 push main。
-- PR 合并前 CI 必须全绿。docker-release workflow 的 `docker-build` job 对所有 PR 运行，
-  **已包含 trivy 扫描**（HIGH/CRITICAL、ignore-unfixed、exit-code 1）——PR 绿就代表镜像构建和安全门都过了。
+- **GitHub CI 不随 PR 自动运行**（省 Actions usage，两个 workflow 均已去掉 `pull_request` 触发）。
+  PR 合并前必须**人工手动触发**并等全绿：
+  - 触发方式：GitHub Actions 页对 `Runtime integration` 和 `Docker release` 各点一次
+    “Run workflow”，分支选 PR 源分支；或命令行
+    `gh workflow run runtime-integration.yml --ref <PR分支>` /
+    `gh workflow run docker-release.yml --ref <PR分支>`（GitHub 操作走 `agentskills/local/SKILL.md` 的代理配置）。
+  - docker-release 的 `docker-build` job **已包含 trivy 扫描**（HIGH/CRITICAL、ignore-unfixed、
+    exit-code 1）——两个 workflow 全绿就代表测试、镜像构建和安全门都过了。
+  - push 到 main 和版本 tag 仍然自动触发；PR 迭代过程中的中间 commit 不再消耗 Actions 时长。
 - CI 只跑了构建与扫描，业务回归脚本本地跑（见 §2）。不要为了赶发版跳过回归直接合。
 
 ## 2. 发版前本地预检（打 tag 之前必须全部通过）
@@ -44,7 +51,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 
 ## 4. 打 tag 与发布
 
-- **前置条件**：版本 PR 已合并进 main，且该 PR 的 CI（含 trivy 门）全绿。
+- **前置条件**：版本 PR 已合并进 main，且合并前手动触发的 CI（含 trivy 门）全绿；
+  合并提交进 main 后 push 自动触发的那轮 CI 也应为绿。
 - tag 打在 **main 的合并提交**上，附注 tag，消息格式 `发布 Gugu <版本>`：
 
   ```bash
