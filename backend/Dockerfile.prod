@@ -19,6 +19,12 @@ WORKDIR /app
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt
+# python:latest 可能预装旧版 setuptools/msgpack；强制重装并校验最终版本，避免旧
+# dist-info 留在镜像中导致发布安全扫描仍识别出已修复漏洞。
+RUN pip install --no-cache-dir --upgrade --force-reinstall \
+        -i "${PIP_INDEX_URL}" \
+        "msgpack==1.2.2" "setuptools==84.0.0" \
+    && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 COPY backend ./
 RUN mkdir -p logs \
