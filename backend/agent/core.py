@@ -37,13 +37,15 @@ _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 def _provider_context_usage(driver: Any, result: Any) -> int:
     """返回用于上下文阈值判断的完整 provider 输入量。
 
-    driver 层已把两条路的 usage 归一成同一语义：``usage_in`` 只含未命中
-    缓存的输入，缓存命中单独放 ``cache_tokens``。真实上下文占用 = 两者之和，
-    不能只取 usage_in——高缓存率下（如 DeepSeek 长对话 90%+ 命中）会把
-    100k 上下文看成 20k，严重延迟 90% 压缩阈值甚至撞 context limit。
+    driver 层已把两条路归一成统一语义：``usage_in`` 只含未命中缓存的输入，
+    缓存命中在 ``cache_tokens``，Anthropic 本轮新写入缓存在
+    ``cache_write_tokens``。真实上下文占用 = 三者之和，不能只取 usage_in——
+    高缓存率下（如 DeepSeek 长对话 90%+ 命中）会把 100k 上下文看成 20k，
+    严重延迟 90% 压缩阈值甚至撞 context limit。
     """
     return (max(0, int(getattr(result, "usage_in", 0) or 0))
-            + max(0, int(getattr(result, "cache_tokens", 0) or 0)))
+            + max(0, int(getattr(result, "cache_tokens", 0) or 0))
+            + max(0, int(getattr(result, "cache_write_tokens", 0) or 0)))
 
 
 def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
@@ -650,7 +652,7 @@ class LLMRunner:
         # 确认结果会进入 tool_result，但模型有时不会把凭证原样带回下一次调用；
         # 若不在运行时续接，就会再次触发同一个确认门。
         pending_confirmation: dict[str, Any] | None = None
-        total_in = total_out = total_cache = 0
+        total_in = total_out = total_cache = total_cache_write = 0
         # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
         # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
         run_context_usage = 0
@@ -980,6 +982,7 @@ class LLMRunner:
             total_in  += result.usage_in
             total_out += result.usage_out
             total_cache += result.cache_tokens
+            total_cache_write += result.cache_write_tokens
             run_context_usage = max(run_context_usage, _provider_context_usage(driver, result))
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
             # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
@@ -990,6 +993,7 @@ class LLMRunner:
                 context_input=int(_provider_context_usage(driver, result) or 0),
                 output=int(result.usage_out or 0),
                 cache_read=int(result.cache_tokens or 0),
+                cache_write=int(result.cache_write_tokens or 0),
             )
 
             _requires_tools = result.requires_tools
@@ -1568,7 +1572,7 @@ class LLMRunner:
                 # 守卫回应作为第二条用户可见消息输出。
                 guard_retry_pending = False
                 guard_retry_buf.clear()
-                yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
+                yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                 return
             # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
             # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
@@ -1656,7 +1660,7 @@ class LLMRunner:
             for _text in drain_round_text():
                 yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
 
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             return
 
         # 核实预算耗尽时，最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾。
@@ -1666,5 +1670,5 @@ class LLMRunner:
             fallback = "已提交前面成功执行的调整；核实轮次已达到上限，未完成的步骤请重新发起。"
             async for _line in genstream.typed_stream(fallback):
                 yield _line
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             return

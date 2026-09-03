@@ -33,19 +33,22 @@ const props = defineProps<{
   tokensIn: number[]      // 未命中缓存的新增输入
   cacheRead: number[]     // 缓存命中
   tokensOut: number[]     // 输出
+  cacheWrite?: number[]   // Anthropic 本轮新写入缓存的输入；并入总量，不单独展示
 }>()
 
 const { t } = useI18n()
 
+const cw = (i: number) => props.cacheWrite?.[i] ?? 0
 const totalIn = computed(() => props.tokensIn.reduce((a, b) => a + b, 0))
 const totalCache = computed(() => props.cacheRead.reduce((a, b) => a + b, 0))
 const totalOut = computed(() => props.tokensOut.reduce((a, b) => a + b, 0))
-const total = computed(() => totalIn.value + totalCache.value + totalOut.value)
+const total = computed(() => totalIn.value + totalCache.value + totalOut.value
+  + (props.cacheWrite?.reduce((a, b) => a + b, 0) ?? 0))
 const dailyAvg = computed(() => Math.round(total.value / Math.max(1, props.labels.length)))
 const today = computed(() => {
   const i = props.labels.length - 1
   if (i < 0) return 0
-  return props.tokensIn[i] + props.cacheRead[i] + props.tokensOut[i]
+  return props.tokensIn[i] + props.cacheRead[i] + cw(i) + props.tokensOut[i]
 })
 const cachePct = computed(() => {
   const denom = totalIn.value + totalCache.value
@@ -64,7 +67,7 @@ const chartData = computed(() => {
   labels: props.labels,
   datasets: [{
     label: t('profileGuguUi.tooltipTotal'),
-    data: props.labels.map((_, i) => props.tokensIn[i] + props.cacheRead[i] + props.tokensOut[i]),
+    data: props.labels.map((_, i) => props.tokensIn[i] + props.cacheRead[i] + cw(i) + props.tokensOut[i]),
     borderColor: lineColor,
     backgroundColor: lineFill,
     fill: true,

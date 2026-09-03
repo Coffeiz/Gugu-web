@@ -11,6 +11,7 @@
             :labels="trends?.labels ?? []"
             :tokens-in="trends?.tokens_in ?? []"
             :cache-read="trends?.cache_read ?? []"
+            :cache-write="trends?.cache_write ?? []"
             :tokens-out="trends?.tokens_out ?? []"
           />
         </template>
@@ -59,7 +60,7 @@ function setReopenResume(value: boolean) { reopenResume.value = value; localStor
 
 const quota = ref({ used_6h: 0, limit_6h: null as number | null, reset_6h_at: null as string | null, used_weekly: 0, limit_weekly: null as number | null, usage_kind: 'platform', is_byok: false, byok_tokens_today: 0, byok_tokens_month: 0, byok_cache_rate: 0 })
 const quotaLoading = ref(false)
-const trends = ref<{ labels: string[]; tokens_in: number[]; cache_read: number[]; tokens_out: number[] } | null>(null)
+const trends = ref<{ labels: string[]; tokens_in: number[]; cache_read: number[]; cache_write: number[]; tokens_out: number[] } | null>(null)
 const recoverLabel = computed(() => {
   if (!quota.value.used_6h || !quota.value.reset_6h_at) return t('profileGuguUi.fullEnergy')
   const diffMs = new Date(quota.value.reset_6h_at).getTime() - Date.now()

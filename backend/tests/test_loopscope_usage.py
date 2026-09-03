@@ -50,6 +50,13 @@ def test_context_threshold_adds_openai_cache_tokens_after_usage_normalization():
     assert _provider_context_usage(SimpleNamespace(api_format="openai"), result) == 100
 
 
+def test_context_threshold_adds_anthropic_cache_write_tokens():
+    """Anthropic 总输入 = input + cache_creation + cache_read；首次建大缓存时
+    （input=1k, creation=80k, read=0）漏记 creation 会把 81k 上下文看成 1k。"""
+    result = SimpleNamespace(usage_in=1, cache_tokens=0, cache_write_tokens=80)
+    assert _provider_context_usage(SimpleNamespace(api_format="anthropic"), result) == 81
+
+
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
     """跑得快：退避/打字延迟不用真等。"""

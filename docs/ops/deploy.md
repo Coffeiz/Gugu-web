@@ -395,10 +395,17 @@ docker network inspect gugu-sandbox-egress
 >
 > **现在 compose 已自动处理**：`--profile sandbox` 启动时会先跑一次性服务
 > `sandbox-bootstrap`，幂等确保目标 daemon 上有 egress 内部网络、squid 代理
-> （`docker save | load` 从宿主搬运镜像）和沙盒基础镜像；rootful 单 daemon 部署下
-> 各项已由 compose 提供，脚本自动全部跳过。日志出现「沙盒环境就绪」即通过
+> 和沙盒基础镜像；rootful 单 daemon 部署下各项已由 compose 提供，脚本自动
+> 全部跳过（compose 管理的代理按 `com.docker.compose.service` 标签识别）。
+> 日志出现「沙盒环境就绪」即通过
 > （`docker logs gugu-web-main-sandbox-bootstrap-1`）。bootstrap 失败不阻塞
 > sandboxd 启动（`required: false`），但 egress 会不可用，需查日志。
+>
+> **Rootless-only 主机**（没有 `/var/run/docker.sock`）：bootstrap 默认不再挂
+> 宿主 rootful socket，缺失镜像时由 rootless daemon 直接 pull。若 rootless
+> daemon 拉不到镜像，可在 `docker-compose.override.yml` 里把 rootful socket
+> 只读挂进 bootstrap 的 `/var/run/docker.sock`，脚本会自动改走
+> `docker save | load` 从宿主搬运。
 >
 > 手动等效操作（不依赖 bootstrap 服务时）：
 >

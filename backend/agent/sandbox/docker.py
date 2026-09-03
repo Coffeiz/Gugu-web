@@ -122,6 +122,23 @@ class DockerSandboxExecutor:
             raise ValueError("未安装 Docker CLI")
         self.image = _image_ref(settings)
 
+    def _daemon_mount_src(self) -> Path:
+        """bind src 由目标 Docker daemon 按**宿主机**视角解析。
+
+        容器里的数据根（STORAGE__LOCAL_PATH，compose 下是 /data/users）在宿主
+        可能是自定义的 GUGU_DATA_HOST_DIR；compose 会注入 SANDBOX__HOST_DATA_ROOT
+        把它翻译成宿主路径。未注入（本机直跑，进程与 daemon 同视角）则原样使用。
+        """
+        host_root = getattr(self.settings, "host_data_root", None)
+        if not host_root:
+            return self.root
+        from app.core.config import get_settings
+        logical_root = Path(get_settings().storage.local_path).resolve()
+        try:
+            return Path(host_root) / self.root.relative_to(logical_root)
+        except ValueError:
+            return self.root
+
     def _resolve_cwd(self, cwd: str | Path) -> Path:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
         return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
@@ -173,7 +190,7 @@ class DockerSandboxExecutor:
             "--ulimit=nofile=1024:1024",
             f"--user={_CONTAINER_USER}",
             # bind mount 默认可写；--mount 长语法不接受裸 `rw` 字段。
-            f"--mount=type=bind,src={self.root},dst={_CONTAINER_ROOT}",
+            f"--mount=type=bind,src={self._daemon_mount_src()},dst={_CONTAINER_ROOT}",
             f"--workdir={container_cwd}",
             "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "--env=LANG=C.UTF-8",

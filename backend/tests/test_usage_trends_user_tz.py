@@ -15,10 +15,10 @@ from app.api.v1 import auth as auth_api
 
 async def _fake_detail(db, user_id, since):
     return [
-        # 东京 09-02 00:30 / UTC+8 09-01 23:30 —— 判别行
-        (datetime(2026, 9, 1, 15, 30, tzinfo=timezone.utc), 100, 40, 5),
+        # 东京 09-02 00:30 / UTC+8 09-01 23:30 —— 判别行；(tin, cache_read, cache_write, tout)
+        (datetime(2026, 9, 1, 15, 30, tzinfo=timezone.utc), 100, 40, 3, 5),
         # 东京 09-03 12:00 —— 常规行
-        (datetime(2026, 9, 3, 3, 0, tzinfo=timezone.utc), 10, 0, 2),
+        (datetime(2026, 9, 3, 3, 0, tzinfo=timezone.utc), 10, 0, 0, 2),
     ]
 
 
@@ -37,3 +37,5 @@ async def test_usage_trends_groups_days_by_user_timezone(monkeypatch):
     assert result["cache_read"] == [0, 40, 0]
     assert result["tokens_out"] == [0, 5, 2]
     assert result["today"] == 12
+    # cache_write 计入 total 但不单独成序列
+    assert result["total"] == 160

@@ -68,6 +68,9 @@ class RoundResult:
     cache_tokens: int = 0              # 统一映射：anthropic 的 cache_read_input_tokens /
                                         # deepseek 的 prompt_cache_hit_tokens，对外 SSE 字段名
                                         # 两边本来就都叫 cache_read，这里合并成一个字段不改变行为。
+    cache_write_tokens: int = 0        # anthropic 的 cache_creation_input_tokens：本轮新写入
+                                        # 缓存的输入，既不在 usage_in 也不在 cache_tokens 里，
+                                        # 但同样是真实上下文占用，漏记会低估压缩阈值。
     raw: Any = None                    # 驱动私有：给 append_* 方法用的原始数据
 
 
@@ -367,6 +370,7 @@ class AnthropicDriver:
             text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(final.usage, "cache_creation_input_tokens", 0) or 0,
             raw=final.content,
         ))
 

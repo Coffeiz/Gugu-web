@@ -126,6 +126,11 @@ class SandboxSettings(BaseModel):
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
     enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
+    host_data_root: str | None = Field(
+        None,
+        description="宿主 Docker daemon 视角的数据根目录（compose 注入 GUGU_DATA_HOST_DIR/users）；"
+                    "bind src 需把容器内逻辑路径翻译成它。本机直跑不注入即不翻译",
+    )
     image: str = Field("debian:bookworm-slim", description="Shell 沙盒基础镜像")
     image_digest: str = Field(
         "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",

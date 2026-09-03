@@ -519,25 +519,29 @@ async def get_usage_trends(
     date_keys = [(start_local + timedelta(days=i)).date().isoformat() for i in range(days)]
 
     # 单用户近 N 天的行数有限，一次取回明细后按本地日聚合，避免依赖数据库时区函数；
-    # 汇总值直接从按天结果求和，保证与序列口径一致。
+    # 汇总值直接从按天结果求和，保证与序列口径一致。cache_write（Anthropic 本轮
+    # 新写入缓存的输入）也计入总 Token，否则建缓存当天总量会明显少算。
     detail = await byok_usage_detail(db, current_user.id, start_utc)
-    by_day: dict[str, list[int]] = {k: [0, 0, 0] for k in date_keys}
-    for created_at, tin, cache_read, tout in detail:
+    by_day: dict[str, list[int]] = {k: [0, 0, 0, 0] for k in date_keys}
+    for created_at, tin, cache_read, cache_write, tout in detail:
         key = created_at.astimezone(tz).date().isoformat()
         if key in by_day:
             by_day[key] = [
                 by_day[key][0] + (tin or 0),
                 by_day[key][1] + (cache_read or 0),
-                by_day[key][2] + (tout or 0),
+                by_day[key][2] + (cache_write or 0),
+                by_day[key][3] + (tout or 0),
             ]
 
     tokens_in = [by_day[k][0] for k in date_keys]
     cache_read = [by_day[k][1] for k in date_keys]
-    tokens_out = [by_day[k][2] for k in date_keys]
+    cache_write = [by_day[k][2] for k in date_keys]
+    tokens_out = [by_day[k][3] for k in date_keys]
     total_in = sum(tokens_in)
     total_cache = sum(cache_read)
+    total_cache_write = sum(cache_write)
     total_out = sum(tokens_out)
-    total = total_in + total_cache + total_out
+    total = total_in + total_cache + total_cache_write + total_out
     return {
         "labels": labels,
         "tokens_in": tokens_in,
@@ -545,7 +549,7 @@ async def get_usage_trends(
         "tokens_out": tokens_out,
         "total": total,
         "daily_avg": round(total / days),
-        "today": tokens_in[-1] + cache_read[-1] + tokens_out[-1],
+        "today": tokens_in[-1] + cache_read[-1] + cache_write[-1] + tokens_out[-1],
         "cache_rate": (total_cache / (total_in + total_cache)) if (total_in + total_cache) else 0,
     }
 

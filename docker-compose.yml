@@ -83,6 +83,8 @@ services:
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -120,6 +122,8 @@ services:
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -229,16 +233,14 @@ services:
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+    # 故意不默认挂宿主 rootful socket：rootless-only 主机没有 /var/run/docker.sock，
+    # 挂了会让 compose 直接起不来；镜像缺失时脚本退化为 rootless 直接 pull。
+    # rootless 无法拉镜像的机器可自行在 override 里把 rootful socket 只读挂进
+    # /var/run/docker.sock，脚本会自动改走 save|load 搬运。
     volumes:
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
-      # 宿主 rootful socket 只读挂载，用于把镜像 save|load 进 rootless daemon；
-      # 个别无 rootful daemon 的机器可缺省，脚本退化为直接 pull。
-      - type: bind
-        source: /var/run/docker.sock
-        target: /var/run/docker.sock
-        read_only: true
-        bind:
-          create_host_path: false
       - ./squid/egress.conf:/config/squid/egress.conf:ro
       - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
     restart: "no"
@@ -266,6 +268,8 @@ services:
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       sandbox-bootstrap:
