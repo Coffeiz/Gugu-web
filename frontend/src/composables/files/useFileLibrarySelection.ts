@@ -56,7 +56,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   }
   // 退出多选的两段式：先只关模式位让 checkbox 进入离场过渡（DOM 节点还在，selected
   // 集合未清 → .checked 保留，带着选中样式一次性淡出），过渡结束再清集合。若同帧清空，
-  // 选中高亮会在淡出第一帧就消失，暗色下结尾明显闪一下。200ms ≈ sel-cb leave 0.18s。
+  // 选中高亮会在淡出第一帧就消失，暗色下结尾明显闪一下。150ms = sel-cb leave 0.15s。
   let exitTimer: ReturnType<typeof setTimeout> | null = null
   function clearSelection() {
     if (exitTimer !== null) { clearTimeout(exitTimer); exitTimer = null }
@@ -70,7 +70,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
       exitTimer = null
       state.clearSelection(); box.clearSelection(); selectedTrashFolderIds.value = new Set(); lastAnchorIndex.value = -1
       selectionExiting.value = false
-    }, 200)
+    }, 150)
   }
   function handleFolderClick(folder: { id: number | string }, event: MouseEvent) {
     if (event.shiftKey) {

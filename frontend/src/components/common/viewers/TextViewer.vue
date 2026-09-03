@@ -19,7 +19,7 @@
         />
       </div>
     </template>
-    <!-- Markdown 编辑复用 CodeMirror 的语法高亮；txt 继续使用轻量 textarea。 -->
+    <!-- Markdown 编辑复用 CodeMirror 的语法高亮。 -->
     <template v-else-if="editing && isMarkdownFile">
       <div class="tv-edit-cm-wrap tv-edit-md-wrap">
         <Codemirror
@@ -35,33 +35,13 @@
         <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? t('viewerUi.saving') : t('viewerUi.save') }}</button>
       </div>
     </template>
-    <template v-else-if="editing">
-      <textarea
-        ref="editArea" v-model="editText" class="tv-edit-textarea"
-        spellcheck="false" @keydown.esc="cancelEdit"
-      ></textarea>
-      <div class="tv-edit-bar">
-        <span v-if="saveError" class="tv-edit-error">{{ saveError }}</span>
-        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">{{ t('viewerUi.cancel') }}</button>
-        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? t('viewerUi.saving') : t('viewerUi.save') }}</button>
-      </div>
-    </template>
     <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
       <button v-if="editable" class="tv-edit-toggle" :title="t('viewerUi.edit')" @click="startEdit">
         <Icon name="action.edit" :size="13" />
       </button>
       <div v-if="truncated" class="tv-notice">{{ t('viewerUi.truncated') }}</div>
-      <!-- Markdown 渲染 -->
+      <!-- Markdown 渲染；txt/代码类扩展名走上面的 CodeMirror，不会落到这里 -->
       <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
-      <!-- 纯文本（txt；代码类扩展名走上面的 CodeMirror，不会落到这里） -->
-      <table v-else class="tv-table" cellspacing="0">
-        <tbody>
-          <tr v-for="(line, i) in lines" :key="i">
-            <td class="tv-ln">{{ Number(i) + 1 }}</td>
-            <td class="tv-code">{{ line }}</td>
-          </tr>
-        </tbody>
-      </table>
     </div>
   </div>
 </template>
@@ -215,26 +195,25 @@ const isVirtualDocument = computed(() => props.sourceText !== null && !!props.sa
 const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.value)
 // 可交互勾选 = md 文件 + 真实文件
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
-// 可编辑 = 后端认得的文本类扩展名 + 真实文件（md/txt 走「编辑」按钮切换态用得到；代码类扩展名
-// 不看这个——代码文件不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
+// 可编辑 = 后端认得的文本类扩展名 + 真实文件（md 走「编辑」按钮切换态用得到；txt/代码类扩展名
+// 不看这个——它们不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
 const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isEditableDocument.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
-// 代码类扩展名：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror——它本身既能当
-// 预览用（只读态），也能编辑（真实文件时），不需要 .tv-table + 单独编辑框这套双视图。
-// md/txt 太小，双视图切换本来就没问题，不用换。
+// 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
+// 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
+// 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
 const isCodeExt = computed(() => {
   const e = (props.ext || '').toLowerCase()
-  return EDITABLE_EXTS.has(e) && e !== 'md' && e !== 'markdown' && e !== 'txt'
+  return EDITABLE_EXTS.has(e) && !isMarkdownFile.value
 })
 const loading     = ref(false)
 const error       = ref<string | null>(null)
 const truncated   = ref(false)
 
-// ── 编辑模式：md/txt 的「预览+编辑」切换态，见 editable；代码类扩展名见 isCodeExt（没有切换态） ──
+// ── 编辑模式：仅 md 有「渲染预览 + 编辑」切换态；txt/代码类见 isCodeExt（没有切换态） ──
 const editing   = ref(false)
 const mdEditorReady = ref(false)
 const editText  = ref('')
-const editArea  = ref<HTMLTextAreaElement | null>(null)   // txt 用的纯文本 textarea
 const saving    = ref(false)
 const saveError = ref('')
 
@@ -307,36 +286,20 @@ async function doAutoSave(targetKey: string | number, content: string) {
   }
 }
 
-// md/txt 的预览/编辑双视图是两套独立 DOM，进出编辑态要把滚动位置对上：md 渲染成 HTML 后跟源码
+// md 的预览/编辑双视图是两套独立 DOM，进出编辑态要把滚动位置对上：md 渲染成 HTML 后跟源码
 // 行号没有线性对应关系（标题/段落/代码块各自高度不同），只能按滚动比例（scrollTop / 可滚动
-// 距离）估算；txt 是等高的行号表格，能精确算「顶部是第几行」，textarea 按自己的行高换算对应。
-let scrollFrac  = 0     // md 用
-let pendingLine = 0     // txt 用
+// 距离）估算。
+let scrollFrac = 0
 
-function rowHeightOf(el: HTMLElement | null) {
-  if (!el) return 0
-  if (el.tagName === 'TEXTAREA') return parseFloat(getComputedStyle(el).lineHeight) || 0
-  const tr = el.querySelector('tr')
-  return tr ? tr.getBoundingClientRect().height : 0
-}
 function captureScroll(el: HTMLElement | null) {
-  if (isMarkdownFile.value) {
-    const max = el ? el.scrollHeight - el.clientHeight : 0
-    scrollFrac = (el && max > 0) ? el.scrollTop / max : 0
-    return
-  }
-  const rh = rowHeightOf(el)
-  pendingLine = (el && rh) ? Math.round(el.scrollTop / rh) : 0
+  if (!isMarkdownFile.value || !el) return
+  const max = el.scrollHeight - el.clientHeight
+  scrollFrac = max > 0 ? el.scrollTop / max : 0
 }
 function applyScroll(el: HTMLElement | null) {
-  if (!el) return
-  if (isMarkdownFile.value) {
-    const max = el.scrollHeight - el.clientHeight
-    el.scrollTop = max > 0 ? scrollFrac * max : 0
-    return
-  }
-  const rh = rowHeightOf(el)
-  el.scrollTop = rh ? pendingLine * rh : 0
+  if (!el || !isMarkdownFile.value) return
+  const max = el.scrollHeight - el.clientHeight
+  el.scrollTop = max > 0 ? scrollFrac * max : 0
 }
 
 async function startEdit() {
@@ -347,20 +310,14 @@ async function startEdit() {
   mdEditorReady.value = false
   const loadSeq = ++cmLoadSeq
   editing.value = true
-  if (isMarkdownFile.value) {
-    await loadCmExtensions('MD', editText.value)
-    if (loadSeq !== cmLoadSeq || !editing.value) return
-    mdEditorReady.value = true
-  }
+  await loadCmExtensions('MD', editText.value)
+  if (loadSeq !== cmLoadSeq || !editing.value) return
+  mdEditorReady.value = true
   await nextTick()
-  if (isMarkdownFile.value) cmView.value?.focus()
-  else {
-    editArea.value?.focus()
-    applyScroll(editArea.value)
-  }
+  cmView.value?.focus()
 }
 function cancelEdit() {
-  captureScroll(editArea.value)
+  captureScroll(tvScroll.value)
   cmLoadSeq++
   cmView.value = null
   mdEditorReady.value = false
@@ -371,7 +328,7 @@ async function saveEdit() {
   saving.value = true
   saveError.value = ''
   try {
-    captureScroll(editArea.value)
+    captureScroll(tvScroll.value)
     if (isVirtualDocument.value) {
       await props.saveSource?.(editText.value)
     } else {
@@ -774,14 +731,23 @@ onBeforeUnmount(() => {
 }
 .tv-edit-cm-wrap :deep(.cm-selectionBackground),
 .tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
+  /* Ctrl+D / Alt+拖拽产生的所有选区（主+副）都画成这个类，统一令牌色 */
   background: var(--selection-text-bg) !important;
 }
 .tv-edit-cm-wrap :deep(.cm-content ::selection),
-.tv-edit-textarea::selection,
 .tv-table ::selection,
 .tv-md ::selection {
   background: var(--selection-text-bg);
   color: var(--content-primary);
+}
+/* 选中一个词后其它相同词的匹配高亮（basicSetup 的 highlightSelectionMatches）：
+   默认写死半透明绿 #99ff7780，与主题无关、暗色下跟选区色混在一起难以分辨。
+   主匹配略浓、其余匹配略淡，都从主色派生以区分于普通选区。 */
+.tv-edit-cm-wrap :deep(.cm-selectionMatch) {
+  background: color-mix(in srgb, var(--action-primary) 22%, transparent);
+}
+.tv-edit-cm-wrap :deep(.cm-selectionMatch-main) {
+  background: color-mix(in srgb, var(--action-primary) 45%, transparent);
 }
 /* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
 .tv-edit-cm-wrap :deep(.tok-heading),
