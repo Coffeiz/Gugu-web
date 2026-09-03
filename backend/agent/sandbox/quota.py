@@ -83,6 +83,11 @@ def ensure_sandbox_root(root: str | Path) -> Path:
     if base.name != "shell" or base.parent.name == "":
         raise ValueError("沙盒目录不是受支持的用户 Shell 根目录")
     base.mkdir(parents=True, exist_ok=True)
+    # 生产部署中沙盒容器由 backend 通过 docker.sock 作为兄弟容器启动；rootless
+    # docker 下沙盒进程映射到部署用户 uid，与 backend 容器的 root 不同，必须在
+    # 挂载根目录上有写权限。目录属主无法跨部署环境保证一致，这里统一放开为
+    # 全员可写；容器侧仍受 cap-drop、只读根和挂载范围限制，不扩大攻击面。
+    base.chmod(0o777)
     if not base.is_dir():
         raise ValueError("沙盒根目录不可用")
     return base

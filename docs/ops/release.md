@@ -74,6 +74,23 @@ docker compose -p gugu-web-main -f docker-compose.prod.yml up -d --force-recreat
 - compose 项目名必须 `-p gugu-web-main`；`backend/.env`、`config.override.json` 属用户数据，流程中只读。
 - sandboxd 与 backend 共用镜像 tag，`up -d` 检测不到 tag 底层镜像变化，必须 `--force-recreate`。
 
+### Shell 沙盒前置（首次部署或迁移时）
+
+沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=/data/users/<uid>/shell`
+由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `/data` 路径（compose 用 local
+driver 把 `GUGU_DATA_HOST_DIR` bind 成 `gugu_data` 卷，默认 `/data`）：
+
+```bash
+mkdir -p /data && chown 1001:1001 /data   # 1001 = rootless docker 用户的 uid
+docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+```
+
+- 沙盒镜像 `--pull=never`，必须提前拉进 rootless daemon 的镜像库，否则报 image not found。
+- rootless 下沙盒进程映射到部署用户 uid，backend（root）创建的 shell 根目录会由
+  `ensure_sandbox_root` 放开为 0777，属主问题不需要手工处理。
+- 从旧 named volume 迁移：`docker compose down` 后用临时容器把
+  `gugu-web-main_gugu_data` 卷内容拷到 `/data`，`docker volume rm` 旧卷再 `up -d`。
+
 ### 部署后验证清单
 
 - `docker ps`：backend healthy；worker/gateway 显示 unhealthy 是已知 healthcheck 配错（容器内无

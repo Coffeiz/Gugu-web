@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **终端沙盒（Docker 部署）**：修复生产 Docker 部署下终端无法启动的问题——沙盒容器由 backend 通过 docker.sock 作为兄弟容器启动，用户数据改用宿主机 `/data` 目录承接（compose 可用 `GUGU_DATA_HOST_DIR` 调整），保证宿主机与容器内路径一致；沙盒根目录创建时统一放开写权限，兼容 rootless Docker。
+
 ## [1.0.2] - 2026-09-03
 
 ### 修复

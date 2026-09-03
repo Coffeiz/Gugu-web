@@ -263,7 +263,18 @@ services:
 
 volumes:
   pgdata:
+  # 用户数据不能用普通 named volume：Shell 沙盒容器由 backend 通过 docker.sock
+  # 作为兄弟容器启动，其 --mount src=/data/users/<uid>/shell 由宿主机 daemon 解析，
+  # 因此宿主机上必须存在与容器内一致的 /data 路径。这里用 local driver 把
+  # GUGU_DATA_HOST_DIR（默认 /data）bind 成同名卷，容器内外路径保持一致。
+  # 部署前置：mkdir -p /data，且属主与 rootless docker 用户一致（默认 1001:1001），
+  # 否则沙盒容器无法写入；backend 会在创建用户 shell 根目录时放开目录权限。
   gugu_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GUGU_DATA_HOST_DIR:-/data}
   gugu_config:
   sandbox_socket:
   gugu_logs:
