@@ -71,6 +71,7 @@ jobs:
           file: backend/Dockerfile.prod
           platforms: linux/amd64
           push: false
+          load: true
           tags: gugu-web-backend:ci
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
@@ -82,9 +83,32 @@ jobs:
           file: frontend/Dockerfile.prod
           platforms: linux/amd64
           push: false
+          load: true
           tags: gugu-web-frontend:ci
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+
+      # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
+      # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
+      # SBOM 会导致误报已修复的漏洞（v1.0.2 曾因此报 msgpack 1.1.2/setuptools 70.3.0，
+      # 而镜像实际为 1.2.2/84.0.0）。本地 daemon 镜像不涉及 referrer 发现。
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: gugu-web-backend:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: gugu-web-frontend:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
 
   publish:
     name: Publish GHCR and Docker Hub release
@@ -184,23 +208,9 @@ jobs:
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
 
-      - name: Scan published images
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE_REPOSITORY }}-backend@${{ steps.backend-image.outputs.digest }}
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
-
-      - name: Scan frontend image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE_REPOSITORY }}-frontend@${{ steps.frontend-image.outputs.digest }}
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
+      # 安全门已前移到 docker-build job（扫本地加载镜像的真实文件系统）。
+      # 此处不扫 registry 引用：trivy 会优先消费 registry 侧可关联的第三方 SBOM
+      # referrer，历史构建残留的过期 SBOM 会导致误报（见 docker-build 内注释）。
 
       - name: Generate update manifest
         env:
