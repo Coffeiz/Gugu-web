@@ -388,6 +388,25 @@ docker compose -f docker-compose.prod.yml ps egress-proxy sandboxd
 docker network inspect gugu-sandbox-egress
 ```
 
+> **⚠️ 沙盒跑在 Rootless daemon 时（backend 通过 `GUGU_DOCKER_SOCKET` 指向
+> `/run/user/<uid>/docker.sock`），egress 必须在 rootless daemon 里复刻一份**——
+> Compose 的 `egress-proxy` 容器和 `gugu-sandbox-egress` 网络建在 rootful daemon，
+> 沙盒容器看不见，执行时直接报「受控 egress Docker 网络不存在」：
+>
+> ```bash
+> D='docker -H unix:///run/user/<uid>/docker.sock'
+> $D network create --internal gugu-sandbox-egress
+> # rootless daemon 通常无法直连 Docker Hub，镜像从 rootful 侧搬运：
+> docker save ubuntu/squid:latest | $D load
+> $D run -d --name egress-proxy --network gugu-sandbox-egress \
+>   --restart unless-stopped -v ./squid/egress.conf:/etc/squid/squid.conf:ro ubuntu/squid:latest
+> $D network connect bridge egress-proxy   # squid 自己要走默认桥出网，沙盒侧仍是内部网
+> $D run --rm --network=gugu-sandbox-egress -e HTTPS_PROXY=http://egress-proxy:3128 \
+>   curlimages/curl:latest -sI https://www.baidu.com   # 端到端验证
+> ```
+>
+> 同理，rootless daemon 里也要提前 `docker save | load` 沙盒基础镜像（`--pull=never`）。
+
 检查通过后，可以在 Admin → Shell 沙盒直接填写并保存受控代理地址，再打开“临时公网访问”。这不会把沙盒默认网络改成公网；
 只有当前会话显式选择 `network=egress` 且通过确认门时，sandboxd 才会使用内部 egress 网络。
 代理配置文件为 `squid/egress.conf`，禁止改为普通 `bridge`，也不要给 backend/worker 挂载
