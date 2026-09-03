@@ -243,7 +243,29 @@ async def lifespan(app: FastAPI):
     await _shutdown_step("数据库连接池", dispose_engine)
 
 
-app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
+# docs_url=None：默认 /docs 引用 swagger-ui-dist@5 浮动 tag，会被下方自定义路由替代。
+app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan, docs_url=None)
+
+
+@app.get("/docs", include_in_schema=False)
+async def _swagger_ui_pinned():
+    """钉住 Swagger UI 的 CDN 版本。
+
+    FastAPI 默认引用 swagger-ui-dist@5 浮动 tag，jsdelivr 会自动升到最新版；
+    2026-09 实测 5.32.x（gitDirty 构建）opblock 上 copy 按钮与展开箭头图标重叠。
+    钉到已知正常的 5.17.14，升级需手动改这里并检查 /docs 渲染。
+    """
+    from fastapi.openapi.docs import get_swagger_ui_html
+
+    cdn = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14"
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url=f"{cdn}/swagger-ui-bundle.js",
+        swagger_css_url=f"{cdn}/swagger-ui.css",
+        swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+    )
 
 app.add_middleware(
     CORSMiddleware,
