@@ -581,13 +581,9 @@ defineExpose({ rootEl: cardRef })
   font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.nc-icon {
-  padding: 3px; border: none; border-radius: 5px;
-  background: transparent; color: var(--text-secondary); cursor: pointer;
-  display: inline-flex; align-items: center;
-}
-.nc-icon:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
-.nc-icon.danger:hover { background: rgba(176,120,88,0.12); color: #b07858; }
+/* .nc-icon 按钮的绘制已上收到 CardAffordances 的统一悬浮按钮契约
+   （与文件库 .file-card-btn 同款：实底 + 0.15s 淡入淡出 + danger 变体），
+   这里不再各画一份透明底样式。 */
 
 /* min-height 让短便签也有几行留白、卡片偏方形——一行字的扁条卡在 440px 列里太寒酸；
    overflow-wrap 治连续长串（纯数字/URL）不换行撑破卡片 */
