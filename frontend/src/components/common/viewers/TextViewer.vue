@@ -700,18 +700,26 @@ onBeforeUnmount(() => {
 }
 .tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
 /* 折叠槽（basicSetup 内置，无法替换扩展，只能样式化）：
-   默认 ⌄/› 字符样式发虚，按 FlipChevron 的观感重做——展开向下/收起向右本来就是这两个字符，
-   这里统一尺寸、令牌配色和 hover 反馈。 */
+   原生是 ⌄/› 两个文本字符，字形不对齐也没法动画。这里把字符隐掉（font-size:0），
+   用 CSS mask 渲染与 FlipChevron 完全相同的 SVG 路径，颜色走令牌（mask 只取 alpha，
+   填充色由 background-color 提供）；收起态靠同一个向下箭头绕中心 rotate(-90deg)——
+   和 FlipChevron 的旋转机制一致。展开/收起态用默认 title（"Fold line"/"Unfold line"）区分。 */
 .tv-edit-cm-wrap :deep(.cm-foldGutter span) {
   display: inline-block;
-  min-width: 14px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--content-tertiary);
+  width: 12px;
+  height: 12px;
+  font-size: 0;
+  vertical-align: middle;
+  background-color: var(--content-tertiary);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
   cursor: pointer;
-  transition: color var(--motion-hover-control) var(--motion-ease-standard);
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    transform var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tv-edit-cm-wrap :deep(.cm-foldGutter span:hover) { color: var(--action-primary); }
+.tv-edit-cm-wrap :deep(.cm-foldGutter span:hover) { background-color: var(--action-primary); }
+.tv-edit-cm-wrap :deep(.cm-foldGutter span[title='Unfold line']) { transform: rotate(-90deg); }
 /* 折叠占位符：默认写死白底 #eee + 灰边，暗色下是突兀的白块。改令牌软底 + 虚线边。 */
 .tv-edit-cm-wrap :deep(.cm-foldPlaceholder) {
   background: var(--surface-soft);
