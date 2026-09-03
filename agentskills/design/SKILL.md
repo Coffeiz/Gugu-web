@@ -29,6 +29,13 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 ## 组件规范
 
 - 按钮：圆角 8-9px，主色填充或 ghost 描边
+- **卡片悬浮操作按钮**：跨域契约统一定义在 `frontend/src/assets/styles/components/card-actions.css`
+  （`.file-card-btn` / `.file-list-btn`，file- 前缀仅为历史兼容）。实底 `--control-bg` +
+  毛玻璃 + `--elevation-card` 投影，背景/前景 `0.15s` 淡入淡出；破坏性操作加 `del`（或
+  `danger`）类取红色 hover。文件库/Dashboard/ProjectModal 直接挂类；画布卡片经
+  `CardAffordances.vue` 的 `:deep(button)` 复用同一口径。**新卡片类型一律消费该契约，
+  禁止另画透明底、无过渡的按钮**；改动契约时 `card-actions.css` 与 `CardAffordances.vue`
+  两处声明同步（归属说明见 `assets/styles/STYLE-OWNERS.md`）。
 - 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
 - 卡片：`--surface-card-solid` 或毛玻璃背景，圆角 12-16px
 - 侧边栏：220px 固定宽度，Glassmorphism 背景

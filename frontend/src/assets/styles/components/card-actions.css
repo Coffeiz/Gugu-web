@@ -1,0 +1,28 @@
+/* 卡片悬浮/行内操作按钮的跨域共享契约。
+ * 消费方：文件库、Dashboard FilePanel、ProjectModal（直接用类）与画布四类卡的
+ * CardAffordances（:deep 复用同一 token/过渡口径）。类名保留 file- 前缀仅为
+ * 兼容既有模板，不再属于文件域私有样式；新卡片类型一律消费这里，不要另画。 */
+
+/* 卡片悬浮操作按钮（默认 20×20；实底控制面 + 毛玻璃 + 0.15s 淡入淡出） */
+.file-card-btn {
+  position: relative;
+  width: 20px; height: 20px; border-radius: 5px; border: none;
+  background: var(--control-bg); color: var(--control-fg);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+  box-shadow: var(--elevation-card);
+}
+.file-card-btn::after { content: ''; position: absolute; inset: -2px; }
+.file-card-btn:hover { background: var(--control-bg-hover); color: var(--control-fg-strong); }
+.file-card-btn.del:hover, .file-card-btn.danger:hover { color: var(--status-danger); background: var(--status-danger-bg); }
+
+/* 列表行操作按钮（默认 24×24，父行 hover 才可见） */
+.file-list-btn {
+  width: 24px; height: 24px; border-radius: 6px; border: none;
+  background: none; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.file-list-btn:hover { background: var(--action-soft); color: var(--action-primary); }
+.file-list-btn.del:hover, .file-list-btn.danger:hover { background: var(--status-danger-bg); color: var(--status-danger); }
