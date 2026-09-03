@@ -247,7 +247,7 @@ import Checkbox from '@/components/common/controls/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { browserTz } from '@/utils/dateAttribution'
-import { barChartOptions } from '@/utils/chartKit'
+import { barChartOptions, chartThemeKey, cssVar } from '@/utils/chartKit'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
   BLUE, AMBER, TEAL, fmtTok, sumArr, dailyAvg,
@@ -325,17 +325,21 @@ const depthChart = computed(() => {
     labels: buckets.map((b: any) => t('adminAnalyticsUi.rounds', { value: b.label })),
     datasets: [{
       data: buckets.map((b: any) => b.users),
-      backgroundColor: 'rgba(123,127,178,0.55)',
-      hoverBackgroundColor: 'rgba(123,127,178,0.8)',
+      // 主题信号建立响应式依赖：主题/调色板切换时重算柱色令牌
+      backgroundColor: colorMix(chartThemeKey.value, 55),
+      hoverBackgroundColor: colorMix(chartThemeKey.value, 80),
       borderRadius: 5,
       maxBarThickness: 44,
     }],
   }
 })
 
-const barOpts = barChartOptions({
+const colorMix = (_sig: string, alpha: number) =>
+  `color-mix(in srgb, ${cssVar('--action-primary', 'rgba(123,127,178,1)')} ${alpha}%, transparent)`
+
+const barOpts = computed(() => barChartOptions({
   tooltipLabel: (ctx: any) => `${ctx.raw} ${t('adminAnalyticsUi.person')}`,
-})
+}))
 
 async function load() {
   loading.value = true

@@ -49,9 +49,13 @@ proxy_host="${EGRESS_PROXY_URL#*://}"
 proxy_host="${proxy_host%%:*}"
 if ! $RD container inspect "$proxy_host" >/dev/null 2>&1; then
     load_image_if_missing "$PROXY_IMAGE"
-    $RD run -d --name "$proxy_host" --network "$EGRESS_NETWORK" \
-        --restart unless-stopped \
-        -v "$SQUID_CONF:/etc/squid/squid.conf:ro" "$PROXY_IMAGE"
+    # 不能用 -v 挂 $SQUID_CONF：bind source 由目标 daemon（rootless）在其宿主机视角解析，
+    # 看不到 bootstrap 容器里的 gugu_config 卷路径。docker cp 的源由 CLI（即本容器）解析，
+    # 先 create 再拷配置再 start，配置就能真正进到目标 daemon 管理的容器里。
+    $RD create --name "$proxy_host" --network "$EGRESS_NETWORK" \
+        --restart unless-stopped "$PROXY_IMAGE"
+    $RD cp "$SQUID_CONF" "$proxy_host:/etc/squid/squid.conf"
+    $RD start "$proxy_host"
     # squid 自己要走默认桥出网；沙盒侧仍只见内部网络。
     $RD network connect bridge "$proxy_host" || true
 fi

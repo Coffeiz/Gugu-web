@@ -24,7 +24,7 @@ import {
   LineElement, Filler, Tooltip,
 } from 'chart.js'
 import { useI18n } from 'vue-i18n'
-import { fmtTok, lineChartOptions, cssVar } from '@/utils/chartKit'
+import { fmtTok, lineChartOptions, cssVar, chartThemeKey } from '@/utils/chartKit'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip)
 
@@ -53,11 +53,14 @@ const cachePct = computed(() => {
 })
 
 // 线条/文字颜色一律走令牌；canvas 里用 color-mix 派生透明版本（浏览器 canvas 支持 CSS color-mix）。
+// chartData 读取 chartThemeKey 建立主题依赖：主题/调色板切换时重算线条色。
 const full = (n: number) => new Intl.NumberFormat().format(Number(n) || 0)
-const lineColor = cssVar('--action-primary', 'rgba(123,127,178,1)')
-const lineFill = `color-mix(in srgb, ${lineColor} 16%, transparent)`
 
-const chartData = computed(() => ({
+const chartData = computed(() => {
+  void chartThemeKey.value
+  const lineColor = cssVar('--action-primary', 'rgba(123,127,178,1)')
+  const lineFill = `color-mix(in srgb, ${lineColor} 16%, transparent)`
+  return {
   labels: props.labels,
   datasets: [{
     label: t('profileGuguUi.tooltipTotal'),
@@ -73,7 +76,8 @@ const chartData = computed(() => ({
     // 允许越出绘图区绘制：贴 0 轴/边缘的 hover 点不被裁半。
     clip: 10,
   }],
-}))
+  }
+})
 
 const chartOpts = computed(() => lineChartOptions({
   isTok: true,

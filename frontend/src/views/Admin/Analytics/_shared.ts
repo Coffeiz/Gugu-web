@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 // fmtTok 实现在公共 utils（个人面板趋势图也用）；必须先 import 建立本地绑定再导出——
 // 纯 `export { x } from` 转发不创建本地绑定，本模块内部的引用会运行时 ReferenceError。
-import { cssVar, fmtTok, lineChartOptions } from '@/utils/chartKit'
+import { cssVar, fmtTok, lineChartOptions, chartThemeKey } from '@/utils/chartKit'
 export { fmtTok }
 
 // ── 排除开发者（全局开关，localStorage 持久，两页共享同一状态）──────────────
@@ -93,19 +93,22 @@ export function lineOpts(isTok: boolean) {
   return lineChartOptions({ isTok })
 }
 
-export function donutOpts() { return {
-  responsive: true,
-  maintainAspectRatio: true,
-  cutout: '68%',
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      backgroundColor: cssVar('--surface-floating', 'rgba(15,15,30,0.95)'),
-      borderColor: cssVar('--border-subtle', 'rgba(255,255,255,0.1)'),
-      borderWidth: 1,
-      titleColor: cssVar('--chart-tick', 'rgba(255,255,255,0.6)'),
-      bodyColor: cssVar('--content-primary', 'rgba(255,255,255,0.85)'),
-      padding: 10,
+export function donutOpts() {
+  void chartThemeKey.value   // 主题/调色板切换时让模板渲染依赖失效，重新解析令牌色
+  return {
+    responsive: true,
+    maintainAspectRatio: true,
+    cutout: '68%',
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: cssVar('--surface-floating', 'rgba(15,15,30,0.95)'),
+        borderColor: cssVar('--border-subtle', 'rgba(255,255,255,0.1)'),
+        borderWidth: 1,
+        titleColor: cssVar('--chart-tick', 'rgba(255,255,255,0.6)'),
+        bodyColor: cssVar('--content-primary', 'rgba(255,255,255,0.85)'),
+        padding: 10,
+      },
     },
-  },
-} }
+  }
+}

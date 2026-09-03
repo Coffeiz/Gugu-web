@@ -148,6 +148,9 @@ cp .env.example .env
 cp backend/.env.example backend/.env
 # Edit backend/.env and set SECRET_KEY, admin, and model configuration.
 # Edit the root .env and set the Compose database password.
+# The user-data directory defaults to /data on the host and must exist before
+# startup (compose fails when the bind source is missing):
+sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
 export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
 docker compose up -d --build
 ```

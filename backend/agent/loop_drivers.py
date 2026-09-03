@@ -563,7 +563,7 @@ class OpenAIDriver:
         try:
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
-                    total_in  += chunk.usage.prompt_tokens or 0
+                    prompt_tokens = chunk.usage.prompt_tokens or 0
                     total_out += chunk.usage.completion_tokens or 0
                     # 缓存命中：DeepSeek 用 prompt_cache_hit_tokens；Qwen/阿里用 prompt_tokens_details.cached_tokens
                     cache_hit = getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
@@ -572,6 +572,10 @@ class OpenAIDriver:
                         if details:
                             cache_hit = getattr(details, "cached_tokens", 0) or 0
                     total_cache += cache_hit
+                    # OpenAI 兼容语义里 prompt_tokens 已包含缓存命中（prompt = hit + miss），
+                    # 与 Anthropic 的 split 口径（input_tokens 不含 cache_read）不同；这里
+                    # 统一归一成「未命中输入」，否则统计层总量会重复计入命中部分。
+                    total_in += max(0, prompt_tokens - cache_hit)
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta

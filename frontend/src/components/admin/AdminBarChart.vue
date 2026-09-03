@@ -9,6 +9,7 @@ import { computed } from 'vue'
 import { Bar } from 'vue-chartjs'
 import { BarElement, CategoryScale, Chart as ChartJS, LinearScale, Tooltip } from 'chart.js'
 import { fmtTok } from '@/views/Admin/Analytics/_shared'
+import { chartThemeKey } from '@/utils/chartKit'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip)
 
@@ -44,7 +45,9 @@ function resolveColor(color: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(token).trim() || color
 }
 
-const data = computed(() => ({
+const data = computed(() => {
+  void chartThemeKey.value   // 主题/调色板切换时重算柱色（resolveColor 是一次性求值）
+  return ({
   labels: props.labels,
   datasets: props.datasets?.length
     ? props.datasets.map((dataset, index) => {
@@ -70,9 +73,12 @@ const data = computed(() => ({
           barThickness: 14,
         }]
       })(),
-}))
+  })
+})
 
-const options = computed(() => ({
+const options = computed(() => {
+  void chartThemeKey.value   // 主题/调色板切换时重算网格/刻度色
+  return ({
   indexAxis: (props.horizontal ? 'y' : 'x') as 'y' | 'x',
   responsive: true,
   maintainAspectRatio: false,
@@ -113,7 +119,8 @@ const options = computed(() => ({
       },
     },
   },
-}))
+  })
+})
 
 const chartStyle = computed(() => ({
   height: `${props.height ?? (props.horizontal ? 196 : 176)}px`,

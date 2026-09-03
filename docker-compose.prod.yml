@@ -212,17 +212,14 @@ services:
     profiles: [sandbox]
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    # 清空镜像 entrypoint：backend 的 docker-entrypoint.sh 会等库+跑迁移，与 migrate
+    # 服务并发有竞态；bootstrap 只准备沙盒 daemon 资源、不碰数据库，直接执行脚本。
+    entrypoint: []
     command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
     env_file:
       - ./backend/.env
     environment:
       DOCKER_HOST: unix:///run/gugu/docker.sock
-      # 镜像 entrypoint 启动时会先连数据库；给上与 migrate 一致的连接信息。
-      DB__HOST: ${GUGU_DB_HOST:-postgres}
-      DB__PORT: ${GUGU_DB_PORT:-5432}
-      DB__NAME: ${GUGU_DB_NAME:-gugu}
-      DB__USER: ${GUGU_DB_USER:-gugu}
-      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128

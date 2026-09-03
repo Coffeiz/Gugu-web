@@ -23,7 +23,7 @@ from app.core.security import (
     set_auth_cookies,
     verify_password,
 )
-from app.core.tz import now_utc, iso_utc, LOCAL_TZ
+from app.core.tz import now_utc, iso_utc, user_tz
 from app.db.session import get_db
 from app.models import User, UserPreferences, AgentUsage, FrontendEvent, EmailChangeRequest
 from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount, EmailChangeRequestCreate, EmailChangeVerify
@@ -464,7 +464,10 @@ async def get_quota(
     byok_today = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
     byok_month = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
     if has_byok:
-        local_now = now.astimezone(LOCAL_TZ)
+        # 今日/本月边界按用户时区算，而不是服务器 LOCAL_TZ：海外用户的「今天」
+        # 与服务器时区可能差出整天。
+        tz = user_tz(current_user)
+        local_now = now.astimezone(tz)
         today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         byok_today = await _byok_stats(today_start)
@@ -506,7 +509,9 @@ async def get_usage_trends(
 
     days = max(1, min(days, 90))
     now = now_utc()
-    local_now = now.astimezone(LOCAL_TZ)
+    # 归日用用户时区（User.timezone，缺省回退服务器 LOCAL_TZ），与 /quota 的今日口径一致。
+    tz = user_tz(current_user)
+    local_now = now.astimezone(tz)
     start_local = (local_now - timedelta(days=days - 1)).replace(
         hour=0, minute=0, second=0, microsecond=0)
     start_utc = start_local.astimezone(timezone.utc)
@@ -518,7 +523,7 @@ async def get_usage_trends(
     detail = await byok_usage_detail(db, current_user.id, start_utc)
     by_day: dict[str, list[int]] = {k: [0, 0, 0] for k in date_keys}
     for created_at, tin, cache_read, tout in detail:
-        key = created_at.astimezone(LOCAL_TZ).date().isoformat()
+        key = created_at.astimezone(tz).date().isoformat()
         if key in by_day:
             by_day[key] = [
                 by_day[key][0] + (tin or 0),

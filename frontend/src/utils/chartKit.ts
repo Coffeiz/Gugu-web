@@ -1,6 +1,15 @@
 /** 通用图表工具：折线图 options 工厂 + token 缩略格式化。
  *  所有 canvas 图表颜色必须走设计令牌（见 agentskills/design/SKILL.md 令牌陷阱一节），
  *  chart.js 不继承 CSS 颜色，用 cssVar() 运行时解析。 */
+import { computed } from 'vue'
+import { useTheme } from '@/composables/core/useTheme'
+
+/** 主题/调色板信号：options 工厂读取它建立响应式依赖，主题或调色板切换时
+ *  依赖它的 computed/渲染会重新求值，canvas 颜色随之刷新（cssVar 本身是一次性求值）。 */
+export const chartThemeKey = computed(() => {
+  const { resolved, palette, family } = useTheme()
+  return `${resolved.value}/${palette.value}/${family.value}`
+})
 
 /** token 数缩略显示：≥1M 显示 x.xM，≥1K 显示 x.xK，其余原样。 */
 export function fmtTok(n: number): string {
@@ -32,6 +41,7 @@ export type LineChartOptionsInput = {
 
 /** 折线图统一 options：令牌配色、首尾点贴合边缘、DOM tooltip 浮于容器之上。 */
 export function lineChartOptions(input: LineChartOptionsInput = {}) {
+  void chartThemeKey.value   // 建立主题响应式依赖：主题切换时重新求值配色
   const isTok = input.isTok ?? false
   const grid = cssVar('--chart-grid-line', 'rgba(255,255,255,0.04)')
   const tick = cssVar('--chart-tick', 'rgba(255,255,255,0.25)')
@@ -94,6 +104,7 @@ export type BarChartOptionsInput = {
 
 /** 纵向柱状图统一 options：令牌配色（x 为分类轴无网格，y 为数值轴）。 */
 export function barChartOptions(input: BarChartOptionsInput = {}) {
+  void chartThemeKey.value   // 建立主题响应式依赖：主题切换时重新求值配色
   const grid = cssVar('--chart-grid-line', 'rgba(255,255,255,0.04)')
   const tick = cssVar('--chart-tick', 'rgba(255,255,255,0.25)')
   return {
