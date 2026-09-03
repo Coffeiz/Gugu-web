@@ -21,7 +21,7 @@
     </template>
     <!-- Markdown 编辑复用 CodeMirror 的语法高亮。 -->
     <template v-else-if="editing && isMarkdownFile">
-      <div class="tv-edit-cm-wrap tv-edit-md-wrap">
+      <div class="tv-edit-cm-wrap">
         <Codemirror
           v-if="mdEditorReady"
           v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument"
@@ -699,11 +699,6 @@ onBeforeUnmount(() => {
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
   color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
-}
-.tv-edit-md-wrap :deep(.cm-content) {
-  padding: 20px 24px;
-  font-family: var(--font-family-mono);
-  line-height: 1.7;
 }
 .tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
 /* CodeMirror 的活动行会单独给左侧行号加 cm-activeLineGutter，覆盖默认亮色主题。 */
