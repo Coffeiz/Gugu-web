@@ -83,7 +83,7 @@ const options = computed(() => ({
       stacked: false,
       beginAtZero: true,
       suggestedMax: props.horizontal ? props.max : undefined,
-      grid: { color: resolveColor('var(--border-hairline)') },
+      grid: { color: resolveColor('var(--chart-grid-line)') },
       border: { color: 'transparent' },
       ticks: { color: resolveColor('var(--content-tertiary)'), font: { size: 10 }, precision: 0 },
     },

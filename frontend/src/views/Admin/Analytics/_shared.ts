@@ -1,5 +1,9 @@
 /** Analytics 两页（数据总览 / 使用分析）共用：图表配置、格式化、排除开发者开关。 */
 import { ref, watch } from 'vue'
+// fmtTok 实现在公共 utils（个人面板趋势图也用）；必须先 import 建立本地绑定再导出——
+// 纯 `export { x } from` 转发不创建本地绑定，本模块内部的引用会运行时 ReferenceError。
+import { cssVar, fmtTok, lineChartOptions } from '@/utils/chartKit'
+export { fmtTok }
 
 // ── 排除开发者（全局开关，localStorage 持久，两页共享同一状态）──────────────
 const _XD_KEY = 'admin_exclude_dev'
@@ -26,11 +30,6 @@ export const donutColors = [
 ]
 
 // ── 格式化 ───────────────────────────────────────────────────────────────────
-export function fmtTok(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
-  return String(n)
-}
 export function sumArr(arr?: number[]): number { return arr?.reduce((a, b) => a + b, 0) ?? 0 }
 export function dailyAvg(arr?: number[]): string {
   if (!arr?.length) return '0'
@@ -84,64 +83,29 @@ export function mkDataset(data: number[], color: string) {
     pointBorderColor: 'rgba(14,14,28,0.85)',
     pointBorderWidth: 1.5,
     borderWidth: 1.5,
+    clip: 10,   // 允许越出绘图区绘制：贴边 hover 点不被裁半
   }
 }
 
+/** 读取设计 token 的计算值（chart.js canvas 不继承 CSS 颜色，需运行时解析）。 */
 export function lineOpts(isTok: boolean) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false as const,
-    interaction: { mode: 'index' as const, intersect: false },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        mode: 'index' as const,
-        intersect: false,
-        displayColors: false,
-        backgroundColor: 'rgba(10,10,22,0.92)',
-        borderColor: 'rgba(255,255,255,0.08)',
-        borderWidth: 1,
-        titleColor: 'rgba(255,255,255,0.45)',
-        bodyColor: 'rgba(255,255,255,0.85)',
-        padding: 10,
-        callbacks: isTok
-          ? { label: (ctx: any) => fmtTok(ctx.raw) }
-          : { label: (ctx: any) => String(ctx.raw) },
-      },
-    },
-    scales: {
-      x: {
-        grid:   { color: 'rgba(255,255,255,0.04)' },
-        border: { color: 'transparent' },
-        ticks:  { color: 'rgba(255,255,255,0.25)', font: { size: 10 }, maxTicksLimit: 8 },
-      },
-      y: {
-        grid:   { color: 'rgba(255,255,255,0.04)' },
-        border: { color: 'transparent' },
-        ticks:  {
-          color: 'rgba(255,255,255,0.25)', font: { size: 10 },
-          callback: isTok ? (v: any) => fmtTok(v) : undefined,
-        },
-        beginAtZero: true,
-      },
-    },
-  }
+  // 统一走公共折线图工厂（令牌配色 + 首尾点对齐 + tooltip 防重叠）。
+  return lineChartOptions({ isTok })
 }
 
-export const donutOpts = {
+export function donutOpts() { return {
   responsive: true,
   maintainAspectRatio: true,
   cutout: '68%',
   plugins: {
     legend: { display: false },
     tooltip: {
-      backgroundColor: 'rgba(15,15,30,0.95)',
-      borderColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: cssVar('--surface-floating', 'rgba(15,15,30,0.95)'),
+      borderColor: cssVar('--border-subtle', 'rgba(255,255,255,0.1)'),
       borderWidth: 1,
-      titleColor: 'rgba(255,255,255,0.6)',
-      bodyColor: 'rgba(255,255,255,0.85)',
+      titleColor: cssVar('--chart-tick', 'rgba(255,255,255,0.6)'),
+      bodyColor: cssVar('--content-primary', 'rgba(255,255,255,0.85)'),
       padding: 10,
     },
   },
-}
+} }

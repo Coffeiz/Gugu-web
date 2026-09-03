@@ -469,7 +469,10 @@ async def get_quota(
         month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         byok_today = await _byok_stats(today_start)
         byok_month = await _byok_stats(month_start)
-    cache_rate = byok_month["cache_read"] / byok_month["tokens_in"] if byok_month["tokens_in"] else 0
+    # tokens_in 是未命中缓存的新增输入（Anthropic/MiniMax 等 split-cache 供应商的
+    # input_tokens 不含 cache_read），完整输入要加上命中部分，否则命中率会超 100%。
+    effective_in = byok_month["tokens_in"] + byok_month["cache_read"]
+    cache_rate = byok_month["cache_read"] / effective_in if effective_in else 0
 
     limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
     limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
@@ -485,6 +488,70 @@ async def get_quota(
         "byok_tokens_today": byok_today["tokens"],
         "byok_tokens_month": byok_month["tokens"],
         "byok_cache_rate": round(cache_rate, 6),
+    }
+
+
+@router.get("/usage/trends")
+async def get_usage_trends(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """当前用户 BYOK 用量的按天序列（近 N 天，默认 30），供个人面板趋势图。
+
+    口径与 agent_usage 落库一致：tokens_in 为未命中缓存的新增输入，
+    cache_read 为缓存命中，tokens_out 为输出；按用户本地时区归日。
+    """
+    from app.models import AgentUsage
+    from sqlalchemy import select, and_
+
+    days = max(1, min(days, 90))
+    now = now_utc()
+    local_now = now.astimezone(LOCAL_TZ)
+    start_local = (local_now - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    start_utc = start_local.astimezone(timezone.utc)
+    labels = [(start_local + timedelta(days=i)).strftime("%m/%d") for i in range(days)]
+    date_keys = [(start_local + timedelta(days=i)).date().isoformat() for i in range(days)]
+
+    # 单用户近 N 天的行数有限，一次取回明细后按本地日聚合，避免依赖数据库时区函数；
+    # 汇总值直接从按天结果求和，保证与序列口径一致。
+    detail = (await db.execute(
+        select(AgentUsage.created_at, AgentUsage.tokens_in,
+               AgentUsage.cache_read, AgentUsage.tokens_out).where(
+            and_(
+                AgentUsage.user_id == current_user.id,
+                AgentUsage.is_byok.is_(True),
+                AgentUsage.created_at >= start_utc,
+            )
+        )
+    )).all()
+    by_day: dict[str, list[int]] = {k: [0, 0, 0] for k in date_keys}
+    for created_at, tin, cache_read, tout in detail:
+        key = created_at.astimezone(LOCAL_TZ).date().isoformat()
+        if key in by_day:
+            by_day[key] = [
+                by_day[key][0] + (tin or 0),
+                by_day[key][1] + (cache_read or 0),
+                by_day[key][2] + (tout or 0),
+            ]
+
+    tokens_in = [by_day[k][0] for k in date_keys]
+    cache_read = [by_day[k][1] for k in date_keys]
+    tokens_out = [by_day[k][2] for k in date_keys]
+    total_in = sum(tokens_in)
+    total_cache = sum(cache_read)
+    total_out = sum(tokens_out)
+    total = total_in + total_cache + total_out
+    return {
+        "labels": labels,
+        "tokens_in": tokens_in,
+        "cache_read": cache_read,
+        "tokens_out": tokens_out,
+        "total": total,
+        "daily_avg": round(total / days),
+        "today": tokens_in[-1] + cache_read[-1] + tokens_out[-1],
+        "cache_rate": (total_cache / (total_in + total_cache)) if (total_in + total_cache) else 0,
     }
 
 

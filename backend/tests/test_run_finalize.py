@@ -123,3 +123,54 @@ async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypa
     assert usage.is_byok is True
     assert usage.tokens_in == 100
     assert usage.tokens_out == 20
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch):
+    """回归：resolve_run_config_for_user 注入的 is_byok 在真实 pydantic 模型上不能丢。
+
+    历史 bug：ModelRunConfig.is_byok 挂在 run_config 上，finalize 拿到的是内层模型
+    对象，getattr 永远取 False → BYOK 用量全部记成平台用量（前端今日 token 恒为 0）。
+    """
+    from app.core.config import AIPresetItem
+
+    db = _Db()
+
+    async def cap_usage(*args):
+        return 50, 10
+
+    monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
+    async def _trim(_):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.conversation_retention.trim_session_messages", _trim)
+    monkeypatch.setattr(
+        "agent.context.compress_conv.schedule_baseline_update", lambda *a, **k: None)
+
+    # 模拟 resolve_run_config_for_user：model_copy(update=...) 注入 is_byok（llm_select.py）
+    base = AIPresetItem(model="MiniMax-M3", provider="minimax", context_tokens=80000)
+    model = base.model_copy(update={"api_key": "sk-test", "is_byok": True})
+    assert model.is_byok is True
+
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    await run_finalize.finalize_run(
+        session_factory=lambda: _DbContext(db),
+        session_id=7,
+        user_id="user-test",
+        settings=settings,
+        model_cfg=model,
+        rag_context=None,
+        messages=[],
+        initial_len=0,
+        text="reply",
+        files=[],
+        tokens_in=50,
+        tokens_out=10,
+    )
+
+    usage = next(item for item in db.items if item.__class__.__name__ == "AgentUsage")
+    assert usage.is_byok is True
+
+    # is_byok 是内部字段：不能泄漏进配置序列化
+    assert "is_byok" not in base.model_dump()

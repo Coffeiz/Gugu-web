@@ -100,6 +100,9 @@ class AISettings(BaseModel):
     capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
     capability_checked_at: str = Field("", description="最近一次能力检测时间")
     capability_fingerprint: str = Field("", description="能力检测绑定的地址/模型指纹")
+    # 内部运行时标记：resolve_run_config_for_user 在每轮 run 开始时注入到模型副本上，
+    # 随 run 落到 agent_usage.is_byok。exclude=True 保证不会序列化进配置文件或 API 响应。
+    is_byok: bool = Field(False, exclude=True, description="内部标记：本轮是否使用用户 BYOK 凭据")
 
 
 class VoiceSettings(BaseModel):
@@ -177,6 +180,8 @@ class AIPresetItem(BaseModel):
     capability_checked_at: str = ""
     capability_fingerprint: str = ""
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
+    # 内部运行时标记（同 AISettings.is_byok）：resolve_run_config_for_user 每轮注入，exclude 不落盘。
+    is_byok: bool = Field(False, exclude=True)
 
 
 class AIPresets(BaseModel):

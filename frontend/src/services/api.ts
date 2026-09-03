@@ -682,6 +682,7 @@ export const authApi = {
   cancelEmailChange: () => request('POST', '/auth/email-change/cancel'),
   verifyEmailChange: (token: string) => request('POST', '/auth/email-change/verify', { token }),
   getQuota:      ()              => request<{ used_6h: number; limit_6h: number | null; reset_6h_at: string | null; used_weekly: number; limit_weekly: number | null; usage_kind: 'platform' | 'byok'; is_byok: boolean; byok_tokens_today: number; byok_tokens_month: number; byok_cache_rate: number }>('GET', '/auth/quota'),
+  getUsageTrends: (days = 30)    => request<{ labels: string[]; tokens_in: number[]; cache_read: number[]; tokens_out: number[]; total: number; daily_avg: number; today: number; cache_rate: number }>('GET', `/auth/usage/trends?days=${days}`),
   deleteAccount: (password: string) => request('DELETE', '/auth/me', { password }),
   uploadAvatar:  (file: File) => {
     const fd = new FormData()

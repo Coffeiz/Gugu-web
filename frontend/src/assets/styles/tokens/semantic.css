@@ -42,6 +42,10 @@
   --border-focus: var(--theme-focus);
   /* 文档内容需要在亮色玻璃表面保持可读的表格分隔线；通用玻璃边框可能是白色。 */
   --border-document-table: color-mix(in srgb, var(--theme-content-primary) 18%, transparent);
+  /* Canvas 图表（chart.js）的网格线与刻度：玻璃主题的通用边框 token 在亮色下接近纯白
+     （设计给毛玻璃表面），落在实心表面的画布上会不可见，因此从内容色派生、随主题明暗反转。 */
+  --chart-grid-line: color-mix(in srgb, var(--theme-content-secondary) 16%, transparent);
+  --chart-tick: var(--theme-content-tertiary);
 
   /* Actions / selection */
   --action-primary: var(--theme-action-primary);
