@@ -57,6 +57,9 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 
 - **前置条件**：版本 PR 已合并进 main，且合并前手动触发的 CI（含 trivy 门）全绿；
   合并提交进 main 后 push 自动触发的那轮 CI 也应为绿。
+- **版本 tag 命名只允许 `v<主>.<次>.<补丁>`（如 `v1.0.4`）**：小写 `v` 前缀 + 三段数字，
+  不加日期、后缀或其它前缀；禁止打裸数字（历史上有过 `1.0.0`，与 `v1.0.0` 重复易混）。
+  备份/基线等非版本用途的 tag 用 `backup/…`、`baseline-…` 命名，不会触发发布流水线。
 - tag 打在 **main 的合并提交**上，附注 tag，消息格式 `发布 Gugu <版本>`：
 
   ```bash
