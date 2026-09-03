@@ -19,6 +19,13 @@ function brandColor(): string {
 let lastBrandColor = ''
 let rerenderTimer: ReturnType<typeof setTimeout> | undefined
 
+function scheduleRender() {
+  clearTimeout(rerenderTimer)
+  rerenderTimer = setTimeout(() => {
+    if (brandColor() !== lastBrandColor) render()
+  }, 600)
+}
+
 function render() {
   const brand = `color:${brandColor()};font-weight:bold`
   lastBrandColor = brandColor()
@@ -46,13 +53,8 @@ function render() {
  * 都会触发）；颜色没变时跳过，避免无意义刷屏。
  */
 export function startConsoleBanner() {
-  render()
-  const observer = new MutationObserver(() => {
-    clearTimeout(rerenderTimer)
-    rerenderTimer = setTimeout(() => {
-      if (brandColor() !== lastBrandColor) render()
-    }, 300)
-  })
+  scheduleRender()
+  const observer = new MutationObserver(scheduleRender)
   observer.observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['data-theme', 'data-family', 'data-palette'],
