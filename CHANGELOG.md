@@ -9,6 +9,7 @@
 
 ### 修复
 
+- **Shell 确认交互**：Shell 工具补上 `destructive` 标记，危险命令确认改为网页/聊天内的确认按钮（点击后服务端自动注入凭证），不再依赖模型原样复述长确认 token——此前 token 复制坏一个字符就会陷入「重签 token」死循环。
 - **终端沙盒（Docker 部署）**：修复生产 Docker 部署下终端无法启动的问题——沙盒容器由 backend 通过 docker.sock 作为兄弟容器启动，用户数据改用宿主机 `/data` 目录承接（compose 可用 `GUGU_DATA_HOST_DIR` 调整），保证宿主机与容器内路径一致；沙盒根目录创建时统一放开写权限，兼容 rootless Docker。新增 `sandbox-bootstrap` 一次性引导服务，自动在沙盒实际运行的 daemon（rootless）上准备 egress 网络与代理，自部署开箱即用。
 
 ## [1.0.2] - 2026-09-03
