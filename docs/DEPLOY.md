@@ -134,6 +134,15 @@ docker compose -f docker-compose.prod.yml --profile sandbox up -d
 
 生产部署前请准备持久化数据卷，并备份数据库和用户文件。Preview 适合公开体验，正式部署请使用固定版本或 digest，不要依赖 `latest`。
 
+> **⚠️ 沙盒与 `/data` 的部署前置**（Preview/Dev/Prod 三个 Compose 相同）：沙盒容器由
+> backend 通过 docker.sock 作为兄弟容器启动，`--mount src=/data/users/<uid>/shell`
+> 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `/data` 路径。Compose
+> 已用 `GUGU_DATA_HOST_DIR`（默认 `/data`）把宿主机目录 bind 成 `gugu_data` 卷；升级
+> 前若还在用旧的 named volume，先 `down`、把 `gugu-web-compose_gugu_data` 卷内容拷到
+> `/data`、删旧卷再 `up`。启用 sandbox profile 时 compose 还会跑一次性
+> `sandbox-bootstrap`，自动在沙盒实际运行的 daemon（含 rootless）上准备 egress 网络、
+> squid 代理和沙盒镜像；rootful 单 daemon 部署下自动跳过。详见 docs/ops/deploy.md。
+
 ## 开发环境
 
 开发者需要源码挂载、Vite 开发服务器和本地构建时，使用独立的 Dev Compose：
