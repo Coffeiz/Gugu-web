@@ -36,12 +36,10 @@
         {{ leadLabelOf(r.leadMin) }}
         <FlipChevron :open="leadMenuIndex === i" />
       </button>
-      <!-- 与排序菜单同源：标准列表弹窗（Teleport 到 body），替代原生 select -->
+      <!-- 与排序菜单同源：标准列表弹窗（Teleport 到 body）；定位/视口钳制交给 PopupMenu，不手传坐标 -->
       <ContextMenu
         :show="leadMenuIndex === i"
         :anchor="leadAnchorEl"
-        :x="leadMenuPos.x"
-        :y="leadMenuPos.y"
         @close="closeLeadMenu"
       >
         <button
@@ -96,7 +94,6 @@ const { t } = useI18n()
 // 提醒项是列表，用打开项下标区分各行的菜单状态。
 const leadMenuIndex = ref(-1)
 const leadAnchorEl = ref<HTMLElement | null>(null)
-const leadMenuPos = ref({ x: 0, y: 0 })
 const leadAnchorEls: HTMLElement[] = []
 
 function setLeadAnchor(i: number, el: unknown) {
@@ -109,9 +106,7 @@ function toggleLeadMenu(i: number) {
   if (leadMenuIndex.value === i) { closeLeadMenu(); return }
   const el = leadAnchorEls[i]
   if (!el) return
-  const r = el.getBoundingClientRect()
   leadAnchorEl.value = el
-  leadMenuPos.value = { x: r.left, y: r.bottom + 6 }
   leadMenuIndex.value = i
 }
 function pickLead(min: number) {

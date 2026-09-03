@@ -247,6 +247,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan, docs_url=None)
 
 
+@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+async def _swagger_oauth2_redirect():
+    """FastAPI 默认注册 docs 时会顺带建 OAuth2 重定向端点；自建 /docs 后要手动补上，
+    否则 Swagger「Authorize」走 OAuth2 流程时 /docs/oauth2-redirect 会 404。"""
+    from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html
+
+    return get_swagger_ui_oauth2_redirect_html()
+
+
 @app.get("/docs", include_in_schema=False)
 async def _swagger_ui_pinned():
     """钉住 Swagger UI 的 CDN 版本。
@@ -254,6 +263,8 @@ async def _swagger_ui_pinned():
     FastAPI 默认引用 swagger-ui-dist@5 浮动 tag，jsdelivr 会自动升到最新版；
     2026-09 实测 5.32.x（gitDirty 构建）opblock 上 copy 按钮与展开箭头图标重叠。
     钉到已知正常的 5.17.14，升级需手动改这里并检查 /docs 渲染。
+    openapi_url 与 swagger_ui_oauth2_redirect_url 由 FastAPI 按 root_path 拼接，
+    反代子路径部署（如 /gugu/docs）下也能指对。
     """
     from fastapi.openapi.docs import get_swagger_ui_html
 

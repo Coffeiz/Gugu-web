@@ -164,12 +164,17 @@ def _cache_key(user_id, locale: str) -> str:
 
 async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
     """不读写缓存地生成一句问候；失败 / 空 → ''（前端兜底）。"""
-    # greeting 是用户请求链路：与聊天同一条 BYOK 覆盖，modelctx 兜底哨兵生效
+    # greeting 是用户请求链路：与聊天同一条 BYOK 覆盖，modelctx 兜底哨兵生效。
+    # resolve 本身可能抛错（DB/解密失败），也要落进函数契约的 '' 兜底；pool + least_loaded
+    # 时 pick_model 会 +1 在途计数，无论成败都必须 release，否则计数被污染、负载选择失真。
     from agent.llm import modelctx
+    from agent.llm.llm_select import release as _release_model
     from agent.llm.llm_select import resolve_run_config_for_user
     modelctx.mark_user_scope()
-    modelctx.set_model_cfg((await resolve_run_config_for_user(settings, db, user_id, None)).model)
+    model = None
     try:
+        model = (await resolve_run_config_for_user(settings, db, user_id, None)).model
+        modelctx.set_model_cfg(model)
         language_instruction = _LOCALE_INSTRUCTIONS.get(locale, _LOCALE_INSTRUCTIONS["zh-CN"])
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id)) + "\n" + language_instruction
         from agent import providers
@@ -198,6 +203,9 @@ async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str
     except Exception as e:
         logger.warning("greeting 生成失败（前端兜底）: %s", e)
         return ""
+    finally:
+        if model is not None:
+            _release_model(model)
 
 
 async def generate(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:

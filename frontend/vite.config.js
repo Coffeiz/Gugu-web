@@ -16,12 +16,16 @@ const APP_VER = (() => {
 const APP_RELEASE = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version
 const APP_BUILT_AT = new Date().toLocaleDateString('sv') // 本地日期 YYYY-MM-DD（toISOString 会按 UTC 差一天）
 
-// Runtime 包版本：优先 npm 安装目录，联调 alias 时回退 sibling 仓库
+// Runtime 包版本：与实际执行的代码来源保持一致——VITE_USE_LOCAL_RUNTIME=1 时
+// 代码走 sibling 仓库 alias，版本也必须读 sibling；否则读 npm 安装目录。
+// （此前固定 npm 优先，本地联调时 node_modules 里装着旧包就会显示错版本。）
 const RUNTIME_VER = (() => {
-  for (const p of [
-    resolve(__dirname, 'node_modules/gugu-interaction-runtime/package.json'),
-    resolve(__dirname, '../../gugu-interaction-runtime/package.json'),
-  ]) {
+  const npmPackage = resolve(__dirname, 'node_modules/gugu-interaction-runtime/package.json')
+  const siblingPackage = resolve(__dirname, '../../gugu-interaction-runtime/package.json')
+  const candidates = process.env.VITE_USE_LOCAL_RUNTIME === '1'
+    ? [siblingPackage, npmPackage]
+    : [npmPackage]
+  for (const p of candidates) {
     try { return JSON.parse(readFileSync(p, 'utf8')).version } catch { /* 下一个路径 */ }
   }
   return ''
