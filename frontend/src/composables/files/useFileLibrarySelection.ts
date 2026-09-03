@@ -51,7 +51,9 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   const inSelectionMode = computed(() => !selectionExiting.value && (selectModeForced.value || box.selectedFileIds.value.size > 0 || box.selectedFolderIds.value.size > 0 || selectedTrashFolderIds.value.size > 0))
   function anchor(type: 'file' | 'folder', id: number | string) { lastAnchorIndex.value = flatSelectableItems.value.findIndex(item => item.type === type && item.id === id) }
   function range(type: 'file' | 'folder', id: number | string) {
-    const target = flatSelectableItems.value.findIndex(item => item.id === id)
+    // folder 和 file 是两张独立的自增主键表，id 会撞号（如 folder:12 与 file:12），
+    // 查找必须同时匹配 type，否则 Shift 范围选择会锚到错误命名空间的项目。
+    const target = flatSelectableItems.value.findIndex(item => item.type === type && item.id === id)
     return target >= 0 && lastAnchorIndex.value >= 0 && state.selectRangeIn(flatSelectableItems.value, lastAnchorIndex.value, target)
   }
   // 退出多选的两段式：先只关模式位让 checkbox 进入离场过渡（DOM 节点还在，selected

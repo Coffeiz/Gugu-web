@@ -37,14 +37,13 @@ _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 def _provider_context_usage(driver: Any, result: Any) -> int:
     """返回用于上下文阈值判断的完整 provider 输入量。
 
-    Anthropic 兼容接口把缓存命中单独放在 ``cache_tokens``，而
-    ``usage_in`` 只包含 fresh input；OpenAI 兼容接口的 ``usage_in`` 已经
-    包含缓存命中，不能再次相加。
+    driver 层已把两条路的 usage 归一成同一语义：``usage_in`` 只含未命中
+    缓存的输入，缓存命中单独放 ``cache_tokens``。真实上下文占用 = 两者之和，
+    不能只取 usage_in——高缓存率下（如 DeepSeek 长对话 90%+ 命中）会把
+    100k 上下文看成 20k，严重延迟 90% 压缩阈值甚至撞 context limit。
     """
-    usage_in = max(0, int(getattr(result, "usage_in", 0) or 0))
-    if getattr(driver, "api_format", "") == "anthropic":
-        usage_in += max(0, int(getattr(result, "cache_tokens", 0) or 0))
-    return usage_in
+    return (max(0, int(getattr(result, "usage_in", 0) or 0))
+            + max(0, int(getattr(result, "cache_tokens", 0) or 0)))
 
 
 def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
