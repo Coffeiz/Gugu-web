@@ -75,6 +75,9 @@ services:
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
       STORAGE__LOCAL_PATH: /data/users
+      # BYOK 主密钥文件必须落在持久卷：默认路径在容器可写层，每次更新重建容器都会
+      # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
+      CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
@@ -112,6 +115,9 @@ services:
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
+      # BYOK 主密钥文件必须落在持久卷：默认路径在容器可写层，每次更新重建容器都会
+      # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
+      CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
@@ -156,6 +162,9 @@ services:
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
+      # BYOK 主密钥文件必须落在持久卷：默认路径在容器可写层，每次更新重建容器都会
+      # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
+      CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
@@ -194,6 +203,9 @@ services:
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       STORAGE__LOCAL_PATH: /data/users
+      # BYOK 主密钥文件必须落在持久卷：默认路径在容器可写层，每次更新重建容器都会
+      # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
+      CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
     depends_on:
       postgres:
@@ -261,6 +273,9 @@ services:
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       STORAGE__LOCAL_PATH: /data/users
+      # BYOK 主密钥文件必须落在持久卷：默认路径在容器可写层，每次更新重建容器都会
+      # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
+      CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
