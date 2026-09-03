@@ -76,9 +76,9 @@
   --action-secondary-fg-hover: var(--content-primary);
   --selection-bg: var(--theme-selection);
   /* 文字选区（编辑器/正文 ::selection）需要比 UI 高亮更实的底色，14~18% 的 --selection-bg
-     在卡片底色上几乎不可见。按主色加浓一档，且要明显强于编辑器 activeLine 的 5% 高亮，
-     否则选区和「当前行高亮」无法区分；文字用主色系深色保证对比。 */
-  --selection-text-bg: color-mix(in srgb, var(--action-primary) 42%, transparent);
+     在卡片底色上几乎不可见。亮色用主色直接半透明铺上（混黑会发灰发暗），是常见的
+     「浅色主题色选区带」；浓度要明显强于编辑器 activeLine 的 5% 高亮。 */
+  --selection-text-bg: color-mix(in srgb, var(--action-primary) 25%, transparent);
   --selection-fg: var(--theme-action-hover);
   --focus-ring: var(--theme-focus);
 
@@ -159,4 +159,12 @@
    让主题底色影响导航，保持它与页面背景的层次关系。 */
 :root[data-theme='dark'] {
   --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 96%, #fff 4%);
+}
+
+/* 文字选区暗色专用值：暗色底色深，半透明叠加明度差太小会与底色融合；
+   改用不透明的饱和中深主色（VS Code 深色选区思路：靠色度差而不是明度差），
+   近白文字在其上仍有足够对比。必须写成顶层规则——嵌套在 :root 里的 & 会被
+   构建管线丢弃（实测 stylesheets 里根本没有这条规则）。 */
+:root[data-theme='dark'] {
+  --selection-text-bg: color-mix(in srgb, var(--action-primary) 55%, black);
 }

@@ -684,15 +684,19 @@ onBeforeUnmount(() => {
 
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }
+/* 背景只能放在 .cm-editor（层叠上下文根）上：drawSelection 的选区层 .cm-selectionLayer
+   以 z-index:-1 挂在 .cm-scroller 下，画在普通流内元素背景的**下面**——若给
+   .cm-scroller/.cm-content 再铺不透明背景，会把选区带整个盖住（暗色下表现为选区几乎不可见）。 */
 .tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: var(--surface-card-solid); color: var(--content-primary); }
-.tv-edit-cm-wrap :deep(.cm-scroller),
-.tv-edit-cm-wrap :deep(.cm-content) { background: var(--surface-card-solid); color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-content) { color: var(--content-primary); }
 /* 行号槽令牌化：CodeMirror 默认主题的 gutter 是亮色（白底灰字），暗色模式下是刺眼白条，
    必须在所有 CodeMirror 场景（代码文件 + Markdown 编辑）覆盖，不能只写在 md-wrap 上。 */
 .tv-edit-cm-wrap :deep(.cm-gutters) {
   background: var(--surface-panel);
   border-right: 1px solid var(--border-subtle);
   color: var(--content-tertiary);
+  /* 行号数字不继承 cm-content 的字体，必须单独指定，否则落在浏览器默认等宽上 */
+  font-family: var(--font-family-mono);
 }
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
@@ -752,7 +756,11 @@ onBeforeUnmount(() => {
   border-left-color: var(--content-primary);
 }
 .tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--content-primary); }
-.tv-edit-cm-wrap :deep(.cm-content ::selection),
+.tv-edit-cm-wrap :deep(.cm-content ::selection) {
+  /* CM 的 drawSelection 已经自绘选区底色；原生 ::selection 若再画一遍会双层叠加，
+     深浅不一致且文字抗锯齿随底色变化（观感上忽粗忽细）。这里置为透明，只留 CM 自绘层。 */
+  background: transparent;
+}
 .tv-md ::selection {
   background: var(--selection-text-bg);
   color: var(--content-primary);
@@ -766,59 +774,34 @@ onBeforeUnmount(() => {
 .tv-edit-cm-wrap :deep(.cm-selectionMatch-main) {
   background: color-mix(in srgb, var(--action-primary) 45%, transparent);
 }
-/* 语法高亮配色：亮色贴近 VS Code Light（与 GuguChat / MarkdownView 的 hljs 同一套）。
-   暗色下深色系原值对比度不够，通过主题变量翻成一组提亮色——html[data-theme='dark']
-   是全局属性，scoped 编译后属性选择器落在 .tv-edit-cm-wrap 上，能正确命中。 */
-.tv-edit-cm-wrap {
-  --syn-heading: #6f62c4;
-  --syn-strong: #8b5fc7;
-  --syn-emphasis: #a56bb3;
-  --syn-keyword: #7b5cf0;
-  --syn-string: #2d7a4f;
-  --syn-comment: #9a9a9a;
-  --syn-number: #b07858;
-  --syn-function: #4a7fb5;
-  --syn-variable: #5a9e88;
-}
-html[data-theme='dark'] .tv-edit-cm-wrap {
-  --syn-heading: #a99af0;
-  --syn-strong: #b79ae0;
-  --syn-emphasis: #c496dc;
-  --syn-keyword: #b39ef5;
-  --syn-string: #7fc79a;
-  --syn-comment: #7c7889;
-  --syn-number: #d9a87e;
-  --syn-function: #8cb8ea;
-  --syn-variable: #83c2ab;
-}
-/* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名。 */
+/* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
 .tv-edit-cm-wrap :deep(.tok-heading),
 .tv-edit-cm-wrap :deep(.tok-heading1),
 .tv-edit-cm-wrap :deep(.tok-heading2),
 .tv-edit-cm-wrap :deep(.tok-heading3),
 .tv-edit-cm-wrap :deep(.tok-heading4),
 .tv-edit-cm-wrap :deep(.tok-heading5),
-.tv-edit-cm-wrap :deep(.tok-heading6) { color: var(--syn-heading); font-weight: 700; }
-.tv-edit-cm-wrap :deep(.tok-strong) { color: var(--syn-strong); font-weight: 700; }
-.tv-edit-cm-wrap :deep(.tok-emphasis) { color: var(--syn-emphasis); font-style: italic; }
+.tv-edit-cm-wrap :deep(.tok-heading6) { color: #6f62c4; font-weight: 700; }
+.tv-edit-cm-wrap :deep(.tok-strong) { color: #8b5fc7; font-weight: 700; }
+.tv-edit-cm-wrap :deep(.tok-emphasis) { color: #a56bb3; font-style: italic; }
 /* 代码 token 与 GuguChat / MarkdownView 共用同一套配色。 */
 .tv-edit-cm-wrap :deep(.tok-keyword),
-.tv-edit-cm-wrap :deep(.tok-atom) { color: var(--syn-keyword); font-weight: 600; }
+.tv-edit-cm-wrap :deep(.tok-atom) { color: #7b5cf0; font-weight: 600; }
 .tv-edit-cm-wrap :deep(.tok-string),
-.tv-edit-cm-wrap :deep(.tok-string2) { color: var(--syn-string); }
+.tv-edit-cm-wrap :deep(.tok-string2) { color: #2d7a4f; }
 .tv-edit-cm-wrap :deep(.tok-comment),
 .tv-edit-cm-wrap :deep(.tok-quote),
-.tv-edit-cm-wrap :deep(.tok-meta) { color: var(--syn-comment); font-style: italic; }
+.tv-edit-cm-wrap :deep(.tok-meta) { color: #9a9a9a; font-style: italic; }
 .tv-edit-cm-wrap :deep(.tok-number),
 .tv-edit-cm-wrap :deep(.tok-labelName),
-.tv-edit-cm-wrap :deep(.tok-propertyName) { color: var(--syn-number); }
+.tv-edit-cm-wrap :deep(.tok-propertyName) { color: #b07858; }
 .tv-edit-cm-wrap :deep(.tok-function),
 .tv-edit-cm-wrap :deep(.tok-name),
 .tv-edit-cm-wrap :deep(.tok-typeName),
-.tv-edit-cm-wrap :deep(.tok-className) { color: var(--syn-function); font-weight: 600; }
+.tv-edit-cm-wrap :deep(.tok-className) { color: #4a7fb5; font-weight: 600; }
 .tv-edit-cm-wrap :deep(.tok-variableName),
 .tv-edit-cm-wrap :deep(.tok-link),
-.tv-edit-cm-wrap :deep(.tok-url) { color: var(--syn-variable); }
+.tv-edit-cm-wrap :deep(.tok-url) { color: #5a9e88; }
 
 /* ── Markdown 渲染 ── */
 .tv-md {
