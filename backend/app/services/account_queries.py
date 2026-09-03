@@ -63,16 +63,21 @@ async def usage_sum(db, user_id, since, is_byok: bool) -> int:
 
 
 async def byok_usage_stats(db, user_id, since) -> dict[str, int]:
-    # tokens 口径 = 新增输入 + 缓存命中 + 输出（用户面板展示总消耗量）；
-    # tokens_in / cache_read 单列保留原始拆分，供缓存命中率计算使用。
+    # tokens 口径 = 新增输入 + 缓存命中 + 本轮新写入 + 输出（用户面板展示总消耗量）；
+    # tokens_in / cache_read / cache_write 单列保留原始拆分，供缓存命中率计算使用。
     result = await db.execute(select(
         func.coalesce(func.sum(
-            AgentUsage.tokens_in + AgentUsage.tokens_out + AgentUsage.cache_read), 0),
+            AgentUsage.tokens_in + AgentUsage.tokens_out + AgentUsage.cache_read
+            + AgentUsage.cache_write), 0),
         func.coalesce(func.sum(AgentUsage.tokens_in), 0),
         func.coalesce(func.sum(AgentUsage.cache_read), 0),
+        func.coalesce(func.sum(AgentUsage.cache_write), 0),
     ).where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(True))))
-    total, tokens_in, cache_read = result.one()
-    return {"tokens": int(total), "tokens_in": int(tokens_in), "cache_read": int(cache_read)}
+    total, tokens_in, cache_read, cache_write = result.one()
+    return {
+        "tokens": int(total), "tokens_in": int(tokens_in),
+        "cache_read": int(cache_read), "cache_write": int(cache_write),
+    }
 
 
 async def byok_usage_detail(db, user_id, since) -> list[tuple]:

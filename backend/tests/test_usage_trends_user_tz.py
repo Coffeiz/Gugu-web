@@ -36,6 +36,8 @@ async def test_usage_trends_groups_days_by_user_timezone(monkeypatch):
     assert result["tokens_in"] == [0, 100, 10]
     assert result["cache_read"] == [0, 40, 0]
     assert result["tokens_out"] == [0, 5, 2]
+    assert result["cache_write"] == [0, 3, 0]
     assert result["today"] == 12
-    # cache_write 计入 total 但不单独成序列
+    # cache_write 计入 total 与命中率分母（40 / (110 + 40 + 3)）
     assert result["total"] == 160
+    assert result["cache_rate"] == 40 / 153

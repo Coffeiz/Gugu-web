@@ -472,9 +472,8 @@ async def get_quota(
         month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         byok_today = await _byok_stats(today_start)
         byok_month = await _byok_stats(month_start)
-    # tokens_in 是未命中缓存的新增输入（Anthropic/MiniMax 等 split-cache 供应商的
-    # input_tokens 不含 cache_read），完整输入要加上命中部分，否则命中率会超 100%。
-    effective_in = byok_month["tokens_in"] + byok_month["cache_read"]
+    # 命中率分母用完整输入（新增 + 命中 + 本轮新写入），与 /usage/trends 同一口径。
+    effective_in = byok_month["tokens_in"] + byok_month["cache_read"] + byok_month["cache_write"]
     cache_rate = byok_month["cache_read"] / effective_in if effective_in else 0
 
     limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
@@ -546,11 +545,17 @@ async def get_usage_trends(
         "labels": labels,
         "tokens_in": tokens_in,
         "cache_read": cache_read,
+        "cache_write": cache_write,
         "tokens_out": tokens_out,
         "total": total,
         "daily_avg": round(total / days),
         "today": tokens_in[-1] + cache_read[-1] + cache_write[-1] + tokens_out[-1],
-        "cache_rate": (total_cache / (total_in + total_cache)) if (total_in + total_cache) else 0,
+        # 命中率分母用完整输入（新增 + 命中 + 本轮新写入），只算 in+read 会把
+        # 首次建缓存当天的分母算小、命中率虚高。
+        "cache_rate": (
+            total_cache / (total_in + total_cache + total_cache_write)
+            if (total_in + total_cache + total_cache_write) else 0
+        ),
     }
 
 
