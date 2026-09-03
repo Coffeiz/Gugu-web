@@ -102,7 +102,8 @@ function onFloatingOutsideClick(event: MouseEvent) {
   const target = event.target as HTMLElement
   // DatePicker/DateSpanPicker 都 Teleport 到 body，它们不是浮动编辑窗的 DOM 子节点，
   // 但属于当前编辑窗的交互范围，不能被 capture 阶段的 outside-click 误关。
-  if (target.closest('.dp-popup, .drp-popup')) return
+  // .ctx-menu 同理（提醒提前量等标准列表弹窗也 Teleport 到 body）。
+  if (target.closest('.dp-popup, .drp-popup, .ctx-menu')) return
   // 活动胶囊自身会负责“再次点击关闭 / 点击其他活动切换”；捕获阶段不能先把
   // store 清空，否则胶囊 click 处理器会把同一活动重新打开，触发一次假离场再入场。
   if (target.closest('.chip-ev-click, .chip-ev-tag, .event-pill, .calendar-event, .cal-event')) return

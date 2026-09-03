@@ -1198,7 +1198,9 @@ function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
 
 function handleClickOutside(e: MouseEvent) {
   const target = e.target as HTMLElement
-  if (target.closest('.dp-popup')) return
+  // .dp-popup 是 DatePicker 的 Teleport 弹层；.ctx-menu 是标准列表弹窗（提醒提前量等），
+  // 两者都不在表单 DOM 内，但属于表单的交互范围，不能被捕获阶段的 outside-click 误关。
+  if (target.closest('.dp-popup, .ctx-menu')) return
   // mouseup 打开表单（周视图选时段新建 / 单击活动编辑）后，浏览器紧接着补发的 click 会冒泡到这里，
   // 此时表单刚打开、target 显然不在表单内——不拦会被当成"点了外面"瞬间关掉。屏蔽这一次即可。
   if (_wvFormOpening) { _wvFormOpening = false; return }

@@ -16,6 +16,10 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * 统一的开合箭头。默认 right-down：收起朝右、展开转为朝下——全站通用语义，无需传 direction；
+ * 个别需要「收起朝下、展开朝上」的下拉场景才显式传 direction="up-down"。
+ */
 withDefaults(defineProps<{
   open?: boolean
   direction?: 'right-down' | 'up-down'

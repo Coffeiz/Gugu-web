@@ -88,11 +88,20 @@ const chartOpts = computed(() => lineChartOptions({
   afterBody: (items: any[]) => {
     const i = items[0]?.dataIndex ?? -1
     if (i < 0) return []
-    return [
-      `${t('profileGuguUi.tooltipIn')} ${full(props.tokensIn[i])}`,
-      `${t('profileGuguUi.tooltipIn')}（${t('profileGuguUi.tooltipCache')}） ${full(props.cacheRead[i])}`,
-      `${t('profileGuguUi.tooltipOut')} ${full(props.tokensOut[i])}`,
+    // 缓存命中/写入是输入的子集：展示为「输入 → 未命中 + 命中(写入)」的从属结构，
+    // 而不是与输入并列的独立项，避免「缓存比输入还高」的误读。
+    const write = cw(i)
+    const inputTotal = props.tokensIn[i] + props.cacheRead[i] + write
+    const lines = [
+      `${t('profileGuguUi.tooltipIn')} ${full(inputTotal)}`,
+      `  ├ ${t('profileGuguUi.tooltipUncached')} ${full(props.tokensIn[i])}`,
     ]
+    if (write > 0) lines.push(`  ├ ${t('profileGuguUi.tooltipCacheWrite')} ${full(write)}`)
+    lines.push(
+      `  └ ${t('profileGuguUi.tooltipCache')} ${full(props.cacheRead[i])}`,
+      `${t('profileGuguUi.tooltipOut')} ${full(props.tokensOut[i])}`,
+    )
+    return lines
   },
 }))
 </script>

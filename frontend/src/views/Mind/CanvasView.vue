@@ -158,6 +158,18 @@ onMounted(async () => {
   const requestedId = Number(route.query.object_id)
   await ensureCanvas(Number.isFinite(requestedId) ? requestedId : undefined)
 })
+// 聊天卡片点击：已在画布页时组件不重新挂载（query 相同时 push 还是 no-op，
+// GuguChat 派发 gugu:open-object 事件），watch query + 自定义事件都接同一处理。
+watch(() => route.query.object_id, async (v) => {
+  const requestedId = Number(v)
+  if (Number.isFinite(requestedId)) await ensureCanvas(requestedId)
+})
+window.addEventListener('gugu:open-object', onOpenObjectEvent as EventListener)
+onBeforeUnmount(() => window.removeEventListener('gugu:open-object', onOpenObjectEvent as EventListener))
+async function onOpenObjectEvent() {
+  const requestedId = Number(route.query.object_id)
+  if (Number.isFinite(requestedId)) await ensureCanvas(requestedId)
+}
 async function ensureCanvas(requestedId?: number) {
   const rememberedId = Number(localStorage.getItem('mind-last-canvas-id'))
   const requestedCanvas = Number.isFinite(requestedId) && store.canvases.some(canvas => canvas.id === requestedId)
