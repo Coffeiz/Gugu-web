@@ -167,6 +167,30 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 for index, item in enumerate(value)
             ]
 
+        # MiniMax 等模型会把数组稳定地序列化成单键包装对象 {"item": [...]}（内层
+        # content/items 也照包，重试换不出别的写法）。包装是无歧义的：schema 在
+        # 该位置只接受 array，且键名固定为 item/block。这里做结构性解除，不猜业务。
+        if (
+            isinstance(value, dict)
+            and isinstance(field_schema, dict)
+            and "array" in types
+            and len(value) == 1
+            and next(iter(value)) in {"item", "block"}
+        ):
+            unwrapped = next(iter(value.values()))
+            if isinstance(unwrapped, list):
+                adaptations.append(f"{path or 'args'}:item_wrapper_unwrapped")
+                item_schema = field_schema.get("items")
+                return [
+                    normalize_value(item, item_schema, f"{path}[{index}]", True)
+                    for index, item in enumerate(unwrapped)
+                ]
+            if isinstance(unwrapped, dict):
+                # content: {"item": {...}} → 单元素数组
+                adaptations.append(f"{path or 'args'}:item_wrapper_unwrapped")
+                item_schema = field_schema.get("items")
+                return [normalize_value(unwrapped, item_schema, f"{path}[0]", True)]
+
         if not isinstance(value, str) or not types.intersection({"boolean", "integer", "number"}):
             return value
         text = value.strip()
