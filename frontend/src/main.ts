@@ -20,8 +20,8 @@ import { installOverlayScrollbars } from '@/utils/overlayScrollbars'
 import { i18n } from '@/i18n'
 
 initializeTheme()
-// 横幅在主题初始化后打印，颜色跟随用户当前主题令牌
-import('@/utils/consoleBanner').then(({ printConsoleBanner }) => printConsoleBanner())
+// 横幅在主题初始化后打印，并跟随服务端偏好落地/用户切主题重打
+import('@/utils/consoleBanner').then(({ startConsoleBanner }) => startConsoleBanner())
 initializeButtonFeedback()
 setupInteractionRuntime()
 
