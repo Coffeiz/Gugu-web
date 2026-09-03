@@ -144,6 +144,19 @@ onBeforeUnmount(() => unregEsc?.())
   transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .bm-enter-from .bm-card::after { opacity: 1; }
+/* 整卡 opacity 淡入（与离场同款）：底色块不能在第一帧就实心出现。
+   加在 .bm-card 自身而不是 .bm-center——元素自身的 opacity 不影响它自己的
+   backdrop-filter，卡片毛玻璃全程仍采样页面；只有卡内面板的采样会被隔离，
+   这部分由仍在进行的玻璃 ramp（遮罩+blur 渐变）盖住。 */
+.bm-enter-active .bm-card {
+  /* 不能只写 opacity：同一简写会覆盖 global.css 给 .bm-card 的 blur/背景 ramp 过渡，
+     blur 会第一帧直接跳满值。这里必须把整组过渡属性合并写全。 */
+  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing),
+              background-color var(--modal-enter-duration) var(--modal-enter-easing),
+              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
+              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
+}
+.bm-enter-from .bm-card { opacity: 0; }
 .bm-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .bm-leave-to { opacity: 0; }
 </style>

@@ -17,7 +17,7 @@
     <Teleport to="body">
       <transition name="gs-pop">
         <div v-if="open && q.trim()" ref="panelEl" class="gs-panel" :style="panelStyle">
-          <div class="gs-scroll">
+          <div class="gs-scroll scroll-surface scroll-surface--compact">
             <div v-if="loading" class="gs-hint">
               <Icon name="status.loading" class="gs-spin" size="md" tone="inherit" /> {{ t('common.searching') }}
             </div>
@@ -227,7 +227,8 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: var(--popup-blur);
   /* z-index 由 :style 动态 */
 }
-.gs-scroll { max-height: calc(62vh - 12px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+/* 滚动面套浮层滚动条契约；滑块右移进面板内侧，避免压到 16px 圆角毛玻璃边框。 */
+.gs-scroll { max-height: calc(62vh - 12px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; --scrollbar-overlay-right-offset: 4px; }
 
 .gs-hint {
   display: flex;
