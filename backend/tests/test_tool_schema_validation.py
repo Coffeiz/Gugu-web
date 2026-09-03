@@ -291,7 +291,7 @@ def test_schema_normalization_converts_numeric_text_and_omits_optional_empty_val
     ]
 
 
-def test_schema_normalization_does_not_guess_required_empty_numbers_or_array_shapes():
+def test_schema_normalization_does_not_guess_required_empty_numbers():
     schema = {
         "type": "object",
         "properties": {
@@ -305,8 +305,10 @@ def test_schema_normalization_does_not_guess_required_empty_numbers_or_array_sha
         schema, {"limit": "", "include_content": "", "types": {"item": ["project", "file"]}}
     )
 
-    assert normalized == {"limit": "", "types": {"item": ["project", "file"]}}
-    assert adaptations == ["include_content:empty_omitted"]
+    # 空值仍不猜（必填空串原样保留、可选空串剔除）；但 {item: [...]} 单键包装
+    # 是模型侧稳定的结构性序列化，属于无歧义转换，见 test_item_wrapper_* 用例。
+    assert normalized == {"limit": "", "types": ["project", "file"]}
+    assert adaptations == ["include_content:empty_omitted", "types:item_wrapper_unwrapped"]
 
 
 async def test_dispatch_applies_schema_normalization_before_handler():
@@ -528,3 +530,51 @@ def test_all_registered_tools_have_cached_validators():
     # 这条测试相当于全量 schema inventory：任一历史 schema 非法会在 import/注册时先 fail-fast。
     assert global_registry._tools
     assert all(tool._input_validator is not None for tool in global_registry._tools.values())
+
+
+def test_item_wrapper_arrays_are_unwrapped_before_validation():
+    """MiniMax 等模型把数组稳定序列化成 {"item": [...]}（内层 content/items 也包），
+    schema_hints 提示重试也改不掉。包装是结构性的：schema 期望 array 且键名固定，
+    归一化层解除包装后必须原样通过校验。"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
+        },
+        "required": ["append_blocks"],
+    }
+    raw = {
+        "append_blocks": {"item": [
+            {"type": "heading", "content": {"item": {"type": "text", "text": "到货验收"}}},
+            {"type": "bullet_list", "items": {"item": [
+                {"content": {"item": {"type": "text", "text": "9/3 晚上收到寄回的耳机"}}},
+            ]}},
+        ]},
+    }
+
+    args, adaptations = normalize_input_by_schema(schema, raw)
+    issues = validate_input(build_validator(schema), args)
+
+    assert issues == []
+    blocks = args["append_blocks"]
+    assert blocks[0]["content"][0]["text"] == "到货验收"
+    assert blocks[1]["items"][0]["content"][0]["text"] == "9/3 晚上收到寄回的耳机"
+    assert len([a for a in adaptations if a.endswith("item_wrapper_unwrapped")]) == 4
+
+
+def test_item_wrapper_unwrap_does_not_touch_plain_objects():
+    """单键对象只在 schema 期望 array 的位置解除；object 字段和多个键的对象不动。"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "options": {"type": "object", "properties": {"item": {"type": "string"}}},
+            "weird": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    raw = {"options": {"item": "keep"}, "weird": {"other": ["x"], "item": ["y"]}}
+
+    args, adaptations = normalize_input_by_schema(schema, raw)
+
+    assert args["options"] == {"item": "keep"}
+    assert args["weird"] == {"other": ["x"], "item": ["y"]}
+    assert adaptations == []

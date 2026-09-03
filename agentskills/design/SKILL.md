@@ -29,6 +29,13 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 ## 组件规范
 
 - 按钮：圆角 8-9px，主色填充或 ghost 描边
+- **卡片悬浮操作按钮**：跨域契约统一定义在 `frontend/src/assets/styles/components/card-actions.css`
+  （`.file-card-btn` / `.file-list-btn`，file- 前缀仅为历史兼容）。实底 `--control-bg` +
+  毛玻璃 + `--elevation-card` 投影，背景/前景 `0.15s` 淡入淡出；破坏性操作加 `del`（或
+  `danger`）类取红色 hover。文件库/Dashboard/ProjectModal 直接挂类；画布卡片经
+  `CardAffordances.vue` 的 `:deep(button)` 复用同一口径。**新卡片类型一律消费该契约，
+  禁止另画透明底、无过渡的按钮**；改动契约时 `card-actions.css` 与 `CardAffordances.vue`
+  两处声明同步（归属说明见 `assets/styles/STYLE-OWNERS.md`）。
 - 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
 - 卡片：`--surface-card-solid` 或毛玻璃背景，圆角 12-16px
 - 侧边栏：220px 固定宽度，Glassmorphism 背景
@@ -38,3 +45,20 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 1. 先确认使用 design token（`var(--xxx)`），不硬编码颜色
 2. 参考 references/ 中的完整设计文档了解具体页面规范
 3. 暗色模式通过 `html[data-theme='dark']` 选择器适配
+
+### 玻璃主题的边框令牌陷阱（多次踩坑）
+
+`--border-hairline` / `--border-subtle` 等玻璃主题边框 token 在**亮色玻璃主题下接近纯白**
+（如 glass-light 的 hairline 是 `rgba(255,255,255,.30)`）——它们设计给毛玻璃表面，落到
+实心表面（面板、图表 canvas、表格）上会不可见。规则：
+
+- **图表（canvas）的所有颜色——网格线、刻度/文字、线条、tooltip——一律走令牌**，
+  禁止写死 `rgba(255,255,255,…)` 或按暗色风格硬编码配色；透明变体在 canvas 里用
+  `color-mix()` 派生（现代浏览器 canvas 支持 CSS color-mix）。
+- 实心表面上的分隔线/网格线，禁止使用玻璃边框 token；用从内容色派生的语义令牌
+  （如 `--border-document-table`、`--chart-grid-line`、`--chart-tick`，定义在
+  `tokens/semantic.css`，均为 `color-mix` 自内容色，随主题明暗自动反转）。
+- 需要新的"实心表面线色"或图表专用色时，先在 `semantic.css` 加语义令牌再消费，
+  不要在组件里单独写亮色兜底；canvas 图表（chart.js 不继承 CSS 颜色）用
+  `getComputedStyle` 运行时解析令牌值（参考 `_shared.ts` 的 `cssVar` /
+  `AdminBarChart` 的 `resolveColor`）。

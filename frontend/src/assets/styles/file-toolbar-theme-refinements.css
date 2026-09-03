@@ -101,14 +101,33 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   border-color: var(--file-toolbar-border-hover);
 }
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
+  position: relative;
+  z-index: 0;
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
   border-color: transparent;
   box-shadow: none;
 }
+/* 主色底是 linear-gradient，background-image 不能参与 transition，直接换 hover 渐变只会瞬跳。
+   底色保持不变，悬停态用 ::after 叠一层 hover 渐变，靠透明度过渡出淡入淡出；
+   按钮自身 z-index:0 建立层叠上下文，::after 的 -1 落在按钮背景之上、文字之下。 */
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--action-primary-bg-hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover::after {
+  opacity: 1;
+}
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover {
   color: var(--content-on-accent);
-  background: var(--action-primary-bg-hover);
+  background: var(--action-primary-bg);
   border-color: transparent;
   box-shadow: none;
 }

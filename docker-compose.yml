@@ -83,6 +83,8 @@ services:
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -120,6 +122,8 @@ services:
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -208,6 +212,39 @@ services:
       - gugu_config:/config
     restart: unless-stopped
 
+  # 一次性引导：沙盒兄弟容器实际运行在 GUGU_DOCKER_SOCKET 指向的 daemon，compose 建
+  # 的网络/容器在该 daemon 是别的 daemon 时不可见（典型：rootless docker）。此服务确保
+  # 目标 daemon 上有沙盒所需镜像、egress 内部网络与 squid 代理；默认 rootful 单 daemon
+  # 部署下各项已由 compose 提供，脚本自动全部跳过。幂等，每次 up 都会重跑确认。
+  sandbox-bootstrap:
+    profiles: [sandbox]
+    logging: *json-file-logging
+    image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    # 清空镜像 entrypoint：backend 的 docker-entrypoint.sh 会等库+跑迁移，与 migrate
+    # 服务并发有竞态；bootstrap 只准备沙盒 daemon 资源、不碰数据库，直接执行脚本。
+    entrypoint: []
+    command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
+    environment:
+      DOCKER_HOST: unix:///run/gugu/docker.sock
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+    # 故意不默认挂宿主 rootful socket：rootless-only 主机没有 /var/run/docker.sock，
+    # 挂了会让 compose 直接起不来；镜像缺失时脚本退化为 rootless 直接 pull。
+    # rootless 无法拉镜像的机器可自行在 override 里把 rootful socket 只读挂进
+    # /var/run/docker.sock，脚本会自动改走 save|load 搬运。
+    volumes:
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+      - ./squid/egress.conf:/config/squid/egress.conf:ro
+      - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
+    restart: "no"
+
   sandboxd:
     profiles: [sandbox]
     # 与 backend 共享 host pid namespace，SO_PEERCRED peer 校验才能拿到真实 pid/uid。
@@ -231,8 +268,13 @@ services:
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
+      sandbox-bootstrap:
+        condition: service_completed_successfully
+        required: false
       migrate:
         condition: service_completed_successfully
     volumes:
@@ -265,7 +307,19 @@ services:
 
 volumes:
   pgdata:
+  # 用户数据不能用普通 named volume：Shell 沙盒容器由 backend 通过 docker.sock
+  # 作为兄弟容器启动，其 --mount src=/data/users/<uid>/shell 由宿主机 daemon 解析，
+  # 因此宿主机上必须存在与容器内一致的 /data 路径。这里用 local driver 把
+  # GUGU_DATA_HOST_DIR（默认 /data）bind 成同名卷，容器内外路径保持一致。
+  # 部署前置：mkdir -p /data，且属主与 rootless docker 用户一致（默认 1001:1001），
+  # 否则沙盒容器无法写入；backend 会在创建用户 shell 根目录时放开目录权限。
+  # 从旧 named volume 迁移：down 后把卷内容拷到 /data，删旧卷再 up。
   gugu_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GUGU_DATA_HOST_DIR:-/data}
   gugu_config:
   sandbox_socket:
 

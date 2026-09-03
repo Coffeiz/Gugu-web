@@ -403,4 +403,4 @@ async def test_memory_compaction_uses_daily_batch_and_rag_only(storage, monkeypa
     assert "已结构化的行为模式" not in captured["user"]
     assert "用户做决定前会先核实事实" not in captured["user"]
     assert "要追加的近期记录" in captured["user"]
-    assert captured["max_tokens"] == 10000
+    assert captured["max_tokens"] is None

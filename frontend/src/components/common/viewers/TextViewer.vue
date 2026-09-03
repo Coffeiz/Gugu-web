@@ -19,9 +19,9 @@
         />
       </div>
     </template>
-    <!-- Markdown 编辑复用 CodeMirror 的语法高亮；txt 继续使用轻量 textarea。 -->
+    <!-- Markdown 编辑复用 CodeMirror 的语法高亮。 -->
     <template v-else-if="editing && isMarkdownFile">
-      <div class="tv-edit-cm-wrap tv-edit-md-wrap">
+      <div class="tv-edit-cm-wrap">
         <Codemirror
           v-if="mdEditorReady"
           v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument"
@@ -35,33 +35,13 @@
         <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? t('viewerUi.saving') : t('viewerUi.save') }}</button>
       </div>
     </template>
-    <template v-else-if="editing">
-      <textarea
-        ref="editArea" v-model="editText" class="tv-edit-textarea"
-        spellcheck="false" @keydown.esc="cancelEdit"
-      ></textarea>
-      <div class="tv-edit-bar">
-        <span v-if="saveError" class="tv-edit-error">{{ saveError }}</span>
-        <button class="tv-edit-btn" :disabled="saving" @click="cancelEdit">{{ t('viewerUi.cancel') }}</button>
-        <button class="tv-edit-btn tv-edit-save" :disabled="saving" @click="saveEdit">{{ saving ? t('viewerUi.saving') : t('viewerUi.save') }}</button>
-      </div>
-    </template>
     <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
       <button v-if="editable" class="tv-edit-toggle" :title="t('viewerUi.edit')" @click="startEdit">
         <Icon name="action.edit" :size="13" />
       </button>
       <div v-if="truncated" class="tv-notice">{{ t('viewerUi.truncated') }}</div>
-      <!-- Markdown 渲染 -->
+      <!-- Markdown 渲染；txt/代码类扩展名走上面的 CodeMirror，不会落到这里 -->
       <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
-      <!-- 纯文本（txt；代码类扩展名走上面的 CodeMirror，不会落到这里） -->
-      <table v-else class="tv-table" cellspacing="0">
-        <tbody>
-          <tr v-for="(line, i) in lines" :key="i">
-            <td class="tv-ln">{{ Number(i) + 1 }}</td>
-            <td class="tv-code">{{ line }}</td>
-          </tr>
-        </tbody>
-      </table>
     </div>
   </div>
 </template>
@@ -205,9 +185,8 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
   },
 }
 
-const lines       = ref<string[]>([])
 const mdHtml      = ref<string | null>(null)
-const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md/txt 编辑模式的保存基于这个）
+const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md 编辑模式的保存基于这个）
 // 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了。
 // 虚拟文档通过 saveSource 保存，不需要文件库 id。
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
@@ -215,26 +194,25 @@ const isVirtualDocument = computed(() => props.sourceText !== null && !!props.sa
 const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.value)
 // 可交互勾选 = md 文件 + 真实文件
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
-// 可编辑 = 后端认得的文本类扩展名 + 真实文件（md/txt 走「编辑」按钮切换态用得到；代码类扩展名
-// 不看这个——代码文件不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
+// 可编辑 = 后端认得的文本类扩展名 + 真实文件（md 走「编辑」按钮切换态用得到；txt/代码类扩展名
+// 不看这个——它们不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
 const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isEditableDocument.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
-// 代码类扩展名：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror——它本身既能当
-// 预览用（只读态），也能编辑（真实文件时），不需要 .tv-table + 单独编辑框这套双视图。
-// md/txt 太小，双视图切换本来就没问题，不用换。
+// 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
+// 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
+// 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
 const isCodeExt = computed(() => {
   const e = (props.ext || '').toLowerCase()
-  return EDITABLE_EXTS.has(e) && e !== 'md' && e !== 'markdown' && e !== 'txt'
+  return EDITABLE_EXTS.has(e) && !isMarkdownFile.value
 })
 const loading     = ref(false)
 const error       = ref<string | null>(null)
 const truncated   = ref(false)
 
-// ── 编辑模式：md/txt 的「预览+编辑」切换态，见 editable；代码类扩展名见 isCodeExt（没有切换态） ──
+// ── 编辑模式：仅 md 有「渲染预览 + 编辑」切换态；txt/代码类见 isCodeExt（没有切换态） ──
 const editing   = ref(false)
 const mdEditorReady = ref(false)
 const editText  = ref('')
-const editArea  = ref<HTMLTextAreaElement | null>(null)   // txt 用的纯文本 textarea
 const saving    = ref(false)
 const saveError = ref('')
 
@@ -270,8 +248,6 @@ async function loadCmExtensions(ext: string, source = '') {
     },
     '.cm-line, .cm-line *': { textDecoration: 'none !important', whiteSpace: 'pre-wrap' },
     '.cm-scroller': { overflow: 'auto' },
-    // 组件内置的 basicSetup 除了行号还带一个代码折叠 gutter，用不上，隐藏掉不留预留空白
-    '.cm-foldGutter': { display: 'none' },
   })
   const loader = CM_LANG_LOADERS[(ext || '').toUpperCase()]
   const langExt = loader ? await loader(source) : null
@@ -307,36 +283,20 @@ async function doAutoSave(targetKey: string | number, content: string) {
   }
 }
 
-// md/txt 的预览/编辑双视图是两套独立 DOM，进出编辑态要把滚动位置对上：md 渲染成 HTML 后跟源码
+// md 的预览/编辑双视图是两套独立 DOM，进出编辑态要把滚动位置对上：md 渲染成 HTML 后跟源码
 // 行号没有线性对应关系（标题/段落/代码块各自高度不同），只能按滚动比例（scrollTop / 可滚动
-// 距离）估算；txt 是等高的行号表格，能精确算「顶部是第几行」，textarea 按自己的行高换算对应。
-let scrollFrac  = 0     // md 用
-let pendingLine = 0     // txt 用
+// 距离）估算。
+let scrollFrac = 0
 
-function rowHeightOf(el: HTMLElement | null) {
-  if (!el) return 0
-  if (el.tagName === 'TEXTAREA') return parseFloat(getComputedStyle(el).lineHeight) || 0
-  const tr = el.querySelector('tr')
-  return tr ? tr.getBoundingClientRect().height : 0
-}
 function captureScroll(el: HTMLElement | null) {
-  if (isMarkdownFile.value) {
-    const max = el ? el.scrollHeight - el.clientHeight : 0
-    scrollFrac = (el && max > 0) ? el.scrollTop / max : 0
-    return
-  }
-  const rh = rowHeightOf(el)
-  pendingLine = (el && rh) ? Math.round(el.scrollTop / rh) : 0
+  if (!isMarkdownFile.value || !el) return
+  const max = el.scrollHeight - el.clientHeight
+  scrollFrac = max > 0 ? el.scrollTop / max : 0
 }
 function applyScroll(el: HTMLElement | null) {
-  if (!el) return
-  if (isMarkdownFile.value) {
-    const max = el.scrollHeight - el.clientHeight
-    el.scrollTop = max > 0 ? scrollFrac * max : 0
-    return
-  }
-  const rh = rowHeightOf(el)
-  el.scrollTop = rh ? pendingLine * rh : 0
+  if (!el || !isMarkdownFile.value) return
+  const max = el.scrollHeight - el.clientHeight
+  el.scrollTop = max > 0 ? scrollFrac * max : 0
 }
 
 async function startEdit() {
@@ -347,20 +307,14 @@ async function startEdit() {
   mdEditorReady.value = false
   const loadSeq = ++cmLoadSeq
   editing.value = true
-  if (isMarkdownFile.value) {
-    await loadCmExtensions('MD', editText.value)
-    if (loadSeq !== cmLoadSeq || !editing.value) return
-    mdEditorReady.value = true
-  }
+  await loadCmExtensions('MD', editText.value)
+  if (loadSeq !== cmLoadSeq || !editing.value) return
+  mdEditorReady.value = true
   await nextTick()
-  if (isMarkdownFile.value) cmView.value?.focus()
-  else {
-    editArea.value?.focus()
-    applyScroll(editArea.value)
-  }
+  cmView.value?.focus()
 }
 function cancelEdit() {
-  captureScroll(editArea.value)
+  captureScroll(tvScroll.value)
   cmLoadSeq++
   cmView.value = null
   mdEditorReady.value = false
@@ -371,7 +325,7 @@ async function saveEdit() {
   saving.value = true
   saveError.value = ''
   try {
-    captureScroll(editArea.value)
+    captureScroll(tvScroll.value)
     if (isVirtualDocument.value) {
       await props.saveSource?.(editText.value)
     } else {
@@ -590,19 +544,14 @@ async function onMdClick(e: MouseEvent) {
   await router.push('/files')
 }
 
-// 把一段文本渲染成 mdHtml / 纯文本行（首次加载、md/txt 编辑保存后重渲都走这条）。代码类扩展名
-// 不在这里处理——它们直接显示 CodeMirror，不需要 mdHtml/lines 这套只读渲染，见 isCodeExt。
+// 把一段文本渲染成 mdHtml（首次加载、md 编辑保存后重渲都走这条）。txt/代码类扩展名不在这里
+// 处理——它们直接显示 CodeMirror，没有只读渲染，见 isCodeExt。
 async function processText(text: string, ext: string) {
   mdHtml.value  = null
-  lines.value   = []
   rawText.value = text
-  const extUp = (ext || '').toUpperCase()
-
-  if (extUp === 'MD') {
+  if ((ext || '').toUpperCase() === 'MD') {
     mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
     await renderMermaidBlocks()
-  } else if (!isCodeExt.value) {
-    lines.value = text.split('\n')
   }
 }
 
@@ -688,7 +637,7 @@ onBeforeUnmount(() => {
   padding: 0 0 16px;
   will-change: scroll-position;
   user-select: text;            /* 覆盖预览弹窗容器的 user-select:none，让正文可选/复制 */
-  -webkit-user-select: text;    /* 行号 .tv-ln 单独 none，不会被选进去 */
+  -webkit-user-select: text;
 }
 
 .tv-notice {
@@ -714,16 +663,7 @@ onBeforeUnmount(() => {
 }
 .tv-edit-toggle:hover { background: var(--action-soft-hover); border-color: var(--action-outline); color: var(--action-primary-hover); }
 
-/* ── 编辑模式：纯文本框 + 底部操作条 ── */
-.tv-edit-textarea {
-  flex: 1; width: 100%; box-sizing: border-box;
-  border: none; outline: none; resize: none;
-  padding: 20px 24px;
-  font-family: var(--font-family-mono);
-  font-size: var(--tv-font-size, 13px);
-  line-height: 1.7; color: var(--content-primary); background: var(--surface-card-solid);
-  caret-color: var(--action-primary); accent-color: var(--action-primary);
-}
+/* ── md 编辑模式底部操作条 ── */
 .tv-edit-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
   padding: 10px 16px; border-top: 1px solid var(--border-default); background: var(--surface-raised);
@@ -744,24 +684,57 @@ onBeforeUnmount(() => {
 
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }
+/* 背景只能放在 .cm-editor（层叠上下文根）上：drawSelection 的选区层 .cm-selectionLayer
+   以 z-index:-1 挂在 .cm-scroller 下，画在普通流内元素背景的**下面**——若给
+   .cm-scroller/.cm-content 再铺不透明背景，会把选区带整个盖住（暗色下表现为选区几乎不可见）。 */
 .tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: var(--surface-card-solid); color: var(--content-primary); }
-.tv-edit-cm-wrap :deep(.cm-scroller),
-.tv-edit-cm-wrap :deep(.cm-content) { background: var(--surface-card-solid); color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-content) { color: var(--content-primary); }
+/* 行号槽令牌化：CodeMirror 默认主题的 gutter 是亮色（白底灰字），暗色模式下是刺眼白条，
+   必须在所有 CodeMirror 场景（代码文件 + Markdown 编辑）覆盖，不能只写在 md-wrap 上。 */
+.tv-edit-cm-wrap :deep(.cm-gutters) {
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--content-tertiary);
+  /* 行号数字不继承 cm-content 的字体，必须单独指定，否则落在浏览器默认等宽上 */
+  font-family: var(--font-family-mono);
+}
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
   color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
 }
-.tv-edit-md-wrap :deep(.cm-content) {
-  padding: 20px 24px;
-  font-family: var(--font-family-mono);
-  line-height: 1.7;
-}
-.tv-edit-md-wrap :deep(.cm-gutters) {
-  background: var(--surface-panel);
-  border-right: 1px solid var(--border-subtle);
-  color: var(--content-tertiary);
-}
 .tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
+/* 折叠槽（basicSetup 内置，无法替换扩展，只能样式化）：
+   原生是 ⌄/› 两个文本字符，字形不对齐也没法动画。这里把字符隐掉（font-size:0），
+   用 CSS mask 渲染与 FlipChevron 完全相同的 SVG 路径，颜色走令牌（mask 只取 alpha，
+   填充色由 background-color 提供）；收起态靠同一个向下箭头绕中心 rotate(-90deg)——
+   和 FlipChevron 的旋转机制一致。展开/收起态用默认 title（"Fold line"/"Unfold line"）区分。 */
+.tv-edit-cm-wrap :deep(.cm-foldGutter span) {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  font-size: 0;
+  vertical-align: middle;
+  background-color: var(--content-tertiary);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    transform var(--motion-hover-control) var(--motion-ease-standard);
+}
+.tv-edit-cm-wrap :deep(.cm-foldGutter span:hover) { background-color: var(--action-primary); }
+.tv-edit-cm-wrap :deep(.cm-foldGutter span[title='Unfold line']) { transform: rotate(-90deg); }
+/* 折叠占位符：默认写死白底 #eee + 灰边，暗色下是突兀的白块。改令牌软底 + 虚线边。 */
+.tv-edit-cm-wrap :deep(.cm-foldPlaceholder) {
+  background: var(--surface-soft);
+  border: 1px dashed var(--border-default);
+  color: var(--content-tertiary);
+  border-radius: 6px;
+  margin: 0 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
 /* CodeMirror 的活动行会单独给左侧行号加 cm-activeLineGutter，覆盖默认亮色主题。 */
 .tv-edit-cm-wrap :deep(.cm-activeLine) {
   background: color-mix(in srgb, var(--action-primary) 5%, transparent);
@@ -772,14 +745,34 @@ onBeforeUnmount(() => {
 }
 .tv-edit-cm-wrap :deep(.cm-selectionBackground),
 .tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
-  background: var(--selection-bg) !important;
+  /* Ctrl+D / Alt+拖拽产生的所有选区（主+副）都画成这个类，统一令牌色。
+     浓度必须明显高于 activeLine 的 5%，否则选区和「当前行高亮」分不出。 */
+  background: var(--selection-text-bg) !important;
 }
-.tv-edit-cm-wrap :deep(.cm-content ::selection),
-.tv-edit-textarea::selection,
-.tv-table ::selection,
+/* 光标：CM 的明暗判定是 darkTheme 开关（我们没开，它默认亮色主题），
+   亮色默认是黑边框光标，暗色模式下直接隐形，必须显式覆盖成正文色。 */
+.tv-edit-cm-wrap :deep(.cm-cursor),
+.tv-edit-cm-wrap :deep(.cm-dropCursor) {
+  border-left-color: var(--content-primary);
+}
+.tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-content ::selection) {
+  /* CM 的 drawSelection 已经自绘选区底色；原生 ::selection 若再画一遍会双层叠加，
+     深浅不一致且文字抗锯齿随底色变化（观感上忽粗忽细）。这里置为透明，只留 CM 自绘层。 */
+  background: transparent;
+}
 .tv-md ::selection {
-  background: var(--selection-bg);
+  background: var(--selection-text-bg);
   color: var(--content-primary);
+}
+/* 选中一个词后其它相同词的匹配高亮（basicSetup 的 highlightSelectionMatches）：
+   默认写死半透明绿 #99ff7780，与主题无关、暗色下跟选区色混在一起难以分辨。
+   主匹配略浓、其余匹配略淡，都从主色派生以区分于普通选区。 */
+.tv-edit-cm-wrap :deep(.cm-selectionMatch) {
+  background: color-mix(in srgb, var(--action-primary) 22%, transparent);
+}
+.tv-edit-cm-wrap :deep(.cm-selectionMatch-main) {
+  background: color-mix(in srgb, var(--action-primary) 45%, transparent);
 }
 /* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
 .tv-edit-cm-wrap :deep(.tok-heading),
@@ -809,40 +802,6 @@ onBeforeUnmount(() => {
 .tv-edit-cm-wrap :deep(.tok-variableName),
 .tv-edit-cm-wrap :deep(.tok-link),
 .tv-edit-cm-wrap :deep(.tok-url) { color: #5a9e88; }
-
-.tv-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--font-family-mono);
-  font-size: var(--tv-font-size, 13px);
-  line-height: 1.7;
-  background: var(--surface-card-solid);
-}
-
-.tv-ln {
-  width: 1%;
-  min-width: 48px;
-  padding: 0 16px 0 20px;
-  text-align: right;
-  color: var(--content-tertiary);
-  white-space: nowrap;
-  user-select: none;
-  border-right: 1px solid var(--border-subtle);
-  vertical-align: top;
-  position: sticky;
-  left: 0;
-  background: var(--surface-panel);
-}
-
-.tv-code {
-  padding: 0 24px 0 16px;
-  white-space: pre;
-  color: var(--content-primary);
-  vertical-align: top;
-}
-
-tr:hover .tv-ln  { background: var(--surface-soft-hover); }
-tr:hover .tv-code { background: color-mix(in srgb, var(--action-primary) 4%, transparent); }
 
 /* ── Markdown 渲染 ── */
 .tv-md {

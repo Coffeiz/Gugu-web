@@ -68,6 +68,9 @@ class RoundResult:
     cache_tokens: int = 0              # 统一映射：anthropic 的 cache_read_input_tokens /
                                         # deepseek 的 prompt_cache_hit_tokens，对外 SSE 字段名
                                         # 两边本来就都叫 cache_read，这里合并成一个字段不改变行为。
+    cache_write_tokens: int = 0        # anthropic 的 cache_creation_input_tokens：本轮新写入
+                                        # 缓存的输入，既不在 usage_in 也不在 cache_tokens 里，
+                                        # 但同样是真实上下文占用，漏记会低估压缩阈值。
     raw: Any = None                    # 驱动私有：给 append_* 方法用的原始数据
 
 
@@ -367,6 +370,7 @@ class AnthropicDriver:
             text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(final.usage, "cache_creation_input_tokens", 0) or 0,
             raw=final.content,
         ))
 
@@ -563,7 +567,7 @@ class OpenAIDriver:
         try:
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
-                    total_in  += chunk.usage.prompt_tokens or 0
+                    prompt_tokens = chunk.usage.prompt_tokens or 0
                     total_out += chunk.usage.completion_tokens or 0
                     # 缓存命中：DeepSeek 用 prompt_cache_hit_tokens；Qwen/阿里用 prompt_tokens_details.cached_tokens
                     cache_hit = getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
@@ -572,6 +576,10 @@ class OpenAIDriver:
                         if details:
                             cache_hit = getattr(details, "cached_tokens", 0) or 0
                     total_cache += cache_hit
+                    # OpenAI 兼容语义里 prompt_tokens 已包含缓存命中（prompt = hit + miss），
+                    # 与 Anthropic 的 split 口径（input_tokens 不含 cache_read）不同；这里
+                    # 统一归一成「未命中输入」，否则统计层总量会重复计入命中部分。
+                    total_in += max(0, prompt_tokens - cache_hit)
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta

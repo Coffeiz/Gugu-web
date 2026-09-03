@@ -1079,6 +1079,8 @@ async def _run_stream_unlocked(
             elif t == "_usage":
                 tin = evt.get("input", 0)
                 tout = evt.get("output", 0)
+                cache_read = evt.get("cache_read", 0) or 0
+                cache_write = evt.get("cache_write", 0) or 0
             elif t == "token":
                 # 走同一清洗器（跟 _collect 一致）保证输出文本跟 run_collect 完全等价
                 token = san.feed(evt.get("content", ""))
@@ -1156,6 +1158,8 @@ async def _run_stream_unlocked(
             files=files,
             tokens_in=tin,
             tokens_out=tout,
+            cache_read=cache_read,
+            cache_write=cache_write,
             context_tokens=run_config.context_tokens,
             actual_usage_tokens=int(context_input or tin),
             compaction_applied=compaction_applied,

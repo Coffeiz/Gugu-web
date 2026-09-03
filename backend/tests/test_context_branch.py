@@ -169,6 +169,24 @@ async def test_text_branch_inherits_configured_thinking(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_max_tokens_none_omits_budget_on_openai_path(monkeypatch):
+    captured = {}
+
+    async def fake_openai(*args, **kwargs):
+        captured.update(kwargs)
+        return '{"ok": true}'
+
+    monkeypatch.setattr("agent.llm.llm_select.use_anthropic_for", lambda _ai: False)
+    monkeypatch.setattr(provider_runner, "_openai", fake_openai)
+    settings = SimpleNamespace(ai=SimpleNamespace())
+
+    result = await provider_runner.complete_json("stable", "turn", settings, max_tokens=None)
+
+    assert result == {"ok": True}
+    assert "max_tokens" not in captured
+
+
+@pytest.mark.asyncio
 async def test_scope_revision_is_audit_only_and_preserves_prefix(monkeypatch):
     captured = []
 

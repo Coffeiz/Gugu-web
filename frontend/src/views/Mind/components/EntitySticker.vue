@@ -29,7 +29,7 @@
       @connect-drag-start="(e, side) => emit('connectDragStart', e, side)"
     >
       <template #actions>
-        <button :title="t('mindUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)">
+        <button class="del" :title="t('mindUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)">
           <PhTrash :size="12" weight="bold" />
         </button>
       </template>

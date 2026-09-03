@@ -132,4 +132,7 @@ defineProps({
   border-color: var(--folder-card-checkbox-border-checked);
 }
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
+/* leave 只走 opacity（同 FileCard.vue 的注释）：离场冻结 paint，避免选中填充
+   先变色再淡完导致结尾闪烁。 */
+.folder-card .sel-cb-leave-active { transition: opacity 0.15s ease; }
 </style>

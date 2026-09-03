@@ -6,7 +6,7 @@
 5 个 destructive 工具都接对了，但新工具漏接不会有任何机制拦住。本脚本在提交前抓这个：
 
   AST 扫 agent/tools/*.py，找出所有 `Tool(..., destructive=True, handler=X)` 注册，
-  校验同模块的函数 X 源码里引用了 `needs_confirmation`。没引用 = 违规退出 1。
+  校验同模块的函数 X 及其同模块委托链源码里引用了 `needs_confirmation`。没引用 = 违规退出 1。
 
 运行时另有 dispatch 层绊线兜底（无 confirm 的调用返回了"成功执行" → CRITICAL 日志），
 两层配合：静态防提交、动态抓漏网。用法：python scripts/check_confirm_gate.py
@@ -25,6 +25,29 @@ def _kw(call: ast.Call, name: str):
         if k.arg == name:
             return k.value
     return None
+
+
+def _has_gate(fn_src: dict[str, str], name: str, seen: set[str] | None = None) -> bool:
+    """判断 handler 及其同模块委托链里是否引用了 confirm.needs_confirmation。
+
+    允许 handler 是审计/加锁等包装层，把执行委托给同模块其他函数——
+    确认门在委托链任意一层出现即视为已接。seen 防循环委托。
+    """
+    seen = seen if seen is not None else set()
+    if name in seen:
+        return False
+    seen.add(name)
+    src = fn_src.get(name)
+    if src is None:
+        return False
+    if "needs_confirmation" in src:
+        return True
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if _has_gate(fn_src, node.func.id, seen):
+                return True
+    return False
 
 
 def check() -> list[str]:
@@ -52,7 +75,7 @@ def check() -> list[str]:
             if handler_name is None or handler_name not in fn_src:
                 violations.append(f"{py.name}: 工具 {tool_name or '?'} 的 handler 不是本模块函数，无法静态校验确认门——请改为本模块函数或人工确认")
                 continue
-            if "needs_confirmation" not in fn_src[handler_name]:
+            if not _has_gate(fn_src, handler_name):
                 violations.append(f"{py.name}: 工具 {tool_name or '?'}（destructive=True）的 handler {handler_name} 没有调用 confirm.needs_confirmation——不可逆操作缺确认门")
     return violations
 

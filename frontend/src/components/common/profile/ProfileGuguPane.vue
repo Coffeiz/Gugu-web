@@ -7,11 +7,13 @@
       </div>
       <template v-else>
         <template v-if="quota.is_byok">
-          <div class="pm-usage-grid">
-            <div class="pm-usage-item"><span class="pm-quota-label">{{ t('profileGuguUi.todayTokens') }}</span><strong>{{ formatTokens(quota.byok_tokens_today) }}</strong></div>
-            <div class="pm-usage-item"><span class="pm-quota-label">{{ t('profileGuguUi.monthTokens') }}</span><strong>{{ formatTokens(quota.byok_tokens_month) }}</strong></div>
-            <div class="pm-usage-item"><span class="pm-quota-label">{{ t('profileGuguUi.cacheRate') }}</span><strong>{{ Math.round(quota.byok_cache_rate * 100) }}%</strong></div>
-          </div>
+          <TokenTrendChart
+            :labels="trends?.labels ?? []"
+            :tokens-in="trends?.tokens_in ?? []"
+            :cache-read="trends?.cache_read ?? []"
+            :cache-write="trends?.cache_write ?? []"
+            :tokens-out="trends?.tokens_out ?? []"
+          />
         </template>
         <template v-else>
           <div class="pm-quota-item"><div class="pm-quota-row"><span class="pm-quota-label">{{ recoverLabel }}</span><span class="pm-quota-pct" :class="quotaPctClass(quota.used_6h, quota.limit_6h)">{{ quota.limit_6h ? Math.round(quota.used_6h / quota.limit_6h * 100) + '%' : t('profileGuguUi.unlimited') }}</span></div><div class="pm-quota-bar"><div class="pm-quota-fill" :style="quotaBarStyle(quota.used_6h, quota.limit_6h)" /></div></div>
@@ -46,6 +48,7 @@ import { agentApi, authApi } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import ProfilePersonalityPane from './ProfilePersonalityPane.vue'
+import TokenTrendChart from './TokenTrendChart.vue'
 
 const { t } = useI18n()
 
@@ -57,6 +60,7 @@ function setReopenResume(value: boolean) { reopenResume.value = value; localStor
 
 const quota = ref({ used_6h: 0, limit_6h: null as number | null, reset_6h_at: null as string | null, used_weekly: 0, limit_weekly: null as number | null, usage_kind: 'platform', is_byok: false, byok_tokens_today: 0, byok_tokens_month: 0, byok_cache_rate: 0 })
 const quotaLoading = ref(false)
+const trends = ref<{ labels: string[]; tokens_in: number[]; cache_read: number[]; cache_write: number[]; tokens_out: number[] } | null>(null)
 const recoverLabel = computed(() => {
   if (!quota.value.used_6h || !quota.value.reset_6h_at) return t('profileGuguUi.fullEnergy')
   const diffMs = new Date(quota.value.reset_6h_at).getTime() - Date.now()
@@ -66,8 +70,8 @@ const recoverLabel = computed(() => {
 })
 function quotaBarStyle(used: number, limit: number | null) { if (!limit) return { width: '8%', background: 'rgba(123,127,178,0.3)' }; const pct = Math.min(100, used / limit * 100); const color = pct >= 90 ? 'rgba(200,80,80,0.7)' : pct >= 70 ? 'rgba(210,160,60,0.75)' : 'linear-gradient(90deg, rgba(123,127,178,0.6), rgba(149,144,196,0.75))'; return { width: pct + '%', background: color } }
 function quotaPctClass(used: number, limit: number | null) { if (!limit) return ''; const pct = used / limit * 100; return pct >= 90 ? 'pct-danger' : pct >= 70 ? 'pct-warn' : '' }
-function formatTokens(value: number) { return new Intl.NumberFormat().format(value) }
-async function loadQuota() { quotaLoading.value = true; try { quota.value = await authApi.getQuota() } catch {} finally { quotaLoading.value = false } }
+async function loadQuota() { quotaLoading.value = true; try { quota.value = await authApi.getQuota(); if (quota.value.is_byok) loadTrends() } catch {} finally { quotaLoading.value = false } }
+async function loadTrends() { try { trends.value = await authApi.getUsageTrends(30) } catch {} }
 function onQuotaChanged() { loadQuota() }
 
 const memoryClearing = ref(false); const memoryMsg = ref(''); const memoryMsgType = ref('ok')
@@ -84,9 +88,4 @@ onUnmounted(() => window.removeEventListener('gugu-quota-changed', onQuotaChange
 </script>
 
 <style scoped>
-.pm-usage-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.pm-usage-item { min-width: 0; padding: 11px 12px; border: 1px solid var(--border-subtle); border-radius: 9px; background: var(--surface-soft); }
-.pm-usage-item .pm-quota-label { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pm-usage-item strong { display: block; margin-top: 6px; color: var(--content-primary); font-size: 16px; font-variant-numeric: tabular-nums; }
-@media (max-width: 560px) { .pm-usage-grid { grid-template-columns: 1fr; } }
 </style>
