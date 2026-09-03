@@ -48,7 +48,7 @@ import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 const rootEl = ref<HTMLElement | null>(null)
 defineExpose({ rootEl })
 
-defineProps({
+const props = defineProps({
   ext: { type: String, required: true },
   displayName: { type: String, required: true },
   hasThumb: { type: Boolean, default: false },
