@@ -64,7 +64,7 @@
     "codemirror": "^6.0.2",
     "dayjs": "^1.11.0",
     "dompurify": "^3.4.11",
-    "gugu-interaction-runtime": "^3.0.5",
+    "gugu-interaction-runtime": "^3.0.6",
     "highlight.js": "^11.11.1",
     "lowlight": "^3.3.0",
     "marked": "^18.0.5",
