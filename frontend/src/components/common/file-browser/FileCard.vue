@@ -183,4 +183,9 @@ defineProps({
 /* leave 只走 opacity（同 filesListRows.css 的注释）：退出多选时 clearSelection 同帧移除
    .checked，若背景/边框也过渡，选中填充会先变色再淡完，暗色下结尾明显闪一下。 */
 .fc-card .sel-cb-leave-active { transition: opacity 0.15s ease; }
+/* 退出多选的遮罩联动：checkbox 进入离场过渡时，整卡/缩略图两层选中遮罩同步淡出。
+   没有这条，遮罩会撑到选中集合清空那一刻才硬切消失（✓ 和遮罩瞬间消失、只剩
+   盒子在淡出的观感）。 */
+.fc-card:has(.sel-cb-leave-active)::before,
+.fc-card:has(.sel-cb-leave-active) .fc-thumb-area::after { opacity: 0; transition: opacity 0.15s ease; }
 </style>
