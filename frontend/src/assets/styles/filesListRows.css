@@ -82,8 +82,11 @@
   background: var(--file-browser-checkbox-bg-checked);
   border-color: var(--file-browser-checkbox-border-checked);
 }
-:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-active,
-:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
+/* leave 只走 opacity：退出多选时 clearSelection 同帧移除 .checked，若 background/border
+   也过渡，选中态填充会先变色再淡完（暗色下高亮填充对比强，结尾明显闪一下）。冻结
+   离场时的 paint，让 checkbox 带着原样式一次性淡出。 */
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-active { transition: opacity 0.18s ease; }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-from,
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-to { opacity: 0; }
 
