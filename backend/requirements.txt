@@ -24,6 +24,9 @@ oss2>=2.18.0
 lark-oapi>=1.6.0
 # QQ 官方机器人接收/发送均为自建 raw WebSocket + raw HTTP，不再依赖 qq-botpy
 # Utils
+# 直接约束传递依赖，避免生产镜像带入已公开漏洞版本。
+msgpack>=1.2.1
+setuptools>=78.1.1
 # 可选本地 tokenizer：LoopScope 配置 tokenizer.json 后按模型精确估算；未配置时自动回退启发式
 tokenizers>=0.20.3,<1.0.0
 python-dotenv>=1.0.0

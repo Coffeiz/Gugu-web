@@ -9,6 +9,7 @@ RUN sed -i \
         /etc/apt/sources.list.d/debian.sources
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker-cli nodejs \
     && rm -rf /var/lib/apt/lists/*
