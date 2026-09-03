@@ -254,11 +254,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "$TAG" \
-            release/update-manifest.json \
-            release/update-manifest.json.bundle \
-            --title "$TAG" \
-            --generate-notes
+          # Release 可能已手动创建（如提前按 CHANGELOG 发）或上次运行已建过；
+          # 幂等处理：已存在只补传 manifest 附件，不存在才新建。
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" \
+              release/update-manifest.json \
+              release/update-manifest.json.bundle --clobber
+          else
+            gh release create "$TAG" \
+              release/update-manifest.json \
+              release/update-manifest.json.bundle \
+              --title "$TAG" \
+              --generate-notes
+          fi
 
       - name: Write release summary
         env:
