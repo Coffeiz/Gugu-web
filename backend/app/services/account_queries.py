@@ -73,3 +73,15 @@ async def byok_usage_stats(db, user_id, since) -> dict[str, int]:
     ).where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(True))))
     total, tokens_in, cache_read = result.one()
     return {"tokens": int(total), "tokens_in": int(tokens_in), "cache_read": int(cache_read)}
+
+
+async def byok_usage_detail(db, user_id, since) -> list[tuple]:
+    """近 N 天 BYOK 用量明细行 (created_at, tokens_in, cache_read, tokens_out)。
+
+    单用户 30 天的行数有限，取回后按用户本地日聚合，避免依赖数据库时区函数。
+    """
+    result = await db.execute(select(
+        AgentUsage.created_at, AgentUsage.tokens_in,
+        AgentUsage.cache_read, AgentUsage.tokens_out,
+    ).where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(True))))
+    return list(result.all())

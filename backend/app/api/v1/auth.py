@@ -502,8 +502,7 @@ async def get_usage_trends(
     口径与 agent_usage 落库一致：tokens_in 为未命中缓存的新增输入，
     cache_read 为缓存命中，tokens_out 为输出；按用户本地时区归日。
     """
-    from app.models import AgentUsage
-    from sqlalchemy import select, and_
+    from app.services.account_queries import byok_usage_detail
 
     days = max(1, min(days, 90))
     now = now_utc()
@@ -516,16 +515,7 @@ async def get_usage_trends(
 
     # 单用户近 N 天的行数有限，一次取回明细后按本地日聚合，避免依赖数据库时区函数；
     # 汇总值直接从按天结果求和，保证与序列口径一致。
-    detail = (await db.execute(
-        select(AgentUsage.created_at, AgentUsage.tokens_in,
-               AgentUsage.cache_read, AgentUsage.tokens_out).where(
-            and_(
-                AgentUsage.user_id == current_user.id,
-                AgentUsage.is_byok.is_(True),
-                AgentUsage.created_at >= start_utc,
-            )
-        )
-    )).all()
+    detail = await byok_usage_detail(db, current_user.id, start_utc)
     by_day: dict[str, list[int]] = {k: [0, 0, 0] for k in date_keys}
     for created_at, tin, cache_read, tout in detail:
         key = created_at.astimezone(LOCAL_TZ).date().isoformat()
