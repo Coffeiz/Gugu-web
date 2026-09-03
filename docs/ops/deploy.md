@@ -526,6 +526,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 - `**nginx: [emerg] duplicate location "/"` 启动失败**：反向代理路径填成了 `/`（把整站都代理给后端）→ 和伪静态的 `location /` 撞车。**反代路径必须是 `/api`**——前端静态归 nginx，只有 `/api` 走后端。
 - `**[Errno 98] address already in use`（8000 被占）**：多半上一次前台 uvicorn 没停。`ss -ltnp | grep :8000` 看谁占，`pkill -f "uvicorn app.main"` 杀掉；或换端口（记得同步改反代目标）。注意：能看到 `Application startup complete` 再报 bind 失败，说明**后端/DB 没问题，纯粹端口冲突**。
+- **入口反代开启缓存导致"操作不生效、刷新后归位"**：1Panel/OpenResty 站点的 `location /` 若开 `proxy_cache`，会把 `/api` 的 GET 响应一并缓存（默认 `proxy_cache_valid 200 ... 10m`，key 只有 host+uri+args）——写入实际成功，但后续读取命中旧缓存，表现为用户操作后界面不变；且 key 不含 Authorization/Cookie，**不同用户命中同一 URL 会共享缓存响应，有跨用户泄露风险**。规则：`/api` 一律 `proxy_cache off`；静态资源可缓存但 `index.html` 不能长缓存（发版后会引用旧 hash 资源）。另：1Panel 改 vhost 可能被面板覆写，reload 前后各 `cat` 一次确认。排障口诀：接口日志正常、库里数据正确、客户端读到旧值 → 先查入口链路缓存。
 - 私有仓库 clone：服务器生成 SSH key → GitHub 仓库 Settings → Deploy keys 加只读公钥 → `git clone git@github.com:...`（国内服务器连不上 GitHub 时走代理 / 镜像）。
 
 ### 4.5 后端服务（systemd · 一次装全 4 个）
