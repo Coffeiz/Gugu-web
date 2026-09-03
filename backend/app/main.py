@@ -257,22 +257,27 @@ async def _swagger_oauth2_redirect():
 
 
 @app.get("/docs", include_in_schema=False)
-async def _swagger_ui_pinned():
+async def _swagger_ui_pinned(request: Request):
     """钉住 Swagger UI 的 CDN 版本。
 
     FastAPI 默认引用 swagger-ui-dist@5 浮动 tag，jsdelivr 会自动升到最新版；
     2026-09 实测 5.32.x（gitDirty 构建）opblock 上 copy 按钮与展开箭头图标重叠。
     钉到已知正常的 5.17.14，升级需手动改这里并检查 /docs 渲染。
-    openapi_url 与 swagger_ui_oauth2_redirect_url 由 FastAPI 按 root_path 拼接，
-    反代子路径部署（如 /gugu/docs）下也能指对。
+    root_path 要运行时从 request scope 读再拼进 URL——app.openapi_url 等只是
+    配置的相对路径，反代子路径部署（如 /gugu/docs）下不拼会让 Swagger 拉不到
+    schema、OAuth redirect 也指错；这与 FastAPI 默认 docs handler 的行为一致。
     """
     from fastapi.openapi.docs import get_swagger_ui_html
 
+    root_path = request.scope.get("root_path", "").rstrip("/")
     cdn = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14"
     return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
+        openapi_url=root_path + app.openapi_url,
         title=f"{app.title} - Swagger UI",
-        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        oauth2_redirect_url=(
+            root_path + app.swagger_ui_oauth2_redirect_url
+            if app.swagger_ui_oauth2_redirect_url else None
+        ),
         swagger_js_url=f"{cdn}/swagger-ui-bundle.js",
         swagger_css_url=f"{cdn}/swagger-ui.css",
         swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
