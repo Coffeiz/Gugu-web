@@ -10,9 +10,13 @@ MiniMax M3），不能靠重新读 `get_settings().ai`——pool/router 场景�
 """
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 
 _model_cfg: ContextVar[object | None] = ContextVar("model_cfg", default=None)
+_user_scope: ContextVar[bool] = ContextVar("modelctx_user_scope", default=False)
+
+logger = logging.getLogger("agent.modelctx")
 
 
 def set_model_cfg(ai) -> None:
@@ -21,3 +25,30 @@ def set_model_cfg(ai) -> None:
 
 def get_model_cfg():
     return _model_cfg.get()
+
+
+def mark_user_scope() -> None:
+    """标记当前上下文为「用户链路」：用户会触发的 LLM 调用都不允许静默回落平台预设。
+
+    Web/IM/定时任务三个入口在解析 BYOK 前调用；create_task 派生的后台任务
+    （反思、总结、压缩、问候语）自动继承，哨兵因此在整条链路生效。
+    """
+    _user_scope.set(True)
+
+
+def effective_ai(settings):
+    """用户链路统一读模型配置的入口：优先当前上下文绑定的模型（BYOK 解析结果），
+    无绑定时回落平台预设。
+
+    用户链路里未绑定就走到兜底，说明新调用点漏接 BYOK 绑定——打哨兵日志让它在
+    日志里现形，而不是像过去那样静默烧平台配额（历史 bug：定时任务/反思/压缩
+    绕过 BYOK，直到上游 429 insufficient_quota 才暴露）。
+    """
+    bound = _model_cfg.get()
+    if bound is not None:
+        return bound
+    if _user_scope.get():
+        logger.warning(
+            "modelctx 兜底哨兵：用户链路 LLM 调用未绑定用户模型，回落平台预设 "
+            "(settings.ai)。新调用点应经 resolve_run_config_for_user + set_model_cfg 绑定。")
+    return settings.ai

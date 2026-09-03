@@ -411,7 +411,16 @@ async function openChatObject(type: string, id: number) {
     canvas: '/mind/canvases', note: '/mind/notes', 'scheduled-task': '/schedules',
   }
   const path = paths[type]
-  if (path) await router.push({ path, query: { object_id: String(id) } })
+  if (path) {
+    // 已在目标页且 query 完全相同时，router.push 是 no-op，页面收不到任何变化；
+    // 派发自定义事件让已挂载的页面直接响应（页面侧三种入口都接了同一处理函数）。
+    if (router.currentRoute.value.path === path
+      && router.currentRoute.value.query.object_id === String(id)) {
+      window.dispatchEvent(new CustomEvent('gugu:open-object', { detail: { type, id } }))
+      return
+    }
+    await router.push({ path, query: { object_id: String(id) } })
+  }
 }
 
 watch(isTypingText, v => {

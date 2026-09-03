@@ -37,6 +37,10 @@ html[data-family='mono'] {
    tokens, so disabling surface highlight does not remove affordance from buttons or inputs. */
 html[data-theme='dark'][data-family] {
   --surface-hover-tint: transparent;
+  /* 日历条/chip 是小组件级交互目标，hover 反馈必须可感知，不能跟着 surface 级
+     「暗色不提亮」一起变全透明；从主题自身的 highlight-hover 派生一层薄高光。 */
+  --calendar-chip-hover-overlay: color-mix(in srgb, white 5%, transparent);
+  --calendar-capsule-hover-overlay: color-mix(in srgb, white 5%, transparent);
   --surface-glass-hover: var(--surface-glass);
   --elevation-card-hover: var(--elevation-card);
   --card-hover-overlay: transparent;

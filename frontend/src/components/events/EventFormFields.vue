@@ -16,13 +16,43 @@
     <TimeInput v-model="event.endTime" :boxed="false" />
     <span v-if="isNextDay(event.time, event.endTime)" class="nextday-tag">{{ t('calendar.nextDay') }}</span>
   </div>
-  <textarea v-model="event.description" class="popup-textarea" :placeholder="t('calendar.descriptionOptional')" rows="2"></textarea>
+  <textarea
+    v-model="event.description"
+    class="popup-textarea"
+    :placeholder="t('calendar.descriptionOptional')"
+    rows="2"
+    :ref="mountAutoGrow"
+    @input="autoGrow($event.target)"
+  ></textarea>
   <div class="reminder-section" v-if="!isPastDate(event.date)">
     <div class="reminder-label"><Icon name="admin.bell" :size="11" /> {{ t('calendar.reminder') }}</div>
     <div v-for="(r, i) in form.reminders.value" :key="i" class="reminder-item">
-      <select v-model.number="r.leadMin" class="lead-select">
-        <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
-      </select>
+      <button
+        :ref="el => setLeadAnchor(i, el)"
+        class="lead-select lead-trigger"
+        type="button"
+        @click.stop="toggleLeadMenu(i)"
+      >
+        {{ leadLabelOf(r.leadMin) }}
+        <FlipChevron :open="leadMenuIndex === i" />
+      </button>
+      <!-- 与排序菜单同源：标准列表弹窗（Teleport 到 body）；定位/视口钳制交给 PopupMenu，不手传坐标 -->
+      <ContextMenu
+        :show="leadMenuIndex === i"
+        :anchor="leadAnchorEl"
+        @close="closeLeadMenu"
+      >
+        <button
+          v-for="o in LEAD_OPTIONS"
+          :key="o.min"
+          class="ctx-item popup-menu-item lead-menu-item"
+          :class="{ active: o.min === form.reminders.value[leadMenuIndex]?.leadMin }"
+          type="button"
+          @click="pickLead(o.min)"
+        >
+          {{ o.label }}
+        </button>
+      </ContextMenu>
       <button class="reminder-del" @click="form.removeReminderAt(i)" :title="t('common.actions.remove')"><Icon name="action.close" :size="10" /></button>
     </div>
     <button class="reminder-add-toggle" @click="form.addReminder">＋ {{ t('calendar.addReminder') }}</button>
@@ -38,17 +68,20 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
 import TimeInput from '@/components/common/controls/TimeInput.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
+import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
 import {
   LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
   type EventDraft, type useEventEditForm,
 } from '@/composables/calendar/useEventEditForm'
 
-defineProps<{
+const props = defineProps<{
   event: EventDraft
   form: ReturnType<typeof useEventEditForm>
   autofocus?: boolean
@@ -56,6 +89,47 @@ defineProps<{
 }>()
 const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-reminder'): void }>()
 const { t } = useI18n()
+
+// 提前量下拉：标准列表弹窗（ContextMenu + FlipChevron），替代原生 select。
+// 提醒项是列表，用打开项下标区分各行的菜单状态。
+const leadMenuIndex = ref(-1)
+const leadAnchorEl = ref<HTMLElement | null>(null)
+const leadAnchorEls: HTMLElement[] = []
+
+function setLeadAnchor(i: number, el: unknown) {
+  if (el) leadAnchorEls[i] = el as HTMLElement
+}
+function leadLabelOf(min: number) {
+  return LEAD_OPTIONS.find(o => o.min === min)?.label ?? `提前 ${min} 分钟`
+}
+function toggleLeadMenu(i: number) {
+  if (leadMenuIndex.value === i) { closeLeadMenu(); return }
+  const el = leadAnchorEls[i]
+  if (!el) return
+  leadAnchorEl.value = el
+  leadMenuIndex.value = i
+}
+function pickLead(min: number) {
+  const item = props.form.reminders.value[leadMenuIndex.value]
+  if (item) item.leadMin = min
+  closeLeadMenu()
+}
+function closeLeadMenu() { leadMenuIndex.value = -1 }
+
+// 描述框随内容自动长高（挂载/输入时各调一次），封顶后内部滚动，不再无限撑高弹窗。
+function autoGrow(el: unknown) {
+  const ta = el as HTMLTextAreaElement | null
+  if (!ta || !ta.isConnected) return
+  ta.style.height = 'auto'
+  // ref 回调可能早于首次布局，scrollHeight 为 0 时保持 rows 默认高度，别写成 0
+  if (!ta.scrollHeight) return
+  ta.style.height = `${Math.min(ta.scrollHeight, 176)}px`
+}
+// 挂载时布局尚未完成，推迟到下一帧测量（打开时已有内容也能正确撑高）
+function mountAutoGrow(el: unknown) {
+  if (!el) return
+  requestAnimationFrame(() => autoGrow(el))
+}
 </script>
 
 <style scoped>
@@ -113,6 +187,8 @@ const { t } = useI18n()
 .popup-textarea {
   width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px;
   resize: none; line-height: 1.5;
+  /* autoGrow 脚本负责动态高度；这个上限只做兜底，超出后内部滚动。 */
+  max-height: 176px; overflow-y: auto;
 }
 .popup-input::placeholder,
 .popup-textarea::placeholder { color: var(--input-placeholder); }
@@ -159,5 +235,19 @@ const { t } = useI18n()
 }
 .chan-chip:hover { color: var(--choice-chip-fg-hover); background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); }
 .chan-chip.on { color: var(--choice-chip-fg-active); background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); }
-.lead-select { flex: 1; padding: 5px 8px; border-radius: var(--radius-xs); font-size: 12px; }
+/* 触发器是按钮（原生 select 已移除），外观沿用输入令牌；宽度铺满提醒项剩余空间。 */
+.lead-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  text-align: center;
+}
 </style>

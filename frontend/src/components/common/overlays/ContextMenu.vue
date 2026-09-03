@@ -1,5 +1,9 @@
 <template>
-  <PopupMenu :show="show" :anchor="anchor" :position="{ x: x ?? 0, y: y ?? 0 }" popup-class="ctx-menu popup-menu">
+  <!-- x/y 都不传时 position 保持 null，PopupMenu 走 anchor 定位（含视口钳制与滚动跟随）；
+       只传其一的旧调用方维持原 (…,0) 行为不变 -->
+  <PopupMenu :show="show" :anchor="anchor"
+    :position="x == null && y == null ? null : { x: x ?? 0, y: y ?? 0 }"
+    popup-class="ctx-menu popup-menu">
         <slot />
   </PopupMenu>
 </template>

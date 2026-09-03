@@ -51,7 +51,8 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
     """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
     prompt = _build_title_prompt(user_msg, ai_reply)
     from agent import providers
-    ai = ai or settings.ai
+    from agent.llm.modelctx import effective_ai
+    ai = ai or effective_ai(settings)
     provider_adapter = providers.adapter_for(ai)
     try:
         if use_anthropic:
@@ -92,23 +93,25 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         f"{convo[:1500]}"
     )
     from agent import providers
-    provider_adapter = providers.adapter_for(settings.ai)
+    from agent.llm.modelctx import effective_ai
+    ai = effective_ai(settings)
+    provider_adapter = providers.adapter_for(ai)
     try:
         if use_anthropic:
             import httpx
-            client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_anthropic_thinking_params(settings.ai)
+            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
+            extra = provider_adapter.build_anthropic_thinking_params(ai)
             resp = await client.messages.create(
-                model=settings.ai.model, max_tokens=80,
+                model=ai.model, max_tokens=80,
                 messages=[{"role": "user", "content": prompt}], **extra)
             text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
             return text.strip().strip('"「」')[:120]
         else:
             import httpx
-            client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_openai_thinking_kwargs(settings.ai)
+            client = providers.build_openai_client(ai, httpx.Timeout(10.0))
+            extra = provider_adapter.build_openai_thinking_kwargs(ai)
             resp = await client.chat.completions.create(
-                model=settings.ai.model, max_tokens=80,
+                model=ai.model, max_tokens=80,
                 messages=[{"role": "user", "content": prompt}], **extra)
             return (resp.choices[0].message.content or "").strip().strip('"「」')[:120]
     except Exception:
@@ -129,6 +132,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
+    from agent.llm import modelctx
+    modelctx.mark_user_scope()
     model_cfg = resolve_run_config(settings, req).model
     from agent.runtime import trace
     trace.new_trace()   # 全链路 trace（web 路入口）：本轮工具轨迹日志自动带同一 id
@@ -140,6 +145,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     async with _sess._SessionLocal() as db:
         run_config = await resolve_run_config_for_user(settings, db, user_id, req)
         model_cfg = run_config.model
+        modelctx.set_model_cfg(model_cfg)   # 后台任务（标题/总结/反思/问候）经 create_task 继承此绑定
         # ── 精力耗尽硬拦判定（与 IM/定时任务 runner 同口径，走 quota.is_exhausted 的 CST 6h/周窗口）──
         quota_exceeded = await quota.is_exhausted(db, user_id, settings)
 
@@ -391,6 +397,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     attach_cards = attach_cards or []
     user_media = user_media or []
     settings = get_settings()
+    from agent.llm import modelctx
+    modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req) if model_cfg is None else None
     model_cfg = model_cfg or run_config.model
     profile = DefaultProfile()
@@ -421,6 +429,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         if model_cfg is None:
             run_config = await resolve_run_config_for_user(settings, db, user_id, req)
             model_cfg = run_config.model
+            modelctx.set_model_cfg(model_cfg)   # 后台任务经 create_task 继承此绑定
         tool_names = await _filter_shell_tool(db, user_id, session_id, list(profile.tool_names))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),

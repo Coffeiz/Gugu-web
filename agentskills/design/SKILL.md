@@ -62,3 +62,16 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
   不要在组件里单独写亮色兜底；canvas 图表（chart.js 不继承 CSS 颜色）用
   `getComputedStyle` 运行时解析令牌值（参考 `_shared.ts` 的 `cssVar` /
   `AdminBarChart` 的 `resolveColor`）。
+
+### 开合箭头统一组件 FlipChevron（方向语义全站默认，勿手写）
+
+所有「收起/展开」箭头一律使用公共组件 `frontend/src/components/common/controls/FlipChevron.vue`，
+禁止在组件里手写 svg + `transform: rotate(...)` 复刻（历史上多次因方向写反返工）。方向语义：
+
+- **默认（不传 direction）= right-down：收起朝右（rotate -90°）、展开转回朝下（rotate 0°）**。
+  这是全站统一默认——树/分组、折叠面板、下拉触发器都用它，调用点无需任何方向参数。
+- 仅「收起朝下、展开朝上」的场景显式传 `direction="up-down"`（如个别顶部横向下拉）。
+- 如果发现某个调用点"方向不对"，先怀疑是调用点自己传错 direction 或手写了旋转样式，
+  而不是去改公共组件的默认值——默认值方向改动曾导致全站回归，不允许再动。
+- 见到旧代码里遗留的 `.xxx-chev { transform: rotate(-90deg) }` 手写箭头，顺手替换为
+  FlipChevron；替换时注意保留原尺寸（`size`）与过渡时长（`transition`）。

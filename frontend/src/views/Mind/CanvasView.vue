@@ -50,7 +50,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
@@ -75,6 +75,15 @@ type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
 const route = useRoute()
+const router = useRouter()
+// 用完即清：object_id 留在地址栏的话，刷新/重进会强制跳回那张画布；
+// replace 不产生历史记录，清空触发的 watch 拿到 NaN 会直接跳过。
+async function consumeObjectId() {
+  const requestedId = Number(route.query.object_id)
+  if (!Number.isFinite(requestedId)) return undefined
+  await router.replace({ query: { ...route.query, object_id: undefined } })
+  return requestedId
+}
 const projectStore = useProjectStore()
 const { openMindRef } = useMindRefActions()
 
@@ -155,9 +164,21 @@ onMounted(async () => {
     !store.canvasesLoaded ? store.fetchCanvases() : Promise.resolve(),
     !projectStore.projectsLoaded && !projectStore.loading ? projectStore.fetchProjects() : Promise.resolve(),
   ])
-  const requestedId = Number(route.query.object_id)
-  await ensureCanvas(Number.isFinite(requestedId) ? requestedId : undefined)
+  const requestedId = await consumeObjectId()
+  await ensureCanvas(requestedId)
 })
+// 聊天卡片点击：已在画布页时组件不重新挂载（query 相同时 push 还是 no-op，
+// GuguChat 派发 gugu:open-object 事件），watch query + 自定义事件都接同一处理。
+watch(() => route.query.object_id, async () => {
+  const requestedId = await consumeObjectId()
+  if (requestedId !== undefined) await ensureCanvas(requestedId)
+})
+window.addEventListener('gugu:open-object', onOpenObjectEvent as EventListener)
+onBeforeUnmount(() => window.removeEventListener('gugu:open-object', onOpenObjectEvent as EventListener))
+async function onOpenObjectEvent() {
+  const requestedId = await consumeObjectId()
+  if (requestedId !== undefined) await ensureCanvas(requestedId)
+}
 async function ensureCanvas(requestedId?: number) {
   const rememberedId = Number(localStorage.getItem('mind-last-canvas-id'))
   const requestedCanvas = Number.isFinite(requestedId) && store.canvases.some(canvas => canvas.id === requestedId)

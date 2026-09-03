@@ -343,6 +343,9 @@ async def _run_collect_unlocked(
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
+    # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
+    from agent.llm import modelctx
+    modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req)
     model_cfg = run_config.model
     context_policy = policy_for(req)
@@ -358,6 +361,7 @@ async def _run_collect_unlocked(
     async with _sess._SessionLocal() as db:
         run_config = await resolve_run_config_for_user(settings, db, user_id, req)
         model_cfg = run_config.model
+        modelctx.set_model_cfg(model_cfg)   # 后台任务（反思/总结/压缩）经 create_task 继承此绑定
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
@@ -790,6 +794,9 @@ async def _run_stream_unlocked(
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
+    # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
+    from agent.llm import modelctx
+    modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req)
     model_cfg = run_config.model
     context_policy = policy_for(req)
@@ -803,6 +810,7 @@ async def _run_stream_unlocked(
     async with _sess._SessionLocal() as db:
         run_config = await resolve_run_config_for_user(settings, db, user_id, req)
         model_cfg = run_config.model
+        modelctx.set_model_cfg(model_cfg)   # 后台任务（反思/总结/压缩）经 create_task 继承此绑定
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
@@ -1368,15 +1376,23 @@ async def _run_scheduled_once(
     allowed_tools: list[str] | None = None,
 ):
     """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
-    run_config = resolve_run_config(settings, None)
-    model_cfg = run_config.model
+    model_cfg = None
     try:
         import app.db.session as _sess
+        from agent.llm import modelctx
 
         if _sess._engine is None:
             _sess._build_engine()
 
+        # 定时任务是用户链路：绑定 BYOK 解析结果到 modelctx，派生的后台任务（如
+        # 压缩）经 effective_ai 读到同一模型，不静默回落平台预设。
+        modelctx.mark_user_scope()
         async with _sess._SessionLocal() as db:
+            # 定时任务与 Web/IM 聊天走同一条 BYOK 覆盖链路：用户配置了 llm 凭据就用
+            # 用户的 provider，否则原样回落平台激活预设（函数内部兜底）。
+            run_config = await resolve_run_config_for_user(settings, db, user_id, None)
+            model_cfg = run_config.model
+            modelctx.set_model_cfg(model_cfg)
             user_tz = await loaders.load_user_tz(db, user_id)
             set_ctx_tz(user_tz)
             if minimal_context:

@@ -56,3 +56,9 @@ npm run build              # 构建验证
 ```
 
 全部通过后再提交 PR。不需要等待 GitHub CI——本地通过即可。
+
+## 开合箭头
+
+需要收起/展开箭头时用公共组件 `components/common/controls/FlipChevron.vue`，默认
+`right-down`（收起朝右、展开朝下），不传 direction，也不要手写 rotate(-90deg) 样式；
+只有确实需要「收起朝下、展开朝上」时才传 `direction="up-down"`。详见 design skill。
