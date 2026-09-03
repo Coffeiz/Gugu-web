@@ -98,8 +98,7 @@
                 <span class="preset-model">{{ p.model }}</span>
                 <span class="preset-meta-item">out {{ p.max_tokens ?? 8000 }}</span>
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? 128000 }}</span>
-                <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
-                <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
+                                <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
                 <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><Icon name="admin.eye" size="xs" />{{ t('agent.image') }}</span>
                 <span v-if="p.vision_video" class="preset-meta-item preset-meta-vision"><Icon name="admin.video" size="xs" />{{ t('agent.video') }}</span>
                 <span v-if="p.vision_audio" class="preset-meta-item preset-meta-vision"><Icon name="admin.microphone" size="xs" />{{ t('agent.audio') }}</span>
@@ -694,7 +693,6 @@ interface LlmPresetDraft extends Partial<LlmPresetRecord> {
   base_url: string
   model: string
   max_tokens: number
-  temperature: number
   context_tokens: number
   thinking: string
   vision: boolean
@@ -736,7 +734,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, temperature: 0.7, context_tokens: 128000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''

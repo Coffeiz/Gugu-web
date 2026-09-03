@@ -132,6 +132,9 @@ services:
       - gugu_data:/data
 
   backend:
+    # sandboxd 用 SO_PEERCRED 校验连接方进程；跨容器 PID namespace 拿不到真实 pid，
+    # backend 与 sandboxd 需共享 host pid namespace（同 docker-compose.prod.yml）。
+    pid: "host"
     logging: *json-file-logging
     build:
       context: ./backend
@@ -273,6 +276,8 @@ services:
   # 只有显式启用 --profile sandbox 才构建/启动；轻量模式不会安装 Docker CLI。
   sandboxd:
     profiles: [sandbox]
+    # 与 backend 共享 host pid namespace，SO_PEERCRED peer 校验才能拿到真实 pid/uid。
+    pid: "host"
     logging: *json-file-logging
     build:
       context: ./backend

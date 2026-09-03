@@ -43,7 +43,7 @@ async def _generate_memory_entries(user: str, settings) -> dict:
     for attempt in range(1, 3):
         try:
             output = await provider_runner.complete_json(
-                _load_sys(), user, settings, max_tokens=10000, temperature=0.3,
+                _load_sys(), user, settings, max_tokens=10000,
             )
             if isinstance(output, dict) and output:
                 return output

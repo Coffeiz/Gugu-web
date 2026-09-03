@@ -655,11 +655,11 @@ async def set_llm_strategy(body: StrategyUpdate):
 
 # 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
-_AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens", "temperature",
+_AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
                  "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
                  "vision_detail", "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
-_AI_DEFAULTS = {"max_tokens": 8000, "temperature": 0.7, "context_tokens": 128000,
+_AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
                 "thinking": "disabled", "reasoning_effort": "", "vision": False,
                 "vision_detail": "auto", "vision_video": False, "vision_audio": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
@@ -679,7 +679,6 @@ class PresetCreate(BaseModel):
     base_url: str = ""
     model: str = ""
     max_tokens: int = 8000
-    temperature: float = 0.7
     context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""
@@ -711,7 +710,6 @@ async def create_llm_preset(body: PresetCreate):
         "base_url": body.base_url,
         "model": body.model,
         "max_tokens": body.max_tokens,
-        "temperature": body.temperature,
         "context_tokens": body.context_tokens,
         "thinking": body.thinking,
         "reasoning_effort": body.reasoning_effort,
@@ -744,7 +742,6 @@ class PresetUpdate(BaseModel):
     base_url: str | None = None
     model: str | None = None
     max_tokens: int | None = None
-    temperature: float | None = None
     context_tokens: int | None = None
     thinking: str | None = None
     reasoning_effort: str | None = None
@@ -781,8 +778,6 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["model"] = body.model
     if body.max_tokens is not None:
         item["max_tokens"] = body.max_tokens
-    if body.temperature is not None:
-        item["temperature"] = body.temperature
     if body.context_tokens is not None:
         item["context_tokens"] = body.context_tokens
     if body.thinking is not None:
@@ -892,7 +887,7 @@ async def _probe_local_capabilities(item: dict) -> dict:
             result["chat"] = {"status": "检测失败", "detail": type(exc).__name__}
             return result
         payload = {"model": item.get("model", ""), "messages": [{"role": "user", "content": "回复 OK"}],
-                   "max_tokens": 4, "temperature": 0, "stream": False}
+                   "max_tokens": 4, "stream": False}
         try:
             response = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
             result["chat"] = {"status": "支持" if response.status_code < 400 else "检测失败",

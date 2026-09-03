@@ -92,7 +92,6 @@ class LoopDriver(Protocol):
 class _AnthropicCtx:
     tools: list
     max_tokens: int
-    temperature: float
     thinking_param: dict
     system_param: Any
     supports_active_cache: bool
@@ -327,7 +326,7 @@ class AnthropicDriver:
             system_param = system_text
 
         ctx = _AnthropicCtx(
-            tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
+            tools=tools, max_tokens=ai.max_tokens,
             thinking_param=thinking_param, system_param=system_param,
             supports_active_cache=supports_active_cache, adapter=adapter, model=ai.model,
             generation_param=adapter.build_anthropic_generation_params(ai),
@@ -413,7 +412,6 @@ class AnthropicDriver:
 class _OpenAICtx:
     tools: list
     max_tokens: int
-    temperature: float
     think_kwargs: dict
     model: str
     supports_active_cache: bool
@@ -518,7 +516,7 @@ class OpenAIDriver:
         think_kwargs = adapter.build_openai_thinking_kwargs(ai)
 
         ctx = _OpenAICtx(
-            tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
+            tools=tools, max_tokens=ai.max_tokens,
             think_kwargs=think_kwargs, model=ai.model,
             supports_active_cache=supports_active_cache,
             supports_explicit_cache=supports_explicit_cache,
@@ -552,7 +550,6 @@ class OpenAIDriver:
             model=ctx.model,
             messages=messages,
             max_tokens=ctx.max_tokens,
-            temperature=ctx.temperature,
             stream=True,
             stream_options={"include_usage": True},
             **ctx.think_kwargs,
@@ -685,7 +682,6 @@ class OpenAIDriver:
 class _OllamaCtx:
     tools: list
     max_tokens: int
-    temperature: float
     model: str
     think: bool | str
     keep_alive: str
@@ -754,7 +750,6 @@ class OllamaDriver:
         return client, _OllamaCtx(
             tools=tools,
             max_tokens=ai.max_tokens,
-            temperature=ai.temperature,
             model=ai.model,
             think=think,
             keep_alive=getattr(ai, "ollama_keep_alive", "5m") or "5m",
@@ -773,7 +768,7 @@ class OllamaDriver:
             "stream": True,
             "think": ctx.think,
             "keep_alive": ctx.keep_alive,
-            "options": {"temperature": ctx.temperature, "num_predict": ctx.max_tokens},
+            "options": {"num_predict": ctx.max_tokens},
         }
         if ctx.tools:
             payload["tools"] = ctx.tools

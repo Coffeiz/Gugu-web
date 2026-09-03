@@ -92,6 +92,9 @@ services:
       - gugu_config:/config
 
   backend:
+    # sandboxd 用 SO_PEERCRED 校验连接方进程；跨容器 PID namespace 拿不到真实 pid，
+    # backend 与 sandboxd 需共享 host pid namespace（同 docker-compose.prod.yml）。
+    pid: "host"
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}
     build:
@@ -207,6 +210,8 @@ services:
 
   sandboxd:
     profiles: [sandbox]
+    # 与 backend 共享 host pid namespace，SO_PEERCRED peer 校验才能拿到真实 pid/uid。
+    pid: "host"
     logging: *json-file-logging
     # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
     image: ${GUGU_BACKEND_IMAGE:-gugu-web-backend:local}

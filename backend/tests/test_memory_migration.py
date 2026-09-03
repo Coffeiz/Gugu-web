@@ -248,14 +248,14 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
     calls = {"n": 0}
     vote_sequences = [{0}, {0, 1}, {0}]   # 索引 0 三次全中；索引 1 只中一次；索引 2 从不中
 
-    async def fake_complete_json(sys_prompt, user, settings, max_tokens=800, temperature=0.1, **kwargs):
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=800, **kwargs):
         idx = calls["n"]
         calls["n"] += 1
         return {"remove": list(vote_sequences[idx])}
 
     monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
 
-    result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3, temperature=0.1)
+    result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3)
 
     assert result["removed"] == 1                 # 只有索引 0 过半数（3/3）
     assert result["removed_texts"] == ["一次性的项目执行细节"]
@@ -277,7 +277,7 @@ async def test_review_patterns_all_trials_fail_to_parse_skips_user(storage, monk
 
     monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
 
-    result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3, temperature=0.1)
+    result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3)
     assert result["removed"] == 0
     assert "error" in result
     # 没删任何东西
@@ -384,7 +384,7 @@ async def test_memory_compaction_uses_daily_batch_and_rag_only(storage, monkeypa
 
     captured = {}
 
-    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3, **kwargs):
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, **kwargs):
         captured["user"] = user
         captured["max_tokens"] = max_tokens
         return {"entries": "## 记录长期记忆：近期事件\n\n2026-07-09\n2026-07-10\n保留事件背景，不复写稳定结论"}

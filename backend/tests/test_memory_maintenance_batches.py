@@ -62,7 +62,7 @@ async def test_review_patterns_maps_each_batch_back_to_stable_pattern_id(isolate
 
     monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     result = await refresh_memory._review_patterns(
-        user_id, settings=object(), dry_run=False, trials=1, temperature=0.1,
+        user_id, settings=object(), dry_run=False, trials=1,
     )
 
     assert result["batch_count"] == 2

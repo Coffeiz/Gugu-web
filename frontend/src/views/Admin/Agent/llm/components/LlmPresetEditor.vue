@@ -87,14 +87,9 @@
                 <input v-model.number="draft.max_tokens" type="number" min="100" max="32000" step="100" class="modal-input" />
               </div>
               <div class="modal-field">
-                <label>{{ t('adminLlmUi.temperature') }}</label>
-                <input v-model.number="draft.temperature" type="number" min="0" max="2" step="0.05" class="modal-input" />
+                <label>{{ t('adminLlmUi.contextTokens') }}</label>
+                <input v-model.number="draft.context_tokens" type="number" min="500" max="200000" step="500" class="modal-input" />
               </div>
-            </div>
-
-            <div class="modal-field">
-              <label>{{ t('adminLlmUi.contextTokens') }}</label>
-              <input v-model.number="draft.context_tokens" type="number" min="500" max="200000" step="500" class="modal-input" />
             </div>
 
             <div class="modal-field modal-field--row">
@@ -175,7 +170,7 @@ interface Provider { key: string; label: string; base_url: string; model: string
 interface Option { key: string; label: string; hint?: string }
 interface LlmPresetDraft {
   id?: string | number; name: string; provider: string; api_key: string; base_url: string; model: string
-  max_tokens: number; temperature: number; context_tokens: number; thinking: string
+  max_tokens: number; context_tokens: number; thinking: string
   vision: boolean; vision_video: boolean; vision_audio: boolean
   capability_checked_at?: string
   [key: string]: unknown

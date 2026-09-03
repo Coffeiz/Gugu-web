@@ -1047,8 +1047,8 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
     failed_users = 0
     for uid in user_ids:
         try:
-            review = await _review_patterns(uid, settings, dry_run=True, trials=3, temperature=0.1)
-            split = await _split_profile(uid, settings, dry_run=True, trials=3, temperature=0.1)
+            review = await _review_patterns(uid, settings, dry_run=True, trials=3)
+            split = await _split_profile(uid, settings, dry_run=True, trials=3)
             if review.get("error") or split.get("error"):
                 failed_users += 1
             profile_events = await _migrate_profile_events(uid, settings, dry_run=True)

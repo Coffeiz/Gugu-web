@@ -67,13 +67,13 @@ _REVIEW_SYS_PROMPT = (
 )
 
 
-async def _review_once(patterns: list[dict], settings, temperature: float) -> dict | None:
+async def _review_once(patterns: list[dict], settings) -> dict | None:
     """单次调用，返回合并/删除建议；解析失败返回 None（不计入投票）。"""
     from agent.context.provider_runner import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
     # merge 需要返回合并后的表述；老用户 pattern 可能有上百条，800 token 容易在 JSON 收尾前被截断。
-    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=2000, temperature=temperature, thinking="disabled")
+    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=2000, thinking="disabled")
     if "remove" not in result and "merge" not in result:
         return None
     remove = result.get("remove", [])
@@ -112,7 +112,7 @@ def _protected_pattern(pattern: dict) -> bool:
 
 
 async def _review_patterns(user_id: str, settings, dry_run: bool,
-                         trials: int = 3, temperature: float = 0.1) -> dict:
+                         trials: int = 3) -> dict:
     """复核一个用户的 pattern.json，挑出不符合现行「只记什么」标准的条目并删除。
 
     同一份输入、同一份 prompt，模型两次调用的判断可能差很多——不能信单次调用的结果。
@@ -149,7 +149,7 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
         batch_ok = 0
         batch_items = list(batch.items)
         for _ in range(trials):
-            r = await _review_once(batch_items, settings, temperature)
+            r = await _review_once(batch_items, settings)
             if r is None:
                 continue
             batch_ok += 1
@@ -269,11 +269,11 @@ _SPLIT_SYS_PROMPT = (
 )
 
 
-async def _split_once(patterns: list[dict], settings, temperature: float) -> set[int] | None:
+async def _split_once(patterns: list[dict], settings) -> set[int] | None:
     from agent.context.provider_runner import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
-    result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature, thinking="disabled")
+    result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, thinking="disabled")
     idxs = result.get("move")
     if not isinstance(idxs, list):
         return None
@@ -281,7 +281,7 @@ async def _split_once(patterns: list[dict], settings, temperature: float) -> set
 
 
 async def _split_profile(user_id: str, settings, dry_run: bool,
-                          trials: int = 3, temperature: float = 0.1, **_ignored) -> dict:
+                          trials: int = 3, **_ignored) -> dict:
     """把 pattern.json 里其实该属于 profile 的条目搬过去——2026-07-08 拆分时 profile.json
     是全新文件，没有旧数据可迁移，这批「身份类」内容当时跟着整份 facts.json 进了 pattern.json，
     一直没被区分出来。同样用多数票机制（理由跟 _review_patterns 一样：单次调用不可信）。"""
@@ -312,7 +312,7 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
         batch_votes: dict[int, int] = {}
         batch_ok = 0
         for _ in range(trials):
-            r = await _split_once(batch_items, settings, temperature)
+            r = await _split_once(batch_items, settings)
             if r is None:
                 continue
             batch_ok += 1
@@ -438,7 +438,6 @@ async def main() -> None:
     ap.add_argument("--user", help="只跑这一个 user_id（调试用），不给则跑全部用户")
     ap.add_argument("--facts", action="store_true", help="旧别名：等同 --patterns")
     ap.add_argument("--trials", type=int, default=3, help="pattern 复核每个用户独立调用几次、多数票才删（默认 3）")
-    ap.add_argument("--temperature", type=float, default=0.1, help="pattern 复核调用的 temperature（默认 0.1，越低越稳定）")
     args = ap.parse_args()
 
     if args.facts:
@@ -458,7 +457,7 @@ async def main() -> None:
         op = OPS[op_name]
         touched = 0
         for uid in user_ids:
-            res = await op(uid, settings, args.dry_run, trials=args.trials, temperature=args.temperature)
+            res = await op(uid, settings, args.dry_run, trials=args.trials)
             if res.get("removed") or res.get("moved") or res.get("migrated") or res.get("error") or res.get("unstable"):
                 touched += 1
                 print(f"[{op_name}] {uid}: {res}")

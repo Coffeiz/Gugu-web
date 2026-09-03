@@ -49,7 +49,6 @@ class ContextBranch:
                     output = await call(
                         branch_input.stable_system, user, settings,
                         max_tokens=policy.max_tokens,
-                        temperature=policy.temperature,
                         thinking=policy.thinking,
                     )
                     ok = isinstance(output, dict) and bool(output)

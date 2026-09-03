@@ -34,7 +34,6 @@ class BranchPolicy:
     output_mode: OutputMode = "json"
     max_retries: int = 0
     max_tokens: int = 800
-    temperature: float = 0.3
     thinking: str | None = None
     preserve_prefix: bool = True
 
