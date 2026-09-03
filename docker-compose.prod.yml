@@ -89,6 +89,9 @@ services:
       - gugu_config:/config
 
   backend:
+    # sandboxd 用 SO_PEERCRED 校验连接方进程；backend 与 sandboxd 分属不同容器时
+    # 跨 PID namespace 无法翻译 peer pid（返回 0 被判"请求进程无效"），共享 host pid namespace。
+    pid: "host"
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
     env_file:
@@ -203,6 +206,8 @@ services:
 
   sandboxd:
     profiles: [sandbox]
+    # 与 backend 共享 host pid namespace，SO_PEERCRED peer 校验才能拿到真实 pid/uid。
+    pid: "host"
     logging: *json-file-logging
     # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
