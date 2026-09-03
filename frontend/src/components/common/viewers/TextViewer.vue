@@ -248,8 +248,6 @@ async function loadCmExtensions(ext: string, source = '') {
     },
     '.cm-line, .cm-line *': { textDecoration: 'none !important', whiteSpace: 'pre-wrap' },
     '.cm-scroller': { overflow: 'auto' },
-    // 组件内置的 basicSetup 除了行号还带一个代码折叠 gutter，用不上，隐藏掉不留预留空白
-    '.cm-foldGutter': { display: 'none' },
   })
   const loader = CM_LANG_LOADERS[(ext || '').toUpperCase()]
   const langExt = loader ? await loader(source) : null
@@ -701,6 +699,30 @@ onBeforeUnmount(() => {
   color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
 }
 .tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
+/* 折叠槽（basicSetup 内置，无法替换扩展，只能样式化）：
+   默认 ⌄/› 字符样式发虚，按 FlipChevron 的观感重做——展开向下/收起向右本来就是这两个字符，
+   这里统一尺寸、令牌配色和 hover 反馈。 */
+.tv-edit-cm-wrap :deep(.cm-foldGutter span) {
+  display: inline-block;
+  min-width: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--content-tertiary);
+  cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.tv-edit-cm-wrap :deep(.cm-foldGutter span:hover) { color: var(--action-primary); }
+/* 折叠占位符：默认写死白底 #eee + 灰边，暗色下是突兀的白块。改令牌软底 + 虚线边。 */
+.tv-edit-cm-wrap :deep(.cm-foldPlaceholder) {
+  background: var(--surface-soft);
+  border: 1px dashed var(--border-default);
+  color: var(--content-tertiary);
+  border-radius: 6px;
+  margin: 0 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
 /* CodeMirror 的活动行会单独给左侧行号加 cm-activeLineGutter，覆盖默认亮色主题。 */
 .tv-edit-cm-wrap :deep(.cm-activeLine) {
   background: color-mix(in srgb, var(--action-primary) 5%, transparent);
