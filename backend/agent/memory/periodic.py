@@ -31,7 +31,7 @@ async def _run_review(user_id, settings, count: int) -> bool:
     try:
         from scripts.refresh_memory import _review_patterns
 
-        result = await _review_patterns(user_id, settings, dry_run=False, trials=3, temperature=0.1)
+        result = await _review_patterns(user_id, settings, dry_run=False, trials=3)
         # 只有模型输出成功解析并完成复核，才推进水位；否则下次活跃对话应继续重试。
         if not isinstance(result, dict) or result.get("error"):
             return False

@@ -25,7 +25,6 @@ async def complete_json(
     user: str,
     settings,
     max_tokens: int = 1500,
-    temperature: float = 0.3,
     thinking: str | None = None,
 ) -> dict:
     from agent.llm.llm_select import use_anthropic_for
@@ -36,14 +35,9 @@ async def complete_json(
         thinking if thinking is not None else getattr(settings.ai, "thinking", None)
     )
     text = (
-        await _anthropic(
-            sys, user, settings, max_tokens, temperature, thinking=effective_thinking
-        )
+        await _anthropic(sys, user, settings, max_tokens, thinking=effective_thinking)
         if use_anthropic
-        else await _openai(
-            sys, user, settings, max_tokens, temperature,
-            json_mode=True, thinking=effective_thinking,
-        )
+        else await _openai(sys, user, settings, max_tokens, json_mode=True, thinking=effective_thinking)
     )
     return _parse_json(text)
 
@@ -53,7 +47,6 @@ async def _anthropic(
     user: str,
     settings,
     max_tokens: int,
-    temperature: float = 0.3,
     thinking: str | None = None,
 ) -> str:
     import httpx
@@ -61,12 +54,12 @@ async def _anthropic(
 
     client = providers.build_anthropic_client(
         settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
+    # temperature 已全局下线（anthropic SDK 1.x 不再接受该参数）。
     kwargs = dict(
         model=settings.ai.model,
         system=sys,
         messages=[{"role": "user", "content": user}],
         max_tokens=max_tokens,
-        temperature=temperature,
     )
     if thinking is not None:
         kwargs["thinking"] = {"type": thinking}
@@ -79,7 +72,6 @@ async def _openai(
     user: str,
     settings,
     max_tokens: int,
-    temperature: float = 0.3,
     json_mode: bool = False,
     thinking: str | None = None,
 ) -> str:
@@ -92,7 +84,6 @@ async def _openai(
         model=settings.ai.model,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
         max_tokens=max_tokens,
-        temperature=temperature,
     )
     adapter = providers.adapter_for(settings.ai)
     if json_mode:
