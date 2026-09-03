@@ -1,6 +1,7 @@
 # 咕咕后端生产镜像：只复制构建上下文，不挂载宿主机源码。
 # 钉住明确版本：latest 会让 Python/Debian 与预装包随时间漂移，影响构建可重现性与安全扫描。
-FROM python:3.14-bookworm
+# 选 trixie（Debian 13）而非 bookworm：trixie 仓库才有 docker-cli（bookworm 没有）。
+FROM python:3.14-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 # 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），生产文档预览依赖它，
