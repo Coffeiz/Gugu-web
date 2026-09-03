@@ -716,9 +716,17 @@ onBeforeUnmount(() => {
 }
 .tv-edit-cm-wrap :deep(.cm-selectionBackground),
 .tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
-  /* Ctrl+D / Alt+拖拽产生的所有选区（主+副）都画成这个类，统一令牌色 */
+  /* Ctrl+D / Alt+拖拽产生的所有选区（主+副）都画成这个类，统一令牌色。
+     浓度必须明显高于 activeLine 的 5%，否则选区和「当前行高亮」分不出。 */
   background: var(--selection-text-bg) !important;
 }
+/* 光标：CM 的明暗判定是 darkTheme 开关（我们没开，它默认亮色主题），
+   亮色默认是黑边框光标，暗色模式下直接隐形，必须显式覆盖成正文色。 */
+.tv-edit-cm-wrap :deep(.cm-cursor),
+.tv-edit-cm-wrap :deep(.cm-dropCursor) {
+  border-left-color: var(--content-primary);
+}
+.tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--content-primary); }
 .tv-edit-cm-wrap :deep(.cm-content ::selection),
 .tv-md ::selection {
   background: var(--selection-text-bg);

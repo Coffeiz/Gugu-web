@@ -76,8 +76,9 @@
   --action-secondary-fg-hover: var(--content-primary);
   --selection-bg: var(--theme-selection);
   /* 文字选区（编辑器/正文 ::selection）需要比 UI 高亮更实的底色，14~18% 的 --selection-bg
-     在卡片底色上几乎不可见。按主色加浓一档，文字用主色系深色保证对比。 */
-  --selection-text-bg: color-mix(in srgb, var(--action-primary) 32%, transparent);
+     在卡片底色上几乎不可见。按主色加浓一档，且要明显强于编辑器 activeLine 的 5% 高亮，
+     否则选区和「当前行高亮」无法区分；文字用主色系深色保证对比。 */
+  --selection-text-bg: color-mix(in srgb, var(--action-primary) 42%, transparent);
   --selection-fg: var(--theme-action-hover);
   --focus-ring: var(--theme-focus);
 
