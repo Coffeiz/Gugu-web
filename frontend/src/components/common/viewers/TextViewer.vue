@@ -772,13 +772,13 @@ onBeforeUnmount(() => {
 }
 .tv-edit-cm-wrap :deep(.cm-selectionBackground),
 .tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
-  background: var(--selection-bg) !important;
+  background: var(--selection-text-bg) !important;
 }
 .tv-edit-cm-wrap :deep(.cm-content ::selection),
 .tv-edit-textarea::selection,
 .tv-table ::selection,
 .tv-md ::selection {
-  background: var(--selection-bg);
+  background: var(--selection-text-bg);
   color: var(--content-primary);
 }
 /* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
