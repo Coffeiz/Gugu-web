@@ -138,6 +138,10 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
     if (e.button !== 0) return
     if (excludeSelector && (e.target as HTMLElement | null)?.closest(excludeSelector)) return
     if (!containerRef.value) return
+    // 内联重命名进行中：放行默认行为，让输入框随点击失焦（@blur 提交并退出）。
+    // mousedown preventDefault 会阻止焦点转移，否则点击卡片间空白处退不出重命名。
+    const active = document.activeElement
+    if (active instanceof HTMLInputElement && active.classList.contains('rename-input-inline')) return
     // 框选不是文本拖拽；在起点就阻止 Safari 建立选区，并清掉此前残留的文字选中态。
     e.preventDefault()
     window.getSelection()?.removeAllRanges()
