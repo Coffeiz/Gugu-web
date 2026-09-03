@@ -1368,8 +1368,7 @@ async def _run_scheduled_once(
     allowed_tools: list[str] | None = None,
 ):
     """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
-    run_config = resolve_run_config(settings, None)
-    model_cfg = run_config.model
+    model_cfg = None
     try:
         import app.db.session as _sess
 
@@ -1377,6 +1376,10 @@ async def _run_scheduled_once(
             _sess._build_engine()
 
         async with _sess._SessionLocal() as db:
+            # 定时任务与 Web/IM 聊天走同一条 BYOK 覆盖链路：用户配置了 llm 凭据就用
+            # 用户的 provider，否则原样回落平台激活预设（函数内部兜底）。
+            run_config = await resolve_run_config_for_user(settings, db, user_id, None)
+            model_cfg = run_config.model
             user_tz = await loaders.load_user_tz(db, user_id)
             set_ctx_tz(user_tz)
             if minimal_context:

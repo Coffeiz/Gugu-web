@@ -539,3 +539,77 @@ async def test_rename_session_rejects_empty_and_overlong(monkeypatch, db, user_a
     with pytest.raises(HTTPException) as exc:
         await rename_session(sess.id, RenameSessionRequest(title="x" * 301), user_a, db)
     assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_scheduled_once_applies_user_byok(monkeypatch):
+    """回归：定时任务执行阶段必须走 resolve_run_config_for_user（BYOK 覆盖链路）。
+
+    历史 bug：_run_scheduled_once 直接用 resolve_run_config（平台激活预设），
+    BYOK 用户聊天走自己的 Key，定时任务却烧平台配额，直到上游 429
+    insufficient_quota 才暴露。
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import app.db.session as db_session
+    import agent.runner as runner
+    from agent.llm.llm_select import ModelRunConfig
+    from agent.profiles import DefaultProfile
+    from app.core.config import AIPresetItem
+
+    class _DbContext:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    byok_model = AIPresetItem(model="MiniMax-M3", provider="minimax", context_tokens=80000).model_copy(
+        update={"provider": "qwen", "api_key": "sk-user", "is_byok": True})
+    picked = {}
+
+    async def fake_resolve_for_user(settings, db, user_id, ctx):
+        picked["user_id"] = user_id
+        return ModelRunConfig(model=byok_model, use_anthropic=False,
+                              context_tokens=80000, is_byok=True)
+
+    async def must_not_resolve(settings, ctx=None):
+        raise AssertionError("定时任务不应绕过 BYOK 覆盖直接取平台预设")
+
+    monkeypatch.setattr(runner, "resolve_run_config_for_user", fake_resolve_for_user)
+    monkeypatch.setattr(runner, "resolve_run_config", must_not_resolve)
+    monkeypatch.setattr(db_session, "_engine", object())
+    monkeypatch.setattr(db_session, "_SessionLocal", lambda: _DbContext())
+    monkeypatch.setattr(runner.loaders, "load_user_tz", AsyncMock(return_value="Asia/Shanghai"))
+
+    async def no_capability(tool_names, settings, owner_id=None, query=None):
+        return None
+
+    monkeypatch.setattr(runner, "_capability_context", no_capability)
+    monkeypatch.setattr(runner.builder, "build_split",
+                        lambda *a, **k: ("系统", "快照", "现在"))
+    monkeypatch.setattr(
+        runner, "_collect",
+        AsyncMock(return_value=("执行完成", 0, 0, 0, 0, False, [], False, {})))
+
+    class _FakeRunner:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, *a, **k):
+            async def _gen():
+                yield ""
+            return _gen()
+
+    monkeypatch.setattr("agent.scheduled.ScheduledLLMRunner", _FakeRunner)
+
+    text, errored, meta = await runner._run_scheduled_once(
+        "user-byok", "小北", "执行任务", DefaultProfile(), SimpleNamespace(),
+        include_meta=True, minimal_context=True,
+    )
+
+    assert picked["user_id"] == "user-byok"
+    assert text == "执行完成"
+    assert errored is False
+    assert meta == {"files": []}
