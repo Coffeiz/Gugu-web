@@ -15,7 +15,7 @@
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [在线预览](https://gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [在线预览](https://www.gugugu.site)
 
 </div>
 

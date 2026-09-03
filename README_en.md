@@ -15,7 +15,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [Live Demo](https://gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [Live Demo](https://www.gugugu.site)
 
 </div>
 
