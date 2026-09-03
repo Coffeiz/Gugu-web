@@ -99,3 +99,20 @@ docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f
 - 新增镜像依赖验证：进入 backend 容器实际调用一次（如 LibreOffice 用 `--convert-to pdf` 转一个
   真实文件，`.md` 不在支持格式内会报错，属正常）。
 - 前端打开一次核心页面（项目、聊天、弹窗），确认版本号与 CHANGELOG 对应的变化生效。
+
+### 入口反代（1Panel OpenResty）缓存陷阱
+
+公网入口 vhost（`playground.gugugu.site.conf`）的 `location /` 若开启 `proxy_cache`，
+会把 `/api` 的 GET 响应一并缓存（默认 `proxy_cache_valid 200 ... 10m`，key 只有
+host+uri+args）。后果：用户操作成功后前端重新拉数据拿到缓存的旧 200，表现为
+「操作不生效、刷新后归位」；且缓存 key 不含 Authorization/Cookie，**不同用户命中
+同一 URL 会共享缓存响应，存在跨用户泄露风险**。
+
+规则：
+
+- 入口反代对 `/api` 一律 `proxy_cache off`（或 vhost 整体不开 proxy_cache）；
+  静态资源可以缓存，但 `index.html` 不能长缓存（否则发版后引用旧 hash 资源）。
+- 1Panel 修改 vhost 后，改动可能被面板覆写，reload 前后各 `cat` 一次确认内容，
+  并把变更记进该站点的备份目录。
+- 排障口诀：写入类接口日志正常、库里数据正确、但客户端读到旧值 → 先查入口链路
+  （1Panel OpenResty）有没有缓存，再看应用层。
