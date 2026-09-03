@@ -147,7 +147,9 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
           provenance: mode=max
-          sbom: true
+          # 不再附加 SBOM attestation：buildx 的 SBOM 生成结果会被 gha cache 缓存，
+          # 依赖层更新后可能仍是旧内容，trivy 扫描会优先读取 attestation 里的过期
+          # 包清单，导致发布扫描误报已修复的漏洞（如 msgpack 1.1.2）。
 
       - name: Build and push frontend image
         id: frontend-image
@@ -165,7 +167,9 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
           provenance: mode=max
-          sbom: true
+          # 不再附加 SBOM attestation：buildx 的 SBOM 生成结果会被 gha cache 缓存，
+          # 依赖层更新后可能仍是旧内容，trivy 扫描会优先读取 attestation 里的过期
+          # 包清单，导致发布扫描误报已修复的漏洞（如 msgpack 1.1.2）。
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
