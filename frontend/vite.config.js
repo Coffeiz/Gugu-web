@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
@@ -10,6 +11,44 @@ import { ArcoResolver } from 'unplugin-vue-components/resolvers'
 const APP_VER = (() => {
   try { return execSync('git rev-parse --short HEAD').toString().trim() } catch { return String(Date.now()) }
 })()
+
+// 语义化发布版本（package.json version，如 1.0.4）与构建时间，供控制台横幅与 version.json
+const APP_RELEASE = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version
+const APP_BUILT_AT = new Date().toLocaleDateString('sv') // 本地日期 YYYY-MM-DD（toISOString 会按 UTC 差一天）
+
+// Runtime 包版本：优先 npm 安装目录，联调 alias 时回退 sibling 仓库
+const RUNTIME_VER = (() => {
+  for (const p of [
+    resolve(__dirname, 'node_modules/gugu-interaction-runtime/package.json'),
+    resolve(__dirname, '../../gugu-interaction-runtime/package.json'),
+  ]) {
+    try { return JSON.parse(readFileSync(p, 'utf8')).version } catch { /* 下一个路径 */ }
+  }
+  return ''
+})()
+
+// 生成真实 /version.json（此前不存在，SPA fallback 会把请求兜成 index.html，线上无法探测版本）
+const versionJsonPlugin = {
+  name: 'gugu-version-json',
+  // closeBundle：产物已写盘后再补 version.json（buildEnd 阶段 dist 还没落盘）
+  closeBundle() {
+    mkdirSync(resolve(__dirname, 'dist'), { recursive: true })
+    writeFileSync(resolve(__dirname, 'dist/version.json'), versionPayload())
+  },
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      if ((req.url || '').split('?')[0] !== '/version.json') return next()
+      res.setHeader('content-type', 'application/json')
+      res.end(versionPayload())
+    })
+  },
+}
+function versionPayload() {
+  return JSON.stringify({
+    version: APP_RELEASE, commit: APP_VER, built: APP_BUILT_AT,
+    runtime: RUNTIME_VER || null,
+  })
+}
 
 const adminEntry = {
   name: 'admin-entry',
@@ -31,10 +70,16 @@ const localRuntimeAliases = process.env.VITE_USE_LOCAL_RUNTIME === '1'
   : []
 
 export default defineConfig({
-  define: { __APP_VERSION__: JSON.stringify(APP_VER) },
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VER),
+    __APP_RELEASE__: JSON.stringify(APP_RELEASE),
+    __APP_BUILT_AT__: JSON.stringify(APP_BUILT_AT),
+    __RUNTIME_VERSION__: JSON.stringify(RUNTIME_VER),
+  },
   plugins: [
     vue(),
     adminEntry,
+    versionJsonPlugin,
     Components({
       resolvers: [ArcoResolver({ sideEffect: true })],
       dts: 'components.d.ts',   // 生成全局组件类型声明，供 vue-tsc / 编辑器识别（已 gitignore）
