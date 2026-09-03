@@ -259,3 +259,9 @@ async def read_pdf_preview(
         raise PreviewError(422, "文档转换超时") from error
     except RuntimeError as error:
         raise PreviewError(422, str(error)) from error
+    except FileNotFoundError as error:
+        # 容器/宿主机未安装 LibreOffice（office_to_pdf 调 create_subprocess_exec("libreoffice")），
+        # 给友好提示而非 500 刷屏；装好组件配 GUGU_INSTALL_LIBREOFFICE=true 重新构建镜像即可。
+        raise PreviewError(422, "文档转换组件未安装，预览暂不可用") from error
+    except OSError as error:
+        raise PreviewError(422, "文档转换失败") from error

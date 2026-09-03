@@ -2,6 +2,9 @@
 FROM python:latest
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+# 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），默认关；
+# 需要文档预览功能时构建传 `GUGU_INSTALL_LIBREOFFICE=true`（开发 Dockerfile 亦同）。
+ARG GUGU_INSTALL_LIBREOFFICE=false
 
 RUN sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
@@ -12,6 +15,7 @@ RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker-cli nodejs \
+        $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
