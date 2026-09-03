@@ -37,7 +37,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { useLiveStore } from '@/stores/live'
@@ -53,6 +53,7 @@ import NoteTimeline from './components/NoteTimeline.vue'
 
 const store     = useMindStore()
 const route     = useRoute()
+const router    = useRouter()
 const { t } = useI18n()
 const liveStore = useLiveStore()
 const uiStore   = useUiStore()
@@ -71,11 +72,12 @@ let highlightTimer: ReturnType<typeof setTimeout> | null = null
 async function highlightRequestedNote() {
   if (!store.loaded) await store.fetchNotes()
   const requestedId = Number(route.query.object_id)
-  if (store.notes.some(note => note.id === requestedId)) {
-    highlightId.value = requestedId
-    if (highlightTimer) clearTimeout(highlightTimer)
-    highlightTimer = setTimeout(() => { highlightId.value = null }, 2200)
-  }
+  if (!store.notes.some(note => note.id === requestedId)) return
+  highlightId.value = requestedId
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => { highlightId.value = null }, 2200)
+  // 用完即清，避免刷新页面重复高亮；replace 不产生历史记录
+  await router.replace({ query: { ...route.query, object_id: undefined } })
 }
 onMounted(highlightRequestedNote)
 watch(() => route.query.object_id, highlightRequestedNote)

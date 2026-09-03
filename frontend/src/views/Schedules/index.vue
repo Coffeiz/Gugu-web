@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
@@ -37,6 +37,7 @@ import { useScheduledTasks } from '@/composables/schedules/useScheduledTasks'
 
 const authStore = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const { t } = useI18n()
 const imChannels = computed(() => authStore.user?.imChannels ?? [])
 const { tasks, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
@@ -51,7 +52,11 @@ async function openRequestedTask() {
   await load()
   const requestedId = Number(route.query.object_id)
   const task = tasks.value.find(item => Number(item.id) === requestedId)
-  if (task) openEdit(task)
+  if (!task) return
+  openEdit(task)
+  // 用完即清：object_id 留在地址栏的话，关掉弹窗后一刷新又会弹出来。
+  // replace 不产生历史记录；清空会触发上面的 watch，但 NaN 匹配不到任务，是安全的空操作。
+  await router.replace({ query: { ...route.query, object_id: undefined } })
 }
 onMounted(openRequestedTask)
 watch(() => route.query.object_id, openRequestedTask)
