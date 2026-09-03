@@ -263,7 +263,10 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 "也不要提及渠道、推送、工具不可用或无法发送。"
                 "如果任务需要配图/发图，正常调用 image_search 和 send_file 把图发出来，"
                 "不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，"
-                "图片必须靠 send_file 实际发送。"
+                "图片必须靠 send_file 实际发送。\n"
+                "汇报要求：结果必须具体——有数据的给实际数字、日期、名称，不要空泛地说"
+                "「已完成」「查了一下」；查不到或没做完的部分直接说明原因，不要为了完整"
+                "而编造或凑数。任务本身很简单时，一两句话自然汇报即可，不要强行套条目。"
             )
             text, files, status = await _run_agent(
                 uid, prompt, target_map=target_map, trial=is_trial,
@@ -614,8 +617,10 @@ _REPORT_SCHEMA_INSTRUCTION = (
     "\n\n[定时任务报告 schema]\n"
     "你的最后一轮输出必须是如下合法 JSON（不要输出其他内容、不要用围栏包裹）：\n"
     "{\n"
-    '  "summary": "面向用户的最终正文，直接给出用户关心的结论、数据或操作结果",\n'
-    '  "context": "执行过程说明（内部记录，不投递）",\n'
+    '  "summary": "面向用户的最终正文：给出实际结果（数字/日期/名称等），未完成的说明原因；'
+    '任务简单时就用自然的短句，不强行列条目",\n'
+    '  "context": "执行过程说明（内部记录，不投递）：调用了哪些工具、各自拿到什么、'
+    '哪一步出了问题",\n'
     '  "status": "success" 或 "partial" 或 "failed"\n'
     "}"
 )

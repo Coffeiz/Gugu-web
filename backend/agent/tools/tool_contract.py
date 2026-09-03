@@ -190,6 +190,11 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 adaptations.append(f"{path or 'args'}:item_wrapper_unwrapped")
                 item_schema = field_schema.get("items")
                 return [normalize_value(unwrapped, item_schema, f"{path}[0]", True)]
+            if isinstance(unwrapped, (str, int, float, bool)):
+                # channels: {"item": "qq"} → ["qq"]；单标量包装同样无歧义
+                adaptations.append(f"{path or 'args'}:item_wrapper_unwrapped")
+                item_schema = field_schema.get("items")
+                return [normalize_value(unwrapped, item_schema, f"{path}[0]", True)]
 
         if not isinstance(value, str) or not types.intersection({"boolean", "integer", "number"}):
             return value

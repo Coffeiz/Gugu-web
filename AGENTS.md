@@ -68,6 +68,8 @@
   （或 `gh workflow run <name> --ref <分支>`），全部全绿后才允许合并；docker-release 已含镜像构建 + trivy 安全门。
 - **打版本 tag 前必须先过本地预检**：前端回归脚本 + 后端测试 + 本地构建生产镜像并 trivy 预扫，
   全部通过后 tag 才允许指向 main 的合并提交；发布失败的 tag 重打规则见 `docs/ops/release.md` §4。
+- 发版改版本号时，记得确认 DevTools 控制台 ASCII 横幅的版本号跟着更新（取自
+  `frontend/package.json`，见 `docs/ops/release.md` §3）。
 
 ## Git 提交完整性
 

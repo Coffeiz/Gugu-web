@@ -211,14 +211,15 @@ async def test_type_error_includes_schema_shape_hint_without_echoing_input():
         },
     })
 
+    # {"item": "qq"} 是模型把单元素数组包装成对象的退化形态，键名固定无歧义，
+    # normalize_input_by_schema 应解除包装而不是报类型错误。
     raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
         "channels": {"item": "qq"},
     })
     payload = json.loads(raw)
 
-    assert payload["schema_hints"] == [
-        'channels 必须是数组，例如 ["web"]；不要传对象。',
-    ]
+    assert payload["ok"] is True
+    assert payload["args"]["channels"] == ["qq"]
     assert '"item": "qq"' not in raw
 
 

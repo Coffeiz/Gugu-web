@@ -46,6 +46,10 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 ## 3. 版本号与 CHANGELOG
 
 - 版本号两处同步：根目录 `package.json` 与 `frontend/package.json`。
+- **DevTools 控制台 ASCII 横幅的版本号别忘确认**：浏览器控制台打印的 GUGU 描边字横幅
+  （`frontend/src/utils/consoleBanner.ts`）里 `gugu v<版本>` 取自 vite define 注入的
+  `__APP_RELEASE__`，来源是 `frontend/package.json` 的 version——因此上面的两处版本号
+  同步漏掉任何一个，横幅就会显示旧版本。发版提交后构建一次，在控制台确认横幅版本已更新。
 - `CHANGELOG.md` 新增版本小节，只写用户可感知的变化；排查细节进 `docs/devlog/`（按日期一篇）。
 - 以上内容随最后一个功能 PR 一起进 dev，不要发版时临时补。
 
