@@ -92,6 +92,9 @@ jobs:
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
       # SBOM 会导致误报已修复的漏洞（v1.0.2 曾因此报 msgpack 1.1.2/setuptools 70.3.0，
       # 而镜像实际为 1.2.2/84.0.0）。本地 daemon 镜像不涉及 referrer 发现。
+      # skip-files：pip 自带 vendored SBOM（bom.cdx.json），记录的是 pip 内部依赖
+      # （msgpack 1.1.2/setuptools 70.3.0），并非应用实际安装的包（1.2.2/84.0.0，
+      # 构建断言保证）。trivy 会把它当语言专用清单解析成 python-pkg 目标并误报漏洞。
       - name: Scan backend image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -100,6 +103,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
+          skip-files: /usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
 
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@v0.36.0
