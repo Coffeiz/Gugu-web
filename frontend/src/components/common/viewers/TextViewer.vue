@@ -185,9 +185,8 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
   },
 }
 
-const lines       = ref<string[]>([])
 const mdHtml      = ref<string | null>(null)
-const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md/txt 编辑模式的保存基于这个）
+const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md 编辑模式的保存基于这个）
 // 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了。
 // 虚拟文档通过 saveSource 保存，不需要文件库 id。
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
@@ -547,19 +546,14 @@ async function onMdClick(e: MouseEvent) {
   await router.push('/files')
 }
 
-// 把一段文本渲染成 mdHtml / 纯文本行（首次加载、md/txt 编辑保存后重渲都走这条）。代码类扩展名
-// 不在这里处理——它们直接显示 CodeMirror，不需要 mdHtml/lines 这套只读渲染，见 isCodeExt。
+// 把一段文本渲染成 mdHtml（首次加载、md 编辑保存后重渲都走这条）。txt/代码类扩展名不在这里
+// 处理——它们直接显示 CodeMirror，没有只读渲染，见 isCodeExt。
 async function processText(text: string, ext: string) {
   mdHtml.value  = null
-  lines.value   = []
   rawText.value = text
-  const extUp = (ext || '').toUpperCase()
-
-  if (extUp === 'MD') {
+  if ((ext || '').toUpperCase() === 'MD') {
     mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
     await renderMermaidBlocks()
-  } else if (!isCodeExt.value) {
-    lines.value = text.split('\n')
   }
 }
 
@@ -645,7 +639,7 @@ onBeforeUnmount(() => {
   padding: 0 0 16px;
   will-change: scroll-position;
   user-select: text;            /* 覆盖预览弹窗容器的 user-select:none，让正文可选/复制 */
-  -webkit-user-select: text;    /* 行号 .tv-ln 单独 none，不会被选进去 */
+  -webkit-user-select: text;
 }
 
 .tv-notice {
@@ -671,16 +665,7 @@ onBeforeUnmount(() => {
 }
 .tv-edit-toggle:hover { background: var(--action-soft-hover); border-color: var(--action-outline); color: var(--action-primary-hover); }
 
-/* ── 编辑模式：纯文本框 + 底部操作条 ── */
-.tv-edit-textarea {
-  flex: 1; width: 100%; box-sizing: border-box;
-  border: none; outline: none; resize: none;
-  padding: 20px 24px;
-  font-family: var(--font-family-mono);
-  font-size: var(--tv-font-size, 13px);
-  line-height: 1.7; color: var(--content-primary); background: var(--surface-card-solid);
-  caret-color: var(--action-primary); accent-color: var(--action-primary);
-}
+/* ── md 编辑模式底部操作条 ── */
 .tv-edit-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
   padding: 10px 16px; border-top: 1px solid var(--border-default); background: var(--surface-raised);
@@ -735,7 +720,6 @@ onBeforeUnmount(() => {
   background: var(--selection-text-bg) !important;
 }
 .tv-edit-cm-wrap :deep(.cm-content ::selection),
-.tv-table ::selection,
 .tv-md ::selection {
   background: var(--selection-text-bg);
   color: var(--content-primary);
@@ -777,40 +761,6 @@ onBeforeUnmount(() => {
 .tv-edit-cm-wrap :deep(.tok-variableName),
 .tv-edit-cm-wrap :deep(.tok-link),
 .tv-edit-cm-wrap :deep(.tok-url) { color: #5a9e88; }
-
-.tv-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--font-family-mono);
-  font-size: var(--tv-font-size, 13px);
-  line-height: 1.7;
-  background: var(--surface-card-solid);
-}
-
-.tv-ln {
-  width: 1%;
-  min-width: 48px;
-  padding: 0 16px 0 20px;
-  text-align: right;
-  color: var(--content-tertiary);
-  white-space: nowrap;
-  user-select: none;
-  border-right: 1px solid var(--border-subtle);
-  vertical-align: top;
-  position: sticky;
-  left: 0;
-  background: var(--surface-panel);
-}
-
-.tv-code {
-  padding: 0 24px 0 16px;
-  white-space: pre;
-  color: var(--content-primary);
-  vertical-align: top;
-}
-
-tr:hover .tv-ln  { background: var(--surface-soft-hover); }
-tr:hover .tv-code { background: color-mix(in srgb, var(--action-primary) 4%, transparent); }
 
 /* ── Markdown 渲染 ── */
 .tv-md {
