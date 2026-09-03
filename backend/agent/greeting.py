@@ -1,6 +1,6 @@
 """对话默认问候生成：组装精简记忆上下文 + 轻量 LLM 直连。
 
-不走完整 agent 循环（参照 gateway/web._generate_title）；模型用默认 `settings.ai`。
+不走完整 agent 循环（参照 gateway/web._generate_title）；模型走 BYOK 覆盖链路（modelctx 绑定）。
 **不计入精力/配额**：本调用不经 web.stream / runner 那条记 AgentUsage 的路，token 不写 AgentUsage、不扣配额。
 同一用户同一语言十分钟内复用 Redis 中的结果，并发请求合并；失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。
 问候**不自我介绍、不报功能菜单、emoji 极简**。
@@ -164,12 +164,19 @@ def _cache_key(user_id, locale: str) -> str:
 
 async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
     """不读写缓存地生成一句问候；失败 / 空 → ''（前端兜底）。"""
+    # greeting 是用户请求链路：与聊天同一条 BYOK 覆盖，modelctx 兜底哨兵生效
+    from agent.llm import modelctx
+    from agent.llm.llm_select import resolve_run_config_for_user
+    modelctx.mark_user_scope()
+    modelctx.set_model_cfg((await resolve_run_config_for_user(settings, db, user_id, None)).model)
     try:
         language_instruction = _LOCALE_INSTRUCTIONS.get(locale, _LOCALE_INSTRUCTIONS["zh-CN"])
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id)) + "\n" + language_instruction
         from agent import providers
         from agent.llm.llm_select import use_anthropic_for
-        ai = settings.ai
+        from agent.llm.modelctx import effective_ai
+        # greeting 由用户请求派生（fire-and-forget），模型走 modelctx 绑定（BYOK）+ 平台兜底
+        ai = effective_ai(settings)
         provider_adapter = providers.adapter_for(ai)
         import httpx
         _timeout = httpx.Timeout(12.0)

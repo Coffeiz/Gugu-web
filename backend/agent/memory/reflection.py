@@ -1,6 +1,6 @@
 """对话后反思：提炼画像、行为模式与近期记忆的增量。
 
-复用 settings.ai 的 provider 做一次廉价非流式调用，产出 JSON：
+复用当前上下文绑定的模型（BYOK 覆盖，见 agent.llm.modelctx.effective_ai）做一次廉价非流式调用，产出 JSON：
   {"profile_add": [{"type": "...", "text": "..."}], "pattern_add": [...], "daily": "...", "summary": "..."}
 profile=稳定身份/偏好，pattern=可复用行为习惯，daily=本次流水，summary=当下状态快照。
 perception=本轮观察（感知遥测，只打点 `agent.perc` 日志，不写记忆、不影响回复）。

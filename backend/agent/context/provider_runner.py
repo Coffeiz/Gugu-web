@@ -10,13 +10,15 @@ import json
 
 async def complete_text(sys: str, user: str, settings, max_tokens: int | None = 800) -> str:
     from agent.llm.llm_select import use_anthropic_for
+    from agent.llm.modelctx import effective_ai
 
-    use_anthropic = use_anthropic_for(settings.ai)
-    thinking = getattr(settings.ai, "thinking", None)
+    ai = effective_ai(settings)
+    use_anthropic = use_anthropic_for(ai)
+    thinking = getattr(ai, "thinking", None)
     return (
-        await _anthropic(sys, user, settings, max_tokens, thinking=thinking)
+        await _anthropic(sys, user, ai, max_tokens, thinking=thinking)
         if use_anthropic
-        else await _openai(sys, user, settings, max_tokens, thinking=thinking)
+        else await _openai(sys, user, ai, max_tokens, thinking=thinking)
     )
 
 
@@ -28,16 +30,18 @@ async def complete_json(
     thinking: str | None = None,
 ) -> dict:
     from agent.llm.llm_select import use_anthropic_for
+    from agent.llm.modelctx import effective_ai
 
-    use_anthropic = use_anthropic_for(settings.ai)
+    ai = effective_ai(settings)
+    use_anthropic = use_anthropic_for(ai)
     # 分支不覆盖模型配置；只有显式传入时才允许调用方临时指定。
     effective_thinking = (
-        thinking if thinking is not None else getattr(settings.ai, "thinking", None)
+        thinking if thinking is not None else getattr(ai, "thinking", None)
     )
     text = (
-        await _anthropic(sys, user, settings, max_tokens, thinking=effective_thinking)
+        await _anthropic(sys, user, ai, max_tokens, thinking=effective_thinking)
         if use_anthropic
-        else await _openai(sys, user, settings, max_tokens, json_mode=True, thinking=effective_thinking)
+        else await _openai(sys, user, ai, max_tokens, json_mode=True, thinking=effective_thinking)
     )
     return _parse_json(text)
 
@@ -45,7 +49,7 @@ async def complete_json(
 async def _anthropic(
     sys: str,
     user: str,
-    settings,
+    ai,
     max_tokens: int | None,
     thinking: str | None = None,
 ) -> str:
@@ -53,13 +57,13 @@ async def _anthropic(
     from agent import providers
 
     client = providers.build_anthropic_client(
-        settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
+        ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
     # Anthropic API 必填 max_tokens，无法真正不限；None 时给高预算。
     if max_tokens is None:
         max_tokens = 32768
     # temperature 已全局下线（anthropic SDK 1.x 不再接受该参数）。
     kwargs = dict(
-        model=settings.ai.model,
+        model=ai.model,
         system=sys,
         messages=[{"role": "user", "content": user}],
         max_tokens=max_tokens,
@@ -73,7 +77,7 @@ async def _anthropic(
 async def _openai(
     sys: str,
     user: str,
-    settings,
+    ai,
     max_tokens: int | None,
     json_mode: bool = False,
     thinking: str | None = None,
@@ -82,20 +86,20 @@ async def _openai(
     from agent import providers
 
     client = providers.build_openai_client(
-        settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
+        ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
     # max_tokens 为 None 表示不限制输出预算，交给 provider 使用模型默认上限。
     kwargs = dict(
-        model=settings.ai.model,
+        model=ai.model,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
     )
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
-    adapter = providers.adapter_for(settings.ai)
+    adapter = providers.adapter_for(ai)
     if json_mode:
-        kwargs.update(adapter.build_structured_output(settings.ai))
+        kwargs.update(adapter.build_structured_output(ai))
     if thinking is not None:
         thinking_params = adapter.build_openai_thinking_kwargs(
-            settings.ai, thinking=thinking)
+            ai, thinking=thinking)
         if thinking_params:
             kwargs.update(thinking_params)
     resp = await client.chat.completions.create(**kwargs)
