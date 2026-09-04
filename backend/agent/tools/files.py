@@ -1770,11 +1770,8 @@ class FilesSkill(BaseSkill):
                     "file": {"type": "string"},
                 },
                 "required": [],
-                "anyOf": [
-                    {"required": ["file"]},
-                    {"required": ["file_id"]},
-                ],
-                "allOf": [
+                # oneOf：file 与 file_id 恰好给一个；不能用 allOf 写互斥（两条 required 子句会互相矛盾，任何输入都过不了）
+                "oneOf": [
                     {"required": ["file"], "not": {"required": ["file_id"]}},
                     {"required": ["file_id"], "not": {"required": ["file"]}},
                 ],
