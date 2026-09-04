@@ -1009,7 +1009,6 @@ class MindCanvasSkill(BaseSkill):
                     "canvas_id": {"type": "integer"},
                     "canvas_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
                 "oneOf": [
@@ -1121,7 +1120,7 @@ class MindCanvasSkill(BaseSkill):
             description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项使用 node_id，批量使用 notes。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}},
                 "required": [],
                 "oneOf": [
                     {"required": ["node_id"], "not": {"required": ["notes"]}},
@@ -1177,7 +1176,7 @@ class MindCanvasSkill(BaseSkill):
             description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
-                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}},
                 "required": ["canvas_id"],
                 "oneOf": [
                     {"required": ["relation_id"], "not": {"required": ["relation_ids"]}},
