@@ -254,11 +254,10 @@ async def test_permanent_delete_folder_uses_folder_id_and_removes_folder(db, use
     payload = json.loads(blocked)
     assert payload.get("needs_confirm") is True
 
-    result = await _permanent_delete(db, user_a.id, {
-        "folder_id": folder.id,
-        "confirm": True,
-        "confirm_token": payload["confirm_token"],
-    })
+    from agent.interactions import confirmations
+    confirmations.redeem_confirmation(user_a.id, payload["confirm_code"])
+
+    result = await _permanent_delete(db, user_a.id, {"folder_id": folder.id})
     assert result["success"] is True
     assert result["deleted_folder_id"] == folder.id
     assert await db.get(Folder, folder.id) is None

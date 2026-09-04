@@ -382,8 +382,23 @@ async def consume_action(
             result.update({
                 "status": "confirmed",
                 "confirm": True,
-                "confirm_token": context.get("confirm_token"),
             })
+            # 工具确认门桥：用短确认码在服务端兑换授权；模型重新调用工具时
+            # 授权命中自动放行，全程不经过模型复述凭证。
+            if context.get("confirm_code"):
+                from agent.interactions.confirmations import redeem_confirmation
+                ttl = redeem_confirmation(user_id, str(context["confirm_code"]))
+                if ttl is None:
+                    result.update({
+                        "status": "error",
+                        "confirm": False,
+                        "text": "确认已过期，请让助手重新发起操作。",
+                    })
+                else:
+                    result["text"] = (
+                        f"{result_text}（用户已确认，授权 {ttl} 分钟内有效；"
+                        "请直接重新调用该工具完成操作。）"
+                    )
         else:
             result.update({"status": "cancelled", "confirm": False})
     tool_call_id = str(context.get("tool_call_id") or "")
@@ -699,11 +714,11 @@ async def create_tool_confirmation(
     if db_session._SessionLocal is None:
         return None
     summary = str(payload.get("summary") or payload.get("instruction") or "请确认是否继续这项操作")
-    confirm_token = payload.get("confirm_token")
+    confirm_code = payload.get("confirm_code")
     context = {
         "tool_name": tool_name,
         "tool_call_id": tool_call_id,
-        "confirm_token": confirm_token if isinstance(confirm_token, str) else None,
+        "confirm_code": confirm_code if isinstance(confirm_code, str) else None,
     }
     async with db_session._SessionLocal() as db:
         prompt, actions = await create_prompt(

@@ -607,7 +607,7 @@ export const terminalsApi = {
     maxOutputChars?: number
     network?: 'none' | 'egress'
     confirm?: boolean
-    confirmToken?: string
+    confirmCode?: string
   }) => post<{ terminal: TerminalItem; requestId: string; event: TerminalEventItem }>(`/terminals/${encodeURIComponent(id)}/input`, data),
   cancel: (id: string, requestId: string) => post<{ cancelled: boolean; requestId?: string }>(`/terminals/${encodeURIComponent(id)}/cancel/${encodeURIComponent(requestId)}`, {}),
   terminate: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/terminate`, {}),

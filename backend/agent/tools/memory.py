@@ -191,7 +191,6 @@ class MemorySkill(BaseSkill):
                 "properties": {
                     "knowledge_id": {"type": "string"},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": ["knowledge_id"],
             },

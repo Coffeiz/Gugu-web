@@ -628,7 +628,6 @@ class ProjectsSkill(BaseSkill):
                     "project": {"type": "string"},
                     "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },

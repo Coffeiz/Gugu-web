@@ -329,7 +329,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
             description_short='删除定时任务。',
-            description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。确认后传 confirm=true 和上一步的 confirm_token。",
+            description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。确认后直接再次调用即可，无需携带凭证。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -337,7 +337,6 @@ class ScheduledTasksSkill(BaseSkill):
                     "task":    {"type": "string"},
                     "task_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },
