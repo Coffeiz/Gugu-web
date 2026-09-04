@@ -280,3 +280,22 @@ async def _true(*_args):
 
 async def _false(*_args):
     return False
+
+
+@pytest.mark.asyncio
+async def test_run_shell_ignores_model_supplied_confirm(monkeypatch):
+    """模型自带 confirm=true 不能跳过危险命令确认门：policy 永远按未确认判定，
+    只有服务端授权命中才放行。"""
+    from agent.tools.shell import _run_shell
+
+    db = _PolicyDB()
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True, dangerous=True))
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _true())
+
+    result = await _run_shell(db, "user-1", {
+        "command": "rm -rf build", "confirm": True, "_session_id": 1,
+    })
+
+    assert isinstance(result, dict) and result.get("_audit_event") == "confirmation_required"
+    assert result.get("needs_confirm") or "确认" in str(result.get("error", ""))
