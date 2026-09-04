@@ -51,6 +51,8 @@ class TsSidecarClient:
         self._revision: str | None = None
         self._document_count = 0
         self.last_search_diagnostics: dict[str, Any] = {}
+        self.last_search_queue_wait_ms = 0
+        self.last_search_query_ms = 0
         self._last_used_at = asyncio.get_running_loop().time()
         self._active_requests = 0
 
@@ -187,12 +189,21 @@ class TsSidecarClient:
                 await process.wait()
 
     async def _request(self, payload: dict) -> dict:
+        queued_at = asyncio.get_running_loop().time()
         async with self._lock:
+            request_started = asyncio.get_running_loop().time()
+            queue_wait_ms = int((request_started - queued_at) * 1000)
             self.touch()
             self._active_requests += 1
             try:
                 await self._ensure_process()
-                return await self._request_unlocked(payload)
+                response = await self._request_unlocked(payload)
+                if payload.get("op") == "search":
+                    self.last_search_queue_wait_ms = queue_wait_ms
+                    self.last_search_query_ms = int(
+                        (asyncio.get_running_loop().time() - request_started) * 1000
+                    )
+                return response
             finally:
                 self._active_requests -= 1
                 self.touch()

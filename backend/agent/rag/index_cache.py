@@ -517,6 +517,13 @@ async def search_documents_with_cache(
     if diagnostics is not None:
         elapsed = int((time.monotonic() - started) * 1000)
         diagnostics["sidecar_search_ms"] = elapsed
+        client = getattr(index, "client", None)
+        diagnostics["sidecar_queue_wait_ms"] = int(
+            getattr(client, "last_search_queue_wait_ms", 0) or 0
+        )
+        diagnostics["sidecar_query_ms"] = int(
+            getattr(client, "last_search_query_ms", 0) or 0
+        )
         diagnostics["search_ms"] = elapsed
     return results
 
