@@ -179,7 +179,6 @@ class EmailSkill(BaseSkill):
                     "theme": {"type": "string", "enum": ["auto", "light", "dark"]},
                     "palette": {"type": "string", "enum": ["auto", "mist", "cafe", "rose", "sky", "sage"]},
                     "html": {"type": "string", "minLength": 1, "maxLength": _MAX_HTML_LENGTH},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": ["subject", "body"],
                 "not": {"required": ["to", "client_id"]},

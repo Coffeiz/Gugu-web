@@ -108,6 +108,7 @@ async def _create_skill(db, user_id, args: dict):
         from agent.security import confirm
         blocked = confirm.needs_confirmation(
             args, f"创建会关联写入或危险工具的 Skill：{', '.join(risky)}", user_id,
+            identity=f"create_user_skill:risky_tools={sorted(risky)}",
         )
         if blocked:
             return blocked
@@ -229,7 +230,6 @@ class MetaSkill(BaseSkill):
                     "category": {"type": "string", "enum": ["personal", "productivity", "research", "creative", "other"]},
                     "related_tools": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 80}},
                     "body": {"type": "string", "minLength": 1, "maxLength": 20000},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": ["name", "description_short", "body", "related_tools"],
                 "additionalProperties": False,
