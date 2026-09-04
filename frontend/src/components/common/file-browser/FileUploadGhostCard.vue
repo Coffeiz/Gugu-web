@@ -8,8 +8,8 @@
     <div class="fc-ghost-fill" :style="{ width: `${progress}%` }" />
     <span v-if="!isFolder" class="fc-ext-badge">{{ ext || '—' }}</span>
     <div class="fc-icon-area">
-      <component v-else-if="!isFolder" :is="fileListIcon(ext)" class="fc-big-icon" :size="86" />
-      <PhFolder v-else class="fc-big-icon" :size="86" />
+      <PhFolder v-if="isFolder" class="fc-big-icon" :size="86" />
+      <component v-else :is="fileListIcon(ext)" class="fc-big-icon" :size="86" />
     </div>
     <div class="fc-label">
       <div class="fc-name" :title="name">{{ name }}</div>
