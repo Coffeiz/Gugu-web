@@ -22,6 +22,7 @@ import { useLiveStore } from '@/stores/live'
 import { useEventEditForm, type EditingEvent } from '@/composables/calendar/useEventEditForm'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import EventFormPanel from './EventFormPanel.vue'
+import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 
 const eventModalStore = useEventModalStore()
 const liveStore = useLiveStore()
@@ -97,7 +98,12 @@ function onFloatingLeave() {
   if (eventModalStore.openEventId == null) event.value = null
 }
 
+// 拖选保护：在编辑窗内拖选文字、移出窗外松开时，click 落在外面，不能因此关窗
+const pressGuard = createPressOutsideGuard((t: Node) => !!floatingPopup.value?.contains(t))
+function onFloatingOutsidePress(e: MouseEvent) { pressGuard.notePress(e) }
+
 function onFloatingOutsideClick(event: MouseEvent) {
+  const clickOutside = pressGuard.shouldCloseOn(event)   // 无条件消费按下记录
   if (!isFloating.value || !show.value) return
   const target = event.target as HTMLElement
   // DatePicker/DateSpanPicker 都 Teleport 到 body，它们不是浮动编辑窗的 DOM 子节点，
@@ -110,7 +116,7 @@ function onFloatingOutsideClick(event: MouseEvent) {
   // “更多”活动列表同样是活动触发器：点击同一活动时交给 openEditForm
   // 做 toggle，不能被浮窗的 outside 捕获监听提前关闭后又重新打开。
   if (target.closest('.overflow-popup, .overflow-item')) return
-  if (!floatingPopup.value?.contains(target)) close()
+  if (clickOutside && !floatingPopup.value?.contains(target)) close()
 }
 
 function clampFloatingIntoView() {
@@ -164,11 +170,13 @@ async function onTestReminder() {
 }
 
 onMounted(() => {
+  document.addEventListener('mousedown', onFloatingOutsidePress, true)
   document.addEventListener('click', onFloatingOutsideClick, true)
   window.addEventListener('resize', clampFloatingIntoView)
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(clampRaf)
+  document.removeEventListener('mousedown', onFloatingOutsidePress, true)
   document.removeEventListener('click', onFloatingOutsideClick, true)
   window.removeEventListener('resize', clampFloatingIntoView)
 })

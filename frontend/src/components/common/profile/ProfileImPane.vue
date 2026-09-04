@@ -74,7 +74,16 @@ const helpPopBotId = ref<number | null>(null)
 const helpAnchorRefs = ref<Record<number, HTMLElement | null>>({})
 function setHelpAnchorRef(botId: number, el: unknown) { helpAnchorRefs.value[botId] = el instanceof HTMLElement ? el : null }
 function toggleHelpPop(botId: number) { helpPopBotId.value = helpPopBotId.value === botId ? null : botId }
-function onDocClickCloseHelp() { helpPopBotId.value = null }
+// 拖选保护：弹层内拖选文字移出后松开，click 落在外面，不能因此误关
+let _helpPressInside = false
+function onDocPressCloseHelp(e: MouseEvent) {
+  _helpPressInside = e.target instanceof HTMLElement && !!e.target.closest('.popup-menu-host')
+}
+function onDocClickCloseHelp(e: MouseEvent) {
+  if (e && _helpPressInside) { _helpPressInside = false; return }
+  _helpPressInside = false
+  helpPopBotId.value = null
+}
 const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let bindingCountdown: ReturnType<typeof setInterval> | null = null; let bindingStatusPoll: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 // 「接入咕咕」设置全部走同一套 latest-intent 乐观事务：apply 永远同步发生，
@@ -243,14 +252,14 @@ function togglePrivateStreaming(bot: Bot) {
   if (current) void updateBotSetting(bot.id, { private_streaming_enabled: current.private_streaming_enabled !== true }, t('profileImUi.privateStreamingFailed'))
 }
 async function removeBot(bot: Bot) { if (!await confirmDialog({ title: t('profileImUi.deleteBotTitle'), message: t('profileImUi.deleteBotMessage', { name: displayBotName(bot) }), tone: 'danger', confirmText: t('profileImUi.deleteBot') })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed') } }
-onMounted(() => { void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000); document.addEventListener('click', onDocClickCloseHelp) })
+onMounted(() => { void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000); document.addEventListener('mousedown', onDocPressCloseHelp, true); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
 onDeactivated(stopBindingStatusPoll)
 onDeactivated(clearCopyFeedback)
 onDeactivated(onDocClickCloseHelp)
 onActivated(resumePoll)
 onActivated(() => { if (Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) startBindingStatusPoll() })
-onBeforeUnmount(() => { stopBindingStatusPoll(); if (bindingCountdown) clearInterval(bindingCountdown); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('click', onDocClickCloseHelp) })
+onBeforeUnmount(() => { stopBindingStatusPoll(); if (bindingCountdown) clearInterval(bindingCountdown); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('mousedown', onDocPressCloseHelp, true); document.removeEventListener('click', onDocClickCloseHelp) })
 </script>
 
 <style scoped>
