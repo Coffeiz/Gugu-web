@@ -123,7 +123,7 @@ async function handleSubmit() {
   text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px;
 }
 .field input {
-  box-sizing: border-box; width: 100%; height: 40px; padding: 10px 14px; line-height: 18px;
+  box-sizing: border-box; width: 100%; min-height: var(--control-height-md); padding: 9px 14px; line-height: var(--line-height-body);
   background: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.76);
   border-radius: 10px; font-size: 14px; color: #1e2028;
   font-family: var(--font-sans); outline: none;

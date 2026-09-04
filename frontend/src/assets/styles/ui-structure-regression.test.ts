@@ -21,6 +21,7 @@ const popovers = load('./adoption/popovers.css')
 const themeRefinements = load('./theme-refinements.css')
 const variables = load('./variables.css')
 const componentEntry = load('./components/index.css')
+const sharedForms = load('./components/forms.css')
 const calendarComponentCss = load('./components/calendar.css')
 const bridgeEntry = load('./bridges/index.css')
 const appSidebar = load('../../components/common/layout/AppSidebar.vue')
@@ -154,6 +155,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(load('./components/card-actions.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
     expect(load('./components/popups.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
     expect(load('./components/forms.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+  })
+
+  it('普通输入统一使用足够的行高，避免字母下伸部被输入框裁切', () => {
+    expect(sharedForms).toContain('line-height: var(--line-height-body);')
+    expect(sharedForms).toContain('vertical-align: middle;')
   })
 
   it('非 Runtime 主题层不接管 Runtime 的 motion 属性', () => {
