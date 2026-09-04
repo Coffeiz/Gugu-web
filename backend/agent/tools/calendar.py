@@ -153,7 +153,8 @@ async def _delete_event(db, user_id, args: dict):
     # 事件无回收站 → 不可逆 → 删除二次确认保底
     _r = f"及其 {len(reminders)} 条提醒" if reminders else ""
     summary = f"将删除日历事件「{etitle}」（{e.date}）{_r}，事件无回收站，删除后不可恢复"
-    blocked = confirm.needs_confirmation(args, summary, user_id)
+    blocked = confirm.needs_confirmation(args, summary, user_id,
+                                         identity=f"delete_event:event_id={eid}")
     if blocked is not None:
         return blocked
 
@@ -329,7 +330,6 @@ class CalendarSkill(BaseSkill):
                     "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "event": {"type": "string"},
                     "on_date": {"type": "string", "pattern": _DATE_PATTERN},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": [],
             },

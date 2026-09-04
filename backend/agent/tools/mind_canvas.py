@@ -528,7 +528,8 @@ async def _canvas_delete(db, user_id, args: dict):
     if canvas is None:
         return {"error": "画布不存在"}
     title = canvas.title or "未命名画布"
-    blocked = confirm.needs_confirmation(args, f"将删除画布「{title}」（含所有便签、引用节点和连接关系）", user_id)
+    blocked = confirm.needs_confirmation(args, f"将删除画布「{title}」（含所有便签、引用节点和连接关系）", user_id,
+                                         identity=f"canvas_delete:canvas_id={canvas_id}")
     if blocked is not None:
         return blocked
     ok = await delete_canvas(db, user_id, canvas_id, commit=True)
@@ -726,7 +727,9 @@ async def _canvas_delete_note(db, user_id, args: dict):
         message = f"将删除 {len(checked)} 条画布便签，并从画布移除其视图项"
     else:
         message = f"将删除画布便签「{checked[0][2].title or '未命名'}」，并从画布移除其视图项"
-    blocked = confirm.needs_confirmation(args, message, user_id)
+    note_ids = sorted(node_id for node_id, _, _ in checked)
+    blocked = confirm.needs_confirmation(args, message, user_id,
+                                         identity=f"canvas_delete_note:canvas_id={args.get('canvas_id')}:node_ids={note_ids}")
     if blocked is not None:
         return blocked
     results = []
@@ -858,7 +861,8 @@ async def _canvas_disconnect(db, user_id, args: dict):
     relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
     if relation is None:
         return {"error": "关联不存在"}
-    blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
+    blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id,
+                                         identity=f"canvas_disconnect:relation_id={relation_id}")
     if blocked is not None:
         return blocked
     await disconnect_node_relation(db, user_id, relation_id, canvas_id=canvas_id, commit=False)
@@ -890,10 +894,15 @@ async def _canvas_batch(db, user_id, args: dict):
 
     if has_delete_note:
         from agent.security import confirm
+        batch_note_ids = sorted(
+            operation.get("node_id") for operation in operations
+            if isinstance(operation, dict) and operation.get("kind") == "delete_note"
+        )
         blocked = confirm.needs_confirmation(
             args,
-            f"将删除 {sum(isinstance(operation, dict) and operation.get('kind') == 'delete_note' for operation in operations)} 条画布便签，并从画布移除其视图项",
+            f"将删除 {len(batch_note_ids)} 条画布便签，并从画布移除其视图项",
             user_id,
+            identity=f"canvas_delete_note:canvas_id={canvas_id}:node_ids={batch_note_ids}",
         )
         if blocked is not None:
             return blocked
@@ -1008,7 +1017,6 @@ class MindCanvasSkill(BaseSkill):
                 "properties": {
                     "canvas_id": {"type": "integer"},
                     "canvas_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": [],
                 "oneOf": [
@@ -1120,7 +1128,7 @@ class MindCanvasSkill(BaseSkill):
             description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项使用 node_id，批量使用 notes。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}},
+                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}},
                 "required": [],
                 "oneOf": [
                     {"required": ["node_id"], "not": {"required": ["notes"]}},
@@ -1176,7 +1184,7 @@ class MindCanvasSkill(BaseSkill):
             description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
-                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}},
+                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}},
                 "required": ["canvas_id"],
                 "oneOf": [
                     {"required": ["relation_id"], "not": {"required": ["relation_ids"]}},

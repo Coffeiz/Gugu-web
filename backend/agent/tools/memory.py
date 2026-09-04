@@ -124,6 +124,7 @@ async def _delete_knowledge(db, user_id, args: dict):
         return {"error": "知识条目不存在"}
     blocked = confirm.needs_confirmation(
         args, f"将删除知识条目「{entry.title}」，保留历史但停止检索", user_id,
+        identity=f"delete_knowledge:knowledge_id={entry_id}",
     )
     if blocked:
         return blocked
@@ -183,14 +184,13 @@ class MemorySkill(BaseSkill):
             name="delete_knowledge", label="删除知识",
             description_short='删除已保存知识。',
             description=(
-                "删除一条已保存的知识条目并停止检索。必须先不带 confirm 请求确认，"
-                "再携带确认凭证执行；历史版本不会被物理覆盖。"
+                "删除一条已保存的知识条目并停止检索。首次调用会返回确认请求，"
+                "用户在界面确认后直接重新调用即可；历史版本不会被物理覆盖。"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "knowledge_id": {"type": "string"},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": ["knowledge_id"],
             },

@@ -78,11 +78,15 @@ async def _permanent_delete(db, user_id, args: dict):
         folders = await list_top_level_deleted_folders(db, user_id)
         if not deleted_count and not folders:
             return {"success": True, "deleted_count": 0, "note": "回收站本来就是空的"}
-        # 不可逆 → 二次确认保底（按数量提示）
+        # 不可逆 → 二次确认保底；all=true 绑定确认瞬间回收站的目标 ID 集合，
+        # 确认后又新增回收站项时授权不会命中，需要重新确认。
+        trash_file_ids = sorted(f.id for f in await list_deleted_files(db, user_id, limit=10_000))
+        trash_folder_ids = sorted(f.id for f in folders)
         blocked = confirm.needs_confirmation(
             args,
             f"将永久删除回收站里全部 {deleted_count} 个文件和 {len(folders)} 个文件夹，删除后无法恢复",
             user_id,
+            identity=f"permanent_delete_all:file_ids={trash_file_ids};folder_ids={trash_folder_ids}",
         )
         if blocked is not None:
             return blocked
@@ -202,7 +206,7 @@ class TrashSkill(BaseSkill):
         Tool(
             name="permanent_delete", label="永久删除",
             description_short='永久删除；清空回收站或删除目标前必须确认。',
-            description="永久删除回收站文件或顶层文件夹；必须先确认目标，再带 confirm 凭证执行。",
+            description="永久删除回收站文件或顶层文件夹；必须先确认目标，用户在界面确认后重新调用即可执行。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -211,7 +215,6 @@ class TrashSkill(BaseSkill):
                     "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "all": {"type": "boolean"},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": [],
             },

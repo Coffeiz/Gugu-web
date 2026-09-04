@@ -240,7 +240,8 @@ async def _delete_project(db, user_id, args: dict):
     # 不可逆 → 删除二次确认保底
     file_cnt = await count_project_files(db, user_id, p.id)
     summary = f"将永久删除项目「{p.name}」" + (f"及其 {file_cnt} 个文件" if file_cnt else "") + "，此操作不可恢复"
-    blocked = confirm.needs_confirmation(args, summary, user_id)
+    blocked = confirm.needs_confirmation(args, summary, user_id,
+                                         identity=f"delete_project:project_id={p.id}")
     if blocked is not None:
         return blocked
 
@@ -627,7 +628,6 @@ class ProjectsSkill(BaseSkill):
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
                     "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": [],
             },

@@ -140,7 +140,6 @@ class WorkspacesSkill(BaseSkill):
             input_schema={
                 "type": "object", "properties": {
                     "workspace_id": {"type": "integer"},
-                    "confirm": {"type": "boolean"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
             }, handler=_delete_workspace, mutates=True, destructive=True,
         ),

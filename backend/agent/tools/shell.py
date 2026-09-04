@@ -99,8 +99,10 @@ async def _run_shell(db, user_id, args: dict):
     network_profile = str(args.get("network") or "none").strip().lower()
     if network_profile not in {"none", "egress"}:
         return {"error": "network 只能是 none 或 egress", "_audit_event": "rejected"}
+    # 模型传入的 confirm 一律不采信：policy 判定永远按未确认进行，
+    # 只有服务端 grant 命中（confirm.needs_confirmation 内部检查）才视为已确认。
     decision = await evaluate(
-        db, user_id, session_id, command, confirm=bool(args.get("confirm")),
+        db, user_id, session_id, command, confirm=False,
         session=current_dispatch_session(),
         workspace_id=requested_workspace_id,
         requested_scope=args.get("scope"),
@@ -339,15 +341,14 @@ class ShellSkill(BaseSkill):
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
                     "network": {"type": "string", "enum": ["none", "egress"]},
                     "scope": {"type": "string", "enum": ["sandbox", "system"]},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": ["command"],
             },
             handler=_shell,
             mutates=True,
             # destructive 才会桥接到网页/IM 确认按钮（create_tool_confirmation），
-            # 由用户点击后服务端注入 confirm 凭证；缺了它确认只能靠模型复述
-            # 长 token，复制坏一个字符就死循环重签。
+            # 用户点击后服务端记录 Redis 授权；schema 不暴露 confirm 参数，
+            # 确认状态只由服务端 grant 决定，模型无法自行声明已确认。
             destructive=True,
         ),
     ]
