@@ -144,7 +144,7 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.standalone.example .env
+cp .env.example .env
 mkdir -p backend && touch backend/.env
 # Edit the root .env and set SECRET_KEY, GUGU_DB_PASSWORD, and model configuration.
 # You may also put application settings in backend/.env; an admin password is generated on first start if omitted.
@@ -157,7 +157,7 @@ docker compose up -d
 Basic variables:
 
 ```dotenv
-# Project-root .env: standalone Compose configuration
+# Project-root .env: default Compose configuration
 SECRET_KEY=replace-with-a-long-random-string
 GUGU_DB_PASSWORD=replace-with-a-database-password
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
@@ -175,7 +175,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8000`.
 
-The default Compose setup pulls one standalone application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
+The default Compose setup pulls one application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
 
 Open:
 

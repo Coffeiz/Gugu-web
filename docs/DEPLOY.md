@@ -9,14 +9,14 @@
 - 一个可访问的模型 Provider，或准备好的 BYOK 配置
 - 能访问镜像仓库和模型服务的网络
 
-## 快速启动（一键 standalone）
+## 快速启动（默认 Compose 单容器模式）
 
 在仓库根目录执行：
 
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.standalone.example .env
+cp .env.example .env
 mkdir -p backend && touch backend/.env
 ```
 
@@ -42,7 +42,7 @@ ADMIN_PASSWORD=请替换为管理员密码
 docker compose up -d
 ```
 
-默认 Compose 会拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的 standalone 应用镜像；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
+默认 Compose 会拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
 
 打开：<http://localhost:9595>
 
@@ -56,7 +56,7 @@ Compose 会读取项目根目录的 `.env` 和当前 Shell 环境变量。`backe
 
 ```dotenv
 # PostgreSQL
-# standalone 默认使用容器名 postgres；跨主机部署时改成实际地址
+# 默认 Compose 使用容器名 postgres；跨主机部署时改成实际地址
 GUGU_DB_HOST=postgres
 GUGU_DB_PORT=5432
 GUGU_DB_NAME=gugu
@@ -80,7 +80,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 GUGU_SANDBOX_ENABLED=true
 GUGU_SANDBOX_NETWORK_PROFILE=egress
 
-# standalone 应用镜像
+# 默认 Compose 应用镜像
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 ```
 
@@ -107,8 +107,7 @@ docker compose --profile sandbox up -d
 常用配置文件：
 
 - `backend/.env`：部署环境变量和敏感配置
-- `docker-compose.yml`：默认 standalone 一键部署入口
-- `docker-compose.standalone.yml`：standalone 完整配置
+- `docker-compose.yml`：默认单容器一键部署入口
 - `docker-compose.dev.yml`：源码开发 Compose 服务
 - `docker-compose.prod.yml`：生产构建物 Compose 服务
 
@@ -135,7 +134,7 @@ docker compose -f docker-compose.prod.yml --profile sandbox up -d
 
 生产部署前请准备持久化数据卷，并备份数据库和用户文件。正式部署请使用固定版本或 digest，不要依赖 `latest`。
 
-> **⚠️ 沙盒与 `/data` 的部署前置**（standalone/Dev/Prod 三个 Compose 相同）：沙盒容器由
+> **⚠️ 沙盒与 `/data` 的部署前置**（默认/Dev/Prod 三个 Compose 相同）：沙盒容器由
 > backend 通过 docker.sock 作为兄弟容器启动，`--mount src=/data/users/<uid>/shell`
 > 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `/data` 路径。Compose
 > 已用 `GUGU_DATA_HOST_DIR`（默认 `/data`）把宿主机目录 bind 成 `gugu_data` 卷；升级

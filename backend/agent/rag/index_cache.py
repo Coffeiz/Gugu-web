@@ -513,17 +513,18 @@ async def search_documents_with_cache(
     if diagnostics is not None:
         diagnostics["index_lookup_ms"] = int((time.monotonic() - lookup_started) * 1000)
     started = time.monotonic()
-    results = await index.search(query, limit=limit, source_types=source_types, scope=scope)
+    if hasattr(index, "search_with_timing"):
+        results, timing = await index.search_with_timing(
+            query, limit=limit, source_types=source_types, scope=scope,
+        )
+    else:
+        results = await index.search(query, limit=limit, source_types=source_types, scope=scope)
+        timing = None
     if diagnostics is not None:
         elapsed = int((time.monotonic() - started) * 1000)
         diagnostics["sidecar_search_ms"] = elapsed
-        client = getattr(index, "client", None)
-        diagnostics["sidecar_queue_wait_ms"] = int(
-            getattr(client, "last_search_queue_wait_ms", 0) or 0
-        )
-        diagnostics["sidecar_query_ms"] = int(
-            getattr(client, "last_search_query_ms", 0) or 0
-        )
+        diagnostics["sidecar_queue_wait_ms"] = int(getattr(timing, "queue_wait_ms", 0) or 0)
+        diagnostics["sidecar_query_ms"] = int(getattr(timing, "query_ms", 0) or 0)
         diagnostics["search_ms"] = elapsed
     return results
 

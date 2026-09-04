@@ -1,6 +1,6 @@
-# 一键部署一体化镜像：前端 dist + 后端生产运行时，单镜像承载完整站点。
-# 与 Dockerfile.prod（backend/frontend 分离、供现生产 compose 使用）并存；
-# 配套 docker-compose.standalone.yml 使用。构建上下文 = 仓库根目录。
+# 默认 Compose 一体化镜像：前端 dist + 后端生产运行时，单镜像承载完整站点。
+# 与 backend/Dockerfile.prod、frontend/Dockerfile.prod（供生产分离 Compose 使用）并存；
+# 构建上下文 = 仓库根目录。
 #
 # 产物只含生产运行时：不含前端源码、node_modules、pnpm 缓存、测试代码与 docs/。
 # 平台：linux/amd64（多架构暂不支持，见 PRD-DEPLOY-1）。
@@ -68,18 +68,18 @@ COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
-COPY backend/standalone_bootstrap.py ./standalone_bootstrap.py
+COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
-COPY nginx/standalone.conf /etc/nginx/nginx.conf
+COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
-    && chmod 755 docker-entrypoint.sh standalone_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh
+    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh
 
 EXPOSE 8000
 
@@ -87,7 +87,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -sf http://127.0.0.1:8000/health || exit 1
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
-# standalone 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway；sandboxd
+# 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway；sandboxd
 # 服务显式清空入口。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

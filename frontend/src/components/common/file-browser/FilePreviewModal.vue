@@ -110,6 +110,7 @@ import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
+import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -124,6 +125,8 @@ const videoSrc   = ref<string | null>(null)
 const loading    = ref(false)
 const converting = ref(false)
 const error      = ref<string | null>(null)
+const previewBlobCache = usePreviewBlobCache()
+const currentCacheKey = ref('')
 
 const isImage  = computed(() => isImageExt(props.file?.ext))
 const isText   = computed(() => isTextExt(props.file?.ext))
@@ -146,39 +149,10 @@ const EXT_COLORS: Record<string, string> = {
 const extColor = ref('#7b7fb2')
 
 function revoke() {
-  // blob URL 若在预览缓存里则由缓存的 LRU 驱逐时统一 revoke，这里只解除引用
-  if (blobUrl.value && !previewCache.has(currentCacheKey.value)) URL.revokeObjectURL(blobUrl.value)
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
   blobUrl.value = null
   videoSrc.value = null
-}
-
-// ── 会话级预览缓存：同一份页面会话里重复打开同一文件直接复用 blob URL，
-// 不再重新下载（配合后端 download 端点的 Cache-Control 兜底跨会话场景）。
-const PREVIEW_CACHE_MAX = 20
-const previewCache = new Map<string, { url: string }>()
-const currentCacheKey = ref('')
-
-function cacheKeyOf(file: Partial<FileMeta>): string {
-  if (file.attach_id) return `attach:${file.attach_id}`
-  if (file.id != null) return `file:${file.id}`
-  return ''
-}
-
-function cacheGet(key: string): string | null {
-  const hit = previewCache.get(key)
-  if (!hit) return null
-  previewCache.delete(key); previewCache.set(key, hit)   // LRU touch
-  return hit.url
-}
-
-function cachePut(key: string, url: string) {
-  previewCache.set(key, { url })
-  while (previewCache.size > PREVIEW_CACHE_MAX) {
-    const oldestKey = previewCache.keys().next().value as string
-    const oldest = previewCache.get(oldestKey)
-    previewCache.delete(oldestKey)
-    if (oldest && oldest.url !== blobUrl.value) URL.revokeObjectURL(oldest.url)
-  }
+  currentCacheKey.value = ''
 }
 
 async function load(file: Partial<FileMeta>, refresh = false) {
@@ -211,10 +185,10 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       blobUrl.value = URL.createObjectURL(blob)
     } else {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
-      const key = cacheKeyOf(file)
+      const key = previewBlobCache.keyOf(file)
       currentCacheKey.value = bust ? '' : key
       if (!bust) {
-        const cached = cacheGet(key)
+        const cached = previewBlobCache.get(key)
         if (cached) { blobUrl.value = cached; return }
       }
       const dlUrl = (file.attach_id
@@ -228,7 +202,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
         blob = new Blob([blob], { type: 'application/pdf' })
       }
       blobUrl.value = URL.createObjectURL(blob)
-      if (!bust) cachePut(key, blobUrl.value)
+      if (!bust) previewBlobCache.put(key, blobUrl.value)
     }
   } catch (e) {
     error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })

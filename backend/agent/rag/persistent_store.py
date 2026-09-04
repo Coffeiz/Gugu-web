@@ -181,9 +181,16 @@ async def search_persistent_index(
     if reason:
         cache_miss_reasons.add(str(reason))
     started = time.monotonic()
-    results.extend(await index.search(
-        query, limit=requested_limit, source_types=set(types), scope=scope,
-    ))
+    if hasattr(index, "search_with_timing"):
+        searched, timing = await index.search_with_timing(
+            query, limit=requested_limit, source_types=set(types), scope=scope,
+        )
+    else:
+        searched = await index.search(
+            query, limit=requested_limit, source_types=set(types), scope=scope,
+        )
+        timing = None
+    results.extend(searched)
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
     if diagnostics is not None:
         diagnostics["document_count"] = getattr(index, "document_count", len(getattr(index, "documents", ()) or ()))
@@ -196,6 +203,8 @@ async def search_persistent_index(
         sidecar_search_ms = int((time.monotonic() - started) * 1000)
         diagnostics["index_lookup_ms"] = index_lookup_ms
         diagnostics["sidecar_search_ms"] = sidecar_search_ms
+        diagnostics["sidecar_queue_wait_ms"] = int(getattr(timing, "queue_wait_ms", 0) or 0)
+        diagnostics["sidecar_query_ms"] = int(getattr(timing, "query_ms", 0) or 0)
         diagnostics["search_ms"] = sidecar_search_ms
         for key in ("index_build_ms", "sidecar_reused", "index_sync", "upsert_count", "delete_count"):
             if key in index_diagnostics:

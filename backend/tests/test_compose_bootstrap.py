@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from standalone_bootstrap import (
-    StandaloneConfigError,
+from compose_bootstrap import (
+    ComposeConfigError,
     ensure_admin_password,
     validate_required_config,
 )
@@ -16,7 +16,7 @@ def test_validate_required_config_reports_actionable_missing_secret(tmp_path: Pa
     monkeypatch.delenv("GUGU_DB_PASSWORD", raising=False)
     monkeypatch.delenv("DB__PASSWORD", raising=False)
 
-    with pytest.raises(StandaloneConfigError, match="SECRET_KEY.*openssl rand -base64 32"):
+    with pytest.raises(ComposeConfigError, match="SECRET_KEY.*openssl rand -base64 32"):
         validate_required_config(
             env_file=tmp_path / ".env",
             data_dir=data_dir,
@@ -32,7 +32,7 @@ def test_validate_required_config_reports_unwritable_data_dir(tmp_path: Path, mo
     monkeypatch.delenv("GUGU_DB_PASSWORD", raising=False)
     monkeypatch.delenv("DB__PASSWORD", raising=False)
 
-    with pytest.raises(StandaloneConfigError, match="用户数据目录不存在.*mkdir -p"):
+    with pytest.raises(ComposeConfigError, match="用户数据目录不存在.*mkdir -p"):
         validate_required_config(
             env_file=env_file,
             data_dir=missing_data_dir,

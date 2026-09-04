@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""standalone compose 启动前检查与首次管理员账号初始化。"""
+"""默认 Compose 启动前检查与首次管理员账号初始化。"""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from typing import Mapping
 from dotenv import dotenv_values
 
 
-class StandaloneConfigError(RuntimeError):
-    """用户可直接修复的 standalone 配置错误。"""
+class ComposeConfigError(RuntimeError):
+    """用户可直接修复的默认 Compose 配置错误。"""
 
 
 _ENV_ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
@@ -47,19 +47,19 @@ def validate_required_config(*, env_file: Path, data_dir: Path, host_data_dir: s
     """校验密钥与数据目录，返回已解析的 env 文件内容。"""
     values = _read_env_file(env_file)
     if not _config_value("SECRET_KEY", values):
-        raise StandaloneConfigError(
-            "SECRET_KEY 未设置，无法安全启动。请在 .env.standalone 中设置，"
+        raise ComposeConfigError(
+            "SECRET_KEY 未设置，无法安全启动。请在 backend/.env 中设置，"
             "或执行：export SECRET_KEY=\"$(openssl rand -base64 32)\""
         )
 
     if not (_config_value("GUGU_DB_PASSWORD", values) or _config_value("DB__PASSWORD", values)):
-        raise StandaloneConfigError(
-            "GUGU_DB_PASSWORD 未设置，无法连接 PostgreSQL。请在 .env.standalone 中设置，"
+        raise ComposeConfigError(
+            "GUGU_DB_PASSWORD 未设置，无法连接 PostgreSQL。请在根目录 .env 中设置，"
             "或执行：export GUGU_DB_PASSWORD=\"$(openssl rand -base64 32)\""
         )
 
     if not data_dir.is_dir():
-        raise StandaloneConfigError(
+        raise ComposeConfigError(
             f"用户数据目录不存在：{data_dir}。请在宿主机执行：{_repair_command_for_data_dir(host_data_dir)}"
         )
 
@@ -68,7 +68,7 @@ def validate_required_config(*, env_file: Path, data_dir: Path, host_data_dir: s
         os.close(fd)
         Path(probe).unlink()
     except OSError as exc:
-        raise StandaloneConfigError(
+        raise ComposeConfigError(
             f"用户数据目录不可写：{data_dir}。请在宿主机执行：{_repair_command_for_data_dir(host_data_dir)}"
         ) from exc
     return values
@@ -118,8 +118,8 @@ def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str])
 
 
 def main() -> int:
-    env_file = Path(os.environ.get("GUGU_STANDALONE_ENV_FILE", "/app/.env"))
-    data_dir = Path(os.environ.get("GUGU_STANDALONE_DATA_DIR", "/data"))
+    env_file = Path(os.environ.get("GUGU_ENV_FILE", "/app/.env"))
+    data_dir = Path(os.environ.get("GUGU_DATA_DIR", "/data"))
     host_data_dir = os.environ.get("GUGU_DATA_HOST_DIR", "/data")
     try:
         values = validate_required_config(
@@ -128,11 +128,11 @@ def main() -> int:
             host_data_dir=host_data_dir,
         )
         ensure_admin_password(env_file=env_file, env_file_values=values)
-    except StandaloneConfigError as exc:
-        print(f"standalone 启动检查失败：{exc}", file=os.sys.stderr)
+    except ComposeConfigError as exc:
+        print(f"Compose 启动检查失败：{exc}", file=os.sys.stderr)
         return 1
     except OSError as exc:
-        print(f"standalone 启动检查失败：无法写入 {env_file}，请确认 backend/.env 可写。", file=os.sys.stderr)
+        print(f"Compose 启动检查失败：无法写入 {env_file}，请确认 backend/.env 可写。", file=os.sys.stderr)
         return 1
     return 0
 

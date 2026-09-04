@@ -8,6 +8,7 @@ import os
 import shlex
 import weakref
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,20 @@ from agent.rag.scope import matches_scope
 
 class TsSidecarUnavailable(RuntimeError):
     """TS worker 未配置、启动失败或协议请求失败。"""
+
+
+@dataclass(frozen=True)
+class SidecarRequestTiming:
+    """一次 sidecar 请求自己的计时，不挂在共享 owner client 上。"""
+
+    queue_wait_ms: int = 0
+    query_ms: int = 0
+
+
+@dataclass(frozen=True)
+class SidecarRequestResult:
+    response: dict
+    timing: SidecarRequestTiming
 
 
 def index_dir_for_owner(owner_user_id: object) -> str:
@@ -51,8 +66,6 @@ class TsSidecarClient:
         self._revision: str | None = None
         self._document_count = 0
         self.last_search_diagnostics: dict[str, Any] = {}
-        self.last_search_queue_wait_ms = 0
-        self.last_search_query_ms = 0
         self._last_used_at = asyncio.get_running_loop().time()
         self._active_requests = 0
 
@@ -65,24 +78,25 @@ class TsSidecarClient:
         return self._active_requests == 0 and current - self._last_used_at >= SIDE_CAR_IDLE_TTL_SECONDS
 
     async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
-        response = await self._request({
+        result = await self._request({
             "op": "replace",
             "revision": revision or "",
             "documents": [_wire_document(document) for document in documents],
         })
+        response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
 
     async def build_documents(self, batch: dict[str, list[dict]]) -> list[dict]:
         """让 TS builder 从统一 source batch 生成 canonical 文档；不读取业务数据库。"""
-        response = await self._request({"op": "build_documents", "batch": batch})
+        response = (await self._request({"op": "build_documents", "batch": batch})).response
         return list(response.get("documents") or [])
 
     async def build_and_index(self, batch: dict[str, list[dict]], revision: str) -> dict:
         """在 TS worker 内完成 source projection、分块和索引更新，避免回传完整文档。"""
-        return await self._request({
+        return (await self._request({
             "op": "build_and_index", "revision": revision, "batch": batch,
-        })
+        })).response
 
     async def patch(
         self,
@@ -92,13 +106,14 @@ class TsSidecarClient:
         base_revision: str | None,
     ) -> None:
         """只同步发生变化的 chunk，保持 worker 的 revision 原子推进。"""
-        response = await self._request({
+        result = await self._request({
             "op": "patch",
             "revision": revision or "",
             "base_revision": base_revision or "",
             "upserts": [_wire_document(document) for document in upserts],
             "deletes": list(deletes),
         })
+        response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or 0)
 
@@ -126,8 +141,22 @@ class TsSidecarClient:
         scope: Scope | None = None,
         limit: int = 10,
     ) -> list[RecallResult]:
+        results, _timing = await self.search_with_timing(
+            query, documents=documents, source_types=source_types, scope=scope, limit=limit,
+        )
+        return results
+
+    async def search_with_timing(
+        self,
+        query: str,
+        *,
+        documents: dict[str, IndexDocument],
+        source_types: Iterable[str] = (),
+        scope: Scope | None = None,
+        limit: int = 10,
+    ) -> tuple[list[RecallResult], SidecarRequestTiming]:
         source_type_set = set(source_types)
-        response = await self._request({
+        result = await self._request({
             "op": "search",
             "revision": self._revision or "",
             # 原文交给 TS worker；索引和查询必须由同一个 TS tokenizer 处理。
@@ -142,6 +171,7 @@ class TsSidecarClient:
                 "scope_id": scope.scope_id,
             }} if scope is not None else {}),
         })
+        response = result.response
         self.last_search_diagnostics = dict(response.get("diagnostics") or {})
         results: list[RecallResult] = []
         for item in response.get("results") or []:
@@ -155,7 +185,7 @@ class TsSidecarClient:
             if scope is not None and not matches_scope(document, scope):
                 continue
             results.append(RecallResult(document, float(item.get("score") or 0)))
-        return results
+        return results, result.timing
 
     async def rank_candidates(
         self, query: str, candidates: list[dict], *, limit: int,
@@ -163,7 +193,7 @@ class TsSidecarClient:
         exclude_content_hashes: set[str] | None = None,
     ) -> tuple[list[dict], dict]:
         """调用 TS 完成来源归一化、confidence 过滤和统一预算。"""
-        response = await self._request({
+        response = (await self._request({
             "op": "rank_candidates",
             "query": query,
             "candidates": candidates,
@@ -172,7 +202,7 @@ class TsSidecarClient:
             "max_per_source": max(1, int(max_per_source)),
             "max_per_parent": max(1, int(max_per_parent)),
             "exclude_content_hashes": sorted(exclude_content_hashes or set()),
-        })
+        })).response
         return list(response.get("selected") or []), dict(response.get("stats") or {})
 
     async def close(self) -> None:
@@ -188,7 +218,7 @@ class TsSidecarClient:
                 process.kill()
                 await process.wait()
 
-    async def _request(self, payload: dict) -> dict:
+    async def _request(self, payload: dict) -> SidecarRequestResult:
         queued_at = asyncio.get_running_loop().time()
         async with self._lock:
             request_started = asyncio.get_running_loop().time()
@@ -198,12 +228,13 @@ class TsSidecarClient:
             try:
                 await self._ensure_process()
                 response = await self._request_unlocked(payload)
-                if payload.get("op") == "search":
-                    self.last_search_queue_wait_ms = queue_wait_ms
-                    self.last_search_query_ms = int(
-                        (asyncio.get_running_loop().time() - request_started) * 1000
-                    )
-                return response
+                query_ms = int(
+                    (asyncio.get_running_loop().time() - request_started) * 1000
+                ) if payload.get("op") == "search" else 0
+                return SidecarRequestResult(
+                    response=response,
+                    timing=SidecarRequestTiming(queue_wait_ms=queue_wait_ms, query_ms=query_ms),
+                )
             finally:
                 self._active_requests -= 1
                 self.touch()
@@ -275,7 +306,15 @@ class TsLexicalIndex:
     async def search(
         self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
     ) -> list[RecallResult]:
-        return await self.client.search(
+        results, _timing = await self.search_with_timing(
+            query, limit=limit, source_types=source_types, scope=scope,
+        )
+        return results
+
+    async def search_with_timing(
+        self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
+    ) -> tuple[list[RecallResult], SidecarRequestTiming]:
+        return await self.client.search_with_timing(
             query, documents=self.documents_by_id, source_types=source_types, scope=scope, limit=limit,
         )
 

@@ -143,7 +143,7 @@
 
 ### 国内网络环境
 
-国内用户拉取 standalone 镜像、进行源码开发或安装依赖时，可以按需使用代理或镜像源。默认 Compose 使用预构建的一体化镜像，不需要先安装 Python 或 Node 依赖。
+国内用户拉取默认 Compose 的一体化镜像、进行源码开发或安装依赖时，可以按需使用代理或镜像源。默认 Compose 使用预构建的一体化镜像，不需要先安装 Python 或 Node 依赖。
 
 ```bash
 # pnpm / npm 依赖
@@ -164,7 +164,7 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.standalone.example .env
+cp .env.example .env
 mkdir -p backend && touch backend/.env
 # 编辑根目录 .env，填写 SECRET_KEY、GUGU_DB_PASSWORD 和模型相关变量
 # 模型、管理员账号等应用配置也可以写入 backend/.env；未设置管理员密码时首次启动自动生成
@@ -176,7 +176,7 @@ docker compose up -d
 基础变量可以这样配置：
 
 ```dotenv
-# 根目录 .env：standalone Compose 配置
+# 根目录 .env：默认 Compose 配置
 SECRET_KEY=请替换为随机长字符串
 GUGU_DB_PASSWORD=请替换为数据库密码
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
@@ -196,7 +196,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
 
-默认 Compose 会拉取一个包含前端、Nginx、Uvicorn、worker、IM gateway 的 standalone 应用镜像，不挂载源码，也不运行开发服务器；同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务。
+默认 Compose 会拉取一个包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像，不挂载源码，也不运行开发服务器；同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务。
 
 启动后访问：
 
