@@ -97,7 +97,8 @@ async def _delete_client(db, user_id, args: dict):
     if _err:
         return _err
     summary = f"将删除客户「{c.name}」，此操作不可恢复"
-    blocked = confirm.needs_confirmation(args, summary, user_id)
+    blocked = confirm.needs_confirmation(args, summary, user_id,
+                                         identity=f"delete_client:client_id={c.id}")
     if blocked is not None:
         return blocked
     cid, cname = await delete_client(db, c)
@@ -163,7 +164,6 @@ class ClientsSkill(BaseSkill):
                     "client_id": {"type": "integer"},
                     "client": {"type": "string"},
                     "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": [],
             },

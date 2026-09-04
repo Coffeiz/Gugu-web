@@ -103,11 +103,18 @@ async def _create_skill(db, user_id, args: dict):
     allowed = current_im.get("allowed_tool_names") if current_im else None
     allowed = list(allowed) if allowed is not None else DefaultProfile().tool_names
     related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
-    risky = [item for item in related if (registry.get(item) and (registry.get(item).mutates or registry.get(item).destructive))]
+    risky = sorted(item for item in related if (registry.get(item) and (registry.get(item).mutates or registry.get(item).destructive)))
     if risky:
+        # identity 绑定本次 Skill 的完整内容：同一批 risky 工具但内容不同的
+        # Skill 不能复用上一次确认的授权。
+        body_digest = hashlib.sha256(json.dumps(
+            {k: args.get(k) for k in ("name", "slug", "description_short", "description_long",
+                                      "category", "related_tools") if args.get(k) is not None},
+            ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         from agent.security import confirm
         blocked = confirm.needs_confirmation(
             args, f"创建会关联写入或危险工具的 Skill：{', '.join(risky)}", user_id,
+            identity=f"create_user_skill:{slug or name}:{body_digest}:risky_tools={risky}",
         )
         if blocked:
             return blocked
@@ -229,7 +236,6 @@ class MetaSkill(BaseSkill):
                     "category": {"type": "string", "enum": ["personal", "productivity", "research", "creative", "other"]},
                     "related_tools": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 80}},
                     "body": {"type": "string", "minLength": 1, "maxLength": 20000},
-                    "confirm": {"type": "boolean"},
                 },
                 "required": ["name", "description_short", "body", "related_tools"],
                 "additionalProperties": False,

@@ -25,6 +25,7 @@ from app.services.terminals import (
     prune_terminals, reopen_terminal, reset_terminal, rename_terminal, serialize_event, serialize_terminal, terminal_events, terminal_metrics,
     append_shell_result, append_terminal_status,
 )
+from agent.interactions.confirmations import redeem_confirmation
 from agent.terminal.access import TerminalOperation, authorize_operation, page_access
 from agent.terminal.contracts import TerminalMode
 from agent.terminal.contracts import TerminalStatus
@@ -425,22 +426,19 @@ async def _run_terminal_command(user_id, terminal_id: str, request_id: str, body
                                  })
 
         try:
-            result = {"ok": False, "error": "命令执行失败"}
             # 终端确认：用户点击确认后携带短确认码，先在服务端兑换授权，
             # 再执行命令；授权命中时确认门自动放行，不经过任何模型凭证。
-            if body.confirmCode:
-                from agent.interactions.confirmations import redeem_confirmation
-                redeemed = redeem_confirmation(user_id, body.confirmCode)
-                if redeemed is None:
-                    result = {"ok": False, "error": "确认码无效或已过期，请重新执行命令。"}
-            if result.get("ok") is None or result["ok"]:
+            # 兑换失败才拦截；无论有无确认码，命令本身都要走 _shell（未授权的危险命令
+            # 会由确认门拦截并生成确认请求，普通命令直接执行）。
+            if body.confirmCode and redeem_confirmation(user_id, body.confirmCode) is None:
+                result = {"ok": False, "error": "确认码无效或已过期，请重新执行命令。"}
+            else:
                 result = await _shell(db, user_id, {
                     "_session_id": row.session_id, "_workspace_id": row.workspace_id,
                     "_terminal_id": row.id, "_terminal_source": "user", "_run_id": request_id,
                     "_terminal_parallel": True, "_defer_terminal_event": True,
                     "command": body.command, "cwd": body.cwd, "timeout": body.timeout,
                     "max_output_chars": body.maxOutputChars, "network": body.network,
-                    "confirm": body.confirm,
                     "_on_output": publish_output,
                 })
         except asyncio.CancelledError:
@@ -471,7 +469,8 @@ async def _run_terminal_command(user_id, terminal_id: str, request_id: str, body
             before_sequence = row.last_sequence
             if isinstance(result, dict) and result.get("ok") is not None:
                 stdout = str(result.get("stdout") or "")
-                stderr = str(result.get("stderr") or "")
+                # 确认码无效等错误以 {"ok": False, "error": …} 形式返回，也要如实落进 stderr
+                stderr = str(result.get("stderr") or result.get("error") or "")
                 exit_code = result.get("exit_code")
                 ok = bool(result.get("ok"))
             else:
