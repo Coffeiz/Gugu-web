@@ -8,11 +8,11 @@ WORKDIR /workspace
 RUN npm install --global pnpm@10.15.0
 
 # 依赖单独一层：workspace 元数据和 manifest 没变时改代码不用重装。
-COPY Gugu-web/package.json Gugu-web/pnpm-lock.yaml Gugu-web/pnpm-workspace.yaml Gugu-web/.npmrc ./
-COPY Gugu-web/frontend/package.json ./frontend/package.json
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY frontend/package.json ./frontend/package.json
 RUN pnpm install --filter gugu-web --frozen-lockfile
 
-COPY Gugu-web/frontend/ ./frontend/
+COPY frontend/ ./frontend/
 WORKDIR /workspace/frontend
 
 EXPOSE 5173

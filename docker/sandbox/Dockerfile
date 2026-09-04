@@ -13,6 +13,7 @@ RUN sed -i \
        -e 's|security.debian.org/debian-security|mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
        /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
+    && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
        bash ca-certificates curl git jq less nodejs npm python3 python3-pip python3-venv tini \
     && apt-get clean \
