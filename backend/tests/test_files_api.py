@@ -117,4 +117,6 @@ async def test_download_endpoint_reads_owned_file(db, user_a):
     uploaded = await _do_upload(db, user_a, b"download-body", "report.txt")
     response = await files_api.download_file(uploaded.id, current_user=user_a, db=db)
     assert response.body == b"download-body"
+    # 图片预览会反复打开同一文件，响应必须带缓存头，浏览器才能免重复下载
+    assert response.headers["cache-control"] == "private, max-age=300"
     assert response.media_type == "text/plain"
