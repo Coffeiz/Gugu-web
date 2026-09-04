@@ -75,12 +75,14 @@
   background: var(--file-browser-checkbox-bg);
   box-shadow: none;
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
+  transition: opacity 0.18s ease;
   pointer-events: none;
 }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox.checked {
   background: var(--file-browser-checkbox-bg-checked);
   border-color: var(--file-browser-checkbox-border-checked);
+  /* 同 FolderCard：填充淡入只在勾选方向声明，取消勾选瞬时还原 */
+  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
 }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
 /* leave 只走 opacity：退出多选时 clearSelection 同帧移除 .checked，若 background/border

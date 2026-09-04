@@ -172,7 +172,7 @@ const props = defineProps({
   box-shadow: none;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
+  transition: opacity 0.18s ease;
 }
 .fc-card .sel-checkbox.checked {
   color: var(--file-card-checkbox-fg-checked, var(--color-primary,#7b7fb2));

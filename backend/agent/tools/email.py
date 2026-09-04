@@ -106,7 +106,7 @@ async def _send_email(db, user_id, args: dict):
                 template=template, title=title, preheader=preheader,
                 sections=sections, actions=actions, theme=theme, palette=palette,
             ),
-            instruction="邮件发送不可撤回。请确认收件人、主题和正文后，带 confirm=true 与本次 confirm_token 再次调用。",
+            instruction="邮件发送不可撤回。请确认收件人、主题和正文后再次调用本工具执行，无需携带凭证。",
         )
         if blocked is not None:
             return blocked
@@ -180,7 +180,6 @@ class EmailSkill(BaseSkill):
                     "palette": {"type": "string", "enum": ["auto", "mist", "cafe", "rose", "sky", "sage"]},
                     "html": {"type": "string", "minLength": 1, "maxLength": _MAX_HTML_LENGTH},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": ["subject", "body"],
                 "not": {"required": ["to", "client_id"]},

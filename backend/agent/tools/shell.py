@@ -129,7 +129,7 @@ async def _run_shell(db, user_id, args: dict):
             ttl_minutes=max(1, (egress_ttl + 59) // 60),
             instruction=(
                 "这是当前会话的临时沙盒联网授权，只允许通过受控代理访问公网，"
-                "有效期10分钟；请把授权范围告知用户，用户明确同意后带 confirm=true 和本次 confirm_token 再次调用。"
+                "有效期10分钟；请把授权范围告知用户，用户在界面确认后直接再次调用即可，无需携带凭证。"
             ),
         )
         if blocked is not None:
@@ -155,7 +155,7 @@ async def _run_shell(db, user_id, args: dict):
             ttl_minutes=30 if shell_lease else 5,
             instruction=(
                 "这是当前会话的受限 Shell 操作授权，有效期 30 分钟；"
-                "请把授权范围告知用户，用户明确同意后带 confirm=true 和本次 confirm_token 再次调用。"
+                "请把授权范围告知用户，用户在界面确认后直接再次调用即可，无需携带凭证。"
                 if shell_lease else None
             ),
         )
@@ -340,7 +340,6 @@ class ShellSkill(BaseSkill):
                     "network": {"type": "string", "enum": ["none", "egress"]},
                     "scope": {"type": "string", "enum": ["sandbox", "system"]},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": ["command"],
             },

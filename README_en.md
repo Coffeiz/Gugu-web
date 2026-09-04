@@ -10,7 +10,7 @@ Gugu brings scattered kanban boards, calendars, notes, files, and canvases into 
 
 This is a *Vibe Coding project*. Issues and pull requests are welcome.
 
-[![status](https://img.shields.io/badge/status-active-success?style=flat)](https://gugugu.site)
+[![status](https://img.shields.io/badge/status-active-success?style=flat)](https://www.gugugu.site)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
@@ -48,7 +48,7 @@ Gugu started as a project management tool. Over time it grew to include an inter
 
 > If the end result is still just a chat box, why call it Agent UI?
 
-Try it at [gugugu.site](https://gugugu.site), or deploy it locally using the instructions below. The online demo runs on limited resources, so responses may occasionally be slower. Issues and pull requests are welcome.
+Try it at [www.gugugu.site](https://www.gugugu.site), or deploy it locally using the instructions below. The online demo runs on limited resources, so responses may occasionally be slower. Issues and pull requests are welcome.
 
 ## Feature Preview
 
