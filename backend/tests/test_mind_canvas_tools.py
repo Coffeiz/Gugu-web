@@ -343,15 +343,16 @@ async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a
     blocked_relation = await _canvas_disconnect(db, user_a.id, {"canvas_id": canvas.id, "relation_id": relation["relation_id"]})
     assert json.loads(blocked_relation)["needs_confirm"] is True
 
-    relation_token = json.loads(blocked_relation)["confirm_token"]
+    from agent.interactions import confirmations
+    confirmations.redeem_confirmation(user_a.id, json.loads(blocked_relation)["confirm_code"])
     deleted_relation = await _canvas_disconnect(db, user_a.id, {
-        "canvas_id": canvas.id, "relation_id": relation["relation_id"], "confirm": True, "confirm_token": relation_token,
+        "canvas_id": canvas.id, "relation_id": relation["relation_id"],
     })
     assert deleted_relation["deleted_relation_id"] == relation["relation_id"]
 
-    note_token = json.loads(blocked)["confirm_token"]
+    confirmations.redeem_confirmation(user_a.id, json.loads(blocked)["confirm_code"])
     deleted_note = await _canvas_delete_note(db, user_a.id, {
-        "node_id": note.id, "version": note.version, "confirm": True, "confirm_token": note_token,
+        "node_id": note.id, "version": note.version,
     })
     assert deleted_note["deleted_node_id"] == note.id
     assert (await db.get(MindNode, note.id)).deleted_at is not None
@@ -505,12 +506,12 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     blocked = await _canvas_delete_note(db, user_a.id, {
             "notes": [{"node_id": node_id} for node_id in note_ids],
     })
+    from agent.interactions import confirmations
     blocked_payload = json.loads(blocked)
     assert blocked_payload["needs_confirm"] is True
+    confirmations.redeem_confirmation(user_a.id, blocked_payload["confirm_code"])
     deleted = await _canvas_delete_note(db, user_a.id, {
             "notes": [{"node_id": node_id} for node_id in note_ids],
-        "confirm": True,
-        "confirm_token": blocked_payload["confirm_token"],
     })
     assert deleted["count"] == 2
 
@@ -554,7 +555,7 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     blocked_batch = await _canvas_batch(db, user_id, delete_request)
     blocked_batch_payload = json.loads(blocked_batch)
     assert blocked_batch_payload["needs_confirm"] is True
-    delete_request.update({"confirm": True, "confirm_token": blocked_batch_payload["confirm_token"]})
+    confirmations.redeem_confirmation(user_id, blocked_batch_payload["confirm_code"])
     deleted_batch = await _canvas_batch(db, user_id, delete_request)
     assert deleted_batch["atomic"] is True
     assert deleted_batch["operations"][0]["deleted_node_id"] == batch_node["node_id"]

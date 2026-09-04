@@ -330,7 +330,6 @@ class CalendarSkill(BaseSkill):
                     "event": {"type": "string"},
                     "on_date": {"type": "string", "pattern": _DATE_PATTERN},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },

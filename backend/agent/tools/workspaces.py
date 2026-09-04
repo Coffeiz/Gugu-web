@@ -141,7 +141,6 @@ class WorkspacesSkill(BaseSkill):
                 "type": "object", "properties": {
                     "workspace_id": {"type": "integer"},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
             }, handler=_delete_workspace, mutates=True, destructive=True,
         ),

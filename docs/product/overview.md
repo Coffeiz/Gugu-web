@@ -1,6 +1,6 @@
 # 咕咕 · 项目总览
 
-> **版本** `0.18.0` · **阶段** 私人 Beta · **更新** 2026-07-13 · [gugugu.site](https://gugugu.site)
+> **版本** `0.18.0` · **阶段** 私人 Beta · **更新** 2026-07-13 · [www.gugugu.site](https://www.gugugu.site)
 
 ---
 

@@ -41,6 +41,49 @@ def pytest_collection_modifyitems(items):
             item.add_marker("slow")
 
 
+@pytest.fixture(autouse=True)
+def _fake_confirm_redis(monkeypatch):
+    """确认门授权存 Redis；测试替换为进程内假客户端，测试之间零残留。
+
+    不隔离的话，一条授权（TTL 分钟级）会泄漏进后续用例：同 user + 同摘要的
+    「缺 confirm 必拒」测试会因授权命中被放行。
+    """
+    class _FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        def _expire_check(self, key):
+            import time
+            item = self.store.get(key)
+            if item is None:
+                return None
+            expires, value = item
+            if expires is not None and expires < time.time():
+                del self.store[key]
+                return None
+            return value
+
+        def get(self, key):
+            return self._expire_check(key)
+
+        def exists(self, key):
+            return 1 if self._expire_check(key) is not None else 0
+
+        def setex(self, key, ttl, value):
+            import time
+            self.store[key] = (time.time() + ttl, value)
+
+        def delete(self, *keys):
+            for key in keys:
+                self.store.pop(key, None)
+
+    import agent.interactions.confirmations as _confirm
+
+    fake = _FakeRedis()
+    monkeypatch.setattr(_confirm, "get_redis_sync", lambda: fake)
+    yield fake
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_redis_client():
     """每个测试结束后重置全局 Redis 客户端单例。

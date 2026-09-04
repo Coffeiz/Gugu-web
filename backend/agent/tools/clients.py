@@ -164,7 +164,6 @@ class ClientsSkill(BaseSkill):
                     "client": {"type": "string"},
                     "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },

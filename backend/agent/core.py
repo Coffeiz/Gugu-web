@@ -64,34 +64,6 @@ def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
     return {key: value for key, value in tool_input.items() if key != "name"}
 
 
-def _inject_pending_confirmation(tool_input: Any, adapter_target: str | None,
-                                 confirmation: dict[str, Any] | None) -> tuple[Any, bool]:
-    """把刚确认的凭证续接到同名工具的一次调用中。
-
-    返回 ``(参数, 是否消费凭证)``。确认续接集中在这里，避免 direct tool 与
-    ``call_tool`` 两条 dispatch 分支各自维护一套容易漂移的安全判断。
-    """
-    if not confirmation or not confirmation.get("confirm_token"):
-        return tool_input, False
-
-    original = _resolve_adapter_arguments(tool_input) if adapter_target else tool_input
-    if not isinstance(original, dict):
-        return tool_input, False
-    confirm_value = original.get("confirm")
-    explicitly_denied = isinstance(confirm_value, str) and confirm_value.strip().lower() in {"false", "0", "no"}
-    if explicitly_denied:
-        return tool_input, True
-
-    # 模型可能会把上一次结果里的 token 原样带回，也可能生成/截断一个同名字段。
-    # 服务端刚通过交互确认签发的 token 才是唯一可信凭证，必须覆盖模型传入值。
-    merged = {**original, "confirm": True, "confirm_token": confirmation["confirm_token"]}
-    if adapter_target:
-        if isinstance(tool_input, dict) and isinstance(tool_input.get("arguments"), dict):
-            return {**tool_input, "arguments": merged}, True
-        return {"name": adapter_target, **merged}, True
-    return merged, True
-
-
 async def _stream_round(client, kwargs, adapter=None):
     """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试（P2-b §4-A 标杆模板）。
     yield ('token', delta) 逐字；结束 yield ('final', message)。
@@ -648,10 +620,8 @@ class LLMRunner:
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
         finalize_pending = False
-        # 交互确认只对“刚刚被用户确认的同一个破坏性工具”续接一次。
-        # 确认结果会进入 tool_result，但模型有时不会把凭证原样带回下一次调用；
-        # 若不在运行时续接，就会再次触发同一个确认门。
-        pending_confirmation: dict[str, Any] | None = None
+        # 破坏性工具的用户确认授权存在服务端（Redis），工具重新调用时由
+        # 确认门自动命中放行，运行时不再做任何凭证续接。
         total_in = total_out = total_cache = total_cache_write = 0
         # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
         # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
@@ -1235,14 +1205,6 @@ class LLMRunner:
                         artifact = None
                     else:
                         dispatch_input = tc.input
-                        confirmation = pending_confirmation
-                        if confirmation and confirmation.get("tool_name") == effective_tool_name:
-                            dispatch_input, consumed = _inject_pending_confirmation(
-                                tc.input, adapter_target, confirmation,
-                            )
-                            if consumed:
-                                # 凭证是一次性的，仅供本次同名工具调用尝试使用。
-                                pending_confirmation = None
                         if adapter_target is not None:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
                             _dispatch_token = set_dispatch_session(session_id, session, run_id)
@@ -1464,7 +1426,7 @@ class LLMRunner:
                 messages.append_batch(batch)
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
-                    prompt_id, pending_tool_call_id, pending_tool_name = pending_interaction
+                    prompt_id, pending_tool_call_id = pending_interaction[:2]
                     answer = await wait_for_resolution(
                         user_id=user_id, prompt_id=prompt_id,
                         heartbeat=lambda: genstream.touch(session_id),
@@ -1476,15 +1438,6 @@ class LLMRunner:
                     if answer is None:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return
-                    if (
-                        isinstance(answer, dict)
-                        and answer.get("status") == "confirmed"
-                        and isinstance(answer.get("confirm_token"), str)
-                    ):
-                        pending_confirmation = {
-                            "tool_name": pending_tool_name,
-                            "confirm_token": answer["confirm_token"],
-                        }
                     _replace_tool_result(
                         messages,
                         tool_call_id=pending_tool_call_id,

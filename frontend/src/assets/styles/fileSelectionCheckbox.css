@@ -22,13 +22,23 @@
 :where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked > svg {
   display: none;
 }
-:where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked::after {
+/* 勾选图形常驻 DOM，用 opacity+scale 过渡：勾/取消勾都有淡入淡出 + 轻微回弹，
+   不再用 content 瞬时出现。只动 opacity/transform，不碰背景/边框——退出多选同帧移除
+   .checked 时，填充色仍按各组件的 opacity-only 退出策略走，避免结尾闪色。 */
+:where(.fc-card, .folder-card, .list-row) .sel-checkbox::after {
   content: '';
   display: block;
   width: 12px;
   height: 12px;
   flex: 0 0 12px;
   background: currentColor;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.15s ease, transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+}
+:where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked::after {
+  opacity: 1;
+  transform: scale(1);
 }

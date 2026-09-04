@@ -1,6 +1,7 @@
 """PRD-LLM-2 Phase 1-3 的轻量协议回归。"""
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 
 from agent.interactions.events import INTERACTION_REQUIRED, ROUND_START
@@ -190,8 +191,13 @@ async def test_tool_budget_prompt_enables_unlimited_without_goal_loop(db, user_a
     assert now_utc() + timedelta(minutes=29) < datetime.fromisoformat(expires_at)
 
 
-async def test_confirmation_button_returns_token_for_resumed_destructive_tool(db, user_a):
+async def test_confirmation_button_grants_server_side_authorization(db, user_a):
+    """确认按钮：确认码兑换服务端授权；结果里不再携带任何模型可复述的凭证。"""
+    from agent.interactions import confirmations
+
     session, pending_message = await _make_interaction_session(db, user_a)
+    code = confirmations.needs_confirmation({}, "将删除 2 个文件", user_a.id)
+    code = json.loads(code)["confirm_code"]
     prompt, actions = await create_prompt(
         db,
         user_id=user_a.id,
@@ -200,25 +206,22 @@ async def test_confirmation_button_returns_token_for_resumed_destructive_tool(db
         title="确认：批量删除",
         body="将删除 2 个文件",
         options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
-        context={"tool_call_id": "call-1", "confirm_token": "signed-tool-token"},
+        context={"tool_call_id": "call-1", "confirm_code": code},
     )
     await db.commit()
     result = await consume_action(
         db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-confirm"
     )
-    assert result["result"] == {
-        "kind": "confirm",
-        "status": "confirmed",
-        "prompt_id": prompt.id,
-        "option_id": "confirm",
-        "value": "confirm",
-        "text": "确认",
-        "confirm": True,
-        "confirm_token": "signed-tool-token",
-    }
+    assert result["result"]["status"] == "confirmed"
+    assert result["result"]["confirm"] is True
+    assert "confirm_token" not in result["result"]
     await db.refresh(pending_message)
-    assert '"confirm": true' in pending_message.content_json[0]["content"]
-    assert "signed-tool-token" in pending_message.content_json[0]["content"]
+    content = pending_message.content_json[0]["content"]
+    assert '"confirm": true' in content
+    # 授权记录只在服务端；写入对话的结果不应出现任何凭证。
+    assert "token" not in content
+    # 兑换后确认码一次性作废。
+    assert confirmations.redeem_confirmation(user_a.id, code) is None
 
 
 async def test_ask_user_text_requires_explicit_permission_and_resolves(db, user_a):

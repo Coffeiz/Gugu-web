@@ -212,7 +212,6 @@ class TrashSkill(BaseSkill):
                     "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
                     "all": {"type": "boolean"},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": [],
             },

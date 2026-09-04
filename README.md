@@ -10,7 +10,7 @@
 
 *这是一个个人的 Vibe Coding 项目，欢迎通过 Issue 和 PR 参与改进。*
 
-[![status](https://img.shields.io/badge/status-active-success?style=flat)](https://gugugu.site)
+[![status](https://img.shields.io/badge/status-active-success?style=flat)](https://www.gugugu.site)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
@@ -48,7 +48,7 @@
 
 > 如果最后还是一个聊天框，为什么要叫 Agent UI？
 
-欢迎试用，也欢迎前往 [gugugu.site](https://gugugu.site) 在线体验，或者按照下方的说明在本地部署。不过服务器能力有限，在线体验时可能会没那么流畅。最后，也欢迎提 Issue 和 PR。
+欢迎试用，也欢迎前往 [www.gugugu.site](https://www.gugugu.site) 在线体验，或者按照下方的说明在本地部署。不过服务器能力有限，在线体验时可能会没那么流畅。最后，也欢迎提 Issue 和 PR。
 
 ## 功能预览
 

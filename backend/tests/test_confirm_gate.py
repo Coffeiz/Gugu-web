@@ -2,13 +2,13 @@
 
 三层验证（商用就绪评审 P0-3）：
 1. 全部 5 个 destructive 工具：不带 confirm 调用 → 返回 needs_confirm 拦截、资源原封不动；
-2. 单带 confirm=true 仍须拒绝；仅携带上一轮凭证时才真正执行；
+2. 单带 confirm=true 仍须拒绝；用户确认后（确认码兑换出服务端授权）不带任何凭证
+   重新调用即可执行——模型不携带、不复述凭证；
 3. dispatch 层绊线：假造一个漏接确认门的 destructive 工具，无 confirm 的调用返回了
    "成功执行" → 必须触发 confirm-gate.bypassed CRITICAL 日志（运行时兜底的行为契约）。
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
 """
 import json
-from datetime import timedelta
 from app.core.tz import now_utc
 import logging
 
@@ -26,9 +26,9 @@ def _blocked(res) -> bool:
     return confirm.is_block(res)
 
 
-def _confirm_token(res) -> str:
+def _confirm_code(res) -> str:
     payload = json.loads(res) if isinstance(res, str) else res
-    return payload["confirm_token"]
+    return payload["confirm_code"]
 
 
 async def _mk(db, obj):
@@ -77,65 +77,75 @@ async def test_permanent_delete_requires_confirm(db, user_a):
     assert await db.get(File, f.id) is not None
 
 
-# ── 2. confirm 必须带上一轮凭证，防模型自行补 confirm=true ───────────────────
+# ── 2. 单带 confirm=true 必拒；服务端授权命中后才放行（凭证不经过模型）────────
 
-async def test_delete_client_rejects_confirm_without_prior_token(db, user_a):
+async def test_delete_client_rejects_confirm_without_grant(db, user_a):
     c = await _mk(db, Client(user_id=user_a.id, name="确认后删"))
     res = await _delete_client(db, user_a.id, {"client_id": c.id, "confirm": True})
     assert _blocked(res)
     assert await db.get(Client, c.id) is not None
 
 
-async def test_delete_client_with_prior_token_executes(db, user_a):
+async def test_delete_client_executes_after_grant_without_credentials(db, user_a):
+    from agent.interactions import confirmations
+
     c = await _mk(db, Client(user_id=user_a.id, name="确认后删"))
     blocked = await _delete_client(db, user_a.id, {"client_id": c.id})
-    res = await _delete_client(db, user_a.id, {
-        "client_id": c.id,
-        "confirm": True,
-        "confirm_token": _confirm_token(blocked),
-    })
+    code = _confirm_code(blocked)
+
+    # 用户点击确认：确认码兑换成服务端授权（一次性）。
+    ttl = confirmations.redeem_confirmation(user_a.id, code)
+    assert ttl is not None
+
+    # 模型不带任何凭证重新调用：授权命中自动注入 confirm 后放行。
+    res = await _delete_client(db, user_a.id, {"client_id": c.id})
     assert isinstance(res, dict) and res.get("success")
     assert await db.get(Client, c.id) is None
 
+    # 摘要里含具体影响范围（目标名），换个目标就是新摘要：必须重新确认。
+    c2 = await _mk(db, Client(user_id=user_a.id, name="授权期内再删"))
+    res = await _delete_client(db, user_a.id, {"client_id": c2.id})
+    assert _blocked(res)
+    assert await db.get(Client, c2.id) is not None
 
-def test_confirmation_lease_can_use_explicit_ttl(user_a):
-    from agent.security import confirm
-    from app.core.config import get_settings
-    from jose import jwt
 
-    blocked = confirm.needs_confirmation(
+def test_confirmation_uses_explicit_ttl(user_a):
+    from agent.interactions import confirmations
+
+    blocked = confirmations.needs_confirmation(
         {},
         "允许当前会话执行只读网络请求",
         user_a.id,
         identity="shell:network-read:1:sandbox",
         ttl_minutes=30,
     )
-    payload = jwt.decode(
-        json.loads(blocked)["confirm_token"],
-        get_settings().secret_key,
-        algorithms=["HS256"],
+    payload = json.loads(blocked)
+    assert payload["authorization_ttl_minutes"] == 30
+    # 同一请求重复被拦截复用同一确认码，用户端不会看到码反复变化。
+    again = confirmations.needs_confirmation(
+        {}, "允许当前会话执行只读网络请求", user_a.id,
+        identity="shell:network-read:1:sandbox", ttl_minutes=30,
     )
-    remaining = payload["exp"] - now_utc().timestamp()
-    assert 29 * 60 < remaining <= 30 * 60
-    assert json.loads(blocked)["authorization_ttl_minutes"] == 30
+    assert _confirm_code(again) == payload["confirm_code"]
+    assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) == 30
+    assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) is None
 
 
-async def test_batch_delete_client_uses_one_target_bound_confirmation(db, user_a):
+async def test_batch_delete_grant_is_summary_bound(db, user_a):
+    from agent.interactions import confirmations
+
     first = await _mk(db, Client(user_id=user_a.id, name="批量客户一"))
     second = await _mk(db, Client(user_id=user_a.id, name="批量客户二"))
     args = {"client_ids": [first.id, second.id]}
     blocked = await _delete_client(db, user_a.id, args)
-    assert _blocked(blocked)
-    token = _confirm_token(blocked)
+    code = _confirm_code(blocked)
+    confirmations.redeem_confirmation(user_a.id, code)
 
-    # 确认凭证不能被换成另一组目标复用。
-    wrong = await _delete_client(db, user_a.id, {
-        "client_ids": [first.id], "confirm": True, "confirm_token": token,
-    })
+    # 授权绑定确认时的摘要（影响范围）；换成另一组目标属于新摘要，必须重新确认。
+    wrong = await _delete_client(db, user_a.id, {"client_ids": [first.id]})
     assert _blocked(wrong)
-    result = await _delete_client(db, user_a.id, {
-        **args, "confirm": True, "confirm_token": token,
-    })
+
+    result = await _delete_client(db, user_a.id, args)
     assert result["success"] and result["deleted_count"] == 2
     assert await db.get(Client, first.id) is None
     assert await db.get(Client, second.id) is None

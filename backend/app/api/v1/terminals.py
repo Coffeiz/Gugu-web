@@ -87,7 +87,7 @@ class TerminalInput(BaseModel):
     maxOutputChars: int = Field(default=12000, ge=1, le=120000)
     network: str = Field(default="none", pattern="^(none|egress)$")
     confirm: bool = False
-    confirmToken: str | None = None
+    confirmCode: str | None = None
 
 
 def _websocket_token(websocket: WebSocket) -> str:
@@ -425,15 +425,24 @@ async def _run_terminal_command(user_id, terminal_id: str, request_id: str, body
                                  })
 
         try:
-            result = await _shell(db, user_id, {
-                "_session_id": row.session_id, "_workspace_id": row.workspace_id,
-                "_terminal_id": row.id, "_terminal_source": "user", "_run_id": request_id,
-                "_terminal_parallel": True, "_defer_terminal_event": True,
-                "command": body.command, "cwd": body.cwd, "timeout": body.timeout,
-                "max_output_chars": body.maxOutputChars, "network": body.network,
-                "confirm": body.confirm, "confirm_token": body.confirmToken,
-                "_on_output": publish_output,
-            })
+            result = {"ok": False, "error": "命令执行失败"}
+            # 终端确认：用户点击确认后携带短确认码，先在服务端兑换授权，
+            # 再执行命令；授权命中时确认门自动放行，不经过任何模型凭证。
+            if body.confirmCode:
+                from agent.interactions.confirmations import redeem_confirmation
+                redeemed = redeem_confirmation(user_id, body.confirmCode)
+                if redeemed is None:
+                    result = {"ok": False, "error": "确认码无效或已过期，请重新执行命令。"}
+            if result.get("ok") is None or result["ok"]:
+                result = await _shell(db, user_id, {
+                    "_session_id": row.session_id, "_workspace_id": row.workspace_id,
+                    "_terminal_id": row.id, "_terminal_source": "user", "_run_id": request_id,
+                    "_terminal_parallel": True, "_defer_terminal_event": True,
+                    "command": body.command, "cwd": body.cwd, "timeout": body.timeout,
+                    "max_output_chars": body.maxOutputChars, "network": body.network,
+                    "confirm": body.confirm,
+                    "_on_output": publish_output,
+                })
         except asyncio.CancelledError:
             await db.rollback()
             lock = _terminal_event_locks.setdefault(terminal_id, asyncio.Lock())

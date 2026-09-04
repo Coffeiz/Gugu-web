@@ -230,7 +230,6 @@ class MetaSkill(BaseSkill):
                     "related_tools": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 80}},
                     "body": {"type": "string", "minLength": 1, "maxLength": 20000},
                     "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
                 },
                 "required": ["name", "description_short", "body", "related_tools"],
                 "additionalProperties": False,
