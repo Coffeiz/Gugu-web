@@ -41,4 +41,13 @@ describe('usePreviewBlobCache', () => {
     cache.release('', 'blob:unmanaged')
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:unmanaged')
   })
+
+  it('强制刷新后用新 blob 替换同一文件的旧缓存', () => {
+    const cache = usePreviewBlobCache()
+    cache.put('file:1', 'blob:v1')
+    cache.put('file:1', 'blob:v2')
+
+    expect(cache.get('file:1')).toBe('blob:v2')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:v1')
+  })
 })

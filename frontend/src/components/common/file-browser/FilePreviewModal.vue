@@ -201,8 +201,11 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       if (file.ext?.toUpperCase() === 'PDF' && blob.type !== 'application/pdf') {
         blob = new Blob([blob], { type: 'application/pdf' })
       }
-      blobUrl.value = URL.createObjectURL(blob)
-      if (!bust) previewBlobCache.put(key, blobUrl.value)
+      const url = URL.createObjectURL(blob)
+      blobUrl.value = url
+      // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
+      previewBlobCache.put(key, url)
+      currentCacheKey.value = key
     }
   } catch (e) {
     error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })

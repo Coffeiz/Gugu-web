@@ -93,6 +93,9 @@ jobs:
           cache-from: type=gha,scope=default-compose
           cache-to: type=gha,mode=max,scope=default-compose
 
+      - name: Smoke test TS RAG worker
+        run: docker run --rm --entrypoint node gugu-web:ci bin/gugu-rag-ts-worker.mjs --version
+
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
       # SBOM 会导致误报已修复的漏洞（v1.0.2 曾因此报 msgpack 1.1.2/setuptools 70.3.0，
@@ -156,6 +159,11 @@ jobs:
             echo '::error::版本 tag 必须符合 v<major>.<minor>.<patch>'; exit 1;
           }
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'is_stable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'is_stable=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -225,14 +233,22 @@ jobs:
           tags: |
             ${{ env.IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
             ${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
-            ${{ env.IMAGE_REPOSITORY }}:latest
             ${{ env.DOCKERHUB_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
             ${{ env.DOCKERHUB_IMAGE_REPOSITORY }}:${{ github.sha }}
-            ${{ env.DOCKERHUB_IMAGE_REPOSITORY }}:latest
           cache-from: type=gha,scope=default-compose
           cache-to: type=gha,mode=max,scope=default-compose
           provenance: mode=max
           # 不附加 SBOM attestation，避免 gha cache 中的旧清单被发布扫描优先消费。
+
+      - name: Tag stable image as latest
+        if: steps.version.outputs.is_stable == 'true'
+        env:
+          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_REPOSITORY}:latest" \
+            --tag "${DOCKERHUB_IMAGE_REPOSITORY}:latest" \
+            "${IMAGE_REPOSITORY}@${APP_DIGEST}"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1

@@ -424,8 +424,11 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         : `${BASE_URL}/files/${f.id}/download`) + bust
       const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      blobUrl.value = URL.createObjectURL(await res.blob())
-      if (!bust) previewBlobCache.put(key, blobUrl.value)
+      const url = URL.createObjectURL(await res.blob())
+      blobUrl.value = url
+      // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
+      previewBlobCache.put(key, url)
+      currentCacheKey.value = key
       if (!refresh || !ready.value) {
         fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
       }

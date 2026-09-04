@@ -32,7 +32,7 @@
 ### 1.2 目标
 
 1. **一键部署**：用户侧从「clone 仓库 → 配两套 env → 本地构建」变成「下载一个 compose 文件和一体化镜像 → 配最少变量 → `docker compose up -d`」，根目录 Compose 默认使用单容器应用模式。
-2. **单一应用镜像**：前端 dist 与后端运行时合并为一个 `gugu-web:<tag>` 镜像，只含生产运行时，不含源码仓库、node_modules、pnpm 缓存等构建期内容。
+2. **单一应用镜像**：前端 dist 与后端运行时合并为一个 `gugu-web:<tag>` 镜像，只含生产运行时，不含源码仓库、前端 node_modules、pnpm 缓存等构建期内容；保留 TS RAG worker 所需的 Linux x64 native 运行依赖。
 3. **数据安全边界**：PostgreSQL 与 Redis 为独立容器，用户数据全部在显式持久卷；升级 = 拉新镜像重建 app 容器，数据库与文件卷不动。
 4. **配置两条路径**：启动前用 compose 变量配置；未配项（模型 API Key 等）启动后在界面配置。缺了无法启动的关键项必须给人话提示。
 5. **管理员账号无默认密码**：首次启动自动生成随机密码，打印一次并落盘 `backend/.env`，不引入公开默认密码（与 README「不会使用公开默认密码」约定一致）。
@@ -139,7 +139,7 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 ### Phase 1：镜像与托管
 
-- [x] `DEPLOY1-001` 编写根目录 `Dockerfile` 多阶段构建（前端 dist + 后端生产运行时，剔除源码与构建缓存）；验收：amd64 构建成功，镜像内 `ls` 抽查无前端源码/node_modules/pnpm 缓存。
+- [x] `DEPLOY1-001` 编写根目录 `Dockerfile` 多阶段构建（前端 dist + 后端生产运行时，剔除源码与构建缓存）；验收：amd64 构建成功，镜像内 `ls` 抽查无前端源码/前端 node_modules/pnpm 缓存，并验证 TS RAG worker native 依赖可启动。
 - [x] `DEPLOY1-002` 盘点现 prod nginx 路径表并定稿静态托管方案（镜像内 Nginx），回填 §3.2；验收：应用容器内完整站点可访问，SSE/WS/静态资源行为与现 prod 一致。
 
 ### Phase 2：一键 compose 与全流程
