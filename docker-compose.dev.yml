@@ -1,4 +1,4 @@
-# 本地/开发一键起全栈用的 Compose 文件；普通用户请使用根目录的 Preview Compose。
+# 本地/开发一键起全栈用的 Compose 文件；普通用户请使用根目录的 standalone Compose。
 # 生产环境请使用 docker-compose.prod.yml 或独立的生产部署方案。
 
 name: gugu-web-compose

@@ -77,6 +77,8 @@ COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/standalone.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
+    && find ./static -type d -exec chmod 755 {} + \
+    && find ./static -type f -exec chmod 644 {} + \
     && chmod 755 docker-entrypoint.sh standalone_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh
 
 EXPOSE 8000
@@ -85,6 +87,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -sf http://127.0.0.1:8000/health || exit 1
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
-# standalone 的 nginx 命令会由入口同时托管 Uvicorn 与消息 worker；sandboxd 服务显式清空入口。
+# standalone 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway；sandboxd
+# 服务显式清空入口。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

@@ -1,5 +1,5 @@
-# Gugu standalone 一键部署：app + PostgreSQL + Redis。
-# 默认只启动网页应用；需要 Shell 沙盒时追加：docker compose -f docker-compose.standalone.yml --profile sandbox up -d
+# Gugu standalone 一键部署：完整 app（Nginx + Uvicorn + worker + IM gateway）+ PostgreSQL + Redis。
+# 默认启动完整应用；需要 Shell 沙盒时追加：docker compose -f docker-compose.standalone.yml --profile sandbox up -d
 
 name: gugu-web-standalone
 
@@ -12,6 +12,8 @@ x-json-file-logging: &json-file-logging
 x-app-environment: &app-environment
   GUGU_STANDALONE: "1"
   GUGU_STANDALONE_APP_PORT: "8001"
+  GUGU_STANDALONE_WORKER: "1"
+  GUGU_STANDALONE_GATEWAY: "1"
   GUGU_STANDALONE_ENV_FILE: /app/.env
   GUGU_STANDALONE_DATA_DIR: /data
   SECRET_KEY: ${SECRET_KEY:-}
@@ -34,7 +36,7 @@ x-app-environment: &app-environment
   SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
   SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-  SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+  SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
   SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
@@ -87,7 +89,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:local}
+    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     logging: *json-file-logging
     ports:
       - "${GUGU_HTTP_PORT:-9595}:8000"
@@ -129,7 +131,7 @@ services:
 
   sandbox-bootstrap:
     profiles: [sandbox]
-    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:local}
+    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     logging: *json-file-logging
     entrypoint: []
     command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
@@ -138,7 +140,7 @@ services:
       SANDBOX__IMAGE: ${SANDBOX__IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${SANDBOX__IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SQUID_CONF_PATH: /opt/gugu/egress.conf
     volumes:
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
@@ -148,12 +150,15 @@ services:
 
   sandboxd:
     profiles: [sandbox]
-    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:local}
+    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     logging: *json-file-logging
     pid: "host"
     # sandboxd 不是 web 服务，不应进入 standalone 的数据库迁移/worker 入口。
     entrypoint: []
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
+    # 该镜像默认 healthcheck 探测 8000，sandboxd 不提供 HTTP 服务，不能沿用该检查。
+    healthcheck:
+      disable: true
     environment:
       DOCKER_HOST: unix:///run/gugu/docker.sock
       STORAGE__LOCAL_PATH: /data/users
@@ -163,7 +168,7 @@ services:
       SANDBOX__IMAGE: ${SANDBOX__IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${SANDBOX__IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     volumes:
       - gugu_data:/data
@@ -190,5 +195,5 @@ volumes:
 
 networks:
   egress_internal:
-    name: gugu-sandbox-egress
+    name: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
     internal: true

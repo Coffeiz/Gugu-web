@@ -7,7 +7,7 @@
   "scripts": { "build": "tsc --noEmit false --outDir dist --rootDir src", "typecheck": "tsc --noEmit", "test": "tsx --test src/index.test.ts", "generate": "drizzle-kit generate" },
   "dependencies": {
     "@loopscope/contracts": "workspace:*",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.44.0"
   },
   "devDependencies": {

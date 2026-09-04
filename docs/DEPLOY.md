@@ -5,28 +5,29 @@
 ## 前置要求
 
 - Docker 20+
-- Docker Compose v2
+- Docker Compose v2.20+
 - 一个可访问的模型 Provider，或准备好的 BYOK 配置
 - 能访问镜像仓库和模型服务的网络
 
-## 快速启动（Preview）
+## 快速启动（一键 standalone）
 
 在仓库根目录执行：
 
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.example .env
-cp backend/.env.example backend/.env
+cp .env.standalone.example .env
+mkdir -p backend && touch backend/.env
 ```
 
-编辑 `backend/.env`，至少修改 `SECRET_KEY`：
+编辑根目录 `.env`，至少修改 `SECRET_KEY` 和 `GUGU_DB_PASSWORD`：
 
 ```dotenv
 SECRET_KEY=请替换为随机长字符串
+GUGU_DB_PASSWORD=请替换为数据库密码
 ```
 
-管理员账号和密码统一写入 `backend/.env`：
+管理员账号和密码可以写入 `backend/.env`；不设置密码时首次启动自动生成：
 
 ```dotenv
 ADMIN_USERNAME=admin
@@ -35,13 +36,13 @@ ADMIN_PASSWORD=请替换为管理员密码
 
 根目录 `.env` 只放 Compose 编排变量，例如 `GUGU_DB_PASSWORD`、端口和镜像地址；不要在根目录重复配置管理员账号密码。
 
-构建并启动服务：
+拉取并启动服务：
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
-默认 Compose 会从当前目录构建 `:local` 应用镜像，不要求登录 GHCR；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
+默认 Compose 会拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的 standalone 应用镜像；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
 
 打开：<http://localhost:9595>
 
@@ -55,7 +56,7 @@ Compose 会读取项目根目录的 `.env` 和当前 Shell 环境变量。`backe
 
 ```dotenv
 # PostgreSQL
-# Preview Compose 默认使用容器名 postgres；跨主机部署时改成实际地址
+# standalone 默认使用容器名 postgres；跨主机部署时改成实际地址
 GUGU_DB_HOST=postgres
 GUGU_DB_PORT=5432
 GUGU_DB_NAME=gugu
@@ -79,12 +80,11 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 GUGU_SANDBOX_ENABLED=true
 GUGU_SANDBOX_NETWORK_PROFILE=egress
 
-# 可选：覆盖本地 Compose 的应用镜像，改为已发布镜像
-# GUGU_BACKEND_IMAGE=你的镜像仓库/gugu-backend:latest
-# GUGU_FRONTEND_IMAGE=你的镜像仓库/gugu-frontend:latest
+# standalone 应用镜像
+GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 ```
 
-生产 Compose 仍要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。根目录 Preview Compose 默认使用本地 `:local` 镜像。
+生产 Compose 仍要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。需要从源码启动并热更新时使用 Dev Compose。
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
 
@@ -107,7 +107,8 @@ docker compose --profile sandbox up -d
 常用配置文件：
 
 - `backend/.env`：部署环境变量和敏感配置
-- `docker-compose.yml`：Preview 构建物 Compose 服务
+- `docker-compose.yml`：默认 standalone 一键部署入口
+- `docker-compose.standalone.yml`：standalone 完整配置
 - `docker-compose.dev.yml`：源码开发 Compose 服务
 - `docker-compose.prod.yml`：生产构建物 Compose 服务
 
@@ -132,9 +133,9 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml --profile sandbox up -d
 ```
 
-生产部署前请准备持久化数据卷，并备份数据库和用户文件。Preview 适合公开体验，正式部署请使用固定版本或 digest，不要依赖 `latest`。
+生产部署前请准备持久化数据卷，并备份数据库和用户文件。正式部署请使用固定版本或 digest，不要依赖 `latest`。
 
-> **⚠️ 沙盒与 `/data` 的部署前置**（Preview/Dev/Prod 三个 Compose 相同）：沙盒容器由
+> **⚠️ 沙盒与 `/data` 的部署前置**（standalone/Dev/Prod 三个 Compose 相同）：沙盒容器由
 > backend 通过 docker.sock 作为兄弟容器启动，`--mount src=/data/users/<uid>/shell`
 > 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `/data` 路径。Compose
 > 已用 `GUGU_DATA_HOST_DIR`（默认 `/data`）把宿主机目录 bind 成 `gugu_data` 卷；升级
@@ -161,16 +162,10 @@ docker compose -f docker-compose.dev.yml --profile sandbox up -d
 
 ```bash
 docker compose ps
-docker compose logs -f backend
+docker compose logs -f app
 ```
 
-更新本地 Preview 构建后：
-
-```bash
-docker compose up -d --build
-```
-
-开发环境更新源码后，请改用：
+开发环境更新源码后：
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d --build

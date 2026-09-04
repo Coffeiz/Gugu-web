@@ -135,53 +135,54 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 
 ### Requirements
 
-- Docker 20+ and Docker Compose v2
+- Docker 20+ and Docker Compose v2.20+
 - A model provider API key (BYOK)
 - Network access for the first start, including PostgreSQL, Redis, and image registries
 
-### Preview Compose (Recommended)
+### One-command deployment (Recommended, linux/amd64)
 
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.example .env
-cp backend/.env.example backend/.env
-# Edit backend/.env and set SECRET_KEY, admin, and model configuration.
-# Edit the root .env and set the Compose database password.
+cp .env.standalone.example .env
+mkdir -p backend && touch backend/.env
+# Edit the root .env and set SECRET_KEY, GUGU_DB_PASSWORD, and model configuration.
+# You may also put application settings in backend/.env; an admin password is generated on first start if omitted.
 # The user-data directory defaults to /data on the host and must exist before
 # startup (compose fails when the bind source is missing):
 sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
-export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
-docker compose up -d --build
+docker compose up -d
 ```
 
 Basic variables:
 
 ```dotenv
-# backend/.env: application configuration
+# Project-root .env: standalone Compose configuration
 SECRET_KEY=replace-with-a-long-random-string
+GUGU_DB_PASSWORD=replace-with-a-database-password
+GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
+
+# backend/.env: optional application configuration
 AI__PROVIDER=qwen
 AI__API_KEY=your-provider-api-key
 
-# backend/.env: admin configuration
+# backend/.env: optional admin configuration; a random password is generated if omitted
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-an-admin-password
-# Project-root .env: Compose configuration only
-GUGU_DB_PASSWORD=replace-with-a-database-password
 # Public site origin used in email verification and password-reset links
 GUGU_PUBLIC_APP_URL=http://localhost:9595
 ```
 
 When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8000`.
 
-The default Compose setup builds local `:local` application images from the checked-out source. It does not mount source code or run a development server, and it does not require GHCR login. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
+The default Compose setup pulls one standalone application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
 
 Open:
 
 - Gugu: <http://localhost:9595>
 - Admin: <http://localhost:9595/admin/>
 
-The first run initializes the database and applies migrations. `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `backend/.env` control the Admin account; there is no public default admin password.
+The first run initializes the database and applies migrations. If `ADMIN_PASSWORD` is omitted, a random password is generated, saved to `backend/.env`, and printed once; there is no public default admin password.
 
 See the [Deployment Guide](docs/DEPLOY.md) for the complete Compose parameters and configuration locations.
 

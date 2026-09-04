@@ -137,13 +137,13 @@
 
 ### 前置要求
 
-- Docker 20+ 和 Docker Compose v2
+- Docker 20+ 和 Docker Compose v2.20+
 - 模型提供商 API Key（BYOK）
 - 首次启动需要 PostgreSQL、Redis 和网络访问
 
 ### 国内网络环境
 
-国内用户进行源码开发、重新构建镜像或安装依赖时，可以按需使用镜像源。Preview Compose 默认在本地构建 `:local` 镜像，不需要先安装 Python 或 Node 依赖。
+国内用户拉取 standalone 镜像、进行源码开发或安装依赖时，可以按需使用代理或镜像源。默认 Compose 使用预构建的一体化镜像，不需要先安装 Python 或 Node 依赖。
 
 ```bash
 # pnpm / npm 依赖
@@ -159,34 +159,35 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
 
 镜像源只影响当前命令；也可以根据网络情况改用官方源或其他可信镜像。
 
-### Preview Compose（推荐）
+### 一键部署（推荐，linux/amd64）
 
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
-cp .env.example .env
-cp backend/.env.example backend/.env
-# 编辑 backend/.env，填写 SECRET_KEY、管理员密码和模型配置
-# 编辑根目录 .env，填写数据库密码等 Compose 编排变量
+cp .env.standalone.example .env
+mkdir -p backend && touch backend/.env
+# 编辑根目录 .env，填写 SECRET_KEY、GUGU_DB_PASSWORD 和模型相关变量
+# 模型、管理员账号等应用配置也可以写入 backend/.env；未设置管理员密码时首次启动自动生成
 # 用户数据目录默认在宿主机 /data，启动前必须先创建（bind source 不存在会启动失败）：
 sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
-export GUGU_DB_PASSWORD="$(openssl rand -base64 32)"
-docker compose up -d --build
+docker compose up -d
 ```
 
 基础变量可以这样配置：
 
 ```dotenv
-# backend/.env：后端应用配置
+# 根目录 .env：standalone Compose 配置
 SECRET_KEY=请替换为随机长字符串
+GUGU_DB_PASSWORD=请替换为数据库密码
+GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
+
+# backend/.env：可选应用配置
 AI__PROVIDER=qwen
 AI__API_KEY=请填写模型服务商密钥
 
-# backend/.env：管理员配置（Compose 和 systemd 共用，唯一来源）
+# backend/.env：可选管理员配置；不填写 ADMIN_PASSWORD 时由首次启动生成并保存
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=请替换为管理员密码
-# 项目根目录 .env：仅 Compose 编排配置
-GUGU_DB_PASSWORD=请替换为数据库密码
 # 用户可访问的公开站点根地址，用于邮箱验证和密码重置链接
 GUGU_PUBLIC_APP_URL=http://localhost:9595
 ```
@@ -195,14 +196,14 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
 
-默认 Compose 会从当前目录构建 `:local` 应用镜像，不挂载源码，也不运行开发服务器。它会同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务，不需要登录 GHCR 或另外安装联网搜索后端。
+默认 Compose 会拉取一个包含前端、Nginx、Uvicorn、worker、IM gateway 的 standalone 应用镜像，不挂载源码，也不运行开发服务器；同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务。
 
 启动后访问：
 
 - 咕咕：<http://localhost:9595>
 - Admin：<http://localhost:9595/admin/>
 
-首次运行会初始化数据库并执行迁移。Admin 账号由 `backend/.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 控制，不会使用公开默认密码。
+首次运行会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时会生成随机密码并保存到 `backend/.env`，终端只打印一次；不会使用公开默认密码。
 
 需要 Shell 沙盒时，再显式启用：
 
