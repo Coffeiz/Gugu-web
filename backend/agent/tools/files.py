@@ -1410,6 +1410,29 @@ async def _send_file(db, user_id, args: dict):
     }
 
 
+async def _present_file(db, user_id, args: dict):
+    """把文件直接推到用户当前网页上打开（全局预览窗口）。只读、不改数据。
+
+    复用 events:{user_id} 实时频道：载荷只含 file_id/name/ext 三个展示必需字段，
+    取数由前端预览组件走既有 /files/{id}/download 端点（端点自身校验属主）。
+    IM 会话里禁用——用户不在网页上，推了也看不到。
+    """
+    from agent.im import imctx
+    if imctx.get_im():
+        return json.dumps({"error": "present_file 只支持网页端；IM 会话里请用 send_file 发送文件"}, ensure_ascii=False)
+
+    f, err = await _resolve_file(db, user_id, args)
+    if err:
+        return err
+    from app.core.redis import get_redis
+    payload = {"present": {"file_id": f.id, "name": f.display_name, "ext": f.ext}}
+    try:
+        await get_redis().publish(f"events:{user_id}", json.dumps(payload, ensure_ascii=False))
+    except Exception as exc:
+        return json.dumps({"error": f"推送失败：{redact(str(exc))}"}, ensure_ascii=False)
+    return {"ok": True, "message": f"已在用户当前页面打开《{f.display_name}.{f.ext}》。", "file_id": f.id}
+
+
 class FilesSkill(BaseSkill):
     name = "files"
     tools = [
@@ -1734,6 +1757,29 @@ class FilesSkill(BaseSkill):
             },
             handler=_send_file,
             mutates=True,
+        ),
+        Tool(
+            name="present_file", label="在网页展示文件",
+            description_short='把文件直接推到用户当前网页上打开预览。',
+            description="把文件库里的文件直接推到用户当前网页上打开预览（图片/音频/视频/文档立即展示）。"
+                        "仅在用户明确要求「打开/展示/给我看」某个文件时调用；不产生聊天附件，IM 会话里不可用。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "integer"},
+                    "file": {"type": "string"},
+                },
+                "required": [],
+                "anyOf": [
+                    {"required": ["file"]},
+                    {"required": ["file_id"]},
+                ],
+                "allOf": [
+                    {"required": ["file"], "not": {"required": ["file_id"]}},
+                    {"required": ["file_id"], "not": {"required": ["file"]}},
+                ],
+            },
+            handler=_present_file,
         ),
         Tool(
             name="list_recent_attachments", label="查最近暂存的附件",
