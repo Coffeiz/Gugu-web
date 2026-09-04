@@ -45,6 +45,7 @@ export function useCalendarEventForm(options: EventFormOptions) {
   const isPastDate = (date: string | null | undefined) => !!date && date < todayIso.value
   const eventForm = useEventEditForm()
   const { reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel, resetReminder, applyReminders } = eventForm
+  const saving = ref(false)
 
   watch(showAddForm, open => { if (open) nextTick(() => addInputRef.value?.focus?.({ preventScroll: true })) })
   watch([() => reminders.value.length, reminderChannels], () => {
@@ -106,7 +107,8 @@ export function useCalendarEventForm(options: EventFormOptions) {
   }
 
   async function saveEvent() {
-    if (!newEvent.value.name) return
+    if (saving.value || !newEvent.value.name) return
+    saving.value = true
     if (newEvent.value.allDay) { newEvent.value.time = ''; newEvent.value.endTime = '' }
     const date = newEvent.value.date || selectedDate.value || todayIso.value
     const uid = 'u' + Date.now()
@@ -126,7 +128,10 @@ export function useCalendarEventForm(options: EventFormOptions) {
       if (index !== -1) extraEvents.value[index] = normalized
       if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)
     } catch { /* 保留原有乐观项，下一次刷新会对账 */ }
-    cacheMonth(cursor.value, [...extraEvents.value])
+    finally {
+      saving.value = false
+      cacheMonth(cursor.value, [...extraEvents.value])
+    }
   }
 
   async function testReminderChannels(name?: string) {
@@ -139,7 +144,7 @@ export function useCalendarEventForm(options: EventFormOptions) {
   return {
     showAddForm, addInputRef, addBtnRef, addFormRef, addFormStyle, newEvent, activeFormDate, isPastDate, eventForm,
     reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel,
-    resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent,
+    resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent, saving,
     LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
   }
 }

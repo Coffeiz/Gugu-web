@@ -119,7 +119,7 @@
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showAddForm" class="add-event-popup shared-event-popup" ref="addFormRef" :style="addFormStyle">
-        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" autofocus
+        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" :saving="saving" autofocus
                         @save="saveEvent" @close="showAddForm = false"
                         @test-reminder="testReminderChannels(newEvent.name)" />
       </div>
@@ -805,7 +805,7 @@ const {
 
 const {
   showAddForm, addBtnRef, addFormRef, addFormStyle, newEvent, isPastDate, eventForm,
-  resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent,
+  resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent, saving,
 } = useCalendarEventForm({
   selectedDate,
   todayIso,

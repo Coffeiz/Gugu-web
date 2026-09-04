@@ -3,11 +3,11 @@
 <template>
   <PopupMenu ref="floatingPopup" :show="show && isFloating" :style="floatingStyle" popup-class="eem-popup"
              @after-leave="onFloatingLeave">
-    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
+    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" :saving="form.saving.value" show-delete autofocus
                     @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
   </PopupMenu>
   <BaseModal v-if="!isFloating" :show="show" width="300px" background="var(--modal-card-bg)" @close="close">
-    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
+    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" :saving="form.saving.value" show-delete autofocus
                     @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
   </BaseModal>
 </template>
