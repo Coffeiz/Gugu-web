@@ -9,7 +9,7 @@
 ---
 
 > 创建时间：2026-06-16
-> 项目：gugugu.site
+> 项目：www.gugugu.site
 
 ---
 

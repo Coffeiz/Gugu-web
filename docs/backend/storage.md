@@ -1,7 +1,7 @@
 # 文件存储结构规范
 
 > 更新：2026-08-28（§2.8 前端缓存与实时刷新重写；实时事件由 FastAPI Live 输出 canonical envelope，详见 §2.8.8）
-> 项目：咕咕 / gugugu.site
+> 项目：咕咕 / www.gugugu.site
 
 ---
 
