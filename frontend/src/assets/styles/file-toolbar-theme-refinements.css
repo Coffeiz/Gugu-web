@@ -347,6 +347,7 @@ html[data-theme][data-family] .file-browser-toolbar .new-folder-input {
   outline: none;
   font-family: var(--font-sans);
   font-size: var(--file-toolbar-font-size);
+  line-height: calc(var(--file-toolbar-control-height) - 2px);
 }
 html[data-theme][data-family] .file-browser-toolbar .new-folder-input:hover {
   border-color: var(--input-border-hover);
