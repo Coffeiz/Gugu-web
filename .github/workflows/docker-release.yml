@@ -131,8 +131,9 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           # 默认一体化镜像把 Python 依赖安装在 /opt/venv；排除 pip 自带的
-          # vendored SBOM，避免把其中记录的旧版本误判为应用依赖。
-          skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
+          # vendored SBOM，避免把其中记录的旧版本误判为应用依赖。基础镜像
+          # 自带的 /usr/local pip 也包含同一份内部依赖清单。
+          skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
 
   publish:
     name: Publish GHCR and Docker Hub release
