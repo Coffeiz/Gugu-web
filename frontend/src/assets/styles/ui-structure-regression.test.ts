@@ -401,9 +401,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatIm).toContain('transform:rotate(-90deg)')
     expect(chatIm).toContain('.im-plat-chev.open { transform:rotate(0deg); }')
 
-    expect(canvasSidebar).toContain('.project-group-chevron {')
-    expect(canvasSidebar).toContain('transform: rotate(-90deg)')
-    expect(canvasSidebar).toContain('.project-group-chevron.open { transform: rotate(0deg); }')
+    expect(canvasSidebar).toContain("import FlipChevron from '@/components/common/controls/FlipChevron.vue'")
+    expect(canvasSidebar).toContain('<FlipChevron')
+    expect(canvasSidebar).toContain(':open="group.items.length > 0 && openProjectStatuses.has(group.status)"')
+    expect(canvasSidebar).not.toContain('.project-group-chevron.open')
+    expect(canvasSidebar).not.toContain('.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform:')
 
     expect(systemLogs).toContain('transform: rotate(-90deg)')
     expect(systemLogs).toContain('.expand-icon.open { transform: rotate(0deg);')
