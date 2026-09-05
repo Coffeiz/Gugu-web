@@ -1,28 +1,28 @@
 import { i18n } from '@/i18n'
 
-export type RepeatMode = 'interval' | 'daily' | 'weekday' | 'weekend' | 'custom'
+export type RepeatMode = 'once' | 'interval' | 'daily' | 'weekday' | 'weekend'
 
 export interface ParsedCron {
   mode: RepeatMode
   time: string
-  startDate: string
   intervalMinutes?: number
 }
 
 export interface BuildCronInput {
-  mode: RepeatMode
+  mode: Exclude<RepeatMode, 'once'>
   time: string
-  startDate?: string
   intervalMinutes?: number
-  now?: Date
 }
+
+export interface ScheduleDateTimeParts {
+  date: string
+  time: string
+}
+
+const SCHEDULE_TIME_ZONE = 'Asia/Shanghai'
 
 function pad(value: number): string {
   return String(value).padStart(2, '0')
-}
-
-function dateIso(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 function timeParts(time: string): [number, number] {
@@ -37,18 +37,7 @@ export function buildCron(input: BuildCronInput): string {
   }
 
   const [hours, minutes] = timeParts(input.time)
-  if (input.mode === 'custom') {
-    const now = input.now ?? new Date()
-    let date = input.startDate || ''
-    if (!date) {
-      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0)
-      if (next <= now) next.setDate(next.getDate() + 1)
-      date = dateIso(next)
-    }
-    return `@once:${date}T${pad(hours)}:${pad(minutes)}`
-  }
-
-  const daysOfWeek: Record<Exclude<RepeatMode, 'interval' | 'custom'>, string> = {
+  const daysOfWeek: Record<Exclude<RepeatMode, 'interval' | 'once'>, string> = {
     daily: '*',
     weekday: '1-5',
     weekend: '0,6',
@@ -58,19 +47,9 @@ export function buildCron(input: BuildCronInput): string {
 
 export function parseCron(cron: string): ParsedCron {
   cron = cron || ''
-  if (cron.startsWith('@once:')) {
-    const iso = cron.slice(6)
-    const [datePart, timePart] = iso.split('T')
-    const [hours, minutes] = (timePart ?? '09:00').split(':')
-    return {
-      mode: 'custom',
-      time: `${pad(Number(hours))}:${pad(Number(minutes))}`,
-      startDate: datePart ?? '',
-    }
-  }
 
   const parts = cron.split(' ')
-  if (parts.length !== 5) return { mode: 'daily', time: '09:00', startDate: '' }
+  if (parts.length !== 5) return { mode: 'daily', time: '09:00' }
 
   const [minute, hour, , , dayOfWeek] = parts
   const interval = minute.match(/^\*\/(\d+)$/)
@@ -78,7 +57,6 @@ export function parseCron(cron: string): ParsedCron {
     return {
       mode: 'interval',
       time: '09:00',
-      startDate: '',
       intervalMinutes: Number(interval[1]),
     }
   }
@@ -89,16 +67,48 @@ export function parseCron(cron: string): ParsedCron {
     : dayOfWeek === '0,6' || dayOfWeek === '6,0'
       ? 'weekend'
       : 'daily'
-  return { mode, time, startDate: '' }
+  return { mode, time }
+}
+
+/** 将 API 返回的 UTC 时间转换为定时任务表单使用的项目时区（Asia/Shanghai）。 */
+export function splitScheduleDateTime(iso: string | null | undefined): ScheduleDateTimeParts {
+  if (!iso) return { date: '', time: '' }
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return { date: '', time: '' }
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: SCHEDULE_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    time: `${values.hour}:${values.minute}`,
+  }
+}
+
+/** API 接收的是不带时区的本地 ISO；后端按 Asia/Shanghai 解释后保存为 UTC。 */
+export function combineScheduleDateTime(date: string, time: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null
+  return `${date}T${time}:00`
+}
+
+export function scheduleDateTimeValue(date: string, time: string): number | null {
+  const iso = combineScheduleDateTime(date, time)
+  if (!iso) return null
+  const [year, month, day] = date.split('-').map(Number)
+  const [hour, minute] = time.split(':').map(Number)
+  const value = Date.UTC(year, month - 1, day, hour - 8, minute)
+  return Number.isFinite(value) ? value : null
 }
 
 export function cronLabel(cron: string): string {
   const t = i18n.global.t
   const parsed = parseCron(cron)
-  if (parsed.mode === 'custom') return `${parsed.startDate} ${parsed.time}`
+  if (parsed.mode === 'once') return t('schedules.once')
   if (parsed.mode === 'interval') return t('schedules.everyMinutes', { minutes: parsed.intervalMinutes })
 
-  const labels: Record<Exclude<RepeatMode, 'interval' | 'custom'>, string> = {
+  const labels: Record<Exclude<RepeatMode, 'interval' | 'once'>, string> = {
     daily: t('schedules.daily'),
     weekday: t('schedules.weekday'),
     weekend: t('schedules.weekend'),

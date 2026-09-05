@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -127,6 +128,7 @@ async def test_execute_task_marks_last_run_failed_on_exception(monkeypatch, db, 
     task = ScheduledTask(
         user_id=user_a.id, name="会失败的任务", payload="占位",
         cron="@once:2099-01-01T00:00:00", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
     )
     db.add(task)
     await db.commit()
@@ -152,6 +154,7 @@ async def test_execute_task_allows_retry_after_previous_failure(monkeypatch, db,
     task = ScheduledTask(
         user_id=user_a.id, name="重试任务", payload="占位",
         cron="@once:2099-01-01T00:00:00", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
         last_run_at=now_utc(),
         last_run_failed=True,
     )
@@ -181,6 +184,7 @@ async def test_execute_task_still_blocks_when_last_run_succeeded_state(db, user_
     task = ScheduledTask(
         user_id=user_a.id, name="已在跑的任务", payload="占位",
         cron="@once:2099-01-01T00:00:00", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
         last_run_at=now_utc(), last_run_failed=False,
     )
     db.add(task)
@@ -254,6 +258,7 @@ async def test_run_now_uses_formal_execution_to_retry_failed_once_task(monkeypat
     task = ScheduledTask(
         user_id=user_a.id, name="失败过的一次性任务", payload="占位",
         cron="@once:2099-01-01T00:00:00", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
         last_run_at=now_utc(), last_run_failed=True,
     )
     db.add(task)

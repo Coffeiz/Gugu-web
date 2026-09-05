@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -414,7 +415,7 @@ async def test_trial_does_not_hold_request_db_session_during_agent(monkeypatch):
         close=AsyncMock(side_effect=lambda: events.append("close")),
     )
     user = SimpleNamespace(id="user-1")
-    owned_task = SimpleNamespace(cron="0 9 * * *", last_run_failed=False)
+    owned_task = SimpleNamespace(schedule_kind="cron", cron="0 9 * * *", end_at=None, last_run_failed=False)
     monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
     execute = AsyncMock(
         side_effect=lambda *args, **kwargs: events.append("execute") or {"网页通知": "已发送"}
@@ -436,7 +437,7 @@ async def test_trial_timeout_does_not_cancel_delivery_task(monkeypatch):
     events = []
     db = SimpleNamespace(close=AsyncMock())
     user = SimpleNamespace(id="user-1")
-    owned_task = SimpleNamespace(cron="0 9 * * *", last_run_failed=False)
+    owned_task = SimpleNamespace(schedule_kind="cron", cron="0 9 * * *", end_at=None, last_run_failed=False)
     monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
     monkeypatch.setattr(scheduled_api, "_TRIAL_WAIT_SECONDS", 0)
 
@@ -545,6 +546,7 @@ async def test_once_task_is_kept_when_execution_or_delivery_fails(monkeypatch, d
         name="失败后可恢复",
         payload="执行一次操作",
         cron="@once:2099-01-01T09:00:00+08:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, 1, tzinfo=timezone.utc),
         channels="web",
     )
     db.add(task)
@@ -576,6 +578,7 @@ async def test_once_task_is_deleted_only_after_successful_delivery(monkeypatch, 
         name="成功后删除",
         payload="发送一次提醒",
         cron="@once:2099-01-01T09:00:00+08:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, 1, tzinfo=timezone.utc),
         channels="web",
     )
     db.add(task)
@@ -656,6 +659,7 @@ async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatc
 
     task = ScheduledTask(
         user_id=user_a.id, name="锁测试", payload="占位", cron="@once:2099-01-01T00:00:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
         channels="qq", delivery_targets=None,
     )
     db.add(task)

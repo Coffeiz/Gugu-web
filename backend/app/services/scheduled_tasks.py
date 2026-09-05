@@ -2,7 +2,17 @@
 from sqlalchemy import select
 
 from app.core.ownership import get_owned
-from app.models import ScheduledTask
+from app.models import ScheduledTask, Workspace
+
+
+async def validate_task_workspace(db, user_id, workspace_id: int | None) -> int | None:
+    """校验任务工作区归属；绑定后任务根目录固定为整个 workspace。"""
+    if workspace_id is None:
+        return None
+    workspace = await get_owned(db, Workspace, workspace_id, user_id)
+    if workspace is None or not workspace.enabled:
+        raise LookupError("工作区不存在或已停用")
+    return workspace.id
 
 
 async def get_task(db, user_id, task_id):
