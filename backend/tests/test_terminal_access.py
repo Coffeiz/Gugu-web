@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import select
 
 from app.api.v1.terminals import stream_terminal_events
-from agent.terminal.access import TerminalOperation, authorize_operation, page_access
+from agent.terminal.access import TerminalOperation, authorize_operation, page_access, pty_access
+from agent.terminal.policy import terminal_capabilities
 from agent.terminal.contracts import (
     TerminalEvent,
     TerminalShellMode,
@@ -78,6 +79,51 @@ async def test_terminal_page_can_show_without_workspace_when_shell_is_enabled(db
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
     decision = await page_access(db, user_a.id)
     assert decision.allowed
+
+
+@pytest.mark.asyncio
+async def test_terminal_policy_can_disable_pty_without_disabling_shell_terminal_page(db, user_a, monkeypatch):
+    monkeypatch.setattr(
+        terminal_access,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
+            sandbox=SimpleNamespace(enabled=True, terminal_mode="pty_disabled"),
+        ),
+    )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
+    monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
+
+    page = await page_access(db, user_a.id)
+    pty = await pty_access(db, user_a.id)
+
+    assert page.allowed
+    assert not pty.allowed
+    assert pty.reason == "交互式 PTY 已由管理员关闭"
+
+
+@pytest.mark.asyncio
+async def test_terminal_entry_policy_hides_page_but_does_not_change_shell_executor(db, user_a, monkeypatch):
+    monkeypatch.setattr(
+        terminal_access,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
+            sandbox=SimpleNamespace(enabled=True, terminal_mode="entry_disabled"),
+        ),
+    )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
+    decision = await page_access(db, user_a.id)
+
+    assert not decision.allowed
+    assert decision.reason == "终端入口已由管理员关闭"
+
+
+def test_terminal_policy_is_automatically_off_when_sandbox_is_not_ready(monkeypatch):
+    settings = SimpleNamespace(sandbox=SimpleNamespace(enabled=False, terminal_mode="auto"))
+    monkeypatch.setattr("agent.terminal.policy.sandbox_readiness", lambda _settings: (False, "Shell 沙盒未开启"))
+
+    assert terminal_capabilities(settings) == (False, False)
 
 
 @pytest.mark.asyncio

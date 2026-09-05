@@ -45,6 +45,27 @@
       <div class="config-row"><span>{{ t('adminSandbox.ephemeralQuota') }}</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
       <div class="config-row"><span>{{ t('adminSandbox.networkPolicy') }}</span><strong>{{ status.network_profile === 'none' ? t('adminSandbox.offline') : status.network_profile }}</strong></div>
       <div class="config-row config-row-switch">
+        <div class="config-row-copy"><span>{{ t('adminSandbox.codeExecution') }}</span><small>{{ t('adminSandbox.codeExecutionHint') }}</small></div>
+        <ToggleSwitch :model-value="status.code_execution_enabled" :disabled="codeExecutionSaving" :aria-label="t('adminSandbox.codeExecution')" @update:model-value="toggleCodeExecution" />
+      </div>
+      <div class="config-row config-row-switch">
+        <div class="config-row-copy"><span>{{ t('adminSandbox.filesystemAuthorization') }}</span><small>{{ t('adminSandbox.filesystemAuthorizationHint') }}</small></div>
+        <ToggleSwitch :model-value="status.filesystem_authorization_enabled" :disabled="filesystemAuthorizationSaving" :aria-label="t('adminSandbox.filesystemAuthorization')" @update:model-value="toggleFilesystemAuthorization" />
+      </div>
+      <div class="config-row terminal-mode-row">
+        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint') }}</small></div>
+        <AdminSelect
+          v-model="terminalModeDraft"
+          :options="terminalModeOptions"
+          :placeholder="t('adminSandbox.terminalModeAuto')"
+          :disabled="terminalModeSaving"
+          :aria-label="t('adminSandbox.terminalMode')"
+        />
+      </div>
+      <p class="section-note terminal-effective-note">
+        {{ t('adminSandbox.terminalEffective', { entry: status.terminal_entry_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled'), pty: status.pty_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}
+      </p>
+      <div class="config-row config-row-switch">
         <div class="config-row-copy"><span>{{ t('adminSandbox.egress') }}</span><small>{{ egressHint }}</small></div>
         <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" :aria-label="t('adminSandbox.switchEgress')" @update:model-value="toggleEgress" />
       </div>
@@ -77,10 +98,16 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import AdminSelect from '@/components/AdminSelect.vue'
 import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {
   enabled: boolean
+  filesystem_authorization_enabled: boolean
+  code_execution_enabled: boolean
+  terminal_mode: 'auto' | 'pty_disabled' | 'entry_disabled'
+  terminal_entry_enabled: boolean
+  pty_enabled: boolean
   docker_installed: boolean
   docker_daemon_ready: boolean
   rootless: boolean | null
@@ -107,11 +134,20 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ enabled: false, filesystem_authorization_enabled: false, code_execution_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
 const quotaError = ref(false)
+const filesystemAuthorizationSaving = ref(false)
+const codeExecutionSaving = ref(false)
+const terminalModeSaving = ref(false)
+const terminalModeDraft = ref<SandboxStatus['terminal_mode']>('auto')
+const terminalModeOptions = computed(() => [
+  { value: 'auto', label: t('adminSandbox.terminalModeAuto') },
+  { value: 'pty_disabled', label: t('adminSandbox.terminalModePtyDisabled') },
+  { value: 'entry_disabled', label: t('adminSandbox.terminalModeEntryDisabled') },
+])
 const egressSaving = ref(false)
 const egressTesting = ref(false)
 const proxyDraft = ref('')
@@ -153,6 +189,46 @@ async function toggleEgress(enabled: boolean) {
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally { egressSaving.value = false }
+}
+
+async function toggleFilesystemAuthorization(enabled: boolean) {
+  filesystemAuthorizationSaving.value = true
+  try {
+    await configStore.saveConfig({ sandbox: { filesystem_authorization_enabled: enabled } })
+    if (configStore.saveError) throw new Error(configStore.saveError)
+    await loadStatus()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    filesystemAuthorizationSaving.value = false
+  }
+}
+
+async function toggleCodeExecution(enabled: boolean) {
+  codeExecutionSaving.value = true
+  try {
+    await configStore.saveConfig({ sandbox: { code_execution_enabled: enabled } })
+    if (configStore.saveError) throw new Error(configStore.saveError)
+    await loadStatus()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    codeExecutionSaving.value = false
+  }
+}
+
+async function saveTerminalMode() {
+  terminalModeSaving.value = true
+  try {
+    await configStore.saveConfig({ sandbox: { terminal_mode: terminalModeDraft.value } })
+    if (configStore.saveError) throw new Error(configStore.saveError)
+    await loadStatus()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+    terminalModeDraft.value = status.terminal_mode
+  } finally {
+    terminalModeSaving.value = false
+  }
 }
 
 async function saveEgressProxy() {
@@ -198,6 +274,7 @@ async function loadStatus() {
   const response = await adminStore.authFetch('/api/v1/admin/sandbox/status')
   if (!response.ok) throw new Error(`读取沙盒状态失败（${response.status}）`)
   Object.assign(status, await response.json())
+  terminalModeDraft.value = status.terminal_mode
   proxyDraft.value = status.egress_proxy_url || ''
 }
 
@@ -253,6 +330,7 @@ h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700
 .config-row-copy { min-width: 0; }
 .config-row-copy small { display: block; margin-top: 4px; color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
 .config-row code { max-width: 72%; overflow: hidden; color: var(--content-secondary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-effective-note { margin-top: 0; }
 .egress-editor { padding: 14px 0 4px; border-bottom: 1px solid var(--panel-divider); }
 .egress-label { display: block; margin-bottom: 8px; color: var(--content-secondary); font-size: 12px; font-weight: 600; }
 .egress-input-row { display: flex; align-items: center; gap: 8px; }

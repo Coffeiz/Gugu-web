@@ -83,7 +83,7 @@ docker/sandbox/Dockerfile
        └─ 后台 Shell 任务
 ```
 
-镜像在构建阶段预装 Bash/readline、Python 3、Node/npm、Git、curl、jq 等基础开发工具；
+镜像在构建阶段预装 Bash/readline、Python 3、Node/npm、ffmpeg、Git、curl、jq 等基础开发工具；
 运行时继续使用固定的 `65532:65532` 用户、只读 rootfs、默认断网、资源限制和独立用户
 数据挂载。不得在容器启动后通过 apt 或公网安装工具，也不得把宿主机解释器映射进沙盒。
 
@@ -156,6 +156,18 @@ docs/prds/
   让前端自行定义另一套终端模式枚举。
 - 不删除现有 `/terminals/{id}/input` 和 `/terminals/{id}/events`，直到咕咕
   `agent-events` 链路完成迁移并通过回归测试。
+
+### 5.2 Admin 终端策略
+
+Admin 在 Shell 沙盒页面配置 `terminal_mode`：
+
+- `auto`：沙盒运行时就绪且 Shell capability 可用时开放终端入口和交互式 PTY。
+- `pty_disabled`：关闭用户交互式 PTY，保留终端页面中的咕咕执行事件和 Agent Shell 执行能力。
+- `entry_disabled`：隐藏用户终端入口并拒绝终端页面/API 访问，只保留咕咕 Shell 工具能力。
+
+沙盒关闭或运行时未就绪时，`terminalEntryEnabled` 与 `ptyEnabled` 的生效值都必须为
+`false`，但不覆盖 Admin 保存的 `terminal_mode`；沙盒恢复后按原策略重新计算。该策略只
+控制用户终端层，不得关闭或改变咕咕 Shell 工具本身的权限判断。
 
 ## 6. 终端协议
 

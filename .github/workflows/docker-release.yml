@@ -16,6 +16,8 @@ env:
   REGISTRY: ghcr.io
   IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-web
   DOCKERHUB_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web
+  SANDBOX_IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-sandbox
+  DOCKERHUB_SANDBOX_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-sandbox
   DOCKER_BUILDKIT: '1'
 
 jobs:
@@ -93,6 +95,29 @@ jobs:
           cache-from: type=gha,scope=default-compose
           cache-to: type=gha,mode=max,scope=default-compose
 
+      - name: Build Shell sandbox runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/sandbox
+          file: docker/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: gugu-sandbox:ci
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+      - name: Smoke test Shell sandbox runtime
+        run: |
+          docker run --rm --entrypoint bash gugu-sandbox:ci -lc '
+            set -eu
+            python --version
+            node --version
+            npm --version
+            ffmpeg -version | head -n 1
+            git --version
+          '
+
       - name: Smoke test TS RAG worker
         run: docker run --rm --entrypoint node gugu-web:ci bin/gugu-rag-ts-worker.mjs --version
 
@@ -134,6 +159,15 @@ jobs:
           # vendored SBOM，避免把其中记录的旧版本误判为应用依赖。基础镜像
           # 自带的 /usr/local pip 也包含同一份内部依赖清单。
           skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
+
+      - name: Scan Shell sandbox runtime image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: gugu-sandbox:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
 
   publish:
     name: Publish GHCR and Docker Hub release
@@ -243,15 +277,37 @@ jobs:
           provenance: mode=max
           # 不附加 SBOM attestation，避免 gha cache 中的旧清单被发布扫描优先消费。
 
+      - name: Build and push Shell sandbox runtime image
+        id: sandbox-image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/sandbox
+          file: docker/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.SANDBOX_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
+            ${{ env.SANDBOX_IMAGE_REPOSITORY }}:${{ github.sha }}
+            ${{ env.DOCKERHUB_SANDBOX_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
+            ${{ env.DOCKERHUB_SANDBOX_IMAGE_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+          provenance: mode=max
+
       - name: Tag stable image as latest
         if: steps.version.outputs.is_stable == 'true'
         env:
           APP_DIGEST: ${{ steps.app-image.outputs.digest }}
+          SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
         run: |
           docker buildx imagetools create \
             --tag "${IMAGE_REPOSITORY}:latest" \
             --tag "${DOCKERHUB_IMAGE_REPOSITORY}:latest" \
             "${IMAGE_REPOSITORY}@${APP_DIGEST}"
+          docker buildx imagetools create \
+            --tag "${SANDBOX_IMAGE_REPOSITORY}:latest" \
+            --tag "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}:latest" \
+            "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
@@ -261,6 +317,7 @@ jobs:
           BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
           FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
           APP_DIGEST: ${{ steps.app-image.outputs.digest }}
+          SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
         run: |
           cosign sign --yes "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
           cosign sign --yes "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
@@ -268,6 +325,8 @@ jobs:
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
           cosign sign --yes "${IMAGE_REPOSITORY}@${APP_DIGEST}"
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
+          cosign sign --yes "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
+          cosign sign --yes "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
       # 安全门已前移到 docker-build job（扫本地加载镜像的真实文件系统）。
       # 此处不扫 registry 引用：trivy 会优先消费 registry 侧可关联的第三方 SBOM

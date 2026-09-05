@@ -22,6 +22,7 @@ from app.services.workspaces import (
     update_workspace,
 )
 from agent.sandbox.docker_runtime import sandbox_readiness
+from agent.terminal.policy import configured_terminal_mode, terminal_capabilities
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -46,17 +47,33 @@ async def list_workspaces(
         .where(ConversationSession.user_id == user.id, ConversationSession.workspace_id.is_not(None))
         .group_by(ConversationSession.workspace_id)
     )).all())
-    sandbox_ready, _ = sandbox_readiness(get_settings().sandbox)
+    settings = get_settings()
+    sandbox_ready, _ = sandbox_readiness(settings.sandbox)
+    terminal_entry_by_policy, pty_by_policy = terminal_capabilities(settings, sandbox_ready=sandbox_ready)
+    from app.services.filesystem_authorization import filesystem_authorization_enabled
+
+    shell_available = bool(settings.agent.shell_enabled) and (
+        await effective_shell_enabled(db, user.id)
+        or (
+            bool(settings.agent.shell_system_enabled)
+            and await effective_shell_system_enabled(db, user.id)
+        )
+    )
+
     return {
-        "globalEnabled": bool(get_settings().agent.shell_enabled),
+        "globalEnabled": bool(settings.agent.shell_enabled),
         "sandboxEnabled": sandbox_ready,
-        "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
-        "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
-        "autopilotGlobalEnabled": bool(get_settings().agent.shell_autopilot_enabled),
+        "systemGlobalEnabled": bool(settings.agent.shell_system_enabled),
+        "dangerousGlobalEnabled": bool(settings.agent.shell_dangerous_enabled),
+        "autopilotGlobalEnabled": bool(settings.agent.shell_autopilot_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
         "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
         "userAutopilotEnabled": await effective_shell_autopilot_enabled(db, user.id),
+        "filesystemAuthorizationEnabled": filesystem_authorization_enabled(),
+        "terminalMode": configured_terminal_mode(settings),
+        "terminalEntryEnabled": bool(terminal_entry_by_policy and shell_available),
+        "ptyEnabled": bool(pty_by_policy and shell_available),
         "items": [_response(row, counts.get(row.id, 0)) for row in rows],
     }
 

@@ -61,6 +61,18 @@ async def test_oss_storage_keeps_a_local_sandbox_root(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_project_root_is_the_user_project_library_not_bound_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        workspace_service,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(backend="local", local_path=str(tmp_path))),
+    )
+    root = await workspace_service.resolve_project_root(None, "user-project")
+    assert root == (tmp_path / "user-project" / "项目文件").resolve()
+    assert root.is_dir()
+
+
+@pytest.mark.asyncio
 async def test_workspace_can_be_renamed_disabled_and_deleted_without_deleting_project(db, user_a):
     project = Project(user_id=user_a.id, name="保留项目")
     db.add(project)

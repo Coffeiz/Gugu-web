@@ -77,7 +77,9 @@ class LocalWorkspaceExecutor:
             raise ValueError("cwd 必须是目录")
         return resolved
 
-    def _validate_workspace_argv(self, argv: list[str], workdir: Path) -> None:
+    def _validate_workspace_argv(
+        self, argv: list[str], workdir: Path, *, allowed_absolute_paths: tuple[str, ...] = (),
+    ) -> None:
         """阻止 workspace 命令通过参数访问 workspace 外的路径。
 
         ``cwd`` 校验无法覆盖 ``ls ..``、``cat /etc/passwd`` 这类参数路径。
@@ -91,6 +93,11 @@ class LocalWorkspaceExecutor:
             if not value or value.startswith("-") and "/" not in value and "\\" not in value:
                 continue
             if value.startswith("~") or Path(value).is_absolute() or value.startswith(("/", "\\")):
+                if value.startswith("/") and any(
+                    Path(value) == Path(allowed) or Path(allowed) in Path(value).parents
+                    for allowed in allowed_absolute_paths
+                ):
+                    continue
                 raise ValueError("workspace 命令不能使用绝对路径或用户目录路径")
             parts = [part for part in _PATH_SEPARATOR_RE.split(value) if part]
             if ".." in parts:

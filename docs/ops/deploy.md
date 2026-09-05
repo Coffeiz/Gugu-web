@@ -297,8 +297,9 @@ Compose 自带配置位于 `searxng/settings.yml`，已经包含 `search.formats
 
 #### Compose 沙箱
 
-沙箱不能仅靠 Compose 自动创建出安全的 Docker 运行时。它依赖宿主机已经配置好的 Rootless
-Docker daemon 和固定 digest 镜像。Compose 已提供独立 `sandboxd` 服务，但默认不启动：
+沙箱不能仅靠 Compose 自动安装宿主机的 Rootless Docker daemon，但它依赖的运行时检查、固定
+digest 镜像、egress 资源和持久目录 ACL 都由 `sandbox-bootstrap` 统一初始化。Compose 已提供
+独立 `sandboxd` 服务，但默认不启动：
 
 ```bash
 GUGU_DOCKER_SOCKET=/run/user/$(id -u)/docker.sock \
@@ -395,17 +396,23 @@ docker network inspect gugu-sandbox-egress
 >
 > **现在 compose 已自动处理**：`--profile sandbox` 启动时会先跑一次性服务
 > `sandbox-bootstrap`，幂等确保目标 daemon 上有 egress 内部网络、squid 代理
-> 和沙盒基础镜像；rootful 单 daemon 部署下各项已由 compose 提供，脚本自动
-> 全部跳过（compose 管理的代理按 `com.docker.compose.service` 标签识别）。
+> 和沙盒基础镜像；同时为每个用户的 `shell`、`个人文件`、`项目文件` 目录应用目标 daemon
+> 对应的 Rootless ACL，并用真实沙盒 UID 验证可创建/删除文件。rootful 单 daemon 部署下
+> 映射使用容器 UID/GID，compose 管理的代理按 `com.docker.compose.service` 标签识别。
 > 日志出现「沙盒环境就绪」即通过
-> （`docker logs gugu-web-main-sandbox-bootstrap-1`）。bootstrap 失败不阻塞
-> sandboxd 启动（`required: false`），但 egress 会不可用，需查日志。
+> （`docker logs gugu-web-main-sandbox-bootstrap-1`）。bootstrap 失败时 sandboxd 不会启动，
+> 形成 fail-closed，需先查 bootstrap 日志和 ACL/写入探针错误。
 >
 > **Rootless-only 主机**（没有 `/var/run/docker.sock`）：bootstrap 默认不再挂
 > 宿主 rootful socket，缺失镜像时由 rootless daemon 直接 pull。若 rootless
 > daemon 拉不到镜像，可在 `docker-compose.override.yml` 里把 rootful socket
 > 只读挂进 bootstrap 的 `/var/run/docker.sock`，脚本会自动改走
 > `docker save | load` 从宿主搬运。
+>
+> 不使用 Compose profile、采用 systemd 直接运行 sandboxd 时，仍需手动运行
+> `backend/scripts/prepare_rootless_storage.py`（或对应安装流程）应用 ACL；不要把
+> `SANDBOX_ACL` 之类手工开关当作 Compose 的替代品。Compose 的 bootstrap 会在数据迁移
+> 完成后统一处理，覆盖新建和已有用户目录。
 >
 > 手动等效操作（不依赖 bootstrap 服务时）：
 >
@@ -639,10 +646,12 @@ Compose 使用同一套宿主机初始化入口：
 ```bash
 cd backend
 make compose-up                         # 普通 Compose，不修改 ACL
-SANDBOX_ACL=1 make compose-up           # 先应用 ACL，再启用 sandbox profile
+SANDBOX_ACL=1 make compose-up           # 启用 sandbox profile；bootstrap 自动应用 ACL 并验证写入
 ```
 
-直接执行 `docker compose up` 不会自动应用 ACL；`--profile sandbox` 只负责启动 sandboxd，不能替代宿主机权限初始化。初始化脚本只处理用户 Shell 持久目录，不会修改业务容器、镜像或数据库目录。
+直接执行 `docker compose up` 仍是轻量模式，不启动沙盒；直接执行
+`docker compose --profile sandbox up` 会自动运行 bootstrap，应用 `shell`、`个人文件`、
+`项目文件` 的 ACL 并验证写入。初始化脚本不会修改业务容器、镜像或数据库目录。
 
 启用沙盒前先检查 Rootless Docker 和固定镜像：
 

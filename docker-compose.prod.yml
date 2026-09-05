@@ -88,6 +88,8 @@ services:
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
@@ -142,6 +144,8 @@ services:
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
@@ -191,6 +195,8 @@ services:
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
     depends_on:
       postgres:
         condition: service_healthy
@@ -276,6 +282,15 @@ services:
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
       - ./squid/egress.conf:/config/squid/egress.conf:ro
       - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
+      - *gugu-data-mount
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/subuid:/host/etc/subuid:ro
+      - /etc/subgid:/host/etc/subgid:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      data-migrate:
+        condition: service_completed_successfully
     restart: "no"
 
   sandboxd:
@@ -284,7 +299,7 @@ services:
     pid: "host"
     logging: *json-file-logging
     # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
-    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    image: ${GUGU_SANDBOXD_IMAGE:-${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}}
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
     env_file:
       - ./backend/.env
@@ -306,6 +321,8 @@ services:
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
@@ -315,7 +332,6 @@ services:
     depends_on:
       sandbox-bootstrap:
         condition: service_completed_successfully
-        required: false
       migrate:
         condition: service_completed_successfully
       data-migrate:

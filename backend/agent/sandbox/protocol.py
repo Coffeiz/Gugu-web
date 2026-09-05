@@ -20,6 +20,10 @@ class ExecuteRequest:
     network_profile: Literal["none", "egress"] = "none"
     egress_expires_at: float | None = None
     request_id: str | None = None
+    personal_root: str | None = None
+    project_root: str | None = None
+    personal_read_only: bool = True
+    project_read_only: bool = True
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExecuteRequest":
@@ -65,6 +69,10 @@ class ExecuteRequest:
             quota_bytes=quota_bytes,
             network_profile=network_profile,
             egress_expires_at=egress_expires_at,
+            personal_root=str(value.get("personal_root") or "").strip() or None,
+            project_root=str(value.get("project_root") or "").strip() or None,
+            personal_read_only=bool(value.get("personal_read_only", True)),
+            project_read_only=bool(value.get("project_read_only", True)),
         )
 
     def to_json(self) -> bytes:
@@ -80,6 +88,10 @@ class ExecuteRequest:
             "quota_bytes": self.quota_bytes,
             "network_profile": self.network_profile,
             "egress_expires_at": self.egress_expires_at,
+            "personal_root": self.personal_root,
+            "project_root": self.project_root,
+            "personal_read_only": self.personal_read_only,
+            "project_read_only": self.project_read_only,
         }, ensure_ascii=False) + "\n").encode("utf-8")
 
 

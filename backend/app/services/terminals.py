@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access
+from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access, pty_access
 from agent.terminal.contracts import TerminalMode, TerminalShellMode, TerminalSource, TerminalStatus
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
@@ -61,6 +61,10 @@ async def create_terminal(
     access = await page_access(db, user_id)
     if not access.allowed:
         raise PermissionError(access.reason)
+    if mode == TerminalMode.INTERACTIVE_PTY.value:
+        pty_decision = await pty_access(db, user_id)
+        if not pty_decision.allowed:
+            raise PermissionError(pty_decision.reason)
     if session_id is not None and await get_owned(db, ConversationSession, session_id, user_id) is None:
         raise LookupError("会话不存在")
     if workspace_id is not None:

@@ -26,6 +26,7 @@ from app.db.session import get_db
 from app.models import User
 from agent.sandbox.quota import clear_sandbox_directory
 from agent.security.logsafe import fingerprint
+from agent.terminal.policy import configured_terminal_mode, terminal_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,8 @@ def _state(
 
 
 def _response():
-    cfg = get_settings().sandbox
+    settings = get_settings()
+    cfg = settings.sandbox
     proxy_url = str(getattr(cfg, "egress_proxy_url", "") or "").strip()
     proxy_safe = (
         proxy_url
@@ -102,8 +104,14 @@ def _response():
         rootless_required=cfg.rootless_required,
         image_ready=image_ready,
     )
+    terminal_entry_enabled, pty_enabled = terminal_capabilities(settings, sandbox_ready=state == "ready")
     return {
         "enabled": bool(cfg.enabled),
+        "filesystem_authorization_enabled": bool(cfg.filesystem_authorization_enabled),
+        "code_execution_enabled": bool(cfg.code_execution_enabled),
+        "terminal_mode": configured_terminal_mode(settings),
+        "terminal_entry_enabled": terminal_entry_enabled,
+        "pty_enabled": pty_enabled,
         "docker_installed": runtime.installed,
         "docker_daemon_ready": runtime.daemon_ready,
         "rootless": runtime.rootless,

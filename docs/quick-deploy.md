@@ -153,7 +153,8 @@ Compose 首次启动会自动创建目录；自定义目录需要保证运行 Do
 > 源卷保留不删除，不需要手工执行第二套迁移。自定义旧 Compose 项目名时设置
 > `GUGU_LEGACY_DATA_VOLUME` 为实际卷名。启用 sandbox profile 时 compose 还会跑一次性
 > `sandbox-bootstrap`，自动在沙盒实际运行的 daemon（含 rootless）上准备 egress 网络、
-> squid 代理和沙盒镜像；rootful 单 daemon 部署下自动跳过。详见 docs/ops/deploy.md。
+> squid 代理、沙盒镜像和用户 `shell`/文件目录 ACL，并用真实沙盒 UID 做写入探针；rootful
+> 单 daemon 部署下自动使用容器 UID/GID。详见 docs/ops/deploy.md。
 
 ## 开发环境
 

@@ -42,6 +42,8 @@ x-app-environment: &app-environment
   # 仅 profile sandbox 实际提供 sandboxd；未启用时 Shell 探测会保持不可用。
   SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
   SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
+  SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+  SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
   SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
@@ -158,20 +160,28 @@ services:
     command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
     environment:
       DOCKER_HOST: unix:///run/gugu/docker.sock
-      SANDBOX__IMAGE: ${SANDBOX__IMAGE:-debian:bookworm-slim}
-      SANDBOX__IMAGE_DIGEST: ${SANDBOX__IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SQUID_CONF_PATH: /opt/gugu/egress.conf
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
     volumes:
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+      - *gugu-data-mount
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/subuid:/host/etc/subuid:ro
+      - /etc/subgid:/host/etc/subgid:ro
     depends_on:
-      - egress-proxy
+      egress-proxy:
+        condition: service_started
+      data-migrate:
+        condition: service_completed_successfully
     restart: "no"
 
   sandboxd:
     profiles: [sandbox]
-    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
+    image: ${GUGU_SANDBOXD_IMAGE:-${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}}
     logging: *json-file-logging
     pid: "host"
     # sandboxd 不是 web 服务，不应进入默认 Compose 的数据库迁移/worker 入口。
@@ -186,8 +196,8 @@ services:
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
       SANDBOX__ENABLED: "true"
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
-      SANDBOX__IMAGE: ${SANDBOX__IMAGE:-debian:bookworm-slim}
-      SANDBOX__IMAGE_DIGEST: ${SANDBOX__IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"

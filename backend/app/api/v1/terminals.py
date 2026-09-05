@@ -26,13 +26,14 @@ from app.services.terminals import (
     append_shell_result, append_terminal_status,
 )
 from agent.interactions.confirmations import redeem_confirmation
-from agent.terminal.access import TerminalOperation, authorize_operation, page_access
+from agent.terminal.access import TerminalOperation, authorize_operation, page_access, pty_access
 from agent.terminal.contracts import TerminalMode
 from agent.terminal.contracts import TerminalStatus
 from agent.terminal.protocol import PtyClientMessage
 from agent.terminal.pty_manager import PtyLaunchSpec
 from agent.terminal.runtime import get_pty_manager
-from app.services.workspaces import resolve_shell_root
+from app.services.workspaces import resolve_project_root, resolve_shell_root, resolve_user_personal_root
+from app.services.filesystem_authorization import resolve_filesystem_policy
 from agent.tools.shell import _shell
 from agent.sandbox.client import SandboxdClient
 from app.core.config import get_settings
@@ -127,7 +128,8 @@ async def get_terminals(user: User = Depends(get_current_user), db: AsyncSession
     await prune_terminals(db, user.id)
     await db.commit()
     rows = await list_terminals(db, user.id)
-    return {"enabled": True, "items": [serialize_terminal(row) for row in rows]}
+    pty_status = await pty_access(db, user.id)
+    return {"enabled": True, "ptyEnabled": pty_status.allowed, "items": [serialize_terminal(row) for row in rows]}
 
 
 @router.get("/metrics")
@@ -185,7 +187,18 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             )
             if not access.allowed:
                 raise HTTPException(status_code=403, detail=access.reason)
+            pty_status = await pty_access(auth_db, user_id)
+            if not pty_status.allowed:
+                raise HTTPException(status_code=403, detail=pty_status.reason)
             root = await resolve_shell_root(auth_db, user_id, row.shell_mode, row.workspace_id)
+            personal_root = await resolve_user_personal_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
+            project_root = await resolve_project_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
+            code_execution_enabled = bool(get_settings().sandbox.code_execution_enabled)
+            filesystem_policy = (
+                await resolve_filesystem_policy(auth_db, user_id, subject_id=row.session_id)
+                if row.shell_mode == "sandbox" and row.session_id is not None
+                else None
+            )
             row_id = row.id
             row_shell_mode = row.shell_mode
             row_network_profile = row.network_profile
@@ -197,6 +210,11 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         manager = get_pty_manager()
         spec = PtyLaunchSpec(
             terminal_id=row_id, root=str(root), shell_mode=row_shell_mode,
+            personal_root=str(personal_root) if personal_root else None,
+            project_root=str(project_root) if project_root else None,
+            personal_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+            project_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+            code_execution_enabled=code_execution_enabled,
             network_profile=row_network_profile, cols=120, rows=32,
         )
         session = manager.get(row_id)
@@ -388,6 +406,10 @@ async def rename_terminal_route(terminal_id: str, body: TerminalUpdate, user: Us
 @router.post("/{terminal_id}/input")
 async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     row = _require(await get_terminal(db, user.id, terminal_id))
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value:
+        pty_status = await pty_access(db, user.id)
+        if not pty_status.allowed:
+            raise HTTPException(status_code=403, detail=pty_status.reason)
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, workspace_id=row.workspace_id, operation=TerminalOperation.INPUT)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
@@ -543,6 +565,10 @@ async def reopen_terminal_view(terminal_id: str, user: User = Depends(get_curren
                                        workspace_id=row.workspace_id, operation=TerminalOperation.REOPEN)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value:
+        pty_status = await pty_access(db, user.id)
+        if not pty_status.allowed:
+            raise HTTPException(status_code=403, detail=pty_status.reason)
     try:
         await reopen_terminal(db, row)
     except ValueError as exc:

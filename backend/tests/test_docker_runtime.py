@@ -1,6 +1,8 @@
 """Docker 沙盒运行时探测测试。"""
 
 import json
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -149,6 +151,141 @@ def test_sandboxd_request_round_trips_as_json():
     assert value["command"] == "pwd"
     assert value["quota_root"] == "/data/user/shell"
     assert value["quota_bytes"] == 512
+
+
+def test_sandboxd_request_round_trips_library_roots():
+    from agent.sandbox.protocol import ExecuteRequest
+
+    request = ExecuteRequest(
+        "/data/user/workspace", "ls /personal", personal_root="/data/user/个人文件",
+        project_root="/data/user/project",
+    )
+    value = json.loads(request.to_json())
+    assert value["personal_root"] == "/data/user/个人文件"
+    assert value["project_root"] == "/data/user/project"
+    assert ExecuteRequest.from_dict(value).personal_root == "/data/user/个人文件"
+    assert ExecuteRequest.from_dict(value).project_root == "/data/user/project"
+
+
+def test_sandboxd_request_preserves_library_write_policy():
+    from agent.sandbox.protocol import ExecuteRequest
+
+    request = ExecuteRequest(
+        "/data/user/workspace", "touch /personal/ok",
+        personal_root="/data/user/个人文件", project_root="/data/user/project",
+        personal_read_only=False, project_read_only=False,
+    )
+    value = json.loads(request.to_json())
+    restored = ExecuteRequest.from_dict(value)
+    assert restored.personal_read_only is False
+    assert restored.project_read_only is False
+
+
+def test_pty_spec_defaults_to_read_only_library_mounts():
+    from agent.terminal.pty_manager import PtyLaunchSpec
+
+    spec = PtyLaunchSpec("terminal-1", "/workspace", "sandbox", "none")
+    assert spec.personal_read_only is True
+    assert spec.project_read_only is True
+
+
+def test_docker_library_mounts_follow_filesystem_policy(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim", image_digest="sha256:" + "a" * 64,
+        network_profile="none", pids_limit=64, cpu_limit=1,
+        memory_limit_bytes=128 * 1024 * 1024, ephemeral_quota_bytes=128 * 1024 * 1024,
+        egress_proxy_url="", egress_isolation_enabled=False,
+    )
+    personal = tmp_path / "personal"
+    project = tmp_path / "project"
+    personal.mkdir()
+    project.mkdir()
+    readonly = DockerSandboxExecutor(
+        tmp_path, settings, docker_path="/usr/bin/docker",
+        personal_root=personal, project_root=project,
+    ).build_argv("pwd")
+    writable = DockerSandboxExecutor(
+        tmp_path, settings, docker_path="/usr/bin/docker",
+        personal_root=personal, project_root=project,
+        personal_read_only=False, project_read_only=False,
+    ).build_argv("pwd")
+    assert any(item.endswith("dst=/personal,readonly") for item in readonly)
+    assert any(item.endswith("dst=/project,readonly") for item in readonly)
+    assert not any(item.endswith("dst=/personal,readonly") for item in writable)
+    assert not any(item.endswith("dst=/project,readonly") for item in writable)
+
+
+def test_interactive_shell_resolves_unique_project_name_without_storage_id(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1,
+        memory_limit_bytes=128 * 1024 * 1024,
+        ephemeral_quota_bytes=128 * 1024 * 1024,
+        egress_proxy_url="",
+        egress_isolation_enabled=False,
+    )
+    executor = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker")
+    argv = executor.build_pty_argv()
+    script = argv[-1]
+
+    project_root = tmp_path / "project-library"
+    physical = project_root / "2026" / "08" / "缘缘 修改 #204"
+    physical.mkdir(parents=True)
+    script = script.replace("/project", str(project_root))
+    script = script.replace(
+        "exec bash --noprofile --norc -i",
+        f"cd {project_root}; exec bash --noprofile --norc -c 'cd 2026/08/缘缘 修改; pwd'",
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, errors="replace", check=False,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip().endswith("2026/08/缘缘 修改 #204")
+
+
+def test_interactive_shell_does_not_guess_duplicate_project_name(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1,
+        memory_limit_bytes=128 * 1024 * 1024,
+        ephemeral_quota_bytes=128 * 1024 * 1024,
+        egress_proxy_url="",
+        egress_isolation_enabled=False,
+    )
+    executor = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker")
+    script = executor.build_pty_argv()[-1]
+    project_root = tmp_path / "project-library"
+    parent = project_root / "2026" / "08"
+    (parent / "同名项目 #10").mkdir(parents=True)
+    (parent / "同名项目 #11").mkdir()
+    script = script.replace("/project", str(project_root))
+    script = script.replace(
+        "exec bash --noprofile --norc -i",
+        f'''cd {project_root}; exec bash --noprofile --norc -c 'cd 2026/08/同名项目; printf "status=%s\\n" "$?"' ''',
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, errors="replace", check=False,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+    )
+    assert result.returncode == 0
+    assert "项目名不唯一" in result.stderr
+    assert "cd --" in result.stderr
+    assert "status=1" in result.stdout
 
 
 def test_sandboxd_egress_request_requires_future_expiry():
@@ -316,6 +453,8 @@ def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     response = sandbox_admin._response()
     assert response["state"] == "disabled"
     assert response["executor_ready"] is True
+    assert response["filesystem_authorization_enabled"] is False
+    assert response["code_execution_enabled"] is True
 
 
 def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
@@ -359,6 +498,8 @@ def test_docker_executor_builds_fixed_security_argv(tmp_path):
     argv = executor.build_argv("pwd", cwd=".")
     assert argv[0:4] == ["/usr/bin/docker", "run", "--rm", "--init"]
     assert "--pull=never" in argv
+    assert "--env=HOME=/" in argv
+    assert not any(item.startswith("--tmpfs=/home/sandbox:rw") for item in argv)
     assert "--label=com.gugu.sandbox=true" in argv
     assert any(item.startswith("--label=com.gugu.sandbox.root-id=") for item in argv)
     assert "--network=none" in argv
@@ -369,9 +510,37 @@ def test_docker_executor_builds_fixed_security_argv(tmp_path):
     assert "--security-opt=apparmor=docker-default" in argv
     assert "--user=65532:65532" in argv
     assert any(item.startswith("--mount=type=bind,") and ",dst=/workspace" in item for item in argv)
+    assert not any(item.startswith("--mount=type=bind,") and ",dst=/project" in item for item in argv)
     assert not any("privileged" in item or "host" in item or "docker.sock" in item for item in argv)
     assert argv[-2] == "debian:bookworm-slim@sha256:" + "b" * 64
     assert argv[-1] == "pwd"
+
+
+def test_docker_executor_mounts_read_only_libraries(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    workspace = tmp_path / "workspace"
+    project = tmp_path / "project"
+    files = tmp_path / "files"
+    workspace.mkdir()
+    project.mkdir()
+    files.mkdir()
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "c" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024,
+        ephemeral_quota_bytes=64 * 1024 * 1024,
+    )
+    argv = DockerSandboxExecutor(
+        workspace, settings, docker_path="/usr/bin/docker", personal_root=files,
+        project_root=project,
+    ).build_argv("ls /personal")
+    assert "--mount=type=bind,src=" + str(files) + ",dst=/personal,readonly" in argv
+    assert "--mount=type=bind,src=" + str(project) + ",dst=/project,readonly" in argv
+    assert any(",dst=/workspace" in item for item in argv if item.startswith("--mount="))
 
 
 def test_docker_executor_uses_only_controlled_egress_network(tmp_path):
@@ -420,11 +589,39 @@ def test_docker_executor_builds_fixed_interactive_pty_argv(tmp_path):
 
     assert argv[1:5] == ["run", "--interactive", "--tty", "--rm"]
     assert argv[-4].startswith("debian:bookworm-slim@sha256:")
-    assert argv[-3:] == ["sh", "-c", "printf '%s\\n' '$if Bash' 'set enable-bracketed-paste on' '$endif' > /tmp/gugu-inputrc; export INPUTRC=/tmp/gugu-inputrc; exec bash --noprofile --norc -i"]
+    assert argv[-3] == "sh"
+    assert argv[-2] == "-c"
+    assert "set enable-bracketed-paste on" in argv[-1]
+    assert "export INPUTRC=/tmp/gugu-inputrc" in argv[-1]
+    assert "export -f cd" in argv[-1]
+    assert "项目名不唯一" in argv[-1]
+    assert "exec bash --noprofile --norc -i" in argv[-1]
     assert r"--env=PS1=gugu-sandbox:\w\$ " in argv
     assert "--cap-drop=ALL" in argv
     assert "--security-opt=no-new-privileges" in argv
     assert "--network=none" in argv
+
+
+def test_docker_executor_pty_blocks_common_code_runtimes_when_disabled(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "e" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024,
+        ephemeral_quota_bytes=64 * 1024 * 1024,
+        timeout_seconds=30,
+        output_limit_bytes=12_000,
+        code_execution_enabled=False,
+    )
+    argv = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker").build_pty_argv()
+
+    assert "python3() { _gugu_code_runtime_disabled; }" in argv[-1]
+    assert "node() { _gugu_code_runtime_disabled; }" in argv[-1]
+    assert "export -f _gugu_code_runtime_disabled python python3" in argv[-1]
 
 
 def test_docker_executor_uses_one_image_reference_for_command_and_pty(tmp_path):
@@ -535,6 +732,70 @@ def test_permission_plan_maps_container_id_and_is_non_destructive(tmp_path):
     assert plan.commands[0][:4] == ("install", "-d", "-o", "runner")
     assert any("g:165531:rwx" in part for part in plan.commands[1])
     assert any("g:165531:rwX" in part for part in plan.commands[3])
+    assert any("d:g:165531:rwx" in part for part in plan.commands[4])
+
+
+def test_prepare_storage_discovers_all_compose_writable_roots(tmp_path):
+    from scripts.prepare_rootless_storage import discover_writable_roots
+
+    users_root = tmp_path / "users"
+    (users_root / "user-a").mkdir(parents=True)
+    (users_root / "user-b").mkdir(parents=True)
+    (users_root / ".staging").mkdir()
+    (users_root / "not-a-user.txt").write_text("ignored", encoding="utf-8")
+
+    assert discover_writable_roots(users_root) == (
+        users_root / "user-a" / "shell",
+        users_root / "user-a" / "个人文件",
+        users_root / "user-a" / "项目文件",
+        users_root / "user-b" / "shell",
+        users_root / "user-b" / "个人文件",
+        users_root / "user-b" / "项目文件",
+    )
+
+
+def test_prepare_storage_applies_target_daemon_mapping_and_probes(tmp_path, monkeypatch):
+    from scripts import prepare_rootless_storage
+    from agent.sandbox.rootless_permissions import SubordinateRange
+
+    users_root = tmp_path / "users"
+    (users_root / "user-a").mkdir(parents=True)
+    ranges = (SubordinateRange("runner", 100000, 65536),)
+    plans = []
+    probes = []
+    monkeypatch.setattr(prepare_rootless_storage, "_docker_info", lambda _socket: (True, 1000))
+    monkeypatch.setattr(prepare_rootless_storage, "_host_login", lambda _uid, _explicit: "runner")
+    monkeypatch.setattr(prepare_rootless_storage, "_host_subordinate_ranges", lambda _login: (ranges, ranges))
+    monkeypatch.setattr(prepare_rootless_storage, "apply_permission_plan", plans.append)
+    monkeypatch.setattr(
+        prepare_rootless_storage,
+        "_probe_root",
+        lambda root, **kwargs: probes.append((root, kwargs["image_ref"])),
+    )
+
+    assert prepare_rootless_storage.prepare(
+        users_root,
+        login=None,
+        docker_socket="/run/user/1000/docker.sock",
+        image_ref="debian:bookworm-slim@sha256:" + "a" * 64,
+        probe=True,
+    ) == 3
+    assert {plan.mapped_uid for plan in plans} == {165531}
+    assert {plan.mapped_gid for plan in plans} == {165531}
+    assert [root for root, _image in probes] == [plan.root for plan in plans]
+
+
+def test_compose_sandbox_bootstrap_has_shared_storage_acl_contract():
+    repo = Path(__file__).parents[2]
+    for name in ("docker-compose.yml", "docker-compose.dev.yml", "docker-compose.prod.yml"):
+        text = (repo / name).read_text(encoding="utf-8")
+        block = text.split("  sandbox-bootstrap:", 1)[1]
+        assert "- *gugu-data-mount" in block
+        assert "/etc/passwd:/host/etc/passwd:ro" in block
+        assert "/etc/subuid:/host/etc/subuid:ro" in block
+        assert "/etc/subgid:/host/etc/subgid:ro" in block
+        assert "condition: service_completed_successfully" in block
+        assert "data-migrate:" in block
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):
