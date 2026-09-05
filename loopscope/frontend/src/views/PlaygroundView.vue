@@ -113,6 +113,7 @@ import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '.
 import { getRun, getRunSpans, listRuns } from '../services/api'
 import SessionMonitor from '../components/SessionMonitor.vue'
 import { buildTraceRounds } from '../utils/runExport'
+import { prettyJson } from '../utils/prettyJson'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
@@ -428,7 +429,7 @@ function spanCount(run: TraceRun | undefined, kind: string) { return run?.spans?
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }
 function fmtTokens(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(v >= 10000 ? 1 : 2)}k` : String(Math.round(v)) }
 function preview(v: unknown) {
-  const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+  const s = typeof v === 'string' ? v : prettyJson(v)
   return (s || '').slice(0, 700)
 }
 async function onBootstrap() {

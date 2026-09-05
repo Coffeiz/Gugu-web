@@ -141,6 +141,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref } from 'vue'
 import type { TraceSpan } from '../types'
+import { prettyJson } from '../utils/prettyJson'
 
 const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSpan; depth?: number }>(), { depth: 0 })
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
@@ -166,7 +167,7 @@ function fmtTokens(v: number | undefined) {
 function pretty(v: unknown) {
   if (v == null) return '—'
   if (typeof v === 'string') return v
-  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
+  try { return prettyJson(v) } catch { return String(v) }
 }
 
 const sourceContent = computed(() => {
