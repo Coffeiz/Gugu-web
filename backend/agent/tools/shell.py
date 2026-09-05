@@ -131,7 +131,8 @@ async def _run_shell(db, user_id, args: dict):
     )
     if not decision.allowed:
         return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
-    if subject_type == "scheduled_task" and (network_profile == "egress" or decision.needs_confirmation):
+    script_authorized = args.get("_script_authorized") is True
+    if subject_type == "scheduled_task" and (network_profile == "egress" or (decision.needs_confirmation and not script_authorized)):
         return {
             "error": "定时任务只能执行无需交互确认的 sandbox 命令",
             "_risk": decision.risk.value,
@@ -169,7 +170,6 @@ async def _run_shell(db, user_id, args: dict):
                 return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "confirmation_required"}
         egress_authorized = True
         egress_expires_at = time.time() + egress_ttl
-    script_authorized = args.get("_script_authorized") is True
     if decision.needs_confirmation and not script_authorized and not (egress_authorized and _can_use_shell_lease(command)):
         shell_lease = _can_use_shell_lease(command)
         confirmation_summary = (
@@ -299,6 +299,7 @@ async def _run_shell(db, user_id, args: dict):
                     project_root=str(project_root) if project_root else None,
                     personal_read_only=not decision.full_user_sandbox_write,
                     project_read_only=not decision.full_user_sandbox_write,
+                    allow_script_execution=script_authorized,
                 ), on_output=on_output,
             )
             if result_data.get("error"):
@@ -318,6 +319,7 @@ async def _run_shell(db, user_id, args: dict):
                 max_output_chars=args.get("max_output_chars", 12_000),
                 authorization_check=authorization_check,
                 on_output=on_output,
+                allow_script_execution=script_authorized,
             )
     except SandboxdUnavailable as exc:
         return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
@@ -451,7 +453,17 @@ async def _run_script(db, user_id, args: dict):
         return {"error": "args 必须是最多 32 个字符串的数组"}
     if any(not isinstance(value, str) or any(char in _SCRIPT_META for char in value) for value in raw_args):
         return {"error": "脚本参数不得包含 Shell 控制字符"}
-    if subject_type != "scheduled_task":
+    if subject_type == "scheduled_task":
+        authorization = subject.get("script_authorization") or {}
+        expected = {
+            "root": root_name,
+            "script_path": relative.as_posix(),
+            "interpreter": interpreter_name,
+            "args": raw_args,
+        }
+        if authorization != expected:
+            return {"error": "定时任务只能执行创建时明确授权的脚本", "_audit_event": "denied"}
+    else:
         blocked = confirm.needs_confirmation(
             args,
             f"允许当前会话执行沙盒脚本：{root_name}/{relative.as_posix()}",
@@ -469,7 +481,7 @@ async def _run_script(db, user_id, args: dict):
         "timeout": args.get("timeout", 30),
         "max_output_chars": args.get("max_output_chars", 12_000),
         "network": "none",
-        "_script_authorized": subject_type != "scheduled_task",
+        "_script_authorized": True,
         "_session_id": args.get("_session_id") or current_dispatch_session_id(),
     })
 

@@ -373,6 +373,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                         "subject_type": "scheduled_task",
                         "subject_id": task_id,
                         "workspace_id": workspace_id,
+                        "script_authorization": t.script_authorization,
                     }
                     if allow_shell else None
                 ),

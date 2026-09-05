@@ -24,6 +24,7 @@ class ExecuteRequest:
     project_root: str | None = None
     personal_read_only: bool = True
     project_read_only: bool = True
+    allow_script_execution: bool = False
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExecuteRequest":
@@ -73,6 +74,7 @@ class ExecuteRequest:
             project_root=str(value.get("project_root") or "").strip() or None,
             personal_read_only=bool(value.get("personal_read_only", True)),
             project_read_only=bool(value.get("project_read_only", True)),
+            allow_script_execution=bool(value.get("allow_script_execution", False)),
         )
 
     def to_json(self) -> bytes:
@@ -92,6 +94,7 @@ class ExecuteRequest:
             "project_root": self.project_root,
             "personal_read_only": self.personal_read_only,
             "project_read_only": self.project_read_only,
+            "allow_script_execution": self.allow_script_execution,
         }, ensure_ascii=False) + "\n").encode("utf-8")
 
 

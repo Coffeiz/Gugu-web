@@ -124,6 +124,7 @@ class SandboxdServer:
                         quota_bytes=request.quota_bytes,
                         network_profile=request.network_profile,
                         on_output=emit_output,
+                        allow_script_execution=request.allow_script_execution,
                     )
                 finally:
                     async with self._active_lock:

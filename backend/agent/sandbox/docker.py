@@ -157,42 +157,23 @@ class DockerSandboxExecutor:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
         return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
 
-    def _host_path_for_container_value(self, value: str) -> Path | None:
-        """把沙盒虚拟挂载路径映射到宿主路径，仅供解释器输入预检使用。"""
-        mounts = (
-            ("/workspace", self.root),
-            ("/personal", self.personal_root),
-            ("/project", self.project_root),
-        )
-        for prefix, host_root in mounts:
-            if host_root is None or not (value == prefix or value.startswith(prefix + "/")):
-                continue
-            suffix = value[len(prefix):].lstrip("/")
-            return host_root / suffix
-        return None
-
-    def _validate_container_interpreter_inputs(self, argv: list[str]) -> None:
-        """禁止普通 Shell 通过容器虚拟路径把沙盒脚本交给解释器。"""
+    def _validate_container_interpreter_inputs(self, argv: list[str], *, allow_script_execution: bool = False) -> None:
+        """禁止普通 Shell 通过容器执行代码运行时。"""
         interpreter_indexes = [
             index for index, value in enumerate(argv)
-            if Path(value).name.lower() in {
+            if (
+                Path(value).name.lower() in {
                 "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
-                "ruby", "sed", "sh", "zsh",
-            }
+                "pytest", "ruby", "sed", "sh", "zsh",
+                }
+                or Path(value).name.lower().startswith("python3.")
+            )
         ]
         if not interpreter_indexes:
             return
-        if any(
-            flag in argv[index + 1:]
-            for index in interpreter_indexes
-            for flag in ("-c", "--command", "-e", "--eval", "--execute", "--expression")
-        ):
-            raise ValueError("禁止通过解释器执行 inline/eval 代码")
-        for raw_value in argv[1:]:
-            value = raw_value.split("=", 1)[1] if "=" in raw_value else raw_value
-            host_path = self._host_path_for_container_value(value)
-            if host_path is not None and host_path.is_file():
-                raise ValueError("禁止将沙盒文件直接交给解释器执行")
+        if allow_script_execution:
+            return
+        raise ValueError("普通 Shell 禁止直接执行代码运行时，请使用 run_script")
 
     def build_argv(
         self,
@@ -201,10 +182,11 @@ class DockerSandboxExecutor:
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
+        allow_script_execution: bool = False,
     ) -> list[str]:
         argv = LocalWorkspaceExecutor._parse_command(command)
         workdir = self._resolve_cwd(cwd)
-        self._validate_container_interpreter_inputs(argv)
+        self._validate_container_interpreter_inputs(argv, allow_script_execution=allow_script_execution)
         LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
             argv, workdir,
             allowed_absolute_paths=tuple(
@@ -213,6 +195,7 @@ class DockerSandboxExecutor:
                     ("/project", self.project_root),
                 ) if mounted
             ),
+            allow_script_execution=allow_script_execution,
         )
         profile = network_profile or self.settings.network_profile
         if profile not in ("none", "egress"):
@@ -367,6 +350,7 @@ exec bash --noprofile --norc -i
         argv = self.build_argv(
             "bash --noprofile --norc", cwd=cwd, network_profile=network_profile,
             container_name=container_name,
+            allow_script_execution=True,
         )
         # 这段命令是服务端固定的启动脚本，不经过用户命令校验器；前面的
         # build_argv 仍负责统一应用镜像、挂载、网络和资源限制参数。
@@ -430,6 +414,7 @@ exec bash --noprofile --norc -i
         container_name = f"gugu-sandbox-{uuid4().hex}"
         docker_argv = self.build_argv(
             command, cwd=cwd, network_profile=network_profile, container_name=container_name,
+            allow_script_execution=allow_script_execution,
         )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))

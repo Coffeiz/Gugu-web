@@ -11,29 +11,30 @@ def test_local_sandbox_rejects_shell_operators(tmp_path):
         asyncio.run(sandbox.execute("pwd && echo escaped"))
 
 
-@pytest.mark.parametrize(
-    "command, filename",
-    [
-        ("bash payload.sh", "payload.sh"),
-        ("sh payload.sh", "payload.sh"),
-        ("perl payload.pl", "payload.pl"),
-        ("awk -f payload.awk", "payload.awk"),
-        ("sed -f payload.sed", "payload.sed"),
-        ("env bash payload.sh", "payload.sh"),
-        ("xargs -a payload.txt bash", "payload.txt"),
-    ],
-)
-def test_local_sandbox_rejects_workspace_files_as_interpreter_input(tmp_path, command, filename):
-    (tmp_path / filename).write_text("$(id)\n", encoding="utf-8")
+@pytest.mark.parametrize("command", [
+    "bash payload.sh", "sh payload.sh", "perl payload.pl", "awk -f payload.awk",
+    "sed -f payload.sed", "env bash payload.sh", "xargs -a payload.txt bash",
+    "bash -lc 'python3 payload.py'", "python3 -m package", "pytest tests",
+])
+def test_local_sandbox_rejects_all_code_runtime_entry_points(tmp_path, command):
+    (tmp_path / "payload.sh").write_text("echo blocked\n", encoding="utf-8")
+    (tmp_path / "payload.py").write_text("print('blocked')\n", encoding="utf-8")
     sandbox = LocalWorkspaceExecutor(tmp_path)
-    with pytest.raises(ValueError, match="解释器"):
+    with pytest.raises(ValueError, match="普通 Shell"):
         asyncio.run(sandbox.execute(command))
 
 
 def test_local_sandbox_rejects_interpreter_eval_mode(tmp_path):
     sandbox = LocalWorkspaceExecutor(tmp_path)
-    with pytest.raises(ValueError, match="inline/eval"):
+    with pytest.raises(ValueError, match="普通 Shell"):
         asyncio.run(sandbox.execute("bash -c 'source payload.sh'"))
+
+
+def test_local_sandbox_allows_only_explicit_script_bypass(tmp_path):
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    sandbox._validate_workspace_argv(
+        ["python3", "payload.py"], tmp_path, allow_script_execution=True,
+    )
 
 
 def test_local_sandbox_still_allows_reading_workspace_files_without_interpreter(tmp_path):

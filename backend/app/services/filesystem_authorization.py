@@ -297,11 +297,14 @@ async def revoke_session_filesystem_access(db: AsyncSession, user_id, session_id
         raise LookupError("会话不存在")
     from agent.interactions.confirmations import revoke_confirmation
 
+    grant = await get_active_grant(db, user_id, subject_type=SUBJECT_SESSION, subject_id=session_id)
     revoke_confirmation(
         user_id,
         f"允许会话「{session.title or '当前会话'}」读写整个用户沙箱（包含 /workspace、/personal、/project）",
         identity=f"session:filesystem:{session.id}",
     )
+    if grant is None:
+        return False
     terminal_rows = (await db.scalars(
         select(TerminalSessionRecord).where(
             TerminalSessionRecord.owner_id == user_id,
@@ -326,9 +329,6 @@ async def revoke_session_filesystem_access(db: AsyncSession, user_id, session_id
             terminal.pty_rows = None
             terminal.closed_at = now_utc()
             terminal.updated_at = now_utc()
-    grant = await get_active_grant(db, user_id, subject_type=SUBJECT_SESSION, subject_id=session_id)
-    if grant is None:
-        return False
     grant.revoked_at = now_utc()
     await db.flush()
     _record_authorization_event(

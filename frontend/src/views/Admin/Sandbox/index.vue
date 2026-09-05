@@ -85,7 +85,7 @@
       <div class="quota-editor">
         <label><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" /></label>
         <label><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" /></label>
-        <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><ActionButton variant="secondary" fit :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</ActionButton><ActionButton fit :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveQuota') }}</ActionButton></div>
+        <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><ActionButton variant="secondary" fit :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</ActionButton><ActionButton fit :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveRuntimeConfig') }}</ActionButton></div>
       </div>
       </div>
     </section>

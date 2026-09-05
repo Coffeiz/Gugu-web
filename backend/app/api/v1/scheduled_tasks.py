@@ -66,6 +66,14 @@ def _norm_authorized_tools(tools: list[str] | None) -> list[str]:
     return ["send_email"] if tools and "send_email" in tools else []
 
 
+def _norm_script_authorization(value):
+    from app.services.scheduled_tasks import normalize_script_authorization
+    try:
+        return normalize_script_authorization(value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 def _to_resp(t: ScheduledTask) -> dict:
     from app.services.filesystem_authorization import filesystem_authorization_enabled
 
@@ -86,6 +94,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "last_run_failed": bool(t.last_run_failed),   # 一次性任务触发过但没成功；前端可用来提示重试
         "delivery_targets": t.delivery_targets,
         "authorized_tools": t.authorized_tools or [],
+        "script_authorization": t.script_authorization,
     }
 
 
@@ -102,6 +111,7 @@ class TaskCreate(BaseModel):
     event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
     authorized_tools: list[str] = Field(default_factory=list)
     workspace_id: int | None = None
+    script_authorization: dict | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -116,6 +126,7 @@ class TaskUpdate(BaseModel):
     enabled: bool | None = None
     authorized_tools: list[str] | None = None
     workspace_id: int | None = None
+    script_authorization: dict | None = None
 
 
 @router.get("")
@@ -178,6 +189,12 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         workspace_id = await validate_task_workspace(db, user.id, body.workspace_id)
     except LookupError as exc:
         raise HTTPException(400, str(exc)) from exc
+    script_authorization = _norm_script_authorization(body.script_authorization)
+    if script_authorization is not None:
+        if script_authorization["root"] == "workspace" and workspace_id is None:
+            raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
+        if script_authorization["root"] in {"personal", "project"}:
+            raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")
     # 绑定事件校验：event_id 必须是本人的事件，防越权/挂错
     if body.event_id is not None:
         from app.models import CalendarEvent
@@ -199,6 +216,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         event_id=body.event_id,
         authorized_tools=_norm_authorized_tools(body.authorized_tools),
         workspace_id=workspace_id,
+        script_authorization=script_authorization,
     )
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
@@ -229,6 +247,7 @@ async def _owned(task_id: int, user: User, db: AsyncSession) -> ScheduledTask:
 @router.patch("/{task_id}")
 async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     t = await _owned(task_id, user, db)
+    previous_workspace_id = t.workspace_id
     if "workspace_id" in body.model_fields_set:
         try:
             t.workspace_id = await validate_task_workspace(db, user.id, body.workspace_id)
@@ -290,6 +309,17 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.authorized_tools = []
     if body.enabled is not None:
         t.enabled = body.enabled
+    if "script_authorization" in body.model_fields_set:
+        script_authorization = _norm_script_authorization(body.script_authorization)
+        if script_authorization is not None:
+            if script_authorization["root"] == "workspace" and t.workspace_id is None:
+                raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
+            if script_authorization["root"] in {"personal", "project"}:
+                raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")
+        t.script_authorization = script_authorization
+    elif "workspace_id" in body.model_fields_set and previous_workspace_id != t.workspace_id:
+        # 工作区变更后原脚本路径的根已不再确定，必须重新显式绑定，不能沿用旧授权。
+        t.script_authorization = None
     await db.commit()
     await db.refresh(t)
     response = _to_resp(t)

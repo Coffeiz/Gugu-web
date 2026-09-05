@@ -181,6 +181,14 @@ def test_sandboxd_request_preserves_library_write_policy():
     assert restored.project_read_only is False
 
 
+def test_sandboxd_request_round_trips_script_execution_capability():
+    from agent.sandbox.protocol import ExecuteRequest
+
+    request = ExecuteRequest("/data/user/workspace", "python3 /workspace/jobs/run.py", allow_script_execution=True)
+    restored = ExecuteRequest.from_dict(json.loads(request.to_json()))
+    assert restored.allow_script_execution is True
+
+
 def test_pty_spec_defaults_to_read_only_library_mounts():
     from agent.terminal.pty_manager import PtyLaunchSpec
 

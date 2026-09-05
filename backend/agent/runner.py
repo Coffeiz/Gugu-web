@@ -643,7 +643,7 @@ async def _run_collect_unlocked(
                 system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
                 system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
             else:
-                tool_names = [name for name in tool_names if name != "shell"]
+                tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
             user_skill_metadata=user_skill_metadata,
@@ -1087,7 +1087,7 @@ async def _run_stream_unlocked(
                 system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
                 system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
             else:
-                tool_names = [name for name in tool_names if name != "shell"]
+                tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
             user_skill_metadata=user_skill_metadata,
@@ -1536,10 +1536,12 @@ async def _run_scheduled_once(
         # 授权时，才沿用 DefaultProfile 中的 shell 工具，并在 dispatch 边界再次
         # 按 filesystem_subject 校验，不能仅靠工具列表作为权限边界。
         if not allow_shell:
-            tool_names = [name for name in tool_names if name != "shell"]
+            tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
+        subject = filesystem_subject or {}
+        if str(subject.get("subject_type") or "") == "scheduled_task" and not subject.get("script_authorization"):
+            tool_names = [name for name in tool_names if name != "run_script"]
         shell_prompt = None
         if "shell" in tool_names:
-            subject = filesystem_subject or {}
             async with _sess._SessionLocal() as policy_db:
                 tool_names = await _filter_shell_tool(
                     policy_db,
@@ -1561,7 +1563,7 @@ async def _run_scheduled_once(
                         workspace_id=subject.get("workspace_id"),
                     )
                     if shell_prompt is None:
-                        tool_names = [name for name in tool_names if name != "shell"]
+                        tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
         if shell_prompt:
             system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))

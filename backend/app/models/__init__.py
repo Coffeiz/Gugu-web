@@ -1268,6 +1268,8 @@ class ScheduledTask(Base):
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     # 用户创建任务时明确授权的自动工具；当前仅允许 send_email，空值表示不自动授权。
     authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+    # 定时任务可执行的唯一脚本；为空时不暴露 run_script。
+    script_authorization: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     # 只对 schedule_kind=once 的任务有意义：last_run_at 非空但这个是 True，
     # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；

@@ -21,13 +21,8 @@ _MAX_OUTPUT = 120_000
 _PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
 _SCRIPT_INTERPRETERS = frozenset({
     "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
-    "ruby", "sed", "sh", "zsh",
+    "pytest", "ruby", "sed", "sh", "zsh",
 })
-_INTERPRETER_EVAL_FLAGS = frozenset({
-    "-c", "--command", "-e", "--eval", "--execute", "--expression",
-})
-
-
 @dataclass(frozen=True)
 class ShellResult:
     ok: bool
@@ -79,6 +74,7 @@ class LocalWorkspaceExecutor:
 
     def _validate_workspace_argv(
         self, argv: list[str], workdir: Path, *, allowed_absolute_paths: tuple[str, ...] = (),
+        allow_script_execution: bool = False,
     ) -> None:
         """阻止 workspace 命令通过参数访问 workspace 外的路径。
 
@@ -132,7 +128,7 @@ class LocalWorkspaceExecutor:
             if stat is not None and candidate.is_file() and stat.st_nlink > 1:
                 raise ValueError("workspace 命令不能使用硬链接文件")
 
-        if self.restrict_interpreter_inputs:
+        if self.restrict_interpreter_inputs and not allow_script_execution:
             self._validate_interpreter_inputs(argv, workdir)
 
     def _validate_interpreter_inputs(self, argv: list[str], workdir: Path) -> None:
@@ -145,34 +141,15 @@ class LocalWorkspaceExecutor:
         """
         interpreter_indexes = [
             index for index, value in enumerate(argv)
-            if Path(value).name.lower() in _SCRIPT_INTERPRETERS
+            if (
+                Path(value).name.lower() in _SCRIPT_INTERPRETERS
+                or Path(value).name.lower().startswith("python3.")
+            )
         ]
         if not interpreter_indexes:
             return
 
-        # 解释器的 inline/eval 模式可以绕过“脚本文件参数”检查，例如
-        # ``bash -c 'source payload.sh'``；Agent shell 不需要嵌套解释器，直接拒绝。
-        for index in interpreter_indexes:
-            if any(value in _INTERPRETER_EVAL_FLAGS for value in argv[index + 1:]):
-                raise ValueError("禁止通过解释器执行 inline/eval 代码")
-
-        # 检查整条 argv，而不是只检查解释器后的参数，以覆盖 env/xargs 包装器：
-        # ``xargs -a payload.txt bash`` 中 payload.txt 位于 bash 之前。
-        for raw_value in argv[1:]:
-            value = raw_value.split("=", 1)[1] if "=" in raw_value else raw_value
-            if not value or value.startswith("-"):
-                continue
-            candidate = (workdir / value).resolve(strict=False)
-            try:
-                candidate.relative_to(self.root)
-            except ValueError:
-                continue
-            try:
-                is_file = candidate.is_file()
-            except OSError:
-                is_file = False
-            if is_file:
-                raise ValueError("禁止将 workspace 文件直接交给解释器执行")
+        raise ValueError("普通 Shell 禁止直接执行代码运行时，请使用 run_script")
 
     @staticmethod
     def _parse_command(command: str) -> list[str]:
@@ -198,10 +175,11 @@ class LocalWorkspaceExecutor:
         max_output_chars: int = 12_000,
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
         on_output: Callable[[str, str], Awaitable[None]] | None = None,
+        allow_script_execution: bool = False,
     ) -> ShellResult:
         argv = self._parse_command(command)
         workdir = self._resolve_cwd(cwd)
-        self._validate_workspace_argv(argv, workdir)
+        self._validate_workspace_argv(argv, workdir, allow_script_execution=allow_script_execution)
         timeout = max(0.1, min(float(timeout), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars), _MAX_OUTPUT))
 
