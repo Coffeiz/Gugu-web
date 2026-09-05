@@ -77,8 +77,12 @@ def _proactive_lead_for(req: AgentRequest, history: list) -> str:
 
 
 async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
-    """按用户偏好创建能力上下文；全量模式返回 None，由 Runner 直接使用完整 Schema。"""
-    from agent.capabilities.injector import build_fixed_adapter_context, build_fixed_adapter_context_for_user
+    """按用户偏好创建能力上下文；full-schema 仍保留真实工具 Schema。"""
+    from agent.capabilities.injector import (
+        build_fixed_adapter_context,
+        build_fixed_adapter_context_for_user,
+        build_skill_metadata_context_for_user,
+    )
     async def _full_schema_preference(session):
         if owner_id is None:
             return False
@@ -96,7 +100,9 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
             _sess._build_engine()
         async with _sess._SessionLocal() as capability_db:
             if await _full_schema_preference(capability_db):
-                return None
+                return await build_skill_metadata_context_for_user(
+                    tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
+                )
             context = await build_fixed_adapter_context_for_user(
                 tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
             )
@@ -105,7 +111,9 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
             return context
     if db is not None and owner_id is not None:
         if await _full_schema_preference(db):
-            return None
+            return await build_skill_metadata_context_for_user(
+                tool_names, db=db, owner_id=owner_id, search_settings=settings,
+            )
         context = await build_fixed_adapter_context_for_user(
             tool_names, db=db, owner_id=owner_id, search_settings=settings,
         )
@@ -116,6 +124,13 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
     if query:
         await context.select_for_query(query)
     return context
+
+
+def _capability_catalog(context):
+    from agent.capabilities.injector import catalog_block
+
+    kind = "skill" if getattr(context, "metadata_only", False) else None
+    return catalog_block(context.snapshot, kind=kind, tool_order=context.snapshot.tools)
 
 
 async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str], *, session=None) -> list[str]:
@@ -574,9 +589,8 @@ async def _run_collect_unlocked(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
         )
     if capability_context is not None:
-        from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
+            f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context, locale=req.locale)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
@@ -1002,9 +1016,8 @@ async def _run_stream_unlocked(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
         )
     if capability_context is not None:
-        from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
+            f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
@@ -1439,8 +1452,7 @@ async def _run_scheduled_once(
         tool_names = [name for name in tool_names if name != "shell"]
         capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
         if capability_context is not None:
-            from agent.capabilities.injector import catalog_block
-            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
+            snapshot_context = f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
         from agent.scheduled import ScheduledLLMRunner
 
         runner = ScheduledLLMRunner(

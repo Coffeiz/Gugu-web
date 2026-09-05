@@ -534,6 +534,7 @@ class LLMRunner:
             generation = self._run_provider(
                 user_id, system_text, messages, use_anthropic=use_anthropic,
                 model_cfg=model_cfg, session_id=session_id, session=session,
+                on_interaction=on_interaction,
             )
             continuation_pending = False
 
@@ -620,7 +621,10 @@ class LLMRunner:
                 _log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
                               before_count, after_count)
         initial_tool_names = self.tool_names
-        if self.capability_context is not None:
+        if (
+            self.capability_context is not None
+            and not getattr(self.capability_context, "metadata_only", False)
+        ):
             initial_tool_names = list(self.capability_context.select_for_messages(messages).tool_names)
         client, ctx = driver.prepare(initial_tool_names, ai, messages, system_text)
         # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
@@ -767,6 +771,21 @@ class LLMRunner:
 
         _context_compaction_event = [None]
 
+        async def notify_interaction(prompt, options, *, round_id_value=None) -> None:
+            """在进入等待前通知 IM 展示层；Web 仍只消费下方的流事件。"""
+            if on_interaction is None:
+                return
+            await on_interaction({
+                "prompt_id": prompt.id,
+                "kind": prompt.kind,
+                "title": prompt.title,
+                "body": prompt.body,
+                "options": options,
+                "expires_at": prompt.expires_at.isoformat(),
+                "round_id": round_id_value,
+                "force_display": True,
+            })
+
         while True:
             # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
             # 最后一轮额外留给模型输出核实后的收束文本。
@@ -799,6 +818,10 @@ class LLMRunner:
                         options=options,
                         expires_at=prompt.expires_at.isoformat(),
                         force_display=True,
+                    )
+                    await notify_interaction(
+                        prompt, options,
+                        round_id_value=round_id if round_number else None,
                     )
                     from app.services.interactions import wait_for_resolution
                     answer = await wait_for_resolution(
@@ -845,7 +868,11 @@ class LLMRunner:
             try:
                 # 每次 provider 请求前刷新 selected tools。工具调用/结果由驱动构造批次，
                 # 再由核心循环一次性提交到 history；这里仅更新原生 tools 参数。
-                if self.capability_context is not None and not getattr(self.capability_context, "fixed_adapter", False):
+                if (
+                    self.capability_context is not None
+                    and not getattr(self.capability_context, "fixed_adapter", False)
+                    and not getattr(self.capability_context, "metadata_only", False)
+                ):
                     selected = self.capability_context.select_for_messages(messages)
                     driver.update_tools(ctx, list(selected.tool_names))
                 _round_gen = driver.run_round(client, ctx, messages)
@@ -1081,6 +1108,7 @@ class LLMRunner:
                         expires_at=prompt.expires_at.isoformat(),
                         force_display=True,
                     )
+                    await notify_interaction(prompt, options, round_id_value=round_id)
                     from app.services.interactions import wait_for_resolution
                     answer = await wait_for_resolution(
                         user_id=user_id,

@@ -190,14 +190,17 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                 attributes = {}
                 if label == "Skill index":
                     skill_rows = skills if isinstance(skills, (list, tuple)) else []
+                    skill_slugs = []
+                    for row in skill_rows:
+                        if isinstance(row, str) and row:
+                            skill_slugs.append(row)
+                        elif isinstance(row, dict) and row.get("slug"):
+                            skill_slugs.append(str(row["slug"]))
                     attributes = {
                         "context_source": "skill_index",
                         "source": "skills_index",
                         "skill_count": len(skill_rows),
-                        "skill_slugs": [
-                            str(row.get("slug")) for row in skill_rows
-                            if isinstance(row, dict) and row.get("slug")
-                        ],
+                        "skill_slugs": skill_slugs,
                     }
                 record_context_source(
                     "context",

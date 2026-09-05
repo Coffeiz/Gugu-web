@@ -63,6 +63,32 @@ def test_catalog_keeps_user_skill_in_separate_skill_section():
     assert "用户定义的做法" in block
 
 
+def test_skill_metadata_context_does_not_take_over_provider_tools():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+
+    context = CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+            skills={"user-skill": CapabilityMeta(
+                "user-skill", "skill", "用户定义的做法。", source="user"
+            )},
+        ),
+        RegistryCapabilitySelector(),
+        fixed_adapter=False,
+        metadata_only=True,
+    )
+
+    assert context.metadata_only is True
+    assert context.fixed_adapter is False
+    skill_catalog = catalog_block(context.snapshot, kind="skill")
+    assert "### 工具" not in skill_catalog
+    assert "### Skill" in skill_catalog
+    assert "固定 Adapter 模式" not in skill_catalog
+    assert "user-skill：用户定义的做法" in skill_catalog
+
+
 def test_catalog_derives_compact_field_signature_from_tool_registry():
     snapshot = CapabilitySnapshot(
         generation=1,
@@ -181,6 +207,56 @@ def test_capability_diagnostics_expose_tool_and_skill_injection_without_schema()
     assert result["skill_names"] == ["web"]
     assert result["skill_count"] == 1
     assert "input_schema" not in repr(result)
+
+
+def test_capability_diagnostics_marks_metadata_only_skill_catalog():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+
+    result = capability_injection_diagnostics(CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+            skills={"user-skill": CapabilityMeta(
+                "user-skill", "skill", "用户定义的做法。", source="user"
+            )},
+        ),
+        RegistryCapabilitySelector(),
+        fixed_adapter=False,
+        metadata_only=True,
+    ))
+
+    assert result["metadata_only"] is True
+    assert result["catalog_kind"] == "skill"
+    assert result["catalog_count"] == 1
+    assert result["skill_names"] == ["user-skill"]
+
+
+@pytest.mark.anyio
+async def test_full_schema_preference_keeps_skill_metadata_context(monkeypatch):
+    from agent import runner
+    from agent.capabilities import injector
+
+    marker = object()
+
+    class FakeDB:
+        async def scalar(self, _statement):
+            return SimpleNamespace(data={})
+
+    async def fake_skill_context(*args, **kwargs):
+        assert args == (["search"],)
+        assert kwargs["db"] is db
+        assert kwargs["owner_id"] == "owner-1"
+        return marker
+
+    db = FakeDB()
+    monkeypatch.setattr(injector, "build_skill_metadata_context_for_user", fake_skill_context)
+
+    result = await runner._capability_context(
+        ["search"], SimpleNamespace(), db=db, owner_id="owner-1",
+    )
+
+    assert result is marker
 
 
 def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_api():

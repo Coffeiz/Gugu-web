@@ -15,7 +15,14 @@ def capability_injection_diagnostics(context) -> dict:
     snapshot = context.snapshot
     selection = context.selection
     recommendation = getattr(context, "recommendation_selection", selection)
-    catalog = catalog_block(snapshot)
+    catalog_kind = "skill" if getattr(context, "metadata_only", False) else None
+    catalog = catalog_block(snapshot, kind=catalog_kind)
+    if catalog_kind == "skill":
+        catalog_items = tuple(item for item in snapshot.skills.values() if item.source != "builtin")
+    else:
+        catalog_items = tuple(snapshot.tools.values()) + tuple(
+            item for item in snapshot.skills.values() if item.source != "builtin"
+        )
     names = list(selection.tool_names)
     name_digest = hashlib.sha256(
         json.dumps(names, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -26,7 +33,8 @@ def capability_injection_diagnostics(context) -> dict:
     ).hexdigest()[:16]
     return {
         "snapshot_generation": snapshot.generation,
-        "catalog_count": len(snapshot.catalog),
+        "catalog_count": len(catalog_items),
+        "catalog_kind": catalog_kind or "all",
         "catalog_chars": len(catalog),
         "authorized_tool_count": len(snapshot.tools),
         "selected_tool_count": len(names),
@@ -35,6 +43,7 @@ def capability_injection_diagnostics(context) -> dict:
         "skill_count": len(skill_names),
         "skill_names": skill_names,
         "skill_digest": skill_digest,
+        "metadata_only": bool(getattr(context, "metadata_only", False)),
         "skill_sources": {
             name: {
                 "source": meta.source,

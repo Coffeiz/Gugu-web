@@ -423,9 +423,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # 发送给模型。不要再把同一段文字追加进 system-reminder：两份语义相同的
     # 开场上下文会提高模型复述问候的概率，也会破坏固定前缀的稳定性。
 
-    # Web 后台生成与 IM 共用稳定能力目录：简介模式首轮注入全部已授权工具的
-    # 短描述和字段签名；完整业务 Schema 仍通过 get_tool_schema 按需获取。
-    from agent.runner import _capability_context, _filter_shell_tool
+    # Web 后台生成与 IM 共用能力目录：简介/catalog 模式注入工具短描述和字段签名；
+    # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
+    from agent.runner import _capability_catalog, _capability_context, _filter_shell_tool
     async with _sess._SessionLocal() as db:
         if model_cfg is None:
             run_config = await resolve_run_config_for_user(settings, db, user_id, req)
@@ -436,9 +436,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
     )
     if capability_context is not None:
-        from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
+            f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
         )
 
     from agent.llm.llm_select import use_anthropic_for
