@@ -165,12 +165,25 @@ def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list
     使用不同 role、字段名和图片包装；如果先拼 wire 再反向归一化，容易把
     Provider 形状误当成历史事实，也会让 batch 包装在跨 provider 时漂移。
     """
+    # 一批并行工具调用可能在某个调用进入确认门时提前中断。此时只把已经
+    # dispatch 的调用写入历史；如果把 result.tool_calls 全量写进去，就会
+    # 产生没有对应 tool_result 的孤儿 tool_call，下一轮 Anthropic/MiniMax
+    # 会直接拒绝整个历史。
+    dispatched_ids = {
+        str(getattr(call, "id", ""))
+        for call, _value in dispatched
+        if getattr(call, "id", None)
+    }
     assistant_blocks: list[dict] = []
     text = str(getattr(result, "text", "") or "")
     if text:
         assistant_blocks.append({"type": "text", "text": text})
     for call in getattr(result, "tool_calls", ()) or ():
-        if not getattr(call, "id", None) or not getattr(call, "name", None):
+        if (
+            not getattr(call, "id", None)
+            or str(call.id) not in dispatched_ids
+            or not getattr(call, "name", None)
+        ):
             continue
         assistant_blocks.append(ToolCall(
             id=str(call.id),

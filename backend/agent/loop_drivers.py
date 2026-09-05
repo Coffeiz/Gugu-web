@@ -49,6 +49,19 @@ TOOL_ARGS_TRUNCATED_ERROR = json.dumps(
     {"error": "参数不完整（内容可能过长被截断），请精简这次调用的参数后重试"}, ensure_ascii=False)
 
 
+def _dispatched_tool_ids(dispatched: list) -> set[str]:
+    """返回本批次已写入结果的工具调用 id。
+
+    共享循环遇到确认门时会暂停并行批次；未处理的调用不能继续留在
+    assistant 工具消息中，否则各 provider 的工具结果都无法完整配对。
+    """
+    return {
+        str(getattr(tool_call, "id", ""))
+        for tool_call, _result in dispatched
+        if getattr(tool_call, "id", None)
+    }
+
+
 @dataclass
 class NormalizedToolCall(ToolCall):
     """运行时工具调用，在 canonical 字段上补充 provider 解析状态。"""
@@ -377,13 +390,30 @@ class AnthropicDriver:
             raw=final.content,
         ))
 
-    def _content_dicts(self, result: RoundResult) -> list:
-        return [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in result.raw]
+    def _content_dicts(self, result: RoundResult, *, tool_ids: set[str] | None = None) -> list:
+        """序列化响应块，必要时只保留已经写入结果的 tool_use。
+
+        destructive 工具进入确认门时，共享循环会暂停当前批次。Provider 原始响应
+        可能包含多个并行 tool_use，但此时 ``dispatched`` 只有已处理的前缀；必须
+        让 assistant 与后续 user.tool_result 严格保持一一对应。
+        """
+        blocks = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in result.raw]
+        if tool_ids is None:
+            return blocks
+        return [
+            block for block in blocks
+            if block.get("type") != "tool_use"
+            or str(block.get("id") or "") in tool_ids
+        ]
 
     def build_tool_round(self, result, dispatched, *, allow_images: bool = True):
         # 序列化为 dict：让 messages 列表 JSON 可序列化（便于持久化），
         # 同时保留 thinking blocks（MiniMax / Anthropic 多轮时原样回传）
-        messages = [{"role": "assistant", "content": self._content_dicts(result)}]
+        dispatched_ids = _dispatched_tool_ids(dispatched)
+        messages = [{
+            "role": "assistant",
+            "content": self._content_dicts(result, tool_ids=dispatched_ids),
+        }]
         tool_results = [{"type": "tool_result", "tool_use_id": tc.id, "content": res} for tc, res in dispatched]
         messages.append({"role": "user", "content": tool_results})
         return messages
@@ -642,12 +672,14 @@ class OpenAIDriver:
 
     def build_tool_round(self, result, dispatched, *, allow_images: bool = True):
         raw = result.raw
+        dispatched_ids = _dispatched_tool_ids(dispatched)
         messages = [self._asst(
             raw, raw.content or None,
             tool_calls_payload=[
                 {"id": b["id"], "type": "function",
                  "function": {"name": b["name"], "arguments": b["args"]}}
                 for b in raw.tool_calls_payload
+                if str(b.get("id") or "") in dispatched_ids
             ],
         )]
         visual_parts: list[dict] = []
@@ -827,16 +859,25 @@ class OllamaDriver:
             raw=_OllamaRaw(content=content, thinking=thinking, tool_calls_payload=tool_calls),
         ))
 
-    def _assistant(self, raw: _OllamaRaw, text: str) -> dict:
+    def _assistant(self, raw: _OllamaRaw, text: str, tool_calls_payload=None) -> dict:
         message = {"role": "assistant", "content": text}
         if raw.thinking:
             message["thinking"] = raw.thinking
-        if raw.tool_calls_payload:
-            message["tool_calls"] = raw.tool_calls_payload
+        payload = raw.tool_calls_payload if tool_calls_payload is None else tool_calls_payload
+        if payload:
+            message["tool_calls"] = payload
         return message
 
     def build_tool_round(self, result, dispatched, *, allow_images: bool = True):
-        messages = [self._assistant(result.raw, result.raw.content)]
+        dispatched_ids = _dispatched_tool_ids(dispatched)
+        messages = [self._assistant(
+            result.raw,
+            result.raw.content,
+            tool_calls_payload=[
+                call for call in result.raw.tool_calls_payload
+                if str(call.get("id") or "") in dispatched_ids
+            ],
+        )]
         for tc, res in dispatched:
             content, _images = _openai_tool_result(res, allow_images=allow_images)
             messages.append({"role": "tool", "tool_name": tc.name, "content": content})
