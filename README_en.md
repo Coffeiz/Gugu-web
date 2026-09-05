@@ -148,9 +148,10 @@ cp .env.example .env
 mkdir -p backend && touch backend/.env
 # Edit the root .env and set SECRET_KEY, GUGU_DB_PASSWORD, and model configuration.
 # You may also put application settings in backend/.env; an admin password is generated on first start if omitted.
-# The user-data directory defaults to /data on the host and must exist before
-# startup (compose fails when the bind source is missing):
-sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
+# The user-data directory defaults to the sibling Gugu-data directory and must
+# exist before startup:
+mkdir -p ../Gugu-data && chown "$(id -u):$(id -g)" ../Gugu-data
+# For a custom absolute path, set GUGU_DATA_HOST_DIR=/srv/gugu-data in .env.
 docker compose up -d
 ```
 

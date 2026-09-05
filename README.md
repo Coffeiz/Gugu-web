@@ -168,8 +168,9 @@ cp .env.example .env
 mkdir -p backend && touch backend/.env
 # 编辑根目录 .env，填写 SECRET_KEY、GUGU_DB_PASSWORD 和模型相关变量
 # 模型、管理员账号等应用配置也可以写入 backend/.env；未设置管理员密码时首次启动自动生成
-# 用户数据目录默认在宿主机 /data，启动前必须先创建（bind source 不存在会启动失败）：
-sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
+# 用户数据目录默认在仓库同级 Gugu-data，启动前必须先创建：
+mkdir -p ../Gugu-data && chown "$(id -u):$(id -g)" ../Gugu-data
+# 如使用自定义绝对路径，写入 .env：GUGU_DATA_HOST_DIR=/srv/gugu-data
 docker compose up -d
 ```
 

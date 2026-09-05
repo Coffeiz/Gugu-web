@@ -62,7 +62,7 @@
 
 ### FR-DEPLOY-004：启动前置检查
 
-app 容器入口在启动前校验关键条件，失败时输出中文提示与修复命令，不产生含糊的堆栈报错：`SECRET_KEY` / `GUGU_DB_PASSWORD` 未设置（提示附 `openssl rand -base64 32` 生成命令）；用户数据目录（`GUGU_DATA_HOST_DIR`，默认 `/data`）不存在或不可写（提示 mkdir/chown 命令）。
+app 容器入口在启动前校验关键条件，失败时输出中文提示与修复命令，不产生含糊的堆栈报错：`SECRET_KEY` / `GUGU_DB_PASSWORD` 未设置（提示附 `openssl rand -base64 32` 生成命令）；用户数据目录（`GUGU_DATA_HOST_DIR`，默认 `../Gugu-data`）不存在或不可写（提示 mkdir/chown 命令）。
 
 ### FR-DEPLOY-005：随机管理员密码
 
@@ -70,7 +70,7 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 ### FR-DEPLOY-006：文档更新
 
-`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`/data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 单容器章节（变量表、升级、备份、沙盒 profile）。
+`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`Gugu-data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 单容器章节（变量表、升级、备份、沙盒 profile）。
 
 ## 3. 技术方案
 
@@ -92,6 +92,8 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 ### 3.3 环境变量
 
 沿用现有命名：`GUGU_DB_PASSWORD`、`SECRET_KEY`、`GUGU_DATA_HOST_DIR`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`GUGU_PUBLIC_APP_URL`；新增 `GUGU_WEB_IMAGE`（默认 Compose 单容器镜像引用，默认 `coffeiz/gugu-web:latest`）。BYOK 主密钥沿用 v1.0.5 的 `CREDENTIALS_MASTER_KEY_FILE` 持久卷机制，升级不丢。
+
+Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-migrate` 一次性服务复用 `migrate_storage_root.py`，将 v1.0.5 及更早版本的旧 named volume 复制到新目录；源卷只读挂载并保留，目标冲突时停止，不覆盖已有文件。
 
 ### 3.4 数据与日志隐私边界
 
@@ -153,4 +155,5 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 ### Phase 3：文档与发布衔接
 
 - [x] `DEPLOY1-007` 更新 `README.md`/`README_en.md` 一键部署说明与 `docs/quick-deploy.md` 默认 Compose 单容器章节；验收：中英文一致，amd64 限制、依赖前置、随机密码说明齐全。
+- [x] `DEPLOY1-009` 统一复用 `migrate_storage_root.py` 迁移旧 Compose named volume 到宿主机 `Gugu-data`；验收：默认/Dev/Prod Compose 均在业务服务前执行幂等迁移，源卷只读保留，冲突不覆盖。
 - [x] `DEPLOY1-008`（随 v1.0.6）Docker release 流水线增加默认单容器镜像构建推送与 `latest` tag；验收：tag 触发后 Docker Hub 出现 `gugu-web:<version>` 与 `latest`，README 一键命令可直接使用。

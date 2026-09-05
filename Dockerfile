@@ -83,6 +83,7 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
+COPY backend/scripts/migrate_storage_root.py ./scripts/migrate_storage_root.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN mkdir -p ./bin

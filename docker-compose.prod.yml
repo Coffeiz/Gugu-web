@@ -84,7 +84,7 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -92,6 +92,18 @@ services:
     volumes:
       - gugu_data:/data
       - gugu_config:/config
+
+  # v1.0.6 起用户数据使用宿主机 Gugu-data。旧版本若使用 named volume，
+  # 先由这个一次性服务复制到新目录；源卷只读且永不自动删除，重复执行安全。
+  data-migrate:
+    logging: *json-file-logging
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    entrypoint: []
+    command: ["python", "scripts/migrate_storage_root.py", "--source", "/legacy", "--target", "/data", "--apply", "--no-config-update"]
+    volumes:
+      - legacy_gugu_data:/legacy:ro
+      - gugu_data:/data
+    restart: "no"
 
   backend:
     # sandboxd 用 SO_PEERCRED 校验连接方进程；backend 与 sandboxd 分属不同容器时
@@ -125,7 +137,7 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -135,6 +147,8 @@ services:
       searxng:
         condition: service_started
       migrate:
+        condition: service_completed_successfully
+      data-migrate:
         condition: service_completed_successfully
     volumes:
       - gugu_data:/data
@@ -178,6 +192,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+      data-migrate:
+        condition: service_completed_successfully
     volumes:
       - gugu_data:/data
       - gugu_config:/config
@@ -214,6 +230,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      data-migrate:
+        condition: service_completed_successfully
     volumes:
       - gugu_data:/data
       - gugu_config:/config
@@ -241,7 +259,7 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}/users
     # 故意不默认挂宿主 rootful socket：rootless-only 主机没有 /var/run/docker.sock，
     # 挂了会让 compose 直接起不来；镜像缺失时脚本退化为 rootless 直接 pull。
     # rootless 无法拉镜像的机器可自行在 override 里把 rootful socket 只读挂进
@@ -284,13 +302,15 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       sandbox-bootstrap:
         condition: service_completed_successfully
         required: false
       migrate:
+        condition: service_completed_successfully
+      data-migrate:
         condition: service_completed_successfully
     volumes:
       - gugu_data:/data
@@ -322,15 +342,18 @@ volumes:
   # 用户数据不能用普通 named volume：Shell 沙盒容器由 backend 通过 docker.sock
   # 作为兄弟容器启动，其 --mount src=/data/users/<uid>/shell 由宿主机 daemon 解析，
   # 因此宿主机上必须存在与容器内一致的 /data 路径。这里用 local driver 把
-  # GUGU_DATA_HOST_DIR（默认 /data）bind 成同名卷，容器内外路径保持一致。
-  # 部署前置：mkdir -p /data，且属主与 rootless docker 用户一致（默认 1001:1001），
-  # 否则沙盒容器无法写入；backend 会在创建用户 shell 根目录时放开目录权限。
+  # GUGU_DATA_HOST_DIR（默认 ../Gugu-data）bind 成固定卷，容器内外路径保持一致。
+  # 部署前置：mkdir -p ../Gugu-data，且属主与 rootless docker 用户一致；否则沙盒
+  # 容器无法写入。旧 named volume 由 data-migrate 自动迁移，源卷保留不删除。
   gugu_data:
+    name: ${GUGU_DATA_VOLUME_NAME:-gugu-web-data}
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${GUGU_DATA_HOST_DIR:-/data}
+      device: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}
+  legacy_gugu_data:
+    name: ${GUGU_LEGACY_DATA_VOLUME:-gugu-web-compose_gugu_data}
   gugu_config:
   sandbox_socket:
   gugu_logs:

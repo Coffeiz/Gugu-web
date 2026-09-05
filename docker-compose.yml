@@ -37,7 +37,7 @@ x-app-environment: &app-environment
   SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
-  SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-/data}/users
+  SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}/users
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
   DOCKER_HOST: unix:///run/gugu/docker.sock
@@ -88,6 +88,17 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
+  # v1.0.6 起用户数据使用宿主机 Gugu-data。旧版本若使用 named volume，
+  # 先由这个一次性服务复制到新目录；源卷只读且永不自动删除，重复执行安全。
+  data-migrate:
+    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
+    entrypoint: []
+    command: ["python", "scripts/migrate_storage_root.py", "--source", "/legacy", "--target", "/data", "--apply", "--no-config-update"]
+    volumes:
+      - legacy_gugu_data:/legacy:ro
+      - gugu_data:/data
+    restart: "no"
+
   app:
     image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     logging: *json-file-logging
@@ -110,6 +121,8 @@ services:
         condition: service_healthy
       searxng:
         condition: service_started
+      data-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -178,17 +191,23 @@ services:
     depends_on:
       sandbox-bootstrap:
         condition: service_completed_successfully
+      data-migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
   pgdata:
   redisdata:
   gugu_data:
+    name: ${GUGU_DATA_VOLUME_NAME:-gugu-web-data}
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${GUGU_DATA_HOST_DIR:-/data}
+      device: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}
+  legacy_gugu_data:
+    # 自定义 Compose project name 的旧部署请显式设置 GUGU_LEGACY_DATA_VOLUME。
+    name: ${GUGU_LEGACY_DATA_VOLUME:-gugu-web-compose_gugu_data}
   gugu_config:
   gugu_logs:
   sandbox_socket:

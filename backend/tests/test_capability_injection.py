@@ -19,15 +19,48 @@ def test_catalog_contains_short_descriptions_only():
         tools={"search": CapabilityMeta("search", "tool", "搜索资料。", "search")},
         skills={"web": CapabilityMeta("web", "skill", "联网查找资料。", "search")},
     )
-    block = catalog_block(snapshot)
+    block = catalog_block(snapshot, include_builtin_skills=True)
     assert "搜索资料" in block
     assert "联网查找资料" in block
+    assert "### 工具" in block
+    assert "### Skill" in block
+    assert block.index("### 工具") < block.index("### Skill")
     assert "input_schema" not in block
     assert "call_tool" in block
     assert "get_tool_schema" in block
     assert "紧凑字段签名" in block
     assert "字段签名只展示类型、简单枚举、必填状态和一层结构" in block
     assert "权限和执行校验由代码完成" in block
+
+
+def test_catalog_omits_builtin_skill_already_present_in_static_prompt():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+        skills={"web": CapabilityMeta("web", "skill", "联网查找资料。")},
+    )
+
+    block = catalog_block(snapshot)
+
+    assert "### 工具" in block
+    assert "### Skill" not in block
+    assert "联网查找资料" not in block
+
+
+def test_catalog_keeps_user_skill_in_separate_skill_section():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+        skills={"user-skill": CapabilityMeta(
+            "user-skill", "skill", "用户定义的做法。", source="user"
+        )},
+    )
+
+    block = catalog_block(snapshot)
+
+    assert "### 工具" in block
+    assert "### Skill" in block
+    assert "用户定义的做法" in block
 
 
 def test_catalog_derives_compact_field_signature_from_tool_registry():

@@ -6,6 +6,7 @@ copy/stat/文件夹钩子在 P1 加入后扩这里。
 """
 import pytest
 
+from app.services import storage as storage_module
 from app.services.storage import LocalStorageBackend
 from app.services.storage.trash import to_trash_key
 
@@ -19,6 +20,23 @@ def storage(tmp_path):
 async def test_put_get_roundtrip(storage):
     await storage.put("u/a/doc.txt", b"hello")
     assert await storage.get("u/a/doc.txt") == b"hello"
+
+
+async def test_failed_replace_keeps_previous_file(tmp_path, monkeypatch):
+    """覆盖写被中断时不能留下空文件或半截内容。"""
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put("u/.agent/pattern.json", b"old")
+
+    def fail_replace(_temporary, _target):
+        raise OSError("模拟原子替换失败")
+
+    monkeypatch.setattr(storage_module.os, "replace", fail_replace)
+
+    with pytest.raises(OSError):
+        await storage.put("u/.agent/pattern.json", b"new")
+
+    assert await storage.get("u/.agent/pattern.json") == b"old"
+    assert not list((tmp_path / "u/.agent").glob(".*.tmp"))
 
 
 async def test_exists(storage):

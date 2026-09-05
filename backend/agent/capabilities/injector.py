@@ -171,7 +171,19 @@ async def build_fixed_adapter_context_for_user(
     return _build_fixed_context(index, limit=limit, names=names, owner_id=owner_id, search_settings=search_settings)
 
 
-def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool_order=None) -> str:
+def catalog_block(
+    snapshot: CapabilitySnapshot,
+    *,
+    kind: str | None = None,
+    tool_order=None,
+    include_builtin_skills: bool = False,
+) -> str:
+    """渲染分章节的能力目录。
+
+    内置 Skill 已经由静态 system prompt 注入；动态 snapshot 默认只补充用户
+    Skill，避免同一份目录重复进入上下文。诊断或独立目录展示可显式打开
+    ``include_builtin_skills``。
+    """
     lines = [
         "## 当前可用能力索引",
         "这里只是稳定的能力名称、用途和紧凑字段签名，不是完整工具 Schema，也不是已经发生的工具调用记录；"
@@ -187,12 +199,25 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
         "无关联工具时 related_tools 使用空数组 []。",
     ]
     ordered_tools = tuple(tool_order or snapshot.tools)
-    catalog = tuple(snapshot.tools[name] for name in ordered_tools if name in snapshot.tools) + tuple(snapshot.skills.values())
+    tools = tuple(snapshot.tools[name] for name in ordered_tools if name in snapshot.tools)
+    skills = tuple(
+        item for item in snapshot.skills.values()
+        if include_builtin_skills or item.source != "builtin"
+    )
+    if kind == "tool":
+        catalog = tools
+    elif kind == "skill":
+        catalog = skills
+    else:
+        catalog = ()
+        if tools:
+            lines.append("\n### 工具")
+            catalog += tools
+        if skills:
+            lines.append("\n### Skill")
+            catalog += skills
+
     for item in catalog:
-        if kind is not None and item.kind != kind:
-            continue
-        if item.kind == "tool" and item.name not in snapshot.tools:
-            continue
         description = " ".join(str(item.description_short or "").split())
         if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
             raise ValueError(

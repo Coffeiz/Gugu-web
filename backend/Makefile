@@ -18,6 +18,7 @@ ROOTLESS_USERS_ROOT ?= $(abspath ../Gugu-data/users)
 # sudo make 时 id -un 会变成 root；Rootless Docker 仍属于原登录用户。
 ROOTLESS_LOGIN ?= $(or $(RUN_USER),$(SUDO_USER),$(shell id -un))
 COMPOSE_FILE ?= ../docker-compose.yml
+GUGU_DATA_HOST_DIR ?= $(abspath ../Gugu-data)
 
 # ── venv 路径自动检测 ───────────────────────────────────
 # 优先用 .venv，找不到退到 venv
@@ -154,12 +155,12 @@ sandbox-acl-prepare: ## 按 SANDBOX_ACL 选择是否在启动前应用 ACL（默
 compose-up: ## 启动 Compose 轻量模式；SANDBOX_ACL=1 时先初始化 ACL 并启用 sandbox profile
 	@$(MAKE) sandbox-acl-prepare
 	@if [ "$(SANDBOX_ACL)" = "1" ]; then \
-		docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \
+	  GUGU_DATA_HOST_DIR="$(GUGU_DATA_HOST_DIR)" docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \
 	else \
-		docker compose -f "$(COMPOSE_FILE)" up -d; \
+	  GUGU_DATA_HOST_DIR="$(GUGU_DATA_HOST_DIR)" docker compose -f "$(COMPOSE_FILE)" up -d; \
 	fi
 
-storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users
+storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users（Compose 复用同一脚本）
 	@set -e; \
 	if [ "$$(id -u)" -eq 0 ] && systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service'; then \
 	  ./start.sh stop; \

@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -162,7 +164,27 @@ class LocalStorageBackend(StorageBackend):
     async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None:
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        # 直接 write_bytes 会先截断目标文件；进程在写入期间退出时会留下 0 字节文件。
+        # 记忆档案、配置快照等覆盖写必须先写同目录临时文件，再原子替换目标。
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            try:
+                directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                # 文件替换已经完成；部分平台不支持目录 fsync，不影响写入结果。
+                pass
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     async def get(self, key: str) -> bytes:
         return (self.root / key).read_bytes()
