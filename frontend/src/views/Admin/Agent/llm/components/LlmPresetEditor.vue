@@ -100,7 +100,7 @@
               <ToggleSwitch :model-value="draft.thinking === 'adaptive'" :aria-label="t('llmExtraUi.toggleThinking')" @update:model-value="draft.thinking = $event ? 'adaptive' : 'disabled'" />
             </div>
 
-            <div class="modal-field modal-field--row" v-if="draft.provider === 'deepseek'">
+            <div class="modal-field modal-field--row modal-field--choice" v-if="draft.provider === 'deepseek'">
               <div class="thinking-label">
                 <span>{{ t('llmExtraUi.effort') }}</span>
                 <span class="thinking-hint">{{ t('llmExtraUi.effortHint') }}</span>
@@ -112,7 +112,19 @@
               </div>
             </div>
 
-            <div class="modal-field modal-field--row" v-if="draft.provider === 'deepseek'">
+            <div class="modal-field modal-field--row modal-field--persistence">
+              <div class="thinking-label">
+                <span>{{ t('llmExtraUi.reasoningPersistence') }}</span>
+                <span class="thinking-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</span>
+              </div>
+              <div class="option-button-row">
+                <button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="toggle-btn"
+                  :class="{ active: (draft.reasoning_persistence || 'off') === option.key }"
+                  @click="draft.reasoning_persistence = option.key">{{ option.label }}</button>
+              </div>
+            </div>
+
+            <div class="modal-field modal-field--row modal-field--choice" v-if="draft.provider === 'deepseek'">
               <div class="thinking-label">
                 <span>{{ t('llmExtraUi.imageDetail') }}</span>
                 <span class="thinking-hint">{{ t('llmExtraUi.imageDetailHint') }}</span>
@@ -170,7 +182,7 @@ interface Provider { key: string; label: string; base_url: string; model: string
 interface Option { key: string; label: string; hint?: string }
 interface LlmPresetDraft {
   id?: string | number; name: string; provider: string; api_key: string; base_url: string; model: string
-  max_tokens: number; context_tokens: number; thinking: string
+  max_tokens: number; context_tokens: number; thinking: string; reasoning_persistence: 'off' | 'summary' | 'continuation'
   vision: boolean; vision_video: boolean; vision_audio: boolean
   capability_checked_at?: string
   [key: string]: unknown
@@ -210,6 +222,11 @@ const ollamaInterfaceOptions = [
   { key: 'native', label: t('adminAgentUi.ollamaNative') },
   { key: 'openai', label: t('adminAgentUi.providerOpenai') },
 ]
+const reasoningPersistenceOptions = computed(() => [
+  { key: 'off', label: t('llmExtraUi.reasoningOff') },
+  { key: 'summary', label: t('llmExtraUi.reasoningSummary') },
+  { key: 'continuation', label: t('llmExtraUi.reasoningContinuation') },
+] as const)
 const $emit = defineEmits<{
   (event: 'close'): void; (event: 'after-close'): void; (event: 'save'): void; (event: 'set-provider', key: string): void; (event: 'open-model-menu'): void
   (event: 'close-model-menu'): void; (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
@@ -245,14 +262,20 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .capability-probe:disabled { opacity:.5; cursor:default; }
 .modal-field--row > span { font-size: 11px; font-weight: 600; color: rgba(255,255,255,.35); letter-spacing: .07em; }
 .thinking-label > span:first-child { font-size: 11px; font-weight: 600; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .07em; }
-.thinking-hint { color: rgba(255,255,255,.2); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.thinking-hint { max-width: min(360px, 100%); display: -webkit-box; overflow: hidden; color: rgba(255,255,255,.2); text-transform: none; letter-spacing: 0; font-weight: 400; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .option-button-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .option-button-row .toggle-btn { min-height:28px; padding:4px 10px; }
+.modal-field--persistence > .thinking-label { flex:1 1 auto; min-width:0; }
+.modal-field--persistence > .option-button-row { flex:0 0 auto; flex-wrap:nowrap; }
+.modal-field--persistence .toggle-btn { white-space:nowrap; padding-inline:8px; }
+.modal-field--choice > .thinking-label { flex:1 1 auto; min-width:0; }
+.modal-field--choice > .option-button-row { flex:0 0 auto; flex-wrap:nowrap; }
+.modal-field--choice .toggle-btn { white-space:nowrap; padding-inline:8px; }
 .option-button-row--center { justify-content:flex-end; }
 .toggle-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .model-fetch-btn, .pca-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .btn-ghost, .btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
-@media(max-width:720px){ .modal-field-row { grid-template-columns:1fr; gap:0; } .modal-box { padding:18px; } }
+@media(max-width:720px){ .modal-field-row { grid-template-columns:1fr; gap:0; } .modal-box { padding:18px; } .thinking-hint { max-width:none; } .modal-field--persistence { align-items:flex-start; } .modal-field--persistence > .option-button-row { flex-wrap:wrap; justify-content:flex-end; } }
 </style>
 <style scoped>
 .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: background-color .15s; }

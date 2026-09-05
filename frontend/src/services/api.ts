@@ -162,13 +162,46 @@ export const projectsApi = {
 }
 
 // ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
+export type ScheduledTaskKind = 'cron' | 'interval' | 'once'
+export interface ScheduledTaskInput {
+  name: string
+  schedule_kind?: 'cron' | 'interval' | 'once'
+  cron?: string | null
+  interval_minutes?: number | null
+  start_at?: string | null
+  end_at?: string | null
+  payload?: string
+  channels?: string[]
+  enabled?: boolean
+  event_id?: number | null
+  authorized_tools?: string[]
+  workspace_id?: number | null
+}
+export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedule_kind'> {
+  id: number
+  schedule_kind: ScheduledTaskKind
+  cron: string
+  payload: string
+  channels: string[]
+  enabled: boolean
+  schedule_status?: 'active' | 'disabled' | 'ended'
+  last_run_at?: string | null
+  last_run_failed?: boolean
+  delivery_targets?: unknown
+  authorized_tools: string[]
+  filesystem_authorized: boolean
+}
+
 export const scheduledTasksApi = {
-  list:         ()                  => get('/scheduled-tasks'),
+  list:         ()                  => get<{ tasks: ScheduledTaskResponse[] }>('/scheduled-tasks'),
   listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
-  create:       (data: any)         => post('/scheduled-tasks', data),
-  update:       (id: number, data: any, meta?: RequestMeta) => patch(`/scheduled-tasks/${id}`, data, meta),
+  create:       (data: Partial<ScheduledTaskInput>)         => post<ScheduledTaskResponse>('/scheduled-tasks', data),
+  update:       (id: number, data: Partial<ScheduledTaskInput>, meta?: RequestMeta) => patch<ScheduledTaskResponse>(`/scheduled-tasks/${id}`, data, meta),
   delete:       (id: number)        => del(`/scheduled-tasks/${id}`),
   run:          (id: number)        => post(`/scheduled-tasks/${id}/run`),
+  requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/scheduled-tasks/${id}/filesystem-authorization/request`),
+  confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/scheduled-tasks/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
+  revokeFilesystemAuthorization: (id: number) => del(`/scheduled-tasks/${id}/filesystem-authorization`),
   testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
@@ -516,7 +549,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; filesystemAuthorizationEnabled: boolean; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
   create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
@@ -529,9 +562,7 @@ export type TerminalAccessStatus = Awaited<ReturnType<typeof workspacesApi.statu
 
 /** 终端入口与后端 page_access 保持同一套 Shell 能力判定。 */
 export function canAccessTerminals(status: TerminalAccessStatus): boolean {
-  return status.sandboxEnabled && status.globalEnabled && (
-    status.userEnabled || (status.systemGlobalEnabled && status.userSystemEnabled)
-  )
+  return status.terminalEntryEnabled
 }
 
 export type TerminalItem = {
@@ -569,7 +600,7 @@ export type TerminalEventItem = {
 }
 
 export const terminalsApi = {
-  list: () => get<{ enabled: boolean; items: TerminalItem[] }>('/terminals'),
+  list: () => get<{ enabled: boolean; ptyEnabled: boolean; items: TerminalItem[] }>('/terminals'),
   create: (data: { name?: string; sessionId?: number; workspaceId?: number; mode?: TerminalItem['mode'] }) => post<TerminalItem>('/terminals', data),
   detail: (id: string) => get<TerminalItem>(`/terminals/${encodeURIComponent(id)}`),
   events: async (id: string, after = 0, signal?: AbortSignal, onEvent?: (event: TerminalEventItem) => void): Promise<void> => {
@@ -630,6 +661,9 @@ export const agentApi = {
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/agent/sessions/${id}/filesystem-authorization/request`),
+  confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/agent/sessions/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
+  revokeFilesystemAuthorization: (id: number) => del(`/agent/sessions/${id}/filesystem-authorization`),
   cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
   // 知道属于哪个会话才能 loadSession + 定位滚动
