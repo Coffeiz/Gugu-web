@@ -97,7 +97,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatTokens).toContain('--gugu-chat-header-height: 50px;')
     expect(chatTokens).toContain('--gugu-chat-composer-height: 50px;')
     expect(chatSidebar).toContain('height: var(--gugu-chat-header-height);')
-    expect(chatSidebar).toContain('min-height: var(--gugu-chat-composer-height);')
+    expect(chatSidebar).toContain('height: var(--gugu-chat-composer-height);')
     expect(chatSidebar).toContain('height: var(--control-height-md);')
     expect(chatWindow).toContain('min-height: var(--gugu-chat-header-height);')
     expect(chatComposer).toContain('min-height: var(--gugu-chat-composer-height);')
