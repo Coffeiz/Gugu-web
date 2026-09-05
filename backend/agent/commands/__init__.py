@@ -54,25 +54,26 @@ def is_goal_start(text: str, *, allow_leading_mention: bool = False) -> tuple[bo
 
 
 async def handle(user_id, text: str, *, session_id: int | None = None,
-                 allow_leading_mention: bool = False) -> str | dict | None:
+                 allow_leading_mention: bool = False,
+                 locale: str | None = None) -> str | dict | None:
     """命中控制命令 → 返回文本或结构化交互（短路）；否则 None。"""
     name, arg = parse(text, allow_leading_mention=allow_leading_mention)
     if name is None:
         return None
     if name == "help":
-        return command_help(arg) if arg and not is_help_arg(arg) else all_help_text()
+        return command_help(arg, locale) if arg and not is_help_arg(arg) else all_help_text(locale)
     if name == "memory":
-        return await show_memory(user_id, arg)
+        return await show_memory(user_id, arg, locale)
     if name == "forget":
-        return await forget(user_id, arg)
+        return await forget(user_id, arg, locale)
     if name == "compact":
-        return await handle_compact(user_id, session_id, arg)
+        return await handle_compact(user_id, session_id, arg, locale)
     if name == "goal":
-        return await handle_goal(user_id, session_id, arg)
+        return await handle_goal(user_id, session_id, arg, locale)
     if name == "unlimited":
-        return await handle_unlimited(user_id, session_id, arg)
+        return await handle_unlimited(user_id, session_id, arg, locale)
     if name == "new":
-        return await handle_new(user_id, session_id, arg)
+        return await handle_new(user_id, session_id, arg, locale)
     if name == "workspace":
-        return await handle_workspace(user_id, session_id, arg)
+        return await handle_workspace(user_id, session_id, arg, locale)
     return None

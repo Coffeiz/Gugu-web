@@ -5,9 +5,9 @@ from agent.commands.help import command_help, is_help_arg
 from agent.memory import store
 
 
-async def show_memory(user_id, arg: str = "") -> str:
+async def show_memory(user_id, arg: str = "", locale: str | None = None) -> str:
     if is_help_arg(arg):
-        return command_help("memory")
+        return command_help("memory", locale)
     profile = await store.read_profile_list(user_id)
     patterns = await store.read_pattern_list(user_id)
     summary = await store.read_summary(user_id)
@@ -38,9 +38,9 @@ def _forget_match(pattern_text: str, arg: str) -> bool:
     return store._pattern_similar(pattern_text, arg)
 
 
-async def forget(user_id, arg: str) -> str:
+async def forget(user_id, arg: str, locale: str | None = None) -> str:
     if is_help_arg(arg):
-        return command_help("forget")
+        return command_help("forget", locale)
     if not arg or len(store._pattern_norm(arg)) < 2:
         return "想忘掉哪条呀？比如「/forget 我喜欢猫」。发「/memory」可以先看看我都记得啥。"
     profile = await store.read_profile_list(user_id)

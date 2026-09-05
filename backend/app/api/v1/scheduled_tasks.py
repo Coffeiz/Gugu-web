@@ -312,6 +312,7 @@ async def request_task_filesystem_authorization(
 ):
     """为任务授权弹窗申请一次性确认码；此请求本身不创建授权。"""
     from agent.security import confirm
+    from agent.interactions.confirmations import revoke_confirmation
     from app.services.filesystem_authorization import (
         SUBJECT_SCHEDULED_TASK, record_filesystem_authorization_request,
         filesystem_authorization_enabled,
@@ -330,6 +331,13 @@ async def request_task_filesystem_authorization(
         if grant is not None and grant.revoked_at is None:
             return {"status": "authorized", "task_id": task.id}
     summary = _task_authorization_summary(task)
+    # 兼容旧版本：数据库授权已撤销时，清掉可能遗留的 Redis 确认授权，避免
+    # 再次申请被误判为已确认而不弹窗。
+    revoke_confirmation(
+        user.id,
+        summary,
+        identity=f"scheduled-task:filesystem:{task.id}",
+    )
     args: dict = {}
     pending = confirm.needs_confirmation(
         args, summary, user.id, identity=f"scheduled-task:filesystem:{task.id}", ttl_minutes=10,

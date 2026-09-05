@@ -17,9 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import chat_attach
 from app.core.security import get_current_user, get_current_user_id, get_current_user_identity, CurrentUserIdentity
 from app.core.ownership import get_owned
-from app.core.tz import iso_utc
+from app.core.tz import iso_utc, now_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, User, UserBot, Workspace
+from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, User, UserBot, Workspace
 from app.services import interactions
 from app.services.workspaces import resolve_sandbox_root
 from agent.sandbox.docker_runtime import cleanup_sandboxes_for_root
@@ -414,6 +414,23 @@ async def list_sessions(
 
     from app.services.filesystem_authorization import filesystem_authorization_enabled
     filesystem_auth_enabled = filesystem_authorization_enabled()
+    authorized_session_ids: set[int] = set()
+    if filesystem_auth_enabled:
+        active_grants = await db.scalars(
+            select(FilesystemAuthorizationGrant.subject_id).where(
+                FilesystemAuthorizationGrant.user_id == current_user.id,
+                FilesystemAuthorizationGrant.subject_type == "session",
+                FilesystemAuthorizationGrant.revoked_at.is_(None),
+                or_(
+                    FilesystemAuthorizationGrant.expires_at.is_(None),
+                    FilesystemAuthorizationGrant.expires_at > now_utc(),
+                ),
+            )
+        )
+        authorized_session_ids = {
+            int(subject_id) for subject_id in active_grants
+            if str(subject_id).isdigit()
+        }
 
     return [
         {
@@ -424,7 +441,7 @@ async def list_sessions(
             "workspaceName": workspace_name,
             "goalActive": goal_active(s),
             "goalStatus": goal_status(s),
-            "filesystemAuthorized": filesystem_auth_enabled and getattr(s, "filesystem_authorization_grant_id", None) is not None,
+            "filesystemAuthorized": filesystem_auth_enabled and s.id in authorized_session_ids,
             "filesystemAuthorizationEnabled": filesystem_auth_enabled,
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
@@ -449,6 +466,7 @@ async def request_session_filesystem_authorization(
 ):
     """为网页会话申请一次性确认码；申请本身不授予文件系统权限。"""
     from agent.security import confirm
+    from agent.interactions.confirmations import revoke_confirmation
     from app.services.filesystem_authorization import (
         SUBJECT_SESSION, filesystem_authorization_enabled,
         record_filesystem_authorization_request,
@@ -461,6 +479,13 @@ async def request_session_filesystem_authorization(
         raise HTTPException(409, "完整用户沙箱授权功能当前未开启")
     if getattr(session, "filesystem_authorization_grant_id", None) is not None:
         return {"status": "authorized", "session_id": session.id}
+    # 兼容旧版本：数据库授权已撤销时，清掉可能遗留的 Redis 确认授权，避免
+    # 再次申请被误判为已确认而不弹窗。
+    revoke_confirmation(
+        current_user.id,
+        _session_authorization_summary(session),
+        identity=f"session:filesystem:{session.id}",
+    )
     pending = confirm.needs_confirmation(
         {}, _session_authorization_summary(session), current_user.id,
         identity=f"session:filesystem:{session.id}", ttl_minutes=10,

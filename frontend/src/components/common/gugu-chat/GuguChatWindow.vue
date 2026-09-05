@@ -48,11 +48,11 @@
           type="button"
           class="filesystem-auth-button"
           :class="{ authorized: filesystemAuthorized }"
-          :title="filesystemAuthorized ? t('chat.filesystemAuthAuthorized') : t('chat.filesystemAuthButton')"
-          :aria-label="filesystemAuthorized ? t('chat.filesystemAuthAuthorized') : t('chat.filesystemAuthButton')"
+          :title="filesystemAuthorized ? t('chat.filesystemAuthRevoke') : t('chat.filesystemAuthButton')"
+          :aria-label="filesystemAuthorized ? t('chat.filesystemAuthRevoke') : t('chat.filesystemAuthButton')"
           @click="onFilesystemAuthorization"
         >
-          <Icon name="admin.shield" :size="13" />
+          <Icon :name="filesystemAuthorized ? 'admin.shieldAuthorized' : 'admin.shield'" :size="13" />
         </button>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
@@ -283,7 +283,8 @@ defineExpose({
   font-size: 12px;
   font-weight: 500;
 }
-.chat-workspace-name.is-compact { flex: 1 1 auto; }
+/* workspace 与授权入口保持语义相邻；右侧空余空间由在线状态吸收。 */
+.chat-workspace-name.is-compact { flex: 0 1 auto; }
 .chat-goal-indicator {
   display: inline-flex;
   align-items: center;
@@ -308,6 +309,8 @@ defineExpose({
 }
 .filesystem-auth-button {
   width: 26px; height: 26px; flex: 0 0 auto; padding: 0;
+  /* 授权入口紧跟 workspace；收起态由 workspace 的伸展规则自然落在右侧。 */
+  margin-left: -6px;
   display: inline-flex; align-items: center; justify-content: center;
   border: 0; border-radius: 7px; background: transparent;
   color: var(--content-tertiary); cursor: pointer;
@@ -315,6 +318,7 @@ defineExpose({
 }
 .filesystem-auth-button:hover { background: var(--action-soft); color: var(--action-primary); }
 .filesystem-auth-button.authorized { color: var(--color-success); }
+.filesystem-auth-button .app-icon { transform: translateY(1px); }
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; line-height: 1; }

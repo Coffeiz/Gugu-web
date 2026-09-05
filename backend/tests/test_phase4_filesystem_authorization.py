@@ -77,8 +77,27 @@ async def test_grant_and_revoke_are_audited_in_same_transaction(
     await db.commit()
     events = (await db.scalars(select(SecurityEvent).order_by(SecurityEvent.id))).all()
     assert [event.reason_code for event in events] == ["granted", "revoked"]
-    await db.refresh(session)
-    assert session.filesystem_authorization_grant_id is None
+    policy = await resolve_filesystem_policy(db, user_a.id, subject_id=session.id)
+    assert policy.full_user_sandbox is False
+
+
+@pytest.mark.asyncio
+async def test_session_grant_remains_effective_without_session_link_field(
+    db, user_a, enable_filesystem_authorization,
+):
+    session = await _session(db, user_a)
+    grant = FilesystemAuthorizationGrant(
+        user_id=user_a.id, subject_type="session", subject_id=str(session.id),
+        scope="user_sandbox", permission="read_write", granted_by="user",
+    )
+    db.add(grant)
+    await db.flush()
+
+    await db.commit()
+    policy = await resolve_filesystem_policy(db, user_a.id, subject_id=session.id)
+
+    assert policy.full_user_sandbox is True
+    assert policy.grant_id == grant.id
 
 
 @pytest.mark.asyncio

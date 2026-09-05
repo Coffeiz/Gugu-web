@@ -55,7 +55,7 @@
       :current-session-workspace-name="currentSessionWorkspaceName"
       :current-session-goal-active="currentSessionGoalActive"
       :current-session-goal-status="currentSessionGoalStatus"
-      :filesystem-authorized="currentSessionFilesystemAuthorized"
+      :filesystem-authorized="sessionFilesystemAuthorized"
       :filesystem-authorization-enabled="currentSessionFilesystemAuthorizationEnabled"
       :session-id="sessionId"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
@@ -76,7 +76,7 @@
       :on-interaction-select="onInteractionSelect"
       :on-reference-click="onReferenceClick"
       :on-prompt-connect="promptConnectIM"
-      :on-filesystem-authorization="requestSessionAuthorization"
+      :on-filesystem-authorization="toggleSessionAuthorization"
       :on-rename-session="renameSession"
       :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
       :on-close="closeChat" :on-raise-chat="raiseChat"
@@ -384,6 +384,12 @@ const {
   animateGreeting, clearStatus,
 } = conversation
 
+// 授权/撤销成功后立即更新标题栏；会话列表刷新只负责把本地状态重新校准到服务端。
+const sessionFilesystemAuthorized = ref(false)
+watch([sessionId, currentSessionFilesystemAuthorized], ([id, authorized]) => {
+  sessionFilesystemAuthorized.value = id != null && Boolean(authorized)
+}, { immediate: true })
+
 const sessionAuthorizationApi: FilesystemAuthorizationApi = {
   request: agentApi.requestFilesystemAuthorization,
   confirm: agentApi.confirmFilesystemAuthorization,
@@ -391,9 +397,17 @@ const sessionAuthorizationApi: FilesystemAuthorizationApi = {
 }
 const sessionAuthorization = useFilesystemAuthorization(sessionAuthorizationApi)
 
-async function requestSessionAuthorization() {
+async function toggleSessionAuthorization() {
   if (sessionId.value == null || !currentSessionFilesystemAuthorizationEnabled.value) return
   try {
+    if (sessionFilesystemAuthorized.value) {
+      await sessionAuthorization.revoke(sessionId.value)
+      const session = sessions.value.find(item => item.id === sessionId.value)
+      if (session) session.filesystemAuthorized = false
+      sessionFilesystemAuthorized.value = false
+      await fetchSessions()
+      return
+    }
     await sessionAuthorization.request({ id: sessionId.value, name: currentSessionTitle.value })
   } catch (error) {
     _chatTip(errorMessage(error))
@@ -403,6 +417,7 @@ async function requestSessionAuthorization() {
 async function confirmSessionAuthorization() {
   try {
     await sessionAuthorization.confirm()
+    sessionFilesystemAuthorized.value = true
     await fetchSessions()
     sessionAuthorization.close()
   } catch (error) {

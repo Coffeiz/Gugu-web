@@ -7,10 +7,10 @@ from __future__ import annotations
 from agent.commands.help import command_help, is_help_arg
 
 
-async def handle(user_id, session_id: int | None, arg: str) -> str:
+async def handle(user_id, session_id: int | None, arg: str, locale: str | None = None) -> str:
     """在当前会话创建、查看、暂停、恢复或取消目标任务。"""
     if is_help_arg(arg):
-        return command_help("goal")
+        return command_help("goal", locale)
     if not session_id:
         return "当前还没有可设置长任务模式的对话。"
 

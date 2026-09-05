@@ -111,6 +111,21 @@ def grant_confirmation(user_id, summary: str, identity: str | None = None,
         return False
 
 
+def revoke_confirmation(user_id, summary: str, identity: str | None = None) -> bool:
+    """撤销确认授权并清理同一范围的待确认请求。"""
+    try:
+        r = get_redis_sync()
+        req_key = f"{_REQ_PREFIX}:{user_id}:{_summary_hash(summary)}:{_identity_hash(identity)}"
+        code = r.get(req_key)
+        keys = [_grant_key(user_id, summary, identity), req_key]
+        if code:
+            keys.append(f"{_CODE_PREFIX}:{user_id}:{code}")
+        r.delete(*keys)
+        return True
+    except Exception:
+        return False
+
+
 def redeem_confirmation(user_id, code: str) -> int | None:
     """用短确认码兑换授权。成功返回授权有效期（分钟），码无效/过期返回 None。"""
     code = str(code or "").strip()
@@ -202,5 +217,5 @@ def needs_confirmation(
 __all__ = [
     "confirmation_payload", "is_block", "is_confirmed", "needs_confirmation",
     "normalize_confirmation_result",
-    "grant_confirmation", "redeem_confirmation",
+    "grant_confirmation", "revoke_confirmation", "redeem_confirmation",
 ]

@@ -4,9 +4,9 @@ from __future__ import annotations
 from agent.commands.help import command_help, is_help_arg
 
 
-async def handle(user_id, session_id: int | None, arg: str) -> str | dict:
+async def handle(user_id, session_id: int | None, arg: str, locale: str | None = None) -> str | dict:
     if is_help_arg(arg):
-        return command_help("workspace")
+        return command_help("workspace", locale)
     if not session_id:
         return "当前还没有会话，暂时不能绑定工作区。"
     from app.db import session as db_session

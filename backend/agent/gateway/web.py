@@ -263,7 +263,9 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     from agent import commands as _commands
     command_name, _command_arg = _commands.parse(req.message)
     goal_start, goal_text = _commands.is_goal_start(req.message)
-    cmd_reply = await _commands.handle(user_id, req.message, session_id=session_id)
+    cmd_reply = await _commands.handle(
+        user_id, req.message, session_id=session_id, locale=current_locale,
+    )
     if command_name in {"goal", "unlimited"}:
         async with _sess._SessionLocal() as state_db:
             state_session = await state_db.get(ConversationSession, session_id)

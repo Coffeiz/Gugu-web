@@ -283,8 +283,6 @@ async def grant_session_filesystem_access(
     )
     db.add(grant)
     await db.flush()
-    session.filesystem_authorization_grant_id = grant.id
-    await db.flush()
     _record_authorization_event(
         db, user_id=user_id, subject_type=SUBJECT_SESSION, subject_id=session_id,
         outcome="granted", grant_id=grant.id, source=granted_by,
@@ -297,11 +295,17 @@ async def revoke_session_filesystem_access(db: AsyncSession, user_id, session_id
     session = await get_owned(db, ConversationSession, session_id, user_id)
     if session is None:
         raise LookupError("会话不存在")
+    from agent.interactions.confirmations import revoke_confirmation
+
+    revoke_confirmation(
+        user_id,
+        f"允许会话「{session.title or '当前会话'}」读写整个用户沙箱（包含 /workspace、/personal、/project）",
+        identity=f"session:filesystem:{session.id}",
+    )
     grant = await get_active_grant(db, user_id, subject_type=SUBJECT_SESSION, subject_id=session_id)
     if grant is None:
         return False
     grant.revoked_at = now_utc()
-    session.filesystem_authorization_grant_id = None
     await db.flush()
     _record_authorization_event(
         db, user_id=user_id, subject_type=SUBJECT_SESSION, subject_id=session_id,
@@ -356,6 +360,13 @@ async def revoke_scheduled_task_filesystem_access(db: AsyncSession, user_id, tas
     task = await get_owned(db, ScheduledTask, task_id, user_id)
     if task is None or task.event_id is not None:
         raise LookupError("定时任务不存在")
+    from agent.interactions.confirmations import revoke_confirmation
+
+    revoke_confirmation(
+        user_id,
+        f"允许定时任务「{task.name}」读写整个用户沙箱（包含 /workspace、/personal、/project）",
+        identity=f"scheduled-task:filesystem:{task.id}",
+    )
     grant = (
         await db.get(FilesystemAuthorizationGrant, task.filesystem_authorization_grant_id)
         if task.filesystem_authorization_grant_id is not None else None

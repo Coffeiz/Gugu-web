@@ -131,6 +131,21 @@ def test_confirmation_uses_explicit_ttl(user_a):
     assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) is None
 
 
+def test_revoking_confirmation_allows_reauthorization(user_a):
+    from agent.interactions import confirmations
+
+    summary = "允许会话「测试会话」读写整个用户沙箱（包含 /workspace、/personal、/project）"
+    identity = "session:filesystem:123"
+    blocked = confirmations.needs_confirmation({}, summary, user_a.id, identity=identity)
+    code = _confirm_code(blocked)
+    assert confirmations.redeem_confirmation(user_a.id, code) is not None
+    assert confirmations.needs_confirmation({}, summary, user_a.id, identity=identity) is None
+
+    assert confirmations.revoke_confirmation(user_a.id, summary, identity=identity)
+    again = confirmations.needs_confirmation({}, summary, user_a.id, identity=identity)
+    assert _blocked(again)
+
+
 async def test_batch_delete_grant_is_summary_bound(db, user_a):
     from agent.interactions import confirmations
 
