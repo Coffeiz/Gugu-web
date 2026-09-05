@@ -160,3 +160,20 @@ async def test_publish_uses_resource_revision_not_global_revision(monkeypatch):
     assert event["revision"] == 1
     assert "live-revision:user-1:projects" in redis.keys
     assert all("live-revision:user-1" not in key or key.endswith(":projects") for key in redis.keys)
+
+
+@pytest.mark.asyncio
+async def test_publish_notification_without_resource_is_not_dropped(monkeypatch):
+    class Redis:
+        def __init__(self):
+            self.published = []
+
+        async def publish(self, channel, value):
+            self.published.append((channel, json.loads(value)))
+
+    redis = Redis()
+    monkeypatch.setattr(events, "get_redis", lambda: redis)
+
+    note = {"id": 9, "title": "定时任务", "content": "执行结果", "bubble": True, "persist": True}
+    assert await events.publish("user-1", notification=note) is True
+    assert redis.published == [("events:user-1", {"notification": note})]

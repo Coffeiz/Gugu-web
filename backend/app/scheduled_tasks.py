@@ -298,8 +298,9 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
 
 
 def _delivery_succeeded(result: dict) -> bool:
-    """一次性任务只有在所有选定渠道确认发送后才删除。"""
-    return not result or all(value == "已发送" for value in result.values())
+    """一次性任务只有在所有选定渠道确认结果已送达或已持久化后才删除。"""
+    successful = {"已发送", "已保存（实时提示失败）"}
+    return not result or all(value in successful for value in result.values())
 
 
 async def _delete_completed_once(task_id: int, user_id) -> None:
@@ -358,11 +359,12 @@ async def deliver_to_channels(
             result["邮件"] = f"发送失败（{type(e).__name__}）"
             diag_log("app.scheduled_tasks.deliver_email", e)
     if {"web", "chat"} & chans:
-        from app.core import events as _ev
-        await _ev.publish(uid, notification={"title": title, "content": text})
+        web_ok, web_status = await _deliver_web_notification(uid, title, text)
         # 网页通知目前只是纯文字气泡，不支持带图——files 非空时如实告知，不能跟 IM 那边
         # 一样标"已发送"，否则「配图任务只选了网页渠道」会静默丢图却显示成功。
-        result["web 通知"] = "已发送" if not files else "已发送（网页通知不支持附件，图片未随通知显示）"
+        if web_ok and files:
+            web_status = f"{web_status}（网页通知不支持附件，图片未随通知显示）"
+        result["web 通知"] = web_status
     im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
     if "im" in chans:
         im_targets.update(_CHAN_PLATFORM.values())
@@ -959,6 +961,47 @@ async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
     if delivery.get("status") == "sent":
         return True, "已发送"
     return False, f"发送失败（{delivery.get('error_code', 'smtp_delivery_error')}）"
+
+
+async def _deliver_web_notification(uid, title: str, text: str) -> tuple[bool, str]:
+    """持久化并实时发布一条用户 Web 通知。
+
+    定时任务不能只依赖 Redis Pub/Sub：用户可能当时不在线，或浏览器恰好重连而错过
+    实时事件。先落 ``site_notifications``，再发布实时事件；两步中只有实时发布失败时，
+    仍算投递成功，但返回“已保存”而不虚报“已发送”。
+    """
+    import app.db.session as ss
+    from app.models import SiteNotification
+
+    try:
+        async with ss._SessionLocal() as db:
+            record = SiteNotification(
+                title=title,
+                content=text,
+                target=str(uid),
+                bubble=True,
+                persist=True,
+                created_by="scheduled_task",
+            )
+            db.add(record)
+            await db.commit()
+            await db.refresh(record)
+            note = {
+                "id": record.id,
+                "title": record.title,
+                "content": record.content,
+                "color": record.color,
+                "bubble": record.bubble,
+                "persist": record.persist,
+            }
+    except Exception as e:
+        diag_log("app.scheduled_tasks.persist_web_notification", e)
+        return False, "发送失败（通知中心不可用）"
+
+    from app.core import events as _ev
+    if await _ev.publish(uid, notification=note):
+        return True, "已发送"
+    return True, "已保存（实时提示失败）"
 
 
 async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> tuple[int, int]:

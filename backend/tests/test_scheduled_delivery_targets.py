@@ -241,17 +241,17 @@ async def test_delivery_with_failed_attachments_is_not_reported_success(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_web_only_delivery_with_files_reports_no_attachment_support(monkeypatch):
+async def test_web_only_delivery_with_files_reports_no_attachment_support(monkeypatch, db, user_a):
     """网页通知目前不支持带图——选了带图任务但只勾了网页渠道时，结果必须如实
     说明图片没有随通知显示，不能跟没有 files 时一样报「已发送」（否则用户会
     以为图已经推过去了，实际网页通知里什么都没有）。"""
     import app.scheduled_tasks as scheduled
     from app.core import events as _ev
 
-    monkeypatch.setattr(_ev, "publish", AsyncMock())
+    monkeypatch.setattr(_ev, "publish", AsyncMock(return_value=True))
 
     result = await scheduled.deliver_to_channels(
-        "user-1", "任务", "正文", {"web"}, files=[{"attach_id": "a1"}]
+        user_a.id, "任务", "正文", {"web"}, files=[{"attach_id": "a1"}]
     )
 
     assert result == {"web 通知": "已发送（网页通知不支持附件，图片未随通知显示）"}
@@ -483,6 +483,56 @@ async def test_trial_does_not_update_last_run_at(monkeypatch, db, user_a):
     assert result == {"web 通知": "已发送"}
     await db.refresh(task)
     assert task.last_run_at is None
+
+
+@pytest.mark.asyncio
+async def test_web_delivery_persists_and_publishes_notification(monkeypatch, db, user_a):
+    """定时任务 Web 渠道必须落通知中心，并发布实时通知，不能只返回假成功。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events
+    from app.models import SiteNotification
+    from sqlalchemy import select
+
+    publish = AsyncMock(return_value=True)
+    monkeypatch.setattr(events, "publish", publish)
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "每日快讯", "今天的结果", {"web"}, files=None,
+    )
+
+    assert result == {"web 通知": "已发送"}
+    publish.assert_awaited_once()
+    assert publish.await_args.kwargs["notification"]["title"] == "每日快讯"
+    record = await db.scalar(select(SiteNotification).where(
+        SiteNotification.target == str(user_a.id),
+        SiteNotification.title == "每日快讯",
+    ))
+    assert record is not None
+    assert record.content == "今天的结果"
+    assert record.persist is True
+    assert record.bubble is True
+
+
+@pytest.mark.asyncio
+async def test_web_delivery_reports_saved_when_realtime_publish_fails(monkeypatch, db, user_a):
+    """Redis 实时发布失败时仍保留通知中心记录，但不能报告实时已发送。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events
+    from app.models import SiteNotification
+    from sqlalchemy import select
+
+    monkeypatch.setattr(events, "publish", AsyncMock(return_value=False))
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "任务结果", "已保存的结果", {"web"}, files=None,
+    )
+
+    assert result == {"web 通知": "已保存（实时提示失败）"}
+    assert await db.scalar(select(SiteNotification).where(
+        SiteNotification.target == str(user_a.id),
+        SiteNotification.title == "任务结果",
+    )) is not None
+    assert scheduled._delivery_succeeded(result)
 
 
 @pytest.mark.asyncio
