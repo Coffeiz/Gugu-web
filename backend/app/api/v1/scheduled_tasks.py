@@ -20,6 +20,7 @@ from app.core.ownership import get_owned
 from app.core import events
 from app.db.session import get_db
 from app.models import ScheduledTask, User
+from app.services.calendar import find_event_reminder_by_cron
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 _TRIAL_WAIT_SECONDS = 180
@@ -125,11 +126,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         ev = await get_owned(db, CalendarEvent, body.event_id, user.id)
         if not ev:
             raise HTTPException(400, "绑定的日历事件不存在")
-        existing = (await db.execute(select(ScheduledTask).where(
-            ScheduledTask.user_id == user.id,
-            ScheduledTask.event_id == body.event_id,
-            ScheduledTask.cron == body.cron,
-        ))).scalars().first()
+        existing = await find_event_reminder_by_cron(db, user.id, body.event_id, body.cron)
         if existing:
             # 客户端超时重试或重复提交同一活动提醒时，返回原任务而不是再建一条。
             return _to_resp(existing)
@@ -148,11 +145,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     except IntegrityError:
         await db.rollback()
         if body.event_id is not None:
-            existing = (await db.execute(select(ScheduledTask).where(
-                ScheduledTask.user_id == user.id,
-                ScheduledTask.event_id == body.event_id,
-                ScheduledTask.cron == body.cron,
-            ))).scalars().first()
+            existing = await find_event_reminder_by_cron(db, user.id, body.event_id, body.cron)
             if existing:
                 return _to_resp(existing)
         raise
@@ -176,12 +169,9 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
     if body.cron is not None:
         _validate_cron(body.cron)
         if t.event_id is not None:
-            conflict = (await db.execute(select(ScheduledTask.id).where(
-                ScheduledTask.user_id == user.id,
-                ScheduledTask.event_id == t.event_id,
-                ScheduledTask.cron == body.cron,
-                ScheduledTask.id != t.id,
-            ))).scalars().first()
+            conflict = await find_event_reminder_by_cron(
+                db, user.id, t.event_id, body.cron, exclude_id=t.id,
+            )
             if conflict is not None:
                 raise HTTPException(409, "该活动在同一触发时刻已有提醒")
         t.cron = body.cron

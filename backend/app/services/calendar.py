@@ -88,6 +88,18 @@ async def list_event_reminders(db, user_id, event_id):
     )).scalars().all()
 
 
+async def find_event_reminder_by_cron(db, user_id, event_id, cron, *, exclude_id=None):
+    """查找活动在指定触发时刻的提醒，统一承接提醒唯一性查询。"""
+    stmt = select(ScheduledTask).where(
+        ScheduledTask.user_id == user_id,
+        ScheduledTask.event_id == event_id,
+        ScheduledTask.cron == cron,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(ScheduledTask.id != exclude_id)
+    return (await db.execute(stmt)).scalars().first()
+
+
 def normalize_reminder_channels(channels):
     channels = list(dict.fromkeys(c for c in (channels or ["web"]) if c in _REMINDER_CHANNELS))
     return ",".join(channels) if channels else "web"
