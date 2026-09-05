@@ -83,6 +83,10 @@ const props = defineProps({
   saveSource: { type: Function as PropType<(content: string) => Promise<void> | void>, default: null },
 })
 
+const emit = defineEmits<{
+  'content-saved': [content: string, fileKey: string | number | null]
+}>()
+
 const router = useRouter()
 const filesCache = useFilesCacheStore()
 const previewStore = usePreviewStore()
@@ -267,17 +271,17 @@ function onCmReady({ view }: { view: any }) {
 // 编辑——真要盯保存状态可以开 devtools 看。
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
-function scheduleAutoSave() {
+function scheduleAutoSave(content = editText.value) {
   if (!isEditableDocument.value || !isRealFile.value) return
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   const targetKey = props.fileKey
-  const content   = editText.value
   autoSaveTimer = setTimeout(() => { autoSaveTimer = null; doAutoSave(targetKey, content) }, 800)
 }
 async function doAutoSave(targetKey: string | number, content: string) {
   try {
     await filesApi.saveContent(Number(targetKey), content)
     rawText.value = content
+    emit('content-saved', content, targetKey)
   } catch (e) {
     console.error('[TextViewer] 自动保存失败:', e)  // eslint
   }
@@ -330,6 +334,7 @@ async function saveEdit() {
       await props.saveSource?.(editText.value)
     } else {
       await filesApi.saveContent(Number(props.fileKey), editText.value)
+      emit('content-saved', editText.value, props.fileKey)
     }
     await processText(editText.value, props.ext)
     cmLoadSeq++
@@ -502,6 +507,7 @@ async function toggleTask(idx: number, cb: HTMLInputElement) {
   rawText.value = ls.join('\n')
   try {
     await filesApi.saveContent(Number(props.fileKey), rawText.value)
+    emit('content-saved', rawText.value, props.fileKey)
   } catch {
     rawText.value = before          // 存失败 → 回滚源 + 视觉
     cb.checked = !cb.checked

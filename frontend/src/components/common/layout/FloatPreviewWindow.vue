@@ -38,7 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" ref="imageViewerRef" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
+      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -472,6 +472,17 @@ async function load(f: Partial<FileMeta>, refresh = false) {
 }
 
 watch(() => props.win.file, f => load(f), { immediate: true })
+
+function onTextContentSaved(content: string, fileKey: string | number | null) {
+  // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
+  // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
+  const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
+  if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
+  const key = previewBlobCache.keyOf(props.win.file)
+  if (!key || props.win.file.attach_id) return
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+  previewBlobCache.put(key, url)
+}
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
