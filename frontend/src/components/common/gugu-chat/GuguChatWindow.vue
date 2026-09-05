@@ -43,6 +43,17 @@
         <span v-if="currentSessionWorkspaceName" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
           · {{ currentSessionWorkspaceName }}
         </span>
+        <button
+          v-if="sessionId && filesystemAuthorizationEnabled"
+          type="button"
+          class="filesystem-auth-button"
+          :class="{ authorized: filesystemAuthorized }"
+          :title="filesystemAuthorized ? t('chat.filesystemAuthAuthorized') : t('chat.filesystemAuthButton')"
+          :aria-label="filesystemAuthorized ? t('chat.filesystemAuthAuthorized') : t('chat.filesystemAuthButton')"
+          @click="onFilesystemAuthorization"
+        >
+          <Icon name="admin.shield" :size="13" />
+        </button>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
@@ -121,6 +132,8 @@ const props = defineProps<{
   currentSessionWorkspaceName: string | null
   currentSessionGoalActive: boolean
   currentSessionGoalStatus: 'active' | 'paused' | null
+  filesystemAuthorized: boolean
+  filesystemAuthorizationEnabled: boolean
   sessionId: number | null
   presenceKind: string
   presenceText: string
@@ -158,6 +171,7 @@ const props = defineProps<{
   onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
   onReferenceClick: (reference: ChatReference) => void
   onPromptConnect: () => void
+  onFilesystemAuthorization: () => void
   onRenameSession: (id: number, title: string) => void
   onEnterExpanded: () => void
   onExitExpanded: () => void
@@ -292,6 +306,15 @@ defineExpose({
   background: var(--surface-soft);
   color: var(--content-secondary);
 }
+.filesystem-auth-button {
+  width: 26px; height: 26px; flex: 0 0 auto; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 7px; background: transparent;
+  color: var(--content-tertiary); cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.filesystem-auth-button:hover { background: var(--action-soft); color: var(--action-primary); }
+.filesystem-auth-button.authorized { color: var(--color-success); }
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; line-height: 1; }

@@ -43,6 +43,7 @@
   --control-checkbox-size: 16px;
   --control-checkbox-radius: 5px;
   --control-checkbox-border-width: 1.5px;
+  --control-checkbox-fill-inset: 1px;
   --control-checkbox-mark-width: 7px;
   --control-checkbox-mark-height: 4px;
   --control-checkbox-mark-stroke: 1.6px;

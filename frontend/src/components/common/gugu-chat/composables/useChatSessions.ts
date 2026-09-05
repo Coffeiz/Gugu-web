@@ -124,6 +124,12 @@ export function useChatSessions(options: {
   const currentSessionGoalStatus = computed(() =>
     !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.goalStatus ?? null)
   )
+  const currentSessionFilesystemAuthorized = computed(() =>
+    !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.filesystemAuthorized)
+  )
+  const currentSessionFilesystemAuthorizationEnabled = computed(() =>
+    !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.filesystemAuthorizationEnabled)
+  )
 
   async function loadSession(id: number) {
     if (id === sessionId.value) return
@@ -220,7 +226,10 @@ export function useChatSessions(options: {
                 toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
                 title: String(item.title || i18n.global.t('chatUi.confirmRequired')), body: String(item.body || ''),
                 options: Array.isArray(item.options) ? item.options : [],
+                allowTextInput: Boolean(item.allow_text_input),
+                customInputActive: Boolean(item.custom_input_active),
                 resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
+                responseText: item.response_text ? String(item.response_text) : null,
                 expiresAt: item.expires_at ? String(item.expires_at) : undefined,
               },
             })
@@ -296,6 +305,7 @@ export function useChatSessions(options: {
 
   return {
     webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
+    currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
     loadSession, newSession, deleteSession, renameSession,
   }
 }

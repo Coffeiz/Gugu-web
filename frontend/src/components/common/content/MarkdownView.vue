@@ -75,9 +75,21 @@ async function renderMermaidBlock(element: HTMLElement, source: string): Promise
   }
 }
 
+function wrapMarkdownTables(): void {
+  if (!root.value) return
+  for (const table of root.value.querySelectorAll<HTMLTableElement>('table')) {
+    if (table.parentElement?.classList.contains('md-table-scroll')) continue
+    const wrapper = document.createElement('div')
+    wrapper.className = 'md-table-scroll'
+    table.replaceWith(wrapper)
+    wrapper.appendChild(table)
+  }
+}
+
 async function renderMermaidBlocks(): Promise<void> {
   await nextTick()
   if (!root.value) return
+  wrapMarkdownTables()
   const sourceBlocks = Array.from(root.value.querySelectorAll<HTMLElement>('.md-mermaid-source'))
   for (const sourceBlock of sourceBlocks) {
     const source = sourceBlock.textContent || ''
@@ -144,6 +156,15 @@ onBeforeUnmount(() => {
 .md-view :deep(li > p) { margin: 0; }
 .md-view :deep(li > ul), .md-view :deep(li > ol) { margin: 2px 0; }
 
+.md-view :deep(.md-table-scroll) {
+  max-width: 100%;
+  margin: 7px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+}
+.md-view :deep(.md-table-scroll > table) { margin: 0; }
+
 .md-view :deep(code) {
   font-family: var(--font-mono, var(--font-family-mono));
   font-size: 0.88em; background: rgba(123,127,178,0.12);
@@ -156,9 +177,9 @@ onBeforeUnmount(() => {
 .md-view :deep(hr) { border: none; border-top: 1px solid rgba(0,0,0,0.1); margin: 9px 0; }
 
 .md-view :deep(table) { border-collapse: collapse; margin: 7px 0; width: 100%; font-size: 0.9em; }
-.md-view :deep(th), .md-view :deep(td) { border: 1px solid rgba(0,0,0,0.12); padding: 4px 7px; text-align: left; }
-.md-view :deep(th) { background: rgba(123,127,178,0.1); font-weight: 600; }
-.md-view :deep(tr:nth-child(even) td) { background: rgba(0,0,0,0.02); }
+.md-view :deep(th), .md-view :deep(td) { border: 1px solid var(--border-document-table); padding: 4px 7px; text-align: left; }
+.md-view :deep(th) { background: var(--surface-soft); font-weight: 600; }
+.md-view :deep(tr:nth-child(even) td) { background: var(--surface-soft-hover); }
 
 .md-view :deep(img) { max-width: 100%; max-height: 240px; border-radius: 8px; object-fit: contain; display: block; margin: 4px 0; }
 

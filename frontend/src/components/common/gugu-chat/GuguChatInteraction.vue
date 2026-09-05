@@ -3,10 +3,14 @@
     <div class="interaction-title">{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</div>
     <div class="interaction-body">{{ msg.interaction?.body }}</div>
     <div class="interaction-actions">
-      <button v-for="option in (msg.interaction?.options || [])" :key="option.id" type="button"
+      <button v-for="option in displayOptions" :key="option.id" type="button"
               :disabled="resolved || expired" @click="selectOption(option)">
         {{ option.label }}
       </button>
+    </div>
+    <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
+    <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
+      {{ msg.interaction.responseText }}
     </div>
     <div v-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
     <div v-else-if="resolved" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
@@ -16,8 +20,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { ChatMessage } from './chatTypes'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { CUSTOM_REPLY_OPTION_ID, type ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()
 const resolved = ref(Boolean(props.msg.interaction?.resolved))
@@ -29,6 +33,12 @@ const initiallyExpired = Boolean(
 )
 const expired = ref(initiallyExpired)
 let expiryTimer: ReturnType<typeof setTimeout> | undefined
+const customInputActive = computed(() => Boolean(props.msg.interaction?.customInputActive))
+const displayOptions = computed(() => (props.msg.interaction?.options || [])
+  .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && customInputActive.value))
+  .map(option => option.id === CUSTOM_REPLY_OPTION_ID
+    ? { ...option, label: t('chatUi.customReply') }
+    : option))
 const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
 }>()
@@ -71,5 +81,7 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-actions button:hover:not(:disabled) { background: var(--action-primary-bg-hover); border-color: var(--action-primary-hover); box-shadow: none; transform: none; }
 .interaction-actions button:focus-visible { outline: none; box-shadow: var(--control-focus-shadow); }
 .interaction-actions button:disabled { opacity: .55; cursor: default; }
+.interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
+.interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }
 </style>

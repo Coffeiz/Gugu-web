@@ -41,6 +41,12 @@ export function useChatWindow(options: UseChatWindowOptions) {
   const miniPinned = ref(localStorage.getItem(MINI_PINNED_KEY) !== 'false')
   const reopenResume = ref(localStorage.getItem(REOPEN_RESUME_KEY) === '1')
 
+  // 每首新打开或刷新后恢复的音频都默认固定播放器，避免播放器被悬浮球遮住。
+  // 用户手动取消固定后，在同一首音频生命周期内仍保持取消状态。
+  watch(() => audioStore.file?.id, (id, previousId) => {
+    if (id != null && id !== previousId) miniPinned.value = true
+  })
+
   // ── 大/小窗位形过渡生命周期 ────────────────────────────
   // viewport resize 与模式切换是两种不同事务：前者必须当帧跟随窗口，后者才允许 0.42s 缓动。
   // 如果用户恰好在模式动画期间拖浏览器边缘，真实 window.resize 会直接结束模式动画，
