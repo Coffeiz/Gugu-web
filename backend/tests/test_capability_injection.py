@@ -271,3 +271,14 @@ def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
     assert "add_event_reminder" in content
     assert "不要再调用 `create_scheduled_task`" in content
     assert "日历事件本身不会主动提醒" not in content
+
+
+def test_web_search_skill_contains_freshness_verification_protocol():
+    from agent.skills import load_skill
+
+    content = load_skill("web-search")
+    assert content is not None
+    assert "事实准确性与时效核验" in content
+    assert "未来事件" in content
+    assert "来源发布时间" in content
+    assert "事件实际发生时间" in content
