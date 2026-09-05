@@ -262,6 +262,10 @@ export -f _gugu_code_runtime_disabled python python3 node npm npx pnpm yarn bun 
         shell_command = r'''
 printf '%s\n' '$if Bash' 'set enable-bracketed-paste on' '$endif' > /tmp/gugu-inputrc
 export INPUTRC=/tmp/gugu-inputrc
+# 外层 bash -c 不会可靠地把环境里的 PS1 传给随后 exec 的交互 Bash；显式导出，
+# 否则页面终端会退回 Bash 默认的 `bash-5.2$` 提示符。
+PS1='gugu-sandbox:\w\$ '
+export PS1
 
 # 项目文件的物理目录为「项目名 #ID」，交互式终端允许用户省略内部 ID。
 # 只解析 /project 下唯一的项目名；重名时列出可复制的真实路径，不猜测落点。
@@ -346,7 +350,10 @@ exec bash --noprofile --norc -i
         )
         # 这段命令是服务端固定的启动脚本，不经过用户命令校验器；前面的
         # build_argv 仍负责统一应用镜像、挂载、网络和资源限制参数。
-        argv[-3:] = ["sh", "-c", shell_command]
+        # shell_command 使用 [[ ]]、数组、shopt 和 export -f 等 Bash 语法，不能
+        # 交给 Debian 默认的 /bin/sh（dash）解析，否则页面 PTY 会在启动时直接报
+        # “Syntax error: "(" unexpected”。
+        argv[-3:] = ["bash", "-c", shell_command]
         run_index = argv.index("run")
         argv[run_index + 1:run_index + 1] = ["--interactive", "--tty"]
         # 沙盒用户是刻意固定的数字 UID，镜像未必为它提供 passwd 名称；

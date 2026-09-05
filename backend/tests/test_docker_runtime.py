@@ -589,10 +589,12 @@ def test_docker_executor_builds_fixed_interactive_pty_argv(tmp_path):
 
     assert argv[1:5] == ["run", "--interactive", "--tty", "--rm"]
     assert argv[-4].startswith("debian:bookworm-slim@sha256:")
-    assert argv[-3] == "sh"
+    assert argv[-3] == "bash"
     assert argv[-2] == "-c"
     assert "set enable-bracketed-paste on" in argv[-1]
     assert "export INPUTRC=/tmp/gugu-inputrc" in argv[-1]
+    assert "PS1='gugu-sandbox:\\w\\$ '" in argv[-1]
+    assert "export PS1" in argv[-1]
     assert "export -f cd" in argv[-1]
     assert "项目名不唯一" in argv[-1]
     assert "exec bash --noprofile --norc -i" in argv[-1]
