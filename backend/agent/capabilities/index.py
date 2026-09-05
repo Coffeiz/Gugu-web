@@ -26,10 +26,11 @@ class CapabilityIndex:
         tool_items = tools.metadata(tool_names)
         skill_items = skills_meta.metadata(skill_names)
         known_tools = set(item.name for item in tool_items)
+        tool_snapshot = tool_registry.snapshot()
         diagnostics = list(tools.diagnostics(tool_names))
         diagnostics.extend(skills_meta.diagnostics(skill_names))
         for item in skill_items:
-            missing = [name for name in item.related_tools if name not in known_tools and tool_registry.get(name) is None]
+            missing = [name for name in item.related_tools if name not in known_tools and tool_snapshot.get(name) is None]
             if missing:
                 raise CapabilityReferenceError(f"Skill {item.name} 关联了未知工具：{', '.join(missing)}")
         return cls(tool_items, skill_items, diagnostics)
@@ -48,14 +49,24 @@ class CapabilityIndex:
     @classmethod
     async def from_registries_for_user(cls, db, owner_id: object, *,
                                        tool_names: list[str] | None = None,
-                                       skill_names: list[str] | None = None):
-        """合并 builtin 与当前用户 Skill metadata；正文仍按需加载。"""
+                                       skill_names: list[str] | None = None,
+                                       skill_metadata: tuple[CapabilityMeta, ...] | None = None):
+        """合并 builtin 与用户 Skill metadata；正文仍按需加载。
+
+        ``skill_metadata`` 用于复用会话 snapshot。传入时不查询数据库，保证用户
+        编辑 Skill 不会改写当前会话已经注入的目录；正文仍由 ``use_skill`` 实时读取。
+        """
         base = cls.from_registries(tool_names=tool_names, skill_names=skill_names)
-        user_items = await SkillCapabilityRegistry().user_metadata(db, owner_id)
-        authorized_tools = set(tool_names) if tool_names is not None else set(tool_registry._tools)
+        user_items = (
+            tuple(skill_metadata)
+            if skill_metadata is not None
+            else await SkillCapabilityRegistry().user_metadata(db, owner_id)
+        )
+        tool_snapshot = tool_registry.snapshot()
+        authorized_tools = set(tool_names) if tool_names is not None else set(tool_snapshot._tools)
         # 先用全局 registry 判断关联名是否真实存在，再单独按本轮授权集收窄；
         # 历史 Skill 关联到后来关闭的工具时，不能把整个会话构建打成 500。
-        known_tools = set(tool_registry._tools)
+        known_tools = set(tool_snapshot._tools)
         for item in user_items:
             missing = [name for name in item.related_tools if name not in known_tools]
             if missing:

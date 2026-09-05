@@ -24,7 +24,7 @@ def _short_description(tool: Tool) -> str:
 
 class ToolCapabilityRegistry:
     def __init__(self, tools: SkillRegistry):
-        self.tools = tools
+        self.tools = tools.snapshot()
 
     def metadata(self, names: list[str] | None = None) -> tuple[CapabilityMeta, ...]:
         wanted = list(self.tools._tools) if names is None else list(names)

@@ -23,6 +23,7 @@ from app.services.files.trash import (
 from app.services.files.previews import delete_thumb_cache
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
+from agent.tools.filesystem_policy import file_write_access_error, write_access_error
 
 
 async def _list_trash(db, user_id, args: dict):
@@ -52,6 +53,12 @@ async def _list_trash(db, user_id, args: dict):
 
 
 async def _restore_file(db, user_id, args: dict):
+    file = await get_deleted_file(db, user_id, args["file_id"])
+    if file is None:
+        return json.dumps({"error": "文件不在回收站"})
+    access_error = await file_write_access_error(db, user_id, file)
+    if access_error:
+        return {"error": access_error}
     try:
         restored = await restore_file_by_id(
             db, get_storage(), user_id, args["file_id"])
@@ -64,6 +71,15 @@ async def _restore_file(db, user_id, args: dict):
 
 
 async def _restore_folder(db, user_id, args: dict):
+    folder = await get_top_level_deleted_folder(db, user_id, args["folder_id"])
+    if folder is None:
+        return json.dumps({"error": "文件夹不在回收站"})
+    access_error = await write_access_error(
+        db, user_id, space="project" if folder.project_id is not None else "personal",
+        project_id=folder.project_id, folder_id=folder.id,
+    )
+    if access_error:
+        return {"error": access_error}
     folder = await FileService(db).restore_folder(user_id, args["folder_id"])
     await db.commit()
     return {"success": True, "folder_id": folder.id, "name": folder.name}
@@ -78,9 +94,21 @@ async def _permanent_delete(db, user_id, args: dict):
         folders = await list_top_level_deleted_folders(db, user_id)
         if not deleted_count and not folders:
             return {"success": True, "deleted_count": 0, "note": "回收站本来就是空的"}
+        trash_limit = max(10_000, deleted_count + 1)
+        for file in await list_deleted_files(db, user_id, limit=trash_limit):
+            access_error = await file_write_access_error(db, user_id, file)
+            if access_error:
+                return {"error": access_error}
+        for folder in folders:
+            access_error = await write_access_error(
+                db, user_id, space="project" if folder.project_id is not None else "personal",
+                project_id=folder.project_id, folder_id=folder.id,
+            )
+            if access_error:
+                return {"error": access_error}
         # 不可逆 → 二次确认保底；all=true 绑定确认瞬间回收站的目标 ID 集合，
         # 确认后又新增回收站项时授权不会命中，需要重新确认。
-        trash_file_ids = sorted(f.id for f in await list_deleted_files(db, user_id, limit=10_000))
+        trash_file_ids = sorted(f.id for f in await list_deleted_files(db, user_id, limit=trash_limit))
         trash_folder_ids = sorted(f.id for f in folders)
         blocked = confirm.needs_confirmation(
             args,
@@ -136,6 +164,18 @@ async def _permanent_delete(db, user_id, args: dict):
         if folder is None:
             return json.dumps({"error": f"文件夹 {folder_id} 不在回收站"})
         folders.append(folder)
+
+    for file in files:
+        access_error = await file_write_access_error(db, user_id, file)
+        if access_error:
+            return {"error": access_error}
+    for folder in folders:
+        access_error = await write_access_error(
+            db, user_id, space="project" if folder.project_id is not None else "personal",
+            project_id=folder.project_id, folder_id=folder.id,
+        )
+        if access_error:
+            return {"error": access_error}
 
     names = [f"{f.display_name}.{f.ext}" for f in files] + [f"文件夹：{f.name}" for f in folders]
     preview = "、".join(names[:10])

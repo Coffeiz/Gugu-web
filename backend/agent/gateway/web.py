@@ -21,7 +21,7 @@ from app.models import ConversationMessage, ConversationSession
 from agent.security import sanitize
 from agent.llm import genstream
 from agent import quota
-from agent.context import builder, loaders, session_snapshot, session_history, run_context
+from agent.context import builder, loaders, session_snapshot, session_history, run_context, session_system
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
@@ -425,17 +425,43 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
     # Web 后台生成与 IM 共用能力目录：简介/catalog 模式注入工具短描述和字段签名；
     # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
-    from agent.runner import _capability_catalog, _capability_context, _filter_shell_tool
+    from agent.runner import (
+        _capability_catalog, _capability_context, _filter_shell_tool,
+        _pin_session_user_skill_metadata, _session_user_skill_metadata,
+    )
+    user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as db:
         if model_cfg is None:
             run_config = await resolve_run_config_for_user(settings, db, user_id, req)
             model_cfg = run_config.model
             modelctx.set_model_cfg(model_cfg)   # 后台任务经 create_task 继承此绑定
-        tool_names = await _filter_shell_tool(db, user_id, session_id, list(profile.tool_names))
+        tool_names = await _filter_shell_tool(
+            db, user_id, session_id, list(profile.tool_names), session=session,
+        )
+        shell_prompt = None
+        if "shell" in tool_names:
+            from agent.security.shell_policy import build_dynamic_prompt
+            shell_prompt = await build_dynamic_prompt(
+                db, user_id, session_id, session=session,
+            )
+            if shell_prompt is None:
+                tool_names = [name for name in tool_names if name != "shell"]
+    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
+    if shell_prompt:
+        system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
+        user_skill_metadata=user_skill_metadata,
     )
     if capability_context is not None:
+        if _pin_session_user_skill_metadata(session, capability_context):
+            # stream() 已经提交并关闭了原事务；后台生成使用独立事务，首次建立的
+            # 用户 Skill 目录必须显式回写，后续请求才能复用同一个会话 snapshot。
+            async with _sess._SessionLocal() as snapshot_db:
+                stored_session = await snapshot_db.get(ConversationSession, session_id)
+                if stored_session is not None:
+                    stored_session.session_context = dict(session.session_context or {})
+                    await snapshot_db.commit()
         _snapshot_injection = session_snapshot.snapshot_message(
             f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
         )
@@ -514,6 +540,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             model_cfg=model_cfg,
             session_id=session_id,
             session=session,
+            reasoning_policy=getattr(run_config, "reasoning_persistence", "off"),
+            state_session_factory=_sess._SessionLocal,
         )
 
         # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，

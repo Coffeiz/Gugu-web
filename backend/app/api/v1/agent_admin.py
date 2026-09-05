@@ -25,6 +25,7 @@ from app.core.tz import now_utc, resolve_tz
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, select, func, text, literal_column
@@ -115,6 +116,7 @@ def _ensure_presets(override: dict) -> dict:
         "base_url": ai.get("base_url", ""),
         "model": ai.get("model", ""),
         "thinking": ai.get("thinking", "disabled"),
+        "reasoning_persistence": ai.get("reasoning_persistence", "off"),
         "ollama_mode": ai.get("ollama_mode", "local"),
     }
     presets = {"active_id": "default", "items": [item]}
@@ -656,11 +658,11 @@ async def set_llm_strategy(body: StrategyUpdate):
 # 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
-                 "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
+                 "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video",
                  "vision_detail", "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
-                "thinking": "disabled", "reasoning_effort": "", "vision": False,
+                "thinking": "disabled", "reasoning_effort": "", "reasoning_persistence": "off", "vision": False,
                 "vision_detail": "auto", "vision_video": False, "vision_audio": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
                 "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
@@ -682,6 +684,7 @@ class PresetCreate(BaseModel):
     context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""
+    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
     vision: bool = False
     vision_detail: str = "auto"
     vision_video: bool = False
@@ -713,6 +716,7 @@ async def create_llm_preset(body: PresetCreate):
         "context_tokens": body.context_tokens,
         "thinking": body.thinking,
         "reasoning_effort": body.reasoning_effort,
+        "reasoning_persistence": body.reasoning_persistence,
         "vision": body.vision,
         "vision_detail": body.vision_detail if body.vision_detail in ("auto", "low", "high", "original") else "auto",
         "vision_video": body.vision_video,
@@ -745,6 +749,7 @@ class PresetUpdate(BaseModel):
     context_tokens: int | None = None
     thinking: str | None = None
     reasoning_effort: str | None = None
+    reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
     vision: bool | None = None
     vision_detail: str | None = None
     vision_video: bool | None = None
@@ -784,6 +789,8 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["thinking"] = body.thinking
     if body.reasoning_effort is not None:
         item["reasoning_effort"] = body.reasoning_effort
+    if body.reasoning_persistence is not None:
+        item["reasoning_persistence"] = body.reasoning_persistence
     if body.vision is not None:
         item["vision"] = body.vision
     if body.vision_detail is not None:

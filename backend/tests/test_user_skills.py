@@ -6,7 +6,7 @@ from agent.capabilities.errors import CapabilityRegistrationError
 from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.skill_registry import SkillCapabilityRegistry, validate_user_skill
 from agent.tools import registry as tool_registry
-from agent.tools.meta import _create_skill
+from agent.tools.skill_management import _create_skill
 from agent.tools.meta import _use_skill
 
 
@@ -112,11 +112,28 @@ async def test_use_skill_loads_owned_body_and_refreshes_digest(db, user_a):
     assert first["_capability_usage"]["owner_fingerprint"]
     first_digest = first["_capability_usage"]["content_digest"]
 
+    from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    loaded_state = {row.slug: first_digest}
+    dispatch_token = set_dispatch_session(
+        None, skill_state=loaded_state,
+    )
+    try:
+        already_loaded = await _use_skill(db, user_a.id, {"name": row.slug})
+    finally:
+        reset_dispatch_session(dispatch_token)
+    assert already_loaded["already_loaded"] is True
+
     row = await registry.update_user_skill(
         db, user_a.id, row.slug, allowed_tool_names=set(tool_registry._tools),
         body="更新后的用户 Skill 正文。",
     )
-    second = await _use_skill(db, user_a.id, {"name": row.slug})
+    dispatch_token = set_dispatch_session(
+        None, skill_state=loaded_state,
+    )
+    try:
+        second = await _use_skill(db, user_a.id, {"name": row.slug})
+    finally:
+        reset_dispatch_session(dispatch_token)
     assert second["content"] == "更新后的用户 Skill 正文。"
     assert second["_capability_usage"]["content_digest"] != first_digest
 

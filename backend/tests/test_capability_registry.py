@@ -2,7 +2,12 @@ import pytest
 
 from agent.capabilities.errors import CapabilityRegistrationError
 from agent.capabilities.index import CapabilityIndex
+from agent.capabilities.skill_registry import (
+    deserialize_user_skill_metadata,
+    serialize_user_skill_metadata,
+)
 from agent.capabilities.tool_registry import ToolCapabilityRegistry
+from agent.capabilities.models import CapabilityMeta
 from agent.tools.base import SkillRegistry, Tool
 
 
@@ -37,6 +42,53 @@ def test_tool_short_description_is_validated():
         ToolCapabilityRegistry(registry).metadata()
 
 
+def test_tool_registry_snapshot_does_not_change_until_process_restart():
+    registry = SkillRegistry()
+    registry.add(_tool("before-restart"))
+    snapshot = registry.snapshot()
+
+    registry.add(_tool("after-snapshot"))
+
+    assert snapshot.get("before-restart") is not None
+    assert snapshot.get("after-snapshot") is None
+    assert [item["function"]["name"] for item in registry.openai_schemas(
+        ["before-restart", "after-snapshot"]
+    )] == ["before-restart"]
+
+
+def test_user_skill_metadata_snapshot_round_trips_without_skill_body():
+    item = CapabilityMeta(
+        name="user-skill", kind="skill", description_short="按需加载的做法",
+        category="personal", related_tools=("web_search",), source="user",
+        content_digest="old-digest", owner_fingerprint="owner-fingerprint",
+    )
+
+    encoded = serialize_user_skill_metadata((item,))
+    decoded = deserialize_user_skill_metadata(encoded)
+
+    assert decoded == (item,)
+    assert "body" not in encoded[0]
+
+
+@pytest.mark.asyncio
+async def test_user_skill_metadata_snapshot_skips_live_database_read():
+    item = CapabilityMeta(
+        name="user-skill", kind="skill", description_short="冻结目录",
+        related_tools=("web_search",), source="user",
+    )
+
+    class NoDatabaseRead:
+        def __getattr__(self, name):
+            raise AssertionError(f"不应读取数据库：{name}")
+
+    index = await CapabilityIndex.from_registries_for_user(
+        NoDatabaseRead(), "owner-1", tool_names=["web_search"],
+        skill_metadata=(item,),
+    )
+
+    assert index.snapshot().skills["user-skill"] == item
+
+
 def test_builtin_capability_snapshot_has_separate_tool_and_skill_maps():
     index = CapabilityIndex.from_registries(
         tool_names=["web_search"],
@@ -52,7 +104,7 @@ def test_builtin_phase1_metadata_is_complete_and_relations_are_registered():
     index = CapabilityIndex.from_registries()
     snapshot = index.snapshot()
 
-    assert len(snapshot.tools) == 103  # 另含工作区 CRUD 五个工具和邮件工具
+    assert len(snapshot.tools) == 106  # 含工作区 CRUD、邮件和用户技能管理工具
     assert len(snapshot.skills) == 12
     assert not snapshot.diagnostics
     assert all(item.category for item in snapshot.tools.values())
@@ -67,7 +119,7 @@ async def test_admin_capability_catalog_exposes_metadata_without_schema_or_body(
     from app.api.v1.agent_admin import list_capabilities
 
     payload = await list_capabilities()
-    assert len(payload["tools"]) == 103  # 另含工作区 CRUD 五个工具和邮件工具
+    assert len(payload["tools"]) == 106  # 含工作区 CRUD、邮件和用户技能管理工具
     assert len(payload["skills"]) == 12
     assert all("description_short" in item for item in payload["tools"])
     assert all("input_schema" not in item and "handler" not in item for item in payload["tools"])

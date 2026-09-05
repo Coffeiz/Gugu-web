@@ -781,6 +781,10 @@ async def dispatch_im_message(payload: dict):
             interaction_result = None
         if interaction_result is not None:
             result_payload = interaction_result.get("result") or {}
+            if result_payload.get("status") == "awaiting_text":
+                await send_text(payload, "请直接发送你的回复，咕咕会继续处理。")
+                trace.finish_run("success")
+                return None
             selected_text = str(
                 result_payload.get("text")
                 or interaction_result.get("option_id")
@@ -857,7 +861,7 @@ async def dispatch_im_message(payload: dict):
     if cmd_reply is not None and not goal_start:
         if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
             await _send_interaction_prompts(payload, [cmd_reply.get("prompt") or {}])
-            trace.finish_run("success", "已发送工作区删除确认")
+            trace.finish_run("success", "已发送命令确认交互")
             return None
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)

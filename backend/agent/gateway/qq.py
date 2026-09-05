@@ -548,6 +548,12 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
     selected_text = str(result_payload.get("text") or option_id)
     chat_type = str(event.get("chat_type") or "c2c")
     target_id = event.get("chat_id") or event["platform_user_id"]
+    if result_payload.get("status") == "awaiting_text":
+        await _qq_ack(
+            channel_id, chat_type, target_id,
+            "请直接发送你的回复，咕咕会继续处理。", None,
+        )
+        return
     await _qq_ack(
         channel_id,
         chat_type,

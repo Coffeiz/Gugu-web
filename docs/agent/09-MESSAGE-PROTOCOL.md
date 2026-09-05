@@ -16,7 +16,10 @@
 
 ### Canonical history
 
-canonical history 是持久化和跨 Provider 恢复的语义事实源，保存用户消息、助手消息、工具调用、工具结果、引用、附件以及必要的运行时上下文块。它不等于某次 SSE 输出，也不等于某个平台最终显示的气泡。
+canonical history 是持久化和跨 Provider 恢复的语义事实源，保存用户消息、助手消息、工具调用、工具结果、引用、附件以及必要的运行时上下文块。Provider 私有 reasoning state 使用独立受保护存储，仅在匹配的 `owner_user_id + session_id` 和 Provider boundary 恢复；它不进入 canonical history、RAG 或渠道展示。它不等于某次 SSE 输出，也不等于某个平台最终显示的气泡。
+
+推理状态的 LoopScope 诊断只表示 run 生命周期状态、Provider/API/模型标识、状态计数、大小、版本和
+digest；`payload`、thinking 正文、签名、用户正文和完整工具参数禁止进入消息协议或诊断快照。
 
 ### Agent stream event
 

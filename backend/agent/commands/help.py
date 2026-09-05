@@ -13,7 +13,7 @@ COMMAND_HELP: dict[str, str] = {
     "new": "/new　清空当前对话上下文并开始新对话；发送 /new help 查看说明",
     "memory": "/memory　查看咕咕记住的内容；发送 /memory help 查看说明",
     "forget": "/forget <text>　忘记匹配的记忆；发送 /forget help 查看说明",
-    "workspace": "/workspace　查看、绑定、解除或删除工作区；发送 /workspace help 查看说明",
+    "workspace": "/workspace　查看、绑定、解除或删除工作区，并管理当前会话的沙箱权限；发送 /workspace help 查看说明",
     "help": "/help　查看全部斜杠命令；也可对单个命令发送 /<command> help",
 }
 
@@ -62,8 +62,8 @@ COMMAND_DETAILS: dict[str, str] = {
         "无别名"
     ),
     "workspace": (
-        "管理当前会话的工作区绑定，也可以删除工作区声明。\n"
-        "用法：/workspace show、/workspace list、/workspace <ID>、/workspace unlink\n"
+        "管理当前会话的工作区绑定和文件系统授权，也可以删除工作区声明。\n"
+        "用法：/workspace show、/workspace status、/workspace god、/workspace revoke、/workspace list、/workspace <ID>、/workspace unlink\n"
         "删除：/workspace delete <ID>，随后点击确认/取消；也支持 /workspace delete <ID> confirm。\n"
         "解除只取消当前会话绑定；删除会解除所有会话绑定，但不会删除项目或文件。"
     ),
@@ -84,7 +84,7 @@ COMMAND_MENU: dict[str, tuple[str, str, str]] = {
     "new": ("开启新对话", "清空当前对话上下文", "/new"),
     "memory": ("查看记忆", "查看咕咕记住的内容", "/memory"),
     "forget": ("忘记一条记忆", "输入要忘记的内容", "/forget "),
-    "workspace": ("工作区", "查看、绑定或删除工作区", "/workspace "),
+    "workspace": ("工作区", "查看、绑定、删除工作区或管理沙盒权限", "/workspace "),
     "help": ("命令帮助", "查看全部命令说明", "/help"),
 }
 

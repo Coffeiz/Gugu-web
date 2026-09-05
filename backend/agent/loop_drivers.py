@@ -13,7 +13,10 @@
    `content:字符串`+`tool_calls:[...]`，每个工具结果各自一条独立的 `role:"tool"` 消息。
 4. 缓存/思考记账——字段名和语义都不完全一样。
 
-这个文件把这几件事收拢成两个 `LoopDriver` 实现（`AnthropicDriver`/`OpenAIDriver`），
+这个文件把这几件事收拢成共享协议和 `AnthropicDriver`、`OpenAIDriver`、`OllamaDriver`
+实现；OpenAI Responses 的独立 response-chain 驱动放在
+`agent/providers/openai_responses.py`，消息/缓存投影放在
+`agent/providers/message_utils.py`。这里保留 Responses 的兼容导出，避免旧调用方同时迁移。
 `core.py` 只写一条共享的 `_run_loop`，需要跟 provider 打交道时调用驱动。
 
 驱动接口四个构造方法：
@@ -32,6 +35,8 @@
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -40,6 +45,15 @@ from typing import Any, AsyncGenerator, Protocol
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 from agent.context.canonical_tool_history import ToolCall
+from agent.providers.message_utils import (
+    _collapse_volatile_messages,
+    _contains_volatile_image,
+    _history_cache_state,
+    _openai_tool_result,
+    _volatile_message_indices,
+    _with_history_cache,
+    _with_single_history_cache,
+)
 
 _log = logging.getLogger("agent.core")
 
@@ -114,210 +128,48 @@ class _AnthropicCtx:
     adapter: Any
     model: str
     generation_param: dict
-
-
-def _contains_volatile_image(value: Any) -> bool:
-    """识别会改变请求前缀的内联图片，不把其后的内容推进缓存断点。"""
-    if isinstance(value, dict):
-        if value.get("type") == "image":
-            source = value.get("source") or {}
-            if isinstance(source, dict) and source.get("type") == "base64" and source.get("data"):
-                return True
-        if value.get("type") == "image_url":
-            image_url = value.get("image_url") or {}
-            url = image_url.get("url") if isinstance(image_url, dict) else image_url
-            if isinstance(url, str) and url.startswith("data:"):
-                return True
-        return any(_contains_volatile_image(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_contains_volatile_image(item) for item in value)
-    return False
-
-
-def _volatile_message_indices(messages: list) -> set[int]:
-    """记录首轮请求中带内联图片的消息位置，后续只折叠这些初始图片。"""
-    return {
-        index for index, message in enumerate(messages)
-        if _contains_volatile_image(message)
-    }
-
-
-def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
-    """模型首轮消费图片后，把初始图片消息收敛为稳定文本，避免跨 round/run 断前缀。"""
-    for index in indices:
-        if index < 0 or index >= len(messages):
-            continue
-        message = messages[index]
-        content = message.get("content")
-        if not isinstance(content, list) or not _contains_volatile_image(content):
-            continue
-        text_parts = [
-            str(block.get("text"))
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
-        ]
-        message["content"] = "\n".join(text_parts) or "[图片已查看]"
-
-
-def _history_cache_state(messages: list) -> tuple[int, set[int]]:
-    """计算实际请求会使用的稳定边界和缓存断点。
-
-    这个计算同时被发送路径和 LoopScope 诊断使用，避免监控看到的是装配前状态，
-    而 provider 实际拿到的副本已经有另一套断点。
-    """
-    conversation = getattr(messages, "conversation", messages)
-    cache_limit = len(conversation)
-    if cache_limit <= 0:
-        return 0, set()
-
-    volatile_index = next(
-        (index for index, message in enumerate(conversation[:cache_limit])
-         if _contains_volatile_image(message)),
-        None,
-    )
-    stable_limit = volatile_index if volatile_index is not None else cache_limit
-    anchor_indices = {
-        index for index in getattr(messages, "cache_anchor_indices", [])
-        if 0 <= index < stable_limit
-    }
-    latest_anchor = stable_limit - 1
-    if anchor_indices:
-        # 续轮只保留最早 baseline 和当前尾部；不要再把中间普通 user 消息
-        # 提升为断点，否则工具结果会把稳定前缀缓存锚点挤掉。
-        anchor_indices = {min(anchor_indices)}
-    else:
-        if latest_anchor >= 0:
-            anchor_indices.add(latest_anchor)
-        # 新请求会重建 PromptMessages，因此首轮需要从稳定 conversation 中
-        # 找到 baseline；工具结果不能作为首轮 baseline。
-        for index in range(stable_limit - 2, -1, -1):
-            message = conversation[index]
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            blocks = content if isinstance(content, list) else []
-            if blocks and all(isinstance(block, dict) and block.get("type") == "tool_result"
-                              for block in blocks):
-                continue
-            anchor_indices.add(index)
-            break
-    if latest_anchor >= 0:
-        anchor_indices.add(latest_anchor)
-    return stable_limit, anchor_indices
-
-
-def _cache_message_copy(messages: list, rendered: list[dict], stable_limit: int):
-    """复制缓存标记后的消息，同时保留 PromptMessages 的动态尾缀边界。"""
-    if not hasattr(messages, "conversation"):
-        return rendered
-
-    from agent.context.assembly import PromptMessages
-
-    result = PromptMessages(
-        rendered[:stable_limit],
-        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-    )
-    if len(rendered) > stable_limit:
-        result.set_dynamic_tail(rendered[stable_limit:])
-    result._cache_anchor_indices = list(getattr(messages, "cache_anchor_indices", ()))
-    for name in ("canonical_context", "_canonical_batches", "_canonical_batch_digests",
-                 "_canonical_batch_metadata"):
-        if hasattr(messages, name):
-            setattr(result, name, getattr(messages, name))
-    return result
-
-
-def _with_history_cache(messages: list) -> list:
-    """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
-
-    MiniMax/Anthropic 缓存机制是前缀匹配：
-    - 找到第一个 cache_control 标记
-    - 缓存从请求开头到该标记的所有内容
-    - 后续请求如果前缀相同，就能命中缓存
-
-    dsh 的做法（已验证 50% 缓存率）：
-    1. system 块加 cache_control（已在 prepare 中处理）
-    2. 最后一条用户消息加 cache_control（缓存完整对话历史）
-
-    这比每个块都加更有效，因为：
-    - MiniMax 只处理有限数量的 cache_control 断点
-    - 最后一条消息的 cache_control 能覆盖整个历史前缀
-    """
-    if not messages:
-        return messages
-
-    # PromptMessages 的动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾；
-    # 否则时间 reminder 会被包含在断点前缀中，下一轮必然失去命中。
-    stable_limit, anchor_indices = _history_cache_state(messages)
-    if stable_limit <= 0:
-        return list(messages)
-    remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    if remember_anchor is not None:
-        for index in sorted(anchor_indices):
-            remember_anchor(index)
-
-    # 浅拷贝 messages 列表
-    new_messages = []
-
-    for i, msg in enumerate(messages):
-        msg = dict(msg)
-        content = msg.get("content")
-
-        # 只给 conversation baseline 加 cache_control；动态尾部永远不加。
-        is_anchor = i in anchor_indices and i < stable_limit
-
-        if isinstance(content, list) and is_anchor and content:
-            new_content = content[:-1] + [
-                {**content[-1], "cache_control": {"type": "ephemeral"}}
-            ]
-        elif isinstance(content, str) and is_anchor:
-            new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
-        else:
-            # 其他消息不加 cache_control
-            new_content = content
-
-        msg["content"] = new_content
-        new_messages.append(msg)
-
-    return _cache_message_copy(messages, new_messages, stable_limit)
-
-
-def _with_single_history_cache(messages: list) -> list:
-    """给稳定 conversation 保留跨 Run baseline 和最新尾部两个历史锚点。"""
-    stable_limit, anchor_indices = _history_cache_state(messages)
-    if stable_limit <= 0:
-        return list(messages)
-    remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    if remember_anchor is not None:
-        for index in sorted(anchor_indices):
-            remember_anchor(index)
-    new_messages = []
-    for index, message in enumerate(messages):
-        clone = dict(message)
-        content = clone.get("content")
-        if index in anchor_indices and index < stable_limit:
-            if isinstance(content, list) and content:
-                clone["content"] = content[:-1] + [
-                    {**content[-1], "cache_control": {"type": "ephemeral"}}
-                ]
-            elif isinstance(content, str):
-                clone["content"] = [{
-                    "type": "text", "text": content,
-                    "cache_control": {"type": "ephemeral"},
-                }]
-        elif message.get("role") != "system":
-            if isinstance(content, list):
-                clone["content"] = [
-                    {key: value for key, value in block.items() if key != "cache_control"}
-                    if isinstance(block, dict) else block
-                    for block in content
-                ]
-        new_messages.append(clone)
-    return _cache_message_copy(messages, new_messages, stable_limit)
+    restored_blocks: list[dict] | None = None
+    tool_state_digest: str = ""
 
 
 class AnthropicDriver:
     api_format = "anthropic"
+    continuation_available = True
+
+    def extract_provider_state(self, result: RoundResult) -> dict | None:
+        """提取必须原样回放的 assistant blocks；不把它们转成 canonical history。"""
+        blocks = [b.model_dump() if hasattr(b, "model_dump") else dict(b)
+                  for b in (result.raw or [])]
+        state_blocks = [block for block in blocks if block.get("type") in {
+            "thinking", "redacted_thinking", "tool_use",
+        }]
+        if not state_blocks:
+            return None
+        counts: dict[str, int] = {}
+        for block in blocks:
+            block_type = str(block.get("type") or "unknown")
+            counts[block_type] = counts.get(block_type, 0) + 1
+        return {
+            "state_kind": "anthropic_thinking_blocks",
+            # 保存完整 content blocks，而不是只保存 thinking 正文；signature、
+            # redacted_thinking 和 tool_use 的字段顺序由原始响应决定。
+            "payload": {"blocks": copy.deepcopy(blocks)},
+            "summary": {
+                "state_block_count": len(blocks),
+                "thinking_block_count": sum(counts.get(t, 0) for t in ("thinking", "redacted_thinking")),
+                "tool_use_block_count": counts.get("tool_use", 0),
+            },
+        }
+
+    def restore_provider_state(self, ctx: _AnthropicCtx, payload: Any) -> bool:
+        blocks = payload.get("blocks") if isinstance(payload, dict) else None
+        if not isinstance(blocks, list) or not blocks or any(
+            not isinstance(block, dict) or not isinstance(block.get("type"), str)
+            for block in blocks
+        ):
+            return False
+        ctx.restored_blocks = copy.deepcopy(blocks)
+        return True
 
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
@@ -346,6 +198,9 @@ class AnthropicDriver:
             thinking_param=thinking_param, system_param=system_param,
             supports_active_cache=supports_active_cache, adapter=adapter, model=ai.model,
             generation_param=adapter.build_anthropic_generation_params(ai),
+            tool_state_digest=hashlib.sha256(json.dumps(
+                tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()[:16],
         )
         return client, ctx
 
@@ -365,6 +220,16 @@ class AnthropicDriver:
         # time-context 等 canonical 边界会丢失并在每轮被误合并。
         from agent.context.provider_history import render_anthropic_message_roles
         outbound = render_anthropic_message_roles(outbound, ctx.adapter)
+        restored_blocks = getattr(ctx, "restored_blocks", None)
+        if restored_blocks:
+            restored = {"role": "assistant", "content": copy.deepcopy(restored_blocks)}
+            # 当前请求的 user 消息仍由业务历史提供；状态只在 provider boundary
+            # 插入，且用完即清，避免同一次 run 重复回放旧响应。
+            if outbound and outbound[-1].get("role") == "user":
+                outbound = outbound[:-1] + [restored, outbound[-1]]
+            else:
+                outbound.append(restored)
+            ctx.restored_blocks = None
         _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
@@ -455,6 +320,7 @@ class _OpenAICtx:
     supports_explicit_cache: bool
     adapter: Any
     ai: Any
+    tool_state_digest: str = ""
 
 
 @dataclass
@@ -468,50 +334,13 @@ class _OpenAIRaw:
     tool_calls_payload: list
 
 
-def _openai_tool_result(res: Any, *, allow_images: bool = True) -> tuple[str, list[dict]]:
-    """把工具返回的 Anthropic 视觉块转换成 OpenAI 可接受的消息。
-
-    工具 registry 为了兼容 Anthropic，会把图片放成 ``image/source`` 块。
-    OpenAI 兼容接口不能把这种块原样放进 ``role=tool``；文本结果留在 tool
-    消息里，图片作为紧随其后的 user 多模态消息交给模型。图片是否出站由本轮
-    provider 能力决定，避免把视觉块发给只接受文本的模型。
-    """
-    if not isinstance(res, list):
-        if isinstance(res, str):
-            return res, []
-        return json.dumps(res, ensure_ascii=False), []
-
-    text_parts: list[str] = []
-    image_parts: list[dict] = []
-    for block in res:
-        if not isinstance(block, dict):
-            text_parts.append(str(block))
-            continue
-        if block.get("type") == "text":
-            value = block.get("text")
-            if value:
-                text_parts.append(str(value))
-            continue
-        if block.get("type") == "image":
-            if not allow_images:
-                text_parts.append("[图片结果已返回，但当前模型不支持视觉输入]")
-                continue
-            source = block.get("source") or {}
-            if source.get("type") == "base64" and source.get("data"):
-                media = source.get("media_type") or "image/jpeg"
-                image_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{media};base64,{source['data']}", "detail": "auto"},
-                })
-                continue
-        # 未知块不要直接丢失，保留一个不会破坏 OpenAI schema 的摘要。
-        text_parts.append(json.dumps(block, ensure_ascii=False))
-
-    return "\n".join(text_parts) or "工具已执行。", image_parts
-
-
 class OpenAIDriver:
     api_format = "openai"
+    continuation_available = False
+
+    def extract_provider_state(self, result: RoundResult) -> dict | None:
+        """Chat Completions 没有跨请求私有推理续接协议，明确返回不可用。"""
+        return None
 
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
@@ -559,6 +388,9 @@ class OpenAIDriver:
             supports_explicit_cache=supports_explicit_cache,
             adapter=adapter,
             ai=ai,
+            tool_state_digest=hashlib.sha256(json.dumps(
+                tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()[:16],
         )
         return client, ctx
 
@@ -715,6 +547,15 @@ class OpenAIDriver:
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
         return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
+
+# OpenAI Responses 独立驱动的兼容导出；新代码应从 provider 模块直接导入。
+from agent.providers.openai_responses import (
+    OpenAIResponsesDriver,
+    _ResponsesCtx,
+    _ResponsesRaw,
+    _responses_input,
+    _responses_tools,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════

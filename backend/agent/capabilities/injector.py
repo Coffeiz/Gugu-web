@@ -60,7 +60,7 @@ def _tool_field_signature(name: str) -> str:
     try:
         from agent.tools import registry
 
-        tool = registry.get(name)
+        tool = registry.snapshot().get(name)
         schema = getattr(tool, "input_schema", None)
     except Exception:
         schema = None
@@ -171,23 +171,29 @@ def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5, search
 
 async def build_fixed_adapter_context_for_user(
     tool_names: list[str], *, limit: int = 5, db=None, owner_id=None, search_settings=None,
+    user_skill_metadata=None,
 ) -> CapabilityToolContext:
     """构建当前 owner 的能力快照；用户 Skill 只进入 metadata，不加载正文。"""
     if db is None or owner_id is None:
         return build_fixed_adapter_context(tool_names, limit=limit, search_settings=search_settings, owner_id=owner_id)
     names = list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES]))
-    index = await CapabilityIndex.from_registries_for_user(db, owner_id, tool_names=names)
+    index = await CapabilityIndex.from_registries_for_user(
+        db, owner_id, tool_names=names, skill_metadata=user_skill_metadata,
+    )
     return _build_fixed_context(index, limit=limit, names=names, owner_id=owner_id, search_settings=search_settings)
 
 
 async def build_skill_metadata_context_for_user(
     tool_names: list[str], *, limit: int = 5, db=None, owner_id=None, search_settings=None,
+    user_skill_metadata=None,
 ) -> CapabilityToolContext:
     """只构建用户 Skill metadata，不改变 full-schema 的 Provider 工具注入。"""
     if db is None or owner_id is None:
         index = CapabilityIndex.from_registries(tool_names=tool_names)
     else:
-        index = await CapabilityIndex.from_registries_for_user(db, owner_id, tool_names=tool_names)
+        index = await CapabilityIndex.from_registries_for_user(
+            db, owner_id, tool_names=tool_names, skill_metadata=user_skill_metadata,
+        )
     return _build_fixed_context(
         index, limit=limit, names=list(tool_names), owner_id=owner_id,
         search_settings=search_settings, metadata_only=True,

@@ -127,6 +127,18 @@ def test_catalog_routes_user_skill_creation_to_create_skill():
     assert "related_tools 使用空数组 []" in block
 
 
+def test_meta_skill_exposes_user_skill_update_and_delete_tools():
+    from agent.tools.meta import MetaSkill
+
+    tools = {tool.name: tool for tool in MetaSkill.tools}
+    assert tools["update_skill"].mutates is True
+    assert tools["update_skill"].destructive is False
+    assert tools["update_skill"].input_schema["required"] == ["slug"]
+    assert tools["delete_skill"].mutates is True
+    assert tools["delete_skill"].destructive is True
+    assert tools["delete_skill"].input_schema["required"] == ["slug"]
+
+
 def test_catalog_rejects_long_description_instead_of_truncating():
     snapshot = CapabilitySnapshot(
         generation=1,
@@ -347,6 +359,41 @@ def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
     assert "add_event_reminder" in content
     assert "不要再调用 `create_scheduled_task`" in content
     assert "日历事件本身不会主动提醒" not in content
+
+
+def test_scheduled_tasks_skill_marks_removed_context_selection_as_unsupported():
+    from agent.skills import load_skill
+    from agent.tools import registry
+
+    content = load_skill("scheduled-tasks")
+    assert content is not None
+    assert "不要传 `tool_groups` 或 `context_config`" in content
+    assert "完整工具集和完整业务上下文" in content
+
+    for name in ("create_scheduled_task", "update_scheduled_task"):
+        tool = registry.get(name)
+        assert tool is not None
+        properties = tool.input_schema["properties"]
+        assert "tool_groups" not in properties
+        assert "context_config" not in properties
+        assert "authorized_tools" in properties
+
+
+def test_scheduled_tasks_skill_documents_interval_window_semantics():
+    from agent.skills import load_skill
+    from agent.tools import registry
+
+    content = load_skill("scheduled-tasks")
+    assert content is not None
+    assert "间隔从 `start_at` 锚定" in content
+    assert "只设置其中一个" in content
+    assert "明确要清除时传 `null`" in content
+    assert "不能自行猜日期" in content
+    create = registry.get("create_scheduled_task")
+    update = registry.get("update_scheduled_task")
+    assert create is not None and update is not None
+    assert "schedule_status" in create.description
+    assert "修改调度类型时必须同时提供新类型所需字段" in update.description
 
 
 def test_web_search_skill_contains_freshness_verification_protocol():

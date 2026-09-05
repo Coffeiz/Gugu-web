@@ -15,6 +15,8 @@ from app.models import ConversationSession, InteractionAction, InteractionPrompt
 from agent.interactions.confirmations import confirmation_payload
 
 TOOL_BUDGET_WINDOW = timedelta(minutes=30)
+CUSTOM_REPLY_OPTION_ID = "__custom_reply__"
+CUSTOM_REPLY_LABEL = "自定义回复"
 
 
 def _hash_token(token: str) -> str:
@@ -45,6 +47,7 @@ async def create_prompt(
     options: list[dict],
     context: dict | None = None,
     allow_text_input: bool = False,
+    source: str = "system",
     expires_minutes: int = 10,
 ) -> tuple[InteractionPrompt, list[dict]]:
     """创建 Prompt，并返回仅用于当前响应的明文 action token。"""
@@ -68,6 +71,16 @@ async def create_prompt(
         )
         .values(status="cancelled", resolved_at=now)
     )
+    # 只有 Agent 主动调用 ask_user 才能开启自定义回答。系统确认/系统选择即使
+    # 误传 allow_text_input，也必须在统一创建入口被强制关闭。
+    allow_custom_reply = source == "agent" and bool(allow_text_input)
+    rendered_options = list(options)
+    if allow_custom_reply and rendered_options:
+        rendered_options.append({
+            "id": CUSTOM_REPLY_OPTION_ID,
+            "label": CUSTOM_REPLY_LABEL,
+            "action_type": "custom_reply",
+        })
     prompt = InteractionPrompt(
         user_id=user_id,
         session_id=session_id,
@@ -75,8 +88,10 @@ async def create_prompt(
         title=title[:300],
         body=body,
         schema_json={
-            "options": options,
-            "allow_text_input": bool(allow_text_input),
+            "options": rendered_options,
+            "allow_text_input": allow_custom_reply,
+            "source": source,
+            "custom_input_active": False,
             "context": dict(context or {}),
         },
         expires_at=expires_at,
@@ -85,7 +100,7 @@ async def create_prompt(
     await db.flush()
 
     rendered: list[dict] = []
-    for option in options:
+    for option in rendered_options:
         token = secrets.token_urlsafe(24)
         action = InteractionAction(
             prompt_id=prompt.id,
@@ -138,11 +153,19 @@ async def create_agent_prompt(
         normalized.append({"id": option_id, "label": label, "action_type": "choice"})
     title = str(payload.get("title") or "需要你的回答").strip()[:120]
     body = str(payload.get("body") or "").strip()[:1000]
+    authorization = str(payload.get("authorization") or "").strip()
+    if authorization and authorization != "user_sandbox":
+        return reject("invalid_authorization_scope")
+    if authorization == "user_sandbox" and session_id is None:
+        return reject("authorization_requires_session")
+    if authorization and (kind != "choice" or [item.get("id") for item in normalized] != ["confirm", "cancel"]):
+        return reject("invalid_authorization_prompt")
     context = {
         "tool_name": tool_name,
         "tool_call_id": tool_call_id,
-        "allow_text_input": bool(payload.get("allow_text_input", False)),
     }
+    if authorization == "user_sandbox":
+        context["command_action"] = "filesystem_authorization_grant"
     from app.db import session as db_session
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
@@ -157,8 +180,16 @@ async def create_agent_prompt(
             body=body,
             options=normalized,
             context=context,
-            allow_text_input=bool(payload.get("allow_text_input", False)),
+            # Agent 主动询问统一提供自定义回答，不由模型自行关闭这个能力。
+            allow_text_input=True,
+            source="agent",
         )
+        if authorization == "user_sandbox":
+            from app.services.filesystem_authorization import record_filesystem_authorization_request
+
+            record_filesystem_authorization_request(
+                db, user_id=user_id, subject_type="session", subject_id=session_id, source="askuser",
+            )
         await db.commit()
         return prompt, rendered
 
@@ -327,12 +358,38 @@ async def consume_action(
     )
     if action is None or action.status != "pending" or action.expires_at <= now:
         raise ValueError("动作无效或已使用")
+    context = dict(action.context_json or {})
+    is_custom_reply = action.option_id == CUSTOM_REPLY_OPTION_ID or action.action_type == "custom_reply"
+    schema = _schema_dict(prompt.schema_json)
+    if is_custom_reply and (schema.get("source") != "agent" or not bool(schema.get("allow_text_input"))):
+        raise ValueError("该交互不接受自定义回答")
     action.status = "consumed"
     action.consumed_at = now
     action.consumed_event_id = event_id
+    if is_custom_reply:
+        # 点击“自定义回复”只切换输入模式，不结束 Prompt；下一条普通消息再由
+        # consume_text 原子提交，原 Agent Run 继续保持等待。
+        prompt.schema_json = {**schema, "custom_input_active": True}
+        result = {
+            "kind": prompt.kind,
+            "status": "awaiting_text",
+            "prompt_id": prompt.id,
+            "option_id": CUSTOM_REPLY_OPTION_ID,
+            "value": None,
+            "text": CUSTOM_REPLY_LABEL,
+        }
+        await db.commit()
+        return {
+            "prompt_id": prompt.id,
+            "session_id": prompt.session_id,
+            "kind": prompt.kind,
+            "option_id": CUSTOM_REPLY_OPTION_ID,
+            "action_type": "custom_reply",
+            "context": context,
+            "result": result,
+        }
     prompt.status = "resolved"
     prompt.resolved_at = now
-    context = dict(action.context_json or {})
     is_cancel = action.option_id == "cancel" or action.action_type == "cancel"
     command_action = str(context.get("command_action") or "")
     if command_action == "workspace_delete" and not is_cancel:
@@ -347,6 +404,20 @@ async def consume_action(
             await delete_workspace(db, user_id, workspace.id)
             result_status = "confirmed"
             result_text = f"已删除工作区「{workspace.name}」（ID {workspace.id}），项目和文件未受影响。"
+    elif command_action == "filesystem_authorization_grant" and action.option_id == "confirm":
+        from app.services.filesystem_authorization import grant_session_filesystem_access
+
+        try:
+            await grant_session_filesystem_access(
+                db, user_id, prompt.session_id,
+                granted_by="askuser" if context.get("tool_name") == "ask_user" else "user",
+            )
+        except LookupError as exc:
+            result_status = "error"
+            result_text = str(exc) if "未开启" in str(exc) else "会话不存在，无法授予文件系统权限。"
+        else:
+            result_status = "confirmed"
+            result_text = "已授权当前会话完整读写用户沙箱（workspace、personal、project）。"
     else:
         result_status = "cancelled" if is_cancel else "selected"
         result_text = next(
@@ -445,13 +516,15 @@ async def consume_text(
         prompt.resolved_at = now
         await db.commit()
         raise ValueError("交互已过期")
-    if not bool(_schema_dict(prompt.schema_json).get("allow_text_input")):
+    schema = _schema_dict(prompt.schema_json)
+    if schema.get("source") != "agent" or not bool(schema.get("allow_text_input")):
         raise ValueError("该交互不接受文本回答")
+    if schema.get("options") and not bool(schema.get("custom_input_active")):
+        raise ValueError("请先选择自定义回答")
     text = str(text or "").strip()
     if not text or len(text) > 2000:
         raise ValueError("回答不能为空或过长")
     # 文本型 Prompt 可能没有 Action，context 存在 Prompt schema 的内部字段中。
-    schema = _schema_dict(prompt.schema_json)
     context = dict(schema.get("context") or {})
     result = {
         "kind": prompt.kind,
@@ -540,9 +613,33 @@ async def consume_choice_text(
     )
     if action is None:
         return None
+    if option_id == CUSTOM_REPLY_OPTION_ID and (
+        schema.get("source") != "agent" or not bool(schema.get("allow_text_input"))
+    ):
+        raise ValueError("该交互不接受自定义回答")
     action.status = "consumed"
     action.consumed_at = now
     action.consumed_event_id = event_id
+    if option_id == CUSTOM_REPLY_OPTION_ID:
+        prompt.schema_json = {**schema, "custom_input_active": True}
+        result = {
+            "kind": prompt.kind,
+            "status": "awaiting_text",
+            "prompt_id": prompt.id,
+            "option_id": CUSTOM_REPLY_OPTION_ID,
+            "value": None,
+            "text": CUSTOM_REPLY_LABEL,
+        }
+        await db.commit()
+        return {
+            "prompt_id": prompt.id,
+            "session_id": prompt.session_id,
+            "kind": prompt.kind,
+            "option_id": CUSTOM_REPLY_OPTION_ID,
+            "action_type": "custom_reply",
+            "context": dict(action.context_json or {}),
+            "result": result,
+        }
     prompt.status = "resolved"
     prompt.resolved_at = now
     context = dict(action.context_json or {})
@@ -576,6 +673,41 @@ async def consume_choice_text(
     }
 
 
+async def consume_custom_text(
+    db: AsyncSession,
+    *,
+    user_id,
+    session_id: int,
+    text: str,
+    event_id: str | None = None,
+) -> dict | None:
+    """消费 Agent ask_user 的自定义回答；系统交互永远不会命中此路径。"""
+    now = now_utc()
+    prompts = (await db.execute(
+        select(InteractionPrompt).where(
+            InteractionPrompt.user_id == user_id,
+            InteractionPrompt.session_id == session_id,
+            InteractionPrompt.status == "active",
+            InteractionPrompt.expires_at > now,
+        ).order_by(InteractionPrompt.created_at.desc())
+    )).scalars().all()
+    for prompt in prompts:
+        schema = _schema_dict(prompt.schema_json)
+        if (
+            schema.get("source") == "agent"
+            and bool(schema.get("allow_text_input"))
+            and (bool(schema.get("custom_input_active")) or not schema.get("options"))
+        ):
+            return await consume_text(
+                db,
+                user_id=user_id,
+                prompt_id=prompt.id,
+                text=text,
+                event_id=event_id,
+            )
+    return None
+
+
 async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
     now = now_utc()
     rows = (await db.execute(
@@ -588,6 +720,7 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
     )).scalars().all()
     result: list[dict] = []
     for prompt in rows:
+        schema = _schema_dict(prompt.schema_json)
         actions = (await db.execute(
             select(InteractionAction).where(
                 InteractionAction.prompt_id == prompt.id,
@@ -602,7 +735,7 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             options.append({
                 "id": action.option_id,
                 "label": next(
-                    (str(item.get("label") or "") for item in _schema_dict(prompt.schema_json).get("options", [])
+                    (str(item.get("label") or "") for item in schema.get("options", [])
                      if str(item.get("id") or "") == action.option_id),
                     action.option_id,
                 ),
@@ -618,6 +751,8 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
             "tool_call_id": str((schema.get("context") or {}).get("tool_call_id") or "") or None,
             "options": options,
+            "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
+            "custom_input_active": bool(schema.get("custom_input_active")),
             "expires_at": prompt.expires_at.isoformat(),
         })
     if result:
@@ -637,12 +772,13 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
     result: list[dict] = []
     changed = False
     for prompt in prompts:
+        schema = _schema_dict(prompt.schema_json)
         actions = (await db.execute(
             select(InteractionAction).where(InteractionAction.prompt_id == prompt.id).order_by(InteractionAction.id)
         )).scalars().all()
         options = []
         selected = None
-        schema_options = _schema_dict(prompt.schema_json).get("options", [])
+        schema_options = schema.get("options", [])
         for action in actions:
             label = next(
                 (str(item.get("label") or "") for item in schema_options
@@ -665,10 +801,13 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "body": prompt.body,
             # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
             # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
-            "tool_call_id": str(_schema_dict(prompt.schema_json).get("context", {}).get("tool_call_id") or "") or None,
+            "tool_call_id": str((schema.get("context") or {}).get("tool_call_id") or "") or None,
             "options": options,
+            "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
+            "custom_input_active": bool(schema.get("custom_input_active")),
             "resolved": prompt.status != "active" or prompt.expires_at <= now,
             "selected_option_id": selected,
+            "response_text": (schema.get("resolved_result") or {}).get("text") if isinstance(schema.get("resolved_result"), dict) else None,
             "expires_at": prompt.expires_at.isoformat(),
             "created_at": prompt.created_at.isoformat(),
         })
@@ -692,7 +831,7 @@ async def create_tool_confirmation(
     # 偶然带 needs_confirm 字段时也被渲染成危险操作按钮。
     try:
         from agent.tools import registry
-        tool = registry.get(tool_name)
+        tool = registry.snapshot().get(tool_name)
         if tool is None or not tool.destructive:
             return None
     except Exception:

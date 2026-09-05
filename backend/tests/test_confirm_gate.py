@@ -215,6 +215,40 @@ async def test_dispatch_tripwire_silent_when_gated(user_a, monkeypatch, caplog):
         base_mod.registry._tools.pop(good.name, None)
 
 
+async def test_dispatch_tripwire_silent_for_server_authorized_autopilot(user_a, monkeypatch, caplog):
+    """Autopilot 是服务端授权放行，不应被误记为确认门绕过。"""
+    from agent.tools import base as base_mod
+    import app.db.session as sess_mod
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return None
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(sess_mod, "_engine", object())
+    monkeypatch.setattr(sess_mod, "_SessionLocal", lambda: _FakeSession())
+
+    async def _autopilot_handler(db, user_id, args):
+        return {"success": True, "_confirm_gate_authorized": "shell_autopilot"}
+
+    autopilot = base_mod.Tool(
+        name="_test_autopilot_delete", label="测试 Autopilot 删除",
+        description="test", input_schema={"type": "object", "properties": {}},
+        handler=_autopilot_handler, destructive=True,
+    )
+    base_mod.registry._tools[autopilot.name] = autopilot
+    try:
+        with caplog.at_level(logging.CRITICAL, logger="agent.traj"):
+            result, _ = await base_mod.registry.dispatch(user_a.id, autopilot.name, {})
+        payload = json.loads(result)
+        assert payload.get("success") is True
+        assert "_confirm_gate_authorized" not in payload
+        assert not any("confirm-gate.bypassed" in r.message for r in caplog.records)
+    finally:
+        base_mod.registry._tools.pop(autopilot.name, None)
+
+
 async def test_dispatch_normalizes_wrapped_confirmation_result(user_a, monkeypatch):
     """工具包装层不能改变 dispatch 对外的顶层确认协议。"""
     from agent.tools import base as base_mod

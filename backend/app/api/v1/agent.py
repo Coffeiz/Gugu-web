@@ -4,12 +4,13 @@
 adapters）。本文件只负责：接收请求 → 构造 AgentRequest → 调 web adapter →
 包成 StreamingResponse；以及对话会话的纯 CRUD 端点。
 """
+import json
 from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -411,6 +412,9 @@ async def list_sessions(
             return None
         return "paused" if context.get("goal_status") == "paused" else "active"
 
+    from app.services.filesystem_authorization import filesystem_authorization_enabled
+    filesystem_auth_enabled = filesystem_authorization_enabled()
+
     return [
         {
             "id": s.id,
@@ -420,11 +424,112 @@ async def list_sessions(
             "workspaceName": workspace_name,
             "goalActive": goal_active(s),
             "goalStatus": goal_status(s),
+            "filesystemAuthorized": filesystem_auth_enabled and getattr(s, "filesystem_authorization_grant_id", None) is not None,
+            "filesystemAuthorizationEnabled": filesystem_auth_enabled,
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
         }
         for s, workspace_name in sessions
     ]
+
+
+class SessionFilesystemAuthorizationConfirm(BaseModel):
+    confirm_code: str = Field(min_length=1, max_length=128)
+
+
+def _session_authorization_summary(session: ConversationSession) -> str:
+    return f"允许会话「{session.title or '当前会话'}」读写整个用户沙箱（包含 /workspace、/personal、/project）"
+
+
+@router.post("/sessions/{session_id}/filesystem-authorization/request")
+async def request_session_filesystem_authorization(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """为网页会话申请一次性确认码；申请本身不授予文件系统权限。"""
+    from agent.security import confirm
+    from app.services.filesystem_authorization import (
+        SUBJECT_SESSION, filesystem_authorization_enabled,
+        record_filesystem_authorization_request,
+    )
+
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "会话不存在")
+    if not filesystem_authorization_enabled():
+        raise HTTPException(409, "完整用户沙箱授权功能当前未开启")
+    if getattr(session, "filesystem_authorization_grant_id", None) is not None:
+        return {"status": "authorized", "session_id": session.id}
+    pending = confirm.needs_confirmation(
+        {}, _session_authorization_summary(session), current_user.id,
+        identity=f"session:filesystem:{session.id}", ttl_minutes=10,
+        instruction="确认后，该会话中的 Shell 每次运行都可读写用户沙箱；不包含宿主机目录。",
+    )
+    if pending is None:
+        return {"status": "authorized", "session_id": session.id}
+    try:
+        response = json.loads(pending)
+    except (TypeError, ValueError):
+        raise HTTPException(503, "确认服务暂不可用，请稍后重试") from None
+    record_filesystem_authorization_request(
+        db, user_id=current_user.id, subject_type=SUBJECT_SESSION,
+        subject_id=session.id, source="user",
+    )
+    await db.commit()
+    return response
+
+
+@router.post("/sessions/{session_id}/filesystem-authorization")
+async def confirm_session_filesystem_authorization(
+    session_id: int,
+    body: SessionFilesystemAuthorizationConfirm,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """兑换确认码并创建当前会话级授权。"""
+    from agent.interactions.confirmations import redeem_confirmation
+    from agent.security import confirm
+    from app.services.filesystem_authorization import (
+        filesystem_authorization_enabled, grant_session_filesystem_access,
+    )
+
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "会话不存在")
+    if not filesystem_authorization_enabled():
+        raise HTTPException(409, "完整用户沙箱授权功能当前未开启")
+    if redeem_confirmation(current_user.id, body.confirm_code) is None:
+        raise HTTPException(400, "授权确认已失效，请重新确认")
+    pending = confirm.needs_confirmation(
+        {}, _session_authorization_summary(session), current_user.id,
+        identity=f"session:filesystem:{session.id}", ttl_minutes=10,
+    )
+    if pending is not None:
+        raise HTTPException(400, "授权确认不匹配，请重新确认")
+    try:
+        grant = await grant_session_filesystem_access(db, current_user.id, session.id)
+    except LookupError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await db.commit()
+    return {"status": "authorized", "session_id": session.id, "grant_id": grant.id}
+
+
+@router.delete("/sessions/{session_id}/filesystem-authorization")
+async def revoke_session_filesystem_authorization(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """撤销当前会话级完整用户沙箱权限。"""
+    from app.services.filesystem_authorization import revoke_session_filesystem_access
+
+    try:
+        revoked = await revoke_session_filesystem_access(db, current_user.id, session_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    await db.commit()
+    return {"status": "revoked", "session_id": session_id, "revoked": revoked}
 
 
 @router.get("/ui-labels")
