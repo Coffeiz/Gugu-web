@@ -22,6 +22,7 @@ DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留�
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -31,6 +32,7 @@ import time
 from app.services.storage import get_storage
 
 _DIR = ".agent"
+_list_write_locks: dict[str, asyncio.Lock] = {}
 DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数
 DAILY_INJECT_CHARS = 2000  # 注入 prompt 时只取最新内容，避免近期流水撑爆上下文
 DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
@@ -63,6 +65,18 @@ MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按�
 
 def _key(user_id, name: str) -> str:
     return f"{user_id}/{_DIR}/{name}"
+
+
+def _list_write_lock(key: str) -> asyncio.Lock:
+    lock = _list_write_locks.get(key)
+    if lock is None:
+        lock = _list_write_locks[key] = asyncio.Lock()
+    return lock
+
+
+def _list_digest(items: list[dict]) -> str:
+    payload = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 async def _read(key: str) -> str:
@@ -218,7 +232,35 @@ async def read_pattern_list(user_id) -> list[dict]:
 
 
 async def write_pattern_list(user_id, patterns: list[dict]) -> None:
-    await _write(_key(user_id, PATTERN_FILE), json.dumps(patterns, ensure_ascii=False, indent=2))
+    key = _key(user_id, PATTERN_FILE)
+    async with _list_write_lock(key):
+        await _write(key, json.dumps(patterns, ensure_ascii=False, indent=2))
+
+
+def pattern_list_digest(patterns: list[dict]) -> str:
+    """计算 pattern 快照摘要，供远程整理完成后的 CAS 提交使用。"""
+    return _list_digest(patterns)
+
+
+async def write_pattern_list_if_unchanged(
+    user_id, expected_digest: str, patterns: list[dict],
+) -> bool:
+    """仅在 pattern 仍等于快照时写入，避免覆盖期间新增的记忆。"""
+    key = _key(user_id, PATTERN_FILE)
+    async with _list_write_lock(key):
+        current_raw = (await _read(key)).strip()
+        try:
+            data = json.loads(current_raw) if current_raw else []
+        except (TypeError, ValueError):
+            return False
+        current = [
+            item for item in data
+            if isinstance(item, dict) and (item.get("text") or "").strip()
+        ] if isinstance(data, list) else []
+        if pattern_list_digest(current) != expected_digest:
+            return False
+        await _write(key, json.dumps(patterns, ensure_ascii=False, indent=2))
+        return True
 
 
 async def read_pattern_maintenance(user_id) -> dict:
@@ -256,7 +298,39 @@ async def read_profile_list(user_id) -> list[dict]:
 async def write_profile_list(user_id, profile: list[dict]) -> None:
     normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
     normalized = [item for item in normalized if item]
-    await _write(_key(user_id, PROFILE_FILE), json.dumps(normalized, ensure_ascii=False, indent=2))
+    key = _key(user_id, PROFILE_FILE)
+    async with _list_write_lock(key):
+        await _write(key, json.dumps(normalized, ensure_ascii=False, indent=2))
+
+
+def profile_list_digest(profile: list[dict]) -> str:
+    """计算 profile 规范化快照摘要，供远程整理完成后的 CAS 提交使用。"""
+    normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+    return _list_digest([item for item in normalized if item])
+
+
+async def write_profile_list_if_unchanged(
+    user_id, expected_digest: str, profile: list[dict],
+) -> bool:
+    """仅在 profile 仍等于快照时写入，避免覆盖期间新增的画像。"""
+    key = _key(user_id, PROFILE_FILE)
+    async with _list_write_lock(key):
+        current_raw = (await _read(key)).strip()
+        try:
+            data = json.loads(current_raw) if current_raw else []
+        except (TypeError, ValueError):
+            return False
+        current = (
+            [_normalize_profile_item(item, keep_ts=True) for item in data]
+            if isinstance(data, list) else []
+        )
+        current = [item for item in current if item]
+        if profile_list_digest(current) != expected_digest:
+            return False
+        normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+        normalized = [item for item in normalized if item]
+        await _write(key, json.dumps(normalized, ensure_ascii=False, indent=2))
+        return True
 
 
 def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:

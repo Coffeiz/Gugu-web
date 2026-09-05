@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from agent.context.provider_runner import complete_json
@@ -10,6 +11,7 @@ from agent.memory import store
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 COMPACTION_THRESHOLD = 100
 COMPACTION_TARGET = 70
+COMPACTION_MIN_RETAIN_RATIO = 0.2
 
 
 def _prompt(name: str) -> str:
@@ -29,8 +31,16 @@ def _pattern_strength(item: dict) -> tuple[int, float, int, float]:
     )
 
 
-def _valid_profile(value) -> list[dict] | None:
+def _safe_compaction_size(source_count: int, result_count: int) -> bool:
+    """拒绝模型异常缩减，避免一次合法但空的 JSON 清空整份记忆。"""
+    minimum = max(1, math.ceil(source_count * COMPACTION_MIN_RETAIN_RATIO))
+    return result_count >= minimum
+
+
+def _valid_profile(value, source_items: list[dict] | None = None) -> list[dict] | None:
     if not isinstance(value, list) or len(value) > COMPACTION_TARGET:
+        return None
+    if source_items is not None and not _safe_compaction_size(len(source_items), len(value)):
         return None
     result = []
     for item in value:
@@ -45,6 +55,8 @@ def _valid_profile(value) -> list[dict] | None:
 
 def _valid_pattern(value, source_items: list[dict]) -> list[dict] | None:
     if not isinstance(value, list) or len(value) > COMPACTION_TARGET:
+        return None
+    if not _safe_compaction_size(len(source_items), len(value)):
         return None
     source_ids = {str(item.get("id") or "") for item in source_items}
     seen_ids = set()
@@ -76,13 +88,16 @@ async def compact_profile(user_id, settings) -> bool:
     items = await store.read_profile_list(user_id)
     if len(items) < COMPACTION_THRESHOLD:
         return False
+    source_digest = store.profile_list_digest(items)
     result = await complete_json(_prompt("profile_compact.md"), _memory_input(items), settings, max_tokens=4000)
     if not isinstance(result, dict):
         return False
-    profile = _valid_profile(result.get("profile"))
+    profile = _valid_profile(result.get("profile"), items)
     if profile is None:
         return False
-    await store.write_profile_list(user_id, profile)
+    # LLM 调用期间可能有 reflection/memory tool 写入；摘要变化时放弃本轮，绝不回写旧快照。
+    if not await store.write_profile_list_if_unchanged(user_id, source_digest, profile):
+        return False
     from agent import events
     events.publish(events.types.MemoryUpdated(
         user_id=user_id, added=0, removed=max(0, len(items) - len(profile)), source="compaction-profile",
@@ -94,6 +109,7 @@ async def compact_pattern(user_id, settings) -> bool:
     items = await store.read_pattern_list(user_id)
     if len(items) < COMPACTION_THRESHOLD:
         return False
+    source_digest = store.pattern_list_digest(items)
     result = await complete_json(_prompt("pattern_compact.md"), _memory_input(items), settings, max_tokens=4000)
     if not isinstance(result, dict):
         return False
@@ -102,7 +118,9 @@ async def compact_pattern(user_id, settings) -> bool:
         return False
     patterns.sort(key=_pattern_strength, reverse=True)
     compacted = patterns[:COMPACTION_TARGET]
-    await store.write_pattern_list(user_id, compacted)
+    # LLM 调用期间可能有 reflection/memory tool 写入；摘要变化时放弃本轮，绝不回写旧快照。
+    if not await store.write_pattern_list_if_unchanged(user_id, source_digest, compacted):
+        return False
     await store.sync_pattern_vecs(user_id, compacted, force=True)
     from agent import events
     events.publish(events.types.MemoryUpdated(

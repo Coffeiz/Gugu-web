@@ -101,7 +101,8 @@ services:
       - gugu_config:/config
 
   # v1.0.6 起用户数据使用宿主机 Gugu-data。旧版本若使用 named volume，
-  # 先由这个一次性服务复制到新目录；源卷只读且永不自动删除，重复执行安全。
+  # 先由这个一次性服务复制到新目录；成功后写入 /data/.system/migrations marker，后续
+  # 启动直接跳过旧卷扫描。源卷只读且永不自动删除。
   data-migrate:
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
@@ -248,7 +249,7 @@ services:
   # 一次性引导：沙盒兄弟容器实际运行在 GUGU_DOCKER_SOCKET 指向的 daemon（生产常为
   # rootless），compose 建的网络/容器在 rootful daemon 上对它不可见。此服务确保目标
   # daemon 上有沙盒所需镜像、egress 内部网络与 squid 代理；rootful 单 daemon 部署下
-  # 各项已由 compose 提供，脚本自动全部跳过。幂等，每次 up 都会重跑确认。
+  # 各项已由 compose 提供，脚本自动全部跳过；已有 bootstrap marker 时也会跳过。
   sandbox-bootstrap:
     profiles: [sandbox]
     logging: *json-file-logging

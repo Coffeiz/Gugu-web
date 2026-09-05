@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import shutil
+import stat
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -10,6 +12,10 @@ from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 
 _log = logging.getLogger("app.services.storage")
+
+# Rootless Shell workspace 会通过目录默认 ACL 给容器用户授权。新文件不能继续使用
+# mkstemp 的 0600 作为最终权限；显式使用共享文件权限，同时保留目录继承的 ACL。
+_LOCAL_NEW_FILE_MODE = 0o660
 
 
 @dataclass
@@ -164,14 +170,37 @@ class LocalStorageBackend(StorageBackend):
     async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None:
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
+        existing_stat = None
+        try:
+            candidate = os.stat(path, follow_symlinks=False)
+            if stat.S_ISREG(candidate.st_mode):
+                existing_stat = candidate
+        except FileNotFoundError:
+            pass
         # 直接 write_bytes 会先截断目标文件；进程在写入期间退出时会留下 0 字节文件。
         # 记忆档案、配置快照等覆盖写必须先写同目录临时文件，再原子替换目标。
         fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         try:
+            if existing_stat is None:
+                # 默认 ACL 会在创建临时文件时从父目录继承；fchmod 只调整权限掩码，
+                # 不会丢掉 ACL 条目。没有 ACL 的普通目录也至少保留共享读写权限。
+                os.fchmod(fd, _LOCAL_NEW_FILE_MODE)
             with os.fdopen(fd, "wb") as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if existing_stat is not None:
+                # replace 会换掉 inode，因此必须在换入前恢复旧文件的 owner、mode、时间戳
+                # 和 Linux extended attributes（其中包括 POSIX ACL）。
+                if hasattr(os, "chown"):
+                    try:
+                        os.chown(temporary, existing_stat.st_uid, existing_stat.st_gid)
+                    except PermissionError:
+                        effective_uid = getattr(os, "geteuid", os.getuid)()
+                        effective_gid = getattr(os, "getegid", os.getgid)()
+                        if (existing_stat.st_uid, existing_stat.st_gid) != (effective_uid, effective_gid):
+                            raise
+                shutil.copystat(path, temporary, follow_symlinks=False)
             os.replace(temporary, path)
             try:
                 directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

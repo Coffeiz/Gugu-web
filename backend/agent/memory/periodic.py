@@ -33,9 +33,10 @@ async def _run_pattern_compact(user_id, settings, count: int) -> bool:
     try:
         if not await longterm_compaction.compact_pattern(user_id, settings):
             return False
+        compacted_count = len(await store.read_pattern_list(user_id))
         await store.write_pattern_maintenance(user_id, {
             "last_review_at": time.time(),
-            "reviewed_count": count,
+            "reviewed_count": compacted_count,
         })
         return True
     except Exception:
@@ -48,8 +49,9 @@ async def _run_profile_compact(user_id, settings, count: int) -> bool:
     try:
         if not await longterm_compaction.compact_profile(user_id, settings):
             return False
+        compacted_count = len(await store.read_profile_list(user_id))
         state = await store.read_pattern_maintenance(user_id)
-        state.update({"profile_last_compact_at": time.time(), "profile_compacted_count": count})
+        state.update({"profile_last_compact_at": time.time(), "profile_compacted_count": compacted_count})
         await store.write_pattern_maintenance(user_id, state)
         return True
     except Exception:

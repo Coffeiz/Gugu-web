@@ -7,7 +7,8 @@ Compose 升级时也复用本脚本，把旧 named volume 挂载的整个 /data 
 --no-config-update。
 
 默认只做检查和预览；传入 --apply 才会复制文件并更新 config.override.json。
-迁移可重复执行：相同文件跳过，目标存在但内容不同则中止，不删除旧目录。
+迁移是 one-shot：成功后在目标目录写入 marker，后续启动直接跳过，不再拿冻结的旧目录
+和已经投入使用的新目录做一致性比较。旧目录始终保留，不删除。
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+MIGRATION_MARKER = Path(".system/migrations/storage-root-v1.done")
 
 
 def file_digest(path: Path) -> str:
@@ -68,6 +71,22 @@ def write_override(path: Path, value: dict) -> None:
             os.unlink(temporary)
 
 
+def write_migration_marker(target: Path) -> None:
+    """在目标目录原子写入一次性迁移标记。"""
+    marker = target / MIGRATION_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{marker.name}.", dir=marker.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write("storage-root-v1\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, marker)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def switch_storage_root(override_path: Path, storage_path: str) -> None:
     if not override_path.exists():
         raise RuntimeError(
@@ -84,6 +103,10 @@ def migrate_tree(source: Path, target: Path, *, apply: bool) -> tuple[int, int, 
     """迁移目录树，返回（文件总数，待复制数，冲突数）。"""
     if source == target:
         print(f"[OK] 源目录和目标目录相同，已完成迁移：{target}")
+        return 0, 0, 0
+    marker = target / MIGRATION_MARKER
+    if marker.is_file() and not marker.is_symlink():
+        print(f"[OK] 已发现迁移完成标记，跳过旧目录扫描：{marker}")
         return 0, 0, 0
     if not source.exists():
         print(f"[OK] 未发现旧存储目录，无需迁移：{source}")
@@ -126,6 +149,7 @@ def migrate_tree(source: Path, target: Path, *, apply: bool) -> tuple[int, int, 
         target_file = target / source_file.relative_to(source)
         if not target_file.exists() or file_digest(source_file) != file_digest(target_file):
             raise RuntimeError(f"迁移校验失败：{source_file.relative_to(source)}")
+    write_migration_marker(target)
     return len(files), len(pending), 0
 
 

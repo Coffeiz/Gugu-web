@@ -93,7 +93,7 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 沿用现有命名：`GUGU_DB_PASSWORD`、`SECRET_KEY`、`GUGU_DATA_HOST_DIR`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`GUGU_PUBLIC_APP_URL`；新增 `GUGU_WEB_IMAGE`（默认 Compose 单容器镜像引用，默认 `coffeiz/gugu-web:latest`）。BYOK 主密钥沿用 v1.0.5 的 `CREDENTIALS_MASTER_KEY_FILE` 持久卷机制，升级不丢。
 
-Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-migrate` 一次性服务复用 `migrate_storage_root.py`，将 v1.0.5 及更早版本的旧 named volume 复制到新目录；源卷只读挂载并保留，目标冲突时停止，不覆盖已有文件。
+Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-migrate` 一次性服务复用 `migrate_storage_root.py`，将 v1.0.5 及更早版本的旧 named volume 复制到新目录；成功后在目标目录写入 `.system/migrations/storage-root-v1.done`，后续启动直接跳过旧卷扫描，避免用户修改新目录后因冻结旧卷产生冲突。源卷只读挂载并保留；首次迁移时目标已有不同内容仍会停止且不覆盖。
 
 ### 3.4 数据与日志隐私边界
 

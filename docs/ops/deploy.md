@@ -459,7 +459,9 @@ sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`
   `.env` 设置 `GUGU_DATA_HOST_DIR=/绝对路径`。
 - `migrate_storage_root.py` 是通用文件树迁移器：目录搬迁可继续传入对应的 `--source` 和
   `--target` 复用；Compose 的 `data-migrate` 正是用 `--no-config-update` 迁移旧 named
-  volume 的整个 `/data`。数据库字段转换、配置结构转换等非文件复制迁移不能套用它。
+  volume 的整个 `/data`。迁移成功后会在目标目录写入
+  `.system/migrations/storage-root-v1.done`，后续重复启动只做 marker skip，不会比较冻结的
+  旧卷与已经投入使用的新目录；数据库字段转换、配置结构转换等非文件复制迁移不能套用它。
 
 ### 4.3 数据库迁移
 

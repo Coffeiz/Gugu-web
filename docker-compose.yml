@@ -96,7 +96,8 @@ services:
     restart: unless-stopped
 
   # v1.0.6 起用户数据使用宿主机 Gugu-data。旧版本若使用 named volume，
-  # 先由这个一次性服务复制到新目录；源卷只读且永不自动删除，重复执行安全。
+  # 先由这个一次性服务复制到新目录；成功后写入 /data/.system/migrations marker，后续
+  # 启动直接跳过旧卷扫描。源卷只读且永不自动删除。
   data-migrate:
     image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     entrypoint: []

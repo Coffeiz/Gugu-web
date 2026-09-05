@@ -79,6 +79,37 @@ async def test_pattern_compaction_failure_does_not_advance_watermark(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_pattern_compaction_records_post_compaction_watermark(monkeypatch):
+    written = []
+    monkeypatch.setattr(periodic.longterm_compaction, "compact_pattern", AsyncMock(return_value=True))
+    monkeypatch.setattr(periodic.store, "read_pattern_list", AsyncMock(return_value=_patterns(70)))
+
+    async def capture_write(_user_id, state):
+        written.append(state)
+
+    monkeypatch.setattr(periodic.store, "write_pattern_maintenance", capture_write)
+
+    assert await periodic._run_pattern_compact("u1", None, 100) is True
+    assert written[0]["reviewed_count"] == 70
+
+
+@pytest.mark.asyncio
+async def test_profile_compaction_records_post_compaction_watermark(monkeypatch):
+    written = []
+    monkeypatch.setattr(periodic.longterm_compaction, "compact_profile", AsyncMock(return_value=True))
+    monkeypatch.setattr(periodic.store, "read_profile_list", AsyncMock(return_value=_patterns(70)))
+    monkeypatch.setattr(periodic.store, "read_pattern_maintenance", AsyncMock(return_value={}))
+
+    async def capture_write(_user_id, state):
+        written.append(state)
+
+    monkeypatch.setattr(periodic.store, "write_pattern_maintenance", capture_write)
+
+    assert await periodic._run_profile_compact("u1", None, 100) is True
+    assert written[0]["profile_compacted_count"] == 70
+
+
+@pytest.mark.asyncio
 async def test_profile_threshold_schedules_profile_compaction(monkeypatch):
     calls = []
     monkeypatch.setattr(periodic.store, "read_pattern_list", AsyncMock(return_value=[]))
