@@ -13,6 +13,7 @@ import { i18n } from '@/i18n'
 export const PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_stages','update_todo'])
 export const CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
 export const FILE_TOOLS = new Set(['edit_file','create_document','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
+export const SCHEDULED_TASK_TOOLS = new Set(['create_scheduled_task', 'update_scheduled_task', 'delete_scheduled_task'])
 
 /**
  * gugu:// 协议链接（代码块复制、绑定 IM、打开文件）+ 工具完成后的前端刷新通知。
@@ -38,6 +39,10 @@ export function useChatActions(options: {
       // 文件：刷文件管理器（uploadSignal）+ 确定性 bump rev.files 让打开的预览窗重载。
       // 实时 SSE（live.js）是 best-effort（dev 重启 / pub-sub 竞态会丢事件），靠这条回合末兜底保证稳定刷新。
       if (has(FILE_TOOLS)) { uploadSignal.value++; liveStore.bump('files') }
+      // 定时任务没有独立的全局 store；通过 live rev 触发打开中的定时任务面板重拉。
+      // 这条回合末兜底也覆盖当前标签页的 SSE 回声被视为 own event 的情况：咕咕工具
+      // 没有更新页面上的本地草稿，不能沿用“自己已乐观更新所以跳过重拉”的规则。
+      if (has(SCHEDULED_TASK_TOOLS)) liveStore.bump('scheduled_tasks')
     } catch (e) { /* 刷新失败不影响对话 */ }
   }
 
