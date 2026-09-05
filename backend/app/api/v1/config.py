@@ -83,7 +83,7 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         if (
             isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch)
         ) or (
-            isinstance(sandbox_patch, dict) and "enabled" in sandbox_patch
+            isinstance(sandbox_patch, dict) and ({"enabled", "terminal_mode"} & sandbox_patch.keys())
         ):
             from app.core import events
             from app.models import User

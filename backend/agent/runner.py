@@ -10,23 +10,19 @@ from app.core.tz import now_utc, set_ctx_tz
 
 import asyncio
 import json
-from typing import AsyncGenerator, AsyncIterator, List, Tuple
+from typing import AsyncGenerator, AsyncIterator, Tuple
 
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, assembly, session_history, audit, run_context
+from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
 from agent.im.permissions import filter_tool_names
-from agent.im.session import (
-    GROUP_CONTEXT_LIMIT,
-    get_or_create_session,
-    session_scope_filters,
-)
+from agent.im.session import get_or_create_session, session_scope_filters
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
@@ -76,7 +72,34 @@ def _proactive_lead_for(req: AgentRequest, history: list) -> str:
     return nonsumm[0].content if nonsumm and nonsumm[0].role == "assistant" else ""
 
 
-async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
+def _session_user_skill_metadata(session):
+    """读取当前会话冻结的用户 Skill 目录；缺失时返回 None，允许首次建立。"""
+    from agent.capabilities.skill_registry import deserialize_user_skill_metadata
+
+    context = getattr(session, "session_context", None) or {}
+    if "user_skill_snapshot" not in context:
+        return None
+    return deserialize_user_skill_metadata(context.get("user_skill_snapshot"))
+
+
+def _pin_session_user_skill_metadata(session, capability_context) -> bool:
+    """首次组装后把用户 Skill 目录写入 session snapshot；返回是否发生写入。"""
+    context = dict(getattr(session, "session_context", None) or {})
+    if "user_skill_snapshot" in context:
+        return False
+    from agent.capabilities.skill_registry import serialize_user_skill_metadata
+
+    user_items = tuple(
+        item for item in capability_context.snapshot.skills.values()
+        if item.source == "user"
+    )
+    context["user_skill_snapshot"] = serialize_user_skill_metadata(user_items)
+    session.session_context = context
+    return True
+
+
+async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query="",
+                              user_skill_metadata=None):
     """按用户偏好创建能力上下文；full-schema 仍保留真实工具 Schema。"""
     from agent.capabilities.injector import (
         build_fixed_adapter_context,
@@ -102,9 +125,11 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
             if await _full_schema_preference(capability_db):
                 return await build_skill_metadata_context_for_user(
                     tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
+                    user_skill_metadata=user_skill_metadata,
                 )
             context = await build_fixed_adapter_context_for_user(
                 tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
+                user_skill_metadata=user_skill_metadata,
             )
             if query:
                 await context.select_for_query(query)
@@ -113,9 +138,11 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
         if await _full_schema_preference(db):
             return await build_skill_metadata_context_for_user(
                 tool_names, db=db, owner_id=owner_id, search_settings=settings,
+                user_skill_metadata=user_skill_metadata,
             )
         context = await build_fixed_adapter_context_for_user(
             tool_names, db=db, owner_id=owner_id, search_settings=settings,
+            user_skill_metadata=user_skill_metadata,
         )
         if query:
             await context.select_for_query(query)
@@ -133,12 +160,34 @@ def _capability_catalog(context):
     return catalog_block(context.snapshot, kind=kind, tool_order=context.snapshot.tools)
 
 
-async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str], *, session=None) -> list[str]:
+async def _filter_shell_tool(
+    db,
+    user_id,
+    session_id: int | None,
+    names: list[str],
+    *,
+    session=None,
+    subject_type: str = "session",
+    subject_id: int | str | None = None,
+    workspace_id: int | None = None,
+) -> list[str]:
     """工具注册前过滤 Shell；执行器仍会再次调用策略层复核。"""
     if "shell" not in names:
         return names
-    from agent.security.shell_policy import available_for_session
-    if await available_for_session(db, user_id, session_id, session=session):
+    if subject_type == "session" and not session_id:
+        return [name for name in names if name != "shell"]
+    from agent.security.shell_policy import evaluate
+    decision = await evaluate(
+        db,
+        user_id,
+        session_id,
+        "pwd",
+        session=session,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        workspace_id=workspace_id,
+    )
+    if decision.allowed and not decision.needs_confirmation:
         return names
     return [name for name in names if name != "shell"]
 
@@ -314,7 +363,6 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
                    `read_conversation(id)` 翻，而不是空着答或拿别的话题顶上。
       B 档（这句像要接着聊时）：直接把上一条尾部几轮塞进上下文，不靠模型自觉调工具。
     上一条太久远（>48h）则不当「刚刚」、整体不注入（防把陈年对话当最近的翻出来）。"""
-    from datetime import datetime
     from sqlalchemy import desc as _desc
     from app.models import ConversationSession, ConversationMessage
     query = select(ConversationSession).where(
@@ -579,15 +627,30 @@ async def _run_collect_unlocked(
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
+    user_skill_metadata = _session_user_skill_metadata(session)
     # 这里同样使用短事务。工具组装可能触发数据库查询，不能把前面已关闭的
     # session 传入，否则 AsyncSession 会在上下文外重新 checkout 连接并由 GC 回收。
     async with _sess._SessionLocal() as tool_db:
         tool_names = await _filter_shell_tool(
             tool_db, user_id, session_id, tool_names, session=session,
         )
+        if "shell" in tool_names:
+            from agent.security.shell_policy import build_dynamic_prompt
+            shell_prompt = await build_dynamic_prompt(
+                tool_db, user_id, session_id, session=session,
+            )
+            if shell_prompt:
+                system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
+                system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
+            else:
+                tool_names = [name for name in tool_names if name != "shell"]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
+            user_skill_metadata=user_skill_metadata,
         )
+    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
+    if capability_context is not None:
+        _pin_session_user_skill_metadata(session, capability_context)
     if capability_context is not None:
         _snapshot_injection = session_snapshot.snapshot_message(
             f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
@@ -632,6 +695,8 @@ async def _run_collect_unlocked(
         session_id=session_id,
         session=session,
         on_interaction=on_interaction,
+        reasoning_policy=run_config.reasoning_persistence,
+        state_session_factory=_sess._SessionLocal,
     )
 
     try:
@@ -1008,13 +1073,28 @@ async def _run_stream_unlocked(
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
+    user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as tool_db:
         tool_names = await _filter_shell_tool(
             tool_db, user_id, session_id, tool_names, session=session,
         )
+        if "shell" in tool_names:
+            from agent.security.shell_policy import build_dynamic_prompt
+            shell_prompt = await build_dynamic_prompt(
+                tool_db, user_id, session_id, session=session,
+            )
+            if shell_prompt:
+                system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
+                system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
+            else:
+                tool_names = [name for name in tool_names if name != "shell"]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
+            user_skill_metadata=user_skill_metadata,
         )
+    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
+    if capability_context is not None:
+        _pin_session_user_skill_metadata(session, capability_context)
     if capability_context is not None:
         _snapshot_injection = session_snapshot.snapshot_message(
             f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
@@ -1059,6 +1139,8 @@ async def _run_stream_unlocked(
         session_id=session_id,
         session=session,
         on_interaction=on_interaction,
+        reasoning_policy=run_config.reasoning_persistence,
+        state_session_factory=_sess._SessionLocal,
     )
 
 
@@ -1119,7 +1201,7 @@ async def _run_stream_unlocked(
             elif t == "interaction_required":
                 interactions.append({
                     key: evt[key]
-                    for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id", "force_display")
+                    for key in ("prompt_id", "kind", "title", "body", "options", "allow_text_input", "custom_input_active", "expires_at", "round_id", "tool_call_id", "force_display")
                     if key in evt
                 })
             elif t == "_cancelled":
@@ -1313,14 +1395,14 @@ async def _collect(
             # create_/update_/delete_/... 词表里的写工具，导致失败后重跑整轮时
             # 重复执行已经生效的写操作。
             from agent.tools import registry as _tool_registry
-            tool = _tool_registry.get(name)
+            tool = _tool_registry.snapshot().get(name)
             if tool is not None and tool.mutates:
                 mutated = True
         elif t == "interaction_required":
             # token 只在当前事件中短暂存在，不能写入日志或历史；平台 adapter 负责决定是否展示。
             interactions.append({
                 key: evt[key]
-                for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id", "force_display")
+                for key in ("prompt_id", "kind", "title", "body", "options", "allow_text_input", "custom_input_active", "expires_at", "round_id", "tool_call_id", "force_display")
                 if key in evt
             })
         elif t == "tool_done":
@@ -1389,6 +1471,8 @@ async def _run_scheduled_once(
     tool_names_override: list[str] | None = None,
     minimal_context: bool = False,
     allowed_tools: list[str] | None = None,
+    filesystem_subject: dict | None = None,
+    allow_shell: bool = False,
 ):
     """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
     model_cfg = None
@@ -1448,8 +1532,39 @@ async def _run_scheduled_once(
             if tool_names_override is not None
             else profile.tool_names
         )
-        # 定时任务没有交互式 session workspace，不向模型暴露本机 Shell。
-        tool_names = [name for name in tool_names if name != "shell"]
+        # 定时任务默认不暴露 Shell；只有任务明确绑定 workspace 或持有完整沙箱
+        # 授权时，才沿用 DefaultProfile 中的 shell 工具，并在 dispatch 边界再次
+        # 按 filesystem_subject 校验，不能仅靠工具列表作为权限边界。
+        if not allow_shell:
+            tool_names = [name for name in tool_names if name != "shell"]
+        shell_prompt = None
+        if "shell" in tool_names:
+            subject = filesystem_subject or {}
+            async with _sess._SessionLocal() as policy_db:
+                tool_names = await _filter_shell_tool(
+                    policy_db,
+                    user_id,
+                    None,
+                    tool_names,
+                    subject_type=str(subject.get("subject_type") or "session"),
+                    subject_id=subject.get("subject_id"),
+                    workspace_id=subject.get("workspace_id"),
+                )
+                if "shell" in tool_names:
+                    from agent.security.shell_policy import build_dynamic_prompt
+                    shell_prompt = await build_dynamic_prompt(
+                        policy_db,
+                        user_id,
+                        None,
+                        subject_type=str(subject.get("subject_type") or "session"),
+                        subject_id=subject.get("subject_id"),
+                        workspace_id=subject.get("workspace_id"),
+                    )
+                    if shell_prompt is None:
+                        tool_names = [name for name in tool_names if name != "shell"]
+        system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
+        if shell_prompt:
+            system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
         capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
         if capability_context is not None:
             snapshot_context = f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
@@ -1474,6 +1589,9 @@ async def _run_scheduled_once(
                 messages,
                 use_anthropic=True,
                 model_cfg=model_cfg,
+                # 定时任务没有稳定的会话续接边界；provider state 只属于交互式 session。
+                reasoning_policy="off",
+                state_session_factory=None,
             )
         else:
             messages = _build_scheduled_messages(
@@ -1486,12 +1604,20 @@ async def _run_scheduled_once(
                 messages,
                 use_anthropic=False,
                 model_cfg=model_cfg,
+                reasoning_policy="off",
+                state_session_factory=None,
             )
 
         # 定时任务由用户创建并明确授权其指令执行；只给邮件工具自动授权，
         # 其它 destructive 工具仍必须经过各自安全门，不能借任务上下文扩大权限。
-        from agent.tools.base import set_automation_allowed_tools, reset_automation_allowed_tools
+        from agent.tools.base import (
+            reset_dispatch_filesystem_subject,
+            reset_automation_allowed_tools,
+            set_dispatch_filesystem_subject,
+            set_automation_allowed_tools,
+        )
         automation_token = set_automation_allowed_tools(set(allowed_tools or []))
+        filesystem_token = set_dispatch_filesystem_subject(filesystem_subject)
         try:
             collected = await _collect(
                 gen,
@@ -1499,6 +1625,7 @@ async def _run_scheduled_once(
                 include_meta=include_meta,
             )
         finally:
+            reset_dispatch_filesystem_subject(filesystem_token)
             reset_automation_allowed_tools(automation_token)
         text, errored, meta = _scheduled_collect_result(collected)
         from agent.usage import record_usage
@@ -1556,7 +1683,15 @@ def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
     return messages
 
 
-async def run_scheduled_execution(user_id, user_name: str, prompt: str, *, allowed_tools: list[str] | None = None):
+async def run_scheduled_execution(
+    user_id,
+    user_name: str,
+    prompt: str,
+    *,
+    allowed_tools: list[str] | None = None,
+    filesystem_subject: dict | None = None,
+    allow_shell: bool = False,
+):
     """执行阶段适配器；自动工具权限来自任务持久化授权，不默认放行。"""
     return await _run_scheduled_once(
         user_id,
@@ -1566,4 +1701,6 @@ async def run_scheduled_execution(user_id, user_name: str, prompt: str, *, allow
         get_settings(),
         include_meta=True,
         allowed_tools=allowed_tools,
+        filesystem_subject=filesystem_subject,
+        allow_shell=allow_shell,
     )
