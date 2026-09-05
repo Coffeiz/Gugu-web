@@ -141,13 +141,13 @@ docker compose -f docker-compose.prod.yml --profile sandbox up -d
 GUGU_DATA_HOST_DIR=/srv/gugu-data
 ```
 
-目录需要提前创建，并保证运行 Docker 的用户可读写；启用 Shell 沙盒时也必须使用宿主机
-daemon 可见的绝对路径。
+Compose 首次启动会自动创建目录；自定义目录需要保证运行 Docker 的用户可读写，启用 Shell
+沙盒时也必须使用宿主机 daemon 可见的绝对路径。
 
 > **⚠️ 沙盒与 `Gugu-data` 的部署前置**（默认/Dev/Prod 三个 Compose 相同）：沙盒容器由
 > backend 通过 docker.sock 作为兄弟容器启动，`--mount src=.../users/<uid>/shell`
 > 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `Gugu-data` 路径。Compose
-> 已用 `GUGU_DATA_HOST_DIR`（未设置时按启动目录解析为上一级 `Gugu-data` 的绝对路径）把宿主机目录 bind 成固定卷；从旧版本
+> 已用 `GUGU_DATA_HOST_DIR`（未设置时按 Compose 文件目录解析为 `Gugu-data`）直接 bind；从旧版本
 > 升级时先停止旧业务容器（`docker compose stop`，不删卷），再执行 `docker compose up -d`，
 > 由 `data-migrate` 自动把旧 `gugu-web-compose_gugu_data` named volume 内容拷到新目录，
 > 源卷保留不删除，不需要手工执行第二套迁移。自定义旧 Compose 项目名时设置

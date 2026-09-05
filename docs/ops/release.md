@@ -92,11 +92,12 @@ docker compose -p gugu-web-main -f docker-compose.prod.yml up -d --force-recreat
 ### Shell 沙盒前置（首次部署或迁移时）
 
 沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=.../users/<uid>/shell`
-由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `Gugu-data` 路径（compose 用
-local driver 把 `GUGU_DATA_HOST_DIR` bind 成固定的 `gugu_data` 卷，未设置时按启动目录解析为上一级 `Gugu-data` 的绝对路径）：
+由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
+会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
+`Gugu-data`，首次启动会自动创建；下面的命令仅用于 rootless 沙盒提前设置目录属主：
 
 ```bash
-mkdir -p ../Gugu-data && chown 1001:1001 ../Gugu-data   # 1001 = rootless docker 用户的 uid
+mkdir -p Gugu-data && chown 1001:1001 Gugu-data   # 1001 = rootless docker 用户的 uid
 docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 ```
 

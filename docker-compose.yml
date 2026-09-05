@@ -9,6 +9,13 @@ x-json-file-logging: &json-file-logging
     max-size: "50m"
     max-file: "3"
 
+x-gugu-data-mount: &gugu-data-mount
+  type: bind
+  source: ${GUGU_DATA_HOST_DIR:-./Gugu-data}
+  target: /data
+  bind:
+    create_host_path: true
+
 x-app-environment: &app-environment
   GUGU_SINGLE_CONTAINER: "1"
   GUGU_APP_PORT: "8001"
@@ -37,7 +44,7 @@ x-app-environment: &app-environment
   SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
-  SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}/users
+  SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
   DOCKER_HOST: unix:///run/gugu/docker.sock
@@ -96,7 +103,7 @@ services:
     command: ["python", "scripts/migrate_storage_root.py", "--source", "/legacy", "--target", "/data", "--apply", "--no-config-update"]
     volumes:
       - legacy_gugu_data:/legacy:ro
-      - gugu_data:/data
+      - *gugu-data-mount
     restart: "no"
 
   app:
@@ -109,7 +116,7 @@ services:
     # 该文件只保存随机管理员密码；应用镜像本身不携带用户配置。
     volumes:
       - ./backend/.env:/app/.env
-      - gugu_data:/data
+      - *gugu-data-mount
       - gugu_config:/config
       - gugu_logs:/app/logs
       - sandbox_socket:/run/gugu
@@ -184,7 +191,7 @@ services:
       SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     volumes:
-      - gugu_data:/data
+      - *gugu-data-mount
       - gugu_config:/config
       - sandbox_socket:/run/gugu
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
@@ -198,13 +205,6 @@ services:
 volumes:
   pgdata:
   redisdata:
-  gugu_data:
-    name: ${GUGU_DATA_VOLUME_NAME:-gugu-web-data}
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${GUGU_DATA_HOST_DIR:-${PWD}/../Gugu-data}
   legacy_gugu_data:
     # 自定义 Compose project name 的旧部署请显式设置 GUGU_LEGACY_DATA_VOLUME。
     name: ${GUGU_LEGACY_DATA_VOLUME:-gugu-web-compose_gugu_data}

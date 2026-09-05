@@ -62,7 +62,7 @@
 
 ### FR-DEPLOY-004：启动前置检查
 
-app 容器入口在启动前校验关键条件，失败时输出中文提示与修复命令，不产生含糊的堆栈报错：`SECRET_KEY` / `GUGU_DB_PASSWORD` 未设置（提示附 `openssl rand -base64 32` 生成命令）；用户数据目录（`GUGU_DATA_HOST_DIR`，默认 `../Gugu-data`）不存在或不可写（提示 mkdir/chown 命令）。
+app 容器入口在启动前校验关键条件，失败时输出中文提示与修复命令，不产生含糊的堆栈报错：`SECRET_KEY` / `GUGU_DB_PASSWORD` 未设置（提示附 `openssl rand -base64 32` 生成命令）；用户数据目录（`GUGU_DATA_HOST_DIR`，默认 `Gugu-data`）不存在或不可写（提示 mkdir/chown 命令）。
 
 ### FR-DEPLOY-005：随机管理员密码
 
