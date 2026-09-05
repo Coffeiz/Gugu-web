@@ -667,12 +667,10 @@ class LLMRunner:
             )
             try:
                 result = await compaction.compact_context(
-                    list(conversation), system_text or "", getattr(ai, "context_tokens", 256000),
-                    session_id=session_id, user_id=user_id,
+                    list(conversation), session_id=session_id,
                     fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-                    overhead_tokens=0,
                     protected_from=protected_from,
-                    force=True,
+                    model_cfg=ai,
                 )
             except Exception as exc:
                 # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成

@@ -10,7 +10,7 @@ system/snapshot 状态。
 
 自动路径不再按数据库累计 token 触发摘要；本轮实际上下文的预算检查由
 ``agent.core`` 负责。数据库积累很多旧消息但当前请求仍在预算内时，不会无谓调用摘要模型。
-压缩保留窗口使用字符硬上限，避免本地 token 估算改变 baseline 内容。
+压缩保留窗口仍使用字符硬上限；摘要请求的输入/输出预算跟随本轮实际模型配置。
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
-from agent.context.tokens import content_text
+from agent.context.tokens import content_text, estimate_tokens
 from agent.context.audit import session_scope, summary_change
 
 logger = logging.getLogger(__name__)
@@ -318,20 +318,36 @@ async def _compress_if_needed_unlocked(
 
     # 分支式候选只读取 history 快照，不持有数据库事务；共享策略超限时自动
     # 使用滚动 fallback，结果仍需在下方按 baseline hash 做 CAS 后才能写回。
-    from agent.context.compaction import generate_compact_summary, BRANCH_SUMMARY_MAX_CHARS
+    from agent.context.compaction import (
+        generate_compact_summary,
+        resolve_compaction_limits,
+    )
+    from agent.llm.modelctx import effective_ai
+    model_cfg = effective_ai(settings)
 
     async def call_once(items, previous):
-        return await _call_llm("\n\n".join(items), previous, settings)
+        return await _call_llm(
+            "\n\n".join(items), previous, settings, model_cfg=model_cfg,
+        )
 
     summary = await generate_compact_summary(
         content_items,
         prev_summary,
         call_once,
+        model_cfg=model_cfg,
     )
-    compression_mode = "branch" if len("\n".join(content_items)) <= BRANCH_SUMMARY_MAX_CHARS else "rolling-fallback"
+    limits = resolve_compaction_limits(model_cfg=model_cfg)
+    compression_mode = (
+        "branch"
+        if estimate_tokens("\n".join(content_items)) + estimate_tokens(prev_summary or "") <= limits.input_tokens
+        else "rolling-fallback"
+    )
     from agent.context.compaction import validate_compact_summary
 
-    summary_ok, summary_reason = validate_compact_summary(summary)
+    summary_ok, summary_reason = validate_compact_summary(
+        summary,
+        max_output_tokens=limits.output_tokens,
+    )
     if not summary_ok:
         logger.warning("[compress_conv] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
         return False
@@ -406,10 +422,17 @@ async def _compress_if_needed_unlocked(
     return True
 
 
-async def _call_llm(conv_text: str, prev_summary: str | None, settings) -> str:
+async def _call_llm(
+    conv_text: str,
+    prev_summary: str | None,
+    settings,
+    *,
+    model_cfg,
+) -> str:
     """通过 ContextBranch 生成/合并摘要，保持与反思相同的 provider 路由。"""
     from agent.context.branch import ContextBranch
     from agent.context.branch_types import BranchInput, BranchPolicy
+    from agent.context.compaction import resolve_compaction_limits
     try:
         sys_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
     except Exception:
@@ -421,7 +444,12 @@ async def _call_llm(conv_text: str, prev_summary: str | None, settings) -> str:
         user_text = conv_text
     result = await ContextBranch().run(
         BranchInput(stable_system=sys_prompt, delta=user_text, scope="conversation-compaction"),
-        BranchPolicy(name="compaction", output_mode="text", max_tokens=600, max_retries=0),
+        BranchPolicy(
+            name="compaction",
+            output_mode="text",
+            max_tokens=resolve_compaction_limits(model_cfg=model_cfg).output_tokens,
+            max_retries=0,
+        ),
         settings,
     )
     return str(result.output or "").strip() if result.ok else ""

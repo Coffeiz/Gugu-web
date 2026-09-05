@@ -109,7 +109,7 @@ async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
     calls = []
 
     async def fake_compact(messages, *args, **kwargs):
-        calls.append(kwargs.get("force"))
+        calls.append(kwargs.get("model_cfg"))
         return list(messages), True
 
     monkeypatch.setattr(compaction, "compact_context", fake_compact)
@@ -125,7 +125,7 @@ async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
 
     assert text == "最终回复"
     assert errors == []
-    assert calls == [True]
+    assert calls == [ai]
     assert ev["_context_compaction"] == 1
 
 
