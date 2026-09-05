@@ -109,6 +109,13 @@
         </div>
         <pre>{{ systemPrompt }}</pre>
       </div>
+      <div v-if="snapshotContent" class="input-snapshot">
+        <div class="input-message-label">
+          <span>Session snapshot</span>
+          <b>用户侧固定上下文 · 不属于 history</b>
+        </div>
+        <pre>{{ snapshotContent }}</pre>
+      </div>
       <div v-if="inputMessages.length && firstDiff" ref="inputMessageList" class="input-message-list">
         <article
           v-for="(message, index) in inputMessages"
@@ -190,6 +197,15 @@ const systemPrompt = computed(() => {
   if (!input || typeof input !== 'object') return ''
   const value = (input as Record<string, unknown>).system_prompt
   return typeof value === 'string' ? value : ''
+})
+const snapshotContent = computed(() => {
+  const input = props.span.input
+  if (!input || typeof input !== 'object') return ''
+  const snapshot = (input as Record<string, unknown>).snapshot
+  if (typeof snapshot === 'string') return snapshot
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  const content = (snapshot as Record<string, unknown>).content
+  return typeof content === 'string' ? content : ''
 })
 const assembly = computed(() => {
   const input = props.span.input as any
@@ -282,7 +298,7 @@ const inputForDisplay = computed(() => {
 const inputWithoutSystemPrompt = computed(() => {
   const input = inputForDisplay.value
   if (!systemPrompt.value || !input || typeof input !== 'object' || Array.isArray(input)) return input
-  const { system_prompt: _systemPrompt, ...rest } = input as Record<string, unknown>
+  const { system_prompt: _systemPrompt, snapshot: _snapshot, ...rest } = input as Record<string, unknown>
   return rest
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
@@ -383,6 +399,8 @@ pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-
 .comparison-label { padding:6px 8px; color:var(--content-secondary); background:var(--surface-soft); font-size:9px; }
 .comparison-column pre { max-height:360px; padding:8px; }
 .input-message-list { display:grid; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
+.input-snapshot { margin-top:10px; border:1px solid color-mix(in srgb,var(--action-primary) 32%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-card)); }
+.input-snapshot pre { max-height:420px; padding:8px; }
 .input-message { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
 .input-message.is-first-diff { border-color:var(--status-warning); box-shadow:0 0 0 2px color-mix(in srgb,var(--status-warning) 18%,transparent); }
 .input-message-label { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; color:var(--content-tertiary); background:var(--surface-soft); font:9px var(--font-mono); }

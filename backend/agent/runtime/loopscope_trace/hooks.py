@@ -65,7 +65,8 @@ def _argument_shape(value: Any) -> Any:
 
 
 def _registered_schema(registry: Any, tool_name: str) -> tuple[dict[str, Any], Any] | None:
-    tool = registry.get(tool_name) if registry is not None else None
+    source = registry.snapshot() if registry is not None and hasattr(registry, "snapshot") else registry
+    tool = source.get(tool_name) if source is not None else None
     schema = getattr(tool, "input_schema", None)
     if tool is None or not isinstance(schema, dict):
         return None
@@ -107,15 +108,51 @@ def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
     """把 provider 的 system 搬运形式还原成 LoopScope 的统一展示形式。
 
     OpenAI 兼容接口把 system 放在 messages[0]，但 LoopScope 同时有独立的
-    system_prompt 字段。展示时保留一份即可，避免用户误以为 system_prompt
-    为空或 system 被重复组装；实际发送给 provider 的 messages 不在这里修改。
+    system_prompt 字段。session snapshot 也可能以固定消息形式进入 provider，
+    但它属于用户侧 snapshot，不应混进 history 展示；实际发送给 provider 的
+    messages 不在这里修改。
     """
-    if system_location != "messages[0]" or not isinstance(messages, list) or not messages:
+    if not isinstance(messages, list):
         return _jsonable(messages)
-    first = messages[0]
-    if isinstance(first, dict) and first.get("role") == "system":
-        return _jsonable(messages[1:])
-    return _jsonable(messages)
+    hidden = set(_snapshot_message_indices(messages))
+    if system_location == "messages[0]" and messages:
+        first = messages[0]
+        if isinstance(first, dict) and first.get("role") == "system":
+            hidden.add(0)
+    return _jsonable([message for index, message in enumerate(messages) if index not in hidden])
+
+
+def _snapshot_message_indices(messages: Any) -> list[int]:
+    """定位固定 session snapshot 消息，供 LoopScope 单独展示。"""
+    if not isinstance(messages, list):
+        return []
+    fixed_count = getattr(messages, "fixed_prefix_size", None)
+    if not isinstance(fixed_count, int) or fixed_count <= 0:
+        return []
+    candidate_count = min(fixed_count, len(messages))
+    indices: list[int] = []
+    for index, message in enumerate(messages[:candidate_count]):
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.startswith("[system-reminder]"):
+            indices.append(index)
+    return indices
+
+
+def _trace_snapshot(messages: Any) -> dict[str, Any] | None:
+    """提取固定 snapshot 正文；正文属于受控 LoopScope trace，可完整查看。"""
+    if not isinstance(messages, list):
+        return None
+    contents = []
+    for index in _snapshot_message_indices(messages):
+        message = messages[index]
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and content:
+            contents.append(content)
+    if not contents:
+        return None
+    return {"content": "\n\n".join(contents), "message_count": len(contents)}
 
 
 def _skill_result_metadata(value: Any) -> dict[str, Any]:
@@ -208,7 +245,8 @@ def ensure_hooks() -> None:
 
     async def dispatch(user_id, name, args):
         run = _scope_run.get()
-        tool = getattr(registry, "_tools", {}).get(name)
+        source = registry.snapshot() if hasattr(registry, "snapshot") else registry
+        tool = source.get(name) if source is not None else None
         handler = getattr(tool, "handler", None)
         span = run.span(
             "tool", str(name), {"arguments": _jsonable(args)},
@@ -269,7 +307,7 @@ def ensure_hooks() -> None:
 
     async def run_loop(
         self, driver, user_id, messages, ai, system_text, session_id=None,
-        session=None, on_interaction=None,
+        session=None, on_interaction=None, reasoning_state=None,
     ):
         run = _scope_run.get()
         if run is not None and session_id is not None:
@@ -338,7 +376,8 @@ def ensure_hooks() -> None:
                 "Context assembly & prompt",
                 {
                     "system_prompt": plain_system,
-                    "messages": _jsonable(messages),
+                    "snapshot": _trace_snapshot(messages),
+                    "messages": _trace_conversation_messages(messages, system_location),
                     "assembly": {
                         "system": system_assembly,
                         "messages": {"count": len(messages) if isinstance(messages, list) else None},
@@ -350,7 +389,7 @@ def ensure_hooks() -> None:
                     "messages_tokens_estimate": messages_est,
                     "estimated_input_tokens": system_est + messages_est,
                 },
-                note="Full application-visible prompt/messages at loop entry",
+                note="Full application-visible prompt, snapshot, and history at loop entry",
             )
             ctx_span.started_at = run.started_at
             ctx_span.finish({
@@ -378,7 +417,7 @@ def ensure_hooks() -> None:
             history = run.span(
                 "history",
                 "Conversation messages sent to loop",
-                {"messages": _jsonable(messages)},
+                {"messages": _trace_conversation_messages(messages, system_location)},
                 parent_span_id=ctx_span.id,
                 code=_code_ref(original_run_loop),
                 token_impact={"included_tokens": messages_est},
@@ -389,6 +428,7 @@ def ensure_hooks() -> None:
             nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages
             round_index += 1
             round_visible_messages = _trace_conversation_messages(round_messages, system_location)
+            round_snapshot = _trace_snapshot(round_messages)
             round_system = effective_system
             model_name = str(getattr(ai, "model", "") or "")
             round_prompt_est = (
@@ -475,6 +515,7 @@ def ensure_hooks() -> None:
                 f"LLM round {round_index}",
                 {
                     "system_prompt": round_system,
+                    "snapshot": round_snapshot,
                     "messages": round_visible_messages,
                     "assembly": {
                         "system": {
@@ -565,6 +606,7 @@ def ensure_hooks() -> None:
                 self, driver, user_id, messages, ai, system_text, session_id=session_id,
                 session=session,
                 on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             ):
                 yield line
                 if run and isinstance(line, str) and '\"_new_round\"' in line:
