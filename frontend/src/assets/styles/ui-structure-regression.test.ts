@@ -362,6 +362,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     const active = cssBlock(chatSidebar, ':deep(.exp-session-item.active) {')
     expect(active).toContain('--gugu-chat-session-hover: var(--gugu-chat-session-active);')
     expect(active).toContain('--sidebar-item-hover: var(--gugu-chat-session-active);')
+
+    const imOpen = cssBlock(chatIm, '.im-plat-head.open {')
+    expect(imOpen).toContain('background:var(--surface-soft);')
+    expect(imOpen).not.toContain('border-color:')
+    expect(cssBlock(chatIm, '.im-plat-head:hover {')).toContain('background:var(--sidebar-item-hover);')
   })
 
   it('项目已完成年组引导线与箭头中心严格对齐，并给月组保留安全间距', () => {
