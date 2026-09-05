@@ -55,11 +55,12 @@
       <div class="config-row terminal-mode-row">
         <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint') }}</small></div>
         <AdminSelect
-          v-model="terminalModeDraft"
+          :model-value="terminalModeDraft"
           :options="terminalModeOptions"
           :placeholder="t('adminSandbox.terminalModeAuto')"
           :disabled="terminalModeSaving"
           :aria-label="t('adminSandbox.terminalMode')"
+          @update:model-value="saveTerminalMode"
         />
       </div>
       <p class="section-note terminal-effective-note">
@@ -217,7 +218,8 @@ async function toggleCodeExecution(enabled: boolean) {
   }
 }
 
-async function saveTerminalMode() {
+async function saveTerminalMode(value: SandboxStatus['terminal_mode']) {
+  terminalModeDraft.value = value
   terminalModeSaving.value = true
   try {
     await configStore.saveConfig({ sandbox: { terminal_mode: terminalModeDraft.value } })

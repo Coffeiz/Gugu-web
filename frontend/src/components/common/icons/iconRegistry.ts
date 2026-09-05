@@ -157,6 +157,7 @@ export const iconRegistry = {
   'admin.terminal': RiTerminalLine,
   'admin.video': RiVideoLine,
   'admin.settings': RiSettings3Line,
+  'admin.shield': RiShieldCheckLine,
   'admin.time': RiTimeLine,
   'admin.wrench': RiWrenchLine,
   'canvas.graph': RiAppsLine,

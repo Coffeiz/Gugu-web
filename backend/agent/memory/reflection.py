@@ -558,6 +558,10 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
             output_mode="json",
             max_tokens=min(_cap, 900),
             max_retries=0,
+            # 反思只提取小型结构化增量，不需要推理链。若继承当前模型的 adaptive
+            # thinking，900 token 很容易被思考预算耗尽而没有最终 JSON，导致 pattern
+            # 增量被 ContextBranch 判为 output_empty。
+            thinking="disabled",
         ),
         settings,
     )

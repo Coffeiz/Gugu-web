@@ -72,6 +72,30 @@ async def test_read_pattern_list_empty_when_nothing_exists(storage):
     assert await store.read_pattern_list(UID) == []
 
 
+async def test_read_pattern_list_normalizes_existing_empty_file(storage):
+    from agent.memory import store
+
+    await storage.put(f"{UID}/.agent/pattern.json", b"")
+    await storage.put(f"{UID}/.agent/pattern_vec.json", b'{"old": {"v": [1], "t": "old"}}')
+
+    assert await store.read_pattern_list(UID) == []
+    assert await storage.get(f"{UID}/.agent/pattern.json") == b"[]"
+    assert await storage.get(f"{UID}/.agent/pattern_vec.json") == b"{}"
+
+
+async def test_read_pattern_list_does_not_resurrect_legacy_after_empty_reset(storage):
+    from agent.memory import store
+
+    await storage.put(f"{UID}/.agent/pattern.json", b"")
+    await storage.put(
+        f"{UID}/.agent/facts.json",
+        json.dumps([{"text": "不应复活", "kind": "observed"}]).encode(),
+    )
+
+    assert await store.read_pattern_list(UID) == []
+    assert await storage.get(f"{UID}/.agent/pattern.json") == b"[]"
+
+
 # ── daily.md 新格式 / 迁移 ───────────────────────────────────────────────
 
 async def test_read_daily_lines_reads_grouped_daily(storage):

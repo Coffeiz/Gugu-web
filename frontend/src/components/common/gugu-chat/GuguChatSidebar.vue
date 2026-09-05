@@ -135,9 +135,9 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 .exp-group-divider { margin: var(--space-sm) var(--space-xs); }
 
 .exp-new-session-wrap {
-  min-height: var(--gugu-chat-composer-height);
+  height: var(--gugu-chat-composer-height);
   box-sizing: border-box;
-  padding: var(--space-sm);
+  padding: 7px var(--space-sm);
   flex-shrink: 0;
 }
 .exp-new-session-btn {

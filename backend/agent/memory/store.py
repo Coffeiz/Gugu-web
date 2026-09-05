@@ -25,11 +25,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import secrets
 import time
 
 from app.services.storage import get_storage
+
+_log = logging.getLogger("agent.memory.store")
 
 _DIR = ".agent"
 _list_write_locks: dict[str, asyncio.Lock] = {}
@@ -209,7 +212,29 @@ def _migrate_md(md: str) -> list[dict]:
 async def read_pattern_list(user_id) -> list[dict]:
     """读结构化 pattern。pattern.json 不存在 → 依次找旧 facts.json(2026-07-08 前的名字)、
     再旧的 facts.md，找到就迁移并写回 pattern.json(一次性)；旧文件保留不删，但不再写。"""
-    raw = await _read(_key(user_id, PATTERN_FILE))
+    pattern_key = _key(user_id, PATTERN_FILE)
+    raw = await _read(pattern_key)
+    # 空文件不是合法的 pattern 快照：通常是进程在旧式截断写入期间退出留下的残骸。
+    # 既然目标文件已经存在，就把它视为用户明确的空状态，不再回退读取旧 facts，避免
+    # “清空后下一次读取又复活旧数据”；只写入规范 JSON，不恢复任何历史内容。
+    if not raw.strip():
+        try:
+            storage = get_storage()
+            if await storage.exists(pattern_key):
+                async with _list_write_lock(pattern_key):
+                    current = await storage.get(pattern_key)
+                    if not current.decode("utf-8", errors="replace").strip():
+                        await storage.put(pattern_key, b"[]", "application/json")
+                        vector_key = _key(user_id, PATTERN_VEC_FILE)
+                        if await storage.exists(vector_key):
+                            # pattern 文本已明确重置，旧向量只可能是孤儿缓存，不能再参与检索。
+                            await storage.put(vector_key, b"{}", "application/json")
+                        _log.info("pattern 空文件已规范化为 JSON 空数组 user_fp=%s", hashlib.sha256(str(user_id).encode()).hexdigest()[:8])
+                        return []
+        except Exception as exc:
+            # 保持记忆读取的 best-effort 语义；失败不伪造迁移成功，后续写入仍会重试。
+            _log.warning("pattern 空文件规范化失败 error_type=%s", type(exc).__name__)
+        # 文件不存在时才允许继续走旧 facts 迁移链。
     if not raw.strip():
         raw = await _read(_key(user_id, "facts.json"))   # 拆分前的旧名字，一次性兼容
     if raw.strip():

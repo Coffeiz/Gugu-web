@@ -8,6 +8,7 @@ describe('图标语义注册表', () => {
       'action.close',
       'action.search',
       'action.upload',
+      'admin.shield',
       'file.folder',
       'project.month-folder',
       'status.success',
