@@ -365,6 +365,7 @@ async def _run_collect_unlocked(
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+        modelctx.set_usage_context(user_id, session_id)
         from app.services.workspaces import resolve_workspace_target
         workspace_target = await resolve_workspace_target(
             db, user_id, session.workspace_id,
@@ -814,6 +815,7 @@ async def _run_stream_unlocked(
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+        modelctx.set_usage_context(user_id, session_id)
         from app.services.workspaces import resolve_workspace_target
         workspace_target = await resolve_workspace_target(
             db, user_id, session.workspace_id,
@@ -1393,6 +1395,7 @@ async def _run_scheduled_once(
             run_config = await resolve_run_config_for_user(settings, db, user_id, None)
             model_cfg = run_config.model
             modelctx.set_model_cfg(model_cfg)
+            modelctx.set_usage_context(user_id)
             user_tz = await loaders.load_user_tz(db, user_id)
             set_ctx_tz(user_tz)
             if minimal_context:
@@ -1486,6 +1489,22 @@ async def _run_scheduled_once(
         finally:
             reset_automation_allowed_tools(automation_token)
         text, errored, meta = _scheduled_collect_result(collected)
+        from agent.usage import record_usage
+        _, tokens_in, tokens_out, cache_read, cache_write, *_ = collected
+        try:
+            await record_usage(
+                user_id,
+                settings,
+                model_cfg,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cache_read=cache_read,
+                cache_write=cache_write,
+                tools_used=meta.get("tool_names") or None,
+            )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("agent.usage.scheduled", exc)
         return (text, errored, meta) if include_meta else (text, errored)
     finally:
         _release_model(model_cfg)

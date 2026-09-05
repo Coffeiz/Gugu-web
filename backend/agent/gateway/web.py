@@ -253,6 +253,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             return
         await db.commit()
         session_id = session.id
+        modelctx.set_usage_context(user_id, session_id)
         # 后台生成任务需要用真实 session id 建立跨 worker gate；新会话在这里才拿到 id。
         req.session_id = session_id
 

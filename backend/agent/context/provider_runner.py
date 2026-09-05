@@ -1,7 +1,7 @@
 """ContextBranch 共用的 provider 调用器。
 
-只负责 provider 路由、调用参数和结果解析；不负责记忆字段、session baseline 或
-任何领域写入；反思与压缩均通过 ``ContextBranch`` 调用这里。
+只负责 provider 路由、调用参数和结果解析；领域写入仍由上层负责，用量则通过当前
+用户链路上下文写入统一账本；反思与压缩均通过 ``ContextBranch`` 调用这里。
 """
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int | None = 
     use_anthropic = use_anthropic_for(ai)
     thinking = getattr(ai, "thinking", None)
     return (
-        await _anthropic(sys, user, ai, max_tokens, thinking=thinking)
+        await _anthropic(sys, user, ai, max_tokens, thinking=thinking, settings=settings)
         if use_anthropic
-        else await _openai(sys, user, ai, max_tokens, thinking=thinking)
+        else await _openai(sys, user, ai, max_tokens, thinking=thinking, settings=settings)
     )
 
 
@@ -39,9 +39,10 @@ async def complete_json(
         thinking if thinking is not None else getattr(ai, "thinking", None)
     )
     text = (
-        await _anthropic(sys, user, ai, max_tokens, thinking=effective_thinking)
+        await _anthropic(sys, user, ai, max_tokens, thinking=effective_thinking, settings=settings)
         if use_anthropic
-        else await _openai(sys, user, ai, max_tokens, json_mode=True, thinking=effective_thinking)
+        else await _openai(sys, user, ai, max_tokens, json_mode=True,
+                           thinking=effective_thinking, settings=settings)
     )
     return _parse_json(text)
 
@@ -52,6 +53,7 @@ async def _anthropic(
     ai,
     max_tokens: int | None,
     thinking: str | None = None,
+    settings=None,
 ) -> str:
     import httpx
     from agent import providers
@@ -71,6 +73,9 @@ async def _anthropic(
     if thinking is not None:
         kwargs["thinking"] = {"type": thinking}
     resp = await client.messages.create(**kwargs)
+    usage = getattr(resp, "usage", None)
+    from agent.usage import normalize_anthropic_usage
+    await _record_usage(settings, ai, normalize_anthropic_usage(usage))
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
@@ -81,6 +86,7 @@ async def _openai(
     max_tokens: int | None,
     json_mode: bool = False,
     thinking: str | None = None,
+    settings=None,
 ) -> str:
     import httpx
     from agent import providers
@@ -103,7 +109,22 @@ async def _openai(
         if thinking_params:
             kwargs.update(thinking_params)
     resp = await client.chat.completions.create(**kwargs)
+    usage = getattr(resp, "usage", None)
+    from agent.usage import normalize_openai_usage
+    await _record_usage(settings, ai, normalize_openai_usage(usage))
     return resp.choices[0].message.content or ""
+
+
+async def _record_usage(settings, model_cfg, usage: dict) -> None:
+    """用量记账失败不能改变反思/压缩的业务结果。"""
+    try:
+        from agent.usage import record_current_usage
+
+        await record_current_usage(settings, model_cfg, usage)
+    except Exception as exc:
+        # provider_runner 的调用方只关心模型结果；记账故障由诊断日志和后续重试处理。
+        from app.core.redaction import diag_log
+        diag_log("agent.usage.provider", exc)
 
 
 def _parse_json(text: str) -> dict:

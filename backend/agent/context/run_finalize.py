@@ -47,9 +47,8 @@ async def finalize_run(
     消息结构、配额封顶及 baseline 入口在这里保持一致。
     ``session_exists_required`` 供 Web 删除竞态使用：会话已删除时跳过消息，但仍保留 usage 记账。
     """
-    from agent import quota
     from agent.context import assembly, compress_conv
-    from app.models import AgentUsage, ConversationMessage, ConversationSession
+    from app.models import ConversationMessage, ConversationSession
     from app.core import chat_attach
     from app.services.conversation_retention import trim_session_messages
 
@@ -150,24 +149,20 @@ async def finalize_run(
                     display_timeline=display_timeline or None,
                 ))
 
-        is_byok = bool(getattr(model_cfg, "is_byok", False))
+        from agent.usage import record_usage
         # BYOK 不参与平台配额封顶，但仍记录实际 token，供用户查看自己的模型用量。
-        cap_in, cap_out = await quota.cap_usage(
-            db, user_id, settings, tokens_in, tokens_out,
+        usage_result = await record_usage(
+            user_id,
+            settings,
+            model_cfg,
+            db=db,
+            session_id=session_id if session_alive else None,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            tools_used=tools_used,
         )
-        if cap_in or cap_out:
-            db.add(AgentUsage(
-                user_id=user_id,
-                session_id=session_id if session_alive else None,
-                tokens_in=cap_in,
-                tokens_out=cap_out,
-                cache_read=cache_read,
-                cache_write=cache_write,
-                model=model_cfg.model,
-                provider=model_cfg.provider,
-                is_byok=is_byok,
-                tools_used=tools_used or None,
-            ))
         await db.commit()
 
     await trim_session_messages(session_id)
@@ -179,4 +174,7 @@ async def finalize_run(
         actual_usage_tokens=int(actual_usage_tokens or 0),
         compaction_applied=bool(compaction_applied),
     )
-    return FinalizeResult(tokens_in=cap_in, tokens_out=cap_out)
+    return FinalizeResult(
+        tokens_in=usage_result.tokens_in,
+        tokens_out=usage_result.tokens_out,
+    )
