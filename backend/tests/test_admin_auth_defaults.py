@@ -8,7 +8,8 @@ def test_admin_password_has_no_public_default(monkeypatch):
     monkeypatch.delenv("ADMIN_USERNAME", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
 
-    settings = AppSettings()
+    # 默认值测试必须隔离部署目录的 .env，避免 devserver 凭据污染测试契约。
+    settings = AppSettings(_env_file=None)
 
     assert settings.admin_username == "admin"
     assert settings.admin_password == ""

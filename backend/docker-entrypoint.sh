@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# 容器启动入口：等数据库就绪 → 跑迁移 → 交给传入的主命令（uvicorn / worker）。
+# 容器启动入口：等数据库就绪 → 跑迁移 → 交给传入的主命令（Nginx / uvicorn / worker）。
 # 迁移放这里而不是要求使用者手动 `make migrate`——本地/开发场景下"docker compose up
 # 就能用"比"再单独进容器跑一条命令"体验好得多，且 alembic upgrade head 本身幂等，
-# 两个服务（backend/worker）用同一个入口脚本、谁先启动都会跑，不会漏迁移也不会重复出错。
+# 分离部署的 backend/worker 复用同一个入口脚本；默认 Compose 额外托管 worker、gateway、Uvicorn 和 Nginx。
 set -euo pipefail
+
+# 默认 Compose 单容器模式在等待数据库和 Alembic 之前给出可操作的中文配置提示；
+# 常规 backend/frontend 分离部署不启用这段逻辑。
+if [ "${GUGU_SINGLE_CONTAINER:-0}" = "1" ]; then
+    python compose_bootstrap.py
+fi
 
 DB_HOST="${DB__HOST:-postgres}"
 DB_PORT="${DB__PORT:-5432}"
@@ -61,4 +67,54 @@ echo "[entrypoint] alembic upgrade head ..."
 alembic upgrade head
 
 echo "[entrypoint] 启动: $*"
+
+if [ "${GUGU_SINGLE_CONTAINER:-0}" = "1" ] \
+    && { [ "${1:-}" = "uvicorn" ] || [ "${1:-}" = "nginx" ]; }; then
+    # 默认 Compose 只有一个 app 容器：Nginx 对外服务，Uvicorn、消息 worker 与 IM gateway
+    # 在容器内运行。任一启用的关键进程退出都让容器退出，避免健康检查看似正常但后台消息
+    # 或 IM 长连接已经无人消费。
+    monitored_pids=()
+    if [ "${GUGU_ENABLE_WORKER:-1}" = "1" ]; then
+        python -m worker &
+        monitored_pids+=("$!")
+    fi
+    if [ "${GUGU_ENABLE_GATEWAY:-1}" = "1" ]; then
+        python -m agent.gateway.gateway &
+        monitored_pids+=("$!")
+    fi
+    app_pid=""
+    if [ "${1:-}" = "nginx" ]; then
+        uvicorn app.main:app --host 127.0.0.1 --port "${GUGU_APP_PORT:-8001}" &
+        app_pid=$!
+    fi
+    "$@" &
+    proxy_pid=$!
+    monitored_pids+=("$proxy_pid")
+    [ -n "$app_pid" ] && monitored_pids+=("$app_pid")
+
+    stop_children() {
+        for pid in "${monitored_pids[@]}"; do
+            kill "$pid" 2>/dev/null || true
+        done
+    }
+    trap stop_children TERM INT
+
+    while true; do
+        for pid in "${monitored_pids[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                set +e
+                wait "$pid"
+                child_status=$?
+                set -e
+                stop_children
+                for other_pid in "${monitored_pids[@]}"; do
+                    [ "$other_pid" = "$pid" ] || wait "$other_pid" 2>/dev/null || true
+                done
+                exit "$child_status"
+            fi
+        done
+        sleep 1
+    done
+fi
+
 exec "$@"

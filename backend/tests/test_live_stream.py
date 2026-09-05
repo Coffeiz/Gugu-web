@@ -36,6 +36,19 @@ def test_serialize_live_message_rejects_non_business_payloads():
     assert live._serialize_message(json.dumps(_event(resource="unknown"))) is None
 
 
+def test_serialize_live_message_present_payload_allowlist():
+    ok = {"present": {"file_id": 12, "name": "demo", "ext": "png"}}
+    frame = live._serialize_message(json.dumps(ok))
+    assert frame is not None
+    assert json.loads(frame.removeprefix("data: ").strip()) == ok
+
+    # file_id 非整数 / 缺失 / 布尔（bool 是 int 子类）都丢弃
+    assert live._serialize_message(json.dumps({"present": {"file_id": "12"}})) is None
+    assert live._serialize_message(json.dumps({"present": {"name": "demo"}})) is None
+    assert live._serialize_message(json.dumps({"present": {"file_id": True}})) is None
+    assert live._serialize_message(json.dumps({"present": "demo.png"})) is None
+
+
 class _Request:
     def __init__(self):
         self.disconnected = False

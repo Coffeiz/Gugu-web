@@ -99,6 +99,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import { useI18n } from 'vue-i18n'
 
 const { t, tm, locale } = useI18n()
@@ -255,16 +256,26 @@ function clear() {
   open.value = false
 }
 
+// 拖选保护：弹层内拖选文字移出后松开，click 落在外面，不能因此误关
+const pressGuard = createPressOutsideGuard((t: Node) =>
+  !!(wrapRef.value?.contains(t) || popupMenuRef.value?.contains(t)))
+function onDocPress(e: MouseEvent) { pressGuard.notePress(e) }
+
 function onClickOutside(e: MouseEvent) {
-  if (!open.value) return
+  if (!open.value) { pressGuard.shouldCloseOn(e); return }
+  if (!pressGuard.shouldCloseOn(e)) return
   if (wrapRef.value?.contains(e.target as Node)) return
   if (popupMenuRef.value?.contains(e.target as Node)) return
   open.value = false
   yearMode.value = false
 }
 
-onMounted(() => document.addEventListener('click', onClickOutside, true))
+onMounted(() => {
+  document.addEventListener('mousedown', onDocPress, true)
+  document.addEventListener('click', onClickOutside, true)
+})
 onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocPress, true)
   document.removeEventListener('click', onClickOutside, true)
 })
 

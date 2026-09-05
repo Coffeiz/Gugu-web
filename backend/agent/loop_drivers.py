@@ -347,6 +347,15 @@ class AnthropicDriver:
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
         #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
         outbound = ctx.adapter.render_history(messages)
+        # MiniMax 等 Anthropic 兼容端点要求 tool_result 紧跟对应的 assistant
+        # tool_use。交互恢复、压缩或历史重放出现边界漂移时，不能把坏序列直接交给
+        # provider；在请求边界统一清洗，且只在结构确实变化时记录诊断。
+        from agent.security.sanitize import sanitize_messages
+        cleaned = sanitize_messages(outbound)
+        if len(cleaned) != len(outbound):
+            from agent.core import _log
+            _log.warning("[anthropic] 请求历史存在非法工具边界，已清洗后发送")
+        outbound = cleaned
         from agent.context.provider_history import render_anthropic_message_roles
         outbound = render_anthropic_message_roles(outbound, ctx.adapter)
         _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound

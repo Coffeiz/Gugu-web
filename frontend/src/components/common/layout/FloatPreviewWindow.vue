@@ -38,7 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" ref="imageViewerRef" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
+      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -155,6 +155,7 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
+import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 
@@ -162,6 +163,7 @@ import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
 const { t } = useI18n()
 const previewStore = usePreviewStore()
+const previewBlobCache = usePreviewBlobCache()
 
 // ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）
 const _unregEsc = registerEsc({
@@ -216,6 +218,7 @@ const imageReady       = ref(false)
 
 const _SVG_EXTS    = new Set(['SVG'])
 const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
+const currentCacheKey = ref('')
 
 // 占位缩略图套上跟 ImageViewer 当前一致的缩放/平移，切图时才不会先跳回居中/100%
 // 再跳回真图当前的视图——两次跳变叠在一起就是用户看到的"闪一下"。
@@ -331,7 +334,9 @@ function onPlaceholderLoad(e: Event) {
 }
 
 async function load(f: Partial<FileMeta>, refresh = false) {
-  if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  blobUrl.value = null
+  currentCacheKey.value = ''
   videoSrc.value       = null
   loading.value        = true
   error.value          = null
@@ -404,16 +409,43 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       })
     } else if (isTextExt(f.ext)) {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
+      const key = previewBlobCache.keyOf(f)
+      currentCacheKey.value = bust ? '' : key
+      if (!bust) {
+        const cached = previewBlobCache.get(key)
+        if (cached) {
+          blobUrl.value = cached
+          if (!ready.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+          return
+        }
+      }
       const dlUrl = (f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
         : `${BASE_URL}/files/${f.id}/download`) + bust
       const res = await fetch(dlUrl, { headers })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      blobUrl.value = URL.createObjectURL(await res.blob())
+      const url = URL.createObjectURL(await res.blob())
+      blobUrl.value = url
+      // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
+      previewBlobCache.put(key, url)
+      currentCacheKey.value = key
       if (!refresh || !ready.value) {
         fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
       }
     } else {
+      const key = previewBlobCache.keyOf(f)
+      currentCacheKey.value = key
+      const cached = previewBlobCache.get(key)
+      if (cached) {
+        blobUrl.value = cached
+        const img = new Image()
+        img.onload = () => {
+          contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
+          if (!ready.value) fitWindow(img.naturalWidth, img.naturalHeight)
+        }
+        img.src = cached
+        return
+      }
       const dlUrl = f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
         : `${BASE_URL}/files/${f.id}/download`
@@ -422,6 +454,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       const blob = await res.blob()
       const url  = URL.createObjectURL(blob)
       blobUrl.value = url
+      previewBlobCache.put(key, url)
       const img = new Image()
       img.onload = () => {
         contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
@@ -439,6 +472,17 @@ async function load(f: Partial<FileMeta>, refresh = false) {
 }
 
 watch(() => props.win.file, f => load(f), { immediate: true })
+
+function onTextContentSaved(content: string, fileKey: string | number | null) {
+  // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
+  // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
+  const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
+  if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
+  const key = previewBlobCache.keyOf(props.win.file)
+  if (!key || props.win.file.attach_id) return
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+  previewBlobCache.put(key, url)
+}
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
@@ -561,7 +605,7 @@ function onResizeUp() {
 onUnmounted(() => {
   _unregEsc()
   _unregArrowNav()
-  if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup',   onDragUp)
   window.removeEventListener('mousemove', onResizeMove)

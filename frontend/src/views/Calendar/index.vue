@@ -119,7 +119,7 @@
   <Teleport to="body">
     <Transition name="form-pop">
       <div v-if="showAddForm" class="add-event-popup shared-event-popup" ref="addFormRef" :style="addFormStyle">
-        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" autofocus
+        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" :title="t('calendarUi.addEvent')" :saving="saving" autofocus
                         @save="saveEvent" @close="showAddForm = false"
                         @test-reminder="testReminderChannels(newEvent.name)" />
       </div>
@@ -805,7 +805,7 @@ const {
 
 const {
   showAddForm, addBtnRef, addFormRef, addFormStyle, newEvent, isPastDate, eventForm,
-  resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent,
+  resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent, saving,
 } = useCalendarEventForm({
   selectedDate,
   todayIso,
@@ -1196,7 +1196,20 @@ function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
   openEditForm(payload.item, payload.event)
 }
 
+// 拖选保护：mousedown 在弹层/表单内、mouseup 在外时 click 落在外面，不能因此误关
+let _pressTarget: EventTarget | null = null
+function onDocPress(e: MouseEvent) { _pressTarget = e.target }
+function pressStartedInside(): boolean {
+  const t = _pressTarget
+  _pressTarget = null
+  if (!(t instanceof HTMLElement)) return false
+  if (t.closest('.dp-popup, .ctx-menu, .popup-menu-host')) return true
+  return !!(addBtnRef.value?.contains(t) || addFormRef.value?.contains(t)
+    || pickerRef.value?.contains(t) || morePopupRef.value?.contains(t))
+}
+
 function handleClickOutside(e: MouseEvent) {
+  if (pressStartedInside()) return
   const target = e.target as HTMLElement
   // .dp-popup 是 DatePicker 的 Teleport 弹层；.ctx-menu 是标准列表弹窗（提醒提前量等），
   // 两者都不在表单 DOM 内，但属于表单的交互范围，不能被捕获阶段的 outside-click 误关。
@@ -1224,6 +1237,7 @@ function handleClickOutside(e: MouseEvent) {
 }
 
 onMounted(() => {
+  document.addEventListener('mousedown', onDocPress, true)
   document.addEventListener('click', handleClickOutside, true)
   fetchEvents()
   fetchNextMonthEvents()
@@ -1233,6 +1247,7 @@ onMounted(() => {
   loadHolidays()
 })
 onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocPress, true)
   document.removeEventListener('click', handleClickOutside, true)
   ro?.disconnect()
   if (_midnightTimer) clearTimeout(_midnightTimer)

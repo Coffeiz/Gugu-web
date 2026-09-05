@@ -1177,6 +1177,17 @@ class ScheduledTask(Base):
     created_at:  Mapped[datetime]           = mapped_column(UtcDateTime, default=now_utc)
     updated_at:  Mapped[datetime]           = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
+    __table_args__ = (
+        # 活动提醒按“用户 + 活动 + 触发时刻”幂等；独立定时任务 event_id 为空，不参与此约束。
+        Index(
+            "uq_scheduled_tasks_event_fire",
+            "user_id", "event_id", "cron",
+            unique=True,
+            postgresql_where=event_id.is_not(None),
+            sqlite_where=event_id.is_not(None),
+        ),
+    )
+
 
 # ── SiteNotification（站点通知广播）──────────────────────────────────────────
 class SiteNotification(Base):

@@ -12,6 +12,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -42,7 +43,7 @@ def _validate_cron(cron: str) -> None:
 
 
 def _norm_channels(chs: list[str] | None) -> str:
-    chs = [c for c in (chs or []) if c in _CHANNELS]
+    chs = list(dict.fromkeys(c for c in (chs or []) if c in _CHANNELS))
     return ",".join(chs) if chs else "web"
 
 
@@ -124,6 +125,14 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         ev = await get_owned(db, CalendarEvent, body.event_id, user.id)
         if not ev:
             raise HTTPException(400, "绑定的日历事件不存在")
+        existing = (await db.execute(select(ScheduledTask).where(
+            ScheduledTask.user_id == user.id,
+            ScheduledTask.event_id == body.event_id,
+            ScheduledTask.cron == body.cron,
+        ))).scalars().first()
+        if existing:
+            # 客户端超时重试或重复提交同一活动提醒时，返回原任务而不是再建一条。
+            return _to_resp(existing)
     t = ScheduledTask(
         user_id=user.id, name=body.name,
         payload=body.payload or "", cron=body.cron,
@@ -134,7 +143,19 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     db.add(t)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        if body.event_id is not None:
+            existing = (await db.execute(select(ScheduledTask).where(
+                ScheduledTask.user_id == user.id,
+                ScheduledTask.event_id == body.event_id,
+                ScheduledTask.cron == body.cron,
+            ))).scalars().first()
+            if existing:
+                return _to_resp(existing)
+        raise
     await db.refresh(t)
     response = _to_resp(t)
     await events.publish(user.id, "scheduled_tasks", operation="create", entity_id=t.id,
@@ -154,6 +175,15 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
     t = await _owned(task_id, user, db)
     if body.cron is not None:
         _validate_cron(body.cron)
+        if t.event_id is not None:
+            conflict = (await db.execute(select(ScheduledTask.id).where(
+                ScheduledTask.user_id == user.id,
+                ScheduledTask.event_id == t.event_id,
+                ScheduledTask.cron == body.cron,
+                ScheduledTask.id != t.id,
+            ))).scalars().first()
+            if conflict is not None:
+                raise HTTPException(409, "该活动在同一触发时刻已有提醒")
         t.cron = body.cron
     if body.name is not None:
         t.name = body.name

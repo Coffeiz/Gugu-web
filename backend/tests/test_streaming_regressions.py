@@ -33,6 +33,31 @@ class _FakeStream:
         return self.sent
 
 
+@pytest.mark.asyncio
+async def test_qq_stream_sequence_uses_a_cross_process_counter(monkeypatch):
+    """QQ 流式消息必须使用独立于普通回复的 Redis 序号。"""
+    import agent.gateway.qq as qq
+
+    class _Redis:
+        def __init__(self):
+            self.value = 0
+            self.expired = []
+
+        async def incr(self, _key):
+            self.value += 1
+            return self.value
+
+        async def expire(self, key, seconds):
+            self.expired.append((key, seconds))
+
+    redis = _Redis()
+    monkeypatch.setattr(qq.R, "get_redis", lambda: redis)
+
+    assert await qq._next_stream_seq("channel-1") == 1
+    assert await qq._next_stream_seq("channel-1") == 2
+    assert redis.expired == [("qqstreamseq:channel-1", 600)]
+
+
 def test_collect_and_stream_share_im_preparation_rules():
     from agent import runner
     from agent.models import AgentRequest

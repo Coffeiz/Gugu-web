@@ -9,7 +9,7 @@
     <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus"
                      @save="emit('save')" @close="emit('close')" @test-reminder="emit('test-reminder')" />
     <div class="popup-actions">
-      <button class="popup-save" @click="emit('save')" :disabled="!event.name">{{ t('common.actions.save') }}</button>
+      <button class="popup-save" @click="emit('save')" :disabled="!event.name || saving">{{ t('common.actions.save') }}</button>
       <button v-if="showDelete" class="popup-delete" @click="emit('delete')">{{ t('common.actions.delete') }}</button>
     </div>
   </div>
@@ -29,6 +29,7 @@ withDefaults(defineProps<{
   title?: string
   showDelete?: boolean
   autofocus?: boolean
+  saving?: boolean
 }>(), { title: '编辑活动', showDelete: false })
 
 const emit = defineEmits<{

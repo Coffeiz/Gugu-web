@@ -2,6 +2,8 @@
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.ownership import get_owned
 from app.core.tz import local_now
@@ -87,7 +89,7 @@ async def list_event_reminders(db, user_id, event_id):
 
 
 def normalize_reminder_channels(channels):
-    channels = [c for c in (channels or ["web"]) if c in _REMINDER_CHANNELS]
+    channels = list(dict.fromkeys(c for c in (channels or ["web"]) if c in _REMINDER_CHANNELS))
     return ",".join(channels) if channels else "web"
 
 
@@ -123,21 +125,72 @@ def build_reminder(user_id, event, lead_minutes, channels):
 
 
 async def create_event_reminders(db, user_id, event, leads, channels, *, commit=False):
-    """批量创建事件提醒；默认只 flush，由 API/任务边界提交。"""
+    """批量创建事件提醒；按活动和触发时刻幂等，默认只 flush，由 API/任务边界提交。"""
     created, skipped = [], []
-    for lead in leads:
+    candidates = []
+    seen_crons = set()
+    for lead in leads or []:
         task, error = build_reminder(user_id, event, lead, channels)
         if error:
             skipped.append(error)
+        elif task.cron in seen_crons:
+            skipped.append("同一触发时刻的活动提醒在本次请求中重复，已跳过")
         else:
-            db.add(task)
-            created.append(task)
+            seen_crons.add(task.cron)
+            candidates.append(task)
+
+    created_ids = []
+    if candidates:
+        existing = set((await db.execute(
+            select(ScheduledTask.cron).where(
+                ScheduledTask.user_id == user_id,
+                ScheduledTask.event_id == event.id,
+                ScheduledTask.cron.in_([task.cron for task in candidates]),
+            )
+        )).scalars().all())
+        pending = []
+        for task in candidates:
+            if task.cron in existing:
+                skipped.append("同一触发时刻的活动提醒已存在，已跳过")
+            else:
+                pending.append(task)
+
+        # 预查询负责常规路径；数据库冲突写入负责并发请求，避免两个请求同时通过预查询。
+        dialect = db.get_bind().dialect.name
+        insert_factory = {"postgresql": pg_insert, "sqlite": sqlite_insert}.get(dialect)
+        if insert_factory is not None:
+            for task in pending:
+                stmt = insert_factory(ScheduledTask).values(
+                    user_id=task.user_id,
+                    event_id=task.event_id,
+                    name=task.name,
+                    payload=task.payload,
+                    cron=task.cron,
+                    channels=task.channels,
+                    enabled=task.enabled,
+                ).on_conflict_do_nothing().returning(ScheduledTask.id)
+                inserted_id = (await db.execute(stmt)).scalar_one_or_none()
+                if inserted_id is None:
+                    skipped.append("同一触发时刻的活动提醒已存在，已跳过")
+                else:
+                    created_ids.append(inserted_id)
+        else:
+            for task in pending:
+                db.add(task)
+            await db.flush()
+            created_ids = [task.id for task in pending]
+
     if commit:
         await db.commit()
     else:
         await db.flush()
-    for task in created:
+
+    for task_id in created_ids:
+        task = await db.get(ScheduledTask, task_id)
+        if task is None:
+            continue
         await db.refresh(task)
+        created.append(task)
     return created, skipped
 
 

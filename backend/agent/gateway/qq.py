@@ -40,6 +40,7 @@ _log = logging.getLogger("agent.gateway.qq")
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
 _ref_indexes: dict[tuple[str, str], QQRefIndex] = {}
+_stream_seq_fallback = 0
 
 
 def _qq_ref_index(owner: str, channel_id: str) -> QQRefIndex:
@@ -248,7 +249,7 @@ def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
     return ""
 
 
-async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
+async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str | None) -> None:
     try:
         message_format = await _message_format(channel_id, chat_type)
         if chat_type == "group":
@@ -531,7 +532,10 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
             )
     except (LookupError, ValueError):
         await _ack_qq_interaction(channel_id, interaction_id, code=3)
-        await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", event.get("event_id") or "")
+        # 交互回调的 event_id 不是 QQ 消息 msg_id，不能用于消息回复，否则会触发
+        # 40034024（msg_id 无效或越权）。交互状态已经由上面的协议 ACK 确认，
+        # 这里发送独立的 C2C 提示，不绑定原消息。
+        await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", None)
         return
     except Exception as exc:
         await _ack_qq_interaction(channel_id, interaction_id, code=1)
@@ -553,7 +557,7 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
             else "已取消。" if option_id == "cancel"
             else f"已选择：{selected_text}，继续处理。"
         ),
-        event.get("event_id") or "",
+        None,
     )
     # consume_action 已经把 pending prompt 标记为 resolved；原来的 Agent Run
     # 会在 wait_for_resolution() 中被唤醒并继续。不要把按钮结果再次入队，
@@ -700,6 +704,21 @@ async def _next_seq(msg_id: str | None) -> int:
     except Exception:
         import time as _t
         return int(_t.time() * 1000) % 1_000_000   # Redis 挂了退回时间戳尾数
+
+
+async def _next_stream_seq(channel_id: str) -> int:
+    """为每个 QQ 官方流会话生成新的 msg_seq，避免跨回复撞序列。"""
+    global _stream_seq_fallback
+    try:
+        redis = R.get_redis()
+        key = f"qqstreamseq:{channel_id}"
+        value = await redis.incr(key)
+        if value == 1:
+            await redis.expire(key, 600)
+        return int(value)
+    except Exception:
+        _stream_seq_fallback = max(_stream_seq_fallback + 1, int(time.time() * 1000))
+        return _stream_seq_fallback
 
 
 async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:

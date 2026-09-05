@@ -227,3 +227,14 @@ def test_scheduled_tasks_skill_documents_channel_array_shape():
     assert 'channels=["qq"]' in content
     assert 'channels={"item":"qq"}' in content
     assert "不修改的字段直接省略" in content
+
+
+def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
+    from agent.skills import load_skill
+
+    content = load_skill("scheduled-tasks")
+    assert content is not None
+    assert "create_event" in content
+    assert "add_event_reminder" in content
+    assert "不要再调用 `create_scheduled_task`" in content
+    assert "日历事件本身不会主动提醒" not in content

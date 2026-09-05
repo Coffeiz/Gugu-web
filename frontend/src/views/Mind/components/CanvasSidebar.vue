@@ -56,7 +56,11 @@
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" data-layout-group="mind:drawer:projects" :data-layout-key="group.status">
                   <button class="project-group-title" :aria-expanded="group.items.length > 0 && openProjectStatuses.has(group.status)" @click="group.items.length && toggleProjectStatus(group.status)">
                     <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
-                    <Icon name="action.down" :size="9" class="project-group-chevron" :class="{ open: group.items.length > 0 && openProjectStatuses.has(group.status) }" />
+                    <FlipChevron
+                      :open="group.items.length > 0 && openProjectStatuses.has(group.status)"
+                      :size="9"
+                      class="project-group-chevron"
+                    />
                   </button>
                   <div
                     v-if="group.items.length > 0"
@@ -90,6 +94,7 @@
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'
@@ -370,8 +375,7 @@ onMounted(() => {
 }
 .project-group-title:hover { background: rgba(0,0,0,.04); }
 .project-group-title > span:nth-last-child(2) { margin-left: auto; font-size: 10px; font-weight: 400; color: rgba(0,0,0,.38); font-variant-numeric: tabular-nums; }
-.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(-90deg); transition: transform .2s cubic-bezier(.22,1,.36,1); }
-.project-group-chevron.open { transform: rotate(0deg); }
+.project-group-chevron { margin-left: 3px !important; }
 .project-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .project-status-dot.is-pending { background: #d46b6b; }
 .project-status-dot.is-active { background: #c9943a; }

@@ -70,6 +70,7 @@ export function useEventEditForm() {
   const reminders          = ref<Reminder[]>([])       // [{ id?, leadMin }]，可多个
   const reminderChannels   = ref<string[]>(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
   const removedReminderIds = ref<number[]>([])         // 编辑里删掉的已存在提醒 id，保存时真删
+  const saving             = ref(false)
 
   function resetReminder() {
     reminders.value = []
@@ -85,6 +86,7 @@ export function useEventEditForm() {
   }
   function addReminder() {
     // 点一下就建一条提醒（默认提前 30 分钟），之后用它自己的下拉改时间
+    if (reminders.value.some(r => r.leadMin === 30)) return
     reminders.value.push({ leadMin: 30 })
   }
   function removeReminderAt(i: number) {
@@ -134,24 +136,30 @@ export function useEventEditForm() {
   /** 保存编辑中的活动：更新活动本身 + 对账提醒 + 广播日历有变（Calendar 页面自己的
    *  watch(liveStore.rev.calendar) 会据此刷新，不用这里手动去碰它的本地数组）。 */
   async function saveEvent(ev: EditingEvent) {
+    if (saving.value) return
+    saving.value = true
     const previous = { ...ev }
     const nextTime = ev.allDay ? '' : ev.time
     const nextEndTime = ev.allDay ? '' : ev.endTime
-    return InteractionSync.execute({
-      scope: 'calendar.event.update',
-      entityKey: `calendar-event:${ev.id}`,
-      apply: () => { ev.time = nextTime; ev.endTime = nextEndTime },
-      rollback: () => Object.assign(ev, previous),
-      request: async mutation => {
-        const updated = await eventsApi.update(ev.id as unknown as number, {
-          title: ev.name, date: ev.date, time: nextTime || null, endTime: nextEndTime || null,
-          description: ev.description || undefined, version: ev.version,
-        }, { mutationId: mutation.mutationId })
-        await applyReminders(ev.id as unknown as number, ev.name, ev.date, nextTime)
-        return updated
-      },
-      onCommit: () => liveStore.bump('calendar'),
-    })
+    try {
+      return await InteractionSync.execute({
+        scope: 'calendar.event.update',
+        entityKey: `calendar-event:${ev.id}`,
+        apply: () => { ev.time = nextTime; ev.endTime = nextEndTime },
+        rollback: () => Object.assign(ev, previous),
+        request: async mutation => {
+          const updated = await eventsApi.update(ev.id as unknown as number, {
+            title: ev.name, date: ev.date, time: nextTime || null, endTime: nextEndTime || null,
+            description: ev.description || undefined, version: ev.version,
+          }, { mutationId: mutation.mutationId })
+          await applyReminders(ev.id as unknown as number, ev.name, ev.date, nextTime)
+          return updated
+        },
+        onCommit: () => liveStore.bump('calendar'),
+      })
+    } finally {
+      saving.value = false
+    }
   }
 
   async function deleteEvent(id: string | number) {
@@ -166,7 +174,7 @@ export function useEventEditForm() {
   return {
     imChannels, reminders, reminderChannels, removedReminderIds,
     resetReminder, leadLabelOf, toggleReminderChannel, addReminder, removeReminderAt,
-    loadReminders, applyReminders, testReminderChannels,
+    loadReminders, applyReminders, testReminderChannels, saving,
     saveEvent, deleteEvent,
   }
 }

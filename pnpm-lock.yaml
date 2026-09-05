@@ -291,11 +291,11 @@ importers:
         specifier: workspace:*
         version: link:../contracts
       better-sqlite3:
-        specifier: ^11.8.1
-        version: 11.10.0
+        specifier: ^13.0.3
+        version: 13.0.3
       drizzle-orm:
         specifier: ^0.44.0
-        version: 0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(postgres@3.4.9)
+        version: 0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3)
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.12
@@ -323,7 +323,7 @@ importers:
         version: link:../db
       drizzle-orm:
         specifier: ^0.44.0
-        version: 0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(postgres@3.4.9)
+        version: 0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3)
     devDependencies:
       '@types/node':
         specifier: ^22.15.0
@@ -1845,8 +1845,9 @@ packages:
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
 
-  better-sqlite3@11.10.0:
-    resolution: {integrity: sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==}
+  better-sqlite3@13.0.3:
+    resolution: {integrity: sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==}
+    engines: {node: '>=22'}
 
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
@@ -2750,6 +2751,10 @@ packages:
   node-abi@3.95.0:
     resolution: {integrity: sha512-T9iGctuocf0qIWFFOTxPzjT5q0SILqaBYXt272tlBHvTKC5+3JnkMirLxNJNkXHtFyBjU2Jx+NL4Zipr0B/c6Q==}
     engines: {node: '>=10'}
+
+  node-addon-api@8.9.2:
+    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
+    engines: {node: ^18 || ^20 || >= 21}
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -4858,10 +4863,9 @@ snapshots:
 
   base64-js@1.5.1: {}
 
-  better-sqlite3@11.10.0:
+  better-sqlite3@13.0.3:
     dependencies:
-      bindings: 1.5.0
-      prebuild-install: 7.1.3
+      node-addon-api: 8.9.2
 
   bidi-js@1.0.3:
     dependencies:
@@ -5234,11 +5238,10 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.12
 
-  drizzle-orm@0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)(postgres@3.4.9):
+  drizzle-orm@0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3):
     optionalDependencies:
       '@types/better-sqlite3': 7.6.13
-      better-sqlite3: 11.10.0
-      postgres: 3.4.9
+      better-sqlite3: 13.0.3
 
   dunder-proto@1.0.1:
     dependencies:
@@ -5741,6 +5744,8 @@ snapshots:
   node-abi@3.95.0:
     dependencies:
       semver: 7.8.5
+
+  node-addon-api@8.9.2: {}
 
   normalize-path@3.0.0: {}
 

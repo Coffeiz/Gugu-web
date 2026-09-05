@@ -1438,11 +1438,19 @@ class LLMRunner:
                     if answer is None:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return
-                    _replace_tool_result(
+                    replaced = _replace_tool_result(
                         messages,
                         tool_call_id=pending_tool_call_id,
                         result=answer,
                     )
+                    if not replaced:
+                        # 继续发送未更新的 waiting_input 结果会让 Anthropic 兼容端点把
+                        # 当前工具回合判为非法；立即停止并留下脱敏诊断，避免把竞态伪装成
+                        # 普通模型故障。
+                        error = RuntimeError("pending tool result missing during interaction resume")
+                        diag_log("agent.core.interaction_resume", error)
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次确认状态已失效，请重新发起操作。'}, ensure_ascii=False)}\n\n"
+                        return
                     if await compact_after_usage_threshold():
                         _event = _context_compaction_event[0]
                         _context_compaction_event[0] = None

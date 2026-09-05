@@ -349,9 +349,10 @@ async def ensure_snapshot(
 ) -> dict:
     """返回本会话冻结的动态上下文。
 
-    仅在首次/过期时调用业务 loader；system prompt 不由本模块刷新，调用方应在
-    返回后从 ``agent.context.session_system`` 每轮组装。旧 snapshot 中的
-    ``system_prompt`` 字段仅为兼容历史数据保留。
+    采用 sliding TTL：首次创建或过期时调用业务 loader，后续命中时刷新
+    ``snapshot_expires_at`` 以保持 idle 有效期。system prompt 不由本模块刷新，
+    调用方应在返回后从 ``agent.context.session_system`` 每轮组装。旧 snapshot
+    中的 ``system_prompt`` 字段仅为兼容历史数据保留。
 
     ``load_context`` 返回已经渲染好的 prompt 输入，避免 runner、Web 各自维护一套
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。
@@ -360,6 +361,9 @@ async def ensure_snapshot(
         _record_snapshot_event(session, "hit")
         context = snapshot_context(session)
         _set_rag_snapshot_context(context["snapshot_context"], context.get("rag_revision"))
+        # Sliding TTL：每次访问刷新过期时间
+        current = now or now_utc()
+        session.snapshot_expires_at = current + ttl
         return context
 
     # revision 只记录本次 snapshot 已吸收的业务版本；普通业务变化先作为
