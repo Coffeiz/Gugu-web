@@ -458,6 +458,7 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 
 - Shell 默认使用 `sandbox` 范围和 `network=none`；范围在每次调用开始时固定，绑定工作区时只能访问该工作区对应目录。
 - 沙盒执行通过 `sandboxd` 和 Docker 承载，包含目录边界、配额、生命周期和执行超时控制；`sandboxd` 不可用时不会回退到本机执行。
+- 所有用户沙盒共用项目维护的固定运行时镜像，预装 Python、Node/npm、ffmpeg、Git、curl、jq 和 Bash；用户工作区仍按用户独立挂载，不共享文件和进程。
 - `system` 范围是明确开启的宿主机执行能力，不属于默认沙盒；危险命令、宿主机范围和受控 egress 网络都需要额外配置或确认。
 - 受控 egress 只允许沙盒使用配置的 HTTP(S) 代理和隔离 Docker 网络；默认保持断网。
 

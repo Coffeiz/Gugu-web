@@ -94,7 +94,9 @@ docker compose -p gugu-web-main -f docker-compose.prod.yml up -d --force-recreat
 沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=.../users/<uid>/shell`
 由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
 会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
-`Gugu-data`，首次启动会自动创建；下面的命令仅用于 rootless 沙盒提前设置目录属主：
+`Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandbox-bootstrap` 会在
+`data-migrate` 成功后自动为每个用户的 `shell`、`个人文件`、`项目文件` 根目录及已有子目录
+设置 Rootless UID/GID ACL，并用真实沙盒 UID 做写入探针；不需要手工 chmod/chown：
 
 ```bash
 mkdir -p Gugu-data && chown 1001:1001 Gugu-data   # 1001 = rootless docker 用户的 uid
@@ -102,8 +104,9 @@ docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f
 ```
 
 - 沙盒镜像 `--pull=never`，必须提前拉进 rootless daemon 的镜像库，否则报 image not found。
-- rootless 下沙盒进程映射到部署用户 uid，backend（root）创建的 shell 根目录会由
-  `ensure_sandbox_root` 放开为 0777，属主问题不需要手工处理。
+- rootless 下沙盒进程使用目标 daemon 的 subordinate UID/GID 映射；bootstrap 会从宿主机的
+  `/etc/passwd`、`/etc/subuid`、`/etc/subgid` 读取映射并写入 ACL。若探针失败，bootstrap
+  会失败并在日志中给出权限错误，不能等到用户第一次执行 Shell 才发现。
 - 从旧 named volume 升级：Compose 的 `data-migrate` 会在业务服务启动前，把
   `GUGU_LEGACY_DATA_VOLUME` 指定的旧卷（默认 `gugu-web-compose_gugu_data`）复制到
   `GUGU_DATA_HOST_DIR`；升级前先停掉旧业务容器，源卷只读挂载并保留，不需要 `down -v`
