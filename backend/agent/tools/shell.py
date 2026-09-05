@@ -123,19 +123,20 @@ async def _run_shell(db, user_id, args: dict):
     egress_expires_at = None
     if network_profile == "egress":
         egress_ttl = int(getattr(get_settings().sandbox, "egress_ttl_seconds", 600))
-        blocked = confirm.needs_confirmation(
-            args,
-            "允许当前会话在沙盒内临时访问公网（仅通过受控代理，有效期10分钟）",
-            user_id,
-            identity=f"shell:egress:{session_id}:{decision.workspace_id or 'user'}",
-            ttl_minutes=max(1, (egress_ttl + 59) // 60),
-            instruction=(
-                "这是当前会话的临时沙盒联网授权，只允许通过受控代理访问公网，"
-                "有效期10分钟；请把授权范围告知用户，用户在界面确认后直接再次调用即可，无需携带凭证。"
-            ),
-        )
-        if blocked is not None:
-            return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "confirmation_required"}
+        if not decision.autopilot_enabled:
+            blocked = confirm.needs_confirmation(
+                args,
+                "允许当前会话在沙盒内临时访问公网（仅通过受控代理，有效期10分钟）",
+                user_id,
+                identity=f"shell:egress:{session_id}:{decision.workspace_id or 'user'}",
+                ttl_minutes=max(1, (egress_ttl + 59) // 60),
+                instruction=(
+                    "这是当前会话的临时沙盒联网授权，只允许通过受控代理访问公网，"
+                    "有效期10分钟；请把授权范围告知用户，用户在界面确认后直接再次调用即可，无需携带凭证。"
+                ),
+            )
+            if blocked is not None:
+                return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "confirmation_required"}
         egress_authorized = True
         egress_expires_at = time.time() + egress_ttl
     if decision.needs_confirmation and not (egress_authorized and _can_use_shell_lease(command)):

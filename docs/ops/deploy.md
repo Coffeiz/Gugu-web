@@ -114,7 +114,7 @@ Docker 日志必须启用轮转，避免 `json-file` 日志占满系统盘。仓
 不会删除 Docker 数据卷；已有容器若要继承新的 Compose 日志选项，需要由对应项目重新创建，
 不能只依赖普通 `restart`。
 
-Docker Compose 同时提供一个受控的临时公网出口：`egress-proxy` 使用 `squid/egress.conf`，沙盒只加入内部网络 `gugu-sandbox-egress`，不能直接加入默认网络绕过代理。Admin 的“临时公网访问”开关只切换会话请求的网络 profile；每次实际 egress 执行仍由 sandboxd 校验内部网络、代理和用户确认，缺少任一条件都会保持断网。不要把沙盒改成 Docker `bridge` 或给业务进程开放 Docker socket。
+Docker Compose 同时提供一个受控的临时公网出口：`egress-proxy` 使用 `squid/egress.conf`，沙盒只加入内部网络 `gugu-sandbox-egress`，不能直接加入默认网络绕过代理。Admin 的“临时公网访问”开关只切换会话请求的网络 profile；普通模式下每次实际 egress 执行还要通过确认门，Shell Autopilot 可跳过确认但仍由 sandboxd 校验内部网络、代理和审计，缺少任一条件都会保持断网。不要把沙盒改成 Docker `bridge` 或给业务进程开放 Docker socket。
 
 ---
 
@@ -421,7 +421,7 @@ docker network inspect gugu-sandbox-egress
 > ```
 
 检查通过后，可以在 Admin → Shell 沙盒直接填写并保存受控代理地址，再打开“临时公网访问”。这不会把沙盒默认网络改成公网；
-只有当前会话显式选择 `network=egress` 且通过确认门时，sandboxd 才会使用内部 egress 网络。
+只有当前会话显式选择 `network=egress` 且通过确认门（或已启用 Shell Autopilot）时，sandboxd 才会使用内部 egress 网络。
 代理配置文件为 `squid/egress.conf`，禁止改为普通 `bridge`，也不要给 backend/worker 挂载
 Docker socket。非 Compose 部署需在 `config.override.json` 的 `sandbox` 中配置
 `egress_proxy_url`、`egress_network_name` 和 `egress_isolation_enabled`，并确保这些配置对

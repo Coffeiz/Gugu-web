@@ -14,6 +14,10 @@ from contextvars import ContextVar
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
+from agent.interactions.confirmations import (
+    confirmation_payload,
+    normalize_confirmation_result,
+)
 from agent.tools.tool_contract import (
     SchemaError,
     build_validator,
@@ -466,15 +470,18 @@ class SkillRegistry:
         # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
         result = enrich_tool_error(name, result)
         result = _redact_result(name, result)
+        # 确认门是跨工具的协议：无论 handler 直接返回 JSON，还是把它包进 error，
+        # 从 dispatch 边界出去都统一为顶层载荷，避免下游各自猜包装形状。
+        result = normalize_confirmation_result(result)
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
+        _pending = confirmation_payload(result) is not None
         if isinstance(result, dict):
-            _pending = bool(result.get("needs_confirm")) or result.get("status") == "waiting_confirmation"
             _ok = not _pending and not result.get("error") and result.get("status") != "failed"
             _note = "等待确认" if _pending else str(result.get("message") or result.get("error") or "")
         elif isinstance(result, str):
-            _ok = not result.lstrip().startswith('{"error"')
-            _note = "" if _ok else result[:120]
+            _ok = not _pending and not result.lstrip().startswith('{"error"')
+            _note = "等待确认" if _pending else ("" if _ok else result[:120])
         else:
             _ok, _note = True, ""
 

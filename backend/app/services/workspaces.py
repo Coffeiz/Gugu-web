@@ -158,7 +158,7 @@ async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
 
 
 async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
-    """读取用户危险 Shell 命令开关；它不能绕过 Admin 开关或确认门。"""
+    """读取用户危险 Shell 命令开关；管理员开关和 Autopilot 由策略层校验。"""
     result = await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )
@@ -167,6 +167,7 @@ async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
 
 
 async def effective_shell_autopilot_enabled(db: AsyncSession, user_id) -> bool:
+    """读取用户 Autopilot 开关；管理员总开关由调用方同时校验。"""
     prefs = (await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )).scalar_one_or_none()

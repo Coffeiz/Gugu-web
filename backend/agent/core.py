@@ -268,14 +268,16 @@ def _mutating_tools(tool_names) -> set:
 
 def _is_successful_tool_result(result: str) -> bool:
     """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。"""
+    from agent.interactions.confirmations import confirmation_payload
+
+    if confirmation_payload(result) is not None:
+        return False
     try:
         payload = json.loads(result)
     except (TypeError, json.JSONDecodeError):
         return True
     if not isinstance(payload, dict):
         return True
-    if payload.get("needs_confirm") or payload.get("status") == "waiting_confirmation":
-        return False
     return not payload.get("error") and payload.get("status") != "failed"
 
 

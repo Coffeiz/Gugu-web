@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
 from app.models import ConversationSession, InteractionAction, InteractionPrompt
+from agent.interactions.confirmations import confirmation_payload
 
 TOOL_BUDGET_WINDOW = timedelta(minutes=30)
 
@@ -485,10 +486,10 @@ async def consume_choice_text(
     text: str,
     event_id: str | None = None,
 ) -> dict | None:
-    """把 IM 降级文案中的序号/选项文字消费为当前 choice Prompt。
+    """把 IM 降级文案中的序号/选项文字消费为当前 choice/confirm Prompt。
 
     这是原生按钮不可用时的同一条交互恢复路径。只匹配指定 session 最近的活动
-    ``choice``，不会把普通消息误当成交互，也不会跨会话消费 Prompt。
+    ``choice`` 或 ``confirm``，不会把普通消息误当成交互，也不会跨会话消费 Prompt。
     """
     value = str(text or "").strip()
     if not value or len(value) > 200:
@@ -498,7 +499,7 @@ async def consume_choice_text(
         select(InteractionPrompt).where(
             InteractionPrompt.user_id == user_id,
             InteractionPrompt.session_id == session_id,
-            InteractionPrompt.kind == "choice",
+            InteractionPrompt.kind.in_(("choice", "confirm")),
             InteractionPrompt.status == "active",
             InteractionPrompt.expires_at > now,
         ).order_by(InteractionPrompt.created_at.desc()).with_for_update()
@@ -696,17 +697,8 @@ async def create_tool_confirmation(
             return None
     except Exception:
         return None
-    import json
-    if isinstance(result, str):
-        try:
-            payload = json.loads(result)
-        except (TypeError, ValueError):
-            return None
-    elif isinstance(result, dict):
-        payload = result
-    else:
-        return None
-    if not isinstance(payload, dict) or not payload.get("needs_confirm"):
+    payload = confirmation_payload(result)
+    if payload is None:
         return None
 
     from app.db import session as db_session

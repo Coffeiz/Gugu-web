@@ -215,6 +215,49 @@ async def test_dispatch_tripwire_silent_when_gated(user_a, monkeypatch, caplog):
         base_mod.registry._tools.pop(good.name, None)
 
 
+async def test_dispatch_normalizes_wrapped_confirmation_result(user_a, monkeypatch):
+    """工具包装层不能改变 dispatch 对外的顶层确认协议。"""
+    from agent.tools import base as base_mod
+    import app.db.session as sess_mod
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return None
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(sess_mod, "_engine", object())
+    monkeypatch.setattr(sess_mod, "_SessionLocal", lambda: _FakeSession())
+
+    async def _wrapped_handler(db, user_id, args):
+        return {
+            "error": json.dumps({
+                "status": "waiting_confirmation",
+                "needs_confirm": True,
+                "summary": "允许执行测试操作",
+                "confirm_code": "opaque-confirm-code",
+            }, ensure_ascii=False),
+            "_audit_event": "confirmation_required",
+        }
+
+    wrapped = base_mod.Tool(
+        name="_test_wrapped_confirmation", label="测试包装确认",
+        description="test", input_schema={"type": "object", "properties": {}},
+        handler=_wrapped_handler, destructive=True,
+    )
+    base_mod.registry._tools[wrapped.name] = wrapped
+    try:
+        result, _ = await base_mod.registry.dispatch(user_a.id, wrapped.name, {})
+        payload = json.loads(result)
+        assert payload["needs_confirm"] is True
+        assert payload["status"] == "waiting_confirmation"
+        assert payload["confirm_code"] == "opaque-confirm-code"
+        assert "error" not in payload
+        assert payload["_audit_event"] == "confirmation_required"
+    finally:
+        base_mod.registry._tools.pop(wrapped.name, None)
+
+
 # ── 4. 静态守卫对当前代码库必须全绿 ───────────────────────────────────────────
 
 def test_static_confirm_gate_guard_passes():

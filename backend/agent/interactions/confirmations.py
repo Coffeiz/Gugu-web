@@ -36,14 +36,48 @@ def is_confirmed(args: dict) -> bool:
     return _truthy(args.get("confirm"))
 
 
+def confirmation_payload(value: object) -> dict | None:
+    """从工具返回值中提取统一的待确认载荷。
+
+    工具可以直接返回 ``needs_confirm`` 的 JSON，也可能为了保留错误协议
+    把它包在 ``error`` 字段中（Shell 就是这种情况）。所有确认门消费者都必须
+    通过这里识别，避免某个包装层改变后只修到其中一条链路。
+    """
+    candidates: list[object] = [value]
+    if isinstance(value, dict):
+        candidates.append(value.get("error"))
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            try:
+                candidate = json.loads(candidate)
+            except (TypeError, ValueError):
+                continue
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("needs_confirm") or candidate.get("status") == "waiting_confirmation":
+            return candidate
+    return None
+
+
+def normalize_confirmation_result(value: object) -> object:
+    """将任意包装形式标准化为顶层确认载荷。
+
+    仅保留外层非 ``error`` 字段作为兼容元数据；确认协议字段由内层载荷覆盖。
+    这样工具可以继续携带审计用的私有字段，但模型、轨迹和交互桥看到的确认
+    结构始终一致。
+    """
+    payload = confirmation_payload(value)
+    if payload is None:
+        return value
+    if isinstance(value, dict):
+        outer = {key: item for key, item in value.items() if key != "error"}
+        return {**outer, **payload}
+    return payload
+
+
 def is_block(result) -> bool:
     """判断工具返回是否是确认拦截结果。"""
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except Exception:
-            return False
-    return isinstance(result, dict) and bool(result.get("needs_confirm"))
+    return confirmation_payload(result) is not None
 
 
 def _summary_hash(summary: str) -> str:
@@ -166,6 +200,7 @@ def needs_confirmation(
 
 
 __all__ = [
-    "is_block", "is_confirmed", "needs_confirmation",
+    "confirmation_payload", "is_block", "is_confirmed", "needs_confirmation",
+    "normalize_confirmation_result",
     "grant_confirmation", "redeem_confirmation",
 ]

@@ -28,6 +28,36 @@ def test_schema_dict_accepts_legacy_json_string_and_rejects_invalid_values():
     assert _schema_dict(["not", "an", "object"]) == {}
 
 
+def test_shell_confirmation_error_envelope_reaches_interaction_bridge():
+    """Shell 的嵌套确认结果必须仍然生成网页/IM 确认交互。"""
+    from agent.interactions.confirmations import confirmation_payload
+
+    payload = confirmation_payload({
+        "error": json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "允许当前会话临时访问公网",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    })
+
+    assert payload is not None
+    assert payload["needs_confirm"] is True
+    assert payload["confirm_code"] == "opaque-confirm-code"
+
+
+def test_confirmation_protocol_accepts_direct_and_nested_results():
+    from agent.interactions.confirmations import confirmation_payload, is_block
+
+    direct = json.dumps({"status": "waiting_confirmation", "needs_confirm": True})
+    nested = {"error": direct, "_audit_event": "confirmation_required"}
+
+    assert confirmation_payload(direct)["needs_confirm"] is True
+    assert confirmation_payload(nested)["status"] == "waiting_confirmation"
+    assert is_block(direct)
+    assert is_block(nested)
+
+
 def test_event_identity_survives_round_trip():
     line = encode_event(
         INTERACTION_REQUIRED,
@@ -222,6 +252,34 @@ async def test_confirmation_button_grants_server_side_authorization(db, user_a):
     assert "token" not in content
     # 兑换后确认码一次性作废。
     assert confirmations.redeem_confirmation(user_a.id, code) is None
+
+
+async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):
+    """确认按钮发送失败后的序号/文字回退，必须消费 confirm Prompt。"""
+    from app.services.interactions import consume_choice_text
+
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="confirm",
+        title="确认操作",
+        body="是否继续",
+        options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+        context={"tool_call_id": "call-1"},
+    )
+    await db.commit()
+
+    result = await consume_choice_text(
+        db, user_id=user_a.id, session_id=session.id, text="1", event_id="evt-confirm-text"
+    )
+
+    assert result is not None
+    assert result["kind"] == "confirm"
+    assert result["option_id"] == "confirm"
+    assert result["result"]["status"] == "selected"
+    assert actions[0]["id"] == "confirm"
 
 
 async def test_ask_user_text_requires_explicit_permission_and_resolves(db, user_a):

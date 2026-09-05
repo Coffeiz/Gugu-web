@@ -103,7 +103,7 @@ async def test_dangerous_shell_keeps_confirmation_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shell_autopilot_skips_confirmation_only_with_two_level_permission(monkeypatch):
+async def test_shell_autopilot_skips_dangerous_confirmation_with_two_level_permission(monkeypatch):
     db = _PolicyDB()
     settings = _settings(shell=True, dangerous=True)
     settings.agent.shell_autopilot_enabled = True
@@ -116,6 +116,64 @@ async def test_shell_autopilot_skips_confirmation_only_with_two_level_permission
 
     assert decision.allowed
     assert not decision.needs_confirmation
+    assert decision.autopilot_enabled
+
+
+@pytest.mark.asyncio
+async def test_shell_autopilot_skips_egress_confirmation(monkeypatch, tmp_path):
+    """Autopilot 同时跳过临时 egress 确认，但仍经过代理和 sandboxd 校验。"""
+    from agent.tools import shell as shell_tool
+    from agent.security.shell_policy import ShellDecision, ShellRisk, ShellScope
+
+    settings = SimpleNamespace(
+        sandbox=SimpleNamespace(
+            egress_ttl_seconds=600,
+            egress_proxy_url="http://proxy.example:7890",
+            egress_isolation_enabled=True,
+            egress_network_name="gugu-sandbox-egress",
+            sandboxd_socket="/tmp/sandboxd.sock",
+        )
+    )
+    decision = ShellDecision(
+        True, "允许在 sandbox 范围执行", ShellRisk.DANGEROUS,
+        scope=ShellScope.SANDBOX, workspace_id=7, autopilot_enabled=True,
+    )
+
+    async def _execute_stream(_request, on_output=None):
+        return {
+            "ok": True, "exit_code": 0, "stdout": "200", "stderr": "",
+            "timed_out": False, "truncated": False, "cwd": ".",
+            "permission_revoked": False, "quota_exceeded": False,
+        }
+
+    class _Sandboxd:
+        def __init__(self, _socket):
+            self.execute_stream = _execute_stream
+
+    async def _evaluate(*args, **kwargs):
+        return decision
+
+    async def _resolve_shell_root(*args, **kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(shell_tool, "evaluate", _evaluate)
+    monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_tool, "valid_egress_proxy", lambda *_: True)
+    monkeypatch.setattr(shell_tool, "valid_egress_network_name", lambda *_: True)
+    monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_: (True, ""))
+    monkeypatch.setattr(shell_tool, "resolve_shell_root", _resolve_shell_root)
+    monkeypatch.setattr(shell_tool, "SandboxdClient", _Sandboxd)
+    monkeypatch.setattr(
+        shell_tool.confirm, "needs_confirmation",
+        lambda *args, **kwargs: pytest.fail("Autopilot 不应再次请求 egress 确认"),
+    )
+
+    result = await shell_tool._run_shell(
+        None, "user-1", {"command": "curl https://example.com", "network": "egress"}
+    )
+
+    assert result["ok"] is True
+    assert result["exit_code"] == 0
 
 
 @pytest.mark.asyncio

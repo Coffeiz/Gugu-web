@@ -44,6 +44,7 @@ class ShellDecision:
     needs_confirmation: bool = False
     workspace_id: int | None = None
     scope: ShellScope = ShellScope.OFF
+    autopilot_enabled: bool = False
 
 
 _DANGEROUS = re.compile(
@@ -147,18 +148,21 @@ async def evaluate(
             ready, reason = sandbox_readiness(sandbox)
             if not ready:
                 return ShellDecision(False, reason, risk)
+    autopilot_enabled = (
+        bool(getattr(settings.agent, "shell_autopilot_enabled", False))
+        and await effective_shell_autopilot_enabled(db, user_id)
+    )
     if risk is ShellRisk.DANGEROUS:
         if not get_settings().agent.shell_dangerous_enabled:
             return ShellDecision(False, "管理员未开启危险 Shell 命令", risk, scope=scope)
         if not await effective_shell_dangerous_enabled(db, user_id):
             return ShellDecision(False, "用户未开启危险 Shell 命令", risk, scope=scope)
-        autopilot_enabled = (
-            bool(getattr(settings.agent, "shell_autopilot_enabled", False))
-            and await effective_shell_autopilot_enabled(db, user_id)
-        )
         if not confirm and not autopilot_enabled:
             return ShellDecision(True, "危险命令需要用户确认", risk, True, workspace.id if workspace else None, scope)
-    return ShellDecision(True, f"允许在 {scope.value} 范围执行", risk, False, workspace.id if workspace else None, scope)
+    return ShellDecision(
+        True, f"允许在 {scope.value} 范围执行", risk, False,
+        workspace.id if workspace else None, scope, autopilot_enabled,
+    )
 
 
 async def available_for_session(
