@@ -37,7 +37,7 @@ async def test_threshold_schedules_once_for_active_user(monkeypatch):
         await asyncio.sleep(0)
         return True
 
-    monkeypatch.setattr(periodic, "_run_review", fake_review)
+    monkeypatch.setattr(periodic, "_run_pattern_compact", fake_review)
     assert await periodic.maybe_schedule("u1", None) is True
     # 同一个活跃反思链路可能连续触发检查，不能重复启动维护任务。
     assert await periodic.maybe_schedule("u1", None) is False
@@ -66,19 +66,33 @@ async def test_cooldown_and_growth_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_review_error_does_not_advance_watermark(monkeypatch):
+async def test_pattern_compaction_failure_does_not_advance_watermark(monkeypatch):
     written = []
-    monkeypatch.setattr(
-        "scripts.refresh_memory._review_patterns",
-        lambda *_args, **_kwargs: {"error": "parse failed"},
-    )
+    monkeypatch.setattr(periodic.longterm_compaction, "compact_pattern", AsyncMock(return_value=False))
     async def capture_write(_user_id, state):
         written.append(state)
 
     monkeypatch.setattr(periodic.store, "write_pattern_maintenance", capture_write)
 
-    assert await periodic._run_review("u1", None, 100) is False
+    assert await periodic._run_pattern_compact("u1", None, 100) is False
     assert written == []
+
+
+@pytest.mark.asyncio
+async def test_profile_threshold_schedules_profile_compaction(monkeypatch):
+    calls = []
+    monkeypatch.setattr(periodic.store, "read_pattern_list", AsyncMock(return_value=[]))
+    monkeypatch.setattr(periodic.store, "read_profile_list", AsyncMock(return_value=_patterns(100)))
+    monkeypatch.setattr(periodic.store, "read_pattern_maintenance", AsyncMock(return_value={}))
+
+    async def fake_compact(user_id, _settings, count):
+        calls.append((user_id, count))
+        return True
+
+    monkeypatch.setattr(periodic, "_run_profile_compact", fake_compact)
+    assert await periodic.maybe_schedule("u1", None) is True
+    await asyncio.gather(*list(periodic._tasks))
+    assert calls == [("u1", 100)]
 
 
 def _patterns(count: int) -> list[dict]:
