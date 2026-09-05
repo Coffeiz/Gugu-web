@@ -272,6 +272,15 @@
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
+/* 暗色主题的危险操作使用低亮度红色表面，避免浅色 danger token 作为实心背景过曝。 */
+html[data-theme='dark'] {
+  --confirm-dialog-danger-confirm-fg: var(--status-danger);
+  --confirm-dialog-danger-confirm-bg: color-mix(in srgb,var(--status-danger) 24%,var(--surface-floating));
+  --confirm-dialog-danger-confirm-bg-hover: color-mix(in srgb,var(--status-danger) 34%,var(--surface-floating));
+  --confirm-dialog-danger-confirm-border: color-mix(in srgb,var(--status-danger) 52%,transparent);
+  --confirm-dialog-danger-confirm-border-hover: color-mix(in srgb,var(--status-danger) 70%,transparent);
+}
+
 /* Mono light uses its solid neutral card surface and visible neutral edge. This is a token remap,
    not a .fc-card/.folder-card selector, so component state paint cannot race the family theme. */
 html[data-theme='light'][data-family='mono'] {

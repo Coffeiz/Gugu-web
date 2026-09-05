@@ -111,37 +111,69 @@ def _image_ref(settings: SandboxSettings) -> str:
 class DockerSandboxExecutor:
     """使用固定 Rootless Docker 基线执行一条工作区命令。"""
 
-    def __init__(self, workspace_root: str | Path, settings: SandboxSettings, *, docker_path: str | None = None):
+    def __init__(
+        self, workspace_root: str | Path, settings: SandboxSettings, *,
+        docker_path: str | None = None, personal_root: str | Path | None = None,
+        project_root: str | Path | None = None,
+        personal_read_only: bool = True, project_read_only: bool = True,
+    ):
         root = Path(workspace_root).expanduser().resolve(strict=True)
         if not root.is_dir():
             raise ValueError("workspace 必须是目录")
         self.root = root
+        self.personal_root = None
+        if personal_root is not None:
+            personal_path = Path(personal_root).expanduser().resolve(strict=True)
+            if not personal_path.is_dir():
+                raise ValueError("personal 根目录必须是目录")
+            self.personal_root = personal_path
+        self.personal_read_only = bool(personal_read_only)
+        self.project_root = None
+        if project_root is not None:
+            project_path = Path(project_root).expanduser().resolve(strict=True)
+            if not project_path.is_dir():
+                raise ValueError("project 根目录必须是目录")
+            self.project_root = project_path
+        self.project_read_only = bool(project_read_only)
         self.settings = settings
         self.docker_path = docker_path or shutil.which("docker")
         if not self.docker_path:
             raise ValueError("未安装 Docker CLI")
         self.image = _image_ref(settings)
 
-    def _daemon_mount_src(self) -> Path:
-        """bind src 由目标 Docker daemon 按**宿主机**视角解析。
-
-        容器里的数据根（STORAGE__LOCAL_PATH，compose 下是 /data/users）在宿主
-        可能是自定义的 GUGU_DATA_HOST_DIR；compose 会注入 SANDBOX__HOST_DATA_ROOT
-        把它翻译成宿主路径。未注入（本机直跑，进程与 daemon 同视角）则原样使用。
-        """
+    def _daemon_mount_src_for(self, path: Path) -> Path:
+        """按目标 Docker daemon 的宿主机视角解析 bind mount 源路径。"""
         host_root = getattr(self.settings, "host_data_root", None)
         if not host_root:
-            return self.root
+            return path
         from app.core.config import get_settings
         logical_root = Path(get_settings().storage.local_path).resolve()
         try:
-            return Path(host_root) / self.root.relative_to(logical_root)
+            return Path(host_root) / path.relative_to(logical_root)
         except ValueError:
-            return self.root
+            return path
 
     def _resolve_cwd(self, cwd: str | Path) -> Path:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
         return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
+
+    def _validate_container_interpreter_inputs(self, argv: list[str], *, allow_script_execution: bool = False) -> None:
+        """禁止普通 Shell 通过容器执行代码运行时。"""
+        interpreter_indexes = [
+            index for index, value in enumerate(argv)
+            if (
+                Path(value).name.lower() in {
+                "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
+                "pytest", "ruby", "sed", "sh", "zsh",
+                }
+                or Path(value).name.lower().startswith("python3.")
+            )
+        ]
+        if not interpreter_indexes:
+            return
+        if allow_script_execution:
+            return
+        raise ValueError("普通 Shell 禁止直接执行代码运行时，请使用 run_script")
 
     def build_argv(
         self,
@@ -150,10 +182,21 @@ class DockerSandboxExecutor:
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
+        allow_script_execution: bool = False,
     ) -> list[str]:
         argv = LocalWorkspaceExecutor._parse_command(command)
         workdir = self._resolve_cwd(cwd)
-        LocalWorkspaceExecutor(self.root)._validate_workspace_argv(argv, workdir)
+        self._validate_container_interpreter_inputs(argv, allow_script_execution=allow_script_execution)
+        LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
+            argv, workdir,
+            allowed_absolute_paths=tuple(
+                path for path, mounted in (
+                    ("/workspace", self.root), ("/personal", self.personal_root),
+                    ("/project", self.project_root),
+                ) if mounted
+            ),
+            allow_script_execution=allow_script_execution,
+        )
         profile = network_profile or self.settings.network_profile
         if profile not in ("none", "egress"):
             raise ValueError("当前 Shell 沙盒网络策略无效")
@@ -189,11 +232,14 @@ class DockerSandboxExecutor:
             f"--tmpfs={_tmpfs_spec(self.settings)}",
             "--ulimit=nofile=1024:1024",
             f"--user={_CONTAINER_USER}",
-            # bind mount 默认可写；--mount 长语法不接受裸 `rw` 字段。
-            f"--mount=type=bind,src={self._daemon_mount_src()},dst={_CONTAINER_ROOT}",
+            # 当前 workspace bind 默认可写；--mount 长语法不接受裸 `rw` 字段。
+            f"--mount=type=bind,src={self._daemon_mount_src_for(self.root)},dst={_CONTAINER_ROOT}",
+            *([f"--mount=type=bind,src={self._daemon_mount_src_for(self.project_root)},dst=/project{',readonly' if self.project_read_only else ''}"] if self.project_root else []),
+            *([f"--mount=type=bind,src={self._daemon_mount_src_for(self.personal_root)},dst=/personal{',readonly' if self.personal_read_only else ''}"] if self.personal_root else []),
             f"--workdir={container_cwd}",
             "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "--env=LANG=C.UTF-8",
+            "--env=HOME=/",
             *([f"--env=HTTP_PROXY={self.settings.egress_proxy_url}",
                f"--env=HTTPS_PROXY={self.settings.egress_proxy_url}",
                "--env=NO_PROXY=127.0.0.1,localhost"] if profile == "egress" else []),
@@ -207,24 +253,111 @@ class DockerSandboxExecutor:
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
+        code_execution_enabled: bool | None = None,
     ) -> list[str]:
         """生成交互式 PTY 的固定启动参数，不接受用户自定义 Shell argv。"""
         # 交互式终端需要 readline；Debian 的 /bin/sh 通常是 dash，Tab 只会被
         # 当作制表符回显，无法提供传统 CLI 的命令和路径补全。
         # --norc 会跳过用户配置；临时 inputrc 放在容器 tmpfs 中，确保 Bash
         # 真正开启 bracketed paste，避免浏览器粘贴多行内容时逐行执行。
-        shell_command = (
-            "printf '%s\\n' '$if Bash' 'set enable-bracketed-paste on' "
-            "'$endif' > /tmp/gugu-inputrc; export INPUTRC=/tmp/gugu-inputrc; "
-            "exec bash --noprofile --norc -i"
-        )
+        runtime_enabled = getattr(self.settings, "code_execution_enabled", True) if code_execution_enabled is None else code_execution_enabled
+        if not runtime_enabled:
+            raise ValueError("代码运行环境已关闭，交互式 PTY 不可用")
+        shell_command = r'''
+printf '%s\n' '$if Bash' 'set enable-bracketed-paste on' '$endif' > /tmp/gugu-inputrc
+export INPUTRC=/tmp/gugu-inputrc
+# 外层 bash -c 不会可靠地把环境里的 PS1 传给随后 exec 的交互 Bash；显式导出，
+# 否则页面终端会退回 Bash 默认的 `bash-5.2$` 提示符。
+PS1='gugu-sandbox:\w\$ '
+export PS1
+
+# 项目文件的物理目录为「项目名 #ID」，交互式终端允许用户省略内部 ID。
+# 只解析 /project 下唯一的项目名；重名时列出可复制的真实路径，不猜测落点。
+cd() {
+    if [ "$#" -eq 0 ]; then
+        builtin cd
+        return $?
+    fi
+    if builtin cd -- "$@" 2>/dev/null; then
+        return 0
+    fi
+    # 逻辑项目路径允许不转义空格；例如 `cd 2026/08/My Project` 会在这里
+    # 重新拼成一个路径。物理路径仍可用引号或反斜杠精确访问。
+    local requested
+    if [ "$#" -eq 1 ]; then
+        requested="$1"
+    else
+        requested="$*"
+    fi
+    local candidate="$requested"
+    if [[ "$candidate" != /project/* ]]; then
+        candidate="$PWD/$candidate"
+    fi
+    # 真实目录已经由前面的 builtin cd 处理；这里只接受不含父目录跳转的
+    # /project 相对路径，避免为了规范化路径依赖镜像外部命令。
+    [[ "$candidate" != */../* && "$candidate" != */./* ]] || return 1
+    [[ "$candidate" == /project/* ]] || return 1
+
+    local relative="${candidate#/project/}"
+    local year="${relative%%/*}"
+    local after_year="${relative#*/}"
+    [[ "$after_year" != "$relative" ]] || return 1
+    local month="${after_year%%/*}"
+    local after_month="${after_year#*/}"
+    [[ "$after_month" != "$month" ]] || return 1
+    local project_name="${after_month%%/*}"
+    local project_tail=""
+    if [[ "$after_month" == */* ]]; then
+        project_tail="${after_month#*/}"
+    fi
+    [ -n "$project_name" ] || return 1
+
+    local parent="/project/$year/$month"
+    local nullglob_was_set=0
+    shopt -q nullglob && nullglob_was_set=1
+    shopt -s nullglob
+    local match physical_name suffix
+    local -a matches=()
+    for match in "$parent/$project_name #"*; do
+        [ -d "$match" ] || continue
+        physical_name="${match##*/}"
+        [[ "$physical_name" == "$project_name #"* ]] || continue
+        suffix="${physical_name#"$project_name #"}"
+        [[ "$suffix" =~ ^[0-9]+$ ]] || continue
+        matches+=("$match")
+    done
+    [ "$nullglob_was_set" -eq 1 ] || shopt -u nullglob
+
+    if [ "${#matches[@]}" -eq 0 ]; then
+        printf '未找到项目目录：%s\n' "$candidate" >&2
+        return 1
+    fi
+    if [ "${#matches[@]}" -gt 1 ]; then
+        printf '%s\n' '项目名不唯一，请使用带 ID 的路径：' >&2
+        for match in "${matches[@]}"; do
+            printf '  cd -- %q\n' "$match" >&2
+        done
+        return 1
+    fi
+
+    local target="${matches[0]}"
+    [ -n "$project_tail" ] && target="$target/$project_tail"
+    builtin cd -- "$target"
+}
+export -f cd
+exec bash --noprofile --norc -i
+'''.strip()
         argv = self.build_argv(
             "bash --noprofile --norc", cwd=cwd, network_profile=network_profile,
             container_name=container_name,
+            allow_script_execution=True,
         )
         # 这段命令是服务端固定的启动脚本，不经过用户命令校验器；前面的
         # build_argv 仍负责统一应用镜像、挂载、网络和资源限制参数。
-        argv[-3:] = ["sh", "-c", shell_command]
+        # shell_command 使用 [[ ]]、数组、shopt 和 export -f 等 Bash 语法，不能
+        # 交给 Debian 默认的 /bin/sh（dash）解析，否则页面 PTY 会在启动时直接报
+        # “Syntax error: "(" unexpected”。
+        argv[-3:] = ["bash", "-c", shell_command]
         run_index = argv.index("run")
         argv[run_index + 1:run_index + 1] = ["--interactive", "--tty"]
         # 沙盒用户是刻意固定的数字 UID，镜像未必为它提供 passwd 名称；
@@ -239,10 +372,12 @@ class DockerSandboxExecutor:
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
+        code_execution_enabled: bool | None = None,
     ) -> DockerPtyHandle:
         """在固定安全参数的 Docker 容器内启动交互式 PTY。"""
         docker_argv = self.build_pty_argv(
             cwd=cwd, network_profile=network_profile, container_name=container_name,
+            code_execution_enabled=code_execution_enabled,
         )
         master_fd, slave_fd = pty.openpty()
         try:
@@ -279,6 +414,7 @@ class DockerSandboxExecutor:
         container_name = f"gugu-sandbox-{uuid4().hex}"
         docker_argv = self.build_argv(
             command, cwd=cwd, network_profile=network_profile, container_name=container_name,
+            allow_script_execution=allow_script_execution,
         )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))

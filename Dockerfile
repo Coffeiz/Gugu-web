@@ -65,7 +65,7 @@ RUN sed -i \
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs \
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
         $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
     && rm -rf /var/lib/apt/lists/*
 
@@ -83,7 +83,9 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
+COPY backend/scripts/migrate_storage_root.py ./scripts/migrate_storage_root.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
+COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
@@ -95,7 +97,7 @@ COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
-    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh
+    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py
 
 EXPOSE 8000
 

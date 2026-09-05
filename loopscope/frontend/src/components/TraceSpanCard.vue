@@ -102,6 +102,20 @@
     </section>
     <section v-if="open.input" ref="inputPanel" class="panel input-panel">
       <div class="panel-label">Input</div>
+      <div v-if="systemPrompt" class="input-system-prompt">
+        <div class="input-message-label">
+          <span>System prompt</span>
+          <b>Skills / policy / stable instructions</b>
+        </div>
+        <pre>{{ systemPrompt }}</pre>
+      </div>
+      <div v-if="snapshotContent" class="input-snapshot">
+        <div class="input-message-label">
+          <span>Session snapshot</span>
+          <b>用户侧固定上下文 · 不属于 history</b>
+        </div>
+        <pre>{{ snapshotContent }}</pre>
+      </div>
       <div v-if="inputMessages.length && firstDiff" ref="inputMessageList" class="input-message-list">
         <article
           v-for="(message, index) in inputMessages"
@@ -117,7 +131,7 @@
           <pre>{{ pretty(message) }}</pre>
         </article>
       </div>
-      <pre v-else>{{ pretty(inputForDisplay) }}</pre>
+      <pre v-else>{{ pretty(inputWithoutSystemPrompt) }}</pre>
     </section>
     <section v-if="open.output" class="panel">
       <div class="panel-label">Output</div>
@@ -141,6 +155,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref } from 'vue'
 import type { TraceSpan } from '../types'
+import { prettyJson } from '../utils/prettyJson'
 
 const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSpan; depth?: number }>(), { depth: 0 })
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
@@ -166,7 +181,7 @@ function fmtTokens(v: number | undefined) {
 function pretty(v: unknown) {
   if (v == null) return '—'
   if (typeof v === 'string') return v
-  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
+  try { return prettyJson(v) } catch { return String(v) }
 }
 
 const sourceContent = computed(() => {
@@ -176,6 +191,21 @@ const sourceContent = computed(() => {
   if (typeof out.included === 'string') return out.included
   if (props.span.kind === 'context' && typeof out.system_prompt === 'string') return out.system_prompt
   return ''
+})
+const systemPrompt = computed(() => {
+  const input = props.span.input
+  if (!input || typeof input !== 'object') return ''
+  const value = (input as Record<string, unknown>).system_prompt
+  return typeof value === 'string' ? value : ''
+})
+const snapshotContent = computed(() => {
+  const input = props.span.input
+  if (!input || typeof input !== 'object') return ''
+  const snapshot = (input as Record<string, unknown>).snapshot
+  if (typeof snapshot === 'string') return snapshot
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  const content = (snapshot as Record<string, unknown>).content
+  return typeof content === 'string' ? content : ''
 })
 const assembly = computed(() => {
   const input = props.span.input as any
@@ -264,6 +294,12 @@ const inputForDisplay = computed(() => {
   }
   const { canonical_context: _diagnostics, ...visibleAssembly } = assembly.value
   return { ...(input as Record<string, unknown>), assembly: visibleAssembly }
+})
+const inputWithoutSystemPrompt = computed(() => {
+  const input = inputForDisplay.value
+  if (!systemPrompt.value || !input || typeof input !== 'object' || Array.isArray(input)) return input
+  const { system_prompt: _systemPrompt, snapshot: _snapshot, ...rest } = input as Record<string, unknown>
+  return rest
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
 const hasAttributes = computed(() => !!props.span.attributes && Object.keys(props.span.attributes).length > 0)
@@ -363,11 +399,17 @@ pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-
 .comparison-label { padding:6px 8px; color:var(--content-secondary); background:var(--surface-soft); font-size:9px; }
 .comparison-column pre { max-height:360px; padding:8px; }
 .input-message-list { display:grid; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
+.input-snapshot { margin-top:10px; border:1px solid color-mix(in srgb,var(--action-primary) 32%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-card)); }
+.input-snapshot pre { max-height:420px; padding:8px; }
 .input-message { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
 .input-message.is-first-diff { border-color:var(--status-warning); box-shadow:0 0 0 2px color-mix(in srgb,var(--status-warning) 18%,transparent); }
 .input-message-label { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; color:var(--content-tertiary); background:var(--surface-soft); font:9px var(--font-mono); }
 .input-message-label b { color:var(--status-warning); font:9px var(--font-sans); }
 .input-message pre { max-height:none; padding:8px; }
+.input-system-prompt { margin-bottom:9px; border:1px solid color-mix(in srgb,var(--trace-context) 45%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.input-system-prompt .input-message-label { color:var(--action-primary); }
+.input-system-prompt .input-message-label b { color:var(--content-tertiary); font-weight:400; }
+.input-system-prompt pre { max-height:600px; padding:9px; background:color-mix(in srgb,var(--trace-context) 5%,var(--surface-card)); }
 .content-panel pre { font-family:var(--font-sans); font-size:11px; line-height:1.65; }
 .assembly-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 18px; }
 .assembly-grid div { min-width:0; }

@@ -113,30 +113,6 @@ html[data-theme='dark'][data-family='mono'] {
   --settings-popup-hover-bg: var(--surface-soft-hover);
 }
 
-/* Notification popup still contains legacy light literals in AppSidebar. settings-popup is now
-   component-owned and consumes only the --settings-popup-* values above. */
-html[data-theme='dark'][data-family] .notif-popup {
-  background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
-  border-color: var(--border-default);
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
-}
-html[data-theme='dark'][data-family] .notif-title,
-html[data-theme='dark'][data-family] .notif-msg,
-html[data-theme='dark'][data-family] .notif-meta.as-title {
-  color: var(--content-primary);
-}
-html[data-theme='dark'][data-family] .notif-meta,
-html[data-theme='dark'][data-family] .notif-empty {
-  color: var(--content-tertiary);
-}
-html[data-theme='dark'][data-family] .notif-item:hover,
-html[data-theme='dark'][data-family] .notif-item.unread {
-  background: var(--color-accent-faint);
-}
-html[data-theme='dark'][data-family] .notif-header {
-  border-color: var(--border-subtle);
-}
-
 html[data-theme='dark'][data-family] .pm-nav-item.active {
   color: var(--sidebar-item-active-fg);
   background: var(--sidebar-item-active);

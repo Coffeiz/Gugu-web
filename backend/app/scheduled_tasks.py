@@ -16,7 +16,12 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from app.core.redaction import diag_log, redact
-from app.core.tz import LOCAL_TZ, local_now, now_utc
+from app.core.schedule_rules import (
+    SCHEDULE_TZ,
+    is_task_ended,
+    task_schedule_kind,
+)
+from app.core.tz import local_now, now_utc
 
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
 logger = logging.getLogger(__name__)
@@ -26,45 +31,75 @@ def _as_uuid(v):
     return v if not isinstance(v, str) else _uuid.UUID(v)
 
 
-def build_trigger(cron: str):
-    """cron 字符串 → APScheduler 触发器。`@once:<ISO>` = 一次性（DateTrigger），否则 crontab。"""
-    if (cron or "").startswith("@once:"):
+def build_trigger(
+    cron: str,
+    *,
+    schedule_kind: str = "cron",
+    interval_minutes: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    created_at: datetime | None = None,
+):
+    """根据规范字段构造 APScheduler trigger。"""
+    kind = schedule_kind
+    if kind not in {"cron", "interval", "once"}:
+        raise ValueError("未知的 schedule_kind")
+    if kind == "once":
         from apscheduler.triggers.date import DateTrigger
-        return DateTrigger(run_date=datetime.fromisoformat(cron[6:]), timezone="Asia/Shanghai")
+        if start_at is None:
+            raise ValueError("once 任务缺少 start_at")
+        return DateTrigger(run_date=_as_local(start_at), timezone="Asia/Shanghai")
     from apscheduler.triggers.cron import CronTrigger
-    return CronTrigger.from_crontab(cron, timezone="Asia/Shanghai")
+    if kind == "interval":
+        if interval_minutes is None:
+            raise ValueError("interval 任务缺少 interval_minutes")
+        anchor = start_at or created_at or local_now()
+        return _interval_trigger(interval_minutes, anchor, end_at)
+    parsed = CronTrigger.from_crontab(cron, timezone=SCHEDULE_TZ)
+    if start_at is None and end_at is None:
+        return parsed
+    # APScheduler 3.11 的 from_crontab 只接受 expr 和 timezone；时间窗口属于
+    # CronTrigger 构造参数，不能直接传给 from_crontab。先解析五段 cron，再带
+    # 窗口重建，避免 cron 任务在 reconcile 中因 TypeError 被全部跳过。
+    expressions = {field.name: str(field) for field in parsed.fields}
+    return CronTrigger(
+        **expressions,
+        start_date=_as_local(start_at) if start_at else None,
+        end_date=_as_local(end_at) if end_at else None,
+        timezone=SCHEDULE_TZ,
+    )
+
+
+def _as_local(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=SCHEDULE_TZ)
+    return value.astimezone(SCHEDULE_TZ)
+
+
+def _interval_trigger(minutes: int, start_at: datetime, end_at: datetime | None):
+    from apscheduler.triggers.interval import IntervalTrigger
+    return IntervalTrigger(
+        minutes=minutes,
+        start_date=_as_local(start_at),
+        end_date=_as_local(end_at) if end_at else None,
+        timezone="Asia/Shanghai",
+    )
 
 
 _ONCE_GC_GRACE = timedelta(seconds=120)   # 一次性任务过点后多久可被 GC（正常触发的由 execute_task 即时删；这宽限只避开正在触发的那一下）
 
 
-def _once_expired(cron: str, now: datetime) -> bool:
-    """判断一次性任务是否过期，兼容旧数据中的 naive/aware ISO 时间。
-
-    历史任务可能保存为本地无时区时间，也可能保存为带 ``+08:00`` 的时间；
-    两者先统一到项目本地时区，再进行比较，避免 naive/aware 混用导致列表接口 500。
-    解析不了的不动（宁留勿误删）。仅过去超过宽限期才算过期，避开正在触发的那一下。
-    """
-    c = cron or ""
-    if not c.startswith("@once:"):
+def _task_once_expired(task, now: datetime) -> bool:
+    start_at = task.start_at
+    if start_at is None:
         return False
-    try:
-        when = datetime.fromisoformat(c[6:])
-    except Exception:
-        return False
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=LOCAL_TZ)
-    else:
-        when = when.astimezone(LOCAL_TZ)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=LOCAL_TZ)
-    else:
-        now = now.astimezone(LOCAL_TZ)
-    return when < now - _ONCE_GC_GRACE
+    current = now if now.tzinfo else now.replace(tzinfo=SCHEDULE_TZ)
+    when = start_at if start_at.tzinfo else start_at.replace(tzinfo=SCHEDULE_TZ)
+    return when < current - _ONCE_GC_GRACE
 
 
 async def _notify_tasks_changed(user_ids) -> None:
-    """定时任务有**自动**变化（GC 清理 / 一次性触发即删）→ 推 `scheduled_tasks` 事件，
+    """定时任务有**自动**变化（结束重复任务销毁 / 一次性 GC）→ 推 `scheduled_tasks` 事件，
     网页定时面板实时刷（咕咕主动建/改/删走 tool dispatch 的 RESOURCE_BY_TOOL，不在此列）。永不抛。"""
     from app.core import events
     for uid in set(user_ids):
@@ -72,6 +107,37 @@ async def _notify_tasks_changed(user_ids) -> None:
             await events.publish(uid, "scheduled_tasks")
         except Exception:
             pass
+
+
+async def _task_is_in_flight(task_id: int) -> bool:
+    """判断任务是否仍有执行协程持有调度锁；Redis 异常时保守保留任务。"""
+    from app.core.redis import get_redis
+
+    try:
+        return bool(await get_redis().exists(_scheduled_lock_key(task_id)))
+    except Exception:
+        return True
+
+
+async def _delete_ended_repeating_tasks(db, tasks, now: datetime | None = None) -> list:
+    """删除结束且未在执行的独立重复任务，并通知在线定时任务面板刷新。"""
+    current = now or local_now()
+    ended = []
+    for task in tasks:
+        if task.user_id is None or task.event_id is not None:
+            continue
+        if task_schedule_kind(task) not in {"cron", "interval"}:
+            continue
+        if not is_task_ended(task, current) or await _task_is_in_flight(task.id):
+            continue
+        ended.append(task)
+    if not ended:
+        return []
+    for task in ended:
+        await db.delete(task)
+    await db.commit()
+    await _notify_tasks_changed({task.user_id for task in ended})
+    return ended
 
 
 # ── reconcile：DB → APScheduler ──────────────────────────────────────────────
@@ -89,7 +155,12 @@ async def reconcile() -> None:
         # GC 过期的一次性任务：一次性任务过点就「用完了」——正常触发的已被 execute_task 即时删，
         # 这里兜底清理漏网的（misfire 没触发、被停用、或残留），否则它们永远僵在面板里。
         now = local_now()
-        gc = [t for t in all_tasks if t.last_run_at is None and _once_expired(t.cron, now)]
+        gc = [
+            t for t in all_tasks
+            if task_schedule_kind(t) == "once"
+            and t.last_run_at is None
+            and _task_once_expired(t, now)
+        ]
         gc_ids = {t.id for t in gc}
         if gc:
             gc_uids = {t.user_id for t in gc}
@@ -105,11 +176,16 @@ async def reconcile() -> None:
         if abandoned:
             print(f"[sched] {len(abandoned)} 个一次性任务判定为崩溃，已标记失败: {sorted(t.id for t in abandoned)}", flush=True)
             await _notify_tasks_changed({t.user_id for t in abandoned})
+        ended = await _delete_ended_repeating_tasks(db, all_tasks, now)
+        if ended:
+            print(f"[sched] 自动销毁 {len(ended)} 个已结束重复任务: {[t.id for t in ended]}", flush=True)
+        ended_ids = {t.id for t in ended}
         tasks = [
             t for t in all_tasks
             if t.enabled
             and t.id not in gc_ids
-            and not ((t.cron or "").startswith("@once:") and t.last_run_at is not None)
+            and t.id not in ended_ids
+            and not (task_schedule_kind(t) == "once" and t.last_run_at is not None)
         ]
 
     desired: dict[str, str] = {}
@@ -120,7 +196,14 @@ async def reconcile() -> None:
         if s.get_job(jid) is not None and _synced.get(jid) == stamp:
             continue   # 没变，跳过
         try:
-            trig = build_trigger(t.cron)
+            trig = build_trigger(
+                t.cron,
+                schedule_kind=task_schedule_kind(t),
+                interval_minutes=t.interval_minutes,
+                start_at=t.start_at,
+                end_at=t.end_at,
+                created_at=t.created_at,
+            )
         except Exception as e:
             diag_log("app.scheduled_tasks.build_trigger", e)
             print(f"[sched] 任务 {t.id} 触发器非法: {redact(type(e).__name__)}", flush=True)
@@ -197,9 +280,9 @@ async def _reap_abandoned_once_tasks(db, tasks) -> list:
     abandoned = []
     now = local_now()
     for t in tasks:
-        if not (t.cron or "").startswith("@once:"):
+        if task_schedule_kind(t) != "once":
             continue
-        if t.last_run_at is None or t.last_run_failed or not _once_expired(t.cron, now):
+        if t.last_run_at is None or t.last_run_failed or not _task_once_expired(t, now):
             continue
         if await _once_task_is_in_flight(t.id, t.last_run_at):
             continue
@@ -240,8 +323,22 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             payload, uid, name = t.payload or "", t.user_id, t.name
             target_map = t.delivery_targets
             authorized_tools = t.authorized_tools or []
+            workspace_id = t.workspace_id
+            from app.services.filesystem_authorization import resolve_filesystem_policy
+            filesystem_policy = await resolve_filesystem_policy(
+                db, uid, subject_type="scheduled_task", subject_id=t.id,
+            )
+            if workspace_id is not None:
+                from app.services.workspaces import resolve_workspace_root
+                if await resolve_workspace_root(db, uid, workspace_id) is None:
+                    # 绑定工作区失效时安全跳过，不能把任务改写到默认 /workspace。
+                    print(f"[sched] 任务 {task_id} 工作区不可用，已跳过", flush=True)
+                    return {"错误": "任务工作区不可用，已跳过执行"}
+            allow_shell = workspace_id is not None or filesystem_policy.full_user_sandbox
             chans = {c for c in (t.channels or "").split(",") if c}
-            is_once = (t.cron or "").startswith("@once:")
+            is_once = task_schedule_kind(t) == "once"
+            if is_task_ended(t):
+                return {"错误": "任务已结束"}
             # last_run_failed=True：上次触发过但失败了，允许再触发一次；只有"已经成功"
             # 或"正在跑"（last_run_at 非空且没标失败）才拒绝。
             if not is_trial and is_once and t.last_run_at is not None and not t.last_run_failed:
@@ -271,6 +368,16 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             text, files, status = await _run_agent(
                 uid, prompt, target_map=target_map, trial=is_trial,
                 authorized_tools=authorized_tools,
+                filesystem_subject=(
+                    {
+                        "subject_type": "scheduled_task",
+                        "subject_id": task_id,
+                        "workspace_id": workspace_id,
+                        "script_authorization": t.script_authorization,
+                    }
+                    if allow_shell else None
+                ),
+                allow_shell=allow_shell,
             )
             result = await deliver_to_channels(uid, name, text, chans, target_map, files=files, status=status)
             if not is_trial and is_once:
@@ -298,8 +405,9 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
 
 
 def _delivery_succeeded(result: dict) -> bool:
-    """一次性任务只有在所有选定渠道确认发送后才删除。"""
-    return not result or all(value == "已发送" for value in result.values())
+    """一次性任务只有在所有选定渠道确认结果已送达或已持久化后才删除。"""
+    successful = {"已发送", "已保存（实时提示失败）"}
+    return not result or all(value in successful for value in result.values())
 
 
 async def _delete_completed_once(task_id: int, user_id) -> None:
@@ -309,7 +417,7 @@ async def _delete_completed_once(task_id: int, user_id) -> None:
 
     async with ss._SessionLocal() as db:
         task = await db.get(ScheduledTask, task_id)
-        if task and (task.cron or "").startswith("@once:"):
+        if task and task_schedule_kind(task) == "once":
             await db.delete(task)
             await db.commit()
     await _notify_tasks_changed([user_id])
@@ -358,11 +466,12 @@ async def deliver_to_channels(
             result["邮件"] = f"发送失败（{type(e).__name__}）"
             diag_log("app.scheduled_tasks.deliver_email", e)
     if {"web", "chat"} & chans:
-        from app.core import events as _ev
-        await _ev.publish(uid, notification={"title": title, "content": text})
+        web_ok, web_status = await _deliver_web_notification(uid, title, text)
         # 网页通知目前只是纯文字气泡，不支持带图——files 非空时如实告知，不能跟 IM 那边
         # 一样标"已发送"，否则「配图任务只选了网页渠道」会静默丢图却显示成功。
-        result["web 通知"] = "已发送" if not files else "已发送（网页通知不支持附件，图片未随通知显示）"
+        if web_ok and files:
+            web_status = f"{web_status}（网页通知不支持附件，图片未随通知显示）"
+        result["web 通知"] = web_status
     im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
     if "im" in chans:
         im_targets.update(_CHAN_PLATFORM.values())
@@ -669,6 +778,8 @@ async def _run_agent(
     target_map: dict | None = None,
     trial: bool = False,
     authorized_tools: list[str] | None = None,
+    filesystem_subject: dict | None = None,
+    allow_shell: bool = False,
 ) -> tuple[str, list, str]:
     """编排定时任务的 execution + report schema 解析（PRD-SCHEDULE-2）。
 
@@ -702,7 +813,10 @@ async def _run_agent(
         uname = (u.display_name or u.username) if u else ""
 
     try:
-        return await _run_agent_execution(user_id, uname, prompt, trial, authorized_tools or [])
+        return await _run_agent_execution(
+            user_id, uname, prompt, trial, authorized_tools or [],
+            filesystem_subject=filesystem_subject, allow_shell=allow_shell,
+        )
     finally:
         # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
         # 到 execute_task 协程结束（P2 生命周期债务）。私聊/Web 未 set_im，无需清理。
@@ -711,7 +825,16 @@ async def _run_agent(
             imctx.clear()
 
 
-async def _run_agent_execution(user_id, uname, prompt, trial, authorized_tools: list[str] | None = None) -> tuple[str, list, str]:
+async def _run_agent_execution(
+    user_id,
+    uname,
+    prompt,
+    trial,
+    authorized_tools: list[str] | None = None,
+    *,
+    filesystem_subject: dict | None = None,
+    allow_shell: bool = False,
+) -> tuple[str, list, str]:
     """_run_agent 的 execution + schema 解析主体（独立函数便于 try/finally 清理 imctx）。"""
     from agent.security import sanitize
     from agent.runner import run_scheduled_execution
@@ -725,14 +848,17 @@ async def _run_agent_execution(user_id, uname, prompt, trial, authorized_tools: 
             "[scheduled-phase] %s",
             json.dumps({"event": "execution-start", "round": round_no, "trial": trial}, ensure_ascii=False),
         )
+        execution_kwargs = {}
         if authorized_tools:
-            execution_text, execution_failed, meta = await run_scheduled_execution(
-                user_id, uname, prompt, allowed_tools=authorized_tools
+            execution_kwargs["allowed_tools"] = authorized_tools
+        if filesystem_subject is not None or allow_shell:
+            execution_kwargs.update(
+                filesystem_subject=filesystem_subject,
+                allow_shell=allow_shell,
             )
-        else:
-            execution_text, execution_failed, meta = await run_scheduled_execution(
-                user_id, uname, prompt
-            )
+        execution_text, execution_failed, meta = await run_scheduled_execution(
+            user_id, uname, prompt, **execution_kwargs,
+        )
         meta = meta or {}
         last_text = execution_text or last_text
         files = meta.get("files") or files
@@ -959,6 +1085,47 @@ async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
     if delivery.get("status") == "sent":
         return True, "已发送"
     return False, f"发送失败（{delivery.get('error_code', 'smtp_delivery_error')}）"
+
+
+async def _deliver_web_notification(uid, title: str, text: str) -> tuple[bool, str]:
+    """持久化并实时发布一条用户 Web 通知。
+
+    定时任务不能只依赖 Redis Pub/Sub：用户可能当时不在线，或浏览器恰好重连而错过
+    实时事件。先落 ``site_notifications``，再发布实时事件；两步中只有实时发布失败时，
+    仍算投递成功，但返回“已保存”而不虚报“已发送”。
+    """
+    import app.db.session as ss
+    from app.models import SiteNotification
+
+    try:
+        async with ss._SessionLocal() as db:
+            record = SiteNotification(
+                title=title,
+                content=text,
+                target=str(uid),
+                bubble=True,
+                persist=True,
+                created_by="scheduled_task",
+            )
+            db.add(record)
+            await db.commit()
+            await db.refresh(record)
+            note = {
+                "id": record.id,
+                "title": record.title,
+                "content": record.content,
+                "color": record.color,
+                "bubble": record.bubble,
+                "persist": record.persist,
+            }
+    except Exception as e:
+        diag_log("app.scheduled_tasks.persist_web_notification", e)
+        return False, "发送失败（通知中心不可用）"
+
+    from app.core import events as _ev
+    if await _ev.publish(uid, notification=note):
+        return True, "已发送"
+    return True, "已保存（实时提示失败）"
 
 
 async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> tuple[int, int]:

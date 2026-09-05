@@ -1,10 +1,12 @@
 """compaction 模块单元测试"""
 import asyncio
+from types import SimpleNamespace
+
 import pytest
+
 from agent.context import compress_conv
 import agent.context.compaction as compaction_module
 from agent.context.compaction import (
-    estimate_context_length,
     compact_context,
     validate_compacted_shape,
     _is_system_injection,
@@ -12,8 +14,9 @@ from agent.context.compaction import (
     _drop_orphan_tool_results,
     _generate_compact_summary,
     validate_compact_summary,
+    resolve_compaction_limits,
 )
-from agent.context.tokens import content_text, estimate_tokens, message_text
+from agent.context.tokens import estimate_tokens, message_text
 
 
 def _make_msg(role: str, text: str) -> dict:
@@ -24,87 +27,93 @@ def _make_tool_result(text: str) -> dict:
     return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": text}]}
 
 
+def _model_cfg(context_tokens: int = 256_000, max_tokens: int = 8_000):
+    return SimpleNamespace(context_tokens=context_tokens, max_tokens=max_tokens)
+
+
 @pytest.fixture(autouse=True)
 def _fake_summary(monkeypatch):
     """压缩单测只验证编排，不访问真实摘要模型。"""
-    async def fake_summary(_items, _previous=None):
+    async def fake_summary(_items, _previous=None, **_kwargs):
         return "测试摘要"
 
     monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
 
 
-class TestEstimateContextLength:
+class TestCompactionBudget:
     def test_compaction_prompt_path_dependency_is_available(self):
         """90% 压缩触发时提示词路径解析不能因缺少标准库依赖而中断。"""
         assert compaction_module.Path("compress_conv.md").name == "compress_conv.md"
 
-    def test_compaction_summary_loads_prompt_before_calling_llm(self, monkeypatch):
+    def test_compaction_summary_uses_model_output_budget(self, monkeypatch):
         captured = {}
 
         async def fake_complete_text(sys, user, settings, max_tokens):
             captured["system_prompt"] = sys
             captured["user_prompt"] = user
+            captured["max_tokens"] = max_tokens
             return "压缩摘要"
 
         monkeypatch.setattr("app.core.config.get_settings", lambda: object())
         monkeypatch.setattr("agent.context.provider_runner.complete_text", fake_complete_text)
         result = asyncio.get_event_loop().run_until_complete(
-            compaction_module._generate_compact_summary_once(["用户：测试压缩"])
+            compaction_module._generate_compact_summary_once(
+                ["用户：测试压缩"], model_cfg=_model_cfg(120_000, 8_000),
+            )
         )
 
         assert result == "压缩摘要"
         assert "历史对话" in captured["system_prompt"]
         assert captured["user_prompt"] == "用户：测试压缩"
+        assert captured["max_tokens"] == 8_000
 
-    def test_empty(self):
-        assert 0 == asyncio.get_event_loop().run_until_complete(
-            estimate_context_length([], "")
+    def test_compaction_limits_follow_model_config(self):
+        limits = resolve_compaction_limits(
+            model_cfg=SimpleNamespace(context_tokens=120_000, max_tokens=8_000)
         )
 
-    def test_system_only(self):
+        assert limits.context_tokens == 120_000
+        assert limits.output_tokens == 8_000
+        assert limits.input_tokens == 112_000
+
+    def test_summary_output_limit_follows_model_config(self, monkeypatch):
+        captured = {}
+
+        async def fake_complete_text(_sys, _user, _settings, max_tokens):
+            captured["max_tokens"] = max_tokens
+            return "压缩摘要"
+
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        monkeypatch.setattr("agent.context.provider_runner.complete_text", fake_complete_text)
         result = asyncio.get_event_loop().run_until_complete(
-            estimate_context_length([], "你是咕咕，一个AI助手。" * 50)
+            compaction_module._generate_compact_summary_once(
+                ["用户：测试压缩"],
+                model_cfg=SimpleNamespace(context_tokens=120_000, max_tokens=8_000),
+            )
         )
-        assert result > 0
 
-    def test_messages_only(self):
-        msgs = [_make_msg("user", "你好") for _ in range(10)]
+        assert result == "压缩摘要"
+        assert captured["max_tokens"] == 8_000
+
+    def test_summary_input_limit_follows_model_config(self, monkeypatch):
+        calls = []
+
+        async def fake_once(items, _previous=None, **_kwargs):
+            calls.append(items)
+            return "分块摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
+        items = ["用户：" + "内容" * 20 for _ in range(8)]
         result = asyncio.get_event_loop().run_until_complete(
-            estimate_context_length(msgs, "")
+            _generate_compact_summary(
+                items,
+                model_cfg=SimpleNamespace(context_tokens=100, max_tokens=20),
+            )
         )
-        assert result > 0
 
-    def test_system_plus_messages(self):
-        sys_text = "你是咕咕" * 10
-        msgs = [_make_msg("user", "你好") for _ in range(5)]
-        result = asyncio.get_event_loop().run_until_complete(
-            estimate_context_length(msgs, sys_text)
-        )
-        assert result > 0
-
-    def test_counts_tool_use_and_result_blocks(self):
-        content = [
-            {"type": "tool_use", "name": "calendar", "input": {"date": "2026-08-21"}},
-            {"type": "tool_result", "tool_use_id": "tool-1", "content": "结果正文"},
-            {"type": "reasoning", "text": "内部推理"},
-        ]
-        assert "calendar" in content_text(content)
-        assert "结果正文" in content_text(content)
-        assert asyncio.get_event_loop().run_until_complete(
-            estimate_context_length([{"role": "assistant", "content": content}], "")
-        ) > 10
-
-    def test_counts_openai_tool_calls_field(self):
-        msg = {"role": "assistant", "content": "查询中", "tool_calls": [
-            {"id": "call-1", "type": "function", "function": {
-                "name": "calendar", "arguments": '{"date":"2026-08-21"}'
-            }}
-        ]}
-        assert "tool_calls" in message_text(msg)
-        assert asyncio.get_event_loop().run_until_complete(
-            estimate_context_length([msg], "")
-        ) > estimate_tokens("查询中")
-
+        assert result == "分块摘要"
+        assert len(calls) > 1
+        assert all(estimate_tokens("\n".join(chunk)) <= 80 for chunk in calls)
 
 class TestIsSystemInjection:
     def test_project(self):
@@ -125,22 +134,28 @@ class TestIsSystemInjection:
 
 
 class TestCompactContext:
-    def test_summary_candidate_has_explicit_length_and_shape_contract(self):
-        assert validate_compact_summary("有效摘要")[0]
-        assert validate_compact_summary(" ") == (False, "摘要为空")
-        assert validate_compact_summary("x" * 10_001) == (False, "摘要超过长度上限")
-        assert validate_compact_summary("<compacted-summary>摘要</compacted-summary>") == (
+    def test_summary_candidate_respects_model_budget_and_shape_contract(self):
+        assert validate_compact_summary("有效摘要", max_output_tokens=8_000)[0]
+        assert validate_compact_summary(" ", max_output_tokens=8_000) == (False, "摘要为空")
+        assert validate_compact_summary("x" * 40_000, max_output_tokens=8_000) == (
+            False, "摘要超过模型输出预算"
+        )
+        assert validate_compact_summary(
+            "<compacted-summary>摘要</compacted-summary>", max_output_tokens=8_000,
+        ) == (
             False, "摘要包含外层包裹标记"
         )
 
     def test_invalid_summary_candidate_does_not_change_messages(self, monkeypatch):
-        async def oversized_summary(_items, _previous=None):
-            return "x" * 10_001
+        async def oversized_summary(_items, _previous=None, **_kwargs):
+            return "x" * 40_000
 
         monkeypatch.setattr("agent.context.compaction._generate_compact_summary", oversized_summary)
         messages = [_make_msg("user", "旧消息" * 100) for _ in range(50)]
         result = asyncio.get_event_loop().run_until_complete(
-            compact_context(messages, "系统", context_tokens=1000, force=True)
+            compact_context(
+                messages, model_cfg=_model_cfg(1000),
+            )
         )
         assert not result.changed
         assert result.return_reason == "summary_validation_failed"
@@ -149,13 +164,15 @@ class TestCompactContext:
     def test_small_history_uses_single_branch_summary_request(self, monkeypatch):
         calls = []
 
-        async def fake_once(items, previous=None):
+        async def fake_once(items, previous=None, **_kwargs):
             calls.append((items, previous))
             return "分支摘要"
 
         monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
         result = asyncio.get_event_loop().run_until_complete(
-            _generate_compact_summary(["用户：第一条", "咕咕：第二条"], "旧摘要")
+            _generate_compact_summary(
+                ["用户：第一条", "咕咕：第二条"], "旧摘要", model_cfg=_model_cfg(),
+            )
         )
         assert result == "分支摘要"
         assert len(calls) == 1
@@ -164,7 +181,7 @@ class TestCompactContext:
     def test_oversized_history_uses_rolling_fallback(self, monkeypatch):
         calls = []
 
-        async def fake_once(items, previous=None):
+        async def fake_once(items, previous=None, **_kwargs):
             calls.append((items, previous))
             return f"摘要{len(calls)}"
 
@@ -172,45 +189,10 @@ class TestCompactContext:
         items = ["用户：" + "内容" * 30_000, "咕咕：" + "内容" * 30_000,
                  "用户：" + "内容" * 30_000, "咕咕：" + "内容" * 30_000]
         result = asyncio.get_event_loop().run_until_complete(
-            _generate_compact_summary(items)
+            _generate_compact_summary(items, model_cfg=_model_cfg(100_000))
         )
         assert result == f"摘要{len(calls)}"
         assert len(calls) > 1
-
-    def test_force_compaction_does_not_use_local_token_estimate(self, monkeypatch):
-        """正常压缩由 provider usage 触发，不得再用本地 token 估算决定是否执行。"""
-        def fail_estimate(*_args, **_kwargs):
-            raise AssertionError("正常压缩路径不应调用本地 token 估算")
-
-        monkeypatch.setattr("agent.context.compaction.estimate_tokens", fail_estimate)
-        messages = [_make_msg("user", f"历史消息 {index} " + "内容" * 40) for index in range(8)]
-        result = asyncio.get_event_loop().run_until_complete(
-            compact_context(messages, "你是咕咕", context_tokens=80, force=True)
-        )
-
-        assert result.changed
-        assert result.return_reason == "compacted"
-
-    def test_below_threshold_no_compact(self):
-        """上下文未达到阈值时不应压缩"""
-        msgs = [_make_msg("user", "你好")]
-        result = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "你是咕咕", context_tokens=256000)
-        )
-        assert not result.changed
-        assert result.messages == msgs
-
-    def test_compaction_result_exposes_return_reason(self):
-        msgs = [_make_msg("user", "你好")]
-        result = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "你是咕咕", context_tokens=256000)
-        )
-        assert not result.changed
-        detailed = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "你是咕咕", context_tokens=256000)
-        )
-        assert detailed.return_reason == "below_threshold"
-        assert detailed.before_tokens == detailed.after_tokens
 
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
@@ -223,7 +205,7 @@ class TestCompactContext:
             lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
         )
         result = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "你是咕咕", context_tokens=1000)
+            compact_context(msgs, model_cfg=_model_cfg(1000))
         )
         assert result.changed  # 应该触发压缩
 
@@ -240,7 +222,7 @@ class TestCompactContext:
             _make_msg("assistant", "好的"),
         ]
         result = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "你是咕咕", context_tokens=1000)
+            compact_context(msgs, model_cfg=_model_cfg(1000))
         )
         # 检查系统上下文注入消息是否被保留
         contents = [m.get("content", "") for m in result.messages]
@@ -255,7 +237,7 @@ class TestCompactContext:
         )
         msgs = [_make_msg("user", "消息" * 100) for _ in range(50)]
         result = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "你是咕咕", context_tokens=1000)
+            compact_context(msgs, model_cfg=_model_cfg(1000))
         )
         if result.changed:
             contents = [m.get("content", "") for m in result.messages]
@@ -268,7 +250,7 @@ class TestCompactContext:
     def test_compaction_covers_all_messages_between_injection_and_kept(self, monkeypatch):
         captured = []
 
-        async def fake_summary(items, previous=None):
+        async def fake_summary(items, previous=None, **_kwargs):
             captured.extend(items)
             return "测试摘要"
 
@@ -281,7 +263,7 @@ class TestCompactContext:
             _make_msg("assistant", "最新消息"),
         ]
         result = asyncio.get_event_loop().run_until_complete(
-            compact_context(msgs, "系统", context_tokens=120)
+            compact_context(msgs, model_cfg=_model_cfg(120))
         )
         assert result.changed
         joined = "\n".join(captured)
@@ -293,7 +275,7 @@ class TestCompactContext:
     def test_tool_turn_is_atomic_at_compaction_boundary(self, monkeypatch):
         captured = []
 
-        async def fake_summary(items, previous=None):
+        async def fake_summary(items, previous=None, **_kwargs):
             captured.extend(items)
             return "测试摘要"
 
@@ -306,7 +288,10 @@ class TestCompactContext:
         current = _make_msg("user", "当前问题")
         # 预算故意只能容纳 current + tool_result，不能容纳完整 tool turn。
         result = asyncio.get_event_loop().run_until_complete(
-            compact_context([_make_msg("user", "旧消息" * 20), tool_use, tool_result, current], "系统", context_tokens=50)
+            compact_context(
+                [_make_msg("user", "旧消息" * 20), tool_use, tool_result, current],
+                model_cfg=_model_cfg(50),
+            )
         )
         assert result.changed
         kept = result.messages[-1:]
@@ -320,7 +305,7 @@ class TestCompactContext:
         """运行中压缩只整理本轮开始前的历史，当前 tool 链保持完整。"""
         captured = []
 
-        async def fake_summary(items, previous=None):
+        async def fake_summary(items, previous=None, **_kwargs):
             captured.extend(items)
             return "历史摘要"
 
@@ -335,9 +320,8 @@ class TestCompactContext:
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(
                 messages,
-                "系统",
-                context_tokens=80,
                 protected_from=1,
+                model_cfg=_model_cfg(80),
             )
         )
 

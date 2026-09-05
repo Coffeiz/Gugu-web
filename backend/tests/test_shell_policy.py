@@ -4,7 +4,7 @@ import pytest
 from types import SimpleNamespace
 
 from agent.security import shell_policy
-from agent.security.shell_policy import ShellRisk, classify_command
+from agent.security.shell_policy import ShellRisk, blocked_runtime, classify_command
 from agent.tools.shell import ShellSkill, _can_use_shell_lease
 
 
@@ -13,6 +13,31 @@ def test_shell_risk_scans_the_whole_command():
     assert classify_command("cat README.md") is ShellRisk.SAFE
     assert classify_command("mkdir -p build") is ShellRisk.WRITE
     assert classify_command("python -c 'print(1)' | curl example.test") is ShellRisk.DANGEROUS
+
+
+def test_blocked_runtime_detects_direct_and_wrapped_invocations():
+    assert blocked_runtime("python3 script.py") == "python3"
+    assert blocked_runtime("/usr/bin/node app.mjs") == "node"
+    assert blocked_runtime("env FOO=bar npm run build") == "npm"
+    assert blocked_runtime("bash -c 'python3 script.py'") == "python3"
+    assert blocked_runtime("cat README.md") is None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_code_execution_switch_blocks_runtimes_but_keeps_basic_shell(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.sandbox = SimpleNamespace(enabled=True, code_execution_enabled=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "sandbox_readiness", lambda *_: (True, ""))
+
+    blocked = await shell_policy.evaluate(db, "user-1", 1, "python3 script.py")
+    allowed = await shell_policy.evaluate(db, "user-1", 1, "ls")
+
+    assert not blocked.allowed
+    assert blocked.reason == "管理员未开启代码运行环境，禁止使用 python3 运行时"
+    assert allowed.allowed
 
 
 def test_shell_schema_does_not_expose_session_identity():
@@ -103,7 +128,62 @@ async def test_dangerous_shell_keeps_confirmation_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shell_autopilot_skips_confirmation_only_with_two_level_permission(monkeypatch):
+async def test_dynamic_shell_prompt_reports_disabled_dangerous_state(monkeypatch):
+    db = _PolicyDB()
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True, dangerous=False))
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _false())
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is not None
+    assert "危险 Shell：未开启" in prompt
+    assert "不要向用户索要确认后继续" in prompt
+    assert "Autopilot：未开启" in prompt
+
+
+@pytest.mark.asyncio
+async def test_dynamic_shell_prompt_reports_confirmation_and_autopilot(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True, dangerous=True)
+    settings.agent.shell_autopilot_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_autopilot_enabled", lambda *_: _true())
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is not None
+    assert "危险 Shell：已开启，但不是预授权" in prompt
+    assert "Autopilot：已开启" in prompt
+    assert "仍受沙盒、范围、配额和审计限制" in prompt
+
+
+@pytest.mark.asyncio
+async def test_dynamic_shell_prompt_is_absent_when_shell_is_not_authorized(monkeypatch):
+    db = _PolicyDB()
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=False))
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is None
+
+
+@pytest.mark.asyncio
+async def test_dynamic_shell_prompt_is_absent_when_sandbox_is_disabled(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.sandbox = SimpleNamespace(enabled=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is None
+
+
+@pytest.mark.asyncio
+async def test_shell_autopilot_skips_dangerous_confirmation_with_two_level_permission(monkeypatch):
     db = _PolicyDB()
     settings = _settings(shell=True, dangerous=True)
     settings.agent.shell_autopilot_enabled = True
@@ -116,6 +196,65 @@ async def test_shell_autopilot_skips_confirmation_only_with_two_level_permission
 
     assert decision.allowed
     assert not decision.needs_confirmation
+    assert decision.autopilot_enabled
+
+
+@pytest.mark.asyncio
+async def test_shell_autopilot_skips_egress_confirmation(monkeypatch, tmp_path):
+    """Autopilot 同时跳过临时 egress 确认，但仍经过代理和 sandboxd 校验。"""
+    from agent.tools import shell as shell_tool
+    from agent.security.shell_policy import ShellDecision, ShellRisk, ShellScope
+
+    settings = SimpleNamespace(
+        sandbox=SimpleNamespace(
+            egress_ttl_seconds=600,
+            egress_proxy_url="http://proxy.example:7890",
+            egress_isolation_enabled=True,
+            egress_network_name="gugu-sandbox-egress",
+            sandboxd_socket="/tmp/sandboxd.sock",
+        )
+    )
+    decision = ShellDecision(
+        True, "允许在 sandbox 范围执行", ShellRisk.DANGEROUS,
+        scope=ShellScope.SANDBOX, workspace_id=7, autopilot_enabled=True,
+    )
+
+    async def _execute_stream(_request, on_output=None):
+        return {
+            "ok": True, "exit_code": 0, "stdout": "200", "stderr": "",
+            "timed_out": False, "truncated": False, "cwd": ".",
+            "permission_revoked": False, "quota_exceeded": False,
+        }
+
+    class _Sandboxd:
+        def __init__(self, _socket):
+            self.execute_stream = _execute_stream
+
+    async def _evaluate(*args, **kwargs):
+        return decision
+
+    async def _resolve_shell_root(*args, **kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(shell_tool, "evaluate", _evaluate)
+    monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_tool, "valid_egress_proxy", lambda *_: True)
+    monkeypatch.setattr(shell_tool, "valid_egress_network_name", lambda *_: True)
+    monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_: (True, ""))
+    monkeypatch.setattr(shell_tool, "resolve_shell_root", _resolve_shell_root)
+    monkeypatch.setattr(shell_tool, "SandboxdClient", _Sandboxd)
+    monkeypatch.setattr(
+        shell_tool.confirm, "needs_confirmation",
+        lambda *args, **kwargs: pytest.fail("Autopilot 不应再次请求 egress 确认"),
+    )
+
+    result = await shell_tool._run_shell(
+        None, "user-1", {"command": "curl https://example.com", "network": "egress"}
+    )
+
+    assert result["ok"] is True
+    assert result["exit_code"] == 0
+    assert result["_confirm_gate_authorized"] == "shell_autopilot"
 
 
 @pytest.mark.asyncio

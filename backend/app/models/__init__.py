@@ -66,6 +66,9 @@ class User(Base):
     provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+    provider_reasoning_states: Mapped[list["ProviderReasoningState"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
     smtp_config: Mapped[Optional["UserSmtpConfig"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan", uselist=False
     )
@@ -75,6 +78,33 @@ class User(Base):
     email_change_requests: Mapped[list["EmailChangeRequest"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+
+
+class FilesystemAuthorizationGrant(Base):
+    """用户沙箱完整读写授权；授权主体可以是会话或定时任务。"""
+
+    __tablename__ = "filesystem_authorization_grants"
+    __table_args__ = (
+        Index(
+            "ix_filesystem_grants_subject_active",
+            "user_id", "subject_type", "subject_id", "revoked_at", "expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    subject_type: Mapped[str] = mapped_column(String(24), default="session", server_default="session")
+    subject_id: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(32), default="user_sandbox", server_default="user_sandbox")
+    permission: Mapped[str] = mapped_column(String(32), default="read_write", server_default="read_write")
+    granted_by: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
+    granted_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
 class SecurityEvent(Base):
@@ -172,6 +202,7 @@ class UserProviderCredential(Base):
     context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     thinking: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     reasoning_effort: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    reasoning_persistence: Mapped[str] = mapped_column(String(20), default="off", server_default="off", nullable=False)
     vision: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -646,6 +677,62 @@ class ConversationSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="ConversationBatch.created_at",
+    )
+    provider_reasoning_states: Mapped[list["ProviderReasoningState"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class ProviderReasoningState(Base):
+    """独立于 canonical history 的 Provider 推理状态。
+
+    同一会话只保留一行当前状态；更新靠 ``version`` 做乐观 CAS，失效时清空密文，
+    只留下受限诊断元数据。这样旧状态不会以历史快照形式重新参与后续请求。
+    """
+
+    __tablename__ = "provider_reasoning_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE")
+    )
+    # 行版本用于并发 CAS；state_version 是 envelope 协议版本，两者不能混用。
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    state_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    api_format: Mapped[str] = mapped_column(String(32))
+    model_id: Mapped[str] = mapped_column(String(200))
+    reasoning_persistence: Mapped[str] = mapped_column(String(20))
+    config_digest: Mapped[str] = mapped_column(String(64))
+    reasoning_config_digest: Mapped[str] = mapped_column(String(64))
+    source_run_id: Mapped[str] = mapped_column(String(128))
+    source_round_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state_kind: Mapped[str] = mapped_column(String(80))
+    encrypted_payload: Mapped[str] = mapped_column(Text, default="")
+    payload_nonce: Mapped[str] = mapped_column(String(64), default="")
+    encrypted_data_key: Mapped[str] = mapped_column(Text, default="")
+    key_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    payload_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state_summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    invalidated_reason: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, default=None)
+    invalidated_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    last_used_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="provider_reasoning_states")
+    session: Mapped["ConversationSession"] = relationship(back_populates="provider_reasoning_states")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_provider_reasoning_states_session"),
+        Index("ix_provider_reasoning_states_session_status", "session_id", "status"),
     )
 
 
@@ -1160,17 +1247,31 @@ class ScheduledTask(Base):
     # 绑定的日历事件 id（活动编辑面板里加的提醒）；null = 普通独立任务。
     # 故意不设 DB 外键：删事件时由应用层显式删其提醒任务（_delete_event），避免 FK 命名/迁移复杂度、更可移植。
     event_id:    Mapped[Optional[int]]      = mapped_column(Integer, nullable=True, index=True)
+    # 可选工作区是任务 Shell 和文件操作的完整边界；不保存宿主机路径。
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # 任务级完整用户沙箱授权；与创建它的 Session 授权完全隔离。
+    filesystem_authorization_grant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("filesystem_authorization_grants.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     name:        Mapped[str]                = mapped_column(String(100))
     payload:     Mapped[str]                = mapped_column(Text, default="")   # 到点要执行的指令（交给 agent 跑）
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
+    schedule_kind: Mapped[str]              = mapped_column(String(16), nullable=False, default="cron", server_default="cron", index=True)
+    interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    start_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    end_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
     # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时仅沿用 owner 私聊地址，拒绝群聊最近地址。
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     # 用户创建任务时明确授权的自动工具；当前仅允许 send_email，空值表示不自动授权。
     authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+    # 定时任务可执行的唯一脚本；为空时不暴露 run_script。
+    script_authorization: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
-    # 只对一次性任务（cron 形如 "@once:..."）有意义：last_run_at 非空但这个是 True，
+    # 只对 schedule_kind=once 的任务有意义：last_run_at 非空但这个是 True，
     # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；
     # None/False 且 last_run_at 非空 = 已成功（成功后本来就会删行，理论上不会读到）。
     last_run_failed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)

@@ -11,9 +11,14 @@ import json
 import logging
 import time
 from contextvars import ContextVar
+from types import MappingProxyType
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
+from agent.interactions.confirmations import (
+    confirmation_payload,
+    normalize_confirmation_result,
+)
 from agent.tools.tool_contract import (
     SchemaError,
     build_validator,
@@ -31,8 +36,17 @@ _log = logging.getLogger("agent.tools")
 _dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
 _dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
 _dispatch_run_id: ContextVar[str | None] = ContextVar("agent_dispatch_run_id", default=None)
+_dispatch_tool_snapshot: ContextVar[object | None] = ContextVar(
+    "agent_dispatch_tool_snapshot", default=None
+)
+_dispatch_skill_state: ContextVar[dict[str, str] | None] = ContextVar(
+    "agent_dispatch_skill_state", default=None
+)
 _automation_allowed_tools: ContextVar[frozenset[str]] = ContextVar(
     "agent_automation_allowed_tools", default=frozenset()
+)
+_dispatch_filesystem_subject: ContextVar[dict[str, Any] | None] = ContextVar(
+    "agent_dispatch_filesystem_subject", default=None,
 )
 
 
@@ -45,19 +59,24 @@ def reset_dispatch_session_id(token) -> None:
     _dispatch_session_id.reset(token)
 
 
-def set_dispatch_session(session_id: int | None, session=None, run_id: str | None = None):
+def set_dispatch_session(session_id: int | None, session=None, run_id: str | None = None,
+                         tool_snapshot=None, skill_state: dict[str, str] | None = None):
     """绑定本轮真实会话；工具复核优先使用对象，避免 IM 映射短暂过期。"""
     id_token = _dispatch_session_id.set(session_id)
     session_token = _dispatch_session.set(session)
     run_token = _dispatch_run_id.set(run_id)
-    return id_token, session_token, run_token
+    snapshot_token = _dispatch_tool_snapshot.set(tool_snapshot)
+    skill_token = _dispatch_skill_state.set(skill_state)
+    return id_token, session_token, run_token, snapshot_token, skill_token
 
 
 def reset_dispatch_session(token) -> None:
-    id_token, session_token, run_token = token
+    id_token, session_token, run_token, snapshot_token, skill_token = token
     _dispatch_session_id.reset(id_token)
     _dispatch_session.reset(session_token)
     _dispatch_run_id.reset(run_token)
+    _dispatch_tool_snapshot.reset(snapshot_token)
+    _dispatch_skill_state.reset(skill_token)
 
 
 def current_dispatch_session_id() -> int | None:
@@ -72,6 +91,16 @@ def current_dispatch_run_id() -> str | None:
     return _dispatch_run_id.get()
 
 
+def current_dispatch_tool_snapshot():
+    """返回当前 Run 固定的工具 snapshot；未绑定时返回 None。"""
+    return _dispatch_tool_snapshot.get()
+
+
+def current_dispatch_skill_state() -> dict[str, str] | None:
+    """返回当前 Run 的 Skill 正文 digest 状态。"""
+    return _dispatch_skill_state.get()
+
+
 def set_automation_allowed_tools(tool_names: set[str] | frozenset[str]):
     """为明确授权的自动任务设置工具范围；默认没有自动授权。"""
     return _automation_allowed_tools.set(frozenset(tool_names))
@@ -83,6 +112,20 @@ def reset_automation_allowed_tools(token) -> None:
 
 def automation_tool_allowed(name: str) -> bool:
     return name in _automation_allowed_tools.get()
+
+
+def set_dispatch_filesystem_subject(subject: dict[str, Any] | None):
+    """绑定当前 Agent 执行的文件系统主体；仅供 Shell 权限层读取。"""
+    return _dispatch_filesystem_subject.set(subject)
+
+
+def reset_dispatch_filesystem_subject(token) -> None:
+    _dispatch_filesystem_subject.reset(token)
+
+
+def current_dispatch_filesystem_subject() -> dict[str, Any] | None:
+    """返回当前执行主体，不把任务主体伪装成交互式 Session。"""
+    return _dispatch_filesystem_subject.get()
 
 # 脱敏逻辑（连接串/密钥/路径/UUID/traceback）已迁到 app.core.redaction.redact——
 # app.*（API/存储/core）不得反向依赖 agent.*，放这儿会逼它们反依赖 agent；
@@ -280,6 +323,57 @@ class Tool:
         }
 
 
+class ToolRegistrySnapshot:
+    """backend 进程内固定的工具声明快照。
+
+    handler 保留原注册对象的可调用引用，Schema 和 metadata 使用浅复制后的 Tool，
+    因此运行期间修改全局 registry 不会改变已经创建的快照。生产环境的更新边界是
+    backend 重启；测试或运行时扩展若要生效也必须重新创建进程。
+    """
+
+    def __init__(self, source: "SkillRegistry"):
+        self._source = source
+        tools = {}
+        for name, tool in source._tools.items():
+            frozen = copy.copy(tool)
+            frozen.input_schema = copy.deepcopy(tool.input_schema)
+            tools[name] = frozen
+        self._tools = MappingProxyType(tools)
+        self._skills = MappingProxyType(
+            {name: tuple(names) for name, names in source._skills.items()}
+        )
+
+    @property
+    def source(self):
+        return self._source
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
+
+    def labels(self) -> dict[str, str]:
+        return {name: tool.label for name, tool in self._tools.items()}
+
+    def anthropic_schemas(self, names: list[str]) -> list[dict]:
+        return [self._tools[name].to_anthropic() for name in names if name in self._tools]
+
+    def openai_schemas(self, names: list[str]) -> list[dict]:
+        return [self._tools[name].to_openai() for name in names if name in self._tools]
+
+    def tools_of(self, skill_names: list[str]) -> list[str]:
+        """按冻结的工具组展开 Profile，避免组成员在进程内漂移。"""
+        out: list[str] = []
+        seen: set[str] = set()
+        for skill_name in skill_names:
+            for tool_name in self._skills.get(skill_name, ()):
+                if tool_name not in seen:
+                    seen.add(tool_name)
+                    out.append(tool_name)
+        return out
+
+    def known_skill_names(self) -> set[str]:
+        return set(self._skills)
+
+
 class BaseSkill:
     """领域技能基类：聚合一组 Tool。
 
@@ -308,6 +402,13 @@ class SkillRegistry:
     def __init__(self):
         self._tools: dict[str, Tool] = {}
         self._skills: dict[str, list[str]] = {}  # skill 名 → 有序工具名
+        self._snapshot: ToolRegistrySnapshot | None = None
+
+    def snapshot(self) -> ToolRegistrySnapshot:
+        """返回 registry 的固定快照；首次调用后不再读取新增或修改的工具声明。"""
+        if self._snapshot is None:
+            self._snapshot = ToolRegistrySnapshot(self)
+        return self._snapshot
 
     def add(self, tool: Tool) -> None:
         # P4 · 注册期契约校验（fail-fast）：定义错在这里就炸，不留到运行时静默失效
@@ -334,30 +435,23 @@ class SkillRegistry:
 
     def tools_of(self, skill_names: list[str]) -> list[str]:
         """把若干 skill 展开为有序、去重的工具名列表（profile.tool_names 据此派生）。"""
-        out: list[str] = []
-        seen: set[str] = set()
-        for s in skill_names:
-            for t in self._skills.get(s, []):
-                if t not in seen:
-                    seen.add(t)
-                    out.append(t)
-        return out
+        return self.snapshot().tools_of(skill_names)
 
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
     def known_skill_names(self) -> set[str]:
         """返回已注册的 skill 组名，供能力目录和注册数据校验使用。"""
-        return set(self._skills.keys())
+        return self.snapshot().known_skill_names()
 
     def labels(self) -> dict[str, str]:
-        return {name: t.label for name, t in self._tools.items()}
+        return self.snapshot().labels()
 
     def anthropic_schemas(self, names: list[str]) -> list[dict]:
-        return [self._tools[n].to_anthropic() for n in names if n in self._tools]
+        return self.snapshot().anthropic_schemas(names)
 
     def openai_schemas(self, names: list[str]) -> list[dict]:
-        return [self._tools[n].to_openai() for n in names if n in self._tools]
+        return self.snapshot().openai_schemas(names)
 
     async def dispatch(self, user_id, name: str, args: Any) -> tuple[str, dict | None]:
         """执行工具，返回 (给 LLM 的 JSON 字符串, 给前端的 UI artifact|None)。
@@ -375,7 +469,12 @@ class SkillRegistry:
             payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})
             return json.dumps(payload, ensure_ascii=False), None
 
-        tool = self._tools.get(name)
+        snapshot = current_dispatch_tool_snapshot()
+        tool = (
+            snapshot.get(name)
+            if snapshot is not None and getattr(snapshot, "source", None) is self
+            else self._tools.get(name)
+        )
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             payload = enrich_tool_error(name, {"error": f"未知工具: {name}"})
@@ -441,10 +540,17 @@ class SkillRegistry:
         try:
             async with _sess._SessionLocal() as db:
                 handler_args = args
-                if name == "shell":
+                if name in {"shell", "run_script"}:
                     handler_args = dict(args)
                     handler_args["_session_id"] = current_dispatch_session_id()
                 result: Any = await tool.handler(db, user_id, handler_args)
+                # 少数由服务端明确授权的执行路径（当前是 Shell Autopilot）不会携带
+                # confirm 参数。授权事实只允许通过内部标记传到 dispatch，随后立即移除，
+                # 不能进入模型结果或轨迹；普通 destructive handler 不能借此跳过绊线。
+                autopilot_authorized = (
+                    isinstance(result, dict)
+                    and result.pop("_confirm_gate_authorized", None) == "shell_autopilot"
+                )
                 # Agent 一次工具调用就是一个任务事务边界。Service 层只负责 flush，
                 # 由这里统一提交/回滚：handler 返回 error dict 说明业务校验失败，
                 # 虽然不会修改数据（校验在写入前就 return 了），但 flush 可能留下
@@ -466,15 +572,18 @@ class SkillRegistry:
         # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
         result = enrich_tool_error(name, result)
         result = _redact_result(name, result)
+        # 确认门是跨工具的协议：无论 handler 直接返回 JSON，还是把它包进 error，
+        # 从 dispatch 边界出去都统一为顶层载荷，避免下游各自猜包装形状。
+        result = normalize_confirmation_result(result)
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
+        _pending = confirmation_payload(result) is not None
         if isinstance(result, dict):
-            _pending = bool(result.get("needs_confirm")) or result.get("status") == "waiting_confirmation"
             _ok = not _pending and not result.get("error") and result.get("status") != "failed"
             _note = "等待确认" if _pending else str(result.get("message") or result.get("error") or "")
         elif isinstance(result, str):
-            _ok = not result.lstrip().startswith('{"error"')
-            _note = "" if _ok else result[:120]
+            _ok = not _pending and not result.lstrip().startswith('{"error"')
+            _note = "等待确认" if _pending else ("" if _ok else result[:120])
         else:
             _ok, _note = True, ""
 
@@ -485,6 +594,7 @@ class SkillRegistry:
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
         from agent.security import confirm as _confirm
         if (tool.destructive and _ok and not automation_tool_allowed(name)
+                and not autopilot_authorized
                 and not _confirm.is_confirmed(args) and not _confirm.is_block(result)):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
             _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])

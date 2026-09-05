@@ -80,6 +80,8 @@ class SandboxdServer:
                 raise ValueError("sandboxd operation 无效")
             request = ExecuteRequest.from_dict(value)
             root = self._validate_root(request.root)
+            personal_root = self._validate_root(request.personal_root) if request.personal_root else None
+            project_root = self._validate_root(request.project_root) if request.project_root else None
             quota_root = self._validate_root(request.quota_root) if request.quota_root else None
             request_id = uuid.uuid4().hex
             request_key = request.request_id or request_id
@@ -88,7 +90,12 @@ class SandboxdServer:
                 async with self._active_lock:
                     self._active[request_key] = str(root)
                 try:
-                    executor = DockerSandboxExecutor(root, get_settings().sandbox)
+                    executor = DockerSandboxExecutor(
+                        root, get_settings().sandbox,
+                        personal_root=personal_root, project_root=project_root,
+                        personal_read_only=request.personal_read_only,
+                        project_read_only=request.project_read_only,
+                    )
                     if request.network_profile == "egress":
                         sandbox_settings = get_settings().sandbox
                         from .docker_runtime import valid_egress_proxy
@@ -117,6 +124,7 @@ class SandboxdServer:
                         quota_bytes=request.quota_bytes,
                         network_profile=request.network_profile,
                         on_output=emit_output,
+                        allow_script_execution=request.allow_script_execution,
                     )
                 finally:
                     async with self._active_lock:
@@ -145,17 +153,25 @@ class SandboxdServer:
 
     async def _handle_pty(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         root = self._validate_root(str(value.get("root") or ""))
+        personal_root = self._validate_root(str(value.get("personal_root") or "")) if value.get("personal_root") else None
+        project_root = self._validate_root(str(value.get("project_root") or "")) if value.get("project_root") else None
+        personal_read_only = bool(value.get("personal_read_only", True))
+        project_read_only = bool(value.get("project_read_only", True))
         if value.get("shell_mode") != "sandbox":
             raise ValueError("sandboxd PTY 只支持 sandbox 范围")
         cols, rows = int(value.get("cols", 120)), int(value.get("rows", 32))
         if not 20 <= cols <= 500 or not 5 <= rows <= 200:
             raise ValueError("sandboxd PTY 尺寸无效")
         settings = get_settings().sandbox
-        executor = DockerSandboxExecutor(root, settings)
+        executor = DockerSandboxExecutor(
+            root, settings, personal_root=personal_root, project_root=project_root,
+            personal_read_only=personal_read_only, project_read_only=project_read_only,
+        )
         container_name = f"gugu-pty-{uuid.uuid4().hex}"
         handle = await executor.open_pty(
             cwd=".", network_profile=str(value.get("network_profile") or "none"),
             container_name=container_name,
+            code_execution_enabled=bool(settings.code_execution_enabled),
         )
         await handle.resize(cols, rows)
         writer.write((json.dumps({"type": "ready", "pid": handle.pid, "sandbox_id": handle.sandbox_id}) + "\n").encode())

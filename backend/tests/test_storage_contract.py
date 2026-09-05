@@ -4,8 +4,12 @@
 （迁移信心的地基）。契约按当前接口（put/get/delete/rename_file/exists/list_keys/delete_prefix）；
 copy/stat/文件夹钩子在 P1 加入后扩这里。
 """
+import os
+import stat
+
 import pytest
 
+from app.services import storage as storage_module
 from app.services.storage import LocalStorageBackend
 from app.services.storage.trash import to_trash_key
 
@@ -19,6 +23,61 @@ def storage(tmp_path):
 async def test_put_get_roundtrip(storage):
     await storage.put("u/a/doc.txt", b"hello")
     assert await storage.get("u/a/doc.txt") == b"hello"
+
+
+async def test_failed_replace_keeps_previous_file(tmp_path, monkeypatch):
+    """覆盖写被中断时不能留下空文件或半截内容。"""
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put("u/.agent/pattern.json", b"old")
+
+    def fail_replace(_temporary, _target):
+        raise OSError("模拟原子替换失败")
+
+    monkeypatch.setattr(storage_module.os, "replace", fail_replace)
+
+    with pytest.raises(OSError):
+        await storage.put("u/.agent/pattern.json", b"new")
+
+    assert await storage.get("u/.agent/pattern.json") == b"old"
+    assert not list((tmp_path / "u/.agent").glob(".*.tmp"))
+
+
+async def test_put_preserves_existing_file_metadata(tmp_path):
+    """原子替换不能把已有文件的 owner/mode 换成临时文件的元数据。"""
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put("u/workspace/doc.txt", b"old")
+    path = tmp_path / "u/workspace/doc.txt"
+    os.chmod(path, 0o640)
+    before = os.stat(path, follow_symlinks=False)
+
+    await storage.put("u/workspace/doc.txt", b"new")
+
+    after = os.stat(path, follow_symlinks=False)
+    assert stat.S_IMODE(after.st_mode) == stat.S_IMODE(before.st_mode)
+    assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid)
+    assert await storage.get("u/workspace/doc.txt") == b"new"
+
+
+async def test_put_updates_existing_file_mtime(tmp_path):
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put("u/workspace/doc.txt", b"old")
+    path = tmp_path / "u/workspace/doc.txt"
+    before = os.stat(path, follow_symlinks=False).st_mtime_ns
+    os.utime(path, ns=(before - 5_000_000_000, before - 5_000_000_000))
+    before = os.stat(path, follow_symlinks=False).st_mtime_ns
+
+    await storage.put("u/workspace/doc.txt", b"new")
+
+    after = os.stat(path, follow_symlinks=False).st_mtime_ns
+    assert after > before
+
+
+async def test_put_new_file_uses_shared_mode(tmp_path):
+    storage = LocalStorageBackend(tmp_path)
+
+    await storage.put("u/workspace/new.txt", b"new")
+
+    assert stat.S_IMODE(os.stat(tmp_path / "u/workspace/new.txt").st_mode) == 0o660
 
 
 async def test_exists(storage):

@@ -28,12 +28,15 @@ const appSidebar = load('../../components/common/layout/AppSidebar.vue')
 const chatSidebar = load('../../components/common/gugu-chat/GuguChatSidebar.vue')
 const chatIm = load('../../components/common/gugu-chat/GuguChatImConnect.vue')
 const interactionRefinements = load('./tokens/interaction-refinements.css')
+const componentThemeRefinements = load('./component-theme-refinements.css')
 const doneColumn = load('../../views/Projects/components/DoneColumn.vue')
 const doneGroup = load('../../views/Projects/components/done/DoneGroup.vue')
 const archivedProjects = load('../../views/Projects/components/ArchivedProjectsModal.vue')
 const uploadModal = load('../../views/Files/UploadModal.vue')
 const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
 const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
+const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
+const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
 const trashView = load('../../views/Files/components/FilesTrashView.vue')
@@ -63,14 +66,38 @@ const terminalsView = load('../../views/Terminals/index.vue')
 const terminalsRouter = load('../../router/index.ts')
 const terminalPty = load('../../views/Terminals/components/InteractivePtyTerminal.vue')
 const profileWorkspacesPane = load('../../components/common/profile/ProfileWorkspacesPane.vue')
+const overlayScrollbars = load('../../utils/overlayScrollbars.ts')
+const notificationBubble = load('../../components/common/feedback/NotificationBubble.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
+    expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup')
+    expect(overlayScrollbars).toContain("thumb.classList.add('overlay-scrollbar--notif')")
+    expect(load('./scrollbars.css')).toContain('.overlay-scrollbar--notif')
+    expect(load('../../components/common/layout/AppSidebar.vue')).toContain('<div class="notif-popup-surface">')
+    expect(popovers).not.toContain('  .notif-popup,')
+    expect(load('../../components/common/layout/AppSidebar.vue')).toContain('border-radius:var(--popup-surface-radius);')
+    expect(load('../../components/common/layout/AppSidebar.vue')).toContain('box-shadow:var(--popup-surface-shadow);')
+    expect(popovers).toContain('html[data-theme][data-family] :is(.notif-pop-enter-active, .notif-pop-leave-active)')
+    expect(popovers).toContain('backdrop-filter: var(--popup-surface-blur);')
+  })
+
+  it('连续通知各自完成气泡打字，避免新通知抢占旧通知的播放 timer', () => {
+    expect(notificationBubble).toContain('const _typeTimers = new Map<number, TypingTimer>()')
+    expect(notificationBubble).toContain('function clearTypingTimer(id: number)')
+    expect(notificationBubble).toContain('function scheduleTyping(item: BubbleItem, delay: number, callback: () => void)')
+    expect(notificationBubble).not.toContain('let _typeTimer:')
+    expect(notificationBubble).not.toContain('let _typingId:')
+    expect(notificationBubble).toContain('clearTypingTimer(id)')
+    expect(notificationBubble).toContain('onUnmounted(() => {')
+  })
+
   it('GuguChat 左右栏头部和底部使用同一组高度契约', () => {
     const chatTokens = load('./tokens/components.css')
     expect(chatTokens).toContain('--gugu-chat-header-height: 50px;')
     expect(chatTokens).toContain('--gugu-chat-composer-height: 50px;')
     expect(chatSidebar).toContain('height: var(--gugu-chat-header-height);')
-    expect(chatSidebar).toContain('min-height: var(--gugu-chat-composer-height);')
+    expect(chatSidebar).toContain('height: var(--gugu-chat-composer-height);')
     expect(chatSidebar).toContain('height: var(--control-height-md);')
     expect(chatWindow).toContain('min-height: var(--gugu-chat-header-height);')
     expect(chatComposer).toContain('min-height: var(--gugu-chat-composer-height);')
@@ -87,7 +114,22 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(canvasDrawerContent).toContain('data-layout-collection="mind:drawer:canvases"')
     expect(canvasDrawerContent).toContain('data-layout-role="card"')
     expect(canvasDrawerContent).toContain('runtime.getMotionProfile()?.flip')
+    expect(canvasDrawerContent).toContain('.canvas-item + .canvas-item { margin-top: 1px; }')
     expect(canvasSidebar).not.toContain('.canvas-item {')
+  })
+
+  it('定时任务工作区使用公共列表选择弹窗', () => {
+    expect(scheduleFormModal).toContain("import AdminSelect from '@/components/AdminSelect.vue'")
+    expect(scheduleFormModal).toContain('<AdminSelect')
+    expect(scheduleFormModal).not.toContain('<select v-model="form.workspaceId"')
+  })
+
+  it('定时任务卡片标题在弹性布局中可收缩并使用省略显示', () => {
+    expect(scheduleCard).toContain('.tc-top { display: flex; align-items: center; gap: 8px; min-width: 0; }')
+    expect(scheduleCard).toContain('.tc-name { min-width: 0; font-size: 13px; line-height: 19px;')
+    expect(scheduleCard).toContain('overflow: hidden; text-overflow: ellipsis; white-space: nowrap;')
+    expect(scheduleCard).toContain('class="tc-name" :title="props.task.name"')
+    expect(scheduleCard).toContain('class="tc-payload" :title="props.task.payload"')
   })
 
   it('Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连', () => {
@@ -160,6 +202,14 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   it('普通输入统一使用足够的行高，避免字母下伸部被输入框裁切', () => {
     expect(sharedForms).toContain('line-height: var(--line-height-body);')
     expect(sharedForms).toContain('vertical-align: middle;')
+  })
+
+  it('定时任务卡片启停状态由最终主题层平滑过渡', () => {
+    const cardBlock = cssBlock(componentThemeRefinements, 'html[data-theme][data-family] .task-card')
+    expect(cardBlock).toContain('transition: var(--card-motion), opacity var(--hover-motion-control);')
+
+    const interactionCardBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .task-card')
+    expect(interactionCardBlock).not.toContain('transition:')
   })
 
   it('非 Runtime 主题层不接管 Runtime 的 motion 属性', () => {
@@ -362,6 +412,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     const active = cssBlock(chatSidebar, ':deep(.exp-session-item.active) {')
     expect(active).toContain('--gugu-chat-session-hover: var(--gugu-chat-session-active);')
     expect(active).toContain('--sidebar-item-hover: var(--gugu-chat-session-active);')
+
+    const imOpen = cssBlock(chatIm, '.im-plat-head.open {')
+    expect(imOpen).toContain('background:var(--surface-soft);')
+    expect(imOpen).not.toContain('border-color:')
+    expect(cssBlock(chatIm, '.im-plat-head:hover {')).toContain('background:var(--sidebar-item-hover);')
   })
 
   it('项目已完成年组引导线与箭头中心严格对齐，并给月组保留安全间距', () => {

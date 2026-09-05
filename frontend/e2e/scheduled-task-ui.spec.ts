@@ -60,6 +60,8 @@ test('定时任务页面：空状态、新建、编辑、启停、试运行和�
 
   const card = page.locator('.task-card', { hasText: '自动化任务' })
   await expect(card).toBeVisible()
+  await expect(card.locator('.tc-window')).toContainText('开始 不限制')
+  await expect(card.locator('.tc-window')).toContainText('结束 不限制')
   await card.getByRole('button', { name: '停用定时任务' }).click()
   await expect(card).toHaveClass(/off/)
 
@@ -78,7 +80,7 @@ test('定时任务页面：空状态、新建、编辑、启停、试运行和�
   await expect(edited).toHaveCount(0)
 })
 
-test('定时任务页面：自定义日期、间隔和渠道选项可切换', async ({ page }) => {
+test('定时任务页面：时间范围、间隔和渠道选项可切换', async ({ page }) => {
   await mockScheduledTasks(page)
   await page.route('**/api/v1/auth/me', async route => {
     await route.fulfill({ json: {
@@ -89,8 +91,8 @@ test('定时任务页面：自定义日期、间隔和渠道选项可切换', as
   await page.goto('/schedules')
   await page.getByRole('button', { name: '新建任务' }).click()
 
-  await page.getByRole('button', { name: '自定义' }).click()
-  await expect(page.locator('.date-range')).toBeVisible()
+  await expect(page.locator('[data-testid="schedule-start-boundary"]')).toBeVisible()
+  await expect(page.locator('[data-testid="schedule-end-boundary"]')).toBeVisible()
   await page.getByRole('button', { name: '分钟' }).click()
   await expect(page.locator('.interval-presets')).toBeVisible()
   await page.getByRole('button', { name: '自定义', exact: true }).last().click()
@@ -101,4 +103,80 @@ test('定时任务页面：自定义日期、间隔和渠道选项可切换', as
   await page.locator('.title-input').fill('间隔任务')
   await page.getByRole('button', { name: '创建', exact: true }).click()
   await expect(page.locator('.task-card', { hasText: '间隔任务' })).toContainText('每 15 分钟')
+})
+
+test('定时任务页面：可以创建自定义单次任务', async ({ page }) => {
+  await mockScheduledTasks(page)
+  await page.route('**/api/v1/auth/me', async route => {
+    await route.fulfill({ json: {
+      id: 'e2e-user', username: 'e2e-user', email: 'e2e@example.invalid',
+      isActive: true, createdAt: '2026-01-01T00:00:00Z', imChannels: [],
+    } })
+  })
+  const createBodies: Record<string, unknown>[] = []
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().includes('/api/v1/scheduled-tasks')) {
+      createBodies.push(request.postDataJSON() as Record<string, unknown>)
+    }
+  })
+  await page.goto('/schedules')
+  await page.getByRole('button', { name: '新建任务' }).click()
+  await page.getByRole('button', { name: '单次', exact: true }).click()
+  await expect(page.locator('[data-testid="schedule-once-boundary"]')).toBeVisible()
+  await page.locator('.title-input').fill('单次任务')
+  await page.locator('.field textarea').fill('单次执行内容')
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+
+  await expect(page.locator('.task-card', { hasText: '单次任务' })).toContainText('单次')
+  expect(createBodies.at(-1)).toMatchObject({
+    schedule_kind: 'once', cron: null, interval_minutes: null, end_at: null,
+    start_at: expect.stringMatching(/T\d{2}:\d{2}:00$/),
+  })
+})
+
+test('定时任务页面：精确窗口提交开始和结束边界', async ({ page }) => {
+  await mockScheduledTasks(page)
+  await page.route('**/api/v1/auth/me', async route => {
+    await route.fulfill({ json: {
+      id: 'e2e-user', username: 'e2e-user', email: 'e2e@example.invalid',
+      isActive: true, createdAt: '2026-01-01T00:00:00Z', imChannels: [],
+    } })
+  })
+  const createBodies: Record<string, unknown>[] = []
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().includes('/api/v1/scheduled-tasks')) {
+      createBodies.push(request.postDataJSON() as Record<string, unknown>)
+    }
+  })
+  await page.goto('/schedules')
+  await page.getByRole('button', { name: '新建任务' }).click()
+  await page.getByRole('button', { name: '分钟' }).click()
+  await page.getByRole('button', { name: '10 分钟' }).click()
+
+  const start = page.locator('[data-testid="schedule-start-boundary"]')
+  await start.locator('.dp-input').click()
+  await page.getByRole('button', { name: '今天' }).click()
+  await start.locator('.time-part').nth(0).fill('18')
+  await start.locator('.time-part').nth(1).fill('30')
+  await start.getByRole('button', { name: '清除时间范围' }).click()
+  await expect(start.locator('.boundary-clear')).toHaveCount(0)
+  await start.locator('.dp-input').click()
+  await page.getByRole('button', { name: '今天' }).click()
+  await start.locator('.time-part').nth(0).fill('18')
+  await start.locator('.time-part').nth(1).fill('30')
+
+  const end = page.locator('[data-testid="schedule-end-boundary"]')
+  await end.locator('.dp-input').click()
+  await page.getByRole('button', { name: '今天' }).click()
+  await end.locator('.time-part').nth(0).fill('19')
+  await end.locator('.time-part').nth(1).fill('30')
+
+  await page.locator('.title-input').fill('窗口任务')
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.locator('.task-card', { hasText: '窗口任务' })).toBeVisible()
+  expect(createBodies.at(-1)).toMatchObject({
+    schedule_kind: 'interval', interval_minutes: 10,
+    start_at: expect.stringMatching(/T18:30:00$/),
+    end_at: expect.stringMatching(/T19:30:00$/),
+  })
 })

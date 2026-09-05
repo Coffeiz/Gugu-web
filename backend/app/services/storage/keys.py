@@ -62,6 +62,8 @@ def compose_logical_path(
         if folder_path else _safe_name(folder_name)
     )
     if space == "project":
+        if not project_name and not project_id and not project_year and not project_month and not safe_folder_path:
+            return "项目文件"
         proj_dir = f"{_safe_name(project_name)} #{project_id}"
         date_path = f"{project_year}/{project_month}/" if project_year and project_month else ""
         base = f"项目文件/{date_path}{proj_dir}"

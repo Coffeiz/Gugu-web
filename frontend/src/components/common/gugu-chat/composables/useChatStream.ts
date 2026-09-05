@@ -254,6 +254,8 @@ export function useChatStream(options: {
                 existing.interaction.title = String(evt.title || existing.interaction.title || i18n.global.t('chatUi.confirmRequired'))
                 existing.interaction.body = String(evt.body || existing.interaction.body || '')
                 existing.interaction.expiresAt = evt.expires_at ? String(evt.expires_at) : existing.interaction.expiresAt
+                existing.interaction.allowTextInput = Boolean(evt.allow_text_input ?? existing.interaction.allowTextInput)
+                existing.interaction.customInputActive = Boolean(evt.custom_input_active ?? existing.interaction.customInputActive)
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
                 messages.value.push({
@@ -265,6 +267,8 @@ export function useChatStream(options: {
                     toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
                     title: String(evt.title || i18n.global.t('chatUi.confirmRequired')), body: String(evt.body || ''),
                     options: evt.options,
+                    allowTextInput: Boolean(evt.allow_text_input),
+                    customInputActive: Boolean(evt.custom_input_active),
                     expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
                   },
                 })

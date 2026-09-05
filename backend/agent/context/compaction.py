@@ -2,8 +2,8 @@
 
 正常路径由 provider 的实际响应决定是否发生溢出；溢出后压缩旧 history 并重试当前
 round。run 收尾时，provider 实际输入达到模型预算的 90% 才异步更新 baseline，避免
-用本地估算提前改变上下文。压缩只保留最近 5k token 的完整 history，其余旧 history
-滚动合并为摘要，摘要上限为 10k 字符；system 前缀和当前 run 后缀始终保留。
+用本地估算提前改变上下文。压缩只保留最近一段完整 history，其余旧 history
+按当前模型输入/输出预算滚动合并为摘要；system 前缀和当前 run 后缀始终保留。
 """
 from __future__ import annotations
 
@@ -12,28 +12,43 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .tokens import content_text, message_text
-from .tokens import estimate_tokens, msg_tokens
+from .tokens import estimate_tokens
 from .audit import summary_change
 from .canonical_context import tool_call_ids, tool_result_ids
 from .summary_format import SUMMARY_CLOSE, SUMMARY_OPEN, format_compacted_summary
 
 logger = logging.getLogger(__name__)
 
-# 自动压缩只由 provider usage/overflow 触发；保留窗口使用字符硬上限，
-# 不再维护本地 token 预算或第二套比例常量。
-COMPACT_SUMMARY_MAX_TOKENS = 800  # provider 摘要输出上限（请求参数，不参与历史估算）
 RECENT_HISTORY_KEEP_CHARS = 20_000  # 压缩后保留的最近完整 history 字符上限
-SUMMARY_SOURCE_CHUNK_CHARS = 48_000  # 单次摘要输入字符上限，跨块滚动合并
-BRANCH_SUMMARY_MAX_CHARS = 96_000  # 可一次性分支压缩的 history 输入上限
-COMPACT_SUMMARY_MAX_CHARS = 10_000  # 候选摘要的持久化/注入硬上限
 
 
-async def estimate_context_length(messages: list, system_text: str = "") -> int:
-    """仅供诊断/回归测试的旧接口；绝不参与压缩、截断或历史组装。"""
-    total = estimate_tokens(system_text) if system_text else 0
-    for msg in messages:
-        total += estimate_tokens(message_text(msg)) if isinstance(msg, dict) else msg_tokens(msg)
-    return total
+@dataclass(frozen=True)
+class CompactionLimits:
+    """本轮模型的压缩输入/输出预算。"""
+
+    context_tokens: int
+    input_tokens: int
+    output_tokens: int
+
+
+def resolve_compaction_limits(model_cfg) -> CompactionLimits:
+    """按实际模型配置计算摘要请求预算。
+
+    输入预算为总上下文扣除模型输出预算，避免摘要请求本身挤占输出空间。
+    """
+    configured_context = getattr(model_cfg, "context_tokens", None)
+    if configured_context is None or int(configured_context) <= 1:
+        raise ValueError("模型缺少有效的 context_tokens")
+    context = int(configured_context)
+    configured_output = getattr(model_cfg, "max_tokens", None)
+    if configured_output is None or int(configured_output) <= 0:
+        raise ValueError("模型缺少有效的 max_tokens")
+    output = min(int(configured_output), context - 1)
+    return CompactionLimits(
+        context_tokens=context,
+        input_tokens=max(1, context - output),
+        output_tokens=output,
+    )
 
 
 @dataclass(frozen=True)
@@ -60,46 +75,29 @@ def _result(messages: list, changed: bool, reason: str,
 
 async def compact_context(
     messages: list,
-    system_text: str,
-    context_tokens: int,
     session_id: int | None = None,
-    user_id: int | None = None,
     fixed_prefix_size: int = 0,
-    overhead_tokens: int = 0,
-    extra_tokens: int = 0,
     protected_from: int | None = None,
-    force: bool = False,
+    *,
+    model_cfg,
 ) -> CompactionResult:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
     策略：
-    1. 保留 system 提示词（不压缩）
+    1. 保留固定前缀（不压缩）
     2. 保留最近约 20k 字符的完整 history，工具轮次保持原子性
     3. 将更老的全部消息分块滚动压缩成一条摘要
     4. 返回压缩后的 messages，确保前缀一致
     """
-    # 本函数只在 provider 达到阈值或返回 overflow 后调用。没有 provider usage
-    # 就没有本地“当前 token 数”，因此不再估算。显式旧入口的非 force 调用仅
-    # 使用消息数量/字符硬上限作兼容保护，不参与正常请求。
-    # 自动路径由 provider overflow 或 run 收尾的实际 usage 驱动，因此必须传
-    # force=True。非 force 只保留显式维护接口的兼容行为。
-    if not force:
-        char_count = sum(len(message_text(message)) for message in messages)
-        if len(messages) < 50 and char_count < 50:
-            result = _result(messages, False, "below_threshold", None)
-        else:
-            force = True
-    if not force:
-        return result
-
     logger.info(
         "[compaction] session=%s 输入预算分项=%s，开始压缩",
         session_id,
-        {"providerUsage": "required", "force": bool(force)},
+        {"providerUsage": "required"},
     )
-    # context_tokens 这里只作为 provider 配置传入的硬参数，不做 token/字符换算；
-    # 小型回归调用使用更小的字符窗口，大模型请求封顶为固定字符上限。
-    recent_char_limit = min(RECENT_HISTORY_KEEP_CHARS, max(1, int(context_tokens or 0) // 2))
+    limits = resolve_compaction_limits(model_cfg)
+    # 保留窗口是历史结构策略，不等同于摘要请求的输入预算；摘要请求本身使用
+    # limits.input_tokens，随本轮模型 context_tokens/max_tokens 变化。
+    recent_char_limit = min(RECENT_HISTORY_KEEP_CHARS, max(1, limits.context_tokens // 2))
 
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
     # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。
@@ -213,9 +211,13 @@ async def compact_context(
     compact_summary = await _generate_compact_summary(
         compressible_content,
         summary_msg.get("content", "") if summary_msg else None,
+        model_cfg=model_cfg,
     )
 
-    summary_ok, summary_reason = validate_compact_summary(compact_summary)
+    summary_ok, summary_reason = validate_compact_summary(
+        compact_summary,
+        max_output_tokens=limits.output_tokens,
+    )
     if not summary_ok:
         logger.warning("[compaction] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
         result = _result(messages, False, "summary_validation_failed", None)
@@ -387,7 +389,11 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     return True, "压缩结构有效"
 
 
-def validate_compact_summary(summary: object) -> tuple[bool, str]:
+def validate_compact_summary(
+    summary: object,
+    *,
+    max_output_tokens: int,
+) -> tuple[bool, str]:
     """校验模型返回的摘要候选，避免坏结果进入 inline history 或 baseline。
 
     外层 ``<compacted-summary>`` 包裹由组装器统一添加，因此模型不能返回另一份
@@ -396,8 +402,8 @@ def validate_compact_summary(summary: object) -> tuple[bool, str]:
     if not isinstance(summary, str) or not summary.strip():
         return False, "摘要为空"
     value = summary.strip()
-    if len(value) > COMPACT_SUMMARY_MAX_CHARS:
-        return False, "摘要超过长度上限"
+    if estimate_tokens(value) > max_output_tokens:
+        return False, "摘要超过模型输出预算"
     if SUMMARY_OPEN in value or SUMMARY_CLOSE in value:
         return False, "摘要包含外层包裹标记"
     return True, "摘要候选有效"
@@ -406,16 +412,22 @@ def validate_compact_summary(summary: object) -> tuple[bool, str]:
 async def _generate_compact_summary(
     content_list: list[str],
     prev_summary: str | None = None,
+    *,
+    model_cfg,
 ) -> str:
     """使用共享分支/fallback 策略生成摘要。"""
+    async def call_once(items, previous):
+        return await _generate_compact_summary_once(items, previous, model_cfg=model_cfg)
+
     return await generate_compact_summary(
         content_list,
         prev_summary,
-        _generate_compact_summary_once,
+        call_once,
+        model_cfg=model_cfg,
     )
 
 
-async def generate_compact_summary(content_list, prev_summary, call_once) -> str:
+async def generate_compact_summary(content_list, prev_summary, call_once, *, model_cfg) -> str:
     """统一执行分支式摘要，超限时才退回滚动 fallback。
 
     ``call_once`` 由调用方提供，以便 inline compaction 和持久 baseline 复用同一
@@ -424,24 +436,28 @@ async def generate_compact_summary(content_list, prev_summary, call_once) -> str
     if not content_list:
         return ""
 
+    limits = resolve_compaction_limits(model_cfg=model_cfg)
+    max_input_tokens = max(1, limits.input_tokens - estimate_tokens(prev_summary or ""))
+
     chunks: list[list[str]] = []
     current: list[str] = []
-    current_chars = 0
+    current_size = 0
     for item in content_list:
-        item_chars = len(item)
-        if current and current_chars + item_chars > SUMMARY_SOURCE_CHUNK_CHARS:
+        item_size = estimate_tokens(item)
+        if current and current_size + item_size > max_input_tokens:
             chunks.append(current)
             current = []
-            current_chars = 0
+            current_size = 0
         current.append(item)
-        current_chars += item_chars
+        current_size += item_size
     if current:
         chunks.append(current)
 
     # 在安全输入上限内只发一次独立摘要请求。调用方稍后才会替换当前 run
     # 的内存消息，因而这里不会改变真实 session；超限时保留原有分块滚动策略。
     all_text = "\n".join(content_list)
-    if len(all_text) <= BRANCH_SUMMARY_MAX_CHARS:
+    fits_single_request = estimate_tokens(all_text) + estimate_tokens(prev_summary or "") <= limits.input_tokens
+    if fits_single_request:
         return await call_once(content_list, prev_summary)
 
     summary = prev_summary
@@ -455,6 +471,8 @@ async def generate_compact_summary(content_list, prev_summary, call_once) -> str
 async def _generate_compact_summary_once(
     content_list: list[str],
     prev_summary: str | None = None,
+    *,
+    model_cfg,
 ) -> str:
     """执行单个摘要块；调用方负责跨块滚动合并。"""
     if not content_list:
@@ -490,13 +508,14 @@ async def _generate_compact_summary_once(
         from agent.context.branch import ContextBranch
         from agent.context.branch_types import BranchInput, BranchPolicy
         settings = get_settings()
+        limits = resolve_compaction_limits(model_cfg=model_cfg)
         result = await ContextBranch().run(
             # 保持旧压缩 Prompt 的 user 正文逐字稳定；分支标识只进入审计元数据。
             BranchInput(stable_system=sys_prompt, delta=user_text),
             BranchPolicy(
                 name="compaction",
                 output_mode="text",
-                max_tokens=COMPACT_SUMMARY_MAX_TOKENS,
+                max_tokens=limits.output_tokens,
                 max_retries=0,
             ),
             settings,

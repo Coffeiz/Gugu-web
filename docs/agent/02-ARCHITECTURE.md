@@ -5,7 +5,7 @@
 ## 1. 架构原则
 
 1. 渠道适配与 Agent 编排分离。Web、QQ、微信、飞书和定时任务可以有不同的输入输出协议，但共用同一套 run/round、上下文、工具和持久化逻辑。
-2. Canonical history 是工具调用、工具结果和交互状态的语义事实源。Provider 或渠道只能转换展示格式，不能重新定义消息语义。
+2. Canonical history 是工具调用、工具结果和交互状态的语义事实源。Provider 或渠道只能转换展示格式，不能重新定义消息语义；Provider 私有推理续接状态单独存储，不能写入 canonical history。
 3. 权限由后端代码决定。提示词可以说明稳定的行为规则，但不能替代注册过滤、用户设置、会话状态和 dispatch 校验。
 4. 上下文组装集中管理。Snapshot、History、RAG、Memory、Knowledge 和当前消息按固定顺序组装，渠道层不自行拼接第二套上下文。
 5. 业务执行与安全边界分离。危险确认控制误操作，Shell 容器、身份、网络和配额控制真正的执行边界。
@@ -35,6 +35,11 @@ RAG/Memory  Interaction
                 |
       LoopScope / Usage / Audit
 ```
+
+模型级 `reasoning_persistence` 在 run 开始固定，由
+`ReasoningStateCoordinator` 负责 provider state 的加载、恢复、提交和失效；状态服务独立于
+canonical history。LoopScope 只接收受限生命周期摘要，Provider payload 不进入普通历史、日志或
+渠道消息。
 
 当前主链路由 Python/FastAPI 承担。TypeScript 主要提供 RAG lexical worker 和 LoopScope 相关服务，不是完整的 TypeScript Agent 后端。
 
@@ -95,6 +100,9 @@ Shell 沙盒执行服务。生产普通用户的 Shell 请求通过 Docker 执�
 - 调用上下文准备、LLM provider 和工具执行器。
 - 处理并行或连续工具调用、交互等待、取消、重试和结束条件。
 - 记录消息、工具事件、用量和诊断信息。
+
+其中 Provider 推理状态的诊断只记录 `off/summary/miss/reused/unavailable/expired/provider_rejected`
+等状态、计数、大小和 digest，不记录推理正文、用户正文、完整工具参数或凭据。
 
 不负责：
 

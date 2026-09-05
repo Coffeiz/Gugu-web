@@ -28,6 +28,22 @@ class ContextBranch:
         *,
         runner=None,
     ) -> BranchResult:
+        if branch_input.session_id is not None:
+            # 分支输入与主会话历史不是同一条 provider response chain；有明确会话
+            # 边界时先让主状态失效，避免分支结果完成后继续复用旧 chain。
+            if branch_input.scope_owner_id is not None:
+                try:
+                    from app.db import session as db_session
+                    from app.services.provider_reasoning_state import invalidate_state
+                    db_session.ensure_engine()
+                    async with db_session._SessionLocal() as db:
+                        await invalidate_state(
+                            db, user_id=branch_input.scope_owner_id,
+                            session_id=branch_input.session_id, reason="branch_changed",
+                        )
+                        await db.commit()
+                except Exception as exc:
+                    diag_log("agent.context.branch.state_boundary", exc)
         user = assemble_branch_user_input(branch_input)
         input_fp = _fingerprint(f"{branch_input.stable_system}\n{user}")
         attempts = 0

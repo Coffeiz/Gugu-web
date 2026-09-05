@@ -58,14 +58,9 @@ async def test_qq_stream_sequence_uses_a_cross_process_counter(monkeypatch):
     assert redis.expired == [("qqstreamseq:channel-1", 600)]
 
 
-def test_collect_and_stream_share_im_preparation_rules():
+def test_im_preparation_helpers_keep_collect_and_stream_rules_aligned():
     from agent import runner
     from agent.models import AgentRequest
-
-    source = Path(runner.__file__).read_text(encoding="utf-8")
-    assert source.count("_snapshot_im_memory(") >= 3
-    assert source.count("_proactive_lead_for(req, history)") == 2
-    assert source.count("chat_attach.should_transcribe_audio(model_cfg)") == 2
 
     private_req = AgentRequest(
         message="hello", user_id="user", user_name="member", source="qq",

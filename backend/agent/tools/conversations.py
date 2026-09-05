@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 
+from sqlalchemy import select
+
+from app.models import ConversationMessage, ConversationSession
 from app.services.conversations import get_session, list_messages, list_recent_sessions
 
 from app.search.query import normalize_mode, normalize_queries
@@ -15,6 +18,48 @@ from agent.tools.base import BaseSkill, Tool
 
 def _fmt(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M") if dt else ""
+
+
+def _positive_int(value: object) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+async def _resolve_conversation_session_id(db, user_id, item: dict) -> int | None:
+    """把 RAG 结果解析为已归属当前用户的会话 ID。
+
+    新协议显式返回 ``session_id``。旧持久化索引的 ``source_id`` 可能是命中
+    消息 ID，且 ``message_id`` 已随结果返回，因此这里做一次兼容回查；不能把
+    消息 ID 直接交给 ``read_conversation``，也不能在无法定位时猜正文。
+    """
+    session_id = _positive_int(item.get("session_id"))
+    if session_id:
+        session = await get_session(db, user_id, session_id)
+        return session.id if session else None
+
+    message_id = _positive_int(item.get("message_id"))
+    source_id = _positive_int(item.get("source_id"))
+    if message_id is None and source_id:
+        # 兼容早期内存检索结果：source_id 当时就是 session ID。
+        session = await get_session(db, user_id, source_id)
+        if session:
+            return session.id
+        # 兼容旧持久化索引：source_id 是 message ID。
+        message_id = source_id
+    if message_id is None:
+        return None
+
+    return (await db.execute(
+        select(ConversationMessage.session_id)
+        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
+        .where(
+            ConversationMessage.id == message_id,
+            ConversationSession.user_id == user_id,
+        )
+    )).scalar_one_or_none()
 
 
 async def _search_conversations(db, user_id, args: dict):
@@ -41,9 +86,13 @@ async def _search_conversations(db, user_id, args: dict):
         db, user_id, " ".join(search_queries), queries=search_queries,
         match_mode=mode, limit=limit * 4,
     )
+    unresolved = False
     for item in recall.get("results", []):
-        session_id = int(item.get("source_id") or 0)
-        if not session_id or session_id in seen:
+        session_id = await _resolve_conversation_session_id(db, user_id, item)
+        if not session_id:
+            unresolved = True
+            continue
+        if session_id in seen:
             continue
         seen[session_id] = {
             "session_id": session_id,
@@ -59,6 +108,11 @@ async def _search_conversations(db, user_id, args: dict):
         if len(seen) >= limit:
             break
 
+    if not seen and unresolved:
+        return {
+            "matches": [],
+            "error": "找到历史消息片段，但无法定位所属会话，不能安全读取正文；请重试历史对话搜索。",
+        }
     if not seen:
         return {"matches": [], "hint": f"没找到提到「{' / '.join(search_queries)}」的过去对话"}
     return {"matches": list(seen.values()),

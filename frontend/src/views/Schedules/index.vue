@@ -19,7 +19,10 @@
     </div>
 
     <ScheduleFormModal :show="showModal" :task="editing" :im-channels="imChannels" :busy="busy"
+      :workspaces="workspaces" :filesystem-authorization-enabled="filesystemAuthorizationEnabled"
       :external-error="formErr" @close="showModal = false" @save="submit" />
+    <FilesystemAuthorizationDialog :show="authorizationOpen" :busy="authorizationBusy"
+      :subject-name="authorizationSubjectName" @close="closeAuthorization" @confirm="confirmAuthorization" />
   </div>
 </template>
 
@@ -29,11 +32,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
-import { errorMessage } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import ScheduleCard from './components/ScheduleCard.vue'
 import ScheduleFormModal from './components/ScheduleFormModal.vue'
+import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
 import { useScheduledTasks } from '@/composables/schedules/useScheduledTasks'
+import { useFilesystemAuthorization } from '@/composables/useFilesystemAuthorization'
 
 const authStore = useAuthStore()
 const route = useRoute()
@@ -41,9 +47,21 @@ const router = useRouter()
 const { t } = useI18n()
 const imChannels = computed(() => authStore.user?.imChannels ?? [])
 const { tasks, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
+const workspaces = ref<Array<{ id: number; name: string }>>([])
+const filesystemAuthorizationEnabled = ref(false)
 const showModal = ref(false)
 const editing = ref<any | null>(null)
 const formErr = ref('')
+const {
+  open: authorizationOpen,
+  busy: authorizationBusy,
+  subjectId: authorizationSubjectId,
+  subjectName: authorizationSubjectName,
+  request: requestFilesystemAuthorization,
+  confirm: confirmFilesystemAuthorization,
+  revoke: revokeFilesystemAuthorization,
+  close: closeAuthorization,
+} = useFilesystemAuthorization()
 
 // 从路由 query / 同页重复点击事件里取目标任务并打开编辑弹窗。
 // 聊天卡片点击是 router.push：已在 /schedules 时组件不会重新挂载，query 相同时
@@ -58,7 +76,20 @@ async function openRequestedTask() {
   // replace 不产生历史记录；清空会触发上面的 watch，但 NaN 匹配不到任务，是安全的空操作。
   await router.replace({ query: { ...route.query, object_id: undefined } })
 }
-onMounted(openRequestedTask)
+async function loadWorkspaces() {
+  try {
+    const result = await workspacesApi.status()
+    workspaces.value = (result.items || [])
+      .filter((item: any) => item?.enabled)
+      .map((item: any) => ({ id: Number(item.id), name: String(item.name || '') }))
+      .filter(item => Number.isFinite(item.id) && item.name)
+    filesystemAuthorizationEnabled.value = result.filesystemAuthorizationEnabled === true
+  } catch {
+    workspaces.value = []
+    filesystemAuthorizationEnabled.value = false
+  }
+}
+onMounted(() => { void loadWorkspaces(); void openRequestedTask() })
 watch(() => route.query.object_id, openRequestedTask)
 window.addEventListener('gugu:open-object', openRequestedTask as EventListener)
 onBeforeUnmount(() => window.removeEventListener('gugu:open-object', openRequestedTask as EventListener))
@@ -78,10 +109,36 @@ function openEdit(task: Record<string, any>) {
 async function submit(data: Record<string, any>) {
   formErr.value = ''
   try {
-    await save(editing.value?.id ?? null, data)
+    const requestedAuthorization = data.filesystem_authorized === true
+    const wasAuthorized = editing.value?.filesystem_authorized === true
+    const taskId = editing.value?.id ?? null
+    const saveData = { ...data }
+    delete saveData.filesystem_authorized
+    const saved = await save(taskId, saveData)
     showModal.value = false
+    if (requestedAuthorization && !wasAuthorized) {
+      const savedTaskId = Number(saved?.id ?? taskId)
+      if (!Number.isFinite(savedTaskId)) throw new Error('任务保存结果缺少任务 ID')
+      await requestFilesystemAuthorization({ id: savedTaskId, name: String(saved?.name ?? data.name ?? '') })
+    } else if (!requestedAuthorization && wasAuthorized && taskId != null) {
+      await revokeFilesystemAuthorization(taskId)
+      await load()
+    }
   } catch (error) {
     formErr.value = error instanceof Error ? error.message : t('schedules.saveFailed', { message: errorMessage(error) })
+    showAppError(formErr.value)
+  }
+}
+
+async function confirmAuthorization() {
+  if (authorizationSubjectId.value == null) return
+  try {
+    await confirmFilesystemAuthorization()
+    await load()
+    closeAuthorization()
+  } catch (error) {
+    formErr.value = t('schedules.filesystemAuthFailed', { message: errorMessage(error) })
+    showAppError(formErr.value)
   }
 }
 </script>
@@ -111,7 +168,7 @@ async function submit(data: Record<string, any>) {
 .empty-state span { font-size:12px; }
 .task-grid {
   flex: 1; min-height: 0; overflow-y: auto; align-content: start;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 12px; align-items: stretch;
   margin: 0 -8px; padding: 10px 8px 16px;
 }
 </style>

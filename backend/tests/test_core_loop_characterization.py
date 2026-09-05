@@ -109,7 +109,7 @@ async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
     calls = []
 
     async def fake_compact(messages, *args, **kwargs):
-        calls.append(kwargs.get("force"))
+        calls.append(kwargs.get("model_cfg"))
         return list(messages), True
 
     monkeypatch.setattr(compaction, "compact_context", fake_compact)
@@ -125,7 +125,7 @@ async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
 
     assert text == "最终回复"
     assert errors == []
-    assert calls == [True]
+    assert calls == [ai]
     assert ev["_context_compaction"] == 1
 
 
@@ -534,7 +534,13 @@ async def test_max_rounds_choice_resumes_same_run_after_unlimited_selected(monke
     async def fake_create_prompt(*, user_id, session_id):
         return Prompt(), [{"id": "goal", "label": "解除工具调用限制", "token": "token"}]
 
+    shown = []
+
+    async def on_interaction(interaction):
+        shown.append(interaction)
+
     async def fake_wait_for_resolution(**_kwargs):
+        assert [item["prompt_id"] for item in shown] == [901]
         return {"status": "selected", "option_id": "continue"}
 
     monkeypatch.setattr("app.services.interactions.create_goal_mode_prompt", fake_create_prompt)
@@ -545,10 +551,13 @@ async def test_max_rounds_choice_resumes_same_run_after_unlimited_selected(monke
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "执行长任务"}]
     ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1)
+        make_runner()._run_anthropic(
+            "u", "sys", messages, AI, session_id=1, on_interaction=on_interaction
+        )
     )
 
     assert ev["interaction_required"] == 1
+    assert [item["prompt_id"] for item in shown] == [901]
     assert ev["_new_round"] >= 1
     assert "解除限制后继续完成" in text
     assert errors == []
@@ -641,7 +650,13 @@ async def test_tool_budget_prompt_resumes_same_run_after_continue(monkeypatch, d
     async def fake_create_prompt(*, user_id, session_id):
         return Prompt(), [{"id": "continue", "label": "继续执行", "token": "token"}]
 
+    shown = []
+
+    async def on_interaction(interaction):
+        shown.append(interaction)
+
     async def fake_wait_for_resolution(**_kwargs):
+        assert [item["prompt_id"] for item in shown] == [903]
         return {"status": "selected", "option_id": "continue"}
 
     monkeypatch.setattr("app.services.interactions.create_tool_budget_prompt", fake_create_prompt)
@@ -650,10 +665,14 @@ async def test_tool_budget_prompt_resumes_same_run_after_continue(monkeypatch, d
     script.append(msg([TX("继续完成")]))
     patch_anthropic(monkeypatch, script)
     ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "执行任务"}], AI, session_id=1)
+        make_runner()._run_anthropic(
+            "u", "sys", [{"role": "user", "content": "执行任务"}], AI,
+            session_id=1, on_interaction=on_interaction,
+        )
     )
 
     assert ev["interaction_required"] == 1
+    assert [item["prompt_id"] for item in shown] == [903]
     assert ev["_new_round"] >= 1
     assert len(dispatched) == MAX_TOOL_CALLS + 1
     assert "继续完成" in text

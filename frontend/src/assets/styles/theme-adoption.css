@@ -216,7 +216,7 @@ html[data-theme='dark'][data-family] .cal-sidebar .cap-name {
 html[data-theme][data-family] .cal-page .wv-now { background: var(--status-danger); }
 
 /* Teleported calendar surfaces. */
-html[data-theme][data-family] .cal-month-picker,
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker),
 html[data-theme][data-family] .cal-more-popup,
 html[data-theme][data-family] .cal-context-menu,
 html[data-theme][data-family] .shared-event-popup {
@@ -225,15 +225,18 @@ html[data-theme][data-family] .shared-event-popup {
   border-color: var(--popup-border);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
 }
-html[data-theme][data-family] .cal-month-picker .picker-year,
-html[data-theme][data-family] .cal-month-picker .picker-month { color: var(--content-primary); }
-html[data-theme][data-family] .cal-month-picker .picker-nav { color: var(--content-secondary); }
-html[data-theme][data-family] .cal-month-picker .picker-nav:hover,
-html[data-theme][data-family] .cal-month-picker .picker-month:hover { background: var(--action-soft); }
-html[data-theme][data-family] .cal-month-picker .picker-month.active {
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-year,
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-month { color: var(--content-primary); }
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-nav { color: var(--content-secondary); }
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-nav:hover,
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-month:hover { background: var(--action-soft); }
+html[data-theme][data-family] :is(.cal-month-picker, .month-picker) .picker-month.active {
   color: var(--content-on-accent);
   background: var(--brand-gradient);
   box-shadow: var(--elevation-card);
+}
+html[data-theme='dark'][data-family] :is(.cal-month-picker, .month-picker) .picker-month.active {
+  color: var(--content-inverse);
 }
 
 /* ── Scheduled tasks ─────────────────────────────────────────────────────────────────── */

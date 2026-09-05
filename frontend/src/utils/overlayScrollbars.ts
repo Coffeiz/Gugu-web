@@ -84,9 +84,10 @@ function bind(element: HTMLElement) {
   }
   // 抽屉和聊天窗一样是独立的浮动滚动宿主。把滑块挂进宿主后，它会跟随宿主的
   // transform/width 动画移动；否则会先挂到 body，以浏览器右边为参照闪入抽屉。
-  const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card')
+  const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card, .notif-popup')
   if (owner) thumb.classList.add('overlay-scrollbar--chat')
   if (element.closest('.drawer-shell')) thumb.classList.add('overlay-scrollbar--drawer')
+  if (element.closest('.notif-popup')) thumb.classList.add('overlay-scrollbar--notif')
   const thumbHost = owner ?? document.body
   thumbHost.appendChild(thumb)
 

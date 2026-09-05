@@ -74,6 +74,19 @@ def _personality_block(prefs: dict) -> str:
     return str(prefs.get("personality_preference") or "").strip()
 
 
+def append_shell_prompt(system_prompt: str, *, enabled: bool) -> str:
+    """在 Shell 工具已注册时追加稳定的 Shell 安全协议。"""
+    if not enabled or "# Shell 安全协议" in system_prompt:
+        return system_prompt
+    try:
+        shell_prompt = (_PROMPTS_DIR / "shell.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        shell_prompt = ""
+    if not shell_prompt:
+        return system_prompt
+    return "\n\n---\n\n".join(part for part in (system_prompt, shell_prompt) if part)
+
+
 def build_static_prompt(profile: str, user_name: str, *,
                         skills: list[str] | None = None,
                         style_prefs: dict | None = None,

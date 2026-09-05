@@ -8,11 +8,10 @@ use_skill(name) 把该技能的正文（剧本）拉进上下文，再照着执�
 from __future__ import annotations
 
 import json
-import hashlib
-
 from agent import skills as _skills
 from agent.security.logsafe import fingerprint
 from agent.tools.base import BaseSkill, Tool
+from agent.tools.skill_management import SKILL_MANAGEMENT_TOOLS
 from agent.tools.tool_contract import normalize_tool_name
 
 
@@ -21,6 +20,7 @@ async def _get_tool_schema(db, user_id, args: dict):
     from agent.im import imctx
     from agent.im.permissions import can_use_tool
     from agent.tools import registry
+    from agent.tools.base import current_dispatch_tool_snapshot
 
     requested = args.get("tools")
     if not isinstance(requested, list) or not requested:
@@ -29,11 +29,12 @@ async def _get_tool_schema(db, user_id, args: dict):
     allowed = current_im.get("allowed_tool_names") if current_im else None
     declared: list[str] = []
     rejected: list[str] = []
+    tool_snapshot = current_dispatch_tool_snapshot() or registry.snapshot()
     for raw_name in requested[:12]:
         name = str(raw_name or "").strip()
         if not name or name in declared:
             continue
-        if registry.get(name) is None or not can_use_tool(name, allowed):
+        if tool_snapshot.get(name) is None or not can_use_tool(name, allowed):
             rejected.append(name)
             continue
         declared.append(name)
@@ -63,6 +64,19 @@ async def _use_skill(db, user_id, args: dict):
         avail = "、".join(s["slug"] for s in _skills.skills_index())
         return {"error": f"没有名为「{name}」的技能", "available": avail}
     content_digest = content_digest if source == "user" else _skills.skill_content_digest(slug or name)
+    from agent.tools.base import current_dispatch_skill_state
+    loaded_state = current_dispatch_skill_state()
+    if (
+        isinstance(content_digest, str)
+        and content_digest
+        and loaded_state is not None
+        and loaded_state.get(slug or name) == content_digest
+    ):
+        return {
+            "skill": slug or name,
+            "already_loaded": True,
+            "message": "该技能正文已在当前上下文中，无需重复加载。",
+        }
     marker = {
         "kind": "skill", "slug": slug or name, "loaded": True,
         "content_digest": content_digest,
@@ -78,70 +92,37 @@ async def _use_skill(db, user_id, args: dict):
 
 async def _ask_user(db, user_id, args: dict):
     """返回受控交互描述；Prompt/Action 由 Agent Loop 绑定 session 后创建。"""
+    if args.get("authorization") == "user_sandbox":
+        from app.services.filesystem_authorization import filesystem_authorization_enabled
+
+        if not filesystem_authorization_enabled():
+            return {"error": "完整用户沙箱授权功能当前未开启"}
+        # 授权交互不能由模型自定义按钮语义，避免把普通澄清误当作权限授予。
+        return {
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "确认授权完整用户沙箱权限？",
+            "body": (
+                "授权后，当前会话中的 Shell 可读写完整用户沙箱内的 workspace、personal 和 project。"
+                "这不会授予宿主机、其他用户目录或 Docker 权限；可使用 /workspace revoke 撤销。"
+            ),
+            "options": [
+                {"id": "confirm", "label": "确认授权"},
+                {"id": "cancel", "label": "取消"},
+            ],
+            "authorization": "user_sandbox",
+            "allow_text_input": False,
+        }
     return {
         "_interaction": "ask_user",
         "kind": args.get("kind", "choice"),
         "title": args.get("title", "需要你的选择"),
         "body": args.get("body", ""),
         "options": args.get("options", []),
-        "allow_text_input": bool(args.get("allow_text_input", False)),
+        # ask_user 是咕咕主动发起的澄清交互，选择卡统一附带自定义回答入口；
+        # 系统确认卡不经过此工具，不能获得该能力。
+        "allow_text_input": True,
     }
-
-
-async def _create_skill(db, user_id, args: dict):
-    """通过统一注册服务创建用户 Prompt Skill，不开放任何可执行代码。"""
-    from agent.capabilities.skill_registry import SkillCapabilityRegistry
-    from agent.im import imctx
-    from agent.profiles.default import DefaultProfile
-    from agent.tools import registry
-
-    name = str(args.get("name") or "").strip()
-    slug = str(args.get("slug") or "").strip().lower()
-    if not slug:
-        slug = f"user-skill-{hashlib.sha256(name.encode('utf-8')).hexdigest()[:10]}"
-    current_im = imctx.get_im()
-    allowed = current_im.get("allowed_tool_names") if current_im else None
-    allowed = list(allowed) if allowed is not None else DefaultProfile().tool_names
-    related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
-    risky = sorted(item for item in related if (registry.get(item) and (registry.get(item).mutates or registry.get(item).destructive)))
-    if risky:
-        # identity 绑定本次 Skill 的完整内容：同一批 risky 工具但内容不同的
-        # Skill 不能复用上一次确认的授权。
-        body_digest = hashlib.sha256(json.dumps(
-            {k: args.get(k) for k in ("name", "slug", "description_short", "description_long",
-                                      "category", "related_tools") if args.get(k) is not None},
-            ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-        from agent.security import confirm
-        blocked = confirm.needs_confirmation(
-            args, f"创建会关联写入或危险工具的 Skill：{', '.join(risky)}", user_id,
-            identity=f"create_user_skill:{slug or name}:{body_digest}:risky_tools={risky}",
-        )
-        if blocked:
-            return blocked
-    try:
-        row = await SkillCapabilityRegistry().create_user_skill(
-            db, user_id, allowed_tool_names=allowed,
-            slug=slug, name=name,
-            description_short=args.get("description_short") or "",
-            description_long=args.get("description_long"),
-            category=args.get("category") or "personal",
-            related_tools=related, body=args.get("body") or "",
-        )
-        await db.commit()
-        return {
-            "success": True, "skill": {
-                "slug": row.slug, "name": row.name,
-                "description_short": row.description_short,
-                "related_tools": list(row.related_tools or ()), "enabled": row.enabled,
-            },
-            "message": "已创建这个咕咕技能，后续会在需要时按需加载。",
-        }
-    except Exception as exc:
-        await db.rollback()
-        from agent.capabilities.errors import CapabilityRegistrationError
-        if isinstance(exc, CapabilityRegistrationError):
-            return {"error": str(exc)}
-        raise
 
 
 async def _call_tool(db, user_id, args: dict):
@@ -219,37 +200,16 @@ class MetaSkill(BaseSkill):
             },
             handler=_use_skill,
         ),
-        Tool(
-            name="create_skill",
-            label="创建咕咕技能",
-            description_short='创建用户自定义技能并保存可复用做法。',
-            description=(
-                "创建可复用的 Prompt Skill；不是项目，也不是调用已有技能。需要 name、description_short、body、related_tools；不能注册工具或扩大权限。"
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80},
-                    "name": {"type": "string", "minLength": 1, "maxLength": 120},
-                    "description_short": {"type": "string", "minLength": 1, "maxLength": 100},
-                    "description_long": {"type": "string", "maxLength": 500},
-                    "category": {"type": "string", "enum": ["personal", "productivity", "research", "creative", "other"]},
-                    "related_tools": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 80}},
-                    "body": {"type": "string", "minLength": 1, "maxLength": 20000},
-                },
-                "required": ["name", "description_short", "body", "related_tools"],
-                "additionalProperties": False,
-            },
-            handler=_create_skill,
-            mutates=True,
-        ),
+        *SKILL_MANAGEMENT_TOOLS,
         Tool(
             name="ask_user",
             label="询问用户",
             description_short='向用户展示选项或澄清问题；不执行业务操作',
             description=(
                 "当下一步存在多个合理选择，或缺少继续任务所必需的信息时，向用户展示结构化问题。"
-                "只用于澄清，不直接执行任何业务操作；明确的破坏性确认必须使用工具自己的确认门。"
+                "choice 选择卡会自动附带“自定义回复”，用户可在原聊天输入框补充回答。"
+                "只用于澄清，不直接执行普通业务操作；权限、删除、覆盖等破坏性确认必须使用工具自己的确认门。"
+                "如确需申请当前会话的完整用户沙箱读写权限，使用 authorization=user_sandbox；系统会展示固定授权范围和确认按钮。"
             ),
             input_schema={
                 "type": "object",
@@ -257,6 +217,7 @@ class MetaSkill(BaseSkill):
                     "kind": {"type": "string", "enum": ["choice", "question", "form"]},
                     "title": {"type": "string", "maxLength": 120},
                     "body": {"type": "string", "maxLength": 1000},
+                    "authorization": {"type": "string", "enum": ["user_sandbox"]},
                     "options": {
                         "type": "array",
                         "minItems": 0,
@@ -271,7 +232,6 @@ class MetaSkill(BaseSkill):
                             "required": ["id", "label"],
                         },
                     },
-                    "allow_text_input": {"type": "boolean"},
                 },
                 "required": ["kind", "title", "body", "options"],
                 "additionalProperties": False,

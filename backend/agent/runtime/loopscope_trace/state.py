@@ -11,7 +11,7 @@ import urllib.request
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from .utils import _code_ref, _estimate_tokens, _jsonable
 
@@ -33,6 +33,75 @@ def _diagnostic_bucket(run: "_ScopeRun", key: str, default: dict[str, Any]) -> d
         value = copy.deepcopy(default)
         run.attributes[key] = value
     return value
+
+
+_REASONING_STATE_DIAGNOSTIC_KEYS = frozenset({
+    "schema_version", "phase", "reasoning_persistence", "state_status", "continuation_attempted",
+    "continuation_reused", "continuation_unavailable", "state_provider",
+    "state_api_format", "state_model", "state_kind", "state_block_count",
+    "state_size", "state_version", "sequence", "state_digest",
+    "invalidated_reason", "unavailable_reason",
+})
+_REASONING_STATE_STATUSES = frozenset({
+    "disabled", "summary_only", "miss", "reused", "captured", "committed",
+    "unavailable", "expired", "provider_rejected",
+})
+
+
+def _safe_reasoning_state_value(key: str, value: Any) -> Any:
+    """校验推理状态诊断标量；拒绝 payload、正文和任意嵌套对象。"""
+    if key not in _REASONING_STATE_DIAGNOSTIC_KEYS:
+        return None
+    if key in {"schema_version", "state_block_count", "state_size", "state_version", "sequence"}:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        return min(value, 8 * 1024 * 1024)
+    if key in {"continuation_attempted", "continuation_reused", "continuation_unavailable"}:
+        return value if isinstance(value, bool) else None
+    if value is None and key in {"invalidated_reason", "unavailable_reason"}:
+        return None
+    if not isinstance(value, str) or len(value) > 128 or any(ord(char) < 32 for char in value):
+        return None
+    if key == "state_status" and value not in _REASONING_STATE_STATUSES:
+        return None
+    if key == "state_digest" and (
+        not value or len(value) > 64 or any(char not in "0123456789abcdef" for char in value.lower())
+    ):
+        return None
+    return value
+
+
+def record_reasoning_state_diagnostics(diagnostics: Mapping[str, Any]) -> None:
+    """记录 Provider state 生命周期摘要，不记录 payload 或任何用户输入。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    try:
+        safe = {}
+        nullable = {"invalidated_reason", "unavailable_reason"}
+        for key, raw in diagnostics.items():
+            value = _safe_reasoning_state_value(key, raw)
+            if value is not None or (raw is None and key in nullable):
+                safe[key] = value
+        if not safe:
+            return
+        bucket = _diagnostic_bucket(run, "reasoning_state", {"events": []})
+        previous = {key: bucket.get(key) for key in safe}
+        bucket.update(safe)
+        event = {
+            key: safe[key]
+            for key in ("phase", "state_status", "invalidated_reason", "unavailable_reason")
+            if key in safe
+        }
+        if event and event != {key: previous.get(key) for key in event}:
+            events = bucket.setdefault("events", [])
+            if isinstance(events, list):
+                events.append(event)
+                del events[:-12]
+    except Exception:
+        pass
 
 
 def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> None:

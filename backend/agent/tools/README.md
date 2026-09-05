@@ -1,3 +1,37 @@
+# Tool 目录职责
+
+`backend/agent/tools/` 只放 Agent 可调用的业务工具定义和执行适配器；工具通过
+`Tool` / `BaseSkill` 注册到全局 registry。职责按资源边界拆分，避免把多个领域的
+数据库读写和工具 Schema 堆进一个文件。
+
+## 文件职责
+
+| 文件 | 职责 | 不负责 |
+| --- | --- | --- |
+| `base.py` | `Tool`、`BaseSkill`、registry、Schema 校验、统一 dispatch | 具体业务和资源查询 |
+| `meta.py` | 固定 Adapter（`call_tool`、`get_tool_schema`）、Skill 正文加载（`use_skill`）和元能力组合 | 用户 Skill 的创建、更新、删除实现 |
+| `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
+| `line_edit.py` | 正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
+| `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |
+| `files.py` / `trash.py` | 文件库与回收站领域工具；写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
+| `shell.py` | 受控 Shell 与显式 `run_script` 执行入口 | 绕过 sandbox 或提供任意脚本命令 |
+| 其他领域文件 | 项目、文件、日历、记忆、画布等各自资源的工具 | 跨领域的通用 Adapter |
+
+新增 Skill 生命周期能力放在 `skill_management.py`；新增固定协议或工具 Schema
+获取能力放在 `meta.py`。两个文件都不得直接绕过 `SkillCapabilityRegistry` 写入
+`UserSkill`，也不得在工具之外复制权限或确认逻辑。
+
+依赖方向固定为：
+
+```text
+meta.py ───────────────┐
+skill_management.py ───┼─> SkillCapabilityRegistry
+                        └─> agent.tools.base registry / confirm
+```
+
+`MetaSkill` 通过 `SKILL_MANAGEMENT_TOOLS` 组合生命周期工具，因此对外仍保持原有
+`meta` 能力分组和固定 Adapter 注入方式；拆文件不会新增第二套工具入口。
+
 # Tool 注册格式
 
 工具仍由 `Tool` 和 `BaseSkill` 注册，执行、Schema 校验、确认门和权限检查不变。

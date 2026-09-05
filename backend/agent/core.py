@@ -34,6 +34,28 @@ _log = logging.getLogger("agent.core")
 _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 
 
+def _sanitize_anthropic_history(messages) -> tuple[int, int, bool]:
+    """在 canonical 层清洗 Anthropic 历史，并把结果写回消息容器。
+
+    不能等 provider 投影成普通文本后再清洗：``time-context`` 等 canonical
+    边界一旦被渲染成 ``text``，会被误判为可合并的相邻 user 消息，导致每轮
+    都看到一次历史变化并重复记录告警。
+    """
+    from agent.security.sanitize import sanitize_messages
+
+    conversation = list(getattr(messages, "conversation", messages))
+    cleaned = sanitize_messages(conversation)
+    if cleaned == conversation:
+        return len(conversation), len(cleaned), False
+
+    replace = getattr(messages, "replace_conversation", None)
+    if callable(replace):
+        replace(cleaned)
+    else:
+        messages[:] = cleaned
+    return len(conversation), len(cleaned), True
+
+
 def _provider_context_usage(driver: Any, result: Any) -> int:
     """返回用于上下文阈值判断的完整 provider 输入量。
 
@@ -268,14 +290,16 @@ def _mutating_tools(tool_names) -> set:
 
 def _is_successful_tool_result(result: str) -> bool:
     """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。"""
+    from agent.interactions.confirmations import confirmation_payload
+
+    if confirmation_payload(result) is not None:
+        return False
     try:
         payload = json.loads(result)
     except (TypeError, json.JSONDecodeError):
         return True
     if not isinstance(payload, dict):
         return True
-    if payload.get("needs_confirm") or payload.get("status") == "waiting_confirmation":
-        return False
     return not payload.get("error") and payload.get("status") != "failed"
 
 
@@ -433,25 +457,38 @@ class LLMRunner:
             use_anthropic: bool, model_cfg=None,
             session_id: int | None = None,
             session=None,
-            on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+            on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+            reasoning_state=None,
+            reasoning_policy="off",
+            state_session_factory=None,
             ) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
+        if reasoning_state is None and state_session_factory is not None:
+            from agent.context.reasoning_runtime import ReasoningStateCoordinator
+            from agent.context.reasoning_state import ReasoningPersistencePolicy
+            reasoning_state = ReasoningStateCoordinator(
+                user_id=user_id, session_id=session_id, model_cfg=ai,
+                policy=ReasoningPersistencePolicy.from_value(reasoning_policy),
+                session_factory=state_session_factory,
+            )
         generation = self._run_provider(
             user_id, system_text, messages, use_anthropic=use_anthropic,
             model_cfg=ai, session_id=session_id, session=session,
-            on_interaction=on_interaction,
+            on_interaction=on_interaction, reasoning_state=reasoning_state,
         )
         return self._recover_interrupted_continuation(
             generation, user_id, system_text, messages,
             use_anthropic=use_anthropic, model_cfg=ai,
-            session_id=session_id, session=session,
+            session_id=session_id, session=session, reasoning_state=reasoning_state,
+            on_interaction=on_interaction,
         )
 
     def _run_provider(
         self, user_id, system_text: str | None, messages: list, *,
         use_anthropic: bool, model_cfg, session_id: int | None, session=None,
         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        reasoning_state=None,
     ) -> AsyncGenerator[str, None]:
         """启动一条未包装的 provider 流，续轮恢复只能调用这里。"""
         ai = model_cfg if model_cfg is not None else self.settings.ai
@@ -460,21 +497,30 @@ class LLMRunner:
             return self._run_ollama(
                 user_id, messages, ai, session_id=session_id,
                 session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
+            )
+        if str(getattr(ai, "api_format", "") or "").lower() in {"responses", "openai_responses"}:
+            return self._run_responses(
+                user_id, system_text, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             )
         if use_anthropic:
             return self._run_anthropic(
                 user_id, system_text, messages, ai, session_id=session_id,
                 session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             )
         return self._run_openai(
             user_id, messages, ai, session_id=session_id,
             session=session, on_interaction=on_interaction,
+            reasoning_state=reasoning_state,
         )
 
     async def _recover_interrupted_continuation(
         self, generation: AsyncGenerator[str, None], user_id, system_text,
         messages: list, *, use_anthropic: bool, model_cfg, session_id: int | None,
-        session=None,
+        session=None, on_interaction=None, reasoning_state=None,
     ) -> AsyncGenerator[str, None]:
         """统一处理工具续轮生成器提前结束。
 
@@ -510,19 +556,23 @@ class LLMRunner:
             generation = self._run_provider(
                 user_id, system_text, messages, use_anthropic=use_anthropic,
                 model_cfg=model_cfg, session_id=session_id, session=session,
+                on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             )
             continuation_pending = False
 
     async def _run_ollama(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
                           session=None,
-                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
-                          ) -> AsyncGenerator[str, None]:
+                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                          reasoning_state=None
+    ) -> AsyncGenerator[str, None]:
         ai = ai if ai is not None else self.settings.ai
-        async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai,
-                                          system_text=None, session_id=session_id,
-                                          session=session,
-                                          on_interaction=on_interaction):
+        kwargs = {"system_text": None, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
@@ -530,28 +580,48 @@ class LLMRunner:
                              messages: list, ai=None,
                              session_id: int | None = None,
                              session=None,
-                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                             reasoning_state=None
                              ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
-        async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
-                                          system_text=system_text, session_id=session_id,
-                                          session=session,
-                                          on_interaction=on_interaction):
+        kwargs = {"system_text": system_text, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
     async def _run_openai(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
                           session=None,
-                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                          reasoning_state=None
                           ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
-        async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
-                                          system_text=None, session_id=session_id,
-                                          session=session,
-                                          on_interaction=on_interaction):
+        kwargs = {"system_text": None, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai, **kwargs):
+            yield line
+
+    async def _run_responses(self, user_id, system_text: str | None,
+                             messages: list, ai=None,
+                             session_id: int | None = None,
+                             session=None,
+                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                             reasoning_state=None
+                             ) -> AsyncGenerator[str, None]:
+        settings = self.settings
+        ai = ai if ai is not None else settings.ai
+        kwargs = {"system_text": system_text, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.OpenAIResponsesDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────
@@ -559,7 +629,8 @@ class LLMRunner:
                          system_text: str | None,
                          session_id: int | None = None,
                          session=None,
-                         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                         reasoning_state=None
                          ) -> AsyncGenerator[str, None]:
         """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
         OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
@@ -590,10 +661,22 @@ class LLMRunner:
                 system_text = f"{system_text}{_GOAL_POLICY}"
             else:
                 messages.insert(0, {"role": "system", "content": _GOAL_POLICY.strip()})
+        if getattr(driver, "api_format", "") == "anthropic":
+            before_count, after_count, history_changed = _sanitize_anthropic_history(messages)
+            if history_changed:
+                _log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
+                              before_count, after_count)
         initial_tool_names = self.tool_names
-        if self.capability_context is not None:
+        if (
+            self.capability_context is not None
+            and not getattr(self.capability_context, "metadata_only", False)
+        ):
             initial_tool_names = list(self.capability_context.select_for_messages(messages).tool_names)
         client, ctx = driver.prepare(initial_tool_names, ai, messages, system_text)
+        from agent.tools import registry as tool_registry
+        tool_snapshot = tool_registry.snapshot()
+        if reasoning_state is not None:
+            await reasoning_state.prepared(driver, ctx)
         # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
         # 不把目录或用户消息复制进 driver。
         if self.capability_context is not None:
@@ -667,12 +750,10 @@ class LLMRunner:
             )
             try:
                 result = await compaction.compact_context(
-                    list(conversation), system_text or "", getattr(ai, "context_tokens", 256000),
-                    session_id=session_id, user_id=user_id,
+                    list(conversation), session_id=session_id,
                     fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-                    overhead_tokens=0,
                     protected_from=protected_from,
-                    force=True,
+                    model_cfg=ai,
                 )
             except Exception as exc:
                 # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成
@@ -713,6 +794,8 @@ class LLMRunner:
             else:
                 messages = compacted_messages
             compaction_applied = True
+            if reasoning_state is not None:
+                await reasoning_state.boundary_changed("baseline_changed")
             yield_event = {"type": "_context_compaction", "applied": True,
                            "reason": getattr(result, "return_reason", "compacted")}
             # 事件由调用方发送，避免 helper 自己消费生成器控制流。
@@ -739,6 +822,21 @@ class LLMRunner:
                 return False
 
         _context_compaction_event = [None]
+
+        async def notify_interaction(prompt, options, *, round_id_value=None) -> None:
+            """在进入等待前通知 IM 展示层；Web 仍只消费下方的流事件。"""
+            if on_interaction is None:
+                return
+            await on_interaction({
+                "prompt_id": prompt.id,
+                "kind": prompt.kind,
+                "title": prompt.title,
+                "body": prompt.body,
+                "options": options,
+                "expires_at": prompt.expires_at.isoformat(),
+                "round_id": round_id_value,
+                "force_display": True,
+            })
 
         while True:
             # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
@@ -772,6 +870,10 @@ class LLMRunner:
                         options=options,
                         expires_at=prompt.expires_at.isoformat(),
                         force_display=True,
+                    )
+                    await notify_interaction(
+                        prompt, options,
+                        round_id_value=round_id if round_number else None,
                     )
                     from app.services.interactions import wait_for_resolution
                     answer = await wait_for_resolution(
@@ -818,7 +920,11 @@ class LLMRunner:
             try:
                 # 每次 provider 请求前刷新 selected tools。工具调用/结果由驱动构造批次，
                 # 再由核心循环一次性提交到 history；这里仅更新原生 tools 参数。
-                if self.capability_context is not None and not getattr(self.capability_context, "fixed_adapter", False):
+                if (
+                    self.capability_context is not None
+                    and not getattr(self.capability_context, "fixed_adapter", False)
+                    and not getattr(self.capability_context, "metadata_only", False)
+                ):
                     selected = self.capability_context.select_for_messages(messages)
                     driver.update_tools(ctx, list(selected.tool_names))
                 _round_gen = driver.run_round(client, ctx, messages)
@@ -864,6 +970,8 @@ class LLMRunner:
                         await _round_gen.aclose()
                         return
             except RetryableError as e:
+                if reasoning_state is not None:
+                    await reasoning_state.failed("provider_rejected")
                 from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
                 overflow = is_context_overflow_error(e) or is_context_overflow_error(e.cause) if e.cause else is_context_overflow_error(e)
                 if overflow and hard_budget_retries < 1:
@@ -889,6 +997,8 @@ class LLMRunner:
                     )
                     if hard_result.changed:
                         compaction_applied = True
+                        if reasoning_state is not None:
+                            await reasoning_state.boundary_changed("baseline_changed")
                         yield f"data: {json.dumps({'type': '_context_compaction', 'applied': True, 'reason': 'provider_overflow_fallback'}, ensure_ascii=False)}\n\n"
                         hard_budget_retries += 1
                         if verify_mode:
@@ -905,6 +1015,8 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError' if not busy else 'chatUi.networkError'}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
+                if reasoning_state is not None:
+                    await reasoning_state.failed("provider_rejected")
                 from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
                 if is_context_overflow_error(e) and hard_budget_retries < 1:
                     if await compact_after_provider_overflow():
@@ -929,6 +1041,8 @@ class LLMRunner:
                     )
                     if hard_result.changed:
                         compaction_applied = True
+                        if reasoning_state is not None:
+                            await reasoning_state.boundary_changed("baseline_changed")
                         yield f"data: {json.dumps({'type': '_context_compaction', 'applied': True, 'reason': 'provider_overflow_fallback'}, ensure_ascii=False)}\n\n"
                         hard_budget_retries += 1
                         if verify_mode:
@@ -954,6 +1068,8 @@ class LLMRunner:
             total_cache += result.cache_tokens
             total_cache_write += result.cache_write_tokens
             run_context_usage = max(run_context_usage, _provider_context_usage(driver, result))
+            if reasoning_state is not None:
+                await reasoning_state.round_finished(driver, ctx, result, round_id)
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
             # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
             yield stream_event(
@@ -1054,6 +1170,7 @@ class LLMRunner:
                         expires_at=prompt.expires_at.isoformat(),
                         force_display=True,
                     )
+                    await notify_interaction(prompt, options, round_id_value=round_id)
                     from app.services.interactions import wait_for_resolution
                     answer = await wait_for_resolution(
                         user_id=user_id,
@@ -1192,10 +1309,15 @@ class LLMRunner:
                         if not current_skill_digest:
                             from agent.skills import skill_content_digest
                             current_skill_digest = skill_content_digest(skill_slug)
+                    skill_meta = None
+                    if skill_slug and self.capability_context is not None:
+                        skill_meta = self.capability_context.skill_meta(skill_slug)
+                    is_user_skill = bool(skill_meta and skill_meta.source == "user")
                     if (
                         skill_slug
                         and current_skill_digest
                         and loaded_skill_slugs.get(skill_slug) == current_skill_digest
+                        and not is_user_skill
                     ):
                         res = json.dumps({
                             "skill": skill_slug,
@@ -1207,7 +1329,11 @@ class LLMRunner:
                         dispatch_input = tc.input
                         if adapter_target is not None:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(session_id, session, run_id)
+                            _dispatch_token = set_dispatch_session(
+                                session_id, session, run_id,
+                                tool_snapshot=tool_snapshot,
+                                skill_state=loaded_skill_slugs,
+                            )
                             try:
                                 res, artifact = await registry.dispatch(
                                     user_id, adapter_target, _resolve_adapter_arguments(dispatch_input)
@@ -1216,13 +1342,26 @@ class LLMRunner:
                                 reset_dispatch_session(_dispatch_token)
                         else:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(session_id, session, run_id)
+                            _dispatch_token = set_dispatch_session(
+                                session_id, session, run_id,
+                                tool_snapshot=tool_snapshot,
+                                skill_state=loaded_skill_slugs,
+                            )
                             try:
                                 res, artifact = await registry.dispatch(user_id, tc.name, dispatch_input)
                             finally:
                                 reset_dispatch_session(_dispatch_token)
-                        if skill_slug and _is_successful_tool_result(res) and current_skill_digest:
-                            loaded_skill_slugs[skill_slug] = current_skill_digest
+                        if skill_slug and _is_successful_tool_result(res):
+                            try:
+                                payload = json.loads(res) if isinstance(res, str) else res
+                            except (TypeError, ValueError):
+                                payload = None
+                            marker = payload.get("_capability_usage") if isinstance(payload, dict) else None
+                            digest = marker.get("content_digest") if isinstance(marker, dict) else None
+                            if isinstance(digest, str) and digest:
+                                loaded_skill_slugs[skill_slug] = digest
+                            elif current_skill_digest:
+                                loaded_skill_slugs[skill_slug] = current_skill_digest
                     if tc.name == "ask_user":
                         # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
                         # provider history，等待回答后由 interaction service 替换 pending
@@ -1383,7 +1522,7 @@ class LLMRunner:
                             if valid_names:
                                 add_event(ToolDiscoveryEvent(valid_names))
                                 for name in valid_names:
-                                    tool = registry.get(name)
+                                    tool = tool_snapshot.get(name)
                                     if tool is not None:
                                         add_event(tool_schema_event(tool))
                             continue
@@ -1398,7 +1537,7 @@ class LLMRunner:
                             if related:
                                 add_event(SkillSchemaEvent(skill_name, related))
                                 for name in related:
-                                    tool = registry.get(name)
+                                    tool = tool_snapshot.get(name)
                                     if tool is not None:
                                         add_event(tool_schema_event(tool))
                             continue
@@ -1420,7 +1559,7 @@ class LLMRunner:
                                 # 不再让模型继续凭记忆猜参数。
                                 target_name = tc.name
                         if target_name:
-                            tool = registry.get(target_name)
+                            tool = tool_snapshot.get(target_name)
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
@@ -1533,6 +1672,8 @@ class LLMRunner:
                 # 守卫回应作为第二条用户可见消息输出。
                 guard_retry_pending = False
                 guard_retry_buf.clear()
+                if reasoning_state is not None:
+                    await reasoning_state.completed()
                 yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                 return
             # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
@@ -1622,6 +1763,8 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
 
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            if reasoning_state is not None:
+                await reasoning_state.completed()
             return
 
         # 核实预算耗尽时，最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾。
@@ -1632,4 +1775,6 @@ class LLMRunner:
             async for _line in genstream.typed_stream(fallback):
                 yield _line
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            if reasoning_state is not None:
+                await reasoning_state.completed()
             return

@@ -87,11 +87,12 @@ class AISettings(BaseModel):
     context_tokens: int = Field(128000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
+    reasoning_persistence: Literal["off", "summary", "continuation"] = Field("off", description="跨请求推理状态: off | summary | continuation")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
     vision_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
     vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
     vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
-    api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
+    api_format: str = Field("", description="API 格式: openai | responses | anthropic | 空=按 provider/base_url 自动判（Responses 与 Chat Completions 分开）")
     ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
     ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
     ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
@@ -126,6 +127,18 @@ class SandboxSettings(BaseModel):
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
     enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
+    filesystem_authorization_enabled: bool = Field(
+        False,
+        description="是否开放完整用户沙箱读写授权入口（默认关闭，需灰度开启）",
+    )
+    code_execution_enabled: bool = Field(
+        True,
+        description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",
+    )
+    terminal_mode: Literal["auto", "pty_disabled", "entry_disabled"] = Field(
+        "auto",
+        description="用户终端策略：自动、关闭交互式 PTY 或关闭终端入口；不影响咕咕 Shell 执行器",
+    )
     host_data_root: str | None = Field(
         None,
         description="宿主 Docker daemon 视角的数据根目录（compose 注入 GUGU_DATA_HOST_DIR/users）；"
@@ -171,11 +184,12 @@ class AIPresetItem(BaseModel):
     context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
+    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
     vision: bool = False
     vision_detail: str = "auto"
     vision_video: bool = False
     vision_audio: bool = False
-    api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
+    api_format: str = ""         # API 格式: openai | responses | anthropic | 空=自动
     ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
     ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
     ollama_keep_alive: str = "5m"     # Ollama 模型驻留时间

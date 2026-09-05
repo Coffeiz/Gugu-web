@@ -10,7 +10,7 @@
             <span class="terminal-item-copy"><b>{{ item.name }}</b><small>{{ item.source === 'agent' ? t('terminals.agentSource') : t('terminals.userSource') }} · {{ statusLabel(item.status) }}</small></span>
             <span class="terminal-status" :class="item.status"></span>
           </button>
-          <button class="terminal-add-card" :disabled="!enabled" @click="createTerminal">
+          <button class="terminal-add-card" :disabled="!enabled || !ptyEnabled" @click="createTerminal">
             <Icon name="action.add" :size="20" style="opacity:0.5" />
             <span class="terminal-add-card-text">{{ t('terminals.add') }}</span>
           </button>
@@ -32,7 +32,7 @@
           </div>
           <KeepAlive>
             <InteractivePtyTerminal
-              v-if="selected?.mode === 'interactive-pty'"
+              v-if="selected?.mode === 'interactive-pty' && ptyEnabled"
               :key="selected.id"
               :terminal-id="selected.id"
               :restart-token="ptyRevisions[selected.id] ?? 0"
@@ -41,6 +41,7 @@
               @error="error = $event"
             />
           </KeepAlive>
+          <div v-if="selected?.mode === 'interactive-pty' && !ptyEnabled" class="terminal-empty">{{ t('terminalUi.ptyUnavailable') }}</div>
           <div v-if="selected && selected.mode !== 'interactive-pty'" ref="outputRef" class="terminal-output">
             <div v-if="error" class="terminal-output-error" role="alert">[{{ t('terminalUi.errorLabel') }}] {{ error }}</div>
             <div v-for="event in events" :key="event.localId ?? event.sequence" class="terminal-event" :class="{ 'is-pending': event.state === 'running', 'is-failed': event.state === 'failed' }">
@@ -84,6 +85,7 @@ const terminals = ref<TerminalItem[]>([])
 const selectedId = ref<string | null>(null)
 const events = ref<TerminalEventView[]>([])
 const enabled = ref(false)
+const ptyEnabled = ref(false)
 const error = ref('')
 const outputRef = ref<HTMLElement | null>(null)
 const commandInput = ref<HTMLInputElement | null>(null)
@@ -103,6 +105,7 @@ async function load(options: { autoOpen?: boolean } = {}) {
   try {
     const data = await terminalsApi.list()
     enabled.value = data.enabled
+    ptyEnabled.value = data.ptyEnabled
     terminals.value = data.items
     const requestedId = typeof route.query.terminalId === 'string' ? route.query.terminalId : null
     if (requestedId && terminals.value.some(item => item.id === requestedId)) selectedId.value = requestedId
@@ -123,6 +126,7 @@ async function load(options: { autoOpen?: boolean } = {}) {
     const status = (cause as { status?: number }).status
     if (status === 401 || status === 403) {
       enabled.value = false
+      ptyEnabled.value = false
       terminals.value = []
       selectedId.value = null
       await router.replace('/projects')

@@ -84,6 +84,14 @@ def _fake_confirm_redis(monkeypatch):
     yield fake
 
 
+@pytest.fixture
+def enable_filesystem_authorization(monkeypatch):
+    """显式打开 Phase 4 授权场景；生产默认值仍保持关闭。"""
+    import app.services.filesystem_authorization as _filesystem_authorization
+
+    monkeypatch.setattr(_filesystem_authorization, "filesystem_authorization_enabled", lambda: True)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_redis_client():
     """每个测试结束后重置全局 Redis 客户端单例。

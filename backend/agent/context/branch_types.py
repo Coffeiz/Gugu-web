@@ -23,6 +23,7 @@ class BranchInput:
     scope: str = ""
     scope_revision: str | None = None
     session_id: int | None = None
+    scope_owner_id: str | int | None = None
     run_id: str | None = None
 
 

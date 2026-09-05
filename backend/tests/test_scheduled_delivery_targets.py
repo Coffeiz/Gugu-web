@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -241,17 +242,17 @@ async def test_delivery_with_failed_attachments_is_not_reported_success(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_web_only_delivery_with_files_reports_no_attachment_support(monkeypatch):
+async def test_web_only_delivery_with_files_reports_no_attachment_support(monkeypatch, db, user_a):
     """网页通知目前不支持带图——选了带图任务但只勾了网页渠道时，结果必须如实
     说明图片没有随通知显示，不能跟没有 files 时一样报「已发送」（否则用户会
     以为图已经推过去了，实际网页通知里什么都没有）。"""
     import app.scheduled_tasks as scheduled
     from app.core import events as _ev
 
-    monkeypatch.setattr(_ev, "publish", AsyncMock())
+    monkeypatch.setattr(_ev, "publish", AsyncMock(return_value=True))
 
     result = await scheduled.deliver_to_channels(
-        "user-1", "任务", "正文", {"web"}, files=[{"attach_id": "a1"}]
+        user_a.id, "任务", "正文", {"web"}, files=[{"attach_id": "a1"}]
     )
 
     assert result == {"web 通知": "已发送（网页通知不支持附件，图片未随通知显示）"}
@@ -414,7 +415,7 @@ async def test_trial_does_not_hold_request_db_session_during_agent(monkeypatch):
         close=AsyncMock(side_effect=lambda: events.append("close")),
     )
     user = SimpleNamespace(id="user-1")
-    owned_task = SimpleNamespace(cron="0 9 * * *", last_run_failed=False)
+    owned_task = SimpleNamespace(schedule_kind="cron", cron="0 9 * * *", end_at=None, last_run_failed=False)
     monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
     execute = AsyncMock(
         side_effect=lambda *args, **kwargs: events.append("execute") or {"网页通知": "已发送"}
@@ -436,7 +437,7 @@ async def test_trial_timeout_does_not_cancel_delivery_task(monkeypatch):
     events = []
     db = SimpleNamespace(close=AsyncMock())
     user = SimpleNamespace(id="user-1")
-    owned_task = SimpleNamespace(cron="0 9 * * *", last_run_failed=False)
+    owned_task = SimpleNamespace(schedule_kind="cron", cron="0 9 * * *", end_at=None, last_run_failed=False)
     monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
     monkeypatch.setattr(scheduled_api, "_TRIAL_WAIT_SECONDS", 0)
 
@@ -486,6 +487,56 @@ async def test_trial_does_not_update_last_run_at(monkeypatch, db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_web_delivery_persists_and_publishes_notification(monkeypatch, db, user_a):
+    """定时任务 Web 渠道必须落通知中心，并发布实时通知，不能只返回假成功。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events
+    from app.models import SiteNotification
+    from sqlalchemy import select
+
+    publish = AsyncMock(return_value=True)
+    monkeypatch.setattr(events, "publish", publish)
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "每日快讯", "今天的结果", {"web"}, files=None,
+    )
+
+    assert result == {"web 通知": "已发送"}
+    publish.assert_awaited_once()
+    assert publish.await_args.kwargs["notification"]["title"] == "每日快讯"
+    record = await db.scalar(select(SiteNotification).where(
+        SiteNotification.target == str(user_a.id),
+        SiteNotification.title == "每日快讯",
+    ))
+    assert record is not None
+    assert record.content == "今天的结果"
+    assert record.persist is True
+    assert record.bubble is True
+
+
+@pytest.mark.asyncio
+async def test_web_delivery_reports_saved_when_realtime_publish_fails(monkeypatch, db, user_a):
+    """Redis 实时发布失败时仍保留通知中心记录，但不能报告实时已发送。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events
+    from app.models import SiteNotification
+    from sqlalchemy import select
+
+    monkeypatch.setattr(events, "publish", AsyncMock(return_value=False))
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "任务结果", "已保存的结果", {"web"}, files=None,
+    )
+
+    assert result == {"web 通知": "已保存（实时提示失败）"}
+    assert await db.scalar(select(SiteNotification).where(
+        SiteNotification.target == str(user_a.id),
+        SiteNotification.title == "任务结果",
+    )) is not None
+    assert scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
 async def test_once_task_is_kept_when_execution_or_delivery_fails(monkeypatch, db, user_a):
     import app.scheduled_tasks as scheduled
     from app.models import ScheduledTask
@@ -495,6 +546,7 @@ async def test_once_task_is_kept_when_execution_or_delivery_fails(monkeypatch, d
         name="失败后可恢复",
         payload="执行一次操作",
         cron="@once:2099-01-01T09:00:00+08:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, 1, tzinfo=timezone.utc),
         channels="web",
     )
     db.add(task)
@@ -526,6 +578,7 @@ async def test_once_task_is_deleted_only_after_successful_delivery(monkeypatch, 
         name="成功后删除",
         payload="发送一次提醒",
         cron="@once:2099-01-01T09:00:00+08:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, 1, tzinfo=timezone.utc),
         channels="web",
     )
     db.add(task)
@@ -606,6 +659,7 @@ async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatc
 
     task = ScheduledTask(
         user_id=user_a.id, name="锁测试", payload="占位", cron="@once:2099-01-01T00:00:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
         channels="qq", delivery_targets=None,
     )
     db.add(task)

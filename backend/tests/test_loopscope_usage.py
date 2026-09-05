@@ -24,7 +24,13 @@ import pytest
 import agent.core as core
 from agent.core import LLMRunner, _provider_context_usage
 from agent.runtime.loopscope_trace import hooks as loop_hooks
-from agent.runtime.loopscope_trace.state import _ScopeRun, _now, _scope_run
+from agent.runtime.loopscope_trace.hooks import _trace_conversation_messages, _trace_snapshot
+from agent.runtime.loopscope_trace.state import (
+    _ScopeRun,
+    _now,
+    _scope_run,
+    record_reasoning_state_diagnostics,
+)
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
                      provider="anthropic", max_tokens=100, temperature=0.7,
@@ -36,6 +42,29 @@ EXPECTED_USAGE = {
     "input": 13, "output": 5, "cache_read": 3, "cache_write": 0,
     "fresh_input": 10, "total": 18, "cache_ratio": round(3 / 13, 6),
 }
+
+
+def test_loopscope_separates_session_snapshot_from_history_display():
+    from agent.context.assembly import PromptMessages
+
+    messages = PromptMessages([
+        {"role": "system", "content": "平台系统内容"},
+        {"role": "system", "content": "[system-reminder]\n用户 Skill catalog\n[/system-reminder]"},
+        {"role": "user", "content": "当前问题"},
+        {"role": "system", "content": "[system-reminder]\n本轮动态提醒\n[/system-reminder]"},
+    ], fixed_prefix_size=2)
+
+    snapshot = _trace_snapshot(messages)
+    visible = _trace_conversation_messages(messages, "messages[0]")
+    assert snapshot == {"content": "[system-reminder]\n用户 Skill catalog\n[/system-reminder]", "message_count": 1}
+    assert visible == [
+        {"role": "user", "content": "当前问题"},
+        {"role": "system", "content": "[system-reminder]\n本轮动态提醒\n[/system-reminder]"},
+    ]
+
+    legacy_messages = [{"role": "system", "content": "[system-reminder]\n旧历史\n[/system-reminder]"}]
+    assert _trace_snapshot(legacy_messages) is None
+    assert _trace_conversation_messages(legacy_messages, "system_param") == legacy_messages
 
 
 def test_context_threshold_uses_cache_tokens_for_anthropic():
@@ -183,7 +212,7 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
 
 
 async def test_loopscope_wrapper_without_active_run_accepts_session_id(monkeypatch, loopscope_hooks):
-    """没有 active LoopScope run 的 IM 路径也必须能透传 session_id。"""
+    """没有 active LoopScope run 的 IM 路径也必须能透传 session_id 和 reasoning_state。"""
     final = SimpleNamespace(
         content=[SimpleNamespace(type="text", text="收到")],
         usage=SimpleNamespace(input_tokens=10, output_tokens=5, cache_read_input_tokens=0),
@@ -194,10 +223,21 @@ async def test_loopscope_wrapper_without_active_run_accepts_session_id(monkeypat
         yield ("final", final)
 
     monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+
+    class ReasoningStateProbe:
+        async def prepared(self, _driver, _ctx):
+            pass
+
+        async def round_finished(self, *_args):
+            pass
+
+        async def completed(self):
+            pass
+
     runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
     ev, text, errors = await drain(
         runner._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], AI,
-                              session_id=388)
+                              session_id=388, reasoning_state=ReasoningStateProbe())
     )
 
     assert ev["_usage"] == 1
@@ -258,3 +298,43 @@ async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hook
     # 没有 done → 用量不应落地（这轮没跑完，不产生用量）
     assert run.usage == {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
                          "fresh_input": 0, "total": 0, "cache_ratio": 0.0}
+
+
+def test_reasoning_state_diagnostics_are_restricted_and_keep_lifecycle_events(monkeypatch):
+    """LoopScope 只接收状态生命周期标量，不得把 provider payload 带出。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-reasoning-diagnostics", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        record_reasoning_state_diagnostics({
+            "phase": "prepared",
+            "mode": "continuation",
+            "state_status": "miss",
+            "continuation_attempted": True,
+            "state_provider": "anthropic",
+            "state_size": 128,
+            "state_digest": "a" * 16,
+            "payload": {"thinking": "不得记录"},
+        })
+        record_reasoning_state_diagnostics({
+            "phase": "completed",
+            "state_status": "reused",
+            "continuation_reused": True,
+            "unavailable_reason": None,
+        })
+    finally:
+        _scope_run.reset(token)
+
+    diagnostics = run.attributes["reasoning_state"]
+    assert diagnostics["state_status"] == "reused"
+    assert diagnostics["continuation_reused"] is True
+    assert diagnostics["unavailable_reason"] is None
+    assert "payload" not in diagnostics
+    assert diagnostics["events"] == [
+        {"phase": "prepared", "state_status": "miss"},
+        {"phase": "completed", "state_status": "reused", "unavailable_reason": None},
+    ]

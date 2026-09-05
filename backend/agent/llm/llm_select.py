@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from agent import providers
+from agent.context.reasoning_state import ReasoningPersistencePolicy
 
 # 未来 Router 注册口：set_router(fn)，fn(settings, ctx) -> 预设对象 | None
 _router = None
@@ -31,6 +32,7 @@ class ModelRunConfig:
     model: object
     use_anthropic: bool
     context_tokens: int
+    reasoning_persistence: str = "off"
     is_byok: bool = False
 
 # 下面这几个判断函数（PRD-LLM-1 FR-LLM-2）改成委托 agent/providers.py 的
@@ -126,21 +128,35 @@ def pick_model(settings, ctx=None):
 
 
 def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
-    """统一解析模型、协议和上下文预算；Web/IM/定时任务共用。"""
+    """统一解析模型、协议、上下文预算和模型级推理状态策略。"""
     model = pick_model(settings, ctx)
     return ModelRunConfig(
         model=model,
         use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
+        reasoning_persistence=ReasoningPersistencePolicy.from_value(
+            getattr(model, "reasoning_persistence", "off")
+        ).mode,
     )
 
 
 async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelRunConfig:
     """解析主模型并应用当前用户的 LLM BYOK 覆盖。"""
     config = resolve_run_config(settings, ctx)
+    config = ModelRunConfig(
+        model=config.model, use_anthropic=config.use_anthropic,
+        context_tokens=config.context_tokens,
+        reasoning_persistence=config.reasoning_persistence,
+        is_byok=config.is_byok,
+    )
     if not (getattr(settings, "byok", None) and
             (settings.byok.enabled or settings.ai.deployment_mode == "local")):
-        return config
+        return ModelRunConfig(
+            model=config.model, use_anthropic=config.use_anthropic,
+            context_tokens=config.context_tokens,
+            is_byok=config.is_byok,
+            reasoning_persistence=config.reasoning_persistence,
+        )
     from app.byok.service import decrypt_value
     from app.models import UserProviderCredential
     rows = (await db.execute(select(UserProviderCredential).where(
@@ -150,7 +166,12 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     ).order_by(UserProviderCredential.id))).scalars().all()
     row = next(iter(rows), None)
     if row is None:
-        return config
+        return ModelRunConfig(
+            model=config.model, use_anthropic=config.use_anthropic,
+            context_tokens=config.context_tokens,
+            is_byok=config.is_byok,
+            reasoning_persistence=config.reasoning_persistence,
+        )
     base = config.model
     updates = {"provider": row.provider, "api_format": row.api_format,
                "api_key": decrypt_value(row), "base_url": row.base_url or getattr(base, "base_url", ""),
@@ -166,7 +187,11 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
         updates["thinking"] = row.thinking
     if getattr(row, "reasoning_effort", None) is not None:
         updates["reasoning_effort"] = row.reasoning_effort
+    updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
     return ModelRunConfig(model=model, use_anthropic=use_anthropic_for(model),
                           context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
-                          is_byok=True)
+                          is_byok=True,
+                          reasoning_persistence=ReasoningPersistencePolicy.from_value(
+                              getattr(model, "reasoning_persistence", "off")
+                          ).mode)

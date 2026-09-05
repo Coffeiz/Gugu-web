@@ -16,19 +16,20 @@ function brandColor(): string {
     || '#7b7fb2'
 }
 
-let lastBrandColor = ''
+let hasRendered = false
 let rerenderTimer: ReturnType<typeof setTimeout> | undefined
 
 function scheduleRender() {
   clearTimeout(rerenderTimer)
   rerenderTimer = setTimeout(() => {
-    if (brandColor() !== lastBrandColor) render()
+    render()
   }, 600)
 }
 
 function render() {
+  if (hasRendered) return
+  hasRendered = true
   const brand = `color:${brandColor()};font-weight:bold`
-  lastBrandColor = brandColor()
   console.info('%c' + ART, brand)
   const isDev = import.meta.env.DEV
   const runtime = __RUNTIME_VERSION__ || 'unknown'
@@ -45,18 +46,11 @@ function render() {
 }
 
 /**
- * 打印横幅并跟随主题变化重打。
+ * 打印一次控制台横幅。
  *
- * 主题初始化分两步：启动时读 localStorage，登录后服务端偏好（applyServerTheme）
- * 才把真正的 family/palette 应用上来——只打印一次会停在默认调色板的颜色上。
- * 这里监听 <html> 的主题属性，变化后防抖重打（服务端偏好落地、用户手动切主题
- * 都会触发）；颜色没变时跳过，避免无意义刷屏。
+ * 启动时保留短暂防抖，给服务端偏好（applyServerTheme）落地的机会；横幅是诊断信息，
+ * 不应跟随用户主题切换重复写入 DevTools。浏览器控制台只能追加日志，无法原地更新。
  */
 export function startConsoleBanner() {
   scheduleRender()
-  const observer = new MutationObserver(scheduleRender)
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['data-theme', 'data-family', 'data-palette'],
-  })
 }

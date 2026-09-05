@@ -131,6 +131,21 @@ def test_confirmation_uses_explicit_ttl(user_a):
     assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) is None
 
 
+def test_revoking_confirmation_allows_reauthorization(user_a):
+    from agent.interactions import confirmations
+
+    summary = "允许会话「测试会话」读写整个用户沙箱（包含 /workspace、/personal、/project）"
+    identity = "session:filesystem:123"
+    blocked = confirmations.needs_confirmation({}, summary, user_a.id, identity=identity)
+    code = _confirm_code(blocked)
+    assert confirmations.redeem_confirmation(user_a.id, code) is not None
+    assert confirmations.needs_confirmation({}, summary, user_a.id, identity=identity) is None
+
+    assert confirmations.revoke_confirmation(user_a.id, summary, identity=identity)
+    again = confirmations.needs_confirmation({}, summary, user_a.id, identity=identity)
+    assert _blocked(again)
+
+
 async def test_batch_delete_grant_is_summary_bound(db, user_a):
     from agent.interactions import confirmations
 
@@ -213,6 +228,83 @@ async def test_dispatch_tripwire_silent_when_gated(user_a, monkeypatch, caplog):
         assert not any("confirm-gate.bypassed" in r.message for r in caplog.records)
     finally:
         base_mod.registry._tools.pop(good.name, None)
+
+
+async def test_dispatch_tripwire_silent_for_server_authorized_autopilot(user_a, monkeypatch, caplog):
+    """Autopilot 是服务端授权放行，不应被误记为确认门绕过。"""
+    from agent.tools import base as base_mod
+    import app.db.session as sess_mod
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return None
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(sess_mod, "_engine", object())
+    monkeypatch.setattr(sess_mod, "_SessionLocal", lambda: _FakeSession())
+
+    async def _autopilot_handler(db, user_id, args):
+        return {"success": True, "_confirm_gate_authorized": "shell_autopilot"}
+
+    autopilot = base_mod.Tool(
+        name="_test_autopilot_delete", label="测试 Autopilot 删除",
+        description="test", input_schema={"type": "object", "properties": {}},
+        handler=_autopilot_handler, destructive=True,
+    )
+    base_mod.registry._tools[autopilot.name] = autopilot
+    try:
+        with caplog.at_level(logging.CRITICAL, logger="agent.traj"):
+            result, _ = await base_mod.registry.dispatch(user_a.id, autopilot.name, {})
+        payload = json.loads(result)
+        assert payload.get("success") is True
+        assert "_confirm_gate_authorized" not in payload
+        assert not any("confirm-gate.bypassed" in r.message for r in caplog.records)
+    finally:
+        base_mod.registry._tools.pop(autopilot.name, None)
+
+
+async def test_dispatch_normalizes_wrapped_confirmation_result(user_a, monkeypatch):
+    """工具包装层不能改变 dispatch 对外的顶层确认协议。"""
+    from agent.tools import base as base_mod
+    import app.db.session as sess_mod
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return None
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(sess_mod, "_engine", object())
+    monkeypatch.setattr(sess_mod, "_SessionLocal", lambda: _FakeSession())
+
+    async def _wrapped_handler(db, user_id, args):
+        return {
+            "error": json.dumps({
+                "status": "waiting_confirmation",
+                "needs_confirm": True,
+                "summary": "允许执行测试操作",
+                "confirm_code": "opaque-confirm-code",
+            }, ensure_ascii=False),
+            "_audit_event": "confirmation_required",
+        }
+
+    wrapped = base_mod.Tool(
+        name="_test_wrapped_confirmation", label="测试包装确认",
+        description="test", input_schema={"type": "object", "properties": {}},
+        handler=_wrapped_handler, destructive=True,
+    )
+    base_mod.registry._tools[wrapped.name] = wrapped
+    try:
+        result, _ = await base_mod.registry.dispatch(user_a.id, wrapped.name, {})
+        payload = json.loads(result)
+        assert payload["needs_confirm"] is True
+        assert payload["status"] == "waiting_confirmation"
+        assert payload["confirm_code"] == "opaque-confirm-code"
+        assert "error" not in payload
+        assert payload["_audit_event"] == "confirmation_required"
+    finally:
+        base_mod.registry._tools.pop(wrapped.name, None)
 
 
 # ── 4. 静态守卫对当前代码库必须全绿 ───────────────────────────────────────────

@@ -19,6 +19,7 @@ from app.services.calendar import (
     list_event_reminders,
     list_events_with_reminders,
 )
+from app.core.schedule_rules import SCHEDULE_TZ
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -174,15 +175,11 @@ def _event_base_dt(date_s, time_s):
 
 def _reminder_brief(t, base):
     """ScheduledTask → 给模型看的精简提醒视图（含提前量、触发时刻、渠道、启用）。"""
-    from datetime import datetime
     lead = fire_at = None
-    if (t.cron or "").startswith("@once:"):
-        try:
-            fdt = datetime.fromisoformat(t.cron[6:])
-            fire_at = fdt.strftime("%Y-%m-%d %H:%M")
-            lead = round((base - fdt).total_seconds() / 60)
-        except ValueError:
-            pass
+    if t.schedule_kind == "once" and t.start_at:
+        fire = t.start_at.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
+        fire_at = fire.strftime("%Y-%m-%d %H:%M")
+        lead = round((base - fire).total_seconds() / 60)
     return {"reminder_id": t.id, "fire_at": fire_at, "lead_minutes": lead,
             "channels": [c for c in (t.channels or "").split(",") if c], "enabled": t.enabled}
 

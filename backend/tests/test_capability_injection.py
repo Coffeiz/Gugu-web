@@ -19,15 +19,74 @@ def test_catalog_contains_short_descriptions_only():
         tools={"search": CapabilityMeta("search", "tool", "搜索资料。", "search")},
         skills={"web": CapabilityMeta("web", "skill", "联网查找资料。", "search")},
     )
-    block = catalog_block(snapshot)
+    block = catalog_block(snapshot, include_builtin_skills=True)
     assert "搜索资料" in block
     assert "联网查找资料" in block
+    assert "### 工具" in block
+    assert "### Skill" in block
+    assert block.index("### 工具") < block.index("### Skill")
     assert "input_schema" not in block
     assert "call_tool" in block
     assert "get_tool_schema" in block
     assert "紧凑字段签名" in block
     assert "字段签名只展示类型、简单枚举、必填状态和一层结构" in block
     assert "权限和执行校验由代码完成" in block
+
+
+def test_catalog_omits_builtin_skill_already_present_in_static_prompt():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+        skills={"web": CapabilityMeta("web", "skill", "联网查找资料。")},
+    )
+
+    block = catalog_block(snapshot)
+
+    assert "### 工具" in block
+    assert "### Skill" not in block
+    assert "联网查找资料" not in block
+
+
+def test_catalog_keeps_user_skill_in_separate_skill_section():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+        skills={"user-skill": CapabilityMeta(
+            "user-skill", "skill", "用户定义的做法。", source="user"
+        )},
+    )
+
+    block = catalog_block(snapshot)
+
+    assert "### 工具" in block
+    assert "### Skill" in block
+    assert "用户定义的做法" in block
+
+
+def test_skill_metadata_context_does_not_take_over_provider_tools():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+
+    context = CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+            skills={"user-skill": CapabilityMeta(
+                "user-skill", "skill", "用户定义的做法。", source="user"
+            )},
+        ),
+        RegistryCapabilitySelector(),
+        fixed_adapter=False,
+        metadata_only=True,
+    )
+
+    assert context.metadata_only is True
+    assert context.fixed_adapter is False
+    skill_catalog = catalog_block(context.snapshot, kind="skill")
+    assert "### 工具" not in skill_catalog
+    assert "### Skill" in skill_catalog
+    assert "固定 Adapter 模式" not in skill_catalog
+    assert "user-skill：用户定义的做法" in skill_catalog
 
 
 def test_catalog_derives_compact_field_signature_from_tool_registry():
@@ -66,6 +125,18 @@ def test_catalog_routes_user_skill_creation_to_create_skill():
     assert "创建用户自定义技能" in block
     assert "创建技能误当成 `create_project`" in block
     assert "related_tools 使用空数组 []" in block
+
+
+def test_meta_skill_exposes_user_skill_update_and_delete_tools():
+    from agent.tools.meta import MetaSkill
+
+    tools = {tool.name: tool for tool in MetaSkill.tools}
+    assert tools["update_skill"].mutates is True
+    assert tools["update_skill"].destructive is False
+    assert tools["update_skill"].input_schema["required"] == ["slug"]
+    assert tools["delete_skill"].mutates is True
+    assert tools["delete_skill"].destructive is True
+    assert tools["delete_skill"].input_schema["required"] == ["slug"]
 
 
 def test_catalog_rejects_long_description_instead_of_truncating():
@@ -148,6 +219,56 @@ def test_capability_diagnostics_expose_tool_and_skill_injection_without_schema()
     assert result["skill_names"] == ["web"]
     assert result["skill_count"] == 1
     assert "input_schema" not in repr(result)
+
+
+def test_capability_diagnostics_marks_metadata_only_skill_catalog():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+
+    result = capability_injection_diagnostics(CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+            skills={"user-skill": CapabilityMeta(
+                "user-skill", "skill", "用户定义的做法。", source="user"
+            )},
+        ),
+        RegistryCapabilitySelector(),
+        fixed_adapter=False,
+        metadata_only=True,
+    ))
+
+    assert result["metadata_only"] is True
+    assert result["catalog_kind"] == "skill"
+    assert result["catalog_count"] == 1
+    assert result["skill_names"] == ["user-skill"]
+
+
+@pytest.mark.anyio
+async def test_full_schema_preference_keeps_skill_metadata_context(monkeypatch):
+    from agent import runner
+    from agent.capabilities import injector
+
+    marker = object()
+
+    class FakeDB:
+        async def scalar(self, _statement):
+            return SimpleNamespace(data={})
+
+    async def fake_skill_context(*args, **kwargs):
+        assert args == (["search"],)
+        assert kwargs["db"] is db
+        assert kwargs["owner_id"] == "owner-1"
+        return marker
+
+    db = FakeDB()
+    monkeypatch.setattr(injector, "build_skill_metadata_context_for_user", fake_skill_context)
+
+    result = await runner._capability_context(
+        ["search"], SimpleNamespace(), db=db, owner_id="owner-1",
+    )
+
+    assert result is marker
 
 
 def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_api():
@@ -238,3 +359,49 @@ def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
     assert "add_event_reminder" in content
     assert "不要再调用 `create_scheduled_task`" in content
     assert "日历事件本身不会主动提醒" not in content
+
+
+def test_scheduled_tasks_skill_marks_removed_context_selection_as_unsupported():
+    from agent.skills import load_skill
+    from agent.tools import registry
+
+    content = load_skill("scheduled-tasks")
+    assert content is not None
+    assert "不要传 `tool_groups` 或 `context_config`" in content
+    assert "完整工具集和完整业务上下文" in content
+
+    for name in ("create_scheduled_task", "update_scheduled_task"):
+        tool = registry.get(name)
+        assert tool is not None
+        properties = tool.input_schema["properties"]
+        assert "tool_groups" not in properties
+        assert "context_config" not in properties
+        assert "authorized_tools" in properties
+
+
+def test_scheduled_tasks_skill_documents_interval_window_semantics():
+    from agent.skills import load_skill
+    from agent.tools import registry
+
+    content = load_skill("scheduled-tasks")
+    assert content is not None
+    assert "间隔从 `start_at` 锚定" in content
+    assert "只设置其中一个" in content
+    assert "明确要清除时传 `null`" in content
+    assert "不能自行猜日期" in content
+    create = registry.get("create_scheduled_task")
+    update = registry.get("update_scheduled_task")
+    assert create is not None and update is not None
+    assert "schedule_status" in create.description
+    assert "修改调度类型时必须同时提供新类型所需字段" in update.description
+
+
+def test_web_search_skill_contains_freshness_verification_protocol():
+    from agent.skills import load_skill
+
+    content = load_skill("web-search")
+    assert content is not None
+    assert "事实准确性与时效核验" in content
+    assert "未来事件" in content
+    assert "来源发布时间" in content
+    assert "事件实际发生时间" in content

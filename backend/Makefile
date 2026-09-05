@@ -12,12 +12,13 @@ SHELL := /bin/bash
 .SILENT:
 .PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up
 
-# 沙盒 ACL 默认不自动修改宿主机权限；只有显式 SANDBOX_ACL=1 才执行。
+# 非 Compose 的宿主机 ACL 默认不自动修改；Compose sandbox profile 会由 bootstrap 自动初始化。
 SANDBOX_ACL ?= 0
 ROOTLESS_USERS_ROOT ?= $(abspath ../Gugu-data/users)
 # sudo make 时 id -un 会变成 root；Rootless Docker 仍属于原登录用户。
 ROOTLESS_LOGIN ?= $(or $(RUN_USER),$(SUDO_USER),$(shell id -un))
 COMPOSE_FILE ?= ../docker-compose.yml
+GUGU_DATA_HOST_DIR ?= $(abspath ../Gugu-data)
 
 # ── venv 路径自动检测 ───────────────────────────────────
 # 优先用 .venv，找不到退到 venv
@@ -35,7 +36,7 @@ help:        ## 显示帮助
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
 	@echo "生产：make install 后 make start | stop | restart | status 管理 Python/FastAPI、IM、sandboxd；TS RAG 由 Python 按需复用固定制品"
 	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
-	@echo "Compose：make compose-up（轻量模式）；make compose-up SANDBOX_ACL=1 同时初始化 ACL 并开启 sandbox profile"
+	@echo "Compose：make compose-up（轻量模式）；make compose-up SANDBOX_ACL=1 开启 sandbox profile（ACL 由 bootstrap 自动初始化）"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
 	@echo "venv 路径：$(VENV_BIN)（自动检测）"
 
@@ -151,15 +152,14 @@ sandbox-acl-prepare: ## 按 SANDBOX_ACL 选择是否在启动前应用 ACL（默
 		echo "ERROR: SANDBOX_ACL 只能是 0 或 1"; exit 1; \
 	fi
 
-compose-up: ## 启动 Compose 轻量模式；SANDBOX_ACL=1 时先初始化 ACL 并启用 sandbox profile
-	@$(MAKE) sandbox-acl-prepare
+compose-up: ## 启动 Compose 轻量模式；SANDBOX_ACL=1 时启用 sandbox profile 并自动初始化 ACL
 	@if [ "$(SANDBOX_ACL)" = "1" ]; then \
-		docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \
+	  GUGU_DATA_HOST_DIR="$(GUGU_DATA_HOST_DIR)" docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \
 	else \
-		docker compose -f "$(COMPOSE_FILE)" up -d; \
+	  GUGU_DATA_HOST_DIR="$(GUGU_DATA_HOST_DIR)" docker compose -f "$(COMPOSE_FILE)" up -d; \
 	fi
 
-storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users
+storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users（Compose 复用同一脚本）
 	@set -e; \
 	if [ "$$(id -u)" -eq 0 ] && systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service'; then \
 	  ./start.sh stop; \

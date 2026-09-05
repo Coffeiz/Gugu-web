@@ -224,6 +224,10 @@ def test_initialize_snapshot_preserves_goal_control_state():
         "goal_status": "active",
         "goal_mode": True,
         "stance_digest": "stable-stance",
+        "user_skill_snapshot": [{
+            "name": "saved-skill", "kind": "skill", "source": "user",
+            "description_short": "已冻结的技能目录",
+        }],
     }
 
     initialize_snapshot(
@@ -238,6 +242,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
     assert session.session_context["goal_status"] == "active"
     assert session.session_context["goal_mode"] is True
     assert session.session_context["stance_digest"] == "stable-stance"
+    assert session.session_context["user_skill_snapshot"][0]["name"] == "saved-skill"
 
 
 def test_history_baseline_never_moves_back_from_session_watermark():

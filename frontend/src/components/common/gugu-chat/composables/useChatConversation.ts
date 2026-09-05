@@ -366,7 +366,7 @@ export function useChatConversation(options: {
     waitForStableScrollLayout,
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
-  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, loadSession, newSession, deleteSession, renameSession } = sessionsApi
+  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession } = sessionsApi
 
   // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
   watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -419,6 +419,7 @@ export function useChatConversation(options: {
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,
     sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
+    currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
     stick, lastTop: _lastTop,
     fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,

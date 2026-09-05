@@ -96,7 +96,11 @@ export function useFileActions(options: FileActionOptions = {}) {
   function copyFile(id: number, folderId: number | null, projectId: number | null = null,
     conflict?: { onConflict?: 'keep_both' | 'overwrite'; overwriteFileId?: number | null }) {
     assertProjectTarget(projectId)
-    return filesApi.copy(id, { folderId, projectId, ...conflict })
+    return filesApi.copy(id, {
+      folderId, projectId,
+      onConflict: conflict?.onConflict ?? 'keep_both',
+      ...(conflict?.overwriteFileId != null ? { overwriteFileId: conflict.overwriteFileId } : {}),
+    })
   }
 
   function copyFolder(id: number, parentId: number | null, projectId: number | null = null) {

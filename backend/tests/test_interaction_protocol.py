@@ -4,18 +4,22 @@ import asyncio
 import json
 from datetime import datetime, timedelta
 
+import pytest
+
 from agent.interactions.events import INTERACTION_REQUIRED, ROUND_START
 from agent.interactions.stream_events import decode_event, encode_event
-from app.models import ConversationMessage, ConversationSession
+from app.models import ConversationMessage, ConversationSession, InteractionPrompt
 from app.core.tz import now_utc
 from app.services.interactions import (
     _hash_token,
     consume_action,
+    consume_choice_text,
     consume_text,
     create_agent_prompt,
     create_goal_mode_prompt,
     create_tool_budget_prompt,
     create_prompt,
+    CUSTOM_REPLY_OPTION_ID,
     wait_for_resolution,
 )
 
@@ -26,6 +30,36 @@ def test_schema_dict_accepts_legacy_json_string_and_rejects_invalid_values():
     assert _schema_dict('{"options":[{"id":"a"}]}')["options"][0]["id"] == "a"
     assert _schema_dict("not-json") == {}
     assert _schema_dict(["not", "an", "object"]) == {}
+
+
+def test_shell_confirmation_error_envelope_reaches_interaction_bridge():
+    """Shell 的嵌套确认结果必须仍然生成网页/IM 确认交互。"""
+    from agent.interactions.confirmations import confirmation_payload
+
+    payload = confirmation_payload({
+        "error": json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "允许当前会话临时访问公网",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    })
+
+    assert payload is not None
+    assert payload["needs_confirm"] is True
+    assert payload["confirm_code"] == "opaque-confirm-code"
+
+
+def test_confirmation_protocol_accepts_direct_and_nested_results():
+    from agent.interactions.confirmations import confirmation_payload, is_block
+
+    direct = json.dumps({"status": "waiting_confirmation", "needs_confirm": True})
+    nested = {"error": direct, "_audit_event": "confirmation_required"}
+
+    assert confirmation_payload(direct)["needs_confirm"] is True
+    assert confirmation_payload(nested)["status"] == "waiting_confirmation"
+    assert is_block(direct)
+    assert is_block(nested)
 
 
 def test_event_identity_survives_round_trip():
@@ -62,6 +96,7 @@ def test_ask_user_tool_is_registered_with_bounded_schema():
     assert tool is not None
     assert tool.input_schema["additionalProperties"] is False
     assert tool.input_schema["properties"]["options"]["maxItems"] == 8
+    assert "allow_text_input" not in tool.input_schema["properties"]
     assert "title" in tool.input_schema["required"]
 
 
@@ -154,7 +189,105 @@ async def test_ask_user_tool_result_creates_waiting_prompt(db, user_a):
 
     assert prompt.session_id == session.id
     assert prompt.kind == "choice"
-    assert [item["id"] for item in actions] == ["talk", "sleep"]
+    assert [item["id"] for item in actions] == ["talk", "sleep", CUSTOM_REPLY_OPTION_ID]
+    assert prompt.schema_json["source"] == "agent"
+    assert prompt.schema_json["allow_text_input"] is True
+
+
+async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-custom",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "请选择下一步",
+            "options": [
+                {"id": "keep", "label": "保留"},
+                {"id": "remove", "label": "删除"},
+            ],
+        },
+    )
+    custom = next(item for item in actions if item["id"] == CUSTOM_REPLY_OPTION_ID)
+    awaiting = await consume_action(
+        db,
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        token=custom["token"],
+        event_id="evt-custom-choice",
+    )
+    assert awaiting["result"]["status"] == "awaiting_text"
+    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    assert stored_prompt.status == "active"
+    assert stored_prompt.schema_json["custom_input_active"] is True
+
+    answered = await consume_text(
+        db,
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        text="改成归档",
+        event_id="evt-custom-text",
+    )
+    assert answered["result"]["status"] == "answered"
+    assert answered["result"]["text"] == "改成归档"
+    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    assert stored_prompt.status == "resolved"
+
+
+async def test_im_custom_reply_option_then_text_resolves_agent_prompt(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, _actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-im-custom",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "请选择下一步",
+            "options": [{"id": "one", "label": "选项一"}, {"id": "two", "label": "选项二"}],
+        },
+    )
+    awaiting = await consume_choice_text(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        text="自定义回复",
+        event_id="evt-im-custom-choice",
+    )
+    assert awaiting["result"]["status"] == "awaiting_text"
+    answered = await consume_text(
+        db,
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        text="使用我的方案",
+        event_id="evt-im-custom-text",
+    )
+    assert answered["result"]["text"] == "使用我的方案"
+
+
+async def test_system_prompt_cannot_enable_custom_reply(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="confirm",
+        title="确认操作",
+        body="是否继续",
+        options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+        allow_text_input=True,
+    )
+    assert [item["id"] for item in actions] == ["confirm", "cancel"]
+    assert prompt.schema_json["source"] == "system"
+    assert prompt.schema_json["allow_text_input"] is False
+    with pytest.raises(ValueError, match="不接受文本回答"):
+        await consume_text(db, user_id=user_a.id, prompt_id=prompt.id, text="绕过确认")
 
 
 async def test_round_limit_prompt_only_resumes_current_run_without_persisting_unlimited(db, user_a):
@@ -224,7 +357,35 @@ async def test_confirmation_button_grants_server_side_authorization(db, user_a):
     assert confirmations.redeem_confirmation(user_a.id, code) is None
 
 
-async def test_ask_user_text_requires_explicit_permission_and_resolves(db, user_a):
+async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):
+    """确认按钮发送失败后的序号/文字回退，必须消费 confirm Prompt。"""
+    from app.services.interactions import consume_choice_text
+
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="confirm",
+        title="确认操作",
+        body="是否继续",
+        options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+        context={"tool_call_id": "call-1"},
+    )
+    await db.commit()
+
+    result = await consume_choice_text(
+        db, user_id=user_a.id, session_id=session.id, text="1", event_id="evt-confirm-text"
+    )
+
+    assert result is not None
+    assert result["kind"] == "confirm"
+    assert result["option_id"] == "confirm"
+    assert result["result"]["status"] == "selected"
+    assert actions[0]["id"] == "confirm"
+
+
+async def test_agent_text_answer_resolves_agent_prompt(db, user_a):
     session, _pending_message = await _make_interaction_session(db, user_a)
     prompt, actions = await create_prompt(
         db,
@@ -236,6 +397,7 @@ async def test_ask_user_text_requires_explicit_permission_and_resolves(db, user_
         options=[],
         context={"tool_call_id": "call-1"},
         allow_text_input=True,
+        source="agent",
     )
     await db.commit()
     assert actions == []

@@ -20,6 +20,7 @@ from app.services.workspaces import (
     effective_shell_enabled,
     effective_shell_system_enabled,
 )
+from .policy import configured_terminal_mode
 
 
 class TerminalOperation(StrEnum):
@@ -52,6 +53,8 @@ async def page_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
     sandbox_ready, sandbox_reason = sandbox_readiness(sandbox)
     if not sandbox_ready:
         return TerminalAccessDecision(False, sandbox_reason, operation)
+    if configured_terminal_mode(settings) == "entry_disabled":
+        return TerminalAccessDecision(False, "终端入口已由管理员关闭", operation)
     if not getattr(settings.agent, "shell_enabled", False):
         return TerminalAccessDecision(False, "管理员未开启 Shell 工具", operation)
     if await effective_shell_enabled(db, user_id):
@@ -62,6 +65,18 @@ async def page_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
     ):
         return TerminalAccessDecision(True, "允许访问终端", operation)
     return TerminalAccessDecision(False, "用户未开启 Shell", operation)
+
+
+async def pty_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
+    """判断当前用户是否可以使用交互式 PTY。"""
+    decision = await page_access(db, user_id)
+    if not decision.allowed:
+        return decision
+    if configured_terminal_mode(get_settings()) == "pty_disabled":
+        return TerminalAccessDecision(False, "交互式 PTY 已由管理员关闭", TerminalOperation.INPUT)
+    if not getattr(get_settings().sandbox, "code_execution_enabled", True):
+        return TerminalAccessDecision(False, "代码运行环境已关闭，交互式 PTY 不可用", TerminalOperation.INPUT)
+    return TerminalAccessDecision(True, "允许使用交互式 PTY", TerminalOperation.INPUT)
 
 
 async def authorize_operation(

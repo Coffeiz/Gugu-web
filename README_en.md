@@ -15,7 +15,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [Live Demo](https://www.gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [Quick Deploy](docs/quick-deploy.md) ｜ [Live Demo](https://www.gugugu.site)
 
 </div>
 
@@ -148,9 +148,9 @@ cp .env.example .env
 mkdir -p backend && touch backend/.env
 # Edit the root .env and set SECRET_KEY, GUGU_DB_PASSWORD, and model configuration.
 # You may also put application settings in backend/.env; an admin password is generated on first start if omitted.
-# The user-data directory defaults to /data on the host and must exist before
-# startup (compose fails when the bind source is missing):
-sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
+# The user-data directory defaults to Gugu-data under the repository root;
+# Compose creates it automatically on first startup:
+# For a custom absolute path, set GUGU_DATA_HOST_DIR=/srv/gugu-data in .env.
 docker compose up -d
 ```
 
@@ -184,7 +184,7 @@ Open:
 
 The first run initializes the database and applies migrations. If `ADMIN_PASSWORD` is omitted, a random password is generated, saved to `backend/.env`, and printed once; there is no public default admin password.
 
-See the [Deployment Guide](docs/DEPLOY.md) for the complete Compose parameters and configuration locations.
+See the [Deployment Guide](docs/quick-deploy.md) for the complete Compose parameters and configuration locations.
 
 To enable the Shell sandbox:
 
@@ -207,7 +207,7 @@ LoopScope must be opened from a logged-in Gugu `/dev` page by selecting the Loop
 
 ## Configuration
 
-The README keeps configuration at index level. See [Deployment Guide](docs/DEPLOY.md) for the complete Compose setup and configuration locations.
+The README keeps configuration at index level. See [Deployment Guide](docs/quick-deploy.md) for the complete Compose setup and configuration locations.
 
 | Configuration | Purpose |
 | --- | --- |

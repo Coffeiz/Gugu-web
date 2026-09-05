@@ -114,7 +114,9 @@ async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, operation: str | None = None,
                   entity_id: int | str | None = None,
                   entity_ids: list[int | str] | None = None,
-                  event_payload: Any = None, **extra) -> None:
+                  event_payload: Any = None,
+                  notification: dict | None = None,
+                  **extra) -> bool:
     """通知某用户：若干资源已变化（best-effort，失败不影响主流程）。
 
     - origin：发起这次改动的浏览器标签页 client-id（来自请求头 X-Client-Id）。前端收到
@@ -187,18 +189,23 @@ async def publish(user_id, *resources: str, origin: str | None = None,
         }
         if session_payload:
             payload["payload"] = session_payload
+    if notification is not None:
+        # 通知不是资源变更事件，允许在没有 resources 时独立发布到用户频道。
+        # 定时任务和指定用户的管理员通知都走这里；广播通知仍由 broadcast() 负责。
+        payload["notification"] = notification
     if not payload:
-        return
+        return False
     try:
         await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
     except Exception:
-        pass
+        return False
     for resource in res:
         if resource in _DATA_RUNTIME_RESOURCES:
             invalidation_operation = inferred_operation if res else (operation or "refresh")
             if invalidation_operation == "append":
                 invalidation_operation = "update"
             await publish_data_runtime_invalidation(user_id, resource, operation=invalidation_operation)
+    return True
 
 
 BROADCAST_CHANNEL = "events:__broadcast__"

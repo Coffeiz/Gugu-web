@@ -162,7 +162,7 @@ async def _read_last_turn(user_id, session_id=None) -> dict | None:
         return None
 
 
-async def _bind_user_model(user_id, settings):
+async def _bind_user_model(user_id, settings, session_id=None):
     """在独立反思任务内解析并绑定用户模型，避免依赖父任务上下文继承。"""
     from app.db import session as db_session
     from agent.llm import modelctx
@@ -175,6 +175,7 @@ async def _bind_user_model(user_id, settings):
         run_config = await resolve_run_config_for_user(settings, db, user_id, None)
     modelctx.mark_user_scope()
     modelctx.set_model_cfg(run_config.model)
+    modelctx.set_usage_context(user_id, session_id)
     return run_config.model
 
 
@@ -396,7 +397,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # 反思既可能由主 Runner 派生，也可能由 IM 被动消息/延迟批处理独立创建。
         # 后者不能依赖父任务的 ContextVar 继承；在真正调用分支模型前按用户重新解析
         # 并绑定 BYOK，解析失败则跳过本次反思，不能静默烧平台额度。
-        await _bind_user_model(user_id, settings)
+        await _bind_user_model(user_id, settings, session_id)
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
         out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"], existing_summary,
@@ -557,6 +558,10 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
             output_mode="json",
             max_tokens=min(_cap, 900),
             max_retries=0,
+            # 反思只提取小型结构化增量，不需要推理链。若继承当前模型的 adaptive
+            # thinking，900 token 很容易被思考预算耗尽而没有最终 JSON，导致 pattern
+            # 增量被 ContextBranch 判为 output_empty。
+            thinking="disabled",
         ),
         settings,
     )

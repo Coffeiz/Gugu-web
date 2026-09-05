@@ -1,11 +1,12 @@
 """日历事件、提醒查询与写入边界。"""
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.ownership import get_owned
+from app.core.schedule_rules import SCHEDULE_TZ
 from app.core.tz import local_now
 from app.models import CalendarEvent, Project, ScheduledTask
 
@@ -88,6 +89,18 @@ async def list_event_reminders(db, user_id, event_id):
     )).scalars().all()
 
 
+async def find_event_reminder_by_cron(db, user_id, event_id, cron, *, exclude_id=None):
+    """查找活动在指定触发时刻的提醒，统一承接提醒唯一性查询。"""
+    stmt = select(ScheduledTask).where(
+        ScheduledTask.user_id == user_id,
+        ScheduledTask.event_id == event_id,
+        ScheduledTask.cron == cron,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(ScheduledTask.id != exclude_id)
+    return (await db.execute(stmt)).scalars().first()
+
+
 def normalize_reminder_channels(channels):
     channels = list(dict.fromkeys(c for c in (channels or ["web"]) if c in _REMINDER_CHANNELS))
     return ",".join(channels) if channels else "web"
@@ -113,11 +126,14 @@ def build_reminder(user_id, event, lead_minutes, channels):
     if fire <= local_now().replace(tzinfo=None):
         return None, f"提前 {lead_minutes} 分钟（{fire.strftime('%Y-%m-%d %H:%M')}）已过，跳过"
     when = event.date + (f" {event.time}" if event.time else "")
+    start_at = fire.replace(tzinfo=SCHEDULE_TZ)
     return ScheduledTask(
         user_id=user_id,
         name=f"{event.title} 提醒",
         payload=f"提醒：{event.title}（{when}）",
-        cron=f"@once:{fire.strftime('%Y-%m-%dT%H:%M')}",
+        cron=f"@once:{start_at.astimezone(timezone.utc).isoformat()}",
+        schedule_kind="once",
+        start_at=start_at,
         channels=normalize_reminder_channels(channels),
         enabled=True,
         event_id=event.id,
@@ -166,6 +182,8 @@ async def create_event_reminders(db, user_id, event, leads, channels, *, commit=
                     name=task.name,
                     payload=task.payload,
                     cron=task.cron,
+                    schedule_kind=task.schedule_kind,
+                    start_at=task.start_at,
                     channels=task.channels,
                     enabled=task.enabled,
                 ).on_conflict_do_nothing().returning(ScheduledTask.id)

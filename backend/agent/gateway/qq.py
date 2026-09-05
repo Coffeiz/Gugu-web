@@ -548,6 +548,12 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
     selected_text = str(result_payload.get("text") or option_id)
     chat_type = str(event.get("chat_type") or "c2c")
     target_id = event.get("chat_id") or event["platform_user_id"]
+    if result_payload.get("status") == "awaiting_text":
+        await _qq_ack(
+            channel_id, chat_type, target_id,
+            "请直接发送你的回复，咕咕会继续处理。", None,
+        )
+        return
     await _qq_ack(
         channel_id,
         chat_type,
@@ -1123,8 +1129,7 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str | None,
-                         *, group: bool, prompt: dict[str, Any],
-                         message_format: str | None = None):
+                         *, group: bool, prompt: dict[str, Any]):
     """发送带文本说明和 Inline Keyboard 的 QQ 消息。"""
     target = "groups" if group else "users"
     path = f"/v2/{target}/{target_id}/messages"
@@ -1144,8 +1149,7 @@ async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str
 
 async def send_keyboard(target_id: str, text: str, prompt: dict[str, Any], *,
                         channel_id: str, msg_id: str | None = None,
-                        group: bool = False,
-                        message_format: str | None = None) -> bool:
+                        group: bool = False) -> bool:
     """发送 QQ Keyboard；平台拒绝时返回 False，由统一出站层发送文本兜底。"""
     for attempt in (1, 2):
         try:
@@ -1156,7 +1160,6 @@ async def send_keyboard(target_id: str, text: str, prompt: dict[str, Any], *,
                 msg_id,
                 group=group,
                 prompt=prompt,
-                message_format=message_format,
             )
             return True
         except Exception as exc:

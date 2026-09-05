@@ -4,11 +4,11 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 
-from app.models import ConversationSession, Folder, Project, UserPreferences, Workspace
+from app.models import ConversationSession, Folder, Project, ScheduledTask, UserPreferences, Workspace
 from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.services.storage.folders import resolve_folder_path
@@ -123,6 +123,18 @@ async def delete_workspace(db: AsyncSession, user_id, workspace_id: int) -> None
     )).scalars().all()
     for session in sessions:
         session.workspace_id = None
+    # 任务不能在工作区删除后静默回落到默认 /workspace；先停用绑定任务，随后
+    # 由外键 SET NULL 清理绑定值。用户重新编辑前不会继续执行旧任务。
+    tasks = (await db.execute(
+        select(ScheduledTask).where(
+            ScheduledTask.user_id == user_id,
+            ScheduledTask.workspace_id == workspace.id,
+            ScheduledTask.event_id.is_(None),
+        )
+    )).scalars().all()
+    for task in tasks:
+        task.enabled = False
+        task.workspace_id = None
     await db.delete(workspace)
     await db.flush()
 
@@ -158,7 +170,7 @@ async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
 
 
 async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
-    """读取用户危险 Shell 命令开关；它不能绕过 Admin 开关或确认门。"""
+    """读取用户危险 Shell 命令开关；管理员开关和 Autopilot 由策略层校验。"""
     result = await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )
@@ -167,6 +179,7 @@ async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
 
 
 async def effective_shell_autopilot_enabled(db: AsyncSession, user_id) -> bool:
+    """读取用户 Autopilot 开关；管理员总开关由调用方同时校验。"""
     prefs = (await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )).scalar_one_or_none()
@@ -287,6 +300,53 @@ async def resolve_sandbox_root(db: AsyncSession, user_id) -> Path | None:
     rows = await ensure_user_storage_space(db, user_id)
     row = next(item for item in rows if item.category == SHELL_PERSISTENT)
     return Path(row.root_path).resolve()
+
+
+async def resolve_user_personal_root(db: AsyncSession, user_id) -> Path | None:
+    """解析当前用户个人文件库根目录，供沙盒以只读方式挂载到 ``/personal``。
+
+    这里只暴露「个人文件」空间，不暴露用户存储根、人格目录、Shell 持久目录
+    或其他内部空间。workspace 是否绑定不影响此映射；``/project`` 也由用户根目录
+    独立解析，不能通过 workspace 参数改变。
+    """
+    settings = get_settings()
+    # OSS 对象没有本机目录，不能把一个空的 local_path 伪装成文件库挂载。
+    # 后续若要支持 OSS，应先实现受控的只读 materialize/cache，而不是直接放开。
+    if settings.storage.backend != "local":
+        return None
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(user_id)).resolve()
+    personal_root = (user_root / compose_logical_path("personal")).resolve()
+    try:
+        user_root.relative_to(storage_root)
+        personal_root.relative_to(user_root)
+    except ValueError:
+        return None
+    # 文件库可能刚创建、尚无文件；创建空间根后仍能稳定提供 /personal。
+    personal_root.mkdir(parents=True, exist_ok=True)
+    return personal_root
+
+
+async def resolve_project_root(db: AsyncSession, user_id) -> Path | None:
+    """解析当前用户完整项目文件库根目录，供沙盒只读挂载到 ``/project``。
+
+    ``/project`` 不是当前 workspace，也不是某一个项目子目录；它对应用户存储
+    下的 ``项目文件``，内部保留 ``年/月/项目名 #id`` 层级。workspace 只决定
+    ``/workspace`` 的默认工作目录。
+    """
+    settings = get_settings()
+    if settings.storage.backend != "local":
+        return None
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(user_id)).resolve()
+    project_root = (user_root / compose_logical_path("project")).resolve()
+    try:
+        user_root.relative_to(storage_root)
+        project_root.relative_to(user_root)
+    except ValueError:
+        return None
+    project_root.mkdir(parents=True, exist_ok=True)
+    return project_root
 
 
 async def resolve_shell_root(db: AsyncSession, user_id, scope: str, workspace_id: int | None) -> Path | None:

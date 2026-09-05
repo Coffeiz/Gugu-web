@@ -1,6 +1,6 @@
 # Gugu 部署指南
 
-这是一份面向普通使用者的简版部署说明。生产环境的反向代理、权限、备份和故障排查见[运维部署文档](ops/DEPLOY.md)。
+这是一份面向普通使用者的简版部署说明。生产环境的反向代理、权限、备份和故障排查见[运维部署文档](ops/deploy.md)。
 
 ## 前置要求
 
@@ -134,14 +134,27 @@ docker compose -f docker-compose.prod.yml --profile sandbox up -d
 
 生产部署前请准备持久化数据卷，并备份数据库和用户文件。正式部署请使用固定版本或 digest，不要依赖 `latest`。
 
-> **⚠️ 沙盒与 `/data` 的部署前置**（默认/Dev/Prod 三个 Compose 相同）：沙盒容器由
-> backend 通过 docker.sock 作为兄弟容器启动，`--mount src=/data/users/<uid>/shell`
-> 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `/data` 路径。Compose
-> 已用 `GUGU_DATA_HOST_DIR`（默认 `/data`）把宿主机目录 bind 成 `gugu_data` 卷；升级
-> 前若还在用旧的 named volume，先 `down`、把 `gugu-web-compose_gugu_data` 卷内容拷到
-> `/data`、删旧卷再 `up`。启用 sandbox profile 时 compose 还会跑一次性
+如需把用户数据放到其他宿主机目录，在项目根目录 `.env` 设置绝对路径；默认、Dev、Prod
+三份 Compose 都使用同一个变量：
+
+```dotenv
+GUGU_DATA_HOST_DIR=/srv/gugu-data
+```
+
+Compose 首次启动会自动创建目录；自定义目录需要保证运行 Docker 的用户可读写，启用 Shell
+沙盒时也必须使用宿主机 daemon 可见的绝对路径。
+
+> **⚠️ 沙盒与 `Gugu-data` 的部署前置**（默认/Dev/Prod 三个 Compose 相同）：沙盒容器由
+> backend 通过 docker.sock 作为兄弟容器启动，`--mount src=.../users/<uid>/shell`
+> 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `Gugu-data` 路径。Compose
+> 已用 `GUGU_DATA_HOST_DIR`（未设置时按 Compose 文件目录解析为 `Gugu-data`）直接 bind；从旧版本
+> 升级时先停止旧业务容器（`docker compose stop`，不删卷），再执行 `docker compose up -d`，
+> 由 `data-migrate` 自动把旧 `gugu-web-compose_gugu_data` named volume 内容拷到新目录，
+> 源卷保留不删除，不需要手工执行第二套迁移。自定义旧 Compose 项目名时设置
+> `GUGU_LEGACY_DATA_VOLUME` 为实际卷名。启用 sandbox profile 时 compose 还会跑一次性
 > `sandbox-bootstrap`，自动在沙盒实际运行的 daemon（含 rootless）上准备 egress 网络、
-> squid 代理和沙盒镜像；rootful 单 daemon 部署下自动跳过。详见 docs/ops/deploy.md。
+> squid 代理、沙盒镜像和用户 `shell`/文件目录 ACL，并用真实沙盒 UID 做写入探针；rootful
+> 单 daemon 部署下自动使用容器 UID/GID。详见 docs/ops/deploy.md。
 
 ## 开发环境
 

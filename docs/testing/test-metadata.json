@@ -1,1 +1,82 @@
-{}
+{
+  "backend/tests/test_model_reasoning_policy.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/llm/llm_select.py",
+    "keyBehavior": "模型配置决定推理持久化策略，缺省值安全关闭",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_phase2_reasoning_drivers.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/loop_drivers.py",
+    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_phase3_filesystem_policy.py": {
+    "domain": "filesystem-security",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/filesystem_authorization.py",
+    "keyBehavior": "工作区目录边界与文件工具写权限策略正确执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_phase4_filesystem_authorization.py": {
+    "domain": "filesystem-security",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/filesystem_authorization.py",
+    "keyBehavior": "文件系统授权开关、确认流程与审计记录安全",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_reasoning_state.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/context/reasoning_state.py",
+    "keyBehavior": "Provider 推理状态隔离、指纹校验、过期与冲突处理",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_scheduled_task_schedule_rules.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/core/schedule_rules.py",
+    "keyBehavior": "单次、间隔和 cron 任务的独立起止时间窗口校验",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_scheduled_task_workspace.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/scheduled_tasks.py",
+    "keyBehavior": "定时任务工作区归属与任务级文件授权隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_shell_prompt.py": {
+    "domain": "shell-security",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/context/session_system.py",
+    "keyBehavior": "Shell 动态权限提示词仅在工具实际可用时注入且可重复调用",
+    "ci": "backend-pytest"
+  },
+  "frontend/src/composables/useFilesystemAuthorization.test.ts": {
+    "domain": "frontend-scheduling",
+    "layer": "L0",
+    "owner": "frontend/composables",
+    "productionEntry": "frontend/src/composables/useFilesystemAuthorization.ts",
+    "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
+    "ci": "frontend-test"
+  },
+  "frontend/src/utils/consoleBanner.test.ts": {
+    "domain": "frontend-ui",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/consoleBanner.ts",
+    "keyBehavior": "主题切换不重复追加控制台横幅",
+    "ci": "frontend-test"
+  }
+}
