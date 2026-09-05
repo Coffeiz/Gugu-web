@@ -57,6 +57,12 @@ def _serialize_message(raw: Any) -> str | None:
     if not (_is_live_event(value) or (
         isinstance(value, dict)
         and isinstance(value.get("notification"), dict)
+    ) or (
+        # present_file 推送：只放行结构合规的载荷，其余字段丢弃
+        isinstance(value, dict)
+        and isinstance(value.get("present"), dict)
+        and isinstance(value["present"].get("file_id"), int)
+        and not isinstance(value["present"].get("file_id"), bool)
     )):
         return None
     return f"data: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}\n\n"

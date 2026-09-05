@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import MarkdownView from '@/components/common/content/MarkdownView.vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/projects'
@@ -180,12 +181,23 @@ function toggleNotif() {
   })
 }
 function markAllRead() { uiStore.markAllRead() }
+// 拖选保护：弹层内拖选文字移出后松开，click 落在外面，不能因此误关
+const pressGuard = createPressOutsideGuard((t: Node) => {
+  if (t instanceof HTMLElement && t.closest('.nb-stack')) return true
+  return !!(notifPopupRef.value?.contains(t) || notifBtnRef.value?.contains(t))
+})
+function onSidebarPress(e: MouseEvent) { pressGuard.notePress(e) }
+
 function closeAll(e: MouseEvent) {
+  if (!pressGuard.shouldCloseOn(e)) return
   if ((e?.target as HTMLElement | null)?.closest?.('.nb-stack')) return
   settingsOpen.value = false
   if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target as Node) && !notifBtnRef.value?.contains(e?.target as Node)) notifOpen.value = false
 }
-onMounted(() => document.addEventListener('click', closeAll))
+onMounted(() => {
+  document.addEventListener('mousedown', onSidebarPress, true)
+  document.addEventListener('click', closeAll)
+})
 watch(() => liveStore.resourceEvent, (event) => {
   if (event?.resource === 'terminals' && event.operation === 'refresh') {
     void refreshTerminalVisibility()
@@ -198,6 +210,7 @@ onMounted(() => {
   window.addEventListener('scroll', updateSettingsPosition, true)
 })
 onUnmounted(() => {
+  document.removeEventListener('mousedown', onSidebarPress, true)
   document.removeEventListener('click', closeAll)
   window.removeEventListener('focus', refreshTerminalVisibility)
   window.removeEventListener('resize', updateSettingsPosition)

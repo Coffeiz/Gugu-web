@@ -1,23 +1,29 @@
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePreferencesStore } from '@/stores/preferences'
 
 const toStageObj = (s: string | { label?: string; todos?: unknown[] }) => typeof s === 'string' ? { label: s, todos: [] } : { label: s.label ?? '', todos: s.todos ?? [] }
 
-const DEFAULT_TEMPLATES = [
-  { id: 'default_1', name: '标准流程',  stages: ['计划', '执行', '交付'].map(toStageObj) },
-  { id: 'default_2', name: '插画流程',  stages: ['草稿', '线稿', '上色', '交付'].map(toStageObj) },
-  { id: 'default_3', name: '动画流程',  stages: ['分镜', '原画', '动画', '后期', '交付'].map(toStageObj) },
-]
-
 export function useStageTemplates() {
   const prefs = usePreferencesStore()
+  const { t } = useI18n()
+
+  const defaultTemplates = computed(() => [
+    { id: 'default_1', name: t('projects.templateStandard'), stages: [t('projects.defaultPlan'), t('projects.defaultExecution'), t('projects.defaultDelivery')].map(toStageObj) },
+    { id: 'default_2', name: t('projects.templateIllustration'), stages: [t('projects.stageDraft'), t('projects.stageLineart'), t('projects.stageColoring'), t('projects.defaultDelivery')].map(toStageObj) },
+    { id: 'default_3', name: t('projects.templateAnimation'), stages: [t('projects.stageStoryboard'), t('projects.stageKeyAnimation'), t('projects.stageAnimation'), t('projects.stagePostProduction'), t('projects.defaultDelivery')].map(toStageObj) },
+  ])
 
   const templates = computed(() =>
-    prefs.stageTemplates.length ? prefs.stageTemplates : DEFAULT_TEMPLATES
+    prefs.stageTemplates.length ? prefs.stageTemplates : defaultTemplates.value
   )
 
   function _current() {
-    return prefs.stageTemplates.length ? [...prefs.stageTemplates] : [...DEFAULT_TEMPLATES]
+    if (prefs.stageTemplates.length) return [...prefs.stageTemplates]
+    return defaultTemplates.value.map(template => ({
+      ...template,
+      stages: template.stages.map(stage => ({ ...stage, todos: [...(stage.todos ?? [])] })),
+    }))
   }
 
   function applyTemplate(id: string) {

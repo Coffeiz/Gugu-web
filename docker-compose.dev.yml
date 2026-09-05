@@ -1,4 +1,4 @@
-# 本地/开发一键起全栈用的 Compose 文件；普通用户请使用根目录的 Preview Compose。
+# 本地/开发一键起全栈用的 Compose 文件；普通用户请使用根目录的默认 Compose。
 # 生产环境请使用 docker-compose.prod.yml 或独立的生产部署方案。
 
 name: gugu-web-compose
@@ -24,7 +24,7 @@ x-json-file-logging: &json-file-logging
 services:
   postgres:
     logging: *json-file-logging
-    image: postgres:latest
+    image: postgres:18
     environment:
       POSTGRES_USER: ${GUGU_DB_USER:-gugu}
       POSTGRES_PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
@@ -32,7 +32,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gugu -d gugu"]
       interval: 5s
@@ -369,8 +369,8 @@ services:
   frontend:
     logging: *json-file-logging
     build:
-      context: ..
-      dockerfile: Gugu-web/frontend/Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     ports:
       - "9595:5173"   # 宿主机 9595 → 容器内 vite dev server 仍然是 5173，容器内部端口不用改
     environment:

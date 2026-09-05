@@ -46,6 +46,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import { nextZ } from '@/composables/core/windowz'
 import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
@@ -179,11 +180,15 @@ function onFocus() {
 
 function close() { open.value = false }
 
+// 拖选保护：面板内拖选文字移出后松开，click 落在外面，不能因此误关
+const pressGuard = createPressOutsideGuard((t: Node) =>
+  !!(wrapEl.value?.contains(t) || panelEl.value?.contains(t)))
+function onDocPress(e: MouseEvent) { pressGuard.notePress(e) }
+
 function onDocClick(e: MouseEvent) {
   // 面板已 Teleport 到 body，点击命中输入框或面板都不关
-  const inWrap  = wrapEl.value?.contains(e.target as Node)
-  const inPanel = panelEl.value?.contains(e.target as Node)
-  if (!inWrap && !inPanel) close()
+  if (!pressGuard.shouldCloseOn(e)) return
+  close()
 }
 
 function onReposition() {
@@ -191,11 +196,13 @@ function onReposition() {
 }
 
 onMounted(() => {
+  document.addEventListener('mousedown', onDocPress, true)
   document.addEventListener('click', onDocClick)
   window.addEventListener('resize', onReposition)
   window.addEventListener('scroll', onReposition, true)
 })
 onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocPress, true)
   document.removeEventListener('click', onDocClick)
   window.removeEventListener('resize', onReposition)
   window.removeEventListener('scroll', onReposition, true)

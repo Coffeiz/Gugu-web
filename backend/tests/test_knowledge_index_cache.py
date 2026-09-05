@@ -22,6 +22,7 @@ def _document(user_id: str, content: str, version: str) -> IndexDocument:
 def _use_fake_sidecar(monkeypatch):
     """缓存测试只验证 revision/owner 隔离，不启动真实 TS worker。"""
     from agent.rag.models import RecallResult
+    from agent.rag.ts_sidecar import SidecarRequestTiming
 
     class FakeSidecar:
         def __init__(self, *_args, **_kwargs):
@@ -41,6 +42,17 @@ def _use_fake_sidecar(monkeypatch):
                 if (not source_types or document.source_type in set(source_types))
                 and needle in (document.title + document.summary + document.content).casefold()
             ]
+
+        async def search_with_timing(
+            self, query, *, documents, source_types=(), scope=None, limit=10, **_kwargs
+        ):
+            return await self.search(
+                query,
+                documents=documents,
+                source_types=source_types,
+                scope=scope,
+                limit=limit,
+            ), SidecarRequestTiming()
 
         async def close(self):
             return None

@@ -110,6 +110,7 @@ import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
+import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -124,6 +125,8 @@ const videoSrc   = ref<string | null>(null)
 const loading    = ref(false)
 const converting = ref(false)
 const error      = ref<string | null>(null)
+const previewBlobCache = usePreviewBlobCache()
+const currentCacheKey = ref('')
 
 const isImage  = computed(() => isImageExt(props.file?.ext))
 const isText   = computed(() => isTextExt(props.file?.ext))
@@ -146,12 +149,15 @@ const EXT_COLORS: Record<string, string> = {
 const extColor = ref('#7b7fb2')
 
 function revoke() {
-  if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  blobUrl.value = null
   videoSrc.value = null
+  currentCacheKey.value = ''
 }
 
 async function load(file: Partial<FileMeta>, refresh = false) {
   revoke()
+  currentCacheKey.value = ''   // 先按旧 key 判定上一个 blob 是否在缓存里，再清掉防串位
   loading.value    = true
   converting.value = false
   error.value      = null
@@ -179,6 +185,12 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       blobUrl.value = URL.createObjectURL(blob)
     } else {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
+      const key = previewBlobCache.keyOf(file)
+      currentCacheKey.value = bust ? '' : key
+      if (!bust) {
+        const cached = previewBlobCache.get(key)
+        if (cached) { blobUrl.value = cached; return }
+      }
       const dlUrl = (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
         : `${BASE_URL}/files/${file.id!}/download`) + bust
@@ -189,7 +201,11 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       if (file.ext?.toUpperCase() === 'PDF' && blob.type !== 'application/pdf') {
         blob = new Blob([blob], { type: 'application/pdf' })
       }
-      blobUrl.value = URL.createObjectURL(blob)
+      const url = URL.createObjectURL(blob)
+      blobUrl.value = url
+      // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
+      previewBlobCache.put(key, url)
+      currentCacheKey.value = key
     }
   } catch (e) {
     error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })

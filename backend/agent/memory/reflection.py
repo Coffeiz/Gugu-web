@@ -162,6 +162,22 @@ async def _read_last_turn(user_id, session_id=None) -> dict | None:
         return None
 
 
+async def _bind_user_model(user_id, settings):
+    """在独立反思任务内解析并绑定用户模型，避免依赖父任务上下文继承。"""
+    from app.db import session as db_session
+    from agent.llm import modelctx
+    from agent.llm.llm_select import resolve_run_config_for_user
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        raise RuntimeError("reflection model binding requires database session")
+    async with db_session._SessionLocal() as db:
+        run_config = await resolve_run_config_for_user(settings, db, user_id, None)
+    modelctx.mark_user_scope()
+    modelctx.set_model_cfg(run_config.model)
+    return run_config.model
+
+
 async def _write_last_turn(user_id, user_msg: str, assistant_reply: str, session_id=None) -> None:
     """把本轮存为「上一轮」缓存（带 session_id 供下轮判延续;截断防膨胀;TTL 24h 陈旧上限）。永不抛。"""
     try:
@@ -377,11 +393,17 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
     }]
     prev_turn = await _read_last_turn(user_id, session_id)   # 上一轮（判 feedback），换会话/过期 → None
     try:
+        # 反思既可能由主 Runner 派生，也可能由 IM 被动消息/延迟批处理独立创建。
+        # 后者不能依赖父任务的 ContextVar 继承；在真正调用分支模型前按用户重新解析
+        # 并绑定 BYOK，解析失败则跳过本次反思，不能静默烧平台额度。
+        await _bind_user_model(user_id, settings)
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
         out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"], existing_summary,
                              settings, prev_turn=prev_turn)
-    except Exception:
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.model_binding", exc)
         out = None
     # 无论 extract 成败，都把本轮存为「上一轮」缓存（带 session_id，下轮据此判是否延续）
     last = turns[-1]

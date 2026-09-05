@@ -241,6 +241,7 @@ class ProjectRetriever:
             f"project:{query_scope.key()}",
             lambda: self.adapter.build_documents(scope=query_scope),
         )
+        document_load_ms = int((time.monotonic() - load_started) * 1000)
         search_metadata = {}
         try:
             results = await search_documents_with_cache(
@@ -260,7 +261,7 @@ class ProjectRetriever:
             candidate_count=len(documents),
             metadata={
                 **{key: str(value) for key, value in search_metadata.items()},
-                "document_load_ms": str(int((time.monotonic() - load_started) * 1000)),
+                "document_load_ms": str(document_load_ms),
                 "fusion": "bm25",
             },
         )
@@ -491,7 +492,9 @@ class UnifiedRecallService:
                 else sum(int(batch.metadata.get("cache_entries", "0")) for batch in batches)
             ),
             "cache_miss_reasons": cache_miss_reasons,
-            "sidecar_reused": bool(sidecar_values) and all(sidecar_values),
+            # 没有执行 reuse_if_current 时不应伪造 false；false 只表示实际检查过
+            # 且确认未复用，None 表示本轮没有发生 restore/reuse 判断。
+            "sidecar_reused": None if not sidecar_values else all(sidecar_values),
             "index_sync": index_syncs[-1] if index_syncs else None,
             "upsert_count": upsert_count,
             "delete_count": delete_count,

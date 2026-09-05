@@ -44,7 +44,11 @@ WORKDIR /app
 ARG PIP_INDEX_URL=https://pypi.org/simple
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -i "${PIP_INDEX_URL}" -r requirements.txt
+    pip install -i "${PIP_INDEX_URL}" -r requirements.txt \
+    && pip install --no-cache-dir --upgrade --force-reinstall \
+        -i "${PIP_INDEX_URL}" \
+        "msgpack==1.2.2" "setuptools==84.0.0" \
+    && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 COPY . .
 RUN mkdir -p logs

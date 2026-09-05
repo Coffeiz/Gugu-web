@@ -1,6 +1,8 @@
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { useFilesCacheStore } from '@/stores/filesCache'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import type { Router } from 'vue-router'
 import { i18n } from '@/i18n'
@@ -39,7 +41,22 @@ export function useChatActions(options: {
     } catch (e) { /* 刷新失败不影响对话 */ }
   }
 
-  function onChatActionClick(e: MouseEvent) {
+  // 咕咕文件链接统一处理：能预览就直接开预览窗（与附件胶囊一致）；
+  // 预览不了（非白名单类型/已删除）才退回跳文件库定位。
+  // 咕咕实际会发两种格式：gugu://open-file/<id> 和 gugu://open-object/file/<id>，都接。
+  async function openFileFromLink(id: number) {
+    const filesCache = useFilesCacheStore()
+    if (!filesCache.loaded) await filesCache.load()
+    const f = filesCache.allFiles.find(item => item.id === id)
+    if (f && isPreviewable(f.ext)) {
+      usePreviewStore().open(f)
+      return
+    }
+    uiStore.pendingFileTarget = { kind: 'file', id }
+    options.router.push('/files')
+  }
+
+  async function onChatActionClick(e: MouseEvent) {
     // 代码块「复制」按钮：渲染时不写内联 onclick（DOMPurify 会剥掉 on*），这里事件委托兜住
     const target = e.target as HTMLElement
     const btn = target.closest?.('.md-copy-btn') as HTMLElement | null
@@ -64,10 +81,9 @@ export function useChatActions(options: {
     const href = a.getAttribute('href') || ''
     const mBind = href.match(/^gugu:\/\/bind-im\/([a-z]+)/i)
     if (mBind) { options.onBindPlatform(mBind[1]); return }
-    const mFile = href.match(/^gugu:\/\/open-file\/(\d+)/i)
+    const mFile = href.match(/^gugu:\/\/open-file\/(\d+)/i) || href.match(/^gugu:\/\/open-object\/file\/(\d+)$/i)
     if (mFile) {
-      uiStore.pendingFileTarget = { kind: 'file', id: parseInt(mFile[1]) }
-      options.router.push('/files')
+      await openFileFromLink(parseInt(mFile[1]))
       return
     }
     const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)

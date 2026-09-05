@@ -111,7 +111,7 @@ function toggleLeadMenu(i: number) {
 }
 function pickLead(min: number) {
   const item = props.form.reminders.value[leadMenuIndex.value]
-  if (item) item.leadMin = min
+  if (item && !props.form.reminders.value.some(r => r !== item && r.leadMin === min)) item.leadMin = min
   closeLeadMenu()
 }
 function closeLeadMenu() { leadMenuIndex.value = -1 }

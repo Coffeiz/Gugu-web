@@ -572,7 +572,9 @@ async def download_file(
     return Response(
         content=result.content,
         media_type=result.file.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        # 图片等预览场景会反复打开同一文件；短 TTL 让浏览器缓存，避免每次全量重新下载。
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+                 "Cache-Control": "private, max-age=300"},
     )
 
 

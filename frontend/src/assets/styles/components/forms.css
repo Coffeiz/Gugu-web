@@ -28,7 +28,8 @@
 
 /* 所有普通文本输入共享同一行高，避免固定高度与默认 padding 叠加后裁切字母下沿。 */
 :where(input[type='text'], input[type='email'], input[type='password'], input[type='number'], input[type='search'], input[type='url'], input:not([type]), select) {
-  line-height: var(--line-height-ui);
+  /* 使用正文行高给输入文字留出字母下伸部空间，避免 g、p、q 等字符被控件内容区裁切。 */
+  line-height: var(--line-height-body);
   vertical-align: middle;
 }
 .form-input:focus {

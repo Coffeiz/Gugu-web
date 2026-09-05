@@ -57,6 +57,7 @@ class KnowledgeAdapter:
             for query_scope in query_scopes
         ])
         documents = [document for documents_for_scope in document_sets for document in documents_for_scope]
+        document_load_ms = int((asyncio.get_running_loop().time() - load_started) * 1000)
         if not documents:
             return RetrievalBatch(
                 source_type=self.source_type, results=(),
@@ -92,7 +93,7 @@ class KnowledgeAdapter:
             candidate_count=len(documents),
             metadata={
                 **{key: str(value) for key, value in diagnostics.items()},
-                "document_load_ms": str(int((asyncio.get_running_loop().time() - load_started) * 1000)),
+                "document_load_ms": str(document_load_ms),
                 "fusion": fusion,
             },
         )

@@ -879,8 +879,10 @@ async def dispatch_im_message(payload: dict):
     if platform == "qq" and payload.get("chat_type") == "c2c":
         from agent.im.message_format import resolve_private_streaming_enabled
         qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
-        # 流消息结束前 QQ 不稳定展示 Inline Keyboard；有交互时改走 collect。
-        if qq_private_streaming and show_tool_interactions:
+        # 交互可能在任意工具 round 中途产生。QQ 流消息在 Agent 等待交互时尚未
+        # 收尾，客户端通常不会展示另一条 Inline Keyboard；必须统一走 collect，
+        # 才能在 Runner 阻塞等待前把按钮发出去。工具状态开关不能影响这个必需交互。
+        if qq_private_streaming:
             qq_private_streaming = False
     async def _show_tool_event(event: dict) -> None:
         """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
@@ -914,8 +916,6 @@ async def dispatch_im_message(payload: dict):
         # ask_user 会让 Runner 等待用户选择；typing 不能持续到下一条消息，
         # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
         await stop_im_typing(activity)
-        if platform == "qq" and qq_private_streaming:
-            return
         try:
             await _send_interaction_prompts(payload, [interaction])
         except Exception as exc:
@@ -1027,9 +1027,9 @@ async def dispatch_im_message(payload: dict):
         await finalize_im_response(platform, puid, True, "")
         return resp
 
-    # 工具交互是独立展示层：关闭时仍执行工具、保存历史和完成确认，只跳过 IM 展示。
-    show_interactions = show_tool_interactions
-    if resp.interactions and (show_interactions or any(item.get("force_display") for item in resp.interactions)):
+    # 工具状态消息仍受 show_tool_interactions 控制；但交互提示是恢复 Runner 所必需
+    # 的用户输入，不能因关闭工具状态展示而被吞掉。
+    if resp.interactions:
         pending_interactions = [
             item for item in resp.interactions
             if item.get("prompt_id") not in shown_interaction_ids

@@ -11,6 +11,8 @@ from agent.rag.ts_sidecar import (
     _rank_clients,
     _take_idle_sidecars,
     _worker_document_key,
+    SidecarRequestResult,
+    SidecarRequestTiming,
 )
 
 
@@ -92,3 +94,31 @@ async def test_sidecar_reaper_handles_owner_registry_and_shared_rank_client():
     finally:
         _lexical_clients.pop(loop, None)
         _rank_clients.pop(loop, None)
+
+
+@pytest.mark.asyncio
+async def test_search_returns_request_local_timing_for_shared_client(monkeypatch):
+    """并发来源读取同一 owner worker 时，诊断计时不能从共享 last_* 回读。"""
+    client = TsSidecarClient("test-owner", command="")
+    document = IndexDocument("project:1", "project", "1", Scope("test-owner"), "标题", "", "正文", "v1")
+    key = _worker_document_key(document)
+
+    async def fake_request(payload):
+        query = payload["query"]
+        return SidecarRequestResult(
+            {"results": [{"id": key, "score": 1}]},
+            SidecarRequestTiming(
+                queue_wait_ms=11 if query == "first" else 22,
+                query_ms=111 if query == "first" else 222,
+            ),
+        )
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    documents = {key: document}
+    first, second = await asyncio.gather(
+        client.search_with_timing("first", documents=documents),
+        client.search_with_timing("second", documents=documents),
+    )
+
+    assert first[1] == SidecarRequestTiming(queue_wait_ms=11, query_ms=111)
+    assert second[1] == SidecarRequestTiming(queue_wait_ms=22, query_ms=222)

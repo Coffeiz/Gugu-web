@@ -276,7 +276,8 @@ async def attachment_download(
     return Response(
         content=data,
         media_type=meta.get("mime") or "application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
+                 "Cache-Control": "private, max-age=300"},
     )
 
 

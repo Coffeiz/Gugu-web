@@ -20,7 +20,7 @@ env:
 
 jobs:
   compose-validate:
-    name: Validate production Compose
+    name: Validate Compose files
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,6 +36,9 @@ jobs:
           GUGU_ADMIN_PASSWORD: ci-only-admin-password
         run: |
           touch backend/.env
+          GUGU_WEB_IMAGE=coffeiz/gugu-web:ci \
+            GUGU_DATA_HOST_DIR=/tmp/gugu-data \
+            docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.prod.yml config --quiet
 
       - name: Validate update manifest schema
@@ -78,6 +81,21 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
+      - name: Build default Compose image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: gugu-web:ci
+          cache-from: type=gha,scope=default-compose
+          cache-to: type=gha,mode=max,scope=default-compose
+
+      - name: Smoke test TS RAG worker
+        run: docker run --rm --entrypoint node gugu-web:ci bin/gugu-rag-ts-worker.mjs --version
+
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
       # SBOM 会导致误报已修复的漏洞（v1.0.2 曾因此报 msgpack 1.1.2/setuptools 70.3.0，
@@ -103,6 +121,19 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
+
+      - name: Scan default Compose image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: gugu-web:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          # 默认一体化镜像把 Python 依赖安装在 /opt/venv；排除 pip 自带的
+          # vendored SBOM，避免把其中记录的旧版本误判为应用依赖。基础镜像
+          # 自带的 /usr/local pip 也包含同一份内部依赖清单。
+          skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
 
   publish:
     name: Publish GHCR and Docker Hub release
@@ -131,6 +162,11 @@ jobs:
             echo '::error::版本 tag 必须符合 v<major>.<minor>.<patch>'; exit 1;
           }
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'is_stable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'is_stable=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -189,6 +225,34 @@ jobs:
           # 依赖层更新后可能仍是旧内容，trivy 扫描会优先读取 attestation 里的过期
           # 包清单，导致发布扫描误报已修复的漏洞（如 msgpack 1.1.2）。
 
+      - name: Build and push default Compose image
+        id: app-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_REPOSITORY }}:${{ github.sha }}
+            ${{ env.DOCKERHUB_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
+            ${{ env.DOCKERHUB_IMAGE_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha,scope=default-compose
+          cache-to: type=gha,mode=max,scope=default-compose
+          provenance: mode=max
+          # 不附加 SBOM attestation，避免 gha cache 中的旧清单被发布扫描优先消费。
+
+      - name: Tag stable image as latest
+        if: steps.version.outputs.is_stable == 'true'
+        env:
+          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_REPOSITORY}:latest" \
+            --tag "${DOCKERHUB_IMAGE_REPOSITORY}:latest" \
+            "${IMAGE_REPOSITORY}@${APP_DIGEST}"
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
 
@@ -196,11 +260,14 @@ jobs:
         env:
           BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
           FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
+          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
         run: |
           cosign sign --yes "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
           cosign sign --yes "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
+          cosign sign --yes "${IMAGE_REPOSITORY}@${APP_DIGEST}"
+          cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
 
       # 安全门已前移到 docker-build job（扫本地加载镜像的真实文件系统）。
       # 此处不扫 registry 引用：trivy 会优先消费 registry 侧可关联的第三方 SBOM
@@ -273,12 +340,14 @@ jobs:
           TAG: ${{ steps.version.outputs.version }}
           BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
           FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
+          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
         run: |
           {
             echo '### Docker 发布完成'
             echo "- 版本：$TAG"
             echo "- backend digest：$BACKEND_DIGEST"
             echo "- frontend digest：$FRONTEND_DIGEST"
+            echo "- default Compose app digest：$APP_DIGEST"
             echo '- 架构：linux/amd64'
             echo '- manifest：GitHub Release 资产'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -91,6 +91,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import { nextZ, registerPopover } from '@/composables/core/windowz'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { useI18n } from 'vue-i18n'
@@ -252,6 +253,7 @@ function toggle() {
 
 function onClickOutside(e: MouseEvent) {
   if (!open.value) return
+  if (!pressGuard.shouldCloseOn(e)) return
   if (wrapRef.value?.contains(e.target as Node)) return
   if (popupRef.value?.contains(e.target as Node)) return
   open.value = false
@@ -266,9 +268,18 @@ watch(open, v => {
     : null
 })
 
-onMounted(() => document.addEventListener('click', onClickOutside, true))
+// 拖选保护：弹层内拖选文字移出后松开，click 落在外面，不能因此误关
+const pressGuard = createPressOutsideGuard((t: Node) =>
+  !!(wrapRef.value?.contains(t) || popupRef.value?.contains(t)))
+function onDocPress(e: MouseEvent) { pressGuard.notePress(e) }
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDocPress, true)
+  document.addEventListener('click', onClickOutside, true)
+})
 onUnmounted(() => {
   unregisterPopover?.()
+  document.removeEventListener('mousedown', onDocPress, true)
   document.removeEventListener('click', onClickOutside, true)
 })
 

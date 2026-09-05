@@ -38,6 +38,18 @@ setup('使用测试账号登录', async ({ page }) => {
   expect(response.ok(), `登录接口返回 ${response.status()}: ${await response.text()}`).toBeTruthy()
   await expect(page).not.toHaveURL(/\/login/)
 
+  // 终端入口同时受管理员总开关和用户级偏好控制；E2E 测试账号需要显式打开
+  // 用户级工作区 Shell，不能依赖账号之前是否手动配置过该偏好。
+  const token = await page.evaluate(() => localStorage.getItem('user_token'))
+  const shellPreferenceResponse = await page.request.patch('/api/v1/preferences', {
+    headers: { Authorization: `Bearer ${token ?? ''}` },
+    data: { shellEnabled: true },
+  })
+  expect(
+    shellPreferenceResponse.ok(),
+    `E2E 测试账号开启 Shell 失败 ${shellPreferenceResponse.status()}: ${await shellPreferenceResponse.text()}`,
+  ).toBeTruthy()
+
   // 新测试用户默认会显示首次设置向导；稳定路径需要从实际业务页面开始，不能让
   // 向导遮住后续页面。CI 冷启动时引导状态请求可能晚于登录跳转，给它完整的
   // 应用启动窗口；按钮文案随用户语言变化，因此按三种支持语言统一处理。

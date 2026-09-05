@@ -5,6 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.6] - 2026-09-04
+
+### 改进
+
+- **一键部署**：默认 Compose 改为拉取包含前端、Nginx、Uvicorn、worker 和 IM gateway 的单容器镜像，PostgreSQL、Redis 与搜索服务仍独立运行。
+- **部署配置**：清理不再使用的 Preview Compose 入口，保留默认单容器、Dev 和 Prod 三条清晰路径；默认 Compose 支持沙盒 egress 网络自定义。
+- **运行时依赖**：刷新自有镜像基础依赖，并将 LoopScope 的 `better-sqlite3` 更新到兼容 Node 22+ 的 13.0.3。
+
+### 修复
+
+- **静态资源访问**：修复默认 Compose 单容器镜像中 logo、字体等构建产物权限过严导致 Nginx 返回 403 的问题。
+
 ## [1.0.5] - 2026-09-04
 
 ### 修复
