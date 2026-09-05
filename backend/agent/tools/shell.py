@@ -169,7 +169,8 @@ async def _run_shell(db, user_id, args: dict):
                 return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "confirmation_required"}
         egress_authorized = True
         egress_expires_at = time.time() + egress_ttl
-    if decision.needs_confirmation and not (egress_authorized and _can_use_shell_lease(command)):
+    script_authorized = args.get("_script_authorized") is True
+    if decision.needs_confirmation and not script_authorized and not (egress_authorized and _can_use_shell_lease(command)):
         shell_lease = _can_use_shell_lease(command)
         confirmation_summary = (
             f"允许当前会话在 {decision.scope.value} 范围执行受限 Shell 操作（30分钟）"
@@ -411,6 +412,9 @@ async def _run_script(db, user_id, args: dict):
     if policy is None:
         return {"error": "脚本只能在有效的 Agent Session 或定时任务上下文中执行"}
 
+    subject = current_dispatch_filesystem_subject() or {}
+    subject_type = str(subject.get("subject_type") or "session")
+
     root_name = str(args.get("root") or "workspace").strip().lower()
     if root_name not in _SCRIPT_ROOT_PREFIX:
         return {"error": "root 只能是 workspace、personal 或 project"}
@@ -447,6 +451,17 @@ async def _run_script(db, user_id, args: dict):
         return {"error": "args 必须是最多 32 个字符串的数组"}
     if any(not isinstance(value, str) or any(char in _SCRIPT_META for char in value) for value in raw_args):
         return {"error": "脚本参数不得包含 Shell 控制字符"}
+    if subject_type != "scheduled_task":
+        blocked = confirm.needs_confirmation(
+            args,
+            f"允许当前会话执行沙盒脚本：{root_name}/{relative.as_posix()}",
+            user_id,
+            identity=f"run-script:{current_dispatch_session_id()}:{root_name}",
+            ttl_minutes=5,
+            instruction="脚本可能修改沙盒文件；用户确认后才会执行。请直接重新调用本工具，无需携带确认凭证。",
+        )
+        if blocked is not None:
+            return {"error": blocked, "_audit_event": "confirmation_required"}
     command = " ".join([interpreter, shlex.quote(script_arg), *(shlex.quote(value) for value in raw_args)])
     return await _run_shell(db, user_id, {
         "command": command,
@@ -454,6 +469,7 @@ async def _run_script(db, user_id, args: dict):
         "timeout": args.get("timeout", 30),
         "max_output_chars": args.get("max_output_chars", 12_000),
         "network": "none",
+        "_script_authorized": subject_type != "scheduled_task",
         "_session_id": args.get("_session_id") or current_dispatch_session_id(),
     })
 

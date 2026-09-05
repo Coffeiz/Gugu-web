@@ -58,6 +58,20 @@ async def test_put_preserves_existing_file_metadata(tmp_path):
     assert await storage.get("u/workspace/doc.txt") == b"new"
 
 
+async def test_put_updates_existing_file_mtime(tmp_path):
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put("u/workspace/doc.txt", b"old")
+    path = tmp_path / "u/workspace/doc.txt"
+    before = os.stat(path, follow_symlinks=False).st_mtime_ns
+    os.utime(path, ns=(before - 5_000_000_000, before - 5_000_000_000))
+    before = os.stat(path, follow_symlinks=False).st_mtime_ns
+
+    await storage.put("u/workspace/doc.txt", b"new")
+
+    after = os.stat(path, follow_symlinks=False).st_mtime_ns
+    assert after > before
+
+
 async def test_put_new_file_uses_shared_mode(tmp_path):
     storage = LocalStorageBackend(tmp_path)
 

@@ -157,6 +157,43 @@ class DockerSandboxExecutor:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
         return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
 
+    def _host_path_for_container_value(self, value: str) -> Path | None:
+        """把沙盒虚拟挂载路径映射到宿主路径，仅供解释器输入预检使用。"""
+        mounts = (
+            ("/workspace", self.root),
+            ("/personal", self.personal_root),
+            ("/project", self.project_root),
+        )
+        for prefix, host_root in mounts:
+            if host_root is None or not (value == prefix or value.startswith(prefix + "/")):
+                continue
+            suffix = value[len(prefix):].lstrip("/")
+            return host_root / suffix
+        return None
+
+    def _validate_container_interpreter_inputs(self, argv: list[str]) -> None:
+        """禁止普通 Shell 通过容器虚拟路径把沙盒脚本交给解释器。"""
+        interpreter_indexes = [
+            index for index, value in enumerate(argv)
+            if Path(value).name.lower() in {
+                "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
+                "ruby", "sed", "sh", "zsh",
+            }
+        ]
+        if not interpreter_indexes:
+            return
+        if any(
+            flag in argv[index + 1:]
+            for index in interpreter_indexes
+            for flag in ("-c", "--command", "-e", "--eval", "--execute", "--expression")
+        ):
+            raise ValueError("禁止通过解释器执行 inline/eval 代码")
+        for raw_value in argv[1:]:
+            value = raw_value.split("=", 1)[1] if "=" in raw_value else raw_value
+            host_path = self._host_path_for_container_value(value)
+            if host_path is not None and host_path.is_file():
+                raise ValueError("禁止将沙盒文件直接交给解释器执行")
+
     def build_argv(
         self,
         command: str,
@@ -167,6 +204,7 @@ class DockerSandboxExecutor:
     ) -> list[str]:
         argv = LocalWorkspaceExecutor._parse_command(command)
         workdir = self._resolve_cwd(cwd)
+        self._validate_container_interpreter_inputs(argv)
         LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
             argv, workdir,
             allowed_absolute_paths=tuple(
@@ -239,26 +277,9 @@ class DockerSandboxExecutor:
         # 当作制表符回显，无法提供传统 CLI 的命令和路径补全。
         # --norc 会跳过用户配置；临时 inputrc 放在容器 tmpfs 中，确保 Bash
         # 真正开启 bracketed paste，避免浏览器粘贴多行内容时逐行执行。
-        runtime_gate = "" if (getattr(self.settings, "code_execution_enabled", True) if code_execution_enabled is None else code_execution_enabled) else r'''
-_gugu_code_runtime_disabled() {
-    printf '%s\n' '管理员未开启代码运行环境，当前禁止使用 Python、Node 等运行时。' >&2
-    return 126
-}
-python() { _gugu_code_runtime_disabled; }
-python3() { _gugu_code_runtime_disabled; }
-node() { _gugu_code_runtime_disabled; }
-npm() { _gugu_code_runtime_disabled; }
-npx() { _gugu_code_runtime_disabled; }
-pnpm() { _gugu_code_runtime_disabled; }
-yarn() { _gugu_code_runtime_disabled; }
-bun() { _gugu_code_runtime_disabled; }
-deno() { _gugu_code_runtime_disabled; }
-pip() { _gugu_code_runtime_disabled; }
-pip3() { _gugu_code_runtime_disabled; }
-uv() { _gugu_code_runtime_disabled; }
-pytest() { _gugu_code_runtime_disabled; }
-export -f _gugu_code_runtime_disabled python python3 node npm npx pnpm yarn bun deno pip pip3 uv pytest
-'''
+        runtime_enabled = getattr(self.settings, "code_execution_enabled", True) if code_execution_enabled is None else code_execution_enabled
+        if not runtime_enabled:
+            raise ValueError("代码运行环境已关闭，交互式 PTY 不可用")
         shell_command = r'''
 printf '%s\n' '$if Bash' 'set enable-bracketed-paste on' '$endif' > /tmp/gugu-inputrc
 export INPUTRC=/tmp/gugu-inputrc
@@ -341,9 +362,8 @@ cd() {
     builtin cd -- "$target"
 }
 export -f cd
-{runtime_gate}
 exec bash --noprofile --norc -i
-'''.replace("{runtime_gate}", runtime_gate).strip()
+'''.strip()
         argv = self.build_argv(
             "bash --noprofile --norc", cwd=cwd, network_profile=network_profile,
             container_name=container_name,

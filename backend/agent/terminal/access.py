@@ -74,6 +74,8 @@ async def pty_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
         return decision
     if configured_terminal_mode(get_settings()) == "pty_disabled":
         return TerminalAccessDecision(False, "交互式 PTY 已由管理员关闭", TerminalOperation.INPUT)
+    if not getattr(get_settings().sandbox, "code_execution_enabled", True):
+        return TerminalAccessDecision(False, "代码运行环境已关闭，交互式 PTY 不可用", TerminalOperation.INPUT)
     return TerminalAccessDecision(True, "允许使用交互式 PTY", TerminalOperation.INPUT)
 
 

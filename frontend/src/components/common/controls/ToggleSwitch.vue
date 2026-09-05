@@ -15,6 +15,7 @@ const emit = defineEmits<{ (event: 'update:modelValue', value: boolean): void }>
 .toggle-switch--sm .toggle-knob { width:13px; height:13px; }
 .toggle-switch.on .toggle-knob { transform:translateX(16px); }
 .toggle-switch--sm.on .toggle-knob { transform:translateX(13px); }
+.toggle-switch:active:not(:disabled) { transform:none; opacity:1; }
 .toggle-switch:focus-visible { outline:2px solid var(--action-outline); outline-offset:2px; }
 .toggle-switch:disabled { opacity:.5; cursor:default; }
 </style>

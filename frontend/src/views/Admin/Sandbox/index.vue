@@ -5,9 +5,9 @@
         <h2 class="page-title">{{ t('adminSandbox.title') }}</h2>
         <p class="page-desc">{{ t('adminSandbox.description') }}</p>
       </div>
-      <button class="btn-primary" :disabled="loading || !canEnable" @click="toggleSandbox">
+      <ActionButton fit :disabled="loading || !canEnable" @click="toggleSandbox">
         {{ loading ? t('adminSandbox.working') : status.enabled ? t('adminSandbox.disable') : t('adminSandbox.enable') }}
-      </button>
+      </ActionButton>
     </div>
 
     <section class="section-wrap">
@@ -74,8 +74,8 @@
         <label class="egress-label" for="egress-proxy-url">{{ t('adminSandbox.proxyAddress') }}</label>
         <div class="egress-input-row">
           <input id="egress-proxy-url" v-model="proxyDraft" class="egress-input" type="url" inputmode="url" placeholder="http://egress-proxy:3128" autocomplete="off" />
-          <button type="button" class="btn-ghost" :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? t('adminSandbox.saving') : t('adminSandbox.saveProxy') }}</button>
-          <button type="button" class="btn-ghost" :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? t('adminSandbox.check') : t('adminSandbox.validate') }}</button>
+          <ActionButton variant="secondary" fit :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? t('adminSandbox.saving') : t('adminSandbox.saveProxy') }}</ActionButton>
+          <ActionButton variant="secondary" fit :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? t('adminSandbox.check') : t('adminSandbox.validate') }}</ActionButton>
         </div>
         <p class="egress-note">{{ t('adminSandbox.proxyHint') }}</p>
         <p v-if="egressMessage" class="action-message" :class="{ error: egressError }">{{ egressMessage }}</p>
@@ -85,7 +85,7 @@
       <div class="quota-editor">
         <label><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" /></label>
         <label><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" /></label>
-        <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><button type="button" class="btn-ghost" :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</button><button type="button" class="btn-primary" :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveQuota') }}</button></div>
+        <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><ActionButton variant="secondary" fit :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</ActionButton><ActionButton fit :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveQuota') }}</ActionButton></div>
       </div>
       </div>
     </section>
@@ -99,6 +99,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -183,22 +184,28 @@ async function saveQuotas() {
   finally { quotaSaving.value = false }
 }
 async function toggleEgress(enabled: boolean) {
+  const previousProfile = status.network_profile
+  status.network_profile = enabled ? 'egress' : 'none'
   egressSaving.value = true
   try {
     await configStore.saveConfig({ sandbox: { network_profile: enabled ? 'egress' : 'none' } })
     await loadStatus()
   } catch (cause) {
+    status.network_profile = previousProfile
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally { egressSaving.value = false }
 }
 
 async function toggleFilesystemAuthorization(enabled: boolean) {
+  const previousValue = status.filesystem_authorization_enabled
+  status.filesystem_authorization_enabled = enabled
   filesystemAuthorizationSaving.value = true
   try {
     await configStore.saveConfig({ sandbox: { filesystem_authorization_enabled: enabled } })
     if (configStore.saveError) throw new Error(configStore.saveError)
     await loadStatus()
   } catch (cause) {
+    status.filesystem_authorization_enabled = previousValue
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     filesystemAuthorizationSaving.value = false
@@ -206,12 +213,15 @@ async function toggleFilesystemAuthorization(enabled: boolean) {
 }
 
 async function toggleCodeExecution(enabled: boolean) {
+  const previousValue = status.code_execution_enabled
+  status.code_execution_enabled = enabled
   codeExecutionSaving.value = true
   try {
     await configStore.saveConfig({ sandbox: { code_execution_enabled: enabled } })
     if (configStore.saveError) throw new Error(configStore.saveError)
     await loadStatus()
   } catch (cause) {
+    status.code_execution_enabled = previousValue
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     codeExecutionSaving.value = false
@@ -305,12 +315,6 @@ onMounted(async () => {
 .page-title-block { display: flex; flex-direction: column; }
 .page-title { margin: 0; color: var(--content-primary); font-size: 22px; font-weight: 700; line-height: 1.2; }
 .page-desc { margin-top: 6px; color: var(--content-tertiary); font-size: 12px; }
-.btn-primary, .btn-ghost { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex-shrink: 0; min-height: 30px; padding: 6px 14px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.2; white-space: nowrap; cursor: pointer; }
-.btn-primary { margin-top: 1px; border: 0; background: var(--action-primary-bg); color: var(--content-on-accent); font-weight: 600; }
-.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
-.btn-ghost { border: 1px solid var(--border-subtle); background: var(--surface-glass); color: var(--content-secondary); }
-.btn-ghost:hover:not(:disabled) { background: var(--surface-glass-hover); color: var(--content-primary); }
-.btn-primary:disabled, .btn-ghost:disabled { cursor: default; opacity: .5; }
 .section-wrap { padding: 20px 36px 0; }
 .section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .section-label { color: var(--content-primary); font-size: 13px; font-weight: 600; }
@@ -329,6 +333,8 @@ h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700
 .config-row:last-of-type { border-bottom: 0; }
 .config-row strong { color: var(--content-secondary); font-size: 12px; font-weight: 600; }
 .config-row-switch { align-items: center; }
+/* 保存期间仍禁止重复点击，但保留开关的即时状态，不用 disabled 的半透明效果覆盖反馈。 */
+.config-row-switch :deep(.toggle-switch:disabled) { opacity: 1; }
 .config-row-copy { min-width: 0; }
 .config-row-copy small { display: block; margin-top: 4px; color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
 .config-row code { max-width: 72%; overflow: hidden; color: var(--content-secondary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -348,6 +354,6 @@ h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700
 .action-message.error { color: var(--status-danger); }
 .error-message { margin: 16px 36px 0; color: var(--status-danger); font-size: 12px; }
 @media (max-width: 760px) { .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
-@media (max-width: 520px) { .page-header { flex-direction: column; gap: 12px; } .btn-primary { align-self: flex-start; } }
+@media (max-width: 520px) { .page-header { flex-direction: column; gap: 12px; } .page-header .app-action-button { align-self: flex-start; } }
 @media (max-width: 620px) { .egress-input-row { align-items: stretch; flex-wrap: wrap; } .egress-input { flex-basis: 100%; } }
 </style>

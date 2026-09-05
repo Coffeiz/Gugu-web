@@ -103,6 +103,25 @@ async def test_terminal_policy_can_disable_pty_without_disabling_shell_terminal_
 
 
 @pytest.mark.asyncio
+async def test_code_execution_switch_disables_pty(db, user_a, monkeypatch):
+    monkeypatch.setattr(
+        terminal_access,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
+            sandbox=SimpleNamespace(enabled=True, terminal_mode="auto", code_execution_enabled=False),
+        ),
+    )
+    monkeypatch.setattr(terminal_access, "sandbox_readiness", lambda _settings: (True, "就绪"))
+    monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
+
+    decision = await pty_access(db, user_a.id)
+
+    assert not decision.allowed
+    assert decision.reason == "代码运行环境已关闭，交互式 PTY 不可用"
+
+
+@pytest.mark.asyncio
 async def test_terminal_entry_policy_hides_page_but_does_not_change_shell_executor(db, user_a, monkeypatch):
     monkeypatch.setattr(
         terminal_access,

@@ -201,6 +201,9 @@ class LocalStorageBackend(StorageBackend):
                         if (existing_stat.st_uid, existing_stat.st_gid) != (effective_uid, effective_gid):
                             raise
                 shutil.copystat(path, temporary, follow_symlinks=False)
+                # copystat 会复制旧 mtime，但覆盖写必须暴露本次写入时间，供 watcher、
+                # 增量备份和同步判断使用；权限、owner 与 ACL 仍保持旧文件语义。
+                os.utime(temporary, None, follow_symlinks=False)
             os.replace(temporary, path)
             try:
                 directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

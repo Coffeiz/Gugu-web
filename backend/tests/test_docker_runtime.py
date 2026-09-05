@@ -604,7 +604,7 @@ def test_docker_executor_builds_fixed_interactive_pty_argv(tmp_path):
     assert "--network=none" in argv
 
 
-def test_docker_executor_pty_blocks_common_code_runtimes_when_disabled(tmp_path):
+def test_docker_executor_pty_does_not_offer_runtime_gate_as_security_boundary(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 
     settings = SimpleNamespace(
@@ -619,11 +619,8 @@ def test_docker_executor_pty_blocks_common_code_runtimes_when_disabled(tmp_path)
         output_limit_bytes=12_000,
         code_execution_enabled=False,
     )
-    argv = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker").build_pty_argv()
-
-    assert "python3() { _gugu_code_runtime_disabled; }" in argv[-1]
-    assert "node() { _gugu_code_runtime_disabled; }" in argv[-1]
-    assert "export -f _gugu_code_runtime_disabled python python3" in argv[-1]
+    with pytest.raises(ValueError, match="交互式 PTY 不可用"):
+        DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker").build_pty_argv()
 
 
 def test_docker_executor_uses_one_image_reference_for_command_and_pty(tmp_path):

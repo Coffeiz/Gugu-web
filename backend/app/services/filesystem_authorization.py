@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import ConversationSession, FilesystemAuthorizationGrant, Folder, ScheduledTask
+from app.models import ConversationSession, FilesystemAuthorizationGrant, Folder, ScheduledTask, TerminalSessionRecord
 
 SUBJECT_SESSION = "session"
 SUBJECT_SCHEDULED_TASK = "scheduled_task"
@@ -302,6 +302,30 @@ async def revoke_session_filesystem_access(db: AsyncSession, user_id, session_id
         f"允许会话「{session.title or '当前会话'}」读写整个用户沙箱（包含 /workspace、/personal、/project）",
         identity=f"session:filesystem:{session.id}",
     )
+    terminal_rows = (await db.scalars(
+        select(TerminalSessionRecord).where(
+            TerminalSessionRecord.owner_id == user_id,
+            TerminalSessionRecord.session_id == session_id,
+            TerminalSessionRecord.mode == "interactive-pty",
+            TerminalSessionRecord.closed_at.is_(None),
+        )
+    )).all()
+    if terminal_rows:
+        from agent.terminal.runtime import get_pty_manager
+        manager = get_pty_manager()
+        for terminal in terminal_rows:
+            if manager.get(terminal.id) is not None:
+                try:
+                    await manager.terminate(terminal.id, force=True)
+                except LookupError:
+                    pass
+            terminal.status = "terminated"
+            terminal.pty_pid = None
+            terminal.pty_sandbox_id = None
+            terminal.pty_cols = None
+            terminal.pty_rows = None
+            terminal.closed_at = now_utc()
+            terminal.updated_at = now_utc()
     grant = await get_active_grant(db, user_id, subject_type=SUBJECT_SESSION, subject_id=session_id)
     if grant is None:
         return False
