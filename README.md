@@ -15,7 +15,7 @@
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [在线预览](https://www.gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [快速部署](docs/quick-deploy.md) ｜ [在线预览](https://www.gugugu.site)
 
 </div>
 
@@ -194,7 +194,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8000` 等容器内部地址写入邮件。
 
-管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
+管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/quick-deploy.md)。
 
 默认 Compose 会拉取一个包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像，不挂载源码，也不运行开发服务器；同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务。
 
@@ -239,7 +239,7 @@ README 只保留配置索引，完整变量和运行规则将在 `docs/configura
 | LoopScope | Agent 链路和性能观测 |
 | Sandbox | Shell 执行环境和网络出口 |
 
-部署细节见 [简版部署指南](docs/DEPLOY.md)，复杂的生产排障见 [运维部署文档](docs/ops/DEPLOY.md)。
+部署细节见 [简版部署指南](docs/quick-deploy.md)，复杂的生产排障见 [运维部署文档](docs/ops/deploy.md)。
 
 ## Workspace
 

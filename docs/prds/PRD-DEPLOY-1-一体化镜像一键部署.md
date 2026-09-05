@@ -3,7 +3,7 @@
 > 状态：🟡 Phase 2 实施完成（003–006）；本轮按用户要求只执行普通测试，不执行 E2E/Trivy；Trivy 改为合并前单独扫描，文档与发布衔接部分已实施（2026-09-04）
 > 创建：2026-09-04
 > 最近更新：2026-09-04
-> 关联模块：`Dockerfile`、`backend/Dockerfile.prod`、`frontend/Dockerfile.prod`、`docker-compose.yml`、`.env.example`、`frontend`（vite 构建链）、`backend/app/main.py`（静态托管）、`.github/workflows`（Docker release）、`README.md`、`README_en.md`、`docs/DEPLOY.md`
+> 关联模块：`Dockerfile`、`backend/Dockerfile.prod`、`frontend/Dockerfile.prod`、`docker-compose.yml`、`.env.example`、`frontend`（vite 构建链）、`backend/app/main.py`（静态托管）、`.github/workflows`（Docker release）、`README.md`、`README_en.md`、`docs/quick-deploy.md`
 > 背景参考：`PRD-ADMIN-2-Docker部署更新.md`（现有发布流水线）、`PRD-ARCH-6-轻量单机部署模式.md`（应用层 SQLite/无 Redis 轻量模式，与本文档的打包交付简化互补，不重叠）、`docs/ops/release.md` §5（现生产部署路径）
 
 ## 0. 实际状态
@@ -70,7 +70,7 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 ### FR-DEPLOY-006：文档更新
 
-`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`/data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/DEPLOY.md` 增补默认 Compose 单容器章节（变量表、升级、备份、沙盒 profile）。
+`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`/data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 单容器章节（变量表、升级、备份、沙盒 profile）。
 
 ## 3. 技术方案
 
@@ -152,5 +152,5 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 ### Phase 3：文档与发布衔接
 
-- [x] `DEPLOY1-007` 更新 `README.md`/`README_en.md` 一键部署说明与 `docs/DEPLOY.md` 默认 Compose 单容器章节；验收：中英文一致，amd64 限制、依赖前置、随机密码说明齐全。
+- [x] `DEPLOY1-007` 更新 `README.md`/`README_en.md` 一键部署说明与 `docs/quick-deploy.md` 默认 Compose 单容器章节；验收：中英文一致，amd64 限制、依赖前置、随机密码说明齐全。
 - [x] `DEPLOY1-008`（随 v1.0.6）Docker release 流水线增加默认单容器镜像构建推送与 `latest` tag；验收：tag 触发后 Docker Hub 出现 `gugu-web:<version>` 与 `latest`，README 一键命令可直接使用。

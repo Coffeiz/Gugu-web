@@ -34,7 +34,7 @@
 
 普通用户的生产 Shell 请求必须经过 `sandboxd -> DockerSandboxExecutor`，Docker 不可用时不会回退到宿主机执行器。默认容器使用 `network=none`，只挂载对应用户的沙盒/工作区，使用固定 digest 镜像、非 root 用户、只读 rootfs 和资源限制。
 
-Docker Compose 额外提供 `egress-proxy`（Squid）和内部网络 `gugu-sandbox-egress`。临时公网访问时，沙盒只加入这个内部网络并把 HTTP(S) 请求交给代理；代理连接默认网络访问公网，沙盒不能直接加入默认网络绕过代理。`sandboxd` 会在执行前检查代理、网络名、网络存在性和会话授权，Web/Worker 不持有 Docker socket。详细配置和运维步骤见 [`docs/ops/DEPLOY.md`](../ops/DEPLOY.md) 与 [Shell 沙盒 PRD](../product/PRD/PRD-SHELL-1-工作区Shell沙盒.md)。
+Docker Compose 额外提供 `egress-proxy`（Squid）和内部网络 `gugu-sandbox-egress`。临时公网访问时，沙盒只加入这个内部网络并把 HTTP(S) 请求交给代理；代理连接默认网络访问公网，沙盒不能直接加入默认网络绕过代理。`sandboxd` 会在执行前检查代理、网络名、网络存在性和会话授权，Web/Worker 不持有 Docker socket。详细配置和运维步骤见 [`docs/ops/deploy.md`](../ops/deploy.md) 与 [Shell 沙盒 PRD](../product/PRD/PRD-SHELL-1-工作区Shell沙盒.md)。
 
 ### 本文边界
 
