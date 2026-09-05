@@ -35,7 +35,7 @@ def _tool_label(tool_name: str) -> str:
     """读取工具注册表中的用户可见名称，历史恢复时与实时 SSE 保持一致。"""
     try:
         from agent.tools import registry
-        tool = registry.get(tool_name)
+        tool = registry.snapshot().get(tool_name)
         return str(tool.label if tool else tool_name)
     except Exception:
         # 历史数据可能包含已移除的旧工具；名称仍比丢失整条时间线更有用。

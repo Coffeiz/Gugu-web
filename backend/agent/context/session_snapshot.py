@@ -269,6 +269,8 @@ def initialize_snapshot(
             "tool_budget_unlimited_until",
             # 姿态正文已经进入 history 后，digest 是跨 snapshot 生命周期的去重水位。
             "stance_digest",
+            # 用户 Skill 目录随会话固定；正文由 use_skill 显式按需读取最新版本。
+            "user_skill_snapshot",
         )
         if key in previous_context
     }

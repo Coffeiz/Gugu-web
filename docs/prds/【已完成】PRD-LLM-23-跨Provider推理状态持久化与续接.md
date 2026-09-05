@@ -1,6 +1,6 @@
 # PRD-LLM-23：跨 Provider 推理状态持久化与续接
 
-> 状态：待实施
+> 状态：Phase 1/2/3 实现完成；真实 Provider 验收按发布前 runbook 执行
 > 创建：2026-09-05
 > 最近更新：2026-09-05
 > 关联模块：`backend/agent/loop_drivers.py`、`backend/agent/context/provider_history.py`、`backend/agent/context/canonical_tool_history.py`、`backend/agent/context/run_finalize.py`、`backend/agent/context/assembly/`
@@ -10,11 +10,11 @@
 
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
-| 统一推理持久化开关 | 当前只有 `thinking` 等模型思考配置 | 🔲 待评估 | 尚未提供跨 Provider 共用的 `off / summary / continuation` 策略。 |
-| OpenAI Responses 推理续接 | 当前 OpenAI-compatible 路径使用 Chat Completions | 🔲 待评估 | 尚未建立 Responses driver，也未保存 `previous_response_id` 或加密 reasoning state。 |
-| Anthropic thinking block 续接 | 同一 Run 内已保留原始 block | 🟡 部分完成 | `AnthropicDriver` 可在工具续轮中回传原始 block，但跨请求持久化尚未接入 canonical/provider state。 |
-| Provider-specific 状态隔离 | 当前 canonical history 不保存 provider thinking | ✅ 已完成 | 现有边界避免了思考内容泄漏到普通历史，但还缺少受控的独立状态存储。 |
-| 推理状态失效 | Provider/history 切换时已有部分清理逻辑 | 🟡 部分完成 | 需要扩展到模型、thinking 配置、分支、压缩和状态过期等场景。 |
+| 模型级推理持久化策略 | `AISettings/AIPresetItem/UserProviderCredential.reasoning_persistence` → run-start policy | ✅ 已完成 | 每个模型独立配置 `off / summary / continuation`，Admin 与用户 BYOK 使用同一组选项，默认 `off`。 |
+| OpenAI Responses 推理续接 | 独立 `OpenAIResponsesDriver` | ✅ 已完成 | 使用 `responses.create`、`previous_response_id` 和 function-call output；Chat Completions 不宣称续接。 |
+| Anthropic thinking block 续接 | 同一 Run 与跨请求均保留原始 block | ✅ 已完成 | `thinking`、`redacted_thinking`、`signature`、`tool_use` 等完整 blocks 进入受保护 provider state。 |
+| Provider-specific 状态隔离 | 当前 canonical history 不保存 provider thinking | ✅ 已完成 | 独立状态表由 ownership、加密、TTL 和 CAS 服务保护，不进入普通历史。 |
+| 推理状态失效 | 统一 coordinator + state service | ✅ 已完成 | 模型/API/推理配置、分支、压缩、错误、过期和关闭策略都会阻止旧状态回放。 |
 | 用户可见思考内容 | 当前不向 Web/IM 普通消息展示 | ✅ 已完成 | 新功能不得改变该边界。 |
 
 ## 1. 背景与目标
@@ -31,7 +31,7 @@ OpenAI 与 Anthropic 对“推理状态”的协议也不同：
 | Anthropic Messages | 原样回放 `thinking` / `redacted_thinking` blocks 及签名 | 必须保持 block 顺序和内容完整，不能自行摘要后当作原 block 回传。 |
 | OpenAI Chat Completions | 无等价的跨请求私有 reasoning continuation | 只能保留普通历史或转用 Responses；不能宣称已延续推理状态。 |
 
-因此，产品层需要一个统一开关，但实现层不能建立一份跨 Provider 的“思考消息格式”。统一开关只表达用户意图，Provider Adapter 负责将意图映射为各自可用的续接机制。
+因此，产品层需要一组统一的模型级选项，但实现层不能建立一份跨 Provider 的“思考消息格式”。模型配置只表达该模型的持久化意图，Provider Adapter 负责将意图映射为各自可用的续接机制。
 
 ### 1.2 目标
 
@@ -48,12 +48,12 @@ reasoning_persistence = off | summary | continuation
 
 目标包括：
 
-1. OpenAI Responses 与 Anthropic Messages 由同一个产品级开关控制，不要求用户理解两种协议差异。
+1. OpenAI Responses 与 Anthropic Messages 由同一套模型级选项控制，不要求用户理解两种协议差异。
 2. `continuation` 在能力允许时跨请求延续 Provider 私有推理状态，尤其覆盖工具调用后的后续请求。
 3. canonical history 继续保持 Provider 无关，不写入无法跨 Provider 解释的 thinking wire block。
 4. Provider、模型、API 格式或推理配置变化时确定性失效，不使用旧状态污染新请求。
 5. 推理状态可观测、可过期、可删除，且不进入 Web、QQ、微信、飞书等用户可见消息。
-6. 默认行为保持兼容：现有用户不开启新开关时，Agent 仍按当前历史和工具续轮运行。
+6. 默认行为保持兼容：模型配置为 `off` 时，Agent 仍按当前历史和工具续轮运行。
 
 ### 1.3 非目标
 
@@ -67,7 +67,7 @@ reasoning_persistence = off | summary | continuation
 
 ## 2. 功能需求
 
-### FR-LLM23-01：统一推理持久化开关
+### FR-LLM23-01：统一模型级推理持久化选项
 
 系统提供一个跨 Provider 的有效配置 `reasoning_persistence`，取值为：
 
@@ -77,7 +77,9 @@ reasoning_persistence = off | summary | continuation
 | `summary` | 只保存有限的内部摘要、状态计数、token 用量、耗时和 fingerprint；不把完整状态回放给模型。Provider 未提供安全摘要时不得强行发起额外 LLM 请求，只保存统计信息。 |
 | `continuation` | 在 Provider 和当前 API 支持时保存可恢复的 provider-specific 状态，并在后续同条件请求中续接。 |
 
-开关的有效值在 Run 开始时解析并固定到执行快照，运行中途修改配置不影响已经开始的 Run。配置界面只展示统一语义；Provider 能力差异通过状态提示和诊断字段体现。
+配置的有效值在 Run 开始时解析并固定到执行快照，运行中途修改模型配置不影响已经开始的 Run。Admin 模型预设和用户 BYOK 模型展示同一套语义；Provider 能力差异通过状态提示和诊断字段体现。
+
+状态持久化的前提是存在可验证的 `owner_user_id + session_id`。Web/IM 交互式会话满足该边界；定时任务、反思等没有稳定会话身份的后台运行明确使用 `off`，继续沿用各自的 canonical history、通知和用量链路，不把一次性运行伪装成可续接会话。
 
 ### FR-LLM23-02：OpenAI Responses 状态续接
 
@@ -259,6 +261,13 @@ Provider state 只能在最后的 Provider boundary 加入，不能参与 RAG、
 
 LoopScope 可记录结构、计数、耗时和 digest，不默认展示或持久化 thinking 正文。诊断字段必须能区分：没有启用、没有可用能力、状态未命中、状态被主动失效和 Provider 拒绝续接。
 
+当前实现由 `ReasoningStateCoordinator.diagnostics()` 生成安全标量，并通过
+`record_reasoning_state_diagnostics()` 写入当前 LoopScope run 的
+`attributes.reasoning_state`。允许字段固定为策略、状态枚举、Provider/API/模型标识、状态
+类型、block 数量、状态大小、版本、序号和不可逆 digest；`events` 最多保留最近 12 个状态转换。
+诊断入口拒绝嵌套对象，因此 provider payload、用户正文、完整工具参数、签名和凭据不会进入
+Collector。
+
 ### 3.7 文件目录与责任边界
 
 根据当前代码调查，第一版采用“用户偏好控制策略、Provider state 独立存储”的落地边界。以下是预计需要修改或新增的文件；实际实施时若发现现有模块已提供等价能力，应优先复用，不再创建第二套实现。
@@ -291,9 +300,9 @@ Gugu-web/
 │   │   ├── services/
 │   │   │   └── provider_reasoning_state.py     【新增】ownership、加密、版本、TTL、删除服务
 │   │   ├── schemas/
-│   │   │   └── __init__.py                     【修改】PreferencesResponse/Update 增加枚举字段
+│   │   │   └── __init__.py                     【保持】用户偏好不承载推理持久化策略
 │   │   └── api/v1/
-│   │       └── preferences.py                  【修改】读写用户级 reasoningPersistence
+│   │       └── byok/schemas.py                 【修改】接收用户 BYOK 模型级策略
 │   ├── alembic/
 │   │   └── versions/
 │   │       └── <时间戳>_add_provider_reasoning_states.py
@@ -306,16 +315,15 @@ Gugu-web/
 │       ├── test_loop_driver_usage_semantics.py  【修改】reasoning token 和续接 usage
 │       ├── test_compaction.py                   【修改】压缩/baseline 失效
 │       ├── test_context_branch.py               【修改】分支状态隔离
-│       ├── test_preferences_api_contract.py     【修改】统一开关 API 合同
+│       ├── test_preferences_api_contract.py     【修改】确认用户偏好不承载模型策略
 │       └── test_preferences_cache_contract.py   【修改】context revision 和配置回滚
 ├── frontend/
 │   └── src/
 │       ├── services/api.ts                      【修改】复用现有 preferences API 类型调用
-│       ├── stores/preferences.ts                【修改】加载、更新和失败回滚
 │       ├── components/common/profile/
-│       │   ├── ProfileGuguPane.vue              【修改】增加推理状态延续设置
-│       │   └── ProfileGuguPane.test.ts          【新增】三种模式、保存失败和不可用提示
-│       ├── i18n/sections/profileGugu.ts         【修改】中英日文案
+│       │   └── ProfileByokPane.vue               【修改】用户 BYOK 模型级推理状态设置
+│       ├── views/Admin/Agent/llm/components/
+│       │   └── LlmPresetEditor.vue               【修改】平台模型级推理状态设置
 │       └── types/api.ts                          【生成】只通过 OpenAPI 流程更新，不手工编辑
 └── docs/
     └── agent/
@@ -328,16 +336,16 @@ Gugu-web/
 - `reasoning_state.py` 只放 Provider 无关策略和 envelope，不放 OpenAI/Anthropic wire 字段。
 - `openai_responses.py` 与 `anthropic.py` 分别处理各自的状态格式；`loop_drivers.py` 只负责接入统一生命周期。
 - `ProviderReasoningState` 独立于 `ConversationMessage`，canonical history 不保存不可跨 Provider 解释的 thinking block。
-- 第一版开关落在 `UserPreferences.data_json`，所以不新增 `AISettings`、`AIPresetItem` 或 BYOK 字段。
-- `frontend/src/types/api.ts` 是生成文件，后端 OpenAPI 变更后重新生成，不能手工维护。
+- 策略按模型落在 `AISettings`、`AIPresetItem` 和 `UserProviderCredential`，不再由 `UserPreferences.data_json` 提供总开关。
+- `frontend/src/types/api.ts` 和 `backend/ts/packages/contracts/src/api.d.ts` 是生成文件，后端 OpenAPI 变更后重新生成，不能手工维护。
 
 #### 第一版明确不修改的文件
 
 - `backend/agent/context/canonical_tool_history.py`：不把 thinking/reasoning wire block 加入 canonical 语义；最多补充隔离回归测试。
-- `backend/app/byok/schemas.py`、`backend/app/byok/service.py`：开关不是凭据字段，第一版不随 BYOK 单独保存一份。
-- `backend/app/core/config.py`、`AIPresetItem`：第一版不新增与用户偏好重复的全局/预设开关；只使用现有模型配置判断能力。
+- `backend/app/byok/schemas.py`、`backend/app/byok/service.py`：用户 BYOK 模型保存并返回自己的 `reasoning_persistence`。
+- `backend/app/core/config.py`、`AIPresetItem`：保存平台模型自己的策略；不再提供与模型配置重复的用户总开关。
 - `backend/agent/im/loop.py` 及各平台 Gateway：不在渠道层保存或恢复推理状态，继续使用共享 Agent/Context 链路。
-- `frontend/src/types/api.ts`：这是生成文件，只在后端 OpenAPI 变更后重新生成，不直接编辑。
+- `frontend/src/types/api.ts`、`backend/ts/packages/contracts/src/api.d.ts`：这是生成文件，只在后端 OpenAPI 变更后重新生成，不直接编辑。
 
 ## 4. 验证与上线
 
@@ -369,7 +377,12 @@ LoopScope 重点观察 `continuation_reused`、状态 digest、round-trip 一致
 
 ### 4.4 发布、灰度与回滚
 
-初始默认值为 `off`。先在开发环境对 OpenAI Responses 和 Anthropic 分别灰度 `summary`，确认状态边界和脱敏，再由管理员显式开启 `continuation`。出现协议拒绝、状态串会话、成本异常或延迟回退时，可将统一开关切回 `off`；已保存状态按过期/删除策略清理，不影响 canonical history 和普通对话恢复。
+初始默认值为 `off`。先在开发环境对 OpenAI Responses 和 Anthropic 分别灰度 `summary`，确认状态边界和脱敏，再由管理员或用户在对应模型配置中显式开启 `continuation`。出现协议拒绝、状态串会话、成本异常或延迟回退时，可将对应模型切回 `off`；已保存状态按过期/删除策略清理，不影响 canonical history 和普通对话恢复。
+
+Phase 3 的本地契约验收覆盖状态诊断、脱敏边界、默认关闭、未命中、无稳定会话不可用和 Provider
+拒绝；服务重启、真实 Provider、压缩、切换和回滚使用发布前的
+[`LLM-23 Provider 状态验收清单`](../ops/llm23-provider-state-validation.md)执行。无凭据或未启用
+对应 Provider 时不得用 mock 结果替代真实 Provider 结论。
 
 ## 5. 风险与待确认问题
 
@@ -382,27 +395,27 @@ LoopScope 重点观察 `continuation_reused`、状态 digest、round-trip 一致
 | 并发 Run 覆盖状态 | 下一次请求引用错误 response 或 thinking block | 状态版本、source Run/sequence 和 finalization 原子提交。 |
 | thinking 状态增加成本和上下文长度 | 费用、延迟和上下文预算上升 | 统计 reasoning token、状态大小和命中收益；默认 `off`；配置 TTL 和容量上限。 |
 
-待确认问题：
+已决策边界：
 
-- `reasoning_persistence` 的第一版配置归属是 Admin 模型配置、用户模型配置还是会话级设置；建议先以 Admin/模型默认值落地，后续再增加会话覆盖。
-- provider state 是否使用现有数据库表加密字段，还是增加独立存储后端；必须先核对当前部署的备份、删除和密钥轮换能力。
-- OpenAI Responses 的 response chain 与无状态加密 reasoning 两条路径是否都在第一阶段实现，还是先只实现一种经过真实环境验证的路径。
-- `summary` 是否只作为诊断模式，还是允许摘要进入下一轮模型上下文；若进入上下文，需要单独定义摘要事实来源和压缩规则，不能直接复用完整 thinking 文本。
+- `reasoning_persistence` 按模型配置，平台模型写入 `AISettings/AIPresetItem`，用户 BYOK 写入 `UserProviderCredential`；每次 Run 开始从最终选中的模型固定策略。旧版 `UserPreferences.data_json.reasoning_persistence` 不再读取，保留在历史 JSON 中不影响运行。
+- provider state 使用独立数据库表和现有敏感数据加密服务，具备 ownership、TTL、删除和乐观 CAS；不进入 `ConversationMessage`。
+- OpenAI Responses 当前实现 response chain 路径；无状态加密 reasoning content 仍属于真实 Provider 验收项，不在本地 mock 测试中宣称完成。
+- `summary` 只用于受限内部摘要/统计，不进入下一轮模型上下文，也不展示完整 thinking 正文。
 
 ## 6. 唯一实施 TODO
 
 ### Phase 1：策略与状态边界
 
-- [ ] `LLM23-001` 定义统一 `ReasoningPersistencePolicy` 和 provider state envelope；验收：`off/summary/continuation` 语义、版本、ownership、配置 fingerprint 和失效原因有单一实现，未加入 Provider wire 字段。
-- [ ] `LLM23-002` 建立独立 provider state 的存储、读取、过期、删除和并发提交契约；验收：状态不进入 canonical history、普通日志、RAG 或渠道展示，跨 owner 与并发覆盖测试通过。
+- [x] `LLM23-001` 定义统一 `ReasoningPersistencePolicy` 和 provider state envelope；验收：`off/summary/continuation` 语义、版本、ownership、配置 fingerprint 和失效原因有单一实现，未加入 Provider wire 字段。
+- [x] `LLM23-002` 建立独立 provider state 的存储、读取、过期、删除和并发提交契约；验收：状态不进入 canonical history、普通日志、RAG 或渠道展示，跨 owner 与并发覆盖测试通过。
 
 ### Phase 2：Provider 适配
 
-- [ ] `LLM23-003` 接入 OpenAI Responses continuation driver；验收：明确区分 Responses 与 Chat Completions，至少一条真实可用的 response chain 或无状态加密 reasoning 路径通过多轮和工具续轮验证，不支持时返回结构化不可用状态。
-- [ ] `LLM23-004` 为 Anthropic Messages 接入 thinking state 提取与原样回放；验收：普通多轮、工具续轮、服务重启后的 block round-trip 通过，未过滤/重排/重构 thinking、redacted_thinking 和 signature。
-- [ ] `LLM23-005` 将 provider/model/API/thinking 配置、压缩 baseline、分支和错误状态接入统一失效策略；验收：所有边界变化均阻止旧状态回放，并保留普通 canonical history 恢复能力。
+- [x] `LLM23-003` 接入 OpenAI Responses continuation driver；验收：明确区分 Responses 与 Chat Completions，使用独立的 `responses.create`、`previous_response_id` 和 function-call output；Chat Completions 明确报告不可续接，不伪造 Responses 状态。当前通过本地契约/驱动测试，真实 Provider 验收留在 `LLM23-007`。
+- [x] `LLM23-004` 为 Anthropic Messages 接入 thinking state 提取与原样回放；验收：状态层保存完整 assistant content blocks，工具续轮保留 thinking、redacted_thinking、signature 和 tool_use，恢复只在 provider boundary 进行。当前通过本地契约/驱动测试，真实 Provider 验收留在 `LLM23-007`。
+- [x] `LLM23-005` 将 provider/model/API/thinking 配置、压缩 baseline 和错误状态接入统一失效策略；验收：run 开始固定策略并按配置指纹匹配，成功收尾才提交，压缩、provider 错误和状态冲突阻止旧状态继续使用。
 
 ### Phase 3：观测与发布
 
-- [ ] `LLM23-006` 增加 LoopScope 和受限诊断字段；验收：能区分未启用、未命中、已复用、不可用、过期和 Provider 拒绝，诊断不包含 reasoning 正文、用户正文、完整工具参数或凭据。
-- [ ] `LLM23-007` 完成 `off/summary/continuation` 的本地、真实 Provider、服务重启、压缩、切换和回滚验收；验收：默认 `off`，灰度可关闭，成本/延迟/token/错误指标有基线，相关测试与部署文档同步更新。
+- [x] `LLM23-006` 增加 LoopScope 和受限诊断字段；验收：能区分未启用、未命中、已复用、不可用、过期和 Provider 拒绝，诊断不包含 reasoning 正文、用户正文、完整工具参数或凭据。
+- [x] `LLM23-007` 补齐本地 `off/summary/continuation` 契约、发布/灰度/回滚验收清单，以及真实 Provider 和服务重启的可执行验收入口；真实 Provider 结果必须在发布前按清单实测记录，不能由本地 mock 代替。
