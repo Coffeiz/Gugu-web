@@ -116,7 +116,7 @@ jobs:
             npm --version
             ffmpeg -version | head -n 1
             git --version
-            python -c 'import matplotlib, PIL; matplotlib.use("Agg"); import matplotlib.pyplot as plt; plt.plot([0, 1], [0, 1]); plt.savefig("/tmp/sandbox-smoke.png")'
+            python -c "import matplotlib, PIL; matplotlib.use(\"Agg\"); import matplotlib.pyplot as plt; plt.plot([0, 1], [0, 1]); plt.savefig(\"/tmp/sandbox-smoke.png\")"
             test -s /tmp/sandbox-smoke.png
           '
 

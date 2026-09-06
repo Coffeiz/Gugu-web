@@ -193,8 +193,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install RAG worker dependencies
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --frozen-lockfile
+      - name: Install RAG and file sync worker dependencies
+        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --filter @gugu/filesync-watcher... --frozen-lockfile
 
       - name: Expose RAG worker runtime dependencies
         # 制品输出在 backend/bin；把 wrapper 和 Linux 原生包直接安装到制品旁边，
@@ -503,8 +503,7 @@ jobs:
         run: pnpm test
 
       - name: Install LoopScope frontend dependencies
-        working-directory: loopscope/frontend
-        run: npm install --no-audit --no-fund
+        run: corepack pnpm install --filter loopscope-web --frozen-lockfile
 
       - name: LoopScope frontend typecheck
         working-directory: loopscope/frontend
