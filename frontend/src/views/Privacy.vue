@@ -1,7 +1,6 @@
 <template>
   <div class="privacy-page">
-    <div class="bg-glow glow-1" />
-    <div class="bg-glow glow-2" />
+    <AuthBackground />
     <div class="privacy-card">
       <div class="privacy-header">
         <router-link to="/login" class="back-link">
@@ -22,6 +21,7 @@ import { marked } from 'marked'
 import { sanitizeHtml } from '@/utils/markdown'
 import { useI18n } from 'vue-i18n'
 import AuthLanguageSwitcher from '@/components/common/auth/AuthLanguageSwitcher.vue'
+import AuthBackground from '@/components/common/auth/AuthBackground.vue'
 import { privacyPolicy } from '@/i18n/privacyPolicy'
 
 const { t, locale } = useI18n()
@@ -29,10 +29,7 @@ const html = computed(() => sanitizeHtml(marked(privacyPolicy[locale.value as ke
 </script>
 
 <style scoped>
-.privacy-page { position: fixed; inset: 0; overflow-y: auto; background: var(--bg-gradient, linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #9aa2b8 100%)); display: flex; align-items: flex-start; justify-content: center; font-family: var(--font-sans); padding: 40px 16px 60px; }
-.bg-glow { position: fixed; border-radius: 50%; pointer-events: none; filter: blur(80px); }
-.glow-1 { width: 500px; height: 500px; top: -120px; left: -100px; background: radial-gradient(circle, rgba(123,127,178,0.18) 0%, transparent 65%); }
-.glow-2 { width: 380px; height: 380px; bottom: -100px; right: -80px; background: radial-gradient(circle, rgba(196,175,200,0.14) 0%, transparent 65%); }
+.privacy-page { position: fixed; inset: 0; overflow-y: auto; display: flex; align-items: flex-start; justify-content: center; font-family: var(--font-sans); padding: 40px 16px 60px; }
 .privacy-card { width: 100%; max-width: 760px; position: relative; z-index: 1; background: rgba(255,255,255,0.56); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.76); border-radius: 20px; box-shadow: 0 20px 60px rgba(80,90,110,0.12), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55); overflow: hidden; }
 .privacy-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 14px 22px; background: rgba(255,255,255,0.5); border-bottom: 1px solid rgba(0,0,0,0.06); }
 .privacy-header :deep(.language-switcher) { justify-content: flex-end; }

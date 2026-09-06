@@ -1,7 +1,6 @@
 <template>
   <div class="auth-page">
-    <div class="bg-glow glow-1" />
-    <div class="bg-glow glow-2" />
+    <AuthBackground />
 
     <div class="auth-card">
       <AuthBrand />
@@ -45,6 +44,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
+import AuthBackground from '@/components/common/auth/AuthBackground.vue'
 import { useI18n } from 'vue-i18n'
 import { fetchSiteConfig } from '@/services/api'
 
@@ -84,21 +84,8 @@ async function handleLogin() {
 <style scoped>
 .auth-page {
   min-height: 100vh;
-  background: var(--bg-gradient, linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #9aa2b8 100%));
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-sans); position: relative; overflow: hidden;
-}
-
-.bg-glow {
-  position: absolute; border-radius: 50%; pointer-events: none; filter: blur(80px);
-}
-.glow-1 {
-  width: 500px; height: 500px; top: -120px; left: -100px;
-  background: radial-gradient(circle, rgba(123,127,178,0.18) 0%, transparent 65%);
-}
-.glow-2 {
-  width: 380px; height: 380px; bottom: -100px; right: -80px;
-  background: radial-gradient(circle, rgba(196,175,200,0.14) 0%, transparent 65%);
 }
 
 .auth-card {
