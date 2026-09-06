@@ -6,13 +6,10 @@ core/sanitize 这套大脑，把 SSE 流"消费成文本"。会话历史/持久�
 worker 按平台用户从 Redis 取（续聊不断），见 worker._im_session_*。
 """
 from __future__ import annotations
-from app.core.tz import now_utc, set_ctx_tz
+from app.core.tz import set_ctx_tz
 
-import asyncio
 import json
 from typing import AsyncGenerator, AsyncIterator, Tuple
-
-from sqlalchemy import select
 
 from app.core.config import get_settings
 from agent.security import sanitize
@@ -23,48 +20,18 @@ from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
+from agent.im.context_runtime import (
+    continuity_bridge,
+    im_identity_block,
+    proactive_lead_for,
+    snapshot_im_memory as add_im_memory_to_snapshot,
+    with_quoted_context,
+)
 from agent.im.permissions import filter_tool_names
-from agent.im.session import get_or_create_session, session_scope_filters
+from agent.im.session import get_or_create_session
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
-
-# 后台任务引用，防止被 GC（fire-and-forget 的标题生成等）
-_bg_tasks: set = set()
-
-
-def _snapshot_im_memory(snapshot_context: str, im_memory: dict, req: AgentRequest,
-                        *, restricted: bool) -> tuple[str, dict]:
-    """统一把有权限的 IM 记忆写入 snapshot，并返回 snapshot 保存形状。"""
-    from agent.im.context_loader import format_group_memory, format_platform_user_memory
-
-    group_memory = (im_memory or {}).get("group") or {}
-    group_block = format_group_memory({"group": group_memory})
-    if group_block:
-        snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
-
-    private_member_memory = {}
-    if not req.chat_id and restricted:
-        private_member_memory = (im_memory or {}).get("platform_user") or {}
-        member_block = format_platform_user_memory(
-            {"platform_user": private_member_memory}
-        )
-        if member_block:
-            snapshot_context = f"{snapshot_context}\n\n---\n\n{member_block}"
-
-    snapshot_memory = {"group": group_memory} if req.chat_id else {
-        "platform_user": private_member_memory,
-    }
-    return snapshot_context, snapshot_memory
-
-
-def _proactive_lead_for(req: AgentRequest, history: list) -> str:
-    """主动消息前导只属于群聊，避免私聊重复注入历史首条 assistant。"""
-    if not req.chat_id:
-        return ""
-    nonsumm = [item for item in history if getattr(item, "role", None) != "summary"]
-    return nonsumm[0].content if nonsumm and nonsumm[0].role == "assistant" else ""
-
 
 def _session_user_skill_metadata(session):
     """读取当前会话冻结的用户 Skill 目录；缺失时返回 None，允许首次建立。"""
@@ -206,194 +173,6 @@ async def _filter_shell_tool(
     return [name for name in names if name != "shell"]
 
 
-def _im_identity_block(req: AgentRequest, history: list) -> str:
-    """把 IM 身份元数据作为内部事实提供给模型，禁止模型凭熟悉感猜身份。"""
-    if req.source not in IM_SOURCES or not req.chat_id:
-        return ""
-    chat_type = "群聊" if req.chat_id else "私聊"
-    role = req.im_role or ("owner" if not req.chat_id else "unknown")
-    role_text = {"owner": "绑定 Bot 的用户", "member": "群成员", "unknown": "未确认身份"}.get(role, role)
-    lines = [
-        "\n\n---\n\n## 当前 IM 身份事实（只供内部核对）",
-        f"- 平台：{req.source}",
-        f"- 会话类型：{chat_type}",
-        f"- 当前发言人平台身份标识：{req.platform_user_id or '未知'}",
-        f"- 当前发言人平台显示名：{req.platform_user_name or '未提供'}",
-        f"- 当前权限角色：{role_text}",
-    ]
-    if req.chat_id:
-        lines.append(f"- 当前群会话标识：{req.chat_id}")
-    previous = [
-        getattr(item, "platform_user_id", None)
-        for item in history
-        if getattr(item, "role", None) == "user" and getattr(item, "platform_user_id", None)
-    ]
-    if previous:
-        lines.append(f"- 当前会话中此前记录到的发言人标识：{', '.join(dict.fromkeys(previous))}")
-    lines.extend([
-        "- 这是当前消息的可靠元数据，优先级高于历史消息；不要根据昵称、记忆或语气猜测身份。",
-        "- 历史消息可能来自其他群成员；回答当前消息时只能使用当前发言人的身份和资料。",
-        "- 群聊和私聊是不同会话类型；回答当前消息时必须按这里的会话类型处理。",
-        "- 被问到‘是不是同一个 ID’时，只能根据这些标识比较；没有比较依据就明确说目前无法确认，不要编造‘一直没变’。",
-        "- 不向用户主动展示原始平台 ID，也不要把 Gugu 账号昵称当成 QQ 昵称。",
-        "- 平台显示名只用于自然称呼当前发言人，不能用于身份识别、权限判断或判断是否为同一个人。",
-    ])
-    return "\n".join(lines)
-
-
-def _schedule_title(user_id, session_id, user_msg: str, reply_text: str, settings, use_anthropic: bool) -> None:
-    """后台生成新会话标题——移出关键路径，别让用户多等一次 LLM 调用（闲置后尤其明显）。"""
-    task = asyncio.create_task(_gen_title_bg(user_id, session_id, user_msg, reply_text, settings, use_anthropic))
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-async def _gen_title_bg(user_id, session_id, user_msg: str, reply_text: str, settings, use_anthropic: bool) -> None:
-    try:
-        from agent.gateway.web import _generate_title
-        new_title = await _generate_title(user_msg, reply_text, settings, use_anthropic)
-        if not new_title:
-            return
-        import app.db.session as _sess
-        from app.models import ConversationSession
-        from sqlalchemy import update as _update
-        async with _sess._SessionLocal() as db:
-            # P1-3：用数据库原子条件 UPDATE 写标题，彻底消除 TOCTOU 竞态。
-            # 手动改名（rename_session）会置 title_locked=True；这里只在
-            # title_locked=false 时才更新，且 UPDATE 与 rename 的 commit 是
-            # 原子串行化的——无论 rename 在哪个时序提交，自动标题都不会覆盖
-            # 用户刚改的标题。rowcount==1 才说明本次确实写入了标题。
-            result = await db.execute(
-                _update(ConversationSession)
-                .where(
-                    ConversationSession.id == session_id,
-                    ConversationSession.title_locked.is_(False),
-                )
-                .values(title=new_title)
-            )
-            if result.rowcount != 1:
-                # 会话不存在或已被手动改名锁定：不覆盖，也不推送标题事件。
-                return
-            await db.commit()
-        from app.core import events
-        await events.publish(user_id, "sessions", session_id=session_id, title=new_title)  # 标题好了再推一次
-    except Exception:
-        pass
-
-
-async def _gen_summary_bg(user_id, session_id, force: bool, settings, use_anthropic: bool) -> None:
-    """后台给会话生成/刷新「一句话总结」（供跨 session 查找 + 续接桥指针）。
-    新会话强制出一版；之后每 ~6 条消息刷新一次、跟着话题走。不计精力（同标题）。"""
-    try:
-        import app.db.session as _sess
-        from app.models import ConversationSession, ConversationMessage
-        from sqlalchemy import select as _select, func as _func, desc as _desc
-        async with _sess._SessionLocal() as db:
-            cnt = (await db.execute(
-                _select(_func.count()).select_from(ConversationMessage)
-                .where(ConversationMessage.session_id == session_id,
-                       ConversationMessage.content_json.is_(None)))).scalar_one()
-            if not force and (cnt < 4 or cnt % 6 != 0):
-                return                              # 没到刷新点就跳过，省 LLM 调用
-            rows = (await db.execute(
-                _select(ConversationMessage)
-                .where(ConversationMessage.session_id == session_id,
-                       ConversationMessage.content_json.is_(None))
-                .order_by(_desc(ConversationMessage.created_at)).limit(12))).scalars().all()
-            rows = [m for m in reversed(rows) if m.content]
-        if not rows:
-            return
-        convo = "\n".join(
-            f"{'用户' if m.role == 'user' else '咕咕'}：{(m.content or '')[:200]}" for m in rows)
-        from agent.gateway.web import _generate_summary
-        summary = await _generate_summary(convo, settings, use_anthropic)
-        if not summary:
-            return                                  # 失败回空 → 不覆盖原总结
-        async with _sess._SessionLocal() as db:
-            s = await db.get(ConversationSession, session_id)
-            if s:
-                from agent.context.audit import session_scope, summary_change
-                audit_scope = session_scope(s)
-                audit_scope.pop("source", None)
-                summary_change(
-                    source="conversation_session_summary_bg",
-                    old=s.summary,
-                    new=summary,
-                    trigger="force" if force else "periodic",
-                    **audit_scope,
-                )
-                s.summary = summary
-                await db.commit()
-    except Exception:
-        pass
-
-
-def _schedule_summary(user_id, session_id, force: bool, settings, use_anthropic: bool) -> None:
-    task = asyncio.create_task(_gen_summary_bg(user_id, session_id, force, settings, use_anthropic))
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-_CONTINUE_CUES = ("继续", "刚刚", "刚才", "刚说", "刚聊", "上次", "上回", "之前",
-                  "接着", "那个事", "那件事", "没续上")
-
-
-def _with_quoted_context(message: str, quoted_text: str | None) -> str:
-    """给模型看的输入：引用/回复场景下把被引用原文包进去。只在**喂给模型**这一步用，
-    不能拿它当 ConversationMessage.content 存/当网页展示文本——那样会把引用原文（可能带
-    markdown 表格等）直接拼进用户消息正文，网页气泡按纯文本渲染，会被原样摊平显示得很难看
-    （devlog 2026-07-10）。展示层面引用原文走 quoted_text 单独一列，前端另起一个引用预览块。"""
-    from agent.im.context_loader import format_quoted_context
-
-    return format_quoted_context(message, quoted_text)
-
-
-async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
-                                source: str, chat_id: str | None,
-                                bot_id: str | None = None,
-                                platform_user_id: str | None = None) -> str:
-    """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
-    上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：
-      A 档（总给）：一行「上一条对话」指针，带 session id —— 让模型（尤其 mimo）知道去
-                   `read_conversation(id)` 翻，而不是空着答或拿别的话题顶上。
-      B 档（这句像要接着聊时）：直接把上一条尾部几轮塞进上下文，不靠模型自觉调工具。
-    上一条太久远（>48h）则不当「刚刚」、整体不注入（防把陈年对话当最近的翻出来）。"""
-    from sqlalchemy import desc as _desc
-    from app.models import ConversationSession, ConversationMessage
-    query = select(ConversationSession).where(
-        ConversationSession.user_id == user_id,
-        ConversationSession.id != current_session_id,
-        *session_scope_filters(ConversationSession, source, chat_id, bot_id, platform_user_id),
-    )
-    prev = (await db.execute(
-        query
-        .order_by(_desc(ConversationSession.updated_at)).limit(1))).scalars().first()
-    if not prev or not prev.updated_at:
-        return ""
-    age_h = (now_utc() - prev.updated_at).total_seconds() / 3600
-    if age_h > 48:
-        return ""
-    when = f"约 {int(age_h)} 小时前" if age_h >= 1 else f"约 {max(1, int(age_h * 60))} 分钟前"
-    title = (prev.title or "").strip() or "（无标题）"
-    gist = (prev.summary or "").strip()
-    gist_str = f"——{gist}" if gist else ""
-    block = (f"\n\n---\n\n## 最近一条对话（用户可能想接着聊）\n"
-             f"上一条对话 #{prev.id}《{title}》{gist_str}，{when}结束。**用户若说「继续 / 刚刚 / 上次 / 之前那次」，"
-             f"多半指的是它**——用 `read_conversation({prev.id})` 把它翻出来再接，别空着答、也别拿别的话题顶上。")
-    if any(c in (user_msg or "") for c in _CONTINUE_CUES):
-        rows = (await db.execute(
-            select(ConversationMessage)
-            .where(ConversationMessage.session_id == prev.id,
-                   ConversationMessage.content_json.is_(None))
-            .order_by(_desc(ConversationMessage.created_at)).limit(8))).scalars().all()
-        rows = [m for m in reversed(rows) if m.content]
-        if rows:
-            tail = "\n".join(
-                f"- {'用户' if m.role == 'user' else '咕咕'}：{(m.content or '')[:200]}" for m in rows)
-            block += "\n\n这句像是要接着上一条聊，下面是那条对话的最近几轮，**直接据此接上**：\n" + tail
-    return block
-
-
 async def _run_collect_unlocked(
     req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
 ) -> AgentResponse:
@@ -442,7 +221,7 @@ async def _run_collect_unlocked(
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
             )
-            snapshot_context, snapshot_im_memory = _snapshot_im_memory(
+            snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
                 restricted=context_policy.restricted,
             )
@@ -492,11 +271,11 @@ async def _run_collect_unlocked(
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         # 主动推送桥只保留群聊行为；私聊不把历史首条主动消息重复塞进每轮尾部。
-        _proactive_lead = _proactive_lead_for(req, history)
+        _proactive_lead = proactive_lead_for(req, history)
 
         # 附件（IM 收到的文件）：文本读内容注入给模型，卡片随用户消息持久化（和网页同一套）
         from app.core import chat_attach
-        llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
+        llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         if getattr(req, "attachments", None):   # 诊断：带附件时记 kind/ext/media 数，排查语音为何没转写
@@ -533,7 +312,7 @@ async def _run_collect_unlocked(
         im_bridge = ""
         if is_new_session and context_policy.allow_continuity_bridge:
             try:
-                im_bridge = await _im_continuity_bridge(
+                im_bridge = await continuity_bridge(
                     db,
                     user_id,
                     session_id,
@@ -593,7 +372,7 @@ async def _run_collect_unlocked(
 
     # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
     _dynamic_extra_parts = []
-    _im_id = _im_identity_block(req, history)
+    _im_id = im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
     if im_bridge:
@@ -757,10 +536,10 @@ async def _run_collect_unlocked(
         # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
         # 闲置后「重新聊天」=新会话，原来要在回复后再串行等一次 LLM 起标题才返回 → 慢一倍，这里去掉。
         if is_new_session and text:
-            _schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+            schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
         # 会话「一句话总结」：新会话先出一版，之后每 ~6 条刷新（跟着话题走）；供 search_conversations + 续接桥
         if text:
-            _schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
+            schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
 
         # 推第二次：咕咕的回复（用户消息已在生成前先推过，这里只补助手消息，
         # 网页就「先看到我发的、再看到回答」，而不是一轮结束一次性蹦出来）
@@ -906,7 +685,7 @@ async def _run_stream_unlocked(
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
             )
-            snapshot_context, snapshot_im_memory = _snapshot_im_memory(
+            snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
                 restricted=context_policy.restricted,
             )
@@ -948,10 +727,10 @@ async def _run_stream_unlocked(
         if strip_thinking:
             clean_persisted_history(history)
             strip_thinking = False
-        _proactive_lead = _proactive_lead_for(req, history)
+        _proactive_lead = proactive_lead_for(req, history)
 
         from app.core import chat_attach
-        llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
+        llm_text = with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
         user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
@@ -980,7 +759,7 @@ async def _run_stream_unlocked(
         im_bridge = ""
         if is_new_session and context_policy.allow_continuity_bridge:
             try:
-                im_bridge = await _im_continuity_bridge(
+                im_bridge = await continuity_bridge(
                     db,
                     user_id,
                     session_id,
@@ -1037,7 +816,7 @@ async def _run_stream_unlocked(
 
     # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
     _dynamic_extra_parts = []
-    _im_id = _im_identity_block(req, history)
+    _im_id = im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
     if im_bridge:
@@ -1265,9 +1044,9 @@ async def _run_stream_unlocked(
         )
 
         if is_new_session and text:
-            _schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+            schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
         if text:
-            _schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
+            schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
 
         try:
             from app.core import events as _evmod

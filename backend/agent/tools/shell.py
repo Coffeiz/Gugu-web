@@ -568,7 +568,7 @@ class ShellSkill(BaseSkill):
             },
             handler=_shell,
             mutates=True,
-            # destructive 才会桥接到网页/IM 确认按钮（create_tool_confirmation），
+        # 需要确认的工具才会桥接到网页/IM 确认按钮（create_tool_confirmation），
             # 用户点击后服务端记录 Redis 授权；schema 不暴露 confirm 参数，
             # 确认状态只由服务端 grant 决定，模型无法自行声明已确认。
             destructive=True,

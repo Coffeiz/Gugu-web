@@ -157,7 +157,7 @@ flowchart LR
 - [ ] 每个可选字段都有独立业务语义或低风险便利性，不是为了兼容、空操作或重复默认值保留。
 - [ ] 同一资源的多个互斥修改动作使用 `action`，并为每个 action 条件必填对应字段。
 - [ ] handler 不猜测缺失字段、不承担字段优先级；最终业务不变量由 service 校验。
-- [ ] 所有权、权限和 destructive confirm 由 registry/dispatch/确认门负责，不写入动态提示词。
+- [ ] 所有权、权限和确认门由 registry/dispatch/确认门负责；需要确认但可撤销的写操作使用 `requires_confirmation`，不可逆操作使用 `destructive`，不写入动态提示词。
 - [ ] 已添加合法正例、缺字段反例、互斥字段反例和历史兼容测试。
 - [ ] 已运行工具 description 审计、Schema validator 和能力注入回归。
 

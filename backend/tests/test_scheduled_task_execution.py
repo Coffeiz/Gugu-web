@@ -394,7 +394,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     会无条件覆盖手动标题。
     """
     from app.models import ConversationSession
-    from agent import runner
+    from agent.conversation import lifecycle
 
     sess = ConversationSession(
         user_id=user_a.id, title="临时标题", source="web",
@@ -414,7 +414,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     async def slow_generate(user_msg, ai_reply, settings, use_anthropic):
         title_started()
         return generated_title
-    monkeypatch.setattr("agent.gateway.web._generate_title", slow_generate)
+    monkeypatch.setattr("agent.conversation.lifecycle.generate_title", slow_generate)
 
     # 先模拟用户手动 rename（title_locked=True）
     sess.title = "用户手动改的标题"
@@ -424,7 +424,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     # 然后 _gen_title_bg 跑
     from app.core.config import get_settings
     settings = get_settings()
-    await runner._gen_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+    await lifecycle.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
 
     # 验证：自动标题没覆盖手动标题
     await db.refresh(sess)
@@ -432,7 +432,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     assert sess.title_locked is True
 
     # 再跑一次也仍不覆盖（title_locked 永久生效）
-    await runner._gen_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+    await lifecycle.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
     await db.refresh(sess)
     assert sess.title == "用户手动改的标题"
 
@@ -452,7 +452,7 @@ async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch,
     import asyncio
     from app.models import ConversationSession
     from app.api.v1.agent import rename_session, RenameSessionRequest
-    from agent import runner
+    from agent.conversation import lifecycle
     from app.core.config import get_settings
 
     sess = ConversationSession(
@@ -466,7 +466,7 @@ async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch,
     # mock LLM：返回会自动覆盖的标题
     async def slow_generate(user_msg, ai_reply, settings, use_anthropic):
         return "LLM_自动生成标题"
-    monkeypatch.setattr("agent.gateway.web._generate_title", slow_generate)
+    monkeypatch.setattr("agent.conversation.lifecycle.generate_title", slow_generate)
 
     settings = get_settings()
 
@@ -474,7 +474,7 @@ async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch,
         await rename_session(sess.id, RenameSessionRequest(title="用户并发改名"), user_a, db)
 
     async def do_auto():
-        await runner._gen_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+        await lifecycle.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
 
     # 并发跑：无论谁先谁后，最终 title 都必须是用户改的
     await asyncio.gather(do_rename(), do_auto())

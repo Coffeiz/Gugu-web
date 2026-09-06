@@ -17,7 +17,6 @@ async def _create_skill(db, user_id, args: dict):
     from agent.im import imctx
     from agent.profiles.default import DefaultProfile
     from agent.tools import registry
-    tool_snapshot = registry.snapshot()
 
     name = str(args.get("name") or "").strip()
     slug = str(args.get("slug") or "").strip().lower()
@@ -27,22 +26,24 @@ async def _create_skill(db, user_id, args: dict):
     allowed = current_im.get("allowed_tool_names") if current_im else None
     allowed = list(allowed) if allowed is not None else DefaultProfile().tool_names
     related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
-    risky = sorted(item for item in related if (
-        tool_snapshot.get(item)
-        and (tool_snapshot.get(item).mutates or tool_snapshot.get(item).destructive)
-    ))
-    if risky:
-        body_digest = hashlib.sha256(json.dumps(
-            {k: args.get(k) for k in ("name", "slug", "description_short", "description_long",
-                                      "category", "related_tools") if args.get(k) is not None},
-            ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-        from agent.security import confirm
-        blocked = confirm.needs_confirmation(
-            args, f"创建会关联写入或危险工具的 Skill：{', '.join(risky)}", user_id,
-            identity=f"create_user_skill:{slug or name}:{body_digest}:risky_tools={risky}",
-        )
-        if blocked:
-            return blocked
+    tool_snapshot = registry.snapshot()
+    missing = [item for item in related if tool_snapshot.get(item) is None]
+    if missing:
+        return {"error": f"Skill 关联了未知工具：{', '.join(missing)}"}
+    unauthorized = [item for item in related if item not in set(allowed)]
+    if unauthorized:
+        return {"error": f"Skill 关联了当前不可用的工具：{', '.join(unauthorized)}"}
+    body_digest = hashlib.sha256(json.dumps(
+        {k: args.get(k) for k in ("name", "slug", "description_short", "description_long",
+                                  "category", "related_tools", "body") if args.get(k) is not None},
+        ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    from agent.security import confirm
+    blocked = confirm.needs_confirmation(
+        args, "创建一个新的用户自定义 Skill，并保存到当前账号", user_id,
+        identity=f"create_user_skill:{slug or name}:{body_digest}",
+    )
+    if blocked:
+        return blocked
     try:
         row = await SkillCapabilityRegistry().create_user_skill(
             db, user_id, allowed_tool_names=allowed,
@@ -174,6 +175,7 @@ SKILL_MANAGEMENT_TOOLS = [
         },
         handler=_create_skill,
         mutates=True,
+        requires_confirmation=True,
     ),
     Tool(
         name="update_skill",

@@ -23,92 +23,11 @@ from agent.llm import genstream
 from agent import quota
 from agent.context import builder, loaders, session_snapshot, session_history, run_context, session_system
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from agent.conversation.lifecycle import generate_title, schedule_summary
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
-
-
-def _build_title_prompt(user_msg: str, ai_reply: str) -> str:
-    """构造新会话标题提示词，标题语言跟随当前对话语言。"""
-    return (
-        "根据下面这段对话，用一句话起一个简短的标题（10字以内，不含引号和标点符号）。"
-        "标题必须使用与用户和咕咕交流相同的语言；如果对话主要使用英文，就用英文输出；"
-        "如果主要使用日文，就用日文输出。不要因为本提示词使用中文而输出中文。"
-        "只输出标题本身，不要任何解释。\n"
-        f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
-    )
-
-
-async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
-    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
-    prompt = _build_title_prompt(user_msg, ai_reply)
-    from agent import providers
-    from agent.llm.modelctx import effective_ai
-    ai = ai or effective_ai(settings)
-    provider_adapter = providers.adapter_for(ai)
-    try:
-        if use_anthropic:
-            import httpx
-            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
-            # mimo 默认开思考，30 token 会被思考块吃光、content[0] 是 thinking 块取不到 .text → 标题空。
-            # 显式关思考（与正文同口径），并从 content 里挑真正的 text 块，别按下标取。
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model,
-                max_tokens=40,
-                messages=[{"role": "user", "content": prompt}],
-                **extra,
-            )
-            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
-            return (text.strip()[:30]) or user_msg[:20]
-        else:
-            import httpx
-            client = providers.build_openai_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_openai_thinking_kwargs(ai)
-            resp = await client.chat.completions.create(
-                model=ai.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=40,
-                **extra,
-            )
-            return (resp.choices[0].message.content or "").strip()[:30] or user_msg[:20]
-    except Exception:
-        return user_msg[:20]
-
-
-async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
-    """用 LLM 给一段会话起「一句话总结」（这段聊了啥），供跨 session 查找/续接。
-    非流式、快速、失败回空（调用方据空不覆盖原总结）。结构同 _generate_title。"""
-    prompt = (
-        "用一句话（20字以内）概括下面这段对话主要在聊什么 / 在做什么，"
-        "供日后检索和接着聊时一眼认出。只输出那句话，不要引号、不要解释。\n\n"
-        f"{convo[:1500]}"
-    )
-    from agent import providers
-    from agent.llm.modelctx import effective_ai
-    ai = effective_ai(settings)
-    provider_adapter = providers.adapter_for(ai)
-    try:
-        if use_anthropic:
-            import httpx
-            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model, max_tokens=80,
-                messages=[{"role": "user", "content": prompt}], **extra)
-            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
-            return text.strip().strip('"「」')[:120]
-        else:
-            import httpx
-            client = providers.build_openai_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_openai_thinking_kwargs(ai)
-            resp = await client.chat.completions.create(
-                model=ai.model, max_tokens=80,
-                messages=[{"role": "user", "content": prompt}], **extra)
-            return (resp.choices[0].message.content or "").strip().strip('"「」')[:120]
-    except Exception:
-        return ""
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -745,7 +664,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
         if is_new_session and full_reply and not resume_interaction:
-            title = (await _generate_title(req.message, full_reply, settings, use_anthropic, model_cfg) or "").strip()
+            title = (await generate_title(req.message, full_reply, settings, use_anthropic, model_cfg) or "").strip()
             if title:
                 async with _sess._SessionLocal() as db3:
                     s = await db3.get(ConversationSession, session_id)
@@ -756,8 +675,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
         # ── 会话「一句话总结」：新会话出一版、之后每 ~6 条刷新（供 search/续接桥；与 IM 路同一套）──
         if full_reply and not resume_interaction:
-            from agent.runner import _schedule_summary
-            _schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
+            schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
         if profile.memory_enabled and full_reply and not resume_interaction:

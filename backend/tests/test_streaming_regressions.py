@@ -59,14 +59,14 @@ async def test_qq_stream_sequence_uses_a_cross_process_counter(monkeypatch):
 
 
 def test_im_preparation_helpers_keep_collect_and_stream_rules_aligned():
-    from agent import runner
+    from agent.im import context_runtime
     from agent.models import AgentRequest
 
     private_req = AgentRequest(
         message="hello", user_id="user", user_name="member", source="qq",
         platform_user_id="platform-user",
     )
-    snapshot, saved_memory = runner._snapshot_im_memory(
+    snapshot, saved_memory = context_runtime.snapshot_im_memory(
         "base", {"platform_user": {"summary": "stable preference"}}, private_req,
         restricted=True,
     )
@@ -77,8 +77,8 @@ def test_im_preparation_helpers_keep_collect_and_stream_rules_aligned():
         message="hello", user_id="user", user_name="member", source="qq",
         chat_id="group",
     )
-    assert runner._proactive_lead_for(group_req, [SimpleNamespace(role="assistant", content="lead")]) == "lead"
-    assert runner._proactive_lead_for(private_req, [SimpleNamespace(role="assistant", content="lead")]) == ""
+    assert context_runtime.proactive_lead_for(group_req, [SimpleNamespace(role="assistant", content="lead")]) == "lead"
+    assert context_runtime.proactive_lead_for(private_req, [SimpleNamespace(role="assistant", content="lead")]) == ""
 
 
 def test_long_lived_stream_routes_do_not_hold_dependency_sessions():

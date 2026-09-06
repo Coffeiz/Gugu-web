@@ -17,6 +17,7 @@ from app.services.interactions import (
     consume_text,
     create_agent_prompt,
     create_goal_mode_prompt,
+    create_tool_confirmation,
     create_tool_budget_prompt,
     create_prompt,
     CUSTOM_REPLY_OPTION_ID,
@@ -355,6 +356,29 @@ async def test_confirmation_button_grants_server_side_authorization(db, user_a):
     assert "token" not in content
     # 兑换后确认码一次性作废。
     assert confirmations.redeem_confirmation(user_a.id, code) is None
+
+
+async def test_create_skill_confirmation_is_bridged_to_web_and_im_prompt(db, user_a):
+    """需要确认但可撤销的 create_skill 也必须生成统一交互卡。"""
+    session = ConversationSession(user_id=user_a.id, title="Skill 确认", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="create_skill",
+        tool_call_id="call-create-skill",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "创建一个新的用户自定义 Skill，并保存到当前账号",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+    assert interaction is not None
+    assert interaction["kind"] == "confirm"
+    assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
 
 
 async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):

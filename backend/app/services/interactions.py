@@ -827,12 +827,13 @@ async def create_tool_confirmation(
     """
     if session_id is None:
         return None
-    # 统一桥只接收工具注册表明确标记为 destructive 的确认门，避免普通业务结果
-    # 偶然带 needs_confirm 字段时也被渲染成危险操作按钮。
+    # 统一桥只接收工具注册表明确声明需要确认的工具，避免普通业务结果偶然带
+    # needs_confirm 字段时也被渲染成危险操作按钮。可撤销的创建/授权类操作不必
+    # 被错误归类为 destructive。
     try:
         from agent.tools import registry
         tool = registry.snapshot().get(tool_name)
-        if tool is None or not tool.destructive:
+        if tool is None or not (tool.destructive or tool.requires_confirmation):
             return None
     except Exception:
         return None
