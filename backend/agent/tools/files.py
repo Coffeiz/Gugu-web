@@ -30,6 +30,10 @@ from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
+from app.services.filesystem_authorization import (
+    FilesystemPolicy,
+    filesystem_location_can_write,
+)
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool, current_dispatch_session
 from agent.tools.filesystem_policy import (
@@ -272,9 +276,16 @@ def _workspace_location(target: dict) -> tuple[str, int | None, int | None]:
     return target["space"], target.get("project_id"), target.get("folder_id")
 
 
-def _location_matches(space, project_id, folder_id, target: dict) -> bool:
-    wanted = _workspace_location(target)
-    return (space, project_id, folder_id) == wanted
+async def _location_matches(db, user_id, space, project_id, folder_id, target: dict) -> bool:
+    """复用统一 workspace 权限，允许根目录下的子文件夹。"""
+    return await filesystem_location_can_write(
+        db,
+        user_id,
+        FilesystemPolicy(workspace_id=target["workspace_id"]),
+        space=space,
+        project_id=project_id,
+        folder_id=folder_id,
+    )
 
 
 def _workspace_conflict(target: dict) -> str:
@@ -302,7 +313,9 @@ async def _resolve_create_location(db, user_id, args: dict):
                 folder = None
             if folder is not None:
                 inferred_space = "project" if folder.project_id is not None else "personal"
-                if _location_matches(inferred_space, folder.project_id, folder.id, target):
+                if await _location_matches(
+                    db, user_id, inferred_space, folder.project_id, folder.id, target,
+                ):
                     return inferred_space, folder.project_id, folder.id, None
         space, project_id, folder_id, error = _coerce_loc(
             args.get("space") or ("project" if args.get("project_id") else "personal"),
@@ -310,7 +323,7 @@ async def _resolve_create_location(db, user_id, args: dict):
         )
         if error:
             return None, None, None, error
-        if not _location_matches(space, project_id, folder_id, target):
+        if not await _location_matches(db, user_id, space, project_id, folder_id, target):
             return None, None, None, _workspace_conflict(target)
         return space, project_id, folder_id, None
     space = args.get("space", "personal")
@@ -987,7 +1000,9 @@ async def _move_items(db, user_id, args: dict):
     t_space, t_pid, t_folder_id, terr = await _resolve_target(db, user_id, target)
     if terr:
         return terr
-    if workspace_target is not None and not _location_matches(t_space, t_pid, t_folder_id, workspace_target):
+    if workspace_target is not None and not await _location_matches(
+        db, user_id, t_space, t_pid, t_folder_id, workspace_target,
+    ):
         return _workspace_conflict(workspace_target)
     file_target = {"space": t_space, "project_id": t_pid, "folder_id": t_folder_id}
 
@@ -1251,7 +1266,9 @@ async def _copy_file(db, user_id, args: dict):
             if fo.project_id is not None:
                 project_id = fo.project_id
                 space = "project"
-    if workspace_target is not None and not _location_matches(space, project_id, folder_id, workspace_target):
+    if workspace_target is not None and not await _location_matches(
+        db, user_id, space, project_id, folder_id, workspace_target,
+    ):
         return _workspace_conflict(workspace_target)
     target_error = await write_access_error(
         db, user_id, space=space, project_id=project_id, folder_id=folder_id,
@@ -1747,8 +1764,8 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "files":   {"type": "array", "items": {"type": "string"}},
-                    "folders": {"type": "array", "items": {"type": "string"}},
+                    "files":   {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+                    "folders": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
                     "target": {
                         "type": "object",
                         "properties": {

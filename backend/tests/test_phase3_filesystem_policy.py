@@ -42,6 +42,28 @@ async def test_workspace_policy_allows_only_workspace_folder_subtree(db, user_a)
 
 
 @pytest.mark.asyncio
+async def test_agent_file_target_accepts_workspace_descendant_folder(db, user_a):
+    """move/copy 目标应遵循统一策略，不能把 workspace 根误当成唯一目录。"""
+    from agent.tools.files import _location_matches
+
+    root = await _persist(db, Folder(user_id=user_a.id, name="移动根"))
+    child = await _persist(db, Folder(user_id=user_a.id, parent_id=root.id, name="图表"))
+    other = await _persist(db, Folder(user_id=user_a.id, name="其它位置"))
+    workspace = await _persist(db, Workspace(
+        user_id=user_a.id, name="移动工作区", kind="folder", folder_id=root.id,
+        enabled=True,
+    ))
+    target = {"workspace_id": workspace.id}
+
+    assert await _location_matches(
+        db, user_a.id, "personal", None, child.id, target,
+    )
+    assert not await _location_matches(
+        db, user_a.id, "personal", None, other.id, target,
+    )
+
+
+@pytest.mark.asyncio
 async def test_full_grant_allows_personal_and_project_file_writes(db, user_a):
     policy = FilesystemPolicy(personal_read_only=False, project_read_only=False)
 
