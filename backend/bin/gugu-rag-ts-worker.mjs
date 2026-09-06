@@ -319,16 +319,17 @@ function rankCandidates(query, candidates, options = {}) {
   const normalized = normalizeBySource(eligible);
   const scored = eligible.map((candidate) => {
     const normalizedScore = normalized.get(candidate.id) ?? 0;
-    const fused = candidate.fused_score !== void 0 ? Number(candidate.fused_score) : candidate.fusion === "hybrid-rrf" ? Number(candidate.raw_score || 0) : normalizedScore;
+    const fused = candidate.fused_score !== void 0 && candidate.fused_score !== null ? Number(candidate.fused_score) : candidate.fusion === "hybrid-rrf" ? Number(candidate.raw_score || 0) : normalizedScore;
     const quality = confidence(candidate, fused, query);
     return { candidate, normalizedScore, fused, ...quality };
   });
   const orderedScored = [...scored].sort(
     (left, right) => right.fused - left.fused || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100) || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? "")) || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version)) || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
   );
+  const selectionMode = options.selectionMode ?? "confidence";
   const preferred = orderedScored.filter((item) => item.value >= 0.55);
   const fallback = orderedScored.filter((item) => item.value >= 0.35 && item.value < 0.55);
-  const confidenceSelected = (preferred.length ? preferred : fallback).slice(0, Math.max(1, Number(options.limit ?? 5)));
+  const confidenceSelected = (selectionMode === "top_k" ? orderedScored : preferred.length ? preferred : fallback).slice(0, Math.max(1, Number(options.limit ?? 5)));
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
   const unified = selectUnifiedRecall(
@@ -375,11 +376,12 @@ function rankCandidates(query, candidates, options = {}) {
   const stats = {
     ...unified.diagnostics,
     accepted_count: results.length,
-    rejected_low_score: scored.filter((item) => item.value < 0.35).length,
-    rejected_not_preferred: scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length,
+    rejected_low_score: selectionMode === "confidence" ? scored.filter((item) => item.value < 0.35).length : 0,
+    rejected_not_preferred: selectionMode === "confidence" ? scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length : 0,
     top_confidence: Math.max(0, ...scored.map((item) => item.value)),
     threshold: 0.35,
     preferred_threshold: 0.55,
+    selection_mode: selectionMode,
     scoring_version: "confidence-v1",
     source_diagnostics: sourceDiagnostics,
     elapsed_ms: Math.round(performance.now() - started)
@@ -482,6 +484,7 @@ async function restore(state2) {
   if (!state2.indexDir) return;
   try {
     const raw = JSON.parse(await readFile(join(state2.indexDir, "index.json"), "utf8"));
+    if (raw.version !== VERSION) return;
     replaceInMemory(state2, raw.revision ?? "", raw.documents ?? []);
   } catch {
     state2.revision = "";
@@ -611,7 +614,7 @@ function search(state2, query, limit, allowedSources, scope) {
   }
   for (const [id, score] of scores) {
     const document = state2.documentsById.get(id);
-    if (document && score > 0) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version });
+    if (document && score > 0) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
   }
   return {
     results: scored.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id)).slice(0, Math.max(1, Math.min(limit, 50))),
@@ -695,7 +698,8 @@ async function handle(state2, request) {
         maxChars: request.max_chars ?? 3e3,
         maxPerSource: request.max_per_source ?? 3,
         maxPerParent: request.max_per_parent ?? 3,
-        excludeContentHashes: request.exclude_content_hashes ?? []
+        excludeContentHashes: request.exclude_content_hashes ?? [],
+        selectionMode: request.selection_mode ?? "confidence"
       }
     );
     return {
