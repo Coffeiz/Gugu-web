@@ -178,6 +178,12 @@ def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list
     text = str(getattr(result, "text", "") or "")
     if text:
         assistant_blocks.append({"type": "text", "text": text})
+    # OpenAI 兼容 provider（例如 Qwen）要求多轮工具调用原样回传
+    # reasoning_content。它属于 assistant 轮次，必须进入 canonical history；
+    # provider wire 的具体字段由 history adapter 在发送边界恢复。
+    raw_reasoning = str(getattr(getattr(result, "raw", None), "reasoning", "") or "")
+    if raw_reasoning:
+        assistant_blocks.append({"type": "reasoning_content", "text": raw_reasoning})
     for call in getattr(result, "tool_calls", ()) or ():
         if (
             not getattr(call, "id", None)

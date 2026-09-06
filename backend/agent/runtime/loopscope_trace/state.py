@@ -405,10 +405,20 @@ class _ScopeRun:
     def add_usage(self, usage: dict[str, Any]) -> None:
         for key in ("input", "output", "cache_read", "cache_write", "fresh_input"):
             self.usage[key] = int(self.usage.get(key, 0) or 0) + int(usage.get(key, 0) or 0)
-        self.usage["total"] = int(self.usage["input"]) + int(self.usage["output"])
+        # input 是完整输入量；fresh_input 是驱动上报的未命中输入，缓存读写
+        # 另列。按三者重算可避免历史调用方传入不一致的 input 破坏比例。
+        measured_input = (
+            int(self.usage.get("fresh_input", 0) or 0)
+            + int(self.usage.get("cache_read", 0) or 0)
+            + int(self.usage.get("cache_write", 0) or 0)
+        )
+        if measured_input or not int(self.usage.get("input", 0) or 0):
+            self.usage["input"] = measured_input
+        input_total = int(self.usage["input"])
+        self.usage["total"] = input_total + int(self.usage["output"])
         self.usage["cache_ratio"] = (
-            round(int(self.usage["cache_read"]) / int(self.usage["input"]), 6)
-            if self.usage["input"] else 0
+            round(int(self.usage["cache_read"]) / input_total, 6)
+            if input_total else 0
         )
         # 0.1 UI/历史 DB 的兼容字段继续保留。
         self.attributes["tokens"] = copy.deepcopy(self.usage)

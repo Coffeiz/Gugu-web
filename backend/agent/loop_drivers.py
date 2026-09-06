@@ -52,6 +52,7 @@ from agent.providers.message_utils import (
     _openai_tool_result,
     _volatile_message_indices,
     _with_history_cache,
+    _with_system_cache_control,
     _with_single_history_cache,
 )
 
@@ -352,28 +353,6 @@ class OpenAIDriver:
         supports_active_cache = adapter.supports_active_cache(model)
         supports_explicit_cache = adapter.supports_explicit_cache(model)
 
-        # OpenAI 兼容 provider 的 cache_control 语义并不统一。经过验证的 Qwen
-        # 端点会把标记作为缓存边界；连续的 system 消息都是稳定前缀的一部分，
-        # 必须一起标记，才能覆盖 system + snapshot。稳定 conversation 的唯一
-        # 历史锚点统一由 run_round 的显式策略放在末尾，动态尾部也不会被纳入。
-        # DeepSeek 走服务端自动缓存，
-        # 不进入这条分支。
-        if supports_explicit_cache:
-            cache_messages = getattr(messages, "conversation", messages)
-            for message in cache_messages:
-                if message.get("role") != "system":
-                    break
-                content = message.get("content")
-                if isinstance(content, str):
-                    message["content"] = [{
-                        "type": "text", "text": content,
-                        "cache_control": {"type": "ephemeral"},
-                    }]
-                elif isinstance(content, list) and content and "cache_control" not in content[-1]:
-                    content[-1] = {
-                        **content[-1], "cache_control": {"type": "ephemeral"},
-                    }
-
         declared = providers.capability_snapshot(ai)
         tools = registry.openai_schemas(tool_names) if declared.get("tools", True) else []
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
@@ -407,6 +386,7 @@ class OpenAIDriver:
         # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
         # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
         if ctx.supports_explicit_cache:
+            outbound = _with_system_cache_control(outbound)
             if ctx.adapter.uses_single_history_cache_anchor(ctx.model):
                 messages = _with_single_history_cache(outbound)
             else:

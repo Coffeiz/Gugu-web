@@ -31,6 +31,7 @@ from agent.runtime.loopscope_trace.state import (
     _scope_run,
     record_reasoning_state_diagnostics,
 )
+from agent.runtime.loopscope_trace.utils import _usage_payload
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
                      provider="anthropic", max_tokens=100, temperature=0.7,
@@ -84,6 +85,43 @@ def test_context_threshold_adds_anthropic_cache_write_tokens():
     （input=1k, creation=80k, read=0）漏记 creation 会把 81k 上下文看成 1k。"""
     result = SimpleNamespace(usage_in=1, cache_tokens=0, cache_write_tokens=80)
     assert _provider_context_usage(SimpleNamespace(api_format="anthropic"), result) == 81
+
+
+@pytest.mark.parametrize("api_format", ["openai", "anthropic", ""])
+def test_loopscope_usage_uses_full_input_for_cache_ratio(api_format):
+    """driver usage_in 是未命中输入，缓存读写量必须计入完整输入分母。"""
+    result = SimpleNamespace(
+        usage_in=1_873,
+        usage_out=775,
+        cache_tokens=79_361,
+        cache_write_tokens=0,
+    )
+
+    assert _usage_payload(result, api_format) == {
+        "input": 81_234,
+        "output": 775,
+        "cache_read": 79_361,
+        "cache_write": 0,
+        "fresh_input": 1_873,
+        "total": 82_009,
+        "cache_ratio": round(79_361 / 81_234, 6),
+    }
+
+
+def test_loopscope_aggregated_usage_recomputes_full_input():
+    run = _ScopeRun(
+        id="run-usage-normalization", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+    run.add_usage({
+        "input": 81_234, "output": 775, "cache_read": 79_361,
+        "cache_write": 0, "fresh_input": 1_873,
+    })
+
+    assert run.usage["input"] == 81_234
+    assert run.usage["total"] == 82_009
+    assert run.usage["cache_ratio"] == round(79_361 / 81_234, 6)
 
 
 @pytest.fixture(autouse=True)

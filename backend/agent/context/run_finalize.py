@@ -174,6 +174,9 @@ async def finalize_run(
         actual_usage_tokens=int(actual_usage_tokens or 0),
         compaction_applied=bool(compaction_applied),
     )
+    # baseline 只允许由 provider 实际上下文达到 90% 的路径推进。
+    # 这里不能在每个 run 收尾后按固定字符窗口再次压缩，否则下一次 run
+    # 会丢失上一 run 的完整前缀，也会绕过 ContextBudget 的真实 usage 判断。
     return FinalizeResult(
         tokens_in=usage_result.tokens_in,
         tokens_out=usage_result.tokens_out,

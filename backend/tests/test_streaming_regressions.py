@@ -208,7 +208,7 @@ async def test_qq_stream_drains_agent_after_transport_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_stream_waits_for_baseline_after_final(monkeypatch):
+async def test_run_stream_releases_session_gate_after_final(monkeypatch):
     import agent.context.compress_conv as compress_conv
     from agent import runner
 
@@ -235,7 +235,54 @@ async def test_run_stream_waits_for_baseline_after_final(monkeypatch):
     items = [item async for item in runner.run_stream(SimpleNamespace(session_id=None))]
 
     assert items[0][0] == "final"
-    assert events == ["enter", "generator-finished", "baseline:11", "exit"]
+    assert events == ["enter", "generator-finished", "baseline:None", "exit"]
+
+
+@pytest.mark.asyncio
+async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monkeypatch):
+    from agent.gateway import web
+    from agent.context import compress_conv
+
+    events = []
+
+    class _Gate:
+        async def __aenter__(self):
+            events.append("enter")
+
+        async def __aexit__(self, *_args):
+            events.append("exit")
+
+    async def fail_refresh(*_args):
+        raise RuntimeError("能力目录暂时不可用")
+
+    async def snapshot(_session_id):
+        return {"done": False}
+
+    async def publish(session_id, event):
+        events.append(("publish", session_id, event["type"]))
+
+    async def end(session_id, **_kwargs):
+        events.append(("end", session_id))
+
+    released = []
+    monkeypatch.setattr(
+        compress_conv, "session_run_gate", lambda _req, **_kwargs: _Gate(),
+    )
+    monkeypatch.setattr(web, "_refresh_generation_history", fail_refresh)
+    monkeypatch.setattr(web.genstream, "snapshot", snapshot)
+    monkeypatch.setattr(web.genstream, "publish", publish)
+    monkeypatch.setattr(web.genstream, "end", end)
+    monkeypatch.setattr(
+        "agent.llm.llm_select.release", lambda model: released.append(model),
+    )
+
+    model = object()
+    await web._generate(SimpleNamespace(), 669, {}, [], False, model_cfg=model)
+
+    assert ("publish", 669, "error") in events
+    assert ("end", 669) in events
+    assert released == [model]
+    assert events[:2] == ["enter", "exit"]
 
 
 @pytest.mark.asyncio

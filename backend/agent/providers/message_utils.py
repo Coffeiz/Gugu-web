@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -153,12 +154,24 @@ def _with_history_cache(messages: list) -> list:
 
 
 def _with_single_history_cache(messages: list) -> list:
-    """给稳定 conversation 保留跨 Run baseline 和最新尾部两个历史锚点。"""
+    """给稳定 conversation 只保留一个最新历史锚点。
+
+    Qwen 的 OpenAI 兼容端点对多个历史 ``cache_control`` 锚点命中不稳定；
+    system 前缀由调用方单独标记，这里不能再把 baseline 和最新尾部同时标记。
+    """
     stable_limit, anchor_indices = _history_cache_state(messages)
     if stable_limit <= 0:
         return list(messages)
+    # _history_cache_state 还会返回旧 baseline，供其它 provider 跨续轮使用；
+    # Qwen 只能发送最新一个历史锚点，避免 provider 在工具续轮中回退到旧短前缀。
+    latest_history_anchor = max(anchor_indices) if anchor_indices else None
+    if latest_history_anchor is not None:
+        anchor_indices = {latest_history_anchor}
     remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    if remember_anchor is not None:
+    replace_anchors = getattr(messages, "replace_cache_anchors", None)
+    if replace_anchors is not None:
+        replace_anchors(anchor_indices)
+    elif remember_anchor is not None:
         for index in sorted(anchor_indices):
             remember_anchor(index)
     new_messages = []
@@ -183,6 +196,26 @@ def _with_single_history_cache(messages: list) -> list:
             ]
         new_messages.append(clone)
     return _cache_message_copy(messages, new_messages, stable_limit)
+
+
+def _with_system_cache_control(messages: list) -> list:
+    """只在 provider 请求副本上标记连续 system 前缀，避免污染会话 history。"""
+    result = copy.deepcopy(messages)
+    for message in result:
+        if message.get("role") != "system":
+            break
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = [{
+                "type": "text", "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }]
+        elif isinstance(content, list) and content and "cache_control" not in content[-1]:
+            message["content"] = [
+                *content[:-1],
+                {**content[-1], "cache_control": {"type": "ephemeral"}},
+            ]
+    return result
 
 
 def _openai_tool_result(res: Any, *, allow_images: bool = True) -> tuple[str, list[dict]]:

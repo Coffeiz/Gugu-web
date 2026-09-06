@@ -17,6 +17,7 @@ from agent.context.compaction import (
     resolve_compaction_limits,
 )
 from agent.context.tokens import estimate_tokens, message_text
+from app.models import ConversationSession
 
 
 def _make_msg(role: str, text: str) -> dict:
@@ -95,6 +96,26 @@ class TestCompactionBudget:
         assert result == "压缩摘要"
         assert captured["max_tokens"] == 8_000
 
+    def test_wire_summary_is_not_compressed_as_normal_history(self, monkeypatch):
+        captured = {}
+
+        async def fake_summary(_items, previous=None, **_kwargs):
+            captured["previous"] = previous
+            return "新摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        messages = [
+            _make_msg("user", "<compacted-summary>\n旧摘要\n</compacted-summary>"),
+            *[_make_msg("user", "旧历史" * 20) for _ in range(40)],
+            _make_msg("user", "当前消息"),
+        ]
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, model_cfg=_model_cfg(1000, 80))
+        )
+
+        assert result.changed
+        assert captured["previous"] == "<compacted-summary>\n旧摘要\n</compacted-summary>"
+
     def test_summary_input_limit_follows_model_config(self, monkeypatch):
         calls = []
 
@@ -161,6 +182,51 @@ class TestCompactContext:
         assert result.return_reason == "summary_validation_failed"
         assert result.messages == messages
 
+    def test_empty_provider_summary_uses_bounded_local_fallback(self, monkeypatch):
+        async def empty_summary(_items, _previous=None, **_kwargs):
+            return ""
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", empty_summary)
+        messages = [_make_msg("user", "历史消息" * 100) for _ in range(50)]
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, model_cfg=_model_cfg(1000, 80))
+        )
+        assert result.changed
+        assert result.return_reason == "compacted"
+        summary = next(m["content"] for m in result.messages if m["role"] == "user" and "compacted-summary" in m["content"])
+        assert estimate_tokens(summary) <= 80 + 10
+        assert "历史片段" in summary
+
+    def test_local_fallback_unwraps_previous_compacted_summary(self, monkeypatch):
+        async def empty_summary(_items, _previous=None, **_kwargs):
+            return ""
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", empty_summary)
+        previous = "<compacted-summary>\n已有结论\n</compacted-summary>"
+        messages = [_make_msg("user", "历史消息" * 100) for _ in range(50)]
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(
+                messages,
+                model_cfg=_model_cfg(1000, 80),
+            )
+        )
+        # 直接验证本地 fallback 的候选入口，避免依赖消息中是否已有 summary 行。
+        candidate = compaction_module._deterministic_summary(
+            ["用户：新历史"], previous, max_output_tokens=80,
+        )
+        assert result.changed
+        assert "已有摘要：已有结论" in candidate
+        assert "<compacted-summary>" not in candidate
+
+    def test_local_fallback_removes_embedded_summary_markers_from_old_history(self):
+        candidate = compaction_module._deterministic_summary(
+            ["用户：前缀 <compacted-summary>旧片段</compacted-summary> 后缀"],
+            "已有摘要：<compacted-summary>旧结论</compacted-summary>",
+            max_output_tokens=80,
+        )
+        assert "<compacted-summary>" not in candidate
+        assert "</compacted-summary>" not in candidate
+
     def test_small_history_uses_single_branch_summary_request(self, monkeypatch):
         calls = []
 
@@ -177,6 +243,23 @@ class TestCompactContext:
         assert result == "分支摘要"
         assert len(calls) == 1
         assert calls[0][1] == "旧摘要"
+
+    def test_summary_provider_timeout_retries_once(self, monkeypatch):
+        calls = []
+
+        async def flaky_provider(_sys, user, _settings, _max_tokens):
+            calls.append(user)
+            if len(calls) == 1:
+                raise TimeoutError("provider timeout")
+            return "重试后的摘要"
+
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        monkeypatch.setattr("agent.context.provider_runner.complete_text", flaky_provider)
+        result = asyncio.get_event_loop().run_until_complete(
+            _generate_compact_summary(["用户：需要压缩的历史"], model_cfg=_model_cfg())
+        )
+        assert result == "重试后的摘要"
+        assert len(calls) == 2
 
     def test_oversized_history_uses_rolling_fallback(self, monkeypatch):
         calls = []
@@ -334,9 +417,12 @@ class TestCompactContext:
         assert "本轮问题" in result_text
         assert "本轮工具结果" in result_text
 
-    def test_post_run_baseline_is_coalesced_and_uses_provider_usage(self, monkeypatch):
-        """同一 session 的 run 收尾 baseline 只启动一次，并使用 provider usage。"""
+    def test_baseline_scheduler_only_runs_at_provider_threshold(self, monkeypatch):
+        """普通 run 不裁剪；达到 90% 才启动 baseline 收敛。"""
         calls = []
+
+        async def fake_read_state(_session_id):
+            return None
 
         async def fake_compress(session_id, user_id, settings, *, force=False):
             calls.append((session_id, user_id, force))
@@ -346,12 +432,57 @@ class TestCompactContext:
 
         async def exercise():
             compress_conv._baseline_tasks.clear()
-            compress_conv.schedule_baseline_update(88, "user", object(), 1000, actual_usage_tokens=950)
-            compress_conv.schedule_baseline_update(88, "user", object(), 1000, actual_usage_tokens=950)
+            monkeypatch.setattr(compress_conv, "_read_execution_state", fake_read_state)
+            compress_conv.schedule_baseline_update(
+                88, "user", object(), 1000, actual_usage_tokens=899,
+            )
+            await compress_conv.wait_for_baseline_update(88)
+            assert calls == []
+            compress_conv.schedule_baseline_update(
+                88, "user", object(), 1000, actual_usage_tokens=900,
+            )
             await compress_conv.wait_for_baseline_update(88)
 
         asyncio.get_event_loop().run_until_complete(exercise())
         assert calls == [(88, "user", False)]
+
+    def test_wait_for_baseline_update_polls_persisted_state_without_local_task(self, monkeypatch):
+        """压缩任务在另一个 worker 时，下一 run 仍必须等待数据库状态回到 idle。"""
+        states = iter(("baseline_updating", "baseline_updating", "idle"))
+        calls = []
+
+        async def fake_read_state(session_id):
+            calls.append(session_id)
+            return next(states)
+
+        async def exercise():
+            compress_conv._baseline_tasks.clear()
+            monkeypatch.setattr(compress_conv, "_read_execution_state", fake_read_state)
+            await compress_conv.wait_for_baseline_update(88)
+
+        asyncio.get_event_loop().run_until_complete(exercise())
+        assert calls == [88, 88, 88]
+
+    def test_claim_session_run_rechecks_baseline_state_under_row_lock(self, db, user_a):
+        """拿到会话锁后 baseline 才切换为 updating 时，不能认领新 run。"""
+        session = ConversationSession(
+            user_id=user_a.id,
+            title="baseline 行锁测试",
+            source="web",
+            execution_state="baseline_updating",
+        )
+        db.add(session)
+        asyncio.get_event_loop().run_until_complete(db.commit())
+        asyncio.get_event_loop().run_until_complete(db.refresh(session))
+
+        claimed = asyncio.get_event_loop().run_until_complete(
+            compress_conv._claim_session_run(session.id, "run-test", False)
+        )
+
+        assert claimed is False
+        asyncio.get_event_loop().run_until_complete(db.refresh(session))
+        assert session.execution_state == "baseline_updating"
+        assert session.active_run_id is None
 
     def test_session_run_lock_key_uses_canonical_session_id(self):
         from types import SimpleNamespace

@@ -829,9 +829,6 @@ async def run_collect(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
             on_round=on_round,
         )
-        # baseline 是 run 末尾提交的安全点。释放 gate 前必须等待它完成，
-        # 否则下一个 worker 可能在 summary/baseline 提交前读取旧快照并再次压缩。
-        await compress_conv.wait_for_baseline_update(response.session_id or req.session_id)
         return response
 
 
@@ -1319,18 +1316,12 @@ async def run_stream(
     """流式生成也复用同一 session gate，避免和普通生成并行。"""
     from agent.context import compress_conv
 
-    final_session_id = req.session_id
     async with compress_conv.session_run_gate(req):
         async for item in _run_stream_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
         ):
-            if isinstance(item, tuple) and len(item) == 2 and item[0] == "final":
-                response = item[1]
-                final_session_id = getattr(response, "session_id", None) or final_session_id
             yield item
-        # 和非流式路径一致：最终帧可以先交给调用方，但 gate 要继续持有到
-        # baseline 完成，保证同 session 的下一轮不会看到未提交的 baseline。
-        await compress_conv.wait_for_baseline_update(final_session_id)
+        await compress_conv.wait_for_baseline_update(req.session_id)
 
 
 async def _collect(

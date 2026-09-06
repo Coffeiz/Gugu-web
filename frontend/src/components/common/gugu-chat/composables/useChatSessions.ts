@@ -39,6 +39,7 @@ interface RawTimelineEvent {
   id: string
   kind: 'assistant' | 'tool'
   text?: string
+  files?: ChatFile[]
   runId?: string
   roundId?: string
   toolCallId?: string
@@ -191,6 +192,7 @@ export function useChatSessions(options: {
         event.kind === 'assistant'
           ? {
               id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
+              files: event.files && event.files.length ? event.files : undefined,
               time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
               runId: event.runId, roundId: event.roundId,
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,

@@ -5,7 +5,10 @@ from agent.context.assembly import NewMessageBatch, PromptMessages, assemble_tur
 from agent.context.canonical_tool_history import render_events_for_provider
 from agent.context.history import build_history_parts
 from agent.context.provider_history import render_anthropic_message_roles
-from agent.context.run_context import _is_legacy_persisted_time_context
+from agent.context.run_context import (
+    _effective_history,
+    _is_legacy_persisted_time_context,
+)
 from agent.security import sanitize
 
 
@@ -143,6 +146,25 @@ def test_legacy_persisted_time_context_rows_are_filtered():
     assert _is_legacy_persisted_time_context(dynamic_now) is True
     assert _is_legacy_persisted_time_context(message_time) is True
     assert _is_legacy_persisted_time_context(mixed_context) is False
+
+
+def test_current_persisted_user_row_is_not_replayed_before_current_projection():
+    """后台重读 history 后，当前用户正文只能出现一次。
+
+    Web 会先提交用户行再启动后台任务；带图片时 history 中的行是纯文本持久化
+    版本，而 current_user 是完整 provider 投影。若两者都发送，会破坏跨轮缓存。
+    """
+    current = _history_row(
+        row_id=42, role="user", content="看这张图",
+        content_json=[{"type": "text", "text": "看这张图"}],
+    )
+    previous = _history_row(
+        row_id=41, role="user", content="上一条",
+        content_json=[{"type": "text", "text": "上一条"}],
+    )
+    filtered = _effective_history([previous, current], user_message=current)
+
+    assert [message.id for message in filtered] == [41]
 
 
 def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail():

@@ -16,6 +16,7 @@ from agent.context.canonical_context import normalize_history_message
 from agent.loop_drivers import NormalizedToolCall
 from agent.context.history import build_history_parts, canonicalize_tool_messages
 from agent.security.sanitize import sanitize_messages
+from agent.context.assembly.batch import NewMessageBatch
 
 
 def test_schema_event_has_stable_digest_and_is_deduplicated():
@@ -230,3 +231,39 @@ def test_canonical_tool_round_does_not_depend_on_provider_wire_shape():
             }],
         },
     ]
+
+
+def test_canonical_tool_round_persists_openai_reasoning_content():
+    result = SimpleNamespace(
+        text="继续处理",
+        raw=SimpleNamespace(reasoning="先确认工具结果，再继续。"),
+        tool_calls=[],
+    )
+
+    canonical = canonical_tool_round(result, [])
+
+    assert canonical == [{
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "继续处理"},
+            {"type": "reasoning_content", "text": "先确认工具结果，再继续。"},
+        ],
+    }]
+    message = SimpleNamespace(
+        role="assistant", content="", content_json=canonical[0]["content"],
+        sent_at=None, chat_type=None, platform_user_id=None, platform_user_name=None,
+        files=None, quoted_text=None,
+    )
+    assert build_history_parts([message], None, use_anthropic=False) == [{
+        "role": "assistant", "content": "继续处理",
+        "reasoning_content": "先确认工具结果，再继续。",
+    }]
+
+
+def test_new_message_batch_accepts_persisted_reasoning_content():
+    batch = NewMessageBatch.from_canonical_messages([{
+        "role": "assistant",
+        "content": [{"type": "reasoning_content", "text": "继续处理"}],
+    }])
+
+    assert batch.canonical_messages[0]["content"][0]["type"] == "reasoning_content"

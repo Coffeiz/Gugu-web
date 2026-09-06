@@ -12,7 +12,7 @@ import { i18n } from '@/i18n'
 // consumeStream() 的 tool_done 分支也要按同一份集合即时 bump 对应资源，故导出。
 export const PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_stages','update_todo'])
 export const CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
-export const FILE_TOOLS = new Set(['edit_file','create_document','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
+export const FILE_TOOLS = new Set(['edit_file','create_file','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
 export const SCHEDULED_TASK_TOOLS = new Set(['create_scheduled_task', 'update_scheduled_task', 'delete_scheduled_task'])
 
 /**
@@ -53,7 +53,7 @@ export function useChatActions(options: {
     const filesCache = useFilesCacheStore()
     if (!filesCache.loaded) await filesCache.load()
     const f = filesCache.allFiles.find(item => item.id === id)
-    if (f && isPreviewable(f.ext)) {
+    if (f && isPreviewable(f.ext, f.mimeType)) {
       usePreviewStore().open(f)
       return
     }

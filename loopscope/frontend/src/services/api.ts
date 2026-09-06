@@ -22,7 +22,10 @@ export async function listRuns(
   const suffix = query.toString() ? `?${query.toString()}` : ''
   const r = await fetch(`${BASE}/sessions/${key}/runs${suffix}`)
   if (!r.ok) throw new Error(`LoopScope ${r.status}`)
-  return r.json()
+  const runs = await r.json() as TraceRun[]
+  // Collector 旧版本曾按“最旧到最新”返回；在 API 层统一成“最新到最旧”，
+  // 这样前端分页方向不会依赖 Collector 是否已同步更新。
+  return runs.sort((a, b) => (b.started_at - a.started_at) || b.id.localeCompare(a.id))
 }
 
 export async function getRun(id: string, options: { includeSpans?: boolean } = {}): Promise<TraceRun> {

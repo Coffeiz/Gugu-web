@@ -195,8 +195,8 @@ def ensure_hooks() -> None:
     original_dispatch = registry.dispatch
     original_builder_build = install_context_hooks(context_loaders, context_builder)
 
-    async def begin(session_id):
-        result = await original_begin(session_id)
+    async def begin(session_id, owner_run_id=None):
+        result = await original_begin(session_id, owner_run_id=owner_run_id)
         try:
             trace_id = get_trace() or uuid.uuid4().hex[:12]
             run = _scope_run.get()

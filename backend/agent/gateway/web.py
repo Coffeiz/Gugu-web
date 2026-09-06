@@ -342,7 +342,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not active_before_start:
         # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
         # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
-        await genstream.begin(session_id)
+        owner_run_id = genstream.new_run_id()
+        await genstream.begin(session_id, owner_run_id=owner_run_id)
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
@@ -350,6 +351,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             session=session, history_stats=history_stats, model_cfg=model_cfg,
             locale=current_locale,
             strip_thinking=strip_thinking,
+            owner_run_id=owner_run_id,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -365,20 +367,46 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
     """续看：浏览器刷新后重连进行中的生成。先把已生成的内容补一次，再订阅后续。
 
     没有进行中的生成（或已完成）→ 立即发 idle done，前端就走正常 DB 加载。
-    （快照→订阅之间有极小窗口可能漏几个 token，刷新瞬间可接受；回复最终以 DB 为准。）
+    订阅在读取快照前建立，避免快照与频道之间出现丢终态事件的窗口；回复最终以 DB 为准。
     """
-    snap = await genstream.snapshot(session_id)
-    if not snap or snap.get("done"):
-        yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
-        return
-    if snap.get("text"):
-        yield f"data: {json.dumps({'type': 'token', 'content': snap['text']}, ensure_ascii=False)}\n\n"
-    for f in (snap.get("files") or []):
-        yield f"data: {json.dumps({'type': 'file', 'file': f}, ensure_ascii=False)}\n\n"
-    if snap.get("tool"):
-        yield f"data: {json.dumps({'type': 'tool_call', 'name': '_preparing', 'label': snap['tool']}, ensure_ascii=False)}\n\n"
-    async for line in genstream.subscribe(session_id):
-        yield line
+    # 必须先订阅再读快照。否则后台可能恰好在 snapshot() 返回后发布 done，
+    # 续看端点既看不到终态，也收不到后续广播。
+    pubsub = await genstream.open_subscription(session_id)
+    try:
+        snap = await genstream.snapshot(session_id)
+        if not snap or snap.get("done"):
+            yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
+            return
+        timeline = snap.get("timeline") or []
+        if timeline:
+            # 快照按实际发布顺序保存，刷新时必须按这个顺序重放。
+            # 不能先恢复累计正文、再恢复工具列表，否则运行中的多 round 会把
+            # 正文气泡全部挪到顶部、工具气泡全部挪到底部，直到 run 结束才恢复。
+            for item in timeline:
+                if not isinstance(item, dict) or not item.get("type"):
+                    continue
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        else:
+            # 兼容升级前已经存在的旧快照（只有 text/tools，没有 timeline）。
+            run_id = snap.get("run_id") or ""
+            round_id = snap.get("round_id") or ""
+            if run_id or round_id:
+                yield f"data: {json.dumps({'type': 'round_start', 'run_id': run_id, 'round_id': round_id}, ensure_ascii=False)}\n\n"
+            if snap.get("text"):
+                yield f"data: {json.dumps({'type': 'token', 'content': snap['text'], 'run_id': run_id, 'round_id': round_id}, ensure_ascii=False)}\n\n"
+            for f in (snap.get("files") or []):
+                yield f"data: {json.dumps({'type': 'file', 'file': f}, ensure_ascii=False)}\n\n"
+            for tool_call in snap.get("tools") or []:
+                if tool_call.get("name"):
+                    yield f"data: {json.dumps({'type': 'tool_call', **tool_call}, ensure_ascii=False)}\n\n"
+                    if tool_call.get("status") not in (None, "running"):
+                        yield f"data: {json.dumps({'type': 'tool_done', **tool_call}, ensure_ascii=False)}\n\n"
+        async for line in genstream.subscribe(session_id, pubsub=pubsub):
+            yield line
+        pubsub = None
+    finally:
+        if pubsub is not None:
+            await genstream.close_subscription(session_id, pubsub)
 
 
 async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
@@ -386,7 +414,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None) -> None:
+                    history_stats=None, model_cfg=None, locale=None,
+                    owner_run_id=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -650,10 +679,25 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                         break
             if etype == "file" and evt.get("file"):
                 sent_files.append(evt["file"])   # 捕获以便持久化，仍转发给前端
+                # 助手消息带工具时间线时，刷新接口会用 display_timeline 恢复并
+                # 隐藏外层 assistant 消息；文件也必须进入时间线，否则实时可见、
+                # 刷新后就会丢失文件卡片。
+                display_timeline.append({
+                    "kind": "assistant",
+                    "runId": current_run_id or None,
+                    "roundId": current_round_id or None,
+                    "text": "",
+                    "files": [evt["file"]],
+                })
             if etype == "_cancelled":
                 cancelled = True
             elif etype == "error":
                 generation_failed = True
+            # 交互事件必须带会话归属。前端在新会话拿到真实 ID、切换会话和
+            # 恢复流的边界上不能只靠本地 live() 猜测，否则授权卡可能被当成
+            # 旧流事件丢弃。
+            if etype == "interaction_required":
+                evt = {"session_id": session_id, **evt}
             await genstream.publish(session_id, evt)
 
         if cancelled or generation_failed:
@@ -683,7 +727,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 text=full_reply,
                 display_timeline=[
                     item for item in display_timeline
-                    if item.get("kind") == "tool" or item.get("text")
+                    if item.get("kind") == "tool" or item.get("text") or item.get("files")
                 ],
                 files=sent_files,
                 tokens_in=usage_tokens["input"],
@@ -751,7 +795,32 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 diag_log("agent.loopscope.web_finalize", trace_exc)
         from agent.llm.llm_select import release as _release_model
         _release_model(model_cfg)
-        await genstream.end(session_id)
+        await genstream.end(session_id, owner_run_id=owner_run_id)
+
+
+async def _refresh_generation_history(session_id: int, snapshot: dict, model_cfg):
+    """在 Web generation gate 内重新读取会话水位和历史。
+
+    Web 请求会先写入消息并创建后台任务；如果在后台任务取得 gate 前另一轮完成了
+    baseline，任务创建时传入的 session/history 就已经过期。这里必须用新事务重新
+    读取，否则下一轮仍会从旧 baseline=0 组装完整历史并再次触发压缩。
+    """
+    import app.db.session as _sess
+    from agent.context.provider_history import clean_persisted_history, prepare_session
+
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id)
+        if session is None:
+            return None
+        baseline = session_snapshot.history_baseline(session)
+        history = await session_history.load_session_history(db, session_id, baseline)
+        history_stats = session_history.consume_history_stats()
+        _, should_strip_thinking = prepare_session(session, model_cfg)
+        if should_strip_thinking:
+            clean_persisted_history(history)
+        refreshed_snapshot = dict(snapshot)
+        refreshed_snapshot["history_baseline_message_id"] = baseline
+        return session, refreshed_snapshot, history, history_stats, bool(should_strip_thinking)
 
 
 async def _generate(req, session_id, snapshot, history, is_new_session,
@@ -759,18 +828,85 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None) -> None:
-    """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。"""
+                    history_stats=None, model_cfg=None, locale=None,
+                    owner_run_id=None) -> None:
+    """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。
+
+    预处理（刷新历史、能力目录校验等）也在这里执行；这些步骤若异常，不能
+    绕过 ``_generate_unlocked`` 的收口，否则 genstream 会一直停在生成中。
+    """
     from agent.context import compress_conv
 
-    async with compress_conv.session_run_gate(req):
-        await _generate_unlocked(
-            req, session_id, snapshot, history, is_new_session,
-            user_content=user_content, user_images=user_images,
-            attach_cards=attach_cards, user_media=user_media,
-            user_tz=user_tz, sent_at=sent_at, user_message=user_message,
-            resume_interaction=resume_interaction, strip_thinking=strip_thinking,
-            session=session, history_stats=history_stats, model_cfg=model_cfg,
-            locale=locale,
+    owner_run_id = owner_run_id or genstream.new_run_id()
+    try:
+        async with compress_conv.session_run_gate(req, run_id=owner_run_id) as claimed_owner_run_id:
+            refreshed = await _refresh_generation_history(
+                session_id, snapshot, model_cfg,
+            )
+            if refreshed is not None:
+                session, snapshot, history, history_stats, strip_thinking = refreshed
+            await _generate_unlocked(
+                req, session_id, snapshot, history, is_new_session,
+                user_content=user_content, user_images=user_images,
+                attach_cards=attach_cards, user_media=user_media,
+                user_tz=user_tz, sent_at=sent_at, user_message=user_message,
+                resume_interaction=resume_interaction, strip_thinking=strip_thinking,
+                session=session, history_stats=history_stats, model_cfg=model_cfg,
+                locale=locale,
+                owner_run_id=claimed_owner_run_id or owner_run_id,
+            )
+            await compress_conv.wait_for_baseline_update(session_id)
+    except asyncio.CancelledError:
+        # 进程关闭/任务取消时保留取消语义，但清掉 active 快照，避免重启后
+        # 续看端点把已不存在的后台任务误显示成「生成中」。
+        await _finalize_preflight_failure(
+            session_id, model_cfg, cancelled=True, owner_run_id=owner_run_id,
         )
-        await compress_conv.wait_for_baseline_update(session_id)
+        raise
+    except BaseException as exc:
+        await _finalize_preflight_failure(
+            session_id, model_cfg, error=exc, owner_run_id=owner_run_id,
+        )
+
+
+async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
+                                      cancelled: bool = False,
+                                      owner_run_id=None) -> None:
+    """收口生成任务在 ``_generate_unlocked`` 之前抛出的异常。
+
+    正常业务异常由 ``_generate_unlocked`` 自己发布并结束；这里只处理它尚未
+    进入内部 ``try`` 的失败（例如能力注册表短暂不一致），并按快照状态幂等
+    判断，避免重复发布错误或重复释放模型计数。
+    """
+    state = await genstream.snapshot(session_id)
+    is_active = bool(state and not state.get("done"))
+    if not is_active:
+        await genstream.end(session_id, owner_run_id=owner_run_id)
+        return
+
+    if error is not None:
+        logger.error(
+            "Web 后台生成任务异常 session=%s error_type=%s",
+            session_id, type(error).__name__,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        is_network_error = _is_network_error(error)
+        message = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
+                   else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
+        await genstream.publish(session_id, {
+            "type": "error",
+            "message": message,
+            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+        })
+    elif cancelled:
+        await genstream.publish(session_id, {
+            "type": "error",
+            "message": "这次生成已中断，请重试。",
+            "message_key": "chatUi.genericError",
+        })
+
+    try:
+        from agent.llm.llm_select import release as _release_model
+        _release_model(model_cfg)
+    finally:
+        await genstream.end(session_id, owner_run_id=owner_run_id)

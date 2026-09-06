@@ -49,6 +49,46 @@ def _wrap_context_loader(module: Any, name: str, kind: str, label: str) -> None:
 def _prompt_file_path(path: Path) -> str:
     return _display_source_path(path)
 
+
+def record_shell_prompt_sources(dynamic_prompt: str, *, code_target: Any = None) -> None:
+    """记录稳定 Shell 协议和本轮权限提示，保持与最终 system prompt 对照。"""
+    prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "shell.md"
+    try:
+        stable_prompt = prompt_path.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        stable_prompt = ""
+    if stable_prompt:
+        display_path = _prompt_file_path(prompt_path)
+        record_context_source(
+            "file",
+            "shell.md",
+            input={"path": display_path, "role": "stable_shell_policy"},
+            output={"content": stable_prompt},
+            attributes={
+                "context_source": "shell_policy",
+                "path": display_path,
+                "role": "stable_protocol",
+            },
+            code_target=code_target,
+            source_value=stable_prompt,
+            included_value=stable_prompt,
+        )
+    if dynamic_prompt:
+        record_context_source(
+            "context",
+            "Shell permission prompt",
+            input={"source": "shell_policy", "role": "dynamic_permissions"},
+            output={"content": dynamic_prompt},
+            attributes={
+                "context_source": "shell_policy",
+                "role": "dynamic_permissions",
+            },
+            code_target=code_target,
+            source_value=dynamic_prompt,
+            included_value=dynamic_prompt,
+        )
+
+
 def _record_builder_sources(context_builder: Any, original_build: Any, bound: inspect.BoundArguments, result: tuple[str, str, str], start: float, end: float) -> None:
     try:
         args = bound.arguments

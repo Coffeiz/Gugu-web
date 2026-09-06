@@ -330,6 +330,7 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
         return [{"role": message.role, "content": content_text(content_json)}]
 
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     tool_calls: list[dict] = []
     tool_results: list[dict] = []
     canonical_events: list[dict] = []
@@ -355,6 +356,9 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
         elif block_type == "text":
             if block.get("text"):
                 text_parts.append(str(block["text"]))
+        elif block_type == "reasoning_content":
+            if block.get("text"):
+                reasoning_parts.append(str(block["text"]))
         else:
             rendered = content_text(block)
             if rendered:
@@ -383,6 +387,8 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
         assistant = {"role": "assistant", "content": "\n".join(text_parts) or None}
         if tool_calls:
             assistant["tool_calls"] = tool_calls
+        if reasoning_parts:
+            assistant["reasoning_content"] = "\n".join(reasoning_parts)
         result.append(assistant)
     elif text_parts:
         result.append({"role": message.role, "content": "\n".join(text_parts)})

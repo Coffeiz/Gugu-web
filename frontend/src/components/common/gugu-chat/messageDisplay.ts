@@ -20,7 +20,7 @@ export function isAnimatedImageFile(f: ChatFile) {
 }
 
 export function canPreview(f: ChatFile) {
-  return (!!f.file_id || !!f.attach_id) && isPreviewable(f.ext)
+  return (!!f.file_id || !!f.attach_id) && isPreviewable(f.ext, f.mime)
 }
 
 export function fmtSize(b?: number) {

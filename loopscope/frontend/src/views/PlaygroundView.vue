@@ -155,14 +155,14 @@ async function refreshRuns() {
 }
 async function loadOlderRuns() {
   if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
-  const oldest = runs.value[0]
+  const oldest = runs.value[runs.value.length - 1]
   loadingOlderRuns.value = true
   try {
     const source = activeSession.value?.source || 'web'
     const older = await listRuns(activeId.value, source, { limit: 20, before: oldest.started_at })
     const existing = new Set(runs.value.map(run => run.id))
     const unique = older.filter(run => !existing.has(run.id))
-    runs.value = [...unique, ...runs.value]
+    runs.value = [...runs.value, ...unique]
     hasOlderRuns.value = older.length >= 20 && unique.length > 0
   } finally {
     loadingOlderRuns.value = false
@@ -313,7 +313,7 @@ async function openMonitor() {
   conversationScrollTop.value = scrollEl.value?.scrollTop ?? conversationScrollTop.value
   await refreshRuns()
   if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
-    monitorFocusRunId.value = runs.value[runs.value.length - 1]?.id ?? ''
+    monitorFocusRunId.value = runs.value[0]?.id ?? ''
   }
   if (monitorFocusRunId.value) await loadRunDetail(monitorFocusRunId.value)
   sessionView.value = 'monitor'
@@ -405,7 +405,7 @@ async function send() {
       await refreshRuns()
       if (runs.value.length > before) break
     }
-    ai.runId = runs.value[runs.value.length - 1]?.id
+    ai.runId = runs.value[0]?.id
     if (ai.runId) void loadRunDetail(ai.runId)
   } catch (e: any) {
     ai.pending = false

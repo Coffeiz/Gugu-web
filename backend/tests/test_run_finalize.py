@@ -31,7 +31,6 @@ class _DbContext:
 @pytest.mark.asyncio
 async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch):
     db = _Db()
-    baseline_calls = []
     trim_calls = []
 
     async def cap_usage(*args):
@@ -40,12 +39,9 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     async def trim(session_id):
         trim_calls.append(session_id)
 
-    def schedule(*args, **kwargs):
-        baseline_calls.append((args, kwargs))
-
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
-    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", schedule)
+    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "agent.context.assembly.newly_appended",
         lambda messages, initial_len: messages[initial_len:],
@@ -73,17 +69,12 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         cache_read=4,
         cache_write=5,
         tools_used=["test_tool"],
-        actual_usage_tokens=1234,
-        compaction_applied=True,
     )
 
     assert result.tokens_in == 12
     assert result.tokens_out == 3
     assert len(db.items) == 4  # RAG、tool turn、assistant、usage
     assert trim_calls == [7]
-    assert baseline_calls[0][0][0:2] == (7, "user-test")
-    assert baseline_calls[0][1]["actual_usage_tokens"] == 1234
-    assert baseline_calls[0][1]["compaction_applied"] is True
 
 
 @pytest.mark.asyncio
@@ -146,8 +137,7 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
     monkeypatch.setattr(
         "app.services.conversation_retention.trim_session_messages", _trim)
     monkeypatch.setattr(
-        "agent.context.compress_conv.schedule_baseline_update", lambda *a, **k: None)
-
+        "agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
     # 模拟 resolve_run_config_for_user：model_copy(update=...) 注入 is_byok（llm_select.py）
     base = AIPresetItem(model="MiniMax-M3", provider="minimax", context_tokens=80000)
     model = base.model_copy(update={"api_key": "sk-test", "is_byok": True})

@@ -237,14 +237,11 @@ def _usage_payload(result: Any, api_format: str = "") -> dict[str, Any]:
     output = int(getattr(result, "usage_out", 0) or 0)
     cache_read = int(getattr(result, "cache_tokens", 0) or 0)
     cache_write = int(getattr(result, "cache_write_tokens", 0) or 0)
-    # 现有 driver 的语义：OpenAI/DeepSeek prompt_tokens 已包含 cache hit；Anthropic
-    # input_tokens 与 cache_read_input_tokens 分列。0.2 在观测层做归一，不改变 core 的旧 usage。
-    if api_format == "anthropic":
-        input_total = reported_input + cache_read + cache_write
-        fresh_input = reported_input
-    else:
-        input_total = reported_input
-        fresh_input = max(input_total - cache_read, 0)
+    # 所有 driver 的 canonical usage 都已统一为：usage_in 只表示未命中输入，
+    # cache_tokens/cache_write_tokens 单独表示缓存读写量。观测层必须把三者
+    # 合并成真实输入量，否则 OpenAI 兼容链路会出现缓存率大于 100%。
+    input_total = reported_input + cache_read + cache_write
+    fresh_input = reported_input
     return {
         "input": input_total,
         "output": output,

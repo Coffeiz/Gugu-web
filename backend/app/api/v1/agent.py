@@ -576,7 +576,10 @@ async def get_ui_labels(current_user: User = Depends(get_current_user)):
         # 命名可含多个候选（| 或换行分隔）→ 返回数组，前端每次随机取一个
         return [p.strip() for p in re.split(r"[|\n]", raw or "") if p.strip()]
 
-    return {"thinking": _split(merged.get("_thinking", ""))}
+    return {
+        "thinking": _split(merged.get("_thinking", "")),
+        "contextCompacting": _split(merged.get("_context_compaction", "")),
+    }
 
 
 @router.get("/commands")

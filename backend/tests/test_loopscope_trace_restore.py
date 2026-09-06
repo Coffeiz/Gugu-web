@@ -1,6 +1,7 @@
 """LoopScope 跨进程 trace 恢复回归测试。"""
 
 from agent.runtime.loopscope_trace import state
+from agent.runtime.loopscope_trace.context import record_shell_prompt_sources
 from agent.runtime.loopscope_trace.hooks import _argument_shape
 
 
@@ -50,3 +51,27 @@ def test_tool_schema_error_span_keeps_schema_and_redacts_argument_values(monkeyp
     assert span.input["arguments_shape"] == {"name": "string"}
     assert "用户正文" not in repr(span.input)
     assert span.status == "error"
+
+
+def test_shell_prompt_sources_record_stable_and_dynamic_parts(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = state._ScopeRun(
+        id="run-shell-prompt", trace_id="trace-shell-prompt",
+        session_key="gugu:web:test", external_session_id="test",
+        source="web", started_at=state._now(),
+    )
+    token = state._scope_run.set(run)
+    try:
+        record_shell_prompt_sources("## 本轮 Shell 权限状态（动态）", code_target=record_shell_prompt_sources)
+    finally:
+        state._scope_run.reset(token)
+
+    assert [span.name for span in run.pending_context_spans] == ["shell.md", "Shell permission prompt"]
+    stable, dynamic = run.pending_context_spans
+    assert stable.kind == "file"
+    assert stable.attributes["context_source"] == "shell_policy"
+    assert stable.attributes["role"] == "stable_protocol"
+    assert "# Shell 安全协议" in stable.output["content"]
+    assert dynamic.kind == "context"
+    assert dynamic.attributes["role"] == "dynamic_permissions"
+    assert dynamic.output["content"] == "## 本轮 Shell 权限状态（动态）"

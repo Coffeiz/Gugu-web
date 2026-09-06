@@ -87,8 +87,8 @@ def n_verify(messages):
     return sum(1 for m in messages if m.get("content") == _VERIFY_PROMPT)
 
 
-async def test_progress_only_round_is_retried_without_leaking_placeholder(monkeypatch):
-    """模型只吐“正在查询”且没有 tool call 时，不能把占位话术当成最终回复。"""
+async def test_progress_only_round_is_retried_but_draft_remains_visible(monkeypatch):
+    """模型的普通 draft 实时可见；守卫追问本身仍不泄漏。"""
     patch_anthropic(monkeypatch, [
         msg([TX("正在为你查询最新信息。")]),
         msg([TX("查完了，结果如下。")]),
@@ -98,14 +98,14 @@ async def test_progress_only_round_is_retried_without_leaking_placeholder(monkey
         make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "查一下最新信息"}], AI)
     )
 
-    # 守卫后的第二轮没有真实工具调用时，追问内容不应再次成为用户可见回复。
-    assert text == ""
+    # 第一轮普通 draft 应实时可见；守卫后的追问内容不应再次泄漏。
+    assert text == "正在为你查询最新信息。"
     assert ev["_new_round"] == 1
     assert errors == []
 
 
-async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
-    """无工具的长最终回复也必须走 run 级 provider usage 90% 检查。"""
+async def test_final_reply_returns_before_background_compaction(monkeypatch):
+    """无工具的最终回复不应等待 baseline 压缩，避免阻塞 done 和后续消息。"""
     calls = []
 
     async def fake_compact(messages, *args, **kwargs):
@@ -125,8 +125,8 @@ async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
 
     assert text == "最终回复"
     assert errors == []
-    assert calls == [ai]
-    assert ev["_context_compaction"] == 1
+    assert calls == []
+    assert ev["_context_compaction"] == 0
 
 
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────
@@ -220,8 +220,8 @@ async def test_verify_clean_pass(monkeypatch, dispatched):
     messages = [{"role": "user", "content": "建个项目X"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert "建好了项目X" in text
-    assert "好的" not in text, "工具轮的过程文字不应泄漏到用户回复"
-    assert "我来核实一下" not in text, "核实过程文字没被抑制"
+    assert "好的" in text, "普通 round draft 应实时展示"
+    assert "我来核实一下" not in text, "核实过程文字仍应被抑制"
     assert "get_project" in dispatched
     assert n_verify(messages) == 1
     assert _FINALIZE_PROMPT in [m.get("content") for m in messages]
@@ -255,7 +255,7 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     ])
     messages = [{"role": "user", "content": "建个项目"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    assert "好的" not in text, "工具轮的过程文字不应泄漏到用户回复"
+    assert "好的" in text, "普通 round draft 应实时展示"
     assert "发现漏了一个待办" in text, f"补做说明没发出来：{text!r}"
     assert "add_todo" in dispatched
     assert "项目已补全" in text
@@ -263,8 +263,8 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 
-async def test_tool_round_text_is_buffered_until_final_round(monkeypatch, dispatched):
-    """带工具调用的模型轮次只展示工具状态，不把计划文字当成最终回复。"""
+async def test_tool_round_text_streams_as_its_own_round(monkeypatch, dispatched):
+    """带工具调用的模型轮次也实时展示 draft，并由 round 事件切分气泡。"""
     patch_anthropic(monkeypatch, [
         msg([TX("我先读取笔记并按行修改。"), TU("note_update", "1", {})]),
         msg([TU("note_get", "2", {})]),
@@ -273,8 +273,7 @@ async def test_tool_round_text_is_buffered_until_final_round(monkeypatch, dispat
     messages = [{"role": "user", "content": "修改笔记"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
 
-    assert text == "笔记已更新。"
-    assert "我先读取笔记" not in text
+    assert text == "我先读取笔记并按行修改。笔记已更新。"
     assert ev["tool_call"] == 2
 
 
@@ -328,7 +327,7 @@ async def test_verify_capped_at_max_verify(monkeypatch, dispatched):
     script = [
         msg([TU("create_project", "0", {})]),   # R1 建（tool）→ did_mutate
     ]
-    for i in range(5):   # 每轮核实都"又补一刀"，应被封顶在 MAX_VERIFY
+    for i in range(MAX_VERIFY):   # 每轮核实都"又补一刀"，应被封顶在 MAX_VERIFY
         script.append(msg([TU("update_todo", f"u{i}", {})]))
     script.append(msg([TX("已完成")]))
     patch_anthropic(monkeypatch, script)
@@ -336,6 +335,33 @@ async def test_verify_capped_at_max_verify(monkeypatch, dispatched):
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert n_verify(messages) == MAX_VERIFY, f"应封顶 {MAX_VERIFY} 次，实际 {n_verify(messages)}"
     assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_unlimited_mode_releases_verification_budget(monkeypatch, dispatched):
+    """无限模式放行整个 run，也不能在核实预算处提前收尾。"""
+    # 把核实预算压到 1，第二个核实修改必须依靠 unlimited 放行；最后补一次
+    # 只读查询，让主循环可以正常收束，而不是靠撞到预算退出。
+    script = [
+        msg([TU("create_project", "create", {})]),
+        msg([TU("update_todo", "update", {})]),
+        msg([TU("get_project", "verify", {})]),
+        msg([TX("无限模式下完成核实")]),
+    ]
+    patch_anthropic(monkeypatch, script)
+
+    messages = [{"role": "user", "content": "连续调整并核实"}]
+    unlimited_ai = SimpleNamespace(**AI.__dict__, context_tokens=1_000_000)
+    ev, text, errors = await drain(
+        make_runner(max_verify_rounds=1, max_verify_cycles=1)._run_anthropic(
+            "u", "sys", messages, unlimited_ai,
+            session=SimpleNamespace(session_context={"unlimited_mode": True}),
+        )
+    )
+
+    assert "无限模式下完成核实" in text
+    assert "核实轮次已达到上限" not in text
+    assert errors == []
+    assert ev["_usage"] == 1
 
 
 async def test_verify_round_cap_after_tool_round_has_safe_finalization(monkeypatch, dispatched):
@@ -425,6 +451,40 @@ async def test_intent_announce_guard_skips_questions(monkeypatch, dispatched):
     nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
     assert len(nudges) == 0, "问句/征询不该被意图守卫误伤"
     assert "要我现在去查一下项目进度吗" in text
+
+
+async def test_intent_guard_runs_after_previous_tool_round_in_chinese(monkeypatch, dispatched):
+    """前一轮调用过工具，当前轮以冒号宣告动作但零工具时，中文守卫仍必须触发。"""
+    patch_anthropic(monkeypatch, [
+        msg([TU("get_project", "1", {})]),
+        msg([TX("接下来我会查一下项目进度：")]),
+        msg([TX("项目进度是 80%")]),
+    ])
+    messages = [{"role": "user", "content": "帮我查一下项目进度"}]
+    ev, text, _errors = await drain(make_runner(locale="zh-CN")._run_anthropic("u", "sys", messages, AI))
+    nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
+    assert len(nudges) == 1
+    assert "接下来我会查一下项目进度：" in text
+    assert "项目进度是 80%" not in text
+    assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_intent_guard_runs_after_previous_tool_round_in_english(monkeypatch, dispatched):
+    """前一轮调用过工具，当前轮以冒号宣告动作但零工具时，英文守卫仍必须触发。"""
+    patch_anthropic(monkeypatch, [
+        msg([TU("get_project", "1", {})]),
+        msg([TX("I will check the project progress:")]),
+        msg([TX("The project is 80% complete")]),
+    ])
+    messages = [{"role": "user", "content": "Check the project progress"}]
+    runner = make_runner(locale="en-US")
+    ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
+    english_nudge = core.guard_locale("en-US").intent_nudge
+    nudges = [m for m in messages if m.get("content") == english_nudge]
+    assert len(nudges) == 1
+    assert "I will check the project progress:" in text
+    assert "The project is 80% complete" not in text
+    assert ev["_usage"] == 1 and ev["error"] == 0
 
 
 async def test_decision_dodge_guard_nudges_once(monkeypatch, dispatched):

@@ -62,3 +62,23 @@ def test_reflection_extraction_disables_thinking_for_structured_delta(monkeypatc
 
     asyncio.run(exercise())
     assert captured == {"thinking": "disabled", "max_tokens": 900}
+
+
+def test_perception_record_uses_bound_byok_model_not_platform_default():
+    from agent.memory import reflection
+
+    model_cfg = SimpleNamespace(
+        model="MiniMax-M3",
+        provider="minimax",
+        is_byok=True,
+    )
+
+    record = reflection._perc_rec(
+        "user-test",
+        {"intent": "闲聊", "ambiguity": 5, "emotion": "无", "emo_strength": 0},
+        model_cfg,
+    )
+
+    assert record["model"] == "MiniMax-M3"
+    assert record["provider"] == "minimax"
+    assert record["is_byok"] is True

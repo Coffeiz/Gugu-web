@@ -15,7 +15,12 @@ from .tokens import content_text, message_text
 from .tokens import estimate_tokens
 from .audit import summary_change
 from .canonical_context import tool_call_ids, tool_result_ids
-from .summary_format import SUMMARY_CLOSE, SUMMARY_OPEN, format_compacted_summary
+from .summary_format import (
+    SUMMARY_CLOSE,
+    SUMMARY_OPEN,
+    format_compacted_summary,
+    unwrap_compacted_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +78,38 @@ def _result(messages: list, changed: bool, reason: str,
     )
 
 
+def _deterministic_summary(
+    content_list: list[str],
+    previous: str | None,
+    *,
+    max_output_tokens: int,
+) -> str:
+    """Provider 不可用时生成有界的本地摘要，避免同一历史反复触发压缩。
+
+    这是故障保护，不试图替代模型摘要：保留已有摘要、最早片段和最新片段，
+    并严格限制大小。原始消息仍在数据库中，下一次正常加载可以继续恢复。
+    """
+    budget = max(32, int(max_output_tokens))
+    parts = []
+    if previous and previous.strip():
+        # previous 来自已持久化的 provider-facing 摘要，通常已经带统一包装；
+        # fallback 返回的是候选正文，不能把包装嵌套进去，否则随后校验必然失败。
+        previous_body = unwrap_compacted_summary(previous)
+        if previous_body:
+            parts.append(f"已有摘要：{previous_body}")
+    if content_list:
+        parts.append("历史片段：")
+        parts.extend(unwrap_compacted_summary(item) for item in content_list[:2])
+        if len(content_list) > 4:
+            parts.append("……")
+        parts.extend(unwrap_compacted_summary(item) for item in content_list[-2:])
+    text = "\n".join(parts).strip()
+    # 估算器对中文偏保守；逐步缩短，确保结果一定能通过同一校验。
+    while text and estimate_tokens(text) > budget:
+        text = text[:max(1, int(len(text) * 0.8))].rstrip()
+    return text
+
+
 async def compact_context(
     messages: list,
     session_id: int | None = None,
@@ -110,7 +147,11 @@ async def compact_context(
     normal_msgs = []
 
     for msg in message_history:
-        if msg.get("role") == "summary":
+        content = msg.get("content", "")
+        is_summary = msg.get("role") == "summary" or (
+            isinstance(content, str) and SUMMARY_OPEN in content
+        )
+        if is_summary:
             summary_msg = msg
         else:
             normal_msgs.append(msg)
@@ -213,6 +254,17 @@ async def compact_context(
         summary_msg.get("content", "") if summary_msg else None,
         model_cfg=model_cfg,
     )
+
+    if not compact_summary.strip():
+        compact_summary = _deterministic_summary(
+            compressible_content,
+            summary_msg.get("content", "") if summary_msg else None,
+            max_output_tokens=limits.output_tokens,
+        )
+        logger.warning(
+            "[compaction] session=%s Provider 摘要不可用，使用本地有界摘要",
+            session_id,
+        )
 
     summary_ok, summary_reason = validate_compact_summary(
         compact_summary,
@@ -516,7 +568,7 @@ async def _generate_compact_summary_once(
                 name="compaction",
                 output_mode="text",
                 max_tokens=limits.output_tokens,
-                max_retries=0,
+                max_retries=1,
             ),
             settings,
         )

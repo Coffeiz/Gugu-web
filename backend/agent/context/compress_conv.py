@@ -1,4 +1,4 @@
-"""对话历史压缩：run 完成后按软预算后台推进 baseline，或由 ``/compact`` 主动执行。
+"""对话历史压缩：达到 provider 上下文阈值时推进 baseline，或由 ``/compact`` 主动执行。
 
 手动/请求内触发时，把"超出保留窗口的最老一批"压成摘要。**滚动**：把上一版 summary
 一并喂给摘要器合并，不从头重压。
@@ -8,9 +8,9 @@
 普通的 user history message。它是 baseline 的历史起点，不是动态尾部，也不是另一份
 system/snapshot 状态。
 
-自动路径不再按数据库累计 token 触发摘要；本轮实际上下文的预算检查由
-``agent.core`` 负责。数据库积累很多旧消息但当前请求仍在预算内时，不会无谓调用摘要模型。
-压缩保留窗口仍使用字符硬上限；摘要请求的输入/输出预算跟随本轮实际模型配置。
+自动路径由 ``agent.core`` 根据 provider 实际上下文 usage 达到 90% 时触发；普通 run
+收尾不会再按固定字符窗口裁剪。压缩保留窗口只决定达到阈值后的压缩目标，摘要请求的
+输入/输出预算跟随本轮实际模型配置。
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
+from redis.exceptions import LockNotOwnedError
 from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
@@ -28,8 +29,7 @@ from agent.context.audit import session_scope, summary_change
 
 logger = logging.getLogger(__name__)
 
-# 自动请求预算由 agent.core 的实际组装长度统一判定；baseline 更新后的完整
-# 上下文上限统一为模型上下文的 50%，没有额外的低水位目标。
+# provider 预算阈值由 agent.core 读取，普通 run 收尾不推进 baseline。
 BASELINE_UPDATE_RATIO = 0.90
 _RECENT_HISTORY_KEEP_CHARS = 20_000
 # 在模型预算允许时，优先从当前 session history 分支出一次摘要请求，保持稳定
@@ -38,7 +38,9 @@ _COMPRESS_LOCK_TIMEOUT = 300
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
 _baseline_tasks: dict[int, asyncio.Task] = {}
-_SESSION_RUN_LOCK_TIMEOUT = 1800
+_SESSION_RUN_LOCK_TIMEOUT = 300
+_SESSION_RUN_HEARTBEAT_INTERVAL = 15
+_BASELINE_WAIT_INTERVAL = 0.1
 
 
 def _session_lock_key(request) -> str:
@@ -56,19 +58,63 @@ def _baseline_matches(session, baseline_id: int, baseline_hash: str) -> bool:
     return current_id == int(baseline_id or 0) and current_hash == str(baseline_hash or "")
 
 
+async def _read_execution_state(session_id: int) -> str | None:
+    """读取持久化执行状态，供不同 worker 之间共享 baseline 水位。"""
+    import app.db.session as _sess
+    from app.models import ConversationSession
+
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id)
+        return str(session.execution_state) if session is not None else None
+
+
+async def _wait_for_baseline_idle(session_id: int) -> None:
+    """等待持久化 baseline 更新结束，而不是只看当前进程的 Task。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _COMPRESS_LOCK_TIMEOUT
+    while True:
+        state = await _read_execution_state(session_id)
+        if state != "baseline_updating":
+            return
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise TimeoutError(f"session {session_id} baseline 更新等待超时")
+        await asyncio.sleep(min(_BASELINE_WAIT_INTERVAL, remaining))
+
+
+async def _claim_session_run(session_id: int, run_id: str, marked_pending: bool) -> bool:
+    """在会话行锁内确认 baseline 已空闲并认领生成状态。"""
+    import app.db.session as _sess
+    from app.models import ConversationSession
+
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id, with_for_update=True)
+        if session is None:
+            return True
+        if session.execution_state == "baseline_updating":
+            return False
+        if marked_pending:
+            session.pending_message_count = max(0, int(session.pending_message_count or 0) - 1)
+        session.execution_state = "running"
+        session.active_run_id = run_id
+        await db.commit()
+        return True
+
+
 @asynccontextmanager
-async def session_run_gate(request):
+async def session_run_gate(request, run_id: str | None = None):
     """阻止同一 session 的并行生成，并持久化排队状态。
 
     Redis 只提供跨 worker 的短租约；execution_state/pending_message_count 才是
     session 的事实状态。被动群消息不经过此 gate，因此不会进入主动 pending。
     """
     session_id = getattr(request, "session_id", None)
+    run_id = str(run_id or f"run-{uuid4().hex[:16]}")
     marked_pending = False
     if not session_id:
         # 新会话尚未获得数据库 session_id，不存在可竞争的 canonical session；
         # 创建完成后后续请求才进入 session gate。
-        yield
+        yield run_id
         return
     if session_id:
         import app.db.session as _sess
@@ -82,30 +128,64 @@ async def session_run_gate(request):
                 await db.commit()
 
     from app.core import redis as redis_core
+    from agent.llm import genstream
 
-    lock = redis_core.get_redis().lock(
-        _session_lock_key(request),
+    lock_key = _session_lock_key(request)
+    redis = redis_core.get_redis()
+    # 进程重启不会执行旧任务的 finally。只有在同一会话没有活跃租约时，
+    # 才回收遗留的 Redis 锁；Redis 不可用时 has_live_lease fail-open，避免
+    # 把正常运行误判为孤儿。
+    try:
+        # baseline 压缩阶段生成租约可能已经结束，但外层 session gate 仍必须
+        # 持有到压缩完成；此时新请求应排队，不能把这把锁误判成重启遗留锁。
+        execution_state = await _read_execution_state(session_id)
+        if (
+            execution_state != "baseline_updating"
+            and await redis.exists(lock_key)
+            and not await genstream.has_live_lease(session_id)
+        ):
+            await redis.delete(lock_key)
+            logger.warning("[compress_conv] session=%s 回收重启遗留的会话锁", session_id)
+    except Exception:
+        logger.debug("[compress_conv] session=%s 检查遗留会话锁失败", session_id, exc_info=True)
+
+    lock = redis.lock(
+        lock_key,
         timeout=_SESSION_RUN_LOCK_TIMEOUT,
         blocking=True,
     )
-    await lock.acquire(blocking=True)
-    run_id = f"run-{uuid4().hex[:16]}"
+    lock_acquired = False
+    session_lock_lost = False
+    gate_claimed = False
+    pending_consumed = False
+    session_claimed = False
     try:
-        if session_id:
+        # 先在拿会话锁前等待一次，减少 baseline 更新期间占住生成队列的时间。
+        await _wait_for_baseline_idle(session_id)
+        await lock.acquire(blocking=True)
+        lock_acquired = True
+        while True:
+            # baseline 可能在第一次检查后才切到 updating；行锁内的二次检查
+            # 与这里的轮询共同消除“检查通过后立即启动”的竞态窗口。
+            await _wait_for_baseline_idle(session_id)
+            if await _claim_session_run(session_id, run_id, marked_pending):
+                pending_consumed = marked_pending
+                session_claimed = True
+                break
+            await asyncio.sleep(_BASELINE_WAIT_INTERVAL)
+        await genstream.claim_lease(session_id, run_id)
+        gate_claimed = True
+    except BaseException:
+        if marked_pending and not pending_consumed:
             import app.db.session as _sess
             from app.models import ConversationSession
 
             async with _sess._SessionLocal() as db:
                 session = await db.get(ConversationSession, session_id, with_for_update=True)
                 if session is not None:
-                    if marked_pending:
-                        session.pending_message_count = max(0, int(session.pending_message_count or 0) - 1)
-                    session.execution_state = "running"
-                    session.active_run_id = run_id
+                    session.pending_message_count = max(0, int(session.pending_message_count or 0) - 1)
                     await db.commit()
-        yield
-    finally:
-        if session_id:
+        if session_claimed:
             import app.db.session as _sess
             from app.models import ConversationSession
 
@@ -115,10 +195,79 @@ async def session_run_gate(request):
                     session.execution_state = "idle"
                     session.active_run_id = None
                     await db.commit()
-        try:
-            await lock.release()
-        except Exception:
-            logger.exception("[compress_conv] session run gate 释放失败")
+        if lock_acquired:
+            try:
+                await lock.release()
+            except Exception:
+                logger.exception("[compress_conv] session run gate 释放失败")
+        raise
+
+    async def keep_session_lease_alive() -> None:
+        nonlocal lock_acquired, session_lock_lost
+        while True:
+            await asyncio.sleep(_SESSION_RUN_HEARTBEAT_INTERVAL)
+            # 两个租约职责不同：生成租约决定前端是否仍可续看，会话锁只负责
+            # 防并行。续期其中一个失败时不能短路另一个，否则一次 Redis 抖动
+            # 就会让正常生成在下一次心跳后变成“中断”。
+            try:
+                if not await genstream.renew_lease(session_id, run_id):
+                    # 生成租约控制前端续看，会话锁仍负责防止同一 session 并行；
+                    # 不能因为前者失效就停止后者续租。
+                    logger.warning("[compress_conv] session=%s 生成租约已失效，继续维护会话锁", session_id)
+            except LockNotOwnedError:
+                session_lock_lost = True
+                lock_acquired = False
+                logger.warning("[compress_conv] session=%s 会话锁已失效，跳过释放", session_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("[compress_conv] session=%s 生成租约续期失败", session_id)
+            try:
+                lock_reacquired = await lock.reacquire()
+                if lock_reacquired is False:
+                    logger.warning("[compress_conv] session=%s 会话锁续期失败", session_id)
+                    # redis-py 返回 False 表示当前 token 已不再持有这把锁；
+                    # 退出时不能再调用 release()，否则只会制造二次异常。
+                    session_lock_lost = True
+                    lock_acquired = False
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # 生成租约仍在时，会话锁偶发续期失败不应中断当前任务；下一次
+                # 请求仍会被 DB 状态和生成租约保护，避免并行生成。
+                logger.warning("[compress_conv] session=%s 会话锁续期异常", session_id)
+
+    heartbeat = asyncio.create_task(
+        keep_session_lease_alive(), name=f"session-lease:{session_id}"
+    )
+    try:
+        yield run_id
+    finally:
+        if gate_claimed:
+            heartbeat.cancel()
+            try:
+                await heartbeat
+            except asyncio.CancelledError:
+                pass
+            await genstream.release_lease(session_id, run_id)
+            if session_id:
+                import app.db.session as _sess
+                from app.models import ConversationSession
+
+                async with _sess._SessionLocal() as db:
+                    session = await db.get(ConversationSession, session_id, with_for_update=True)
+                    if session is not None and session.active_run_id == run_id:
+                        session.execution_state = "idle"
+                        session.active_run_id = None
+                        await db.commit()
+        if lock_acquired and not session_lock_lost:
+            try:
+                await lock.release()
+            except LockNotOwnedError:
+                # 锁可能在最后一次状态检查和 release 之间自然过期；这不是业务失败。
+                logger.warning("[compress_conv] session=%s 会话锁已失效，跳过释放", session_id)
+            except Exception:
+                logger.exception("[compress_conv] session run gate 释放失败")
 
 
 def fixed_context_parts(snapshot_injection: dict | None) -> list[dict]:
@@ -188,38 +337,26 @@ def schedule_baseline_update(
     actual_usage_tokens: int = 0,
     compaction_applied: bool = False,
 ) -> None:
-    """按 provider usage 或本轮压缩结果调度唯一 baseline 更新。
-
-    正常请求不以本地估算触发；``actual_usage_tokens`` 来自 provider 的输入 usage，
-    ``compaction_applied`` 覆盖 overflow 后已经在内存中完成的压缩/确定性兜底。
-    """
+    """仅在 provider usage 达到 90% 或本轮已压缩时推进 baseline。"""
     if not session_id:
         return
     context_tokens = max(1, int(context_tokens or 0))
     usage_ratio = max(0.0, float(actual_usage_tokens or 0) / context_tokens)
-    logger.info(
-        "[runtime-baseline-lifecycle] %s",
-        {
-            "session_id": session_id,
-            "provider_usage_tokens": int(actual_usage_tokens or 0),
-            "model_context_tokens": context_tokens,
-            "usage_ratio": round(usage_ratio, 4),
-            "compaction_applied": bool(compaction_applied),
-            "phase": "schedule",
-        },
-    )
+    logger.info("[runtime-baseline-lifecycle] %s", {
+        "session_id": session_id,
+        "provider_usage_tokens": int(actual_usage_tokens or 0),
+        "model_context_tokens": context_tokens,
+        "usage_ratio": round(usage_ratio, 4),
+        "compaction_applied": bool(compaction_applied),
+        "phase": "schedule",
+    })
     if not compaction_applied and usage_ratio < BASELINE_UPDATE_RATIO:
         return
     existing = _baseline_tasks.get(session_id)
     if existing is not None and not existing.done():
         return
     task = asyncio.create_task(
-        compress_if_needed(
-            session_id,
-            user_id,
-            settings,
-            force=False,
-        ),
+        compress_if_needed(session_id, user_id, settings, force=False),
         name=f"context-baseline:{session_id}",
     )
     _baseline_tasks[session_id] = task
@@ -230,29 +367,26 @@ def schedule_baseline_update(
         try:
             done.exception()
         except asyncio.CancelledError:
-            # 服务关闭时允许任务取消，不把取消当成业务失败。
             pass
         except Exception:
-            # 后台 baseline 更新失败不影响已经完成的 run；下一轮仍可从持久状态
-            # 继续处理，但必须留下诊断日志，避免 baseline 永久停在旧水位却无人知晓。
             logger.exception("[compress_conv] session=%s 后台 baseline 更新失败", session_id)
 
     task.add_done_callback(_cleanup)
 
 
 async def wait_for_baseline_update(session_id: int | None) -> None:
-    """等待同一个 baseline 更新，避免并发读取/写入唯一 baseline。"""
+    """等待当前进程任务和持久化状态，避免下一 run 读取旧水位。"""
     if not session_id:
         return
     task = _baseline_tasks.get(session_id)
-    if task is None:
-        return
-    try:
-        await task
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception("[compress_conv] session=%s 后台 baseline 更新失败", session_id)
+    if task is not None:
+        try:
+            await task
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[compress_conv] session=%s 后台 baseline 更新失败", session_id)
+    await _wait_for_baseline_idle(session_id)
 
 
 async def _compress_if_needed_unlocked(
@@ -264,7 +398,7 @@ async def _compress_if_needed_unlocked(
 ) -> bool:
     """检查并执行压缩，返回是否实际执行了压缩。
 
-    ``force`` 只跳过自动阈值；压缩后的完整上下文统一不超过模型上限的 50%。
+    ``force`` 仅用于记录主动压缩触发来源；压缩后的完整上下文统一不超过模型上限的 50%。
     没有可整理的旧消息时仍然返回 False，避免凭空调用摘要模型。
     """
     import app.db.session as _sess
@@ -287,8 +421,7 @@ async def _compress_if_needed_unlocked(
     if not all_msgs:
         return False
 
-    # 自动路径由 provider usage/overflow 决定；不把本地 token 估算用于决定哪些
-    # history 被保留。保留窗口采用字符硬上限。
+    # 不把本地 token 估算用于决定哪些 history 被保留；保留窗口采用字符硬上限。
     target_keep_chars = _RECENT_HISTORY_KEEP_CHARS
     tail_chars = 0
     split_idx = 0
@@ -349,8 +482,30 @@ async def _compress_if_needed_unlocked(
         max_output_tokens=limits.output_tokens,
     )
     if not summary_ok:
-        logger.warning("[compress_conv] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
-        return False
+        # baseline 更新属于持久化保护路径：供应商超时/返回空时也必须把历史
+        # 收敛到有界状态，否则下一轮会再次带上同一批旧消息并重复压缩。
+        from agent.context.compaction import _deterministic_summary
+        fallback = _deterministic_summary(
+            content_items,
+            prev_summary,
+            max_output_tokens=limits.output_tokens,
+        )
+        fallback_ok, fallback_reason = validate_compact_summary(
+            fallback,
+            max_output_tokens=limits.output_tokens,
+        )
+        if not fallback_ok:
+            logger.warning(
+                "[compress_conv] session=%s 摘要候选校验失败: %s; 本地兜底失败: %s",
+                session_id, summary_reason, fallback_reason,
+            )
+            return False
+        summary = fallback
+        compression_mode = "deterministic-fallback"
+        logger.warning(
+            "[compress_conv] session=%s Provider 摘要不可用，使用本地有界摘要",
+            session_id,
+        )
 
     async with _sess._SessionLocal() as db:
         # 重新锁定并读取水位。摘要模型运行期间可能已有另一个进程完成了

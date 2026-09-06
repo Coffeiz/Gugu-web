@@ -312,6 +312,7 @@ const contextLabel = computed(() => {
     capability_catalog: '能力目录',
     skill_index: 'Skill 索引',
     skill_body: 'Skill 正文',
+    shell_policy: 'Shell 提示词',
   }
   return labels[String(source)] || '上下文注入'
 })

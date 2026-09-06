@@ -318,9 +318,12 @@ onMounted(() => {
   window.addEventListener('beforeunload', saveProgress)
   // 小窗也需要会话权限摘要，避免只有展开聊天窗口后才知道当前 Session 的授权状态。
   void fetchSessions()
-  // 拉一次状态显示名（目前只用到「思考中」候选文案；失败就保持默认三个点）
+  // 拉一次状态显示名；失败就保持前端默认文案。
   agentApi.getUiLabels?.().then(r => {
     thinkingLabels.value = Array.isArray(r?.thinking) ? r.thinking : (r?.thinking ? [r.thinking] : [])
+    contextCompactingLabels.value = Array.isArray(r?.contextCompacting)
+      ? r.contextCompacting
+      : (r?.contextCompacting ? [r.contextCompacting] : [])
   }).catch(() => {})
   // 恢复上次会话：① 本标签刷新 → sessionStorage 仍在，直接接续；② 重开浏览器（sessionStorage 已清）
   //   → 仅当设置「重开接续上次」打开时，从 localStorage 的最近一段接续；否则开新对话。
@@ -373,7 +376,7 @@ const conversation = useChatConversation({
 })
 const {
   messages, mkid, now, sessionSettling,
-  inputText, inputReferences, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
+  inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, ownerPlatformUserId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
   currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
