@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -51,13 +51,19 @@ const imgRef  = ref<HTMLImageElement | null>(null)
 const scale   = ref(1)
 const tx      = ref(0)
 const ty      = ref(0)
+const naturalWidth = ref(0)
+const naturalHeight = ref(0)
+const hasUserZoom = ref(false)
 const dragging = ref(false)
 const error    = ref(false)
 
 let dragStart: { x: number; y: number } | null = null
+let resizeObserver: ResizeObserver | null = null
 
 const imgStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
+  width: naturalWidth.value ? `${naturalWidth.value}px` : undefined,
+  height: naturalHeight.value ? `${naturalHeight.value}px` : undefined,
   cursor: dragging.value ? 'grabbing' : 'grab',
 }))
 
@@ -79,6 +85,7 @@ function clamp() {
 const pct = computed(() => Math.round(scale.value * 100))
 
 function applyZoom(newScale: number) {
+  hasUserZoom.value = true
   scale.value = Math.min(8, Math.max(0.05, newScale))
   clamp()
 }
@@ -113,18 +120,58 @@ function onMouseUp() {
 }
 
 function reset() {
+  hasUserZoom.value = true
   scale.value = 1
   tx.value = 0
   ty.value = 0
 }
 
+function fitToView() {
+  if (hasUserZoom.value || !wrapRef.value || !naturalWidth.value || !naturalHeight.value) return
+  const availableWidth = Math.max(1, wrapRef.value.clientWidth - PADDING * 2)
+  const availableHeight = Math.max(1, wrapRef.value.clientHeight - PADDING * 2)
+  scale.value = Math.min(
+    1,
+    availableWidth / naturalWidth.value,
+    availableHeight / naturalHeight.value,
+  )
+  tx.value = 0
+  ty.value = 0
+}
+
 const emit = defineEmits(['loaded'])
-function onLoad() { error.value = false; emit('loaded') }
+function onLoad() {
+  error.value = false
+  const img = imgRef.value
+  if (img) {
+    naturalWidth.value = img.naturalWidth
+    naturalHeight.value = img.naturalHeight
+    fitToView()
+  }
+  emit('loaded')
+}
 function onError() { error.value = true }
+
+watch(() => props.blobUrl, () => {
+  // 切换文件时重新执行“打开即适配”；只有用户主动缩放/重置后才保留当前视图。
+  hasUserZoom.value = false
+  naturalWidth.value = 0
+  naturalHeight.value = 0
+})
+
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined' || !wrapRef.value) return
+  // 浮动窗口会在图片读取完成后异步调整尺寸；观察容器可以覆盖这段竞态，
+  // 也同时处理最大化、手动 resize 和浏览器窗口变化。
+  resizeObserver = new ResizeObserver(() => fitToView())
+  resizeObserver.observe(wrapRef.value)
+})
 
 onUnmounted(() => {
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', onMouseUp)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 // 供外层占位缩略图（切换图片时短暂覆盖在真图上方）复用同一份缩放/平移状态，
@@ -160,9 +207,8 @@ defineExpose({ scale, tx, ty })
 }
 
 .iv-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  display: block;
+  flex: none;
   transform-origin: center;
   transition: transform 0.08s ease-out;
   border-radius: 6px;

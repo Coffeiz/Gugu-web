@@ -147,8 +147,8 @@ watch(file, (f) => {
   thumbTiny.value = null
   thumbCard.value = null
   if (!f || !isImageExt(f.ext)) return
-  getThumb(f.id, 'tiny').then(url => { if (url) thumbTiny.value = url })
-  getThumb(f.id, 'card').then(url => { if (url) thumbCard.value = url })
+  getThumb(f.id, 'tiny', f.version).then(url => { if (url) thumbTiny.value = url })
+  getThumb(f.id, 'card', f.version).then(url => { if (url) thumbCard.value = url })
 }, { immediate: true })
 
 // 拖飞的是 FileCard.vue 自己的根节点（.fc-card）——三个模板分支（真文件/缓存加载中/确认

@@ -146,6 +146,16 @@ async def test_copy(storage):
     assert await storage.get("u/b/dst.txt") == b"payload"
 
 
+async def test_local_file_operations_keep_group_write_access(storage):
+    await storage.put("u/a/source.txt", b"payload")
+    await storage.rename_file("u/a/source.txt", "u/b/moved.txt")
+    mode = (storage.root / "u/b/moved.txt").stat().st_mode
+    assert mode & 0o060 == 0o060
+    await storage.copy("u/b/moved.txt", "u/c/copied.txt")
+    copied_mode = (storage.root / "u/c/copied.txt").stat().st_mode
+    assert copied_mode & 0o060 == 0o060
+
+
 async def test_stat(storage):
     assert await storage.stat("u/a/missing.txt") is None
     await storage.put("u/a/x.txt", b"12345")

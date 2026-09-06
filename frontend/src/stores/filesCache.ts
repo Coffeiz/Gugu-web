@@ -21,6 +21,7 @@ export type FolderMeta = components['schemas']['FolderResponse']
 
 let _lastVersion: string | number | null = null
 let _visibilityBound = false
+let _pendingLiveRefresh = false
 
 export const useFilesCacheStore = defineStore('filesCache', () => {
   const allFiles   = ref<FileMeta[]>([])
@@ -76,6 +77,12 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
       allFolders.value = folders
       loaded.value     = true
       _lastVersion = ver?.version ?? null
+      // 首次加载和 watcher 事件可能并发：不能因为 cache 尚未 ready 就丢掉 live
+      // 事件，否则请求返回旧快照后必须手动刷新页面才能看到本地文件变化。
+      if (_pendingLiveRefresh) {
+        _pendingLiveRefresh = false
+        void refresh()
+      }
     } catch (e) {
       console.error('[filesCache] 加载失败:', e instanceof Error ? e.message : e)
     } finally {
@@ -102,6 +109,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     loaded.value = false
     loading.value = false
     _lastVersion = null
+    _pendingLiveRefresh = false
   }
 
   async function _checkVersion() {
@@ -218,9 +226,13 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const eventQueue = new InteractionSyncEventQueue()
   eventQueue.register('files', applyCanonicalEvent, () => { if (loaded.value) void refresh() })
   watch(() => useLiveStore().resourceEvent, (event) => {
-    if (!event || event.resource !== 'files' || !loaded.value) return
+    if (!event || event.resource !== 'files') return
+    if (!loaded.value) {
+      _pendingLiveRefresh = true
+      return
+    }
     eventQueue.receive(event)
-  })
+  }, { immediate: true })
 
   return {
     allFiles, allFolders, loaded, loading,

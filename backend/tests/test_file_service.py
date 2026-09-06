@@ -201,10 +201,12 @@ async def test_create_file_overwrite(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     r1 = await _create(svc, user_a.id, "a", "TXT", data=b"old")
     await db.commit()
+    old_version = r1.file.version
     r2 = await _create(svc, user_a.id, "a", "TXT", data=b"newer",
                        on_conflict="overwrite", overwrite_file_id=r1.file.id)
     await db.commit()
     assert r2.was_overwrite and r2.file.id == r1.file.id and r2.file.size_bytes == 5
+    assert r2.file.version == old_version + 1
     assert await svc.storage.get(r2.file.storage_key) == b"newer"
 
 

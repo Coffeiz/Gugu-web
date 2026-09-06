@@ -5422,6 +5422,8 @@ export interface components {
             imgWidth?: number | null;
             /** Imgheight */
             imgHeight?: number | null;
+            /** Version */
+            version: number;
         };
         /** FileTreeResponse */
         FileTreeResponse: {

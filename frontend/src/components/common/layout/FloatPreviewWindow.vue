@@ -180,7 +180,7 @@ const h = ref(props.win.h)
 // ── 文件类型 ──────────────────────────────────────────────────────────────────
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
-const isText = computed(() => isTextExt(props.win.file.ext))
+const isText = computed(() => isTextExt(props.win.file.ext, props.win.file.mimeType))
 const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 
 // ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
@@ -219,6 +219,7 @@ const imageReady       = ref(false)
 const _SVG_EXTS    = new Set(['SVG'])
 const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
 const currentCacheKey = ref('')
+let loadSequence = 0
 
 // 占位缩略图套上跟 ImageViewer 当前一致的缩放/平移，切图时才不会先跳回居中/100%
 // 再跳回真图当前的视图——两次跳变叠在一起就是用户看到的"闪一下"。
@@ -333,7 +334,13 @@ function onPlaceholderLoad(e: Event) {
   placeholderReady.value = true
 }
 
+function withCacheBust(url: string, refresh: boolean): string {
+  if (!refresh) return url
+  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
+}
+
 async function load(f: Partial<FileMeta>, refresh = false) {
+  const sequence = ++loadSequence
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
   blobUrl.value = null
   currentCacheKey.value = ''
@@ -356,17 +363,17 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       // 聊天附件：占位图走附件缩略图端点
       const token = localStorage.getItem('user_token') ?? ''
       const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-      fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
+        fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
         .then(r => r.ok ? r.blob() : null).then(b => {
-          if (b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
+          if (sequence === loadSequence && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
         }).catch(() => {})
     } else {
-      const cached = getCachedThumb(f.id!, 'card')
+      const cached = refresh ? null : getCachedThumb(f.id!, 'card', f.version)
       if (cached) {
         placeholderSrc.value = cached
       } else {
-        getThumb(f.id!, 'card').then((url: string | null | undefined) => {
-          if (url && !imageReady.value) placeholderSrc.value = url
+        getThumb(f.id!, 'card', f.version).then((url: string | null | undefined) => {
+          if (sequence === loadSequence && url && !imageReady.value) placeholderSrc.value = url
         })
       }
     }
@@ -384,13 +391,15 @@ async function load(f: Partial<FileMeta>, refresh = false) {
     if (isVideoExt(f.ext)) {
       let url
       if (f.attach_id) {
-        const res = await fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, { headers })
+        const res = await fetch(withCacheBust(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, refresh), { headers, cache: 'no-cache' })
+        if (sequence !== loadSequence) return
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         url = URL.createObjectURL(await res.blob())
         videoSrc.value = url
       } else {
         const stream = await filesApi.getStreamUrl(f.id!)
-        url = stream.url
+        if (sequence !== loadSequence) return
+        url = withCacheBust(stream.url, refresh)
         videoSrc.value = url
       }
       // 探视频尺寸
@@ -407,7 +416,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         vid.onerror = () => { fitWindow(720, 404); resolve() }
         vid.src = url
       })
-    } else if (isTextExt(f.ext)) {
+      if (sequence !== loadSequence) return
+    } else if (isTextExt(f.ext, f.mimeType)) {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
       const key = previewBlobCache.keyOf(f)
       currentCacheKey.value = bust ? '' : key
@@ -423,8 +433,10 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
         : `${BASE_URL}/files/${f.id}/download`) + bust
       const res = await fetch(dlUrl, { headers })
+      if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const url = URL.createObjectURL(await res.blob())
+      if (sequence !== loadSequence) return
       blobUrl.value = url
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
       previewBlobCache.put(key, url)
@@ -434,12 +446,14 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       }
     } else {
       const key = previewBlobCache.keyOf(f)
-      currentCacheKey.value = key
-      const cached = previewBlobCache.get(key)
+      const bust = refresh ? `?_t=${Date.now()}` : ''
+      currentCacheKey.value = bust ? '' : key
+      const cached = bust ? null : previewBlobCache.get(key)
       if (cached) {
         blobUrl.value = cached
         const img = new Image()
         img.onload = () => {
+          if (sequence !== loadSequence) return
           contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
           if (!ready.value) fitWindow(img.naturalWidth, img.naturalHeight)
         }
@@ -449,14 +463,17 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       const dlUrl = f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
         : `${BASE_URL}/files/${f.id}/download`
-      const res = await fetch(dlUrl, { headers })
+      const res = await fetch(dlUrl + bust, { headers, cache: 'no-cache' })
+      if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
+      if (sequence !== loadSequence) return
       const url  = URL.createObjectURL(blob)
       blobUrl.value = url
       previewBlobCache.put(key, url)
       const img = new Image()
       img.onload = () => {
+        if (sequence !== loadSequence) return
         contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
         // 窗口尺寸只由打开时的第一张图决定（同上），这里只在窗口还没显示过时才定尺。
         if (!ready.value) fitWindow(img.naturalWidth, img.naturalHeight)
@@ -464,10 +481,11 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       img.src = url
     }
   } catch (e) {
+    if (sequence !== loadSequence) return
     error.value = '加载失败：' + (e instanceof Error ? e.message : e)
     if (!refresh || !ready.value) fitWindow(480, 300)
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 
@@ -488,7 +506,7 @@ const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
   if (event?.resource !== 'files') return
   if (event?.origin === CLIENT_ID) return
-  if (isText.value && !props.win.file.attach_id) load(props.win.file, true)
+  if (!props.win.file.attach_id) load(props.win.file, true)
 })
 
 async function handleDownload() {

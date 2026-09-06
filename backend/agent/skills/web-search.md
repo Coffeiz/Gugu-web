@@ -16,7 +16,7 @@ emoji: 🔎
 | `web_search` | 自建 SearXNG 通用网页搜索：找官网/文档/GitHub/某个事实/新闻标题/下载地址 | 免费、无配额 |
 | `deep_research` | 管理员选择的 Tavily / 百度搜索 / You.com：Tavily/You.com 返回研究答案，百度返回普通搜索引用，适合"读+总结/比较/研究/给引用" | 有每日次数配额（`SearchUsage`） |
 | `image_search` | 统一图片搜索：`mode=text` 按关键词找图，`mode=image` 以图搜图找同款/相似图 | 文字模式免费；图片模式按独立日额度限制 |
-| `inspect_images` | 读取 image_search 选中的图片，交给视觉模型分析/比较 | 最多 20 张/次 |
+| `inspect_images` | 读取 image_search 选中的图片、聊天附件或文件库图片，交给视觉模型分析/比较 | 最多 20 张/次；文件库图片传 `file_id` |
 
 需要判断或比较图片内容时，详细的分析维度和输出规范见 [`image-analysis.md`](image-analysis.md)；本技能只负责搜索、选图和调用工具。
 
@@ -116,7 +116,7 @@ SearXNG 搜索结果会带 `search_status.state`，不要把所有 `results=[]` 
 如果用户要求快速辨认、比较或核对搜索到的图片，先调用 `image_search(mode="text")` 或
 `image_search(mode="image")`，再单独调用 `inspect_images`。关键词搜图候选填写
 `result_id`、`img_src`、`title`；以图搜图候选填写 `result_id`、`image_url`、
-`title`。一轮对话最多发起 3 次网络图片读取，每次最多读取 20 张。不需要看图时不要读取，避免额外下载和视觉输入成本。
+`title`；文件库图片直接填写 `file_id`，聊天附件填写 `attach_id`。一轮对话最多发起 3 次网络图片读取，每次最多读取 20 张；文件库图片和历史附件不占网络图片额度。不需要看图时不要读取，避免额外下载和视觉输入成本。
 
 ## image_search(mode="image") 找同款后怎么处理
 

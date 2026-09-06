@@ -138,11 +138,20 @@ async def _call_tool(db, user_id, args: dict):
     if not isinstance(arguments, dict):
         return {"error": "arguments 必须是 object"}
     from agent.tools import registry
-    result, _artifact = await registry.dispatch(user_id, name, arguments)
+    result, artifact = await registry.dispatch(user_id, name, arguments)
     try:
-        return json.loads(result) if isinstance(result, str) else result
+        payload = json.loads(result) if isinstance(result, str) else result
     except (TypeError, ValueError):
-        return {"result": result}
+        payload = {"result": result}
+    # 固定 Adapter 的 call_tool 不能吞掉业务工具返回的 UI artifact。
+    # send_file 通过这里调用时，外层 dispatch 只有看到 _artifact 才会发布
+    # file SSE 事件；之前丢弃它导致工具回执成功，但对话里没有文件卡片。
+    if artifact is not None:
+        if isinstance(payload, dict):
+            payload["_artifact"] = artifact
+        else:
+            payload = {"result": payload, "_artifact": artifact}
+    return payload
 
 
 class MetaSkill(BaseSkill):
