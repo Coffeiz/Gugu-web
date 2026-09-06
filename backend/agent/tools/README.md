@@ -48,6 +48,29 @@ Tool(
 )
 ```
 
+## 工具名称与 i18n
+
+工具名称分为三层，不能混用：
+
+| 字段/位置 | 职责 | 约束 |
+| --- | --- | --- |
+| `Tool.name` | 稳定的机器标识，用于 Schema、dispatch、历史记录、LoopScope 和前端映射 | 使用稳定的 `资源_动作` 名称；不得为了翻译或修改显示文案而变更 |
+| `Tool.label` / 后端标签 | 后端、管理端、IM 等无法使用前端 i18n 时的默认显示名 | 保留简短中文 fallback；不作为前端多语言文案的唯一来源 |
+| `frontend/src/i18n/sections/toolNames.ts` | Web 工具气泡的用户可见名称 | 每个内置工具同时补 `zh-CN`、`ja-JP`、`en-US`；key 必须与 `Tool.name` 一致 |
+
+工具的 `description` 和 `description_short` 是模型能力说明，不是界面标题，也不应当作为工具气泡的显示名。不要把翻译文案写入工具注册表、动态 Prompt、工具返回值或持久化历史；历史事件只保存稳定的工具名，界面按当前语言重新渲染。
+
+固定 Adapter `call_tool` 只负责转发实际工具调用。前端遇到 `call_tool` 事件时，必须优先读取其参数中的实际工具名（例如 `toolInput.name`），再使用 `toolNames.<实际工具名>` 翻译，不能把 `call_tool` 直接显示给用户。
+
+新增工具时按以下顺序完成：
+
+1. 在后端用稳定的 `Tool.name` 注册工具，并提供简短的后端 fallback 标签。
+2. 在 `frontend/src/i18n/sections/toolNames.ts` 的三种语言中补上同名 key。
+3. 确认 `messages.ts` 已组装 `toolNames`，并检查实时气泡、历史气泡和 `call_tool` 转发调用都显示实际工具名。
+4. 运行前端 i18n 扫描、类型检查和相关测试；缺少任一语言 key 不得合并。
+
+未知工具名必须保留可读 fallback（后端标签或稳定机器名），不能因缺少翻译导致气泡为空、显示 `call_tool` 或阻断工具事件渲染。
+
 `description_short` 为 1-100 个 Unicode 字符，建议通常控制在 30-60 字、目标约 50 字。
 它只说明“能做什么、什么时候用、必要的相邻工具关系”；不要在这里重复字段名、类型、必填项或完整示例、
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
