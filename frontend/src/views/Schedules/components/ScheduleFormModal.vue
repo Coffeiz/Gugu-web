@@ -10,7 +10,7 @@
       </label>
       <div class="divider"></div>
 
-      <div class="field workspace-field">
+      <div v-if="props.workspaceSupported" class="field workspace-field">
         <div class="field-heading">
           <span>{{ t('schedules.workspace') }}</span>
           <small>{{ t('schedules.workspaceHint') }}</small>
@@ -22,7 +22,7 @@
           :placeholder="t('schedules.workspaceRoot')"
         />
       </div>
-      <div v-if="props.filesystemAuthorizationEnabled" class="field authorization-field">
+      <div v-if="props.workspaceSupported && props.filesystemAuthorizationEnabled" class="field authorization-field">
         <Checkbox v-model="form.filesystemAuthorized">
           {{ t('schedules.fullSandboxAccess') }}
         </Checkbox>
@@ -142,6 +142,7 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   externalError: { type: String, default: '' },
   filesystemAuthorizationEnabled: { type: Boolean, default: false },
+  workspaceSupported: { type: Boolean, default: false },
 })
 const emit = defineEmits<{
   (event: 'close'): void
@@ -228,7 +229,7 @@ function resetForm() {
   startTime.value = start.time
   endDate.value = end.date
   endTime.value = end.time
-  form.workspaceId = props.task?.workspace_id ?? null
+  form.workspaceId = props.workspaceSupported ? (props.task?.workspace_id ?? null) : null
   form.filesystemAuthorized = Boolean(props.task?.filesystem_authorized)
   formErr.value = ''
   nextTick(() => { nameRef.value?.focus(); resizePayload() })

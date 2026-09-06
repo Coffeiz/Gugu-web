@@ -34,6 +34,9 @@ async def validate_task_workspace(db, user_id, workspace_id: int | None) -> int 
     """校验任务工作区归属；绑定后任务根目录固定为整个 workspace。"""
     if workspace_id is None:
         return None
+    from app.services.workspaces import workspace_shell_supported
+    if not workspace_shell_supported():
+        raise LookupError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
     workspace = await get_owned(db, Workspace, workspace_id, user_id)
     if workspace is None or not workspace.enabled:
         raise LookupError("工作区不存在或已停用")

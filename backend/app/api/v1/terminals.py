@@ -147,6 +147,8 @@ async def add_terminal(body: TerminalCreate, user: User = Depends(get_current_us
                                     workspace_id=body.workspaceId, mode=body.mode)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await db.commit()

@@ -5,6 +5,9 @@ from agent.commands.help import command_help, is_help_arg
 
 
 async def handle(user_id, session_id: int | None, arg: str, locale: str | None = None) -> str | dict:
+    from app.services.workspaces import workspace_shell_supported
+    if not workspace_shell_supported():
+        return "当前为 OSS 存储模式，workspace、/personal 和 /project 不可用；Shell 只能使用独立沙盒。"
     if is_help_arg(arg):
         return command_help("workspace", locale)
     if not session_id:

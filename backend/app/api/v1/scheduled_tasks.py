@@ -69,7 +69,11 @@ def _norm_authorized_tools(tools: list[str] | None) -> list[str]:
 def _norm_script_authorization(value):
     from app.services.scheduled_tasks import normalize_script_authorization
     try:
-        return normalize_script_authorization(value)
+        normalized = normalize_script_authorization(value)
+        from app.services.workspaces import workspace_shell_supported
+        if normalized and normalized["root"] in {"personal", "project"} and not workspace_shell_supported():
+            raise HTTPException(409, "OSS 存储模式不支持 personal/project 脚本")
+        return normalized
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -191,7 +195,8 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         raise HTTPException(400, str(exc)) from exc
     script_authorization = _norm_script_authorization(body.script_authorization)
     if script_authorization is not None:
-        if script_authorization["root"] == "workspace" and workspace_id is None:
+        from app.services.workspaces import workspace_shell_supported
+        if script_authorization["root"] == "workspace" and workspace_id is None and workspace_shell_supported():
             raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
         if script_authorization["root"] in {"personal", "project"}:
             raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")
@@ -312,7 +317,8 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
     if "script_authorization" in body.model_fields_set:
         script_authorization = _norm_script_authorization(body.script_authorization)
         if script_authorization is not None:
-            if script_authorization["root"] == "workspace" and t.workspace_id is None:
+            from app.services.workspaces import workspace_shell_supported
+            if script_authorization["root"] == "workspace" and t.workspace_id is None and workspace_shell_supported():
                 raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
             if script_authorization["root"] in {"personal", "project"}:
                 raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")

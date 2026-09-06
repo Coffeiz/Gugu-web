@@ -16,12 +16,21 @@ from app.services.storage.keys import compose_logical_path
 from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT
 
 
+def workspace_shell_supported() -> bool:
+    """只有本地文件事实源支持 workspace 作为 Shell 挂载。"""
+    return get_settings().storage.backend == "local"
+
+
 async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspace | None:
+    if not workspace_shell_supported():
+        return None
     return await get_owned(db, Workspace, workspace_id, user_id)
 
 
 async def list_workspaces(db: AsyncSession, user_id) -> list[Workspace]:
     """列出当前用户可绑定的启用工作区。"""
+    if not workspace_shell_supported():
+        return []
     result = await db.execute(
         select(Workspace)
         .where(Workspace.user_id == user_id, Workspace.enabled.is_(True))
@@ -32,6 +41,8 @@ async def list_workspaces(db: AsyncSession, user_id) -> list[Workspace]:
 
 async def list_workspaces_for_management(db: AsyncSession, user_id) -> list[Workspace]:
     """列出当前用户全部工作区，包含停用项供管理工具使用。"""
+    if not workspace_shell_supported():
+        return []
     result = await db.execute(
         select(Workspace)
         .where(Workspace.user_id == user_id)
@@ -72,6 +83,8 @@ async def create_workspace(
     folder_id: int | None = None, project_id: int | None = None,
     enabled: bool = True,
 ) -> Workspace:
+    if not workspace_shell_supported():
+        raise ValueError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
     if kind == "folder":
         if folder_id is None or await get_owned(db, Folder, folder_id, user_id) is None:
             raise ValueError("文件夹不存在")
@@ -96,6 +109,8 @@ async def update_workspace(
     db: AsyncSession, user_id, workspace_id: int, *,
     name: str | None = None, enabled: bool | None = None,
 ) -> Workspace:
+    if not workspace_shell_supported():
+        raise ValueError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
     workspace = await get_workspace(db, user_id, workspace_id)
     if workspace is None:
         raise LookupError("工作区不存在")
@@ -111,6 +126,8 @@ async def update_workspace(
 
 
 async def delete_workspace(db: AsyncSession, user_id, workspace_id: int) -> None:
+    if not workspace_shell_supported():
+        raise ValueError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
     workspace = await get_workspace(db, user_id, workspace_id)
     if workspace is None:
         raise LookupError("工作区不存在")
@@ -143,6 +160,8 @@ async def bind_session(db: AsyncSession, user_id, session_id: int, workspace_id:
     session = await get_owned(db, ConversationSession, session_id, user_id)
     if session is None:
         raise LookupError("会话不存在")
+    if workspace_id is not None and not workspace_shell_supported():
+        raise ValueError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
     if workspace_id is None:
         session.workspace_id = None
     else:
@@ -201,6 +220,8 @@ async def resolve_workspace_target(
     工作区 id 与项目/文件夹 id 属于不同命名空间；文件工具只消费这里返回的
     ``space/project_id/folder_id``，避免把同数值的 workspace_id 误当成 project_id。
     """
+    if not workspace_shell_supported():
+        return None
     workspace = await get_workspace(db, user_id, workspace_id)
     if workspace is None or not workspace.enabled:
         return None
@@ -246,9 +267,7 @@ async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -
     if workspace is None or not workspace.enabled:
         return None
     settings = get_settings()
-    # OSS 只决定文件库对象如何存储；Shell 仍需要一块本地、独立的执行空间。
-    # 该目录不作为 OSS 对象路径使用，也不与旧 backend/uploads 混用。
-    if settings.storage.backend not in {"local", "oss"}:
+    if settings.storage.backend != "local":
         return None
 
     logical = None

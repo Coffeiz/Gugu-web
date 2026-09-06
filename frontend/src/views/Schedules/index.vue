@@ -20,6 +20,7 @@
 
     <ScheduleFormModal :show="showModal" :task="editing" :im-channels="imChannels" :busy="busy"
       :workspaces="workspaces" :filesystem-authorization-enabled="filesystemAuthorizationEnabled"
+      :workspace-supported="workspaceSupported"
       :external-error="formErr" @close="showModal = false" @save="submit" />
     <FilesystemAuthorizationDialog :show="authorizationOpen" :busy="authorizationBusy"
       :subject-name="authorizationSubjectName" @close="closeAuthorization" @confirm="confirmAuthorization" />
@@ -49,6 +50,7 @@ const imChannels = computed(() => authStore.user?.imChannels ?? [])
 const { tasks, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
 const workspaces = ref<Array<{ id: number; name: string }>>([])
 const filesystemAuthorizationEnabled = ref(false)
+const workspaceSupported = ref(false)
 const showModal = ref(false)
 const editing = ref<any | null>(null)
 const formErr = ref('')
@@ -84,9 +86,11 @@ async function loadWorkspaces() {
       .map((item: any) => ({ id: Number(item.id), name: String(item.name || '') }))
       .filter(item => Number.isFinite(item.id) && item.name)
     filesystemAuthorizationEnabled.value = result.filesystemAuthorizationEnabled === true
+    workspaceSupported.value = result.workspaceSupported === true
   } catch {
     workspaces.value = []
     filesystemAuthorizationEnabled.value = false
+    workspaceSupported.value = false
   }
 }
 onMounted(() => { void loadWorkspaces(); void openRequestedTask() })

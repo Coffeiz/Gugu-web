@@ -21,6 +21,7 @@ from app.services.workspaces import (
     effective_shell_enabled,
     effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
+    workspace_shell_supported,
 )
 from app.services.filesystem_authorization import (
     SUBJECT_SCHEDULED_TASK,
@@ -165,6 +166,8 @@ async def evaluate(
     # 防止权限配置或会话状态在连续调用之间把执行器从容器漂移到宿主机。
     workspace = None
     filesystem_policy = None
+    if (session is not None and session.workspace_id is not None or workspace_id is not None) and not workspace_shell_supported():
+        return ShellDecision(False, "OSS 存储模式不支持 workspace，只能使用独立 Shell 沙盒", risk, scope=scope)
     if subject_type == SUBJECT_SCHEDULED_TASK:
         if scope is ShellScope.SYSTEM:
             return ShellDecision(False, "定时任务只能在 sandbox 范围执行", risk, scope=scope)
@@ -183,7 +186,7 @@ async def evaluate(
         workspace_id = task_workspace_id
         # 没有 workspace 且没有完整沙箱授权的任务不应获得一个隐含的共享
         # /workspace；scheduler 也只会在这两种显式条件下注册 shell 工具。
-        if workspace_id is None and not full_user_sandbox_write:
+        if workspace_id is None and not full_user_sandbox_write and settings.storage.backend != "oss":
             return ShellDecision(False, "定时任务未绑定工作区或获得完整沙箱授权", risk, scope=scope)
         if workspace_id is not None:
             workspace = await db.get(Workspace, workspace_id)
@@ -281,6 +284,7 @@ async def build_dynamic_prompt(
     ``evaluate`` 仍是唯一权限事实源；危险探针只用于分类和判权，从不交给执行器。
     未通过安全命令探测时返回 ``None``，调用方也不应注册 Shell 工具。
     """
+    settings = get_settings()
     safe = await evaluate(
         db,
         user_id,
@@ -331,4 +335,9 @@ async def build_dynamic_prompt(
         )
     if subject_type == SUBJECT_SCHEDULED_TASK:
         lines.append("- 当前是定时任务；不支持交互式确认，需要确认的危险操作不得执行。")
+    if getattr(getattr(settings, "storage", None), "backend", "local") == "oss":
+        lines.extend([
+            "- OSS 存储模式：本轮 Shell 只使用独立沙盒 /workspace；/personal、/project 和 workspace 绑定不可用。",
+            "- OSS 文件库不会自动挂载、下载、同步或生成 File 记录；需要处理文件时必须走明确的文件库 API 操作。",
+        ])
     return "\n".join(lines)

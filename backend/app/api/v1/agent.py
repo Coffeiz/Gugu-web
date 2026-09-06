@@ -21,7 +21,12 @@ from app.core.tz import iso_utc, now_utc
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, User, UserBot, Workspace
 from app.services import interactions
-from app.services.workspaces import resolve_sandbox_root
+from app.services.workspaces import resolve_sandbox_root, workspace_shell_supported
+from app.services.filesystem_authorization import (
+    SUBJECT_SESSION,
+    filesystem_authorization_enabled,
+    get_active_grant,
+)
 from agent.sandbox.docker_runtime import cleanup_sandboxes_for_root
 from agent.sandbox.quota import clear_sandbox_directory
 
@@ -438,7 +443,7 @@ async def list_sessions(
             "title": s.title,
             "source": s.source,
             "chatType": s.chat_type,
-            "workspaceName": workspace_name,
+            "workspaceName": workspace_name if workspace_shell_supported() else None,
             "goalActive": goal_active(s),
             "goalStatus": goal_status(s),
             "filesystemAuthorized": filesystem_auth_enabled and s.id in authorized_session_ids,
@@ -699,10 +704,18 @@ async def get_session_messages(
 
     workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
     session_context = session.session_context if isinstance(session.session_context, dict) else {}
+    active_filesystem_grant = await get_active_grant(
+        db,
+        current_user.id,
+        subject_type=SUBJECT_SESSION,
+        subject_id=session.id,
+    ) if filesystem_authorization_enabled() else None
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
                     "ownerPlatformUserId": owner_platform_user_id,
-                    "workspaceName": workspace.name if workspace else None,
+                    "workspaceName": workspace.name if workspace and workspace_shell_supported() else None,
+                    "filesystemAuthorized": active_filesystem_grant is not None,
+                    "filesystemAuthorizationEnabled": filesystem_authorization_enabled(),
                     "goalActive": bool(session_context.get("goal_mode") and session_context.get("goal_text")),
                     "goalStatus": "paused" if session_context.get("goal_status") == "paused" and session_context.get("goal_text") else ("active" if session_context.get("goal_text") else None)},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）

@@ -171,7 +171,12 @@ async def _filter_shell_tool(
     subject_id: int | str | None = None,
     workspace_id: int | None = None,
 ) -> list[str]:
-    """工具注册前过滤 Shell；执行器仍会再次调用策略层复核。"""
+    """工具注册前过滤存储相关工具和 Shell；执行器仍会再次调用策略层复核。"""
+    # OSS 文件库没有本地挂载语义；工作区工具不能仅靠 handler 返回空列表，
+    # 否则模型仍会误以为可以创建或绑定 workspace。
+    from app.services.workspaces import workspace_shell_supported
+    if not workspace_shell_supported():
+        names = [name for name in names if name != "workspaces"]
     if "shell" not in names:
         return names
     if subject_type == "session" and not session_id:

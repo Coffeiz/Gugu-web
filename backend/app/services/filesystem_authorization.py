@@ -20,7 +20,13 @@ READ_WRITE = "read_write"
 
 def filesystem_authorization_enabled() -> bool:
     """返回完整用户沙箱授权入口的后端灰度状态。"""
-    return bool(get_settings().sandbox.filesystem_authorization_enabled)
+    settings = get_settings()
+    # OSS 没有可供 Shell 挂载的个人/项目本地目录；完整用户沙盒授权在此模式
+    # 下必须整体关闭，避免旧授权记录重新打开 /personal 或 /project 语义。
+    return bool(
+        settings.storage.backend == "local"
+        and settings.sandbox.filesystem_authorization_enabled
+    )
 
 
 def _record_authorization_event(

@@ -15,17 +15,17 @@ related_tools: shell, run_script
 ## 调用规则
 
 - 不要传递 `session_id`；会话身份由执行器注入。`cwd` 只能是当前 Shell 范围内的相对路径。
-- 沙盒容器的当前 workspace 挂载为 `/workspace`，当前用户完整项目文件库（含年月和项目目录）
-  以只读方式挂载到 `/project`，当前用户的个人文件库以只读方式挂载到 `/personal`。
-  沙盒用户的 home 是根目录 `/`；workspace 只改变 `/workspace` 的默认目录；
-  不要尝试访问其他绝对路径。
-- `/project/YYYY/MM/项目名` 是交互式终端中的人类可读路径，`cd` 会自动解析到内部的
-  `项目名 #ID` 目录；唯一项目不需要输入 `#ID`，项目名含空格时也不需要额外转义。
-  如果同一月份存在同名项目，Shell 会列出带 ID 的可复制路径，避免猜错项目。
+- 沙盒容器的当前工作目录统一是 `/workspace`。它在 local 存储且本轮明确绑定
+  workspace 时才对应绑定目录；否则对应用户独立的 Shell 持久目录。
+- `/personal` 和 `/project` 不是固定存在的挂载点，只在本轮动态权限状态明确声明可用时
+  才能访问。没有该声明时不得尝试访问、猜测路径或要求用户继续授权。
+- OSS 存储模式只提供独立 Shell 沙盒：workspace 绑定、`/personal`、`/project`、OSS
+  对象挂载、materialize/cache、自动同步和自动上传均不可用。文件库操作必须走明确的文件 API。
 - `cd` 不带参数会回到沙盒 home `/`；需要回到当前 workspace 时使用 `cd /workspace`。
 - 一次只执行一条命令，不使用管道、重定向、命令替换或下载后执行。
 - 运行用户明确指定的脚本使用 `run_script`，只传沙盒内相对 `script_path`；不要把脚本内容拼进 `shell`，也不要使用解释器的 inline/eval 参数。
-- `run_script` 只支持 `python3`、`node`、`bash`；`personal`/`project` 脚本需要完整用户沙箱授权，脚本路径不能经过软链接或硬链接。
+- `run_script` 只支持 `python3`、`node`、`bash`；脚本根和是否可用以本轮动态权限状态及
+  工具 Schema 为准，脚本路径不能经过软链接或硬链接。
 
 ## 高风险操作与失败处理
 

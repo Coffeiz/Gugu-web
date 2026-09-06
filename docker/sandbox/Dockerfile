@@ -15,7 +15,7 @@ RUN sed -i \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
-       bash ca-certificates curl ffmpeg git jq less nodejs npm python-is-python3 python3 python3-pip python3-venv \
+       bash ca-certificates curl ffmpeg git jq less libssh2-1 nodejs npm python-is-python3 python3 python3-pip python3-venv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && groupadd --gid 65532 sandbox \

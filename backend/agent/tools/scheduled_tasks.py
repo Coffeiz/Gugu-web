@@ -101,6 +101,7 @@ def _normalize_tool_schedule(args: dict, *, current=None) -> ScheduleSpec | str:
 
 def _to_dict(t: Any) -> dict:
     from app.services.filesystem_authorization import filesystem_authorization_enabled
+    from app.services.workspaces import workspace_shell_supported
 
     kind = task_schedule_kind(t)
     interval_minutes = getattr(t, "interval_minutes", None)
@@ -121,7 +122,7 @@ def _to_dict(t: Any) -> dict:
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
         "delivery_targets": t.delivery_targets,
         "authorized_tools": t.authorized_tools or [],
-        "workspace_id": getattr(t, "workspace_id", None),
+        "workspace_id": getattr(t, "workspace_id", None) if workspace_shell_supported() else None,
         "filesystem_authorized": filesystem_authorization_enabled() and getattr(t, "filesystem_authorization_grant_id", None) is not None,
     }
 
@@ -240,7 +241,8 @@ async def _create_scheduled_task(db, user_id, args: dict):
     except ValueError as exc:
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
     if script_authorization is not None:
-        if script_authorization["root"] == "workspace" and args.get("workspace_id") is None:
+        from app.services.workspaces import workspace_shell_supported
+        if script_authorization["root"] == "workspace" and args.get("workspace_id") is None and workspace_shell_supported():
             return json.dumps({"error": "workspace 脚本必须绑定 workspace_id"}, ensure_ascii=False)
         if script_authorization["root"] in {"personal", "project"} and args.get("filesystem_authorized") is not True:
             return json.dumps({"error": "personal/project 脚本必须同时申请完整用户沙箱授权"}, ensure_ascii=False)
@@ -379,7 +381,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
         except ValueError as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
         if script_authorization is not None:
-            if script_authorization["root"] == "workspace" and workspace_id is None:
+            from app.services.workspaces import workspace_shell_supported
+            if script_authorization["root"] == "workspace" and workspace_id is None and workspace_shell_supported():
                 return json.dumps({"error": "workspace 脚本必须绑定 workspace_id"}, ensure_ascii=False)
             if script_authorization["root"] in {"personal", "project"} and args.get("filesystem_authorized") is not True and not getattr(t, "filesystem_authorization_grant_id", None):
                 return json.dumps({"error": "personal/project 脚本必须拥有完整用户沙箱授权"}, ensure_ascii=False)

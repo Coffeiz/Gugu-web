@@ -334,7 +334,12 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                     # 绑定工作区失效时安全跳过，不能把任务改写到默认 /workspace。
                     print(f"[sched] 任务 {task_id} 工作区不可用，已跳过", flush=True)
                     return {"错误": "任务工作区不可用，已跳过执行"}
-            allow_shell = workspace_id is not None or filesystem_policy.full_user_sandbox
+            from app.core.config import get_settings
+            allow_shell = (
+                workspace_id is not None
+                or filesystem_policy.full_user_sandbox
+                or get_settings().storage.backend == "oss"
+            )
             chans = {c for c in (t.channels or "").split(",") if c}
             is_once = task_schedule_kind(t) == "once"
             if is_task_ended(t):

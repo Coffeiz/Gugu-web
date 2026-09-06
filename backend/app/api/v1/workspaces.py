@@ -20,6 +20,7 @@ from app.services.workspaces import (
     get_workspace,
     delete_workspace,
     update_workspace,
+    workspace_shell_supported,
 )
 from agent.sandbox.docker_runtime import sandbox_readiness
 from agent.terminal.policy import configured_terminal_mode, terminal_capabilities
@@ -39,10 +40,10 @@ def _response(row: Workspace, count: int = 0) -> WorkspaceResponse:
 async def list_workspaces(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    rows = (await db.execute(
+    rows = [] if not workspace_shell_supported() else (await db.execute(
         select(Workspace).where(Workspace.user_id == user.id).order_by(Workspace.updated_at.desc())
     )).scalars().all()
-    counts = dict((await db.execute(
+    counts = {} if not workspace_shell_supported() else dict((await db.execute(
         select(ConversationSession.workspace_id, func.count(ConversationSession.id))
         .where(ConversationSession.user_id == user.id, ConversationSession.workspace_id.is_not(None))
         .group_by(ConversationSession.workspace_id)
@@ -71,6 +72,8 @@ async def list_workspaces(
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
         "userAutopilotEnabled": await effective_shell_autopilot_enabled(db, user.id),
         "filesystemAuthorizationEnabled": filesystem_authorization_enabled(),
+        "workspaceSupported": workspace_shell_supported(),
+        "storageBackend": settings.storage.backend,
         "terminalMode": configured_terminal_mode(settings),
         "terminalEntryEnabled": bool(terminal_entry_by_policy and shell_available),
         "ptyEnabled": bool(pty_by_policy and shell_available),
@@ -89,7 +92,7 @@ async def add_workspace(
             folder_id=body.folderId, project_id=body.projectId, enabled=body.enabled,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return _response(row)
 
@@ -126,6 +129,8 @@ async def remove_workspace(
         await delete_workspace(db, user.id, workspace_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return {"ok": True, "workspaceId": workspace_id}
 
@@ -139,6 +144,8 @@ async def bind_workspace(
         await bind_session(db, user.id, session_id, workspace_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     row = await get_workspace(db, user.id, workspace_id)
     await db.commit()
     return _response(row, 1)

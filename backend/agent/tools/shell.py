@@ -21,13 +21,19 @@ from agent.tools.base import (
 )
 from agent.tools.filesystem_policy import current_filesystem_policy
 from agent.sandbox import LocalWorkspaceExecutor
+from agent.sandbox.local_executor import ShellResult
 from agent.sandbox.docker_runtime import sandbox_readiness, valid_egress_network_name, valid_egress_proxy
 from agent.sandbox.quota import measure_directory, snapshot_quota
 from agent.sandbox.client import SandboxdClient, SandboxdUnavailable
 from agent.sandbox.protocol import ExecuteRequest
 from app.core.config import get_settings
 from agent.tools.base import BaseSkill, Tool
-from app.services.workspaces import resolve_project_root, resolve_shell_root, resolve_user_personal_root
+from app.services.workspaces import (
+    resolve_project_root,
+    resolve_shell_root,
+    resolve_user_personal_root,
+    workspace_shell_supported,
+)
 from app.services.storage.quota_ledger import SHELL_PERSISTENT, record_usage, reconcile_user_storage
 
 logger = logging.getLogger(__name__)
@@ -204,6 +210,10 @@ async def _run_shell(db, user_id, args: dict):
     quota_root = None
     quota_bytes = None
     quota_before = None
+    sync_result = {"status": "not_applicable"}
+    sync_changed = False
+    summary = None
+    execution_error = None
     if decision.scope.value == "sandbox":
         sandbox_settings = get_settings().sandbox
         ready, reason = sandbox_readiness(sandbox_settings)
@@ -224,6 +234,29 @@ async def _run_shell(db, user_id, args: dict):
                 }
         quota_root = root if decision.workspace_id is None else None
         quota_bytes = sandbox_settings.persistent_quota_bytes if decision.workspace_id is None else None
+    if decision.scope.value == "sandbox" and decision.workspace_id is not None:
+        from app.services.filesync import reconcile_local_directory
+        if getattr(get_settings().sandbox, "file_sync_enabled", False):
+            try:
+                baseline = await reconcile_local_directory(
+                    db, user_id, workspace_id=decision.workspace_id, source="shell",
+                )
+                if baseline.rejected:
+                    return {
+                        "error": "Shell 工作区同步基线校验未通过，未执行命令",
+                        "_risk": decision.risk.value, "_workspace_id": decision.workspace_id,
+                        "_scope": decision.scope.value, "_audit_event": "sync_rejected",
+                    }
+                sync_result = {"status": "baseline", "baseline_journal_count": len(baseline.journal_ids)}
+                sync_changed = any((baseline.created, baseline.updated, baseline.moved, baseline.deleted))
+            except Exception as exc:
+                from app.core.redaction import diag_log
+                diag_log("agent.tools.shell.filesync_baseline", exc)
+                return {
+                    "error": "Shell 工作区同步基线不可用，未执行命令",
+                    "_risk": decision.risk.value, "_workspace_id": decision.workspace_id,
+                    "_scope": decision.scope.value, "_audit_event": "sync_unavailable",
+                }
     terminal_row = None
     from app.services.terminals import ensure_agent_terminal, get_terminal
     requested_terminal_id = str(args.get("_terminal_id") or "").strip()
@@ -284,27 +317,29 @@ async def _run_shell(db, user_id, args: dict):
             # sandbox 生产链路必须经过 sandboxd；客户端失败不得回退 Docker CLI
             # 或本机执行器，否则 Docker/ACL/审计边界会被静默绕过。
             if not sandbox_settings.sandboxd_socket:
-                return {"error": "sandboxd 未配置，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
-            result_data = await SandboxdClient(sandbox_settings.sandboxd_socket).execute_stream(
-                ExecuteRequest(
-                    root=str(root), command=command, cwd=str(requested_cwd),
-                    timeout=float(args.get("timeout", 30)),
-                    max_output_chars=int(args.get("max_output_chars", 12_000)),
-                    quota_root=str(quota_root) if quota_root else None,
-                    quota_bytes=quota_bytes,
-                    network_profile=network_profile,
-                    egress_expires_at=egress_expires_at,
-                    request_id=str(args.get("_run_id") or "") or None,
-                    personal_root=str(personal_root) if personal_root else None,
-                    project_root=str(project_root) if project_root else None,
-                    personal_read_only=not decision.full_user_sandbox_write,
-                    project_read_only=not decision.full_user_sandbox_write,
-                    allow_script_execution=script_authorized,
-                ), on_output=on_output,
-            )
-            if result_data.get("error"):
-                return {"error": result_data["error"], "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_rejected"}
-            result = type("SandboxdResult", (), result_data)()
+                execution_error = "sandboxd 未配置，未执行命令"
+            else:
+                result_data = await SandboxdClient(sandbox_settings.sandboxd_socket).execute_stream(
+                    ExecuteRequest(
+                        root=str(root), command=command, cwd=str(requested_cwd),
+                        timeout=float(args.get("timeout", 30)),
+                        max_output_chars=int(args.get("max_output_chars", 12_000)),
+                        quota_root=str(quota_root) if quota_root else None,
+                        quota_bytes=quota_bytes,
+                        network_profile=network_profile,
+                        egress_expires_at=egress_expires_at,
+                        request_id=str(args.get("_run_id") or "") or None,
+                        personal_root=str(personal_root) if personal_root else None,
+                        project_root=str(project_root) if project_root else None,
+                        personal_read_only=not decision.full_user_sandbox_write,
+                        project_read_only=not decision.full_user_sandbox_write,
+                        allow_script_execution=script_authorized,
+                    ), on_output=on_output,
+                )
+                if result_data.get("error"):
+                    execution_error = result_data["error"]
+                else:
+                    result = type("SandboxdResult", (), result_data)()
         else:
             executor = (
                 LocalWorkspaceExecutor(
@@ -322,9 +357,40 @@ async def _run_shell(db, user_id, args: dict):
                 allow_script_execution=script_authorized,
             )
     except SandboxdUnavailable as exc:
-        return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
+        execution_error = str(exc)
     except ValueError as exc:
-        return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "rejected"}
+        execution_error = str(exc)
+    if result is None:
+        result = ShellResult(
+            ok=False, exit_code=None, stdout="", stderr=execution_error or "Shell 执行失败",
+            timed_out=False, cwd=str(requested_cwd),
+        )
+    if decision.scope.value == "sandbox" and decision.workspace_id is not None:
+        from app.services.filesync import reconcile_local_directory
+        try:
+            if getattr(get_settings().sandbox, "file_sync_enabled", False):
+                summary = await reconcile_local_directory(
+                    db, user_id, workspace_id=decision.workspace_id, source="shell",
+                )
+                sync_result = {
+                    "status": "synced" if summary.rejected == 0 else "partial",
+                    "created": summary.created, "updated": summary.updated,
+                    "moved": summary.moved, "deleted": summary.deleted,
+                    "rejected": summary.rejected,
+                    "baseline_journal_count": sync_result.get("baseline_journal_count", 0),
+                }
+                sync_changed = any((summary.created, summary.updated, summary.moved, summary.deleted))
+            else:
+                sync_result = {"status": "disabled"}
+        except Exception as exc:
+            # 命令结果不能被同步故障伪造成成功；具体异常进入受限诊断日志。
+            from app.core.redaction import diag_log
+            diag_log("agent.tools.shell.filesync_reconcile", exc)
+            # reconcile 可能已经 flush 过部分投影；收尾失败时不能让 dispatch
+            # 把半成品提交为成功状态，回滚后由下次对账重试。
+            await db.rollback()
+            sync_result = {"status": "failed", "error_code": type(exc).__name__}
+            sync_changed = False
     if decision.scope.value == "sandbox" and decision.workspace_id is None and quota_before is not None:
         quota_after = measure_directory(root)
         operation = (
@@ -358,7 +424,13 @@ async def _run_shell(db, user_id, args: dict):
         "cwd": result.cwd,
         "permission_revoked": result.permission_revoked,
         "quota_exceeded": getattr(result, "quota_exceeded", False),
+        "sync": sync_result,
+        **({"_file_sync_event": {
+            "operation": "refresh", "source": "shell",
+            "entity_ids": list(getattr(summary, "entity_ids", ())),
+        }} if sync_changed else {}),
         "_terminal_id": terminal_row.id if terminal_row is not None else None,
+        **({"error": execution_error} if execution_error else {}),
         **({"error": "Shell 持久空间达到配额，命令已终止"} if getattr(result, "quota_exceeded", False) else {}),
         "_risk": decision.risk.value,
         "_workspace_id": decision.workspace_id,
@@ -434,6 +506,8 @@ async def _run_script(db, user_id, args: dict):
 
     if root_name == "workspace":
         root = await resolve_shell_root(db, user_id, "sandbox", policy.workspace_id)
+    elif not workspace_shell_supported():
+        return {"error": "OSS 存储模式只支持独立 workspace 沙盒，不支持 personal/project 脚本"}
     elif not policy.full_user_sandbox:
         return {"error": "personal/project 脚本需要先显式授权完整用户沙箱读写权限"}
     elif root_name == "personal":
@@ -492,8 +566,8 @@ class ShellSkill(BaseSkill):
         Tool(
             name="shell",
             label="执行 Shell 命令",
-            description_short='受控执行 Shell；沙盒挂载可写 /workspace、只读项目目录 /project 和个人文件库 /personal；system 或 egress 需显式选择并确认',
-            description="在授权 Shell 范围执行一条受控命令；沙盒当前目录为 /workspace，/project 是当前用户完整项目文件库（只读，含年月和项目目录），/personal 是当前用户个人文件库（只读）；危险命令需确认，不支持管道和重定向。",
+            description_short='在当前授权范围内受控执行 Shell；目录挂载和网络能力以本轮实际权限为准',
+            description="在当前授权 Shell 范围执行一条受控命令；默认工作目录为 /workspace，其他目录挂载、网络和危险操作以本轮实际权限状态为准；危险命令需确认，不支持管道和重定向。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -516,10 +590,10 @@ class ShellSkill(BaseSkill):
         Tool(
             name="run_script",
             label="运行沙盒脚本",
-            description_short="运行用户明确指定的沙盒内 Python、Node 或 Bash 脚本。",
+            description_short="运行用户明确指定的沙盒内 Python、Node 或 Bash 脚本；可用根目录以本轮权限状态为准。",
             description=(
                 "运行一个已存在且由用户明确指定的沙盒脚本。script_path 必须是相对路径，"
-                "不能经过软链接或硬链接；root 可选 workspace/personal/project。默认使用 python3，"
+                "不能经过软链接或硬链接；root 可选 workspace/personal/project，但是否可用以本轮权限状态为准。默认使用 python3，"
                 "脚本仍复用 Shell 的沙盒、workspace/cwd、超时、输出、网络隔离和进程清理边界；"
                 "personal/project 需要完整用户沙箱授权，不能传任意 Shell command 或 eval 参数。"
             ),

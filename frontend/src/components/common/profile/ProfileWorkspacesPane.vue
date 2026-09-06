@@ -24,7 +24,7 @@
     </div>
     <div class="pm-sep"></div>
     </template>
-    <div class="pm-section">
+    <div v-if="workspaceSupported" class="pm-section">
       <div class="pm-section-label">{{ t('profileWorkspacesUi.workspaceManagement') }}</div>
       <p class="pm-workspaces-intro">{{ t('profileWorkspacesUi.workspaceIntro') }}</p>
       <div v-if="loading" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.loadingWorkspaces') }}</div>
@@ -80,6 +80,7 @@ const globalEnabled = ref(false)
 const systemGlobalEnabled = ref(false)
 const dangerousGlobalEnabled = ref(false)
 const autopilotGlobalEnabled = ref(false)
+const workspaceSupported = ref(false)
 const resetting = ref(false)
 const rebuilding = ref(false)
 const shellMessage = ref('')
@@ -101,9 +102,11 @@ async function load() {
     systemGlobalEnabled.value = response.systemGlobalEnabled
     dangerousGlobalEnabled.value = response.dangerousGlobalEnabled
     autopilotGlobalEnabled.value = response.autopilotGlobalEnabled === true
+    workspaceSupported.value = response.workspaceSupported === true
     items.value = response.items as WorkspaceItem[]
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.workspaceLoadFailed')
+    workspaceSupported.value = false
   } finally {
     loading.value = false
     shellLoading.value = false
