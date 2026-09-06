@@ -8,6 +8,7 @@ export type UnifiedRecallOptions = {
   maxPerSource?: number;
   maxPerParent?: number;
   excludeContentHashes?: string[];
+  selectionMode?: "confidence" | "top_k";
 };
 
 export type UnifiedRecallDiagnostics = {
@@ -153,7 +154,7 @@ export function rankCandidates(
   const normalized = normalizeBySource(eligible);
   const scored = eligible.map((candidate) => {
     const normalizedScore = normalized.get(candidate.id) ?? 0;
-    const fused = candidate.fused_score !== undefined
+    const fused = candidate.fused_score !== undefined && candidate.fused_score !== null
       ? Number(candidate.fused_score)
       : candidate.fusion === "hybrid-rrf"
         ? Number(candidate.raw_score || 0)
@@ -168,9 +169,12 @@ export function rankCandidates(
     || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version))
     || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
   );
+  const selectionMode = options.selectionMode ?? "confidence";
   const preferred = orderedScored.filter((item) => item.value >= 0.55);
   const fallback = orderedScored.filter((item) => item.value >= 0.35 && item.value < 0.55);
-  const confidenceSelected = (preferred.length ? preferred : fallback)
+  const confidenceSelected = (selectionMode === "top_k"
+    ? orderedScored
+    : (preferred.length ? preferred : fallback))
     .slice(0, Math.max(1, Number(options.limit ?? 5)));
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
@@ -218,11 +222,14 @@ export function rankCandidates(
   const stats = {
     ...unified.diagnostics,
     accepted_count: results.length,
-    rejected_low_score: scored.filter((item) => item.value < 0.35).length,
-    rejected_not_preferred: scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length,
+    rejected_low_score: selectionMode === "confidence" ? scored.filter((item) => item.value < 0.35).length : 0,
+    rejected_not_preferred: selectionMode === "confidence"
+      ? scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length
+      : 0,
     top_confidence: Math.max(0, ...scored.map((item) => item.value)),
     threshold: 0.35,
     preferred_threshold: 0.55,
+    selection_mode: selectionMode,
     scoring_version: "confidence-v1",
     source_diagnostics: sourceDiagnostics,
     elapsed_ms: Math.round(performance.now() - started),

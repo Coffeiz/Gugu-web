@@ -209,9 +209,24 @@ test("TS 完整候选流水线与 Python 评分契约保持一致", () => {
   ], { limit: 5, maxChars: 1000 });
 
   assert.deepEqual(output.results.map((item) => item.id), ["file:1", "memory:1"]);
+  assert.equal(output.results[0].fused_score, output.results[0].normalized_score);
   assert.equal(output.diagnostics.rejected_low_score, 1);
   assert.equal(output.diagnostics.scoring_version, "confidence-v1");
   assert.equal(output.diagnostics.output_chars, 12);
+});
+
+test("主动候选搜索按 Top-K 返回，不受 confidence 阈值过滤", () => {
+  const output = rankCandidates("缓存", [
+    {
+      id: "knowledge:1", source_type: "knowledge", raw_score: 0.01, rank: 1, fused_score: null,
+      document: { id: "knowledge:1", text: "缓存相关知识", source_type: "knowledge", scope_type: "owner", scope_id: "owner-1", document_version: "1", metadata: { confidence: "confirmed" } },
+    },
+  ], { limit: 5, maxChars: 1000, selectionMode: "top_k" });
+
+  assert.equal(output.results.length, 1);
+  assert.ok(output.results[0].fused_score > 0);
+  assert.equal(output.diagnostics.selection_mode, "top_k");
+  assert.equal(output.diagnostics.rejected_low_score, 0);
 });
 
 test("rank_candidates 在评分前排除已注入的历史内容", () => {

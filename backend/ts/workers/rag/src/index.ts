@@ -287,6 +287,7 @@ async function handle(state: State, request: RagRequest): Promise<RagResponse> {
         maxPerSource: request.max_per_source ?? 3,
         maxPerParent: request.max_per_parent ?? 3,
         excludeContentHashes: request.exclude_content_hashes ?? [],
+        selectionMode: request.selection_mode ?? "confidence",
       },
     );
     return {
