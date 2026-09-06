@@ -73,7 +73,7 @@
 | Node.js         | 18+   | 前端构建                                                                |
 | PostgreSQL      | 15+   | 数据库                                                                 |
 | Redis           | 8+    | IM 队列（接 IM 才需）                                                      |
-| **LibreOffice** | 任意    | 咕咕生成 Word/PDF/Excel（`create_document`）靠 `libreoffice --headless` 转换 |
+| **LibreOffice** | 任意    | 文件读取工具提取 Word/PDF/Excel；`create_file` 只直接写入 UTF-8 文本，不做格式转换 |
 | **CJK 字体** | `fonts-noto-cjk` | LibreOffice 生成 PDF 时提供中文/日文/韩文字形；浏览器字体另由前端构建产物提供 |
 | **ffmpeg**      | 任意    | IM 语音理解：把 QQ/飞书语音（SILK/opus）转成 mp3 喂 mimo（配合 pip 的 `pilk` 解 SILK）。只装在跑 IM 网关的机器；没装则语音退文字提示 |
 | **Docker Rootless** | Docker CLI + Rootless daemon | Shell 沙盒的固定镜像、断网容器和资源限制；只在启用生产 Shell 沙盒时需要 |

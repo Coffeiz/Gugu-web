@@ -35,7 +35,7 @@
 
 这些语义对人类描述看似简短，对模型却容易造成三类错误：漏传关键状态、把“保持不变”误解成“清空”、同时填写互斥字段导致执行路径不确定。
 
-全量 Schema 基线也暴露出评测口径问题：20 个脱敏 case 的全量模式为 14/20（70%），但失败不等同于 Schema 校验错误。`memory_search` 不是注册工具名（实际为 `search_memory`）；`create_event` 后查询事件、`create_document` 后读取文件可能是合理的多步核实；`save_uploaded_file` 的 `attach_id` 允许在暂存区无歧义时省略。只有未路由到目标工具、字段缺失或值格式不符，才应分别计入路由、字段或值错误。本轮使用 no-op dispatch，`schema_errors=0` 仅表示没有进入真实校验失败路径，不能代表任务全部正确。
+全量 Schema 基线也暴露出评测口径问题：20 个脱敏 case 的全量模式为 14/20（70%），但失败不等同于 Schema 校验错误。`memory_search` 不是注册工具名（实际为 `search_memory`）；`create_event` 后查询事件、`create_file` 后读取文件可能是合理的多步核实；`save_uploaded_file` 的 `attach_id` 允许在暂存区无歧义时省略。只有未路由到目标工具、字段缺失或值格式不符，才应分别计入路由、字段或值错误。本轮使用 no-op dispatch，`schema_errors=0` 仅表示没有进入真实校验失败路径，不能代表任务全部正确。
 
 静态契约核对确认，部分失败确实来自 Schema 过于宽松：
 

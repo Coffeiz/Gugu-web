@@ -2,7 +2,7 @@
 
 > 状态：✅ 全部完成（Phase 0～6）
 > 创建：2026-08-03
-> 最近更新：2026-08-04
+> 最近更新：2026-09-06
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
 > 关联文档：[`【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`08-CHANNELS.md`](../agent/08-CHANNELS.md)、[`09-MESSAGE-PROTOCOL.md`](../agent/09-MESSAGE-PROTOCOL.md)
 
@@ -76,6 +76,23 @@ flowchart TD
 ### 审查结论
 
 Phase 5 已完成上述职责收口。历史审查中记录的 P1/P2 已逐项修复；当前唯一保留的重复代码是 `run_collect()` 与 `run_stream()` 的 token 消费循环，这是流式平台输出的必要差异，其他上下文、权限、session、附件、持久化、反思和压缩收尾均由同一套组件驱动。详细证据和测试命令见 [Phase 5 代码审查报告](./PRD-IM-2-PHASE5-代码审查报告.md)。
+
+### 运行时生命周期边界（2026-09-06 固化）
+
+IM 与 Web 共享业务 Run 的责任边界，但不共享浏览器 SSE 回放协议：
+
+1. `worker._dispatch/_flush_loop` 持有 IM Run 调度；平台 Gateway 只负责协议接收和出站发送，
+   连接断开、typing 失败或卡片更新失败不能判定 Run 失败。
+2. `run_collect()` / `run_stream()` 共享 session gate、上下文、持久化、反思、压缩和
+   baseline barrier；出站层只能观察或消费结果，不能拥有业务收尾权。
+3. QQ 流式发送失败后仍必须继续消费 Agent iterator 到 `final`；飞书卡片创建/发送失败
+   必须完整消费后再走普通文本 fallback。展示失败不得中断 Runner。
+4. 只有显式取消信号或 Runner 发布的业务错误改变 Run 终态；普通平台发送错误只记录受限
+   诊断并保留已持久化结果。
+5. 微信当前使用非流式出站，沿用同一 `run_collect()` 生命周期，不新增专用终态实现。
+
+因此 IM 不需要接入 Web 的 `genstream` 订阅/回放层；若未来增加 IM 跨进程回放，应先设计
+持久化 Run 事件和幂等消费游标，再复用统一终态规则，禁止从平台回执或时间窗口反推失败。
 
 ## 1. 背景与目标
 
