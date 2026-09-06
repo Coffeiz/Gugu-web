@@ -6,8 +6,10 @@
 import { readFile } from 'node:fs/promises'
 import { readdir } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = resolve(new URL('..', import.meta.url).pathname, 'src')
+// URL.pathname 会把中文目录编码成 %E6...，在 devserver 等非 ASCII 路径下会导致扫描目录不存在。
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)), 'src')
 async function findVueFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
   const nested = await Promise.all(entries.map(entry => {
