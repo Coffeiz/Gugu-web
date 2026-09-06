@@ -2,7 +2,8 @@
 
 Memory 的直接注入缓存和 RAG 索引使用不同的分块契约，不能共用裸 chunk hash。
 RAG 缓存使用带来源前缀的最终 chunk 内容 hash，避免覆盖旧的 memory.md 缓存，
-并让不同 scope 的相同正文安全复用向量。
+并让不同 scope 的相同正文安全复用向量。Knowledge 使用自己的
+``.agent/knowledge/vectors.json``，不再写入 Memory 的向量缓存。
 """
 from __future__ import annotations
 
@@ -39,7 +40,10 @@ async def sync_memory_index_vectors(
     if not embedding.is_enabled():
         return 0
     try:
-        docs = [document for document in documents if document.source_id != "pattern"]
+        docs = [
+            document for document in documents
+            if document.source_id != "pattern" and document.source_type != "knowledge"
+        ]
         vecs = await store.read_memory_vecs(user_id)
         tag = embedding.model_tag()
         alive = {key for document in docs if (key := cache_key(document))}
@@ -82,10 +86,10 @@ async def sync_knowledge_index_vectors(
     force: bool = False,
     strict: bool = False,
 ) -> int:
-    """同步 Knowledge 文档向量，复用 Memory 的 owner 缓存和 TTL。"""
-    return await sync_memory_index_vectors(
-        user_id, documents, force=force, strict=strict, prune=False,
-    )
+    """同步 Knowledge 文档向量到 Knowledge 专属缓存。"""
+    from agent.knowledge.vector_cache import sync_vectors
+
+    return await sync_vectors(user_id, documents, force=force, strict=strict)
 
 
 __all__ = [

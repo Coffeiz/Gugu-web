@@ -229,6 +229,29 @@ test("主动候选搜索按 Top-K 返回，不受 confidence 阈值过滤", () =
   assert.equal(output.diagnostics.rejected_low_score, 0);
 });
 
+test("主动 Top-K 不再被来源、父文档和相似度配额二次截断", () => {
+  const output = rankCandidates("缓存", Array.from({ length: 5 }, (_, index) => ({
+    id: `memory:${index}`,
+    source_type: "memory",
+    raw_score: 10 - index,
+    rank: index + 1,
+    document: {
+      id: `memory:${index}`,
+      text: `缓存相关记录 ${index} 的具体内容`,
+      source_type: "memory",
+      scope_type: "owner",
+      scope_id: "owner-1",
+      document_version: "1",
+      parent_id: "memory:shared-parent",
+    },
+  })), { limit: 5, maxChars: 1000, selectionMode: "top_k" });
+
+  assert.equal(output.results.length, 5);
+  assert.equal(output.diagnostics.rejected_source, 0);
+  assert.equal(output.diagnostics.rejected_parent, 0);
+  assert.equal(output.diagnostics.rejected_similarity, 0);
+});
+
 test("rank_candidates 在评分前排除已注入的历史内容", () => {
   const historicalText = "历史知识内容";
   const output = rankCandidates("知识", [

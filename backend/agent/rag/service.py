@@ -31,7 +31,7 @@ from agent.rag.scope import (
 from agent.rag.vector_cache import cache_key
 
 
-MAX_ACTIVE_RESULTS = 10
+MAX_ACTIVE_RESULTS = 25
 DEFAULT_RESULTS = 5
 MAX_OUTPUT_CHARS = 3000
 MAX_PER_SOURCE = 3
@@ -693,17 +693,21 @@ async def search_conversations(
 
 
 async def _load_cached_vectors(user_id, documents) -> dict[str, list[float]]:
-    """读取已有 memory/pattern cache，不在查询热路径生成文档向量。"""
+    """读取 Memory、Knowledge 和 pattern 专属缓存，不在查询热路径生成向量。"""
     from agent.memory import embedding, store
+    from agent.knowledge.vector_cache import read_vectors as read_knowledge_vectors
 
     tag = embedding.model_tag()
     pattern = await store.read_pattern_vecs(user_id)
     memory = await store.read_memory_vecs(user_id)
+    knowledge = await read_knowledge_vectors(user_id)
     result: dict[str, list[float]] = {}
     for doc in documents:
         key = doc.metadata.get("vector_key")
         if doc.source_id == "pattern":
             cached = pattern.get(key or "")
+        elif doc.source_type == "knowledge":
+            cached = knowledge.get(cache_key(doc) or "")
         else:
             cached = memory.get(cache_key(doc) or "")
         if cached and cached.get("t") == tag and isinstance(cached.get("v"), list):

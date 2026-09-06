@@ -6,7 +6,7 @@
 import json
 
 from agent.memory import store
-from agent.rag.service import search_memory
+from agent.rag.service import MAX_ACTIVE_RESULTS, search_memory
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -59,9 +59,9 @@ async def _search_memory(db, user_id, args: dict):
     try:
         limit = int(args.get("limit", 5) or 5)
     except (TypeError, ValueError):
-        return {"error": "limit 必须是 1 到 10 的整数"}
-    if not 1 <= limit <= 10:
-        return {"error": "limit 必须是 1 到 10 的整数"}
+        return {"error": f"limit 必须是 1 到 {MAX_ACTIVE_RESULTS} 的整数"}
+    if not 1 <= limit <= MAX_ACTIVE_RESULTS:
+        return {"error": f"limit 必须是 1 到 {MAX_ACTIVE_RESULTS} 的整数"}
     try:
         from agent.im import imctx
         return await search_memory(
@@ -130,6 +130,18 @@ async def _delete_knowledge(db, user_id, args: dict):
         return blocked
     deleted = await store.delete(entry_id)
     if deleted:
+        try:
+            from agent.knowledge.vector_cache import sync_vectors
+            from agent.rag.adapters.knowledge import KnowledgeAdapter
+            from agent.rag.models import Scope
+
+            documents = await KnowledgeAdapter(user_id).build_documents(
+                scope=Scope(owner_user_id=str(user_id), scope_type="owner"),
+            )
+            await sync_vectors(user_id, documents)
+        except Exception:
+            # 向量是可重建缓存，删除主数据成功后不因缓存 GC 失败而回滚。
+            pass
         from agent.rag.index_cache import get_index_cache
         get_index_cache().invalidate(user_id, "knowledge")
     return {"success": deleted, "knowledge_id": entry_id}
@@ -209,7 +221,7 @@ class MemorySkill(BaseSkill):
                     "scope": {"type": "string", "enum": ["auto", "current_group", "all_my_groups", "private_memory"]},
                     "source": {"type": "string", "enum": ["all", "knowledge", "profile", "pattern", "daily", "memory"]},
                     "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"]},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_ACTIVE_RESULTS},
                 },
                 "required": ["query"],
             },

@@ -74,6 +74,11 @@ def test_search_conversations_keeps_recent_without_search_term():
     assert _issues("search_conversations", {"query": "文件架构", "keyword": "架构"})
 
 
+def test_search_memory_allows_top_k_up_to_25():
+    assert _issues("search_memory", {"query": "架构", "limit": 25}) == []
+    assert _issues("search_memory", {"query": "架构", "limit": 26})
+
+
 def test_phase2_calendar_and_file_semantics():
     assert _issues("create_event", {"title": "评审", "date": "2026-09-03", "all_day": True}) == []
     assert _issues("create_event", {"title": "评审", "date": "2026-09-03", "all_day": True, "time": "14:30"})

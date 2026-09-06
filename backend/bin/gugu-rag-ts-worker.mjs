@@ -403,6 +403,7 @@ function selectUnifiedRecall(candidates, options = {}) {
   let rejectedParent = 0;
   let rejectedSource = 0;
   let rejectedSimilarity = 0;
+  const diversityLimited = options.selectionMode !== "top_k";
   const ordered = [...candidates].sort(
     (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id)
   );
@@ -415,16 +416,16 @@ function selectUnifiedRecall(candidates, options = {}) {
       continue;
     }
     const parent = document.parent_id || document.id;
-    if ((parentCounts.get(parent) ?? 0) >= maxPerParent) {
+    if (diversityLimited && (parentCounts.get(parent) ?? 0) >= maxPerParent) {
       rejectedParent += 1;
       continue;
     }
-    if ((sourceCounts.get(document.source_type) ?? 0) >= maxPerSource) {
+    if (diversityLimited && (sourceCounts.get(document.source_type) ?? 0) >= maxPerSource) {
       rejectedSource += 1;
       continue;
     }
     const tokens2 = tokenSet(document);
-    if (selectedTokens.some((previous) => similarity(tokens2, previous) >= 0.85)) {
+    if (diversityLimited && selectedTokens.some((previous) => similarity(tokens2, previous) >= 0.85)) {
       rejectedSimilarity += 1;
       continue;
     }
