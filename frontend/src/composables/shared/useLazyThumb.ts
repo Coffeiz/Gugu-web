@@ -24,7 +24,7 @@ function _load(el: LazyThumbEl, id: number | string, size: string = 'card', revi
     return
   }
   const obs = new IntersectionObserver(([entry]) => {
-    if (!entry.isIntersecting) return
+    if (!entry?.isIntersecting) return
     obs.disconnect(); el._lazyThumbObs = null
     getThumb(id, size, revision).then((url: string | null | undefined) => {
       if (url) { el.src = url; if (size === 'card') el.decode?.().catch(() => {}) }

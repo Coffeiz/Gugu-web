@@ -27,11 +27,13 @@ export function getCachedThumb(id: number | string, size = 'card', revision?: Th
 
 export function getThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
   const key = thumbKey(id, size, revision)
-  if (cache.has(key)) {
+  const cached = cache.get(key)
+  if (cached) {
     if (size === 'card') thumbLoadedIds.add(id)
-    return Promise.resolve(cache.get(key))
+    return Promise.resolve(cached)
   }
-  if (pending.has(key)) return pending.get(key)
+  const existing = pending.get(key)
+  if (existing) return existing
 
   const token = localStorage.getItem('user_token') ?? ''
   const p = thumbLimit(() => {
@@ -68,8 +70,10 @@ export function getCachedThumbUrl(key: string) {
 }
 
 export function getThumbUrl(key: string, url: string) {
-  if (cache.has(key)) return Promise.resolve(cache.get(key))
-  if (pending.has(key)) return pending.get(key)
+  const cached = cache.get(key)
+  if (cached) return Promise.resolve(cached)
+  const existing = pending.get(key)
+  if (existing) return existing
 
   const token = localStorage.getItem('user_token') ?? ''
   const p = thumbLimit(() => {
