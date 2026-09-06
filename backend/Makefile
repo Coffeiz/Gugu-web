@@ -10,7 +10,7 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up
 
 # 非 Compose 的宿主机 ACL 默认不自动修改；Compose sandbox profile 会由 bootstrap 自动初始化。
 SANDBOX_ACL ?= 0
@@ -99,7 +99,13 @@ deps-dev:    ## 装开发/测试依赖（包含 Worker 热重载 watcher）
 	@echo "  pip install -r requirements-dev.txt ..."
 	@$(VENV_BIN)/pip install -r requirements-dev.txt
 
-rag-ts-build: ## 构建固定的 TypeScript RAG worker 制品（不在运行时编译）
+filesync-ts-build: ## 构建固定的 TypeScript 文件监听 worker 制品（不在运行时编译）
+	@cd .. && pnpm install --filter @gugu/filesync-watcher... --frozen-lockfile --ignore-scripts --reporter=silent
+	@cd .. && pnpm --filter @gugu/filesync-watcher build
+	@chmod 755 bin/gugu-filesync-ts-worker.cjs
+	@node bin/gugu-filesync-ts-worker.cjs </dev/null
+
+rag-ts-build: filesync-ts-build ## 构建固定的 TypeScript RAG worker 制品（不在运行时编译）
 	@CI=1 pnpm --dir ts install --frozen-lockfile --prod --ignore-scripts --reporter=silent
 	@cd ts && \
 	case "$$(uname -s):$$(uname -m)" in \

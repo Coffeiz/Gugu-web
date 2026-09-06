@@ -95,6 +95,9 @@ export const useConfigStore = defineStore('config', () => {
       egress_ttl_seconds: 600,
       egress_isolation_enabled: false,
     },
+    filesync: {
+      enabled: false,
+    },
     agent: {
       shell_enabled: false,
       shell_system_enabled: false,
@@ -169,6 +172,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.voice) { secretSet.voiceApiKey = data.voice.api_key === '****'; Object.assign(cfg.voice, sanitizeForEdit(data.voice)) }
       if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
       if (data.sandbox) Object.assign(cfg.sandbox, data.sandbox)
+      if (data.filesync) Object.assign(cfg.filesync, data.filesync)
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))

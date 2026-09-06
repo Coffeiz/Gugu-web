@@ -123,9 +123,9 @@ fi
 hr; log "步骤 5/6 — 构建 TS RAG 固定制品与前端"
 if $DO_BUILD; then
     if command -v pnpm >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1; then
-        log "构建 TypeScript RAG worker 固定制品 ..."
+        log "构建 TypeScript 文件监听与 RAG worker 固定制品 ..."
         make rag-ts-build
-        ok "TS RAG 固定制品已更新 → $APP_DIR/bin/gugu-rag-ts-worker.mjs"
+        ok "TS 文件监听与 RAG 固定制品已更新"
     else
         err "未找到 pnpm 或 corepack，无法构建 TS RAG 固定制品"
         exit 1
