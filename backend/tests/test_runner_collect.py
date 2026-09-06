@@ -1,7 +1,8 @@
 import json
 import pytest
 
-from agent.runner import _collect, _scheduled_collect_result
+from agent.runner import _collect
+from agent.scheduled_execution import _scheduled_collect_result
 from agent.im.replies import format_tool_event
 
 

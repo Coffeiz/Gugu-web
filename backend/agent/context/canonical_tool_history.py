@@ -47,6 +47,51 @@ _PROVIDER_TEXT_EVENT_TYPES = frozenset({
 })
 
 
+def persistable_canonical_batch_records(messages: Any) -> list[dict]:
+    """筛选需要跨 run 重放的 canonical batch。
+
+    工具批次带 ``round_id``；首轮组装批次没有 round id，但其中的
+    ``runtime-context``（例如工作区约束）必须落库，否则下一次 run 会把同一
+    reminder 从历史中间移动到输入末尾，打断 provider 的缓存前缀。RAG 等其它
+    首轮附属内容由独立持久化路径负责，这里只保留 runtime-context，避免重复写入。
+    """
+    records = getattr(messages, "canonical_batch_records", ())
+    result: list[dict] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        metadata = record.get("metadata") or {}
+        if metadata.get("round_id"):
+            result.append(record)
+            continue
+
+        runtime_messages = []
+        for message in record.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            runtime_blocks = [
+                block for block in content
+                if isinstance(block, dict) and block.get("type") == "runtime-context"
+            ]
+            if runtime_blocks:
+                runtime_messages.append({
+                    "role": message.get("role", "user"),
+                    "content": runtime_blocks,
+                })
+        if runtime_messages:
+            # 不复用包含 RAG 的原 batch digest；按实际要持久化的 runtime 内容
+            # 重新生成 fallback digest，才能在连续 run 中稳定去重。
+            result.append({
+                "messages": runtime_messages,
+                "digest": "",
+                "metadata": {"kind": "runtime-context"},
+            })
+    return result
+
+
 def _tool_result_is_error(block: dict[str, Any]) -> bool:
     """从 provider-neutral 结果中判断失败，不读取或记录结果正文。"""
     if "is_error" in block:

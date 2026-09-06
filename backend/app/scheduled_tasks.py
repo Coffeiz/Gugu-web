@@ -842,7 +842,7 @@ async def _run_agent_execution(
 ) -> tuple[str, list, str]:
     """_run_agent 的 execution + schema 解析主体（独立函数便于 try/finally 清理 imctx）。"""
     from agent.security import sanitize
-    from agent.runner import run_scheduled_execution
+    from agent.scheduled_execution import run_scheduled_execution
 
     max_rounds = 2
     last_text = "咕咕这次没有产出内容"

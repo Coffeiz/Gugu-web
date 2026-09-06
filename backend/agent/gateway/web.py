@@ -22,18 +22,11 @@ from agent.security import sanitize
 from agent.llm import genstream
 from agent import quota
 from agent.context import builder, loaders, session_snapshot, session_history, run_context, session_system
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
-
-
-def _canonical_tool_batch_records(messages) -> list[dict]:
-    """只把已封存的工具批次交给统一收尾，避免从 provider wire 反推历史。"""
-    records = getattr(messages, "canonical_batch_records", ())
-    return [record for record in records
-            if isinstance(record, dict)
-            and (record.get("metadata") or {}).get("round_id")]
 
 
 def _build_title_prompt(user_msg: str, ai_reply: str) -> str:
@@ -724,7 +717,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
                 stance_text=prepared.stance_to_persist,
                 user_message_id=getattr(user_message, "id", None),
-                canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
+                canonical_batches=persistable_canonical_batch_records(anthr_messages if use_anthropic else oa_messages),
                 text=full_reply,
                 display_timeline=[
                     item for item in display_timeline

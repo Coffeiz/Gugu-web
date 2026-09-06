@@ -9,6 +9,7 @@ from agent.context.run_context import (
     _effective_history,
     _is_legacy_persisted_time_context,
 )
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.security import sanitize
 
 
@@ -251,6 +252,34 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     next_run_prefix = _provider_wire(restored)
 
     assert next_run_prefix == previous_conversation_wire
+
+
+def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
+    """首轮工作区 reminder 必须跨 run 保持原位置，RAG 不得重复落库。"""
+    runtime_text = "## 当前会话工作区\n当前绑定：QQ；规范落点 space=personal"
+    turn_batch, _ = assemble_turn(
+        current_user={"role": "user", "content": "测试"},
+        conversation_tail=[{
+            "role": "user",
+            "content": [{"type": "knowledge-context", "text": "RAG"}],
+        }],
+        extra_reminder=runtime_text,
+    )
+    messages = PromptMessages()
+    messages.append_batch(turn_batch)
+
+    records = persistable_canonical_batch_records(messages)
+
+    assert len(records) == 1
+    assert records[0]["metadata"] == {"kind": "runtime-context"}
+    assert [
+        block["type"]
+        for message in records[0]["messages"]
+        for block in message["content"]
+    ] == ["runtime-context"]
+    assert records[0]["messages"][0]["content"][0]["text"] == (
+        f"[system-reminder]\n{runtime_text}\n[/system-reminder]"
+    )
 
 
 def test_replayed_knowledge_context_keeps_standalone_boundary_across_runs():

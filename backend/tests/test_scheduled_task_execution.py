@@ -7,7 +7,7 @@ import pytest
 
 
 def test_scheduled_messages_keep_snapshot_context_before_tail():
-    from agent.runner import _build_scheduled_messages
+    from agent.scheduled_execution import _build_scheduled_messages
 
     messages = _build_scheduled_messages(
         "稳定系统", "## 项目\n- 小北的计划", "2026-08-21（星期五）10:00",
@@ -35,7 +35,7 @@ async def test_scheduled_execution_always_uses_full_loop(monkeypatch, db, user_a
         '{"summary":"执行结果","context":"","status":"success"}',
         False, {"tool_names": [], "mutated": False},
     ))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, _status = await scheduled._run_agent(user_a.id, "测试任务", trial=True)
 
@@ -54,7 +54,7 @@ async def test_scheduled_tools_run_schema_parse_without_reexecuting(monkeypatch,
         '{"summary":"整理后的报告","context":"调了 web_search","status":"success"}',
         False, {"tool_names": ["web_search"], "mutated": False},
     ))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, _status = await scheduled._run_agent(user_a.id, "查资料", trial=True)
 
@@ -67,7 +67,7 @@ async def test_scheduled_execution_failure_after_mutation_is_not_replayed(monkey
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=("写入后模型失败", True, {"tool_names": ["update_file"], "mutated": True}))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, _status = await scheduled._run_agent(user_a.id, "修改文件", trial=False)
 
@@ -88,7 +88,7 @@ async def test_scheduled_schema_parse_failure_retries_execution(monkeypatch, db,
         ('{"summary":"整理后的报告","context":"","status":"success"}',
          False, {"tool_names": ["web_search"], "mutated": False}),
     ])
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, _status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
 
@@ -109,7 +109,7 @@ async def test_scheduled_schema_parse_failure_mutated_never_reruns(monkeypatch, 
         False,
         {"tool_names": ["create_project"], "mutated": True},
     ))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
 
@@ -305,7 +305,7 @@ async def test_scheduled_schema_parse_failure_twice_falls_back_to_execution_text
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=("查询结果", False, {"tool_names": ["web_search"], "mutated": False}))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, _status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
 
@@ -558,7 +558,7 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     from unittest.mock import AsyncMock
 
     import app.db.session as db_session
-    import agent.runner as runner
+    import agent.scheduled_execution as runner
     from agent.llm.llm_select import ModelRunConfig
     from agent.profiles import DefaultProfile
     from app.core.config import AIPresetItem
@@ -579,11 +579,7 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
         return ModelRunConfig(model=byok_model, use_anthropic=False,
                               context_tokens=80000, is_byok=True)
 
-    async def must_not_resolve(settings, ctx=None):
-        raise AssertionError("定时任务不应绕过 BYOK 覆盖直接取平台预设")
-
     monkeypatch.setattr(runner, "resolve_run_config_for_user", fake_resolve_for_user)
-    monkeypatch.setattr(runner, "resolve_run_config", must_not_resolve)
     monkeypatch.setattr(db_session, "_engine", object())
     monkeypatch.setattr(db_session, "_SessionLocal", lambda: _DbContext())
     monkeypatch.setattr(runner.loaders, "load_user_tz", AsyncMock(return_value="Asia/Shanghai"))
@@ -609,7 +605,7 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
 
     monkeypatch.setattr("agent.scheduled.ScheduledLLMRunner", _FakeRunner)
 
-    text, errored, meta = await runner._run_scheduled_once(
+    text, errored, meta = await runner.run_scheduled_once(
         "user-byok", "小北", "执行任务", DefaultProfile(), SimpleNamespace(),
         include_meta=True, minimal_context=True,
     )

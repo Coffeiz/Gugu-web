@@ -18,6 +18,8 @@ from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
 from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
@@ -29,14 +31,6 @@ from agent.profiles import DefaultProfile
 
 # 后台任务引用，防止被 GC（fire-and-forget 的标题生成等）
 _bg_tasks: set = set()
-
-
-def _canonical_tool_batch_records(messages) -> list[dict]:
-    """只取已封存的工具批次；动态尾缀和普通控制提示不进入 canonical history。"""
-    records = getattr(messages, "canonical_batch_records", ())
-    return [record for record in records
-            if isinstance(record, dict)
-            and (record.get("metadata") or {}).get("round_id")]
 
 
 def _snapshot_im_memory(snapshot_context: str, im_memory: dict, req: AgentRequest,
@@ -245,25 +239,6 @@ def _im_identity_block(req: AgentRequest, history: list) -> str:
         "- 平台显示名只用于自然称呼当前发言人，不能用于身份识别、权限判断或判断是否为同一个人。",
     ])
     return "\n".join(lines)
-
-
-def _reflection_input(req: AgentRequest, messages: list, initial_len: int, reply: str) -> tuple[str, str]:
-    """为 owner 反思隔离群聊内容，只保留 owner 发言和私人工具结果。"""
-    if not req.chat_id:
-        return req.message, reply
-    private_results = []
-    for item in messages[initial_len:]:
-        if item.get("role") != "tool":
-            continue
-        content = item.get("content")
-        if isinstance(content, list):
-            content = "\n".join(
-                str(part.get("text") or part.get("content") or "")
-                for part in content if isinstance(part, dict)
-            )
-        if content:
-            private_results.append(str(content))
-    return req.message, "\n\n".join(private_results) or "（只分析当前 owner 发言，不分析群聊助手回复）"
 
 
 def _schedule_title(user_id, session_id, user_msg: str, reply_text: str, settings, use_anthropic: bool) -> None:
@@ -766,7 +741,7 @@ async def _run_collect_unlocked(
             initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
             stance_text=prepared.stance_to_persist,
             user_message_id=getattr(user_message, "id", None),
-            canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
+            canonical_batches=persistable_canonical_batch_records(anthr_messages if use_anthropic else oa_messages),
             text=text,
             display_timeline=display_timeline or None,
             files=sent_files,
@@ -818,7 +793,7 @@ async def _run_collect_unlocked(
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
-            reflect_message, reflect_reply = _reflection_input(
+            reflect_message, reflect_reply = build_reflection_input(
                 req, anthr_messages, anthr_initial_len, text
             )
             if reflect_reply:
@@ -1277,7 +1252,7 @@ async def _run_stream_unlocked(
             initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
             stance_text=prepared.stance_to_persist,
             user_message_id=getattr(user_message, "id", None),
-            canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
+            canonical_batches=persistable_canonical_batch_records(anthr_messages if use_anthropic else oa_messages),
             text=text,
             files=files,
             tokens_in=tin,
@@ -1309,7 +1284,7 @@ async def _run_stream_unlocked(
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
-            reflect_message, reflect_reply = _reflection_input(
+            reflect_message, reflect_reply = build_reflection_input(
                 req, anthr_messages, anthr_initial_len, text
             )
             if reflect_reply:
@@ -1460,263 +1435,8 @@ async def _collect(
     return result + (meta,) if include_meta else result
 
 
-def _scheduled_collect_result(collected: tuple) -> tuple[str, bool, dict]:
-    """把定时执行的收集结果按完整字段顺序转换成执行元数据。
+async def run_scheduled_execution(*args, **kwargs):
+    """兼容旧入口；定时任务执行适配器已归属 agent.scheduled_execution。"""
+    from agent.scheduled_execution import run_scheduled_execution as execute_scheduled
 
-    `_collect(include_meta=True)` 的返回顺序是文本、输入/输出用量、缓存用量、
-    错误标记、附件、取消标记、元数据。定时任务只需要其中三项，但必须显式跳过
-    中间字段，避免附件列表错位成为元数据。
-    """
-    text, _, _, _, _, errored, files, _, meta = collected
-    execution_meta = dict(meta or {})
-    execution_meta["files"] = files
-    return text, errored, execution_meta
-
-
-async def _run_scheduled_once(
-    user_id,
-    user_name: str,
-    prompt: str,
-    profile,
-    settings,
-    *,
-    include_meta: bool = False,
-    tool_names_override: list[str] | None = None,
-    minimal_context: bool = False,
-    allowed_tools: list[str] | None = None,
-    filesystem_subject: dict | None = None,
-    allow_shell: bool = False,
-):
-    """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
-    model_cfg = None
-    try:
-        import app.db.session as _sess
-        from agent.llm import modelctx
-
-        if _sess._engine is None:
-            _sess._build_engine()
-
-        # 定时任务是用户链路：绑定 BYOK 解析结果到 modelctx，派生的后台任务（如
-        # 压缩）经 effective_ai 读到同一模型，不静默回落平台预设。
-        modelctx.mark_user_scope()
-        async with _sess._SessionLocal() as db:
-            # 定时任务与 Web/IM 聊天走同一条 BYOK 覆盖链路：用户配置了 llm 凭据就用
-            # 用户的 provider，否则原样回落平台激活预设（函数内部兜底）。
-            run_config = await resolve_run_config_for_user(settings, db, user_id, None)
-            model_cfg = run_config.model
-            modelctx.set_model_cfg(model_cfg)
-            modelctx.set_usage_context(user_id)
-            user_tz = await loaders.load_user_tz(db, user_id)
-            set_ctx_tz(user_tz)
-            if minimal_context:
-                projects, events, files_overview, memory, im_channels = [], [], None, {}, []
-                style_prefs = {}
-            else:
-                projects = await loaders.load_projects(db, user_id)
-                events = await loaders.load_events(db, user_id, tz=user_tz)
-                files_overview = await loaders.load_files_overview(db, user_id)
-                memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
-                im_channels = await loaders.load_im_channels(user_id)
-                style_prefs = await loaders.load_style_prefs(db, user_id)
-
-        prompt_name = profile.prompt_file.removesuffix(".md")
-        static_prompt, snapshot_context, now_str = builder.build_split(
-            prompt_name,
-            user_name,
-            projects,
-            events,
-            memory,
-            files_overview,
-            skills=profile.skills,
-            style_prefs=style_prefs,
-            im_channels=im_channels,
-            non_streaming=True,
-            include_projects=not minimal_context,
-            include_calendar=not minimal_context,
-            include_files=not minimal_context,
-            include_memory=not minimal_context,
-            user_tz=user_tz,
-        )
-        system_prompt = static_prompt
-
-        use_anthropic = run_config.use_anthropic
-        tool_names = (
-            tool_names_override
-            if tool_names_override is not None
-            else profile.tool_names
-        )
-        # 定时任务默认不暴露 Shell；只有任务明确绑定 workspace 或持有完整沙箱
-        # 授权时，才沿用 DefaultProfile 中的 shell 工具，并在 dispatch 边界再次
-        # 按 filesystem_subject 校验，不能仅靠工具列表作为权限边界。
-        if not allow_shell:
-            tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
-        subject = filesystem_subject or {}
-        if str(subject.get("subject_type") or "") == "scheduled_task" and not subject.get("script_authorization"):
-            tool_names = [name for name in tool_names if name != "run_script"]
-        shell_prompt = None
-        if "shell" in tool_names:
-            async with _sess._SessionLocal() as policy_db:
-                tool_names = await _filter_shell_tool(
-                    policy_db,
-                    user_id,
-                    None,
-                    tool_names,
-                    subject_type=str(subject.get("subject_type") or "session"),
-                    subject_id=subject.get("subject_id"),
-                    workspace_id=subject.get("workspace_id"),
-                )
-                if "shell" in tool_names:
-                    from agent.security.shell_policy import build_dynamic_prompt
-                    shell_prompt = await build_dynamic_prompt(
-                        policy_db,
-                        user_id,
-                        None,
-                        subject_type=str(subject.get("subject_type") or "session"),
-                        subject_id=subject.get("subject_id"),
-                        workspace_id=subject.get("workspace_id"),
-                    )
-                    if shell_prompt is None:
-                        tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
-        system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
-        if shell_prompt:
-            system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
-        capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
-        system_prompt, snapshot_context = _apply_capability_context(
-            system_prompt, snapshot_context, capability_context,
-        )
-        from agent.scheduled import ScheduledLLMRunner
-
-        runner = ScheduledLLMRunner(
-            tool_names,
-            settings,
-            capability_context=capability_context,
-        )
-
-        from app.core.chat_attach import build_user_content
-
-        if use_anthropic:
-            messages = _build_scheduled_messages(
-                system_prompt, snapshot_context, now_str, prompt, memory,
-                use_anthropic=True, user_content=build_user_content(prompt, [], True),
-            )
-            gen = runner.run(
-                user_id,
-                system_prompt,
-                messages,
-                use_anthropic=True,
-                model_cfg=model_cfg,
-                # 定时任务没有稳定的会话续接边界；provider state 只属于交互式 session。
-                reasoning_policy="off",
-                state_session_factory=None,
-            )
-        else:
-            messages = _build_scheduled_messages(
-                system_prompt, snapshot_context, now_str, prompt, memory,
-                use_anthropic=False, user_content=prompt,
-            )
-            gen = runner.run(
-                user_id,
-                None,
-                messages,
-                use_anthropic=False,
-                model_cfg=model_cfg,
-                reasoning_policy="off",
-                state_session_factory=None,
-            )
-
-        # 定时任务由用户创建并明确授权其指令执行；只给邮件工具自动授权，
-        # 其它 destructive 工具仍必须经过各自安全门，不能借任务上下文扩大权限。
-        from agent.tools.base import (
-            reset_dispatch_filesystem_subject,
-            reset_automation_allowed_tools,
-            set_dispatch_filesystem_subject,
-            set_automation_allowed_tools,
-        )
-        automation_token = set_automation_allowed_tools(set(allowed_tools or []))
-        filesystem_token = set_dispatch_filesystem_subject(filesystem_subject)
-        try:
-            collected = await _collect(
-                gen,
-                model_cfg=model_cfg,
-                include_meta=include_meta,
-            )
-        finally:
-            reset_dispatch_filesystem_subject(filesystem_token)
-            reset_automation_allowed_tools(automation_token)
-        text, errored, meta = _scheduled_collect_result(collected)
-        from agent.usage import record_usage
-        _, tokens_in, tokens_out, cache_read, cache_write, *_ = collected
-        try:
-            await record_usage(
-                user_id,
-                settings,
-                model_cfg,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                cache_read=cache_read,
-                cache_write=cache_write,
-                tools_used=meta.get("tool_names") or None,
-            )
-        except Exception as exc:
-            from app.core.redaction import diag_log
-            diag_log("agent.usage.scheduled", exc)
-        return (text, errored, meta) if include_meta else (text, errored)
-    finally:
-        _release_model(model_cfg)
-
-
-def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
-                              now_str: str, prompt: str, memory: dict,
-                              *, use_anthropic: bool, user_content=None):
-    """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
-    fixed_parts = ([session_snapshot.snapshot_message(snapshot_context)]
-                   if snapshot_context else [])
-    stance_text = builder.stance_block(memory)
-    if user_content is None:
-        user_content = prompt
-    if use_anthropic:
-        messages = assembly.assemble(
-            fixed_parts=fixed_parts, history=[],
-            system_text=system_prompt,
-        )
-        batch, _ = assembly.assemble_turn(
-            stance=stance_text,
-            current_user={"role": "user", "content": user_content},
-            now_text=now_str,
-        )
-        messages.append_batch(batch)
-        return messages
-    messages = assembly.assemble(
-        fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
-        history=[], system_text=system_prompt,
-    )
-    batch, _ = assembly.assemble_turn(
-        stance=stance_text,
-        current_user={"role": "user", "content": user_content},
-        now_text=now_str,
-    )
-    messages.append_batch(batch)
-    return messages
-
-
-async def run_scheduled_execution(
-    user_id,
-    user_name: str,
-    prompt: str,
-    *,
-    allowed_tools: list[str] | None = None,
-    filesystem_subject: dict | None = None,
-    allow_shell: bool = False,
-):
-    """执行阶段适配器；自动工具权限来自任务持久化授权，不默认放行。"""
-    return await _run_scheduled_once(
-        user_id,
-        user_name,
-        prompt,
-        DefaultProfile(),
-        get_settings(),
-        include_meta=True,
-        allowed_tools=allowed_tools,
-        filesystem_subject=filesystem_subject,
-        allow_shell=allow_shell,
-    )
+    return await execute_scheduled(*args, **kwargs)
