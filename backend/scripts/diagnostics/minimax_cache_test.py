@@ -6,7 +6,7 @@
 - 被动缓存：不发送 cache_control，API 不报告 cache_read_input_tokens
 
 用法：
-    python tests/minimax_cache_test.py
+    python backend/scripts/diagnostics/minimax_cache_test.py
 """
 import os
 import json
