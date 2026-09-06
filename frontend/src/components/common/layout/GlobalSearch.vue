@@ -66,6 +66,7 @@ const TYPE_ICON = {
   client: 'communication.customer',
   conversation: 'communication.chat',
   note: 'canvas.graph',
+  skill: 'resource.skill',
 }
 
 const router       = useRouter()
@@ -73,8 +74,8 @@ const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 const { t } = useI18n()
 
-interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number }
-interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note'; label: string; items: SearchItem[] }
+interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number; slug?: string; enabled?: boolean }
+interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note' | 'skill'; label: string; items: SearchItem[] }
 
 const wrapEl  = ref<HTMLElement | null>(null)
 const inputEl = ref<InstanceType<typeof SearchInput> | null>(null)
@@ -162,6 +163,8 @@ function go(type: string, it: SearchItem) {
   } else if (type === 'note') {
     uiStore.pendingNoteId = it.id   // NotesView 监听后定位到对应日期并打开编辑态
     router.push('/mind/notes')
+  } else if (type === 'skill') {
+    router.push({ path: '/skills', query: { skill: it.slug || String(it.id) } })
   }
 }
 

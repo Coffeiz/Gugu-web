@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `base.py` | `Tool`、`BaseSkill`、registry、Schema 校验、统一 dispatch | 具体业务和资源查询 |
 | `meta.py` | 固定 Adapter（`call_tool`、`get_tool_schema`）、Skill 正文加载（`use_skill`）和元能力组合 | 用户 Skill 的创建、更新、删除实现 |
-| `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
+| `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；以独立的按需工具组注册，复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
 | `line_edit.py` | 正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
 | `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |
 | `files.py` / `trash.py` | 文件库与回收站领域工具；写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
@@ -29,8 +29,10 @@ skill_management.py ───┼─> SkillCapabilityRegistry
                         └─> agent.tools.base registry / confirm
 ```
 
-`MetaSkill` 通过 `SKILL_MANAGEMENT_TOOLS` 组合生命周期工具，因此对外仍保持原有
-`meta` 能力分组和固定 Adapter 注入方式；拆文件不会新增第二套工具入口。
+`SkillManagementSkill` 将生命周期工具注册到全局 registry，但不加入默认 Profile；因此
+`create_skill`、`update_skill`、`delete_skill` 不会常驻 Provider Schema。模型需要管理用户
+Skill 时，先通过常驻的 `get_tool_schema` 获取对应 Schema，再通过 `call_tool` 调用，仍然只走
+同一套 registry、权限校验、参数校验和确认门。
 
 # Tool 注册格式
 

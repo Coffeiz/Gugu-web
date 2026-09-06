@@ -11,7 +11,6 @@ import json
 from agent import skills as _skills
 from agent.security.logsafe import fingerprint
 from agent.tools.base import BaseSkill, Tool
-from agent.tools.skill_management import SKILL_MANAGEMENT_TOOLS
 from agent.tools.tool_contract import normalize_tool_name
 
 
@@ -209,7 +208,6 @@ class MetaSkill(BaseSkill):
             },
             handler=_use_skill,
         ),
-        *SKILL_MANAGEMENT_TOOLS,
         Tool(
             name="ask_user",
             label="询问用户",

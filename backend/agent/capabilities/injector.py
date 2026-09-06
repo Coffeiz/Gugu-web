@@ -9,6 +9,14 @@ from .selector import CapabilitySelector
 
 CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
+# Skill 生命周期管理不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
+# 它们不会因此进入 Provider 的首轮工具 Schema。
+ON_DEMAND_TOOL_NAMES = ("create_skill", "update_skill", "delete_skill")
+
+
+def _capability_tool_names(tool_names: list[str]) -> list[str]:
+    """构建能力快照可见工具名；保持 Profile 工具名与 Provider 工具名分离。"""
+    return list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES, *ON_DEMAND_TOOL_NAMES]))
 
 
 def _field_signature_type(schema: dict, *, depth: int = 0) -> str:
@@ -165,7 +173,7 @@ def _build_fixed_context(
 
 def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5, search_settings=None, owner_id=None) -> CapabilityToolContext:
     """Phase 5：业务工具不进入 Provider tools，只保留固定 Adapter 入口。"""
-    names = list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES]))
+    names = _capability_tool_names(tool_names)
     return _build_fixed_context(CapabilityIndex.from_registries(tool_names=names), limit=limit, names=names,
                                 owner_id=owner_id, search_settings=search_settings)
 
@@ -177,7 +185,7 @@ async def build_fixed_adapter_context_for_user(
     """构建当前 owner 的能力快照；用户 Skill 只进入 metadata，不加载正文。"""
     if db is None or owner_id is None:
         return build_fixed_adapter_context(tool_names, limit=limit, search_settings=search_settings, owner_id=owner_id)
-    names = list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES]))
+    names = _capability_tool_names(tool_names)
     index = await CapabilityIndex.from_registries_for_user(
         db, owner_id, tool_names=names, skill_metadata=user_skill_metadata,
     )
@@ -190,13 +198,13 @@ async def build_skill_metadata_context_for_user(
 ) -> CapabilityToolContext:
     """只构建用户 Skill metadata，不改变 full-schema 的 Provider 工具注入。"""
     if db is None or owner_id is None:
-        index = CapabilityIndex.from_registries(tool_names=tool_names)
+        index = CapabilityIndex.from_registries(tool_names=_capability_tool_names(tool_names))
     else:
         index = await CapabilityIndex.from_registries_for_user(
-            db, owner_id, tool_names=tool_names, skill_metadata=user_skill_metadata,
+            db, owner_id, tool_names=_capability_tool_names(tool_names), skill_metadata=user_skill_metadata,
         )
     return _build_fixed_context(
-        index, limit=limit, names=list(tool_names), owner_id=owner_id,
+        index, limit=limit, names=_capability_tool_names(tool_names), owner_id=owner_id,
         search_settings=search_settings, metadata_only=True,
     )
 
@@ -221,9 +229,8 @@ def catalog_block(
     if kind == "skill":
         lines.extend([
             "技能只展示名称和用途；命中技能场景时先使用 `use_skill` 加载正文，再按正文执行。",
-            "用户要求创建、保存或定义一套可复用做法时，使用 `create_skill`；不要把创建技能误当成 `create_project`，"
-            "也不要先调用 `use_skill`。创建用户 Skill 时至少准备 name、description_short、body 和 related_tools，"
-            "无关联工具时 related_tools 使用空数组 []。",
+            "用户要求创建、修改或删除一套可复用做法时，先用 `get_tool_schema` 获取对应的 Skill 生命周期工具 Schema，"
+            "再通过 `call_tool` 调用 `create_skill`、`update_skill` 或 `delete_skill`；不要把 `create_skill` 误当成 `create_project`。",
         ])
     else:
         lines.extend([
@@ -234,8 +241,9 @@ def catalog_block(
             "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
             "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
             "`use_skill` 只用于加载技能正文及其关联工具 Schema。",
-            "用户要求创建、保存或定义一套可复用做法时，使用 `create_skill`；不要把创建技能误当成 `create_project`，"
-            "也不要先调用 `use_skill`。创建用户 Skill 时至少准备 name、description_short、body 和 related_tools，"
+            "用户要求创建、修改或删除一套可复用做法时，先用 `get_tool_schema` 获取对应的 Skill 生命周期工具 Schema，"
+            "再通过 `call_tool` 调用 `create_skill`、`update_skill` 或 `delete_skill`；不要把 `create_skill` 误当成 `create_project`；"
+            "创建时至少准备 name、description_short、body 和 related_tools，"
             "无关联工具时 related_tools 使用空数组 []。",
         ])
     ordered_tools = tuple(tool_order or snapshot.tools)

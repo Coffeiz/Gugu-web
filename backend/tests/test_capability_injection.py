@@ -207,20 +207,46 @@ def test_catalog_routes_user_skill_creation_to_create_skill():
     )
     block = catalog_block(snapshot)
     assert "创建用户自定义技能" in block
-    assert "创建技能误当成 `create_project`" in block
+    assert "不要把 `create_skill` 误当成 `create_project`" in block
     assert "related_tools 使用空数组 []" in block
 
 
-def test_meta_skill_exposes_user_skill_update_and_delete_tools():
+def test_skill_management_tools_are_registered_on_demand_not_in_meta_or_profile():
     from agent.tools.meta import MetaSkill
+    from agent.tools import registry
+    from agent.profiles.default import DefaultProfile
 
-    tools = {tool.name: tool for tool in MetaSkill.tools}
-    assert tools["update_skill"].mutates is True
-    assert tools["update_skill"].destructive is False
-    assert tools["update_skill"].input_schema["required"] == ["slug"]
-    assert tools["delete_skill"].mutates is True
-    assert tools["delete_skill"].destructive is True
-    assert tools["delete_skill"].input_schema["required"] == ["slug"]
+    meta_tools = {tool.name: tool for tool in MetaSkill.tools}
+    profile_tools = set(DefaultProfile().tool_names)
+    for name in ("create_skill", "update_skill", "delete_skill"):
+        assert name not in meta_tools
+        assert name not in profile_tools
+        assert registry.snapshot().get(name) is not None
+
+
+def test_skill_management_is_discoverable_without_being_a_provider_tool():
+    from agent.capabilities.injector import build_fixed_adapter_context
+
+    context = build_fixed_adapter_context([])
+
+    assert {"create_skill", "update_skill", "delete_skill"} <= set(context.snapshot.tools)
+    assert context.select_for_messages([]).tool_names == (
+        "call_tool", "get_tool_schema", "use_skill", "ask_user"
+    )
+
+
+@pytest.mark.anyio
+async def test_get_tool_schema_can_discover_skill_management_tools_on_demand():
+    from agent.tools.meta import _get_tool_schema
+
+    result = await _get_tool_schema(None, None, {
+        "tools": ["create_skill", "update_skill", "delete_skill"],
+    })
+
+    assert result == {
+        "tool_schemas": ["create_skill", "update_skill", "delete_skill"],
+        "rejected": [],
+    }
 
 
 def test_catalog_rejects_long_description_instead_of_truncating():

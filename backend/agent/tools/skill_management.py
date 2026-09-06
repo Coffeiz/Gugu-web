@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from agent.tools.base import Tool
+from agent.tools.base import BaseSkill, Tool
 
 
 async def _create_skill(db, user_id, args: dict):
@@ -222,3 +222,17 @@ SKILL_MANAGEMENT_TOOLS = [
         destructive=True,
     ),
 ]
+
+
+class SkillManagementSkill(BaseSkill):
+    """Skill 生命周期工具的注册组。
+
+    该组只负责让固定 Adapter 能在用户需要时发现并 dispatch 工具；不加入默认
+    Profile，因此 create/update/delete_skill 不会作为常驻 Provider Schema 发送。
+    """
+
+    name = "skill-management"
+    tools = SKILL_MANAGEMENT_TOOLS
+
+
+SkillManagementSkill().register()
