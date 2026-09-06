@@ -113,7 +113,7 @@ def build_static_prompt(profile: str, user_name: str, *,
             persona = ""
     if persona:
         parts.append(persona)
-    for filename in ("skills.md", "policy.md"):
+    for filename in ("skills.md", "policy.md", "retrieval.md"):
         try:
             text = (_PROMPTS_DIR / filename).read_text(encoding="utf-8").strip()
         except FileNotFoundError:
