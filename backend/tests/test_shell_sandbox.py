@@ -174,3 +174,14 @@ def test_local_sandbox_allows_proc_word_but_not_proc_absolute_path(tmp_path):
     assert (tmp_path / "proc_test").is_file()
     with pytest.raises(ValueError, match="绝对路径"):
         asyncio.run(sandbox.execute("cat /proc/self/status"))
+
+
+def test_local_sandbox_passes_runtime_environment_to_script(tmp_path):
+    script = tmp_path / "env.py"
+    script.write_text("import os; print(os.environ['GUGU_SCRIPT_PATH'])", encoding="utf-8")
+    result = asyncio.run(LocalWorkspaceExecutor(tmp_path).execute(
+        "python3 env.py", allow_script_execution=True,
+        environment={"GUGU_SCRIPT_PATH": "jobs/env.py"},
+    ))
+    assert result.ok
+    assert result.stdout.strip() == "jobs/env.py"

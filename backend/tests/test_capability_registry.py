@@ -100,6 +100,17 @@ def test_builtin_capability_snapshot_has_separate_tool_and_skill_maps():
     assert all(len(item.description_short) <= 100 for item in snapshot.catalog)
 
 
+def test_capability_index_partitions_metadata_by_kind_not_argument_position():
+    tool = CapabilityMeta("demo-tool", "tool", "演示工具。")
+    skill = CapabilityMeta("demo-skill", "skill", "演示技能。")
+
+    # 兼容历史调用方传反两个 tuple 的情况；kind 才是能力类型的事实来源。
+    snapshot = CapabilityIndex((skill,), (tool,)).snapshot()
+
+    assert set(snapshot.tools) == {"demo-tool"}
+    assert set(snapshot.skills) == {"demo-skill"}
+
+
 def test_builtin_phase1_metadata_is_complete_and_relations_are_registered():
     index = CapabilityIndex.from_registries()
     snapshot = index.snapshot()
@@ -107,6 +118,9 @@ def test_builtin_phase1_metadata_is_complete_and_relations_are_registered():
     assert len(snapshot.tools) == 106  # 含工作区 CRUD、邮件和用户技能管理工具
     assert len(snapshot.skills) == 12
     assert not snapshot.diagnostics
+    assert "create_file" in snapshot.tools
+    assert "create_document" not in snapshot.tools
+    assert "create_file" in snapshot.skills["file-ops"].related_tools
     assert all(item.category for item in snapshot.tools.values())
     assert all(1 <= len(item.description_short) <= 100 for item in snapshot.catalog)
     for skill in snapshot.skills.values():

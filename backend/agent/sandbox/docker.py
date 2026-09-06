@@ -183,6 +183,7 @@ class DockerSandboxExecutor:
         network_profile: str | None = None,
         container_name: str | None = None,
         allow_script_execution: bool = False,
+        environment: dict[str, str] | None = None,
     ) -> list[str]:
         argv = LocalWorkspaceExecutor._parse_command(command)
         workdir = self._resolve_cwd(cwd)
@@ -240,6 +241,7 @@ class DockerSandboxExecutor:
             "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "--env=LANG=C.UTF-8",
             "--env=HOME=/",
+            *([f"--env={key}={value}" for key, value in (environment or {}).items()]),
             *([f"--env=HTTP_PROXY={self.settings.egress_proxy_url}",
                f"--env=HTTPS_PROXY={self.settings.egress_proxy_url}",
                "--env=NO_PROXY=127.0.0.1,localhost"] if profile == "egress" else []),
@@ -409,12 +411,15 @@ exec bash --noprofile --norc -i
         quota_root: str | Path | None = None,
         quota_bytes: int | None = None,
         network_profile: str | None = None,
+        allow_script_execution: bool = False,
+        environment: dict[str, str] | None = None,
     ) -> ShellResult:
         workdir = self._resolve_cwd(cwd)
         container_name = f"gugu-sandbox-{uuid4().hex}"
         docker_argv = self.build_argv(
             command, cwd=cwd, network_profile=network_profile, container_name=container_name,
             allow_script_execution=allow_script_execution,
+            environment=environment,
         )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))

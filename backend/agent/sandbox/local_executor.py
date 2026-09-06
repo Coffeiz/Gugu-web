@@ -75,6 +75,7 @@ class LocalWorkspaceExecutor:
     def _validate_workspace_argv(
         self, argv: list[str], workdir: Path, *, allowed_absolute_paths: tuple[str, ...] = (),
         allow_script_execution: bool = False,
+        environment: dict[str, str] | None = None,
     ) -> None:
         """阻止 workspace 命令通过参数访问 workspace 外的路径。
 
@@ -176,18 +177,22 @@ class LocalWorkspaceExecutor:
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
         on_output: Callable[[str, str], Awaitable[None]] | None = None,
         allow_script_execution: bool = False,
+        environment: dict[str, str] | None = None,
     ) -> ShellResult:
         argv = self._parse_command(command)
         workdir = self._resolve_cwd(cwd)
         self._validate_workspace_argv(argv, workdir, allow_script_execution=allow_script_execution)
         timeout = max(0.1, min(float(timeout), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars), _MAX_OUTPUT))
+        process_env = dict(self.env)
+        if environment:
+            process_env.update(environment)
 
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=workdir,
-                env=self.env,
+                env=process_env,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

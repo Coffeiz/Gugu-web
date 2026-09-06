@@ -25,7 +25,13 @@ related_tools: shell, run_script
 - 一次只执行一条命令，不使用管道、重定向、命令替换或下载后执行。
 - 运行用户明确指定的脚本使用 `run_script`，只传沙盒内相对 `script_path`；不要把脚本内容拼进 `shell`，也不要使用解释器的 inline/eval 参数。
 - `run_script` 只支持 `python3`、`node`、`bash`；脚本根和是否可用以本轮动态权限状态及
-  工具 Schema 为准，脚本路径不能经过软链接或硬链接。
+  工具 Schema 为准，脚本路径不能经过软链接或硬链接。网络由后台沙盒配置自动决定，
+  不要向工具传递 `network` 参数。
+- `run_script` 不接受 positional `args` 数组；脚本应读取执行器注入的环境变量：
+  `GUGU_SCRIPT_ROOT`、`GUGU_SCRIPT_PATH`、`GUGU_WORKSPACE`，以及权限允许时的
+  `GUGU_PERSONAL`、`GUGU_PROJECT`。这些变量只描述本轮可见挂载点，不包含密钥。
+- Autopilot 开启且执行器判定当前沙盒权限满足时，`run_script` 可跳过交互确认；这不扩大
+  沙盒范围，也不绕过脚本路径、解释器、配额、审计和执行器校验。未满足条件时仍需确认。
 
 ## 高风险操作与失败处理
 

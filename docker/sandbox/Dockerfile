@@ -15,11 +15,16 @@ RUN sed -i \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
-       bash ca-certificates curl ffmpeg git jq less libssh2-1 nodejs npm python-is-python3 python3 python3-pip python3-venv \
+       bash ca-certificates curl ffmpeg fontconfig fonts-noto-cjk git jq less libssh2-1 nodejs npm \
+       python-is-python3 python3 python3-matplotlib python3-pil python3-pip python3-venv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && fc-cache -f \
     && groupadd --gid 65532 sandbox \
     && useradd --uid 65532 --gid 65532 --no-create-home --home-dir / --shell /bin/bash sandbox
+
+# 根文件系统运行时只读；字体探测产生的用户缓存必须落在执行器提供的 /tmp tmpfs。
+ENV XDG_CACHE_HOME=/tmp/.cache
 
 USER 65532:65532
 WORKDIR /

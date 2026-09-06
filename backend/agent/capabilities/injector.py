@@ -137,7 +137,8 @@ class CapabilityToolContext:
 
     def skill_meta(self, name: str):
         value = str(name or "").strip().lower()
-        return self.snapshot.skills.get(value)
+        meta = self.snapshot.skills.get(value)
+        return meta if meta is not None and meta.kind == "skill" else None
 
     def skill_digest(self, name: str) -> str | None:
         meta = self.skill_meta(name)
@@ -238,10 +239,14 @@ def catalog_block(
             "无关联工具时 related_tools 使用空数组 []。",
         ])
     ordered_tools = tuple(tool_order or snapshot.tools)
-    tools = tuple(snapshot.tools[name] for name in ordered_tools if name in snapshot.tools)
+    tools = tuple(
+        snapshot.tools[name]
+        for name in ordered_tools
+        if name in snapshot.tools and snapshot.tools[name].kind == "tool"
+    )
     skills = tuple(
         item for item in snapshot.skills.values()
-        if include_builtin_skills or item.source != "builtin"
+        if item.kind == "skill" and (include_builtin_skills or item.source != "builtin")
     )
     if kind == "tool":
         catalog = tools

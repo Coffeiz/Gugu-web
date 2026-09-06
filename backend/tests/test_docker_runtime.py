@@ -738,6 +738,8 @@ def test_permission_plan_maps_container_id_and_is_non_destructive(tmp_path):
     assert not plan.root.exists()
     assert plan.commands[0][:4] == ("install", "-d", "-o", "runner")
     assert any("g:165531:rwx" in part for part in plan.commands[1])
+    assert any("u:runner:rwX" in part for part in plan.commands[3])
+    assert any("d:u:runner:rwx" in part for part in plan.commands[4])
     assert any("g:165531:rwX" in part for part in plan.commands[3])
     assert any("d:g:165531:rwx" in part for part in plan.commands[4])
 
@@ -819,14 +821,21 @@ def test_permission_plan_rejects_root_directory(tmp_path):
         )
 
 
-def test_discover_shell_roots_only_scans_user_directories(tmp_path):
-    from scripts.prepare_rootless_users import discover_shell_roots
+def test_discover_writable_roots_only_scans_user_directories(tmp_path):
+    from scripts.prepare_rootless_users import discover_writable_roots
 
     (tmp_path / "user-a").mkdir()
     (tmp_path / "user-b").mkdir()
     (tmp_path / ".staging").mkdir()
     (tmp_path / "not-a-user.txt").write_text("ignored", encoding="utf-8")
-    assert discover_shell_roots(tmp_path) == (tmp_path / "user-a" / "shell", tmp_path / "user-b" / "shell")
+    assert discover_writable_roots(tmp_path) == (
+        tmp_path / "user-a" / "shell",
+        tmp_path / "user-a" / "个人文件",
+        tmp_path / "user-a" / "项目文件",
+        tmp_path / "user-b" / "shell",
+        tmp_path / "user-b" / "个人文件",
+        tmp_path / "user-b" / "项目文件",
+    )
 
 
 def test_systemd_templates_pin_rootless_socket():

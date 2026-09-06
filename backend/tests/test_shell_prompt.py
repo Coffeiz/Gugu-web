@@ -11,6 +11,8 @@ def test_shell_prompt_only_appends_for_registered_shell_tool():
     assert "# Shell 安全协议" not in without_shell
     assert "# Shell 安全协议" in with_shell
     assert "模型不能通过拆分命令、改写命令、换工具" in with_shell
+    assert "Python 3.11" in with_shell
+    assert "Matplotlib" in with_shell
 
 
 def test_shell_prompt_is_idempotent():

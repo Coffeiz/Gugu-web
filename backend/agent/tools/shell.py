@@ -80,12 +80,16 @@ async def _shell(db, user_id, args: dict):
         event = "failed"
         raise
     finally:
+        audit_result = result if isinstance(result, dict) else {}
+        risk = audit_result.pop("_risk", risk)
+        workspace_id = audit_result.pop("_workspace_id", None)
+        scope = audit_result.pop("_scope", None)
+        terminal_id = audit_result.pop("_terminal_id", None)
+        event = audit_result.pop("_audit_event", event)
         if isinstance(result, dict):
-            risk = result.pop("_risk", risk)
-            workspace_id = result.pop("_workspace_id", None)
-            scope = result.pop("_scope", None)
-            terminal_id = result.pop("_terminal_id", None)
-            event = result.pop("_audit_event", event)
+            # Shell 工具同时覆盖安全与危险命令；把实际风险传给 dispatch，
+            # 不能仅依据 Tool.destructive=True 判断。
+            result["_dispatch_risk"] = risk
         _audit(
             event=event,
             user_id=fingerprint(str(user_id)),
@@ -93,12 +97,13 @@ async def _shell(db, user_id, args: dict):
             workspace_id=workspace_id,
             scope=scope,
             risk=risk,
-            ok=result.get("ok") if isinstance(result, dict) else False,
-            exit_code=result.get("exit_code") if isinstance(result, dict) else None,
-            timed_out=result.get("timed_out", False) if isinstance(result, dict) else False,
-            permission_revoked=result.get("permission_revoked", False) if isinstance(result, dict) else False,
-            truncated=result.get("truncated", False) if isinstance(result, dict) else False,
-            cwd_fingerprint=fingerprint(result.get("cwd", "")) if isinstance(result, dict) and result.get("cwd") else None,
+            ok=audit_result.get("ok", False),
+            exit_code=audit_result.get("exit_code"),
+            timed_out=audit_result.get("timed_out", False),
+            permission_revoked=audit_result.get("permission_revoked", False),
+            truncated=audit_result.get("truncated", False),
+            network_access=audit_result.get("network_access"),
+            cwd_fingerprint=fingerprint(audit_result["cwd"]) if audit_result.get("cwd") else None,
             duration_ms=round((time.monotonic() - started) * 1000, 2),
             terminal_id=terminal_id,
         )
@@ -122,9 +127,6 @@ async def _run_shell(db, user_id, args: dict):
         if args.get("cwd") not in (None, "")
         else filesystem_subject.get("cwd") or "."
     )
-    network_profile = str(args.get("network") or "none").strip().lower()
-    if network_profile not in {"none", "egress"}:
-        return {"error": "network 只能是 none 或 egress", "_audit_event": "rejected"}
     # 模型传入的 confirm 一律不采信：policy 判定永远按未确认进行，
     # 只有服务端 grant 命中（confirm.needs_confirmation 内部检查）才视为已确认。
     decision = await evaluate(
@@ -137,8 +139,18 @@ async def _run_shell(db, user_id, args: dict):
     )
     if not decision.allowed:
         return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
+    sandbox_settings = get_settings().sandbox
+    # 网络是后台沙盒策略，不是 Agent 每次调用时可选择的参数。sandbox 只按
+    # 管理员配置决定是否接入受控 egress；system 使用宿主机自身网络策略。
+    network_profile = (
+        str(getattr(sandbox_settings, "network_profile", "none") or "none").strip().lower()
+        if decision.scope.value == "sandbox" else "none"
+    )
+    if network_profile not in {"none", "egress"}:
+        return {"error": "后台沙盒网络策略无效", "_audit_event": "denied"}
     script_authorized = args.get("_script_authorized") is True
-    if subject_type == "scheduled_task" and (network_profile == "egress" or (decision.needs_confirmation and not script_authorized)):
+    confirm_gate_authorized = False
+    if subject_type == "scheduled_task" and decision.needs_confirmation and not script_authorized:
         return {
             "error": "定时任务只能执行无需交互确认的 sandbox 命令",
             "_risk": decision.risk.value,
@@ -148,35 +160,18 @@ async def _run_shell(db, user_id, args: dict):
         }
     if network_profile == "egress":
         if decision.scope.value != "sandbox":
-            return {"error": "临时 egress 只支持沙盒范围，system 请使用宿主机自身网络策略", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
-        sandbox_settings = get_settings().sandbox
+            return {"error": "后台 egress 只支持沙盒范围，system 使用宿主机自身网络策略", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
         if not valid_egress_proxy(getattr(sandbox_settings, "egress_proxy_url", "")):
-            return {"error": "临时 egress 尚未配置受控 HTTP(S) 代理", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
+            return {"error": "后台 egress 尚未配置受控 HTTP(S) 代理", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
         if not getattr(sandbox_settings, "egress_isolation_enabled", False):
             return {"error": "受控 egress 网络尚未启用，当前沙盒保持断网", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
         if not valid_egress_network_name(getattr(sandbox_settings, "egress_network_name", "")):
             return {"error": "受控 egress Docker 网络名无效，当前沙盒保持断网", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
-    egress_authorized = False
     egress_expires_at = None
     if network_profile == "egress":
         egress_ttl = int(getattr(get_settings().sandbox, "egress_ttl_seconds", 600))
-        if not decision.autopilot_enabled:
-            blocked = confirm.needs_confirmation(
-                args,
-                "允许当前会话在沙盒内临时访问公网（仅通过受控代理，有效期10分钟）",
-                user_id,
-                identity=f"shell:egress:{session_id}:{decision.workspace_id or 'user'}",
-                ttl_minutes=max(1, (egress_ttl + 59) // 60),
-                instruction=(
-                    "这是当前会话的临时沙盒联网授权，只允许通过受控代理访问公网，"
-                    "有效期10分钟；请把授权范围告知用户，用户在界面确认后直接再次调用即可，无需携带凭证。"
-                ),
-            )
-            if blocked is not None:
-                return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "confirmation_required"}
-        egress_authorized = True
         egress_expires_at = time.time() + egress_ttl
-    if decision.needs_confirmation and not script_authorized and not (egress_authorized and _can_use_shell_lease(command)):
+    if decision.needs_confirmation and not script_authorized:
         shell_lease = _can_use_shell_lease(command)
         confirmation_summary = (
             f"允许当前会话在 {decision.scope.value} 范围执行受限 Shell 操作（30分钟）"
@@ -201,6 +196,7 @@ async def _run_shell(db, user_id, args: dict):
         )
         if blocked is not None:
             return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "confirmation_required"}
+        confirm_gate_authorized = True
 
     root = await resolve_shell_root(db, user_id, decision.scope.value, decision.workspace_id)
     if root is None:
@@ -210,9 +206,7 @@ async def _run_shell(db, user_id, args: dict):
     quota_root = None
     quota_bytes = None
     quota_before = None
-    sync_result = {"status": "not_applicable"}
-    sync_changed = False
-    summary = None
+    result = None
     execution_error = None
     if decision.scope.value == "sandbox":
         sandbox_settings = get_settings().sandbox
@@ -234,29 +228,6 @@ async def _run_shell(db, user_id, args: dict):
                 }
         quota_root = root if decision.workspace_id is None else None
         quota_bytes = sandbox_settings.persistent_quota_bytes if decision.workspace_id is None else None
-    if decision.scope.value == "sandbox" and decision.workspace_id is not None:
-        from app.services.filesync import reconcile_local_directory
-        if getattr(get_settings().sandbox, "file_sync_enabled", False):
-            try:
-                baseline = await reconcile_local_directory(
-                    db, user_id, workspace_id=decision.workspace_id, source="shell",
-                )
-                if baseline.rejected:
-                    return {
-                        "error": "Shell 工作区同步基线校验未通过，未执行命令",
-                        "_risk": decision.risk.value, "_workspace_id": decision.workspace_id,
-                        "_scope": decision.scope.value, "_audit_event": "sync_rejected",
-                    }
-                sync_result = {"status": "baseline", "baseline_journal_count": len(baseline.journal_ids)}
-                sync_changed = any((baseline.created, baseline.updated, baseline.moved, baseline.deleted))
-            except Exception as exc:
-                from app.core.redaction import diag_log
-                diag_log("agent.tools.shell.filesync_baseline", exc)
-                return {
-                    "error": "Shell 工作区同步基线不可用，未执行命令",
-                    "_risk": decision.risk.value, "_workspace_id": decision.workspace_id,
-                    "_scope": decision.scope.value, "_audit_event": "sync_unavailable",
-                }
     terminal_row = None
     from app.services.terminals import ensure_agent_terminal, get_terminal
     requested_terminal_id = str(args.get("_terminal_id") or "").strip()
@@ -334,6 +305,7 @@ async def _run_shell(db, user_id, args: dict):
                         personal_read_only=not decision.full_user_sandbox_write,
                         project_read_only=not decision.full_user_sandbox_write,
                         allow_script_execution=script_authorized,
+                        environment=args.get("_environment"),
                     ), on_output=on_output,
                 )
                 if result_data.get("error"):
@@ -355,6 +327,7 @@ async def _run_shell(db, user_id, args: dict):
                 authorization_check=authorization_check,
                 on_output=on_output,
                 allow_script_execution=script_authorized,
+                environment=args.get("_environment"),
             )
     except SandboxdUnavailable as exc:
         execution_error = str(exc)
@@ -365,32 +338,6 @@ async def _run_shell(db, user_id, args: dict):
             ok=False, exit_code=None, stdout="", stderr=execution_error or "Shell 执行失败",
             timed_out=False, cwd=str(requested_cwd),
         )
-    if decision.scope.value == "sandbox" and decision.workspace_id is not None:
-        from app.services.filesync import reconcile_local_directory
-        try:
-            if getattr(get_settings().sandbox, "file_sync_enabled", False):
-                summary = await reconcile_local_directory(
-                    db, user_id, workspace_id=decision.workspace_id, source="shell",
-                )
-                sync_result = {
-                    "status": "synced" if summary.rejected == 0 else "partial",
-                    "created": summary.created, "updated": summary.updated,
-                    "moved": summary.moved, "deleted": summary.deleted,
-                    "rejected": summary.rejected,
-                    "baseline_journal_count": sync_result.get("baseline_journal_count", 0),
-                }
-                sync_changed = any((summary.created, summary.updated, summary.moved, summary.deleted))
-            else:
-                sync_result = {"status": "disabled"}
-        except Exception as exc:
-            # 命令结果不能被同步故障伪造成成功；具体异常进入受限诊断日志。
-            from app.core.redaction import diag_log
-            diag_log("agent.tools.shell.filesync_reconcile", exc)
-            # reconcile 可能已经 flush 过部分投影；收尾失败时不能让 dispatch
-            # 把半成品提交为成功状态，回滚后由下次对账重试。
-            await db.rollback()
-            sync_result = {"status": "failed", "error_code": type(exc).__name__}
-            sync_changed = False
     if decision.scope.value == "sandbox" and decision.workspace_id is None and quota_before is not None:
         quota_after = measure_directory(root)
         operation = (
@@ -421,14 +368,17 @@ async def _run_shell(db, user_id, args: dict):
         "truncated": result.truncated,
         "workspace_id": decision.workspace_id,
         "scope": decision.scope.value,
+        # 把执行器实际采用的网络能力回传给模型，避免它根据配置默认值或
+        # 某次脚本/命令错误臆测为“无网络”。不返回代理地址等敏感配置。
+        "network_profile": network_profile,
+        "network_access": (
+            "egress" if network_profile == "egress"
+            else "host" if decision.scope.value == "system"
+            else "none"
+        ),
         "cwd": result.cwd,
         "permission_revoked": result.permission_revoked,
         "quota_exceeded": getattr(result, "quota_exceeded", False),
-        "sync": sync_result,
-        **({"_file_sync_event": {
-            "operation": "refresh", "source": "shell",
-            "entity_ids": list(getattr(summary, "entity_ids", ())),
-        }} if sync_changed else {}),
         "_terminal_id": terminal_row.id if terminal_row is not None else None,
         **({"error": execution_error} if execution_error else {}),
         **({"error": "Shell 持久空间达到配额，命令已终止"} if getattr(result, "quota_exceeded", False) else {}),
@@ -437,7 +387,8 @@ async def _run_shell(db, user_id, args: dict):
         "_scope": decision.scope.value,
         "_audit_event": "permission_revoked" if result.permission_revoked else "completed",
         **({"_confirm_gate_authorized": "shell_autopilot"}
-           if decision.autopilot_enabled and decision.risk.value == "dangerous" else {}),
+           if (confirm_gate_authorized or
+               (decision.autopilot_enabled and decision.risk.value == "dangerous")) else {}),
     }
 
 
@@ -522,42 +473,74 @@ async def _run_script(db, user_id, args: dict):
         return {"error": str(exc)}
 
     script_arg = f"{_SCRIPT_ROOT_PREFIX[root_name]}/{relative.as_posix()}"
-    raw_args = args.get("args") or []
-    if not isinstance(raw_args, list) or len(raw_args) > 32:
-        return {"error": "args 必须是最多 32 个字符串的数组"}
-    if any(not isinstance(value, str) or any(char in _SCRIPT_META for char in value) for value in raw_args):
-        return {"error": "脚本参数不得包含 Shell 控制字符"}
+    confirm_gate_authorized = False
     if subject_type == "scheduled_task":
         authorization = subject.get("script_authorization") or {}
         expected = {
             "root": root_name,
             "script_path": relative.as_posix(),
             "interpreter": interpreter_name,
-            "args": raw_args,
         }
         if authorization != expected:
             return {"error": "定时任务只能执行创建时明确授权的脚本", "_audit_event": "denied"}
+        # 定时任务的精确脚本授权是在创建任务时完成的服务端授权，不应被
+        # dispatch 的 destructive 绊线误判为未经确认。
+        confirm_gate_authorized = True
     else:
-        blocked = confirm.needs_confirmation(
-            args,
-            f"允许当前会话执行沙盒脚本：{root_name}/{relative.as_posix()}",
+        # run_script 的脚本内容不会进入 Shell 风险分类；使用同一套有效权限
+        # 判定读取 Autopilot。Autopilot 只跳过交互确认，路径、沙盒、配额和
+        # 执行器校验仍由后续 _run_shell 完整执行。
+        execution_policy = await evaluate(
+            db,
             user_id,
-            identity=f"run-script:{current_dispatch_session_id()}:{root_name}",
-            ttl_minutes=5,
-            instruction="脚本可能修改沙盒文件；用户确认后才会执行。请直接重新调用本工具，无需携带确认凭证。",
+            args.get("_session_id") or current_dispatch_session_id(),
+            "pwd",
+            confirm=False,
+            session=current_dispatch_session(),
+            workspace_id=policy.workspace_id,
+            requested_scope="sandbox",
+            subject_type=subject_type,
+            subject_id=subject.get("subject_id"),
         )
-        if blocked is not None:
-            return {"error": blocked, "_audit_event": "confirmation_required"}
-    command = " ".join([interpreter, shlex.quote(script_arg), *(shlex.quote(value) for value in raw_args)])
-    return await _run_shell(db, user_id, {
+        if not execution_policy.allowed:
+            return {"error": execution_policy.reason, "_audit_event": "denied"}
+        if not execution_policy.autopilot_enabled:
+            blocked = confirm.needs_confirmation(
+                args,
+                f"允许当前会话执行沙盒脚本：{root_name}/{relative.as_posix()}",
+                user_id,
+                identity=f"run-script:{current_dispatch_session_id()}:{root_name}",
+                ttl_minutes=5,
+                instruction="脚本可能修改沙盒文件；用户确认后才会执行。请直接重新调用本工具，无需携带确认凭证。",
+            )
+            if blocked is not None:
+                return {"error": blocked, "_audit_event": "confirmation_required"}
+        # 用户确认或服务端 Autopilot 均已通过 run_script 自己的确认门；
+        # 该状态需要传回外层 dispatch，避免内部复制的 args 导致误报。
+        confirm_gate_authorized = True
+    environment = {
+        "GUGU_SCRIPT_ROOT": _SCRIPT_ROOT_PREFIX[root_name],
+        "GUGU_SCRIPT_PATH": relative.as_posix(),
+        "GUGU_WORKSPACE": _SCRIPT_ROOT_PREFIX["workspace"],
+    }
+    if root_name == "personal" or getattr(policy, "full_user_sandbox", False):
+        environment["GUGU_PERSONAL"] = _SCRIPT_ROOT_PREFIX["personal"]
+    if root_name == "project" or getattr(policy, "full_user_sandbox", False):
+        environment["GUGU_PROJECT"] = _SCRIPT_ROOT_PREFIX["project"]
+    command = " ".join([interpreter, shlex.quote(script_arg)])
+    result = await _run_shell(db, user_id, {
         "command": command,
         "cwd": policy.cwd or ".",
         "timeout": args.get("timeout", 30),
         "max_output_chars": args.get("max_output_chars", 12_000),
-        "network": "none",
+        # 网络由后台 sandbox 配置自动决定，由 _run_shell 统一执行校验和隔离策略。
         "_script_authorized": True,
+        "_environment": environment,
         "_session_id": args.get("_session_id") or current_dispatch_session_id(),
     })
+    if isinstance(result, dict) and confirm_gate_authorized:
+        result["_confirm_gate_authorized"] = "shell_autopilot"
+    return result
 
 
 class ShellSkill(BaseSkill):
@@ -566,8 +549,8 @@ class ShellSkill(BaseSkill):
         Tool(
             name="shell",
             label="执行 Shell 命令",
-            description_short='在当前授权范围内受控执行 Shell；目录挂载和网络能力以本轮实际权限为准',
-            description="在当前授权 Shell 范围执行一条受控命令；默认工作目录为 /workspace，其他目录挂载、网络和危险操作以本轮实际权限状态为准；危险命令需确认，不支持管道和重定向。",
+            description_short='在当前授权范围内受控执行 Shell；目录挂载和网络能力由后台策略决定',
+            description="在当前授权 Shell 范围执行一条受控命令；默认工作目录为 /workspace，其他目录挂载、网络和危险操作以服务端策略为准；网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络），不要根据默认配置或脚本错误臆测当前网络状态；危险命令需确认，不支持管道和重定向。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -575,7 +558,6 @@ class ShellSkill(BaseSkill):
                     "cwd": {"type": "string"},
                     "timeout": {"type": "number", "minimum": 0.1, "maximum": 300},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
-                    "network": {"type": "string", "enum": ["none", "egress"]},
                     "scope": {"type": "string", "enum": ["sandbox", "system"]},
                 },
                 "required": ["command"],
@@ -595,7 +577,10 @@ class ShellSkill(BaseSkill):
                 "运行一个已存在且由用户明确指定的沙盒脚本。script_path 必须是相对路径，"
                 "不能经过软链接或硬链接；root 可选 workspace/personal/project，但是否可用以本轮权限状态为准。默认使用 python3，"
                 "脚本仍复用 Shell 的沙盒、workspace/cwd、超时、输出、网络隔离和进程清理边界；"
-                "personal/project 需要完整用户沙箱授权，不能传任意 Shell command 或 eval 参数。"
+                "网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络）；"
+                "不要根据默认配置或脚本错误臆测当前网络状态；"
+                "personal/project 需要完整用户沙箱授权，不能传任意 Shell command、eval 参数或 positional args；"
+                "脚本从 GUGU_SCRIPT_ROOT、GUGU_SCRIPT_PATH 和本轮允许的 GUGU_WORKSPACE/GUGU_PERSONAL/GUGU_PROJECT 环境变量读取运行上下文。"
             ),
             input_schema={
                 "type": "object",
@@ -603,7 +588,6 @@ class ShellSkill(BaseSkill):
                     "script_path": {"type": "string", "minLength": 1, "maxLength": 1000},
                     "root": {"type": "string", "enum": ["workspace", "personal", "project"]},
                     "interpreter": {"type": "string", "enum": ["python3", "node", "bash"]},
-                    "args": {"type": "array", "items": {"type": "string", "maxLength": 1000}, "maxItems": 32},
                     "timeout": {"type": "number", "minimum": 0.1, "maximum": 300},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
                 },

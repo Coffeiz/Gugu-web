@@ -20,7 +20,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.sandbox.rootless_permissions import apply_permission_plan, default_permission_plan
 
 
-def discover_shell_roots(users_root: str | Path) -> tuple[Path, ...]:
+_WRITABLE_ROOT_NAMES = ("shell", "个人文件", "项目文件")
+
+
+def discover_writable_roots(users_root: str | Path) -> tuple[Path, ...]:
+    """返回非 Compose 部署需要准备 ACL 的全部用户可写根目录。"""
     root = Path(users_root).expanduser().resolve(strict=True)
     if root == Path("/") or root.name in {"", ".", ".."}:
         raise ValueError("用户数据根目录无效")
@@ -30,7 +34,7 @@ def discover_shell_roots(users_root: str | Path) -> tuple[Path, ...]:
     for user_root in sorted(root.iterdir(), key=lambda item: item.name):
         if not user_root.is_dir() or user_root.name.startswith("."):
             continue
-        result.append(user_root / "shell")
+        result.extend(user_root / name for name in _WRITABLE_ROOT_NAMES)
     return tuple(result)
 
 
@@ -43,7 +47,7 @@ def main() -> int:
     if not args.login:
         parser.error("无法确定登录用户，请传入 --login")
     try:
-        roots = discover_shell_roots(args.users_root)
+        roots = discover_writable_roots(args.users_root)
         plans = tuple(default_permission_plan(root, login=args.login) for root in roots)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
@@ -63,7 +67,7 @@ def main() -> int:
     except (OSError, RuntimeError) as exc:
         print(f"应用失败：{exc}", file=sys.stderr)
         return 1
-    print("Rootless 用户 Shell ACL 已应用。")
+    print("Rootless 用户沙盒 ACL 已应用。")
     return 0
 
 

@@ -24,15 +24,20 @@ def test_scheduled_task_contract_uses_workspace_root_without_cwd():
 def test_scheduled_script_authorization_is_exact_and_relative():
     value = normalize_script_authorization({
         "root": "workspace", "script_path": "jobs/report.py",
-        "interpreter": "python3", "args": ["--daily"],
+        "interpreter": "python3",
     })
     assert value == {
         "root": "workspace", "script_path": "jobs/report.py",
-        "interpreter": "python3", "args": ["--daily"],
+        "interpreter": "python3",
     }
     with pytest.raises(ValueError, match="相对路径"):
         normalize_script_authorization({
             "root": "workspace", "script_path": "../report.py", "interpreter": "python3",
+        })
+    with pytest.raises(ValueError, match="args 已移除"):
+        normalize_script_authorization({
+            "root": "workspace", "script_path": "jobs/report.py",
+            "interpreter": "python3", "args": ["--daily"],
         })
 
 

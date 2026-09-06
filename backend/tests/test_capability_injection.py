@@ -63,6 +63,20 @@ def test_catalog_keeps_user_skill_in_separate_skill_section():
     assert "用户定义的做法" in block
 
 
+def test_catalog_does_not_render_misclassified_metadata_in_skill_section():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+        # 模拟旧运行时代码构造出的错误映射；章节渲染必须仍按 kind 隔离。
+        skills={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+    )
+
+    block = catalog_block(snapshot, kind="skill", include_builtin_skills=True)
+
+    assert "### Skill" not in block
+    assert "search：搜索资料" not in block
+
+
 def test_skill_metadata_context_does_not_take_over_provider_tools():
     from agent.capabilities.injector import CapabilityToolContext
     from agent.capabilities.selector import RegistryCapabilitySelector
@@ -87,6 +101,22 @@ def test_skill_metadata_context_does_not_take_over_provider_tools():
     assert "### Skill" in skill_catalog
     assert "固定 Adapter 模式" not in skill_catalog
     assert "user-skill：用户定义的做法" in skill_catalog
+
+
+def test_skill_lookup_rejects_tool_metadata_in_skill_map():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+
+    context = CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={},
+            skills={"not-a-skill": CapabilityMeta("not-a-skill", "tool", "错误归类。")},
+        ),
+        RegistryCapabilitySelector(),
+    )
+
+    assert context.skill_meta("not-a-skill") is None
 
 
 def test_catalog_derives_compact_field_signature_from_tool_registry():

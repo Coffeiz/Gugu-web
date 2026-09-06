@@ -61,13 +61,14 @@ async def test_agent_file_create_is_read_only_without_session_grant(db, user_a):
     session = await _persist(db, ConversationSession(user_id=user_a.id, title="Phase3 测试"))
     token = set_dispatch_session(session.id, session, "phase3-test")
     try:
-        result = await agent_files._create_document(
-            db, user_a.id, {"name": "禁止写入", "format": "md", "content": "正文"},
+        result = await agent_files._create_file(
+            db, user_a.id, {"files": [{"name": "禁止写入.md", "content": "正文"}]},
         )
     finally:
         reset_dispatch_session(token)
 
-    assert result["error"].startswith("当前文件系统权限只允许读取")
+    assert result["failed_count"] == 1
+    assert result["failed"][0]["error"].startswith("当前文件系统权限只允许读取")
 
 
 @pytest.mark.asyncio

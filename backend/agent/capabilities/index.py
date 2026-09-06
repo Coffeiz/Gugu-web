@@ -14,8 +14,12 @@ from .errors import CapabilityReferenceError
 
 class CapabilityIndex:
     def __init__(self, tool_meta: tuple[CapabilityMeta, ...], skill_meta: tuple[CapabilityMeta, ...], diagnostics=()):
-        self._tools = {item.name: item for item in tool_meta}
-        self._skills = {item.name: item for item in skill_meta}
+        # 不信任调用方传入的分组位置，只按 metadata 自带的 kind 分区。
+        # 这样旧调用方即使把两组 tuple 顺序传反，也不会让 Tool 落进 Skill
+        # 目录，或让 Skill 被当成可 dispatch 的工具。
+        metadata = (*tool_meta, *skill_meta)
+        self._tools = {item.name: item for item in metadata if item.kind == "tool"}
+        self._skills = {item.name: item for item in metadata if item.kind == "skill"}
         self._diagnostics = tuple(diagnostics)
         self._generation = 0
 

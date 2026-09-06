@@ -340,4 +340,10 @@ async def build_dynamic_prompt(
             "- OSS 存储模式：本轮 Shell 只使用独立沙盒 /workspace；/personal、/project 和 workspace 绑定不可用。",
             "- OSS 文件库不会自动挂载、下载、同步或生成 File 记录；需要处理文件时必须走明确的文件库 API 操作。",
         ])
-    return "\n".join(lines)
+    prompt = "\n".join(lines)
+    try:
+        from agent.runtime.loopscope_trace.context import record_shell_prompt_sources
+        record_shell_prompt_sources(prompt, code_target=build_dynamic_prompt)
+    except Exception:
+        pass
+    return prompt
