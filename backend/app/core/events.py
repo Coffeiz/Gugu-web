@@ -33,7 +33,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     # 日历
     "create_event": "calendar", "update_event": "calendar", "delete_event": "calendar",
     # 文件库
-    "edit_file": "files", "create_document": "files", "rename_file": "files",
+    "edit_file": "files", "create_file": "files", "rename_file": "files",
     "move_items": "files", "copy_file": "files", "create_folder": "files",
     "delete_file": "files", "rename_folder": "files", "delete_folder": "files",
     "save_uploaded_file": "files",

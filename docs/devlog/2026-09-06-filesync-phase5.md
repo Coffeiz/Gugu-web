@@ -20,7 +20,7 @@
 
 ## 回滚
 
-关闭 `sandbox.file_sync_enabled` 即停止新的同步操作；保留 journal、冲突、outbox 和
+关闭 `filesync.enabled` 即停止新的同步操作；保留 journal、冲突、outbox 和
 物理文件，不删除数据库记录，不执行 `down -v`。Admin 原有存储对账仍可独立使用。
 
 ## 验证

@@ -20,6 +20,7 @@ def _oss_settings(tmp_path, *, authorization=True):
     return SimpleNamespace(
         storage=SimpleNamespace(backend="oss", local_path=str(tmp_path)),
         sandbox=SimpleNamespace(filesystem_authorization_enabled=authorization),
+        filesync=SimpleNamespace(enabled=True),
     )
 
 
@@ -48,7 +49,6 @@ async def test_oss_hides_local_sync_state_and_never_creates_file_rows(db, user_a
     monkeypatch.setattr(bindings, "get_settings", lambda: _oss_settings(tmp_path))
     monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: False)
     monkeypatch.setattr(protocol, "get_settings", lambda: _oss_settings(tmp_path))
-    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
     assert await list_user_bindings(db, user_a.id) == []
     result = await dry_run_local_binding(db, user_a.id, root_path=".")
     assert result.summary.rejected == 1
@@ -56,7 +56,7 @@ async def test_oss_hides_local_sync_state_and_never_creates_file_rows(db, user_a
     assert (await db.scalars(select(File))).all() == []
 
     with pytest.raises(ValueError, match="OSS"):
-        await create_binding(db, user_id=user_a.id, source="shell", root_fingerprint="a" * 64)
+        await create_binding(db, user_id=user_a.id, source="local_directory", root_fingerprint="a" * 64)
 
 
 @pytest.mark.asyncio

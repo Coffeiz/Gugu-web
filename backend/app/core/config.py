@@ -131,10 +131,6 @@ class SandboxSettings(BaseModel):
         False,
         description="是否开放完整用户沙箱读写授权入口（默认关闭，需灰度开启）",
     )
-    file_sync_enabled: bool = Field(
-        False,
-        description="是否启用文件事实源同步协议（默认关闭，完成投影与冲突处理后再开启）",
-    )
     code_execution_enabled: bool = Field(
         True,
         description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",
@@ -163,6 +159,8 @@ class SandboxSettings(BaseModel):
     memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
     pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
     timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
+
+
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
     pty_output_limit_bytes: int = Field(120 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 单会话输出上限")
     pty_output_rate_bytes: int = Field(256 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 每秒输出上限")
@@ -174,6 +172,15 @@ class SandboxSettings(BaseModel):
             f"/run/user/{getattr(os, 'getuid', lambda: 0)()}/gugu-sandboxd.sock",
         ),
         description="sandboxd Unix Socket；生产 Shell 必须通过该 socket 执行",
+    )
+
+
+class FileSyncSettings(BaseModel):
+    """本地文件事实源同步配置。"""
+
+    enabled: bool = Field(
+        False,
+        description="是否启用本地文件事实源自动同步（默认关闭）",
     )
 
 
@@ -378,6 +385,7 @@ class AppSettings(BaseSettings):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    filesync: FileSyncSettings = Field(default_factory=FileSyncSettings)
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
@@ -487,6 +495,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["sandbox"] = SandboxSettings.model_construct(**merged)
 
+            if "filesync" in override:
+                raw_filesync = override["filesync"] or {}
+                merged = {**self.filesync.model_dump(), **{
+                    k: v for k, v in raw_filesync.items()
+                    if k in FileSyncSettings.model_fields
+                }}
+                updates["filesync"] = FileSyncSettings.model_validate(merged)
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{
                     k: v for k, v in override["quota"].items()
@@ -543,7 +558,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "byok"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -650,6 +665,14 @@ async def save_override(patch: dict) -> AppSettings:
             **patch["embedding"],
             "dimensions": normalize_dimensions(patch["embedding"].get("dimensions")),
         }}
+    if "filesync" in patch:
+        raw_filesync = patch["filesync"]
+        if not isinstance(raw_filesync, dict):
+            raise ValueError("filesync 配置必须是对象")
+        FileSyncSettings.model_validate({
+            **get_settings().filesync.model_dump(),
+            **raw_filesync,
+        })
     existing = {}
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))

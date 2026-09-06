@@ -20,7 +20,7 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import get_settings, save_override
+from app.core.config import FileSyncSettings, get_settings, save_override
 from app.core.redaction import redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from agent.sandbox.docker_runtime import sandbox_readiness
@@ -59,6 +59,18 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
     try:
         agent_patch = body.patch.get("agent")
         sandbox_patch = body.patch.get("sandbox")
+        filesync_patch = body.patch.get("filesync")
+        if isinstance(filesync_patch, dict):
+            if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
+                raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
+            FileSyncSettings.model_validate({
+                **get_settings().filesync.model_dump(),
+                **filesync_patch,
+            })
+            if filesync_patch.get("enabled") is True and get_settings().storage.backend != "local":
+                raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
+        elif filesync_patch is not None:
+            raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
         if isinstance(agent_patch, dict) and any(
             agent_patch.get(field) is True
             for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled")
@@ -125,10 +137,30 @@ async def init_db():
 # ── 存储 ↔ DB 对账（只读）────────────────────────────────────────────────
 
 def _is_internal_key(k: str) -> bool:
-    """非 File 表管理的内部对象：记忆 .agent/、聊天暂存 .chat_staging/、缩略图 .thumbs/、
-    用户头像 avatars/。对账时跳过，避免误报成孤儿。"""
-    return (".agent/" in k or ".chat_staging" in k or ".thumbs" in k
-            or "_thumb" in k or ".thumbcache" in k or k.startswith("avatars/"))
+    """判断是否为不由 ``File`` 表管理的存储对象。
+
+    用户文件的 key 形如 ``<user_id>/<path>``（旧版也可能是
+    ``u/<user_id>/<path>``）。用户根目录下的 ``.system``（RAG 等系统索引）、
+    ``.agent``（记忆）、``shell``（持久化 Shell 工作区）、``.voice``（语音暂存）
+    和 ``.video_cache``（视频转码缓存）由运行时直接管理，不会创建 ``File`` 记录，
+    不能作为孤儿文件参与对账。这里只忽略用户根目录下的这些命名空间，避免误伤
+    用户在普通目录中创建的同名文件夹。
+    """
+    key = str(k)
+    parts = [part for part in key.split("/") if part]
+    user_path_parts = parts[2:] if len(parts) >= 3 and parts[0] == "u" else parts[1:]
+    internal_user_root = bool(user_path_parts) and user_path_parts[0] in {
+        ".system", ".agent", "shell", ".voice", ".video_cache",
+    }
+    return (
+        internal_user_root
+        or ".agent/" in key
+        or ".chat_staging" in key
+        or ".thumbs" in key
+        or "_thumb" in key
+        or ".thumbcache" in key
+        or key.startswith("avatars/")
+    )
 
 
 @router.get("/reconcile-storage")

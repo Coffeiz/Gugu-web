@@ -36,6 +36,7 @@ def to_file_response(
         deleted_at=file.deleted_at.strftime("%Y-%m-%dT%H:%M:%S") if file.deleted_at else None,
         img_width=file.img_width,
         img_height=file.img_height,
+        version=int(file.version or 1),
     )
 
 

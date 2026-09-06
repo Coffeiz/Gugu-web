@@ -299,6 +299,8 @@ class FileResponse(CamelModel):
     deleted_at: Optional[str] = None
     img_width: Optional[int] = None
     img_height: Optional[int] = None
+    # 文件正文版本：外部同步、覆盖上传或正文编辑后递增，供客户端失效内容缓存。
+    version: int = 1
 
 
 class BatchDeleteBody(CamelModel):

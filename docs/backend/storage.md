@@ -298,7 +298,7 @@ const _folderIdx = computed(() => { ... })
    - Python 业务 API、Agent 和 IM 只负责产生业务事件，不再提供 SSE 代理或自定义旧字段；网页写操作与咕咕/IM 写操作共用同一 publisher。
    - `filesCache` 消费文件实体事件：删除走本地剔除，其他变更防抖刷新；预览窗、项目卡片等只需要粗粒度信号的消费者继续监听资源 rev。
 3. **断线补偿**：FastAPI live 重连后由前端错峰 bump 所有资源；文件、画布、会话和终端等领域再按各自接口/sequence 做完整性补偿。
-4. **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删 DB 记录（不进回收站），保证 UI 与文件系统一致。
+4. **本地文件删除检测（历史兜底）**：旧实现曾在 `GET /files/all` 中扫描每个文件实体是否存在并直接硬删 DB 记录。当前本地目录实时同步由 `PRD-FS-3` 规定的 TS watcher + Python reconcile 负责，页面请求不得再承担物理目录扫描或隐式删除；Admin 对账和周期性全量 reconcile 仅用于事件丢失、进程重启和异常恢复。
 
 #### 2.8.7 加载体验优化
 
@@ -309,6 +309,8 @@ const _folderIdx = computed(() => { ... })
 - 回收站仍走异步请求（需要 `deleted_at` 字段，不在主缓存中）
 
 #### 2.8.8 已知 stale 缺口与「免刷新保证」方案（2026-07-11 排查）
+
+> 本节保留为 2026-07-11 的历史排查记录。文件系统到 DB 的实时同步方案以后续 `docs/prds/PRD-FS-3-文件事实源与双向同步.md` 为准，不再把页面请求或前端缓存刷新当作宿主目录 watcher。
 
 **要达成"所有页面免刷新即更新"的保证，最小充分集 = ① 所有改动都广播 → ② 所有展示面都订阅 → ③ 收到就刷新。当前 ②③ 基本有（除 FilePanel），缺的核心是 ①：用户自己的网页操作后端不 publish（§2.8.6）。**
 
@@ -350,6 +352,12 @@ const _folderIdx = computed(() => { ... })
 - **边界**：还原（trash→库）是唯一「不乐观更新」的网页写操作，发起页 SSE 回声被抑制拉不回来 → `restoreFile`/`restoreSelected` 显式 `cacheStore.refresh()` 自刷。断线重连 `_catchUp` 通过 `rev.files` 补回漏掉的改动。
 
 **落地后现状**：Tier 0/1/2/3 全部闭环。"所有页面免刷新即更新"保证达成；三套缓存收敛为单一 `filesCache` store；SSE 细粒度化后——发起页零重拉（回声抑制）、其它端删除零网络（remove 快路径）、增改合并刷新，"任意小改动全库重拉"的性能天花板消除。回声成本（Tier 2 遗留）随回声抑制一并解决。
+
+#### 2.8.9 本地文件实时同步（2026-09-06）
+
+本地绑定目录的变更检测采用 TypeScript sidecar 的操作系统文件系统事件监听，默认通过 `chokidar` 适配 macOS `fsevents`、Linux inotify 等平台能力。TS 进程只负责监听、去抖和发送候选事件，不访问数据库、不判断 ownership、不发布 UI 事件。
+
+Python worker 负责 sidecar 生命周期、binding 下发、版本化本地 NDJSON 通道、路径和权限复核、稳定读取、`File`/`Folder` 投影、journal/outbox 以及 60 秒周期全量 reconcile。sidecar 断线、事件溢出、重启或不确定状态会触发对应绑定的 reconcile。生产路径只保留 TS watcher 一套实时监听器，不维护 Shell 专用刷新策略。
 
 ### 2.9 图片缩略图
 
@@ -425,9 +433,9 @@ Authorization: Bearer <user_token>
 | 幽灵（ghost） | DB 有 `files` 行，但 `storage_key` 指向的物理对象不存在 | 暂只报告（删 DB 行风险高，留人工判断） |
 | 孤儿（orphan） | 物理对象存在，但没有任何 `files` 行引用 | `delete`（删物理文件）或 `import`（重建 DB 记录） |
 
-内部 key 不计入孤儿：`.agent/`、`.chat_staging`、`.thumbs/`、`_thumb`、`.thumbcache`、`avatars/`（`_is_internal_key`，`backend/app/api/v1/config.py`）。
+内部 key 不计入孤儿：用户根目录下的 `.system/`（RAG 等系统索引）、`.agent/`（记忆）、`shell/`（持久化 Shell 工作区）、`.chat_staging/`（聊天暂存）、`.voice/`（语音暂存）、`.video_cache/`（视频转码缓存），以及 `.thumbs/`、`_thumb`、`.thumbcache`、`avatars/`（`_is_internal_key`，`backend/app/api/v1/config.py`）。旧版 `u/<user_id>/...` 路径同样按用户根目录规则处理。
 
-**待核实/已知潜在缺口**：语音暂存用的 `.voice/` 子目录**不在**这份内部 key 白名单里（当前列表只覆盖 `.chat_staging`）。理论上语音条暂存文件如果凑巧被对账工具扫到，可能被误判为"孤儿"。是否已有其他机制规避（比如语音条留存周期短、TTL 内不会被扫到等）待核实，未来加固建议把 `.voice/` 一并加进 `_is_internal_key`。
+文件同步的 workspace 对账是另一条链路：它只处理用户显式绑定的 workspace 根目录。Admin 存储对账不会把上述运行时命名空间导入 `File` 表；回收站 `trash/` 仍由 `File` 记录持有，因此保留在对账范围内。
 
 #### 2.10.2 接口
 

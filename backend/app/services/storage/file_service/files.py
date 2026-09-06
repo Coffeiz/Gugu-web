@@ -119,6 +119,8 @@ class FileOps:
             existing.mime_type = mime_type
             existing.img_width = img_width
             existing.img_height = img_height
+            existing.version = int(existing.version or 1) + 1
+            existing.updated_at = now_utc()
             await self.db.flush()
             await record_usage(
                 self.db, user_id, category=FILE_LIBRARY,
@@ -240,6 +242,7 @@ class FileOps:
             existing.img_width = f.img_width
             existing.img_height = f.img_height
             existing.stage_name = f.stage_name
+            existing.version = int(existing.version or 1) + 1
             existing.updated_at = now_utc()
             await self.db.flush()
             return FileResult(existing, project, folder_name or None, was_overwrite=True)

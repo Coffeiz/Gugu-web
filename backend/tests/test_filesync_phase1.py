@@ -17,7 +17,6 @@ from app.services.filesync import (
     enqueue_file_event,
     deliver_file_event,
 )
-from app.services.filesync import LocalDirectoryWatcher
 
 
 def test_sync_path_is_normalized_and_confined(tmp_path):
@@ -37,25 +36,10 @@ def test_sync_path_rejects_symlink_escape(tmp_path):
         validate_sync_path(tmp_path, "link/secret.txt")
 
 
-def test_local_directory_watcher_only_emits_candidates(tmp_path):
-    watcher = LocalDirectoryWatcher(tmp_path)
-    assert watcher.poll() == []
-    path = tmp_path / "created.txt"
-    path.write_text("one", encoding="utf-8")
-    created = watcher.poll()
-    assert [(item.relative_path, item.operation) for item in created] == [("created.txt", "create")]
-    path.write_text("two", encoding="utf-8")
-    changed = watcher.poll()
-    assert [(item.relative_path, item.operation) for item in changed] == [("created.txt", "update")]
-    path.unlink()
-    deleted = watcher.poll()
-    assert [(item.relative_path, item.operation) for item in deleted] == [("created.txt", "delete")]
-
-
 @pytest.mark.asyncio
 async def test_phase1_protocol_is_disabled_by_default(db, user_a):
     with pytest.raises(FileSyncDisabled):
-        await create_binding(db, user_id=user_a.id, source="shell", root_fingerprint="a" * 64)
+        await create_binding(db, user_id=user_a.id, source="local_directory", root_fingerprint="a" * 64)
 
 
 @pytest.mark.asyncio
@@ -64,17 +48,17 @@ async def test_journal_is_idempotent_and_advances_revision(db, user_a, monkeypat
 
     monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
     binding = await create_binding(
-        db, user_id=user_a.id, source="shell", root_fingerprint="a" * 64,
+        db, user_id=user_a.id, source="local_directory", root_fingerprint="a" * 64,
     )
     key = build_idempotency_key(
-        source="shell", operation="create", relative_path="reports/a.txt", fingerprint="b" * 64,
+        source="local_directory", operation="create", relative_path="reports/a.txt", fingerprint="b" * 64,
     )
     first = await record_change(
-        db, binding=binding, user_id=user_a.id, source="shell", operation="create",
+        db, binding=binding, user_id=user_a.id, source="local_directory", operation="create",
         relative_path="reports/a.txt", idempotency_key=key, observed_fingerprint="b" * 64,
     )
     second = await record_change(
-        db, binding=binding, user_id=user_a.id, source="shell", operation="create",
+        db, binding=binding, user_id=user_a.id, source="local_directory", operation="create",
         relative_path="reports/a.txt", idempotency_key=key, observed_fingerprint="b" * 64,
     )
     await db.commit()
@@ -139,11 +123,13 @@ async def test_local_reconcile_projects_create_update_move_and_delete(db, user_a
     assert first.created == 1
     (await db.scalars(select(FileSyncBinding))).one()
     file_row = (await db.scalars(select(File))).one()
+    first_version = file_row.version
 
     file_path.write_text("world", encoding="utf-8")
     second = await reconcile.reconcile_local_directory(db, user_a.id)
     await db.commit()
     assert second.updated == 1
+    assert file_row.version == first_version + 1
 
     moved_path = root / "after.txt"
     file_path.rename(moved_path)
@@ -361,7 +347,7 @@ async def test_filesync_event_outbox_retries_and_preserves_event_id(db, user_a, 
     import app.services.filesync.outbox as outbox
 
     row = await enqueue_file_event(
-        db, user_a.id, operation="refresh", entity_ids=(7,), source="shell",
+        db, user_a.id, operation="refresh", entity_ids=(7,), source="local_directory",
     )
     await db.commit()
     published = []
@@ -376,4 +362,4 @@ async def test_filesync_event_outbox_retries_and_preserves_event_id(db, user_a, 
     assert row.status == "delivered"
     assert published[0][1]["event_id"] == row.event_id
     assert published[0][1]["entity_ids"] == [7]
-    assert published[0][1]["source"] == "shell"
+    assert published[0][1]["source"] == "local_directory"

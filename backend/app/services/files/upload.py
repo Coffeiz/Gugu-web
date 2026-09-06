@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
+from app.core.tz import now_utc
 from app.models import File, Project, User
 from app.services.storage import OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
@@ -309,6 +310,8 @@ async def confirm_oss_upload(
         existing.size = _fmt_size(size_bytes)
         existing.size_bytes = size_bytes
         existing.mime_type = actual_mime_type
+        existing.version = int(existing.version or 1) + 1
+        existing.updated_at = now_utc()
         await db.flush()
         await record_usage(
             db, user_id, category=FILE_LIBRARY,

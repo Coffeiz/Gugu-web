@@ -12,10 +12,11 @@ def normalize_script_authorization(value):
         return None
     if not isinstance(value, dict):
         raise ValueError("script_authorization 必须是对象")
+    if "args" in value:
+        raise ValueError("script_authorization.args 已移除，脚本请读取运行时环境变量")
     root = str(value.get("root") or "").strip().lower()
     interpreter = str(value.get("interpreter") or "").strip().lower()
     path = str(value.get("script_path") or "").strip().replace("\\", "/")
-    args = value.get("args") or []
     if root not in {"workspace", "personal", "project"}:
         raise ValueError("script_authorization.root 无效")
     if interpreter not in {"python3", "node", "bash"}:
@@ -25,9 +26,7 @@ def normalize_script_authorization(value):
         raise ValueError("script_authorization.script_path 必须是沙盒内相对路径")
     if len(parsed.parts) > 32 or any(not part or part in {".", ".."} for part in parsed.parts):
         raise ValueError("script_authorization.script_path 无效")
-    if not isinstance(args, list) or len(args) > 32 or any(not isinstance(item, str) for item in args):
-        raise ValueError("script_authorization.args 必须是最多 32 个字符串的数组")
-    return {"root": root, "script_path": parsed.as_posix(), "interpreter": interpreter, "args": args}
+    return {"root": root, "script_path": parsed.as_posix(), "interpreter": interpreter}
 
 
 async def validate_task_workspace(db, user_id, workspace_id: int | None) -> int | None:

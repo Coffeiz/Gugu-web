@@ -234,8 +234,50 @@ async def _sync_binding(
             scanned=summary.scanned, created=summary.created, updated=summary.updated,
             moved=summary.moved, deleted=summary.deleted, rejected=summary.rejected,
             conflicts=len(conflict_ids), journal_ids=summary.journal_ids,
-            entity_ids=summary.entity_ids,
+            entity_ids=summary.entity_ids, folders_created=summary.folders_created,
+            folders_updated=summary.folders_updated, folders_deleted=summary.folders_deleted,
         ), conflict_ids=conflict_ids,
+    )
+
+
+async def sync_existing_binding(
+    db: AsyncSession,
+    user_id,
+    binding: FileSyncBinding,
+    *,
+    root: Path,
+    allow_delete: bool = True,
+) -> BindingSyncResult:
+    """同步 watcher 已登记的绑定，不重新创建或切换绑定范围。"""
+    if binding.user_id != user_id:
+        raise LookupError("同步绑定不存在")
+    conflict_ids = await _pending_conflicts(db, user_id, binding, root)
+    blocked: set[str] = set()
+    if conflict_ids:
+        blocked = set((await db.scalars(select(FileSyncConflict.relative_path).where(
+            FileSyncConflict.id.in_(conflict_ids),
+        ))).all())
+    if binding.mode == FileSyncMode.MIRROR_OUT:
+        summary = await _mirror_out_summary(root, user_id, db)
+    else:
+        summary = await reconcile_local_directory(
+            db, user_id, root=root, workspace_id=binding.workspace_id,
+            source=FileSyncSource.LOCAL_DIRECTORY, allow_delete=allow_delete,
+            blocked_paths=blocked, binding=binding,
+        )
+    binding.last_reconciled_at = now_utc()
+    await db.flush()
+    return BindingSyncResult(
+        binding_id=binding.id, mode=binding.mode, root_path=binding.root_path,
+        dry_run=False,
+        summary=SyncSummary(
+            scanned=summary.scanned, created=summary.created, updated=summary.updated,
+            moved=summary.moved, deleted=summary.deleted, rejected=summary.rejected,
+            conflicts=len(conflict_ids), journal_ids=summary.journal_ids,
+            entity_ids=summary.entity_ids, folders_created=summary.folders_created,
+            folders_updated=summary.folders_updated, folders_deleted=summary.folders_deleted,
+        ),
+        conflict_ids=conflict_ids,
     )
 
 

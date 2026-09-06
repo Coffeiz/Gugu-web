@@ -98,6 +98,8 @@ async def update_file_content(
     await storage.put(file.storage_key, data, file.mime_type or "text/markdown")
     file.size_bytes = len(data)
     file.size = _fmt_size(len(data))
+    file.version = int(file.version or 1) + 1
+    file.updated_at = now_utc()
     return file
 
 

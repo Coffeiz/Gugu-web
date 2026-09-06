@@ -1,4 +1,4 @@
-"""同步协议的稳定字段、幂等键和路径安全校验。"""
+"""文件同步协议的稳定字段、幂等键和路径安全校验。"""
 from __future__ import annotations
 
 import hashlib
@@ -10,8 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import FileSyncBinding, FileSyncJournal
-from app.models import Workspace
+from app.models import FileSyncBinding, FileSyncJournal, Workspace
 from app.core.ownership import get_owned
 
 FILE_SYNC_PROTOCOL_VERSION = 1
@@ -23,7 +22,6 @@ class FileSyncDisabled(RuntimeError):
 
 class FileSyncSource(StrEnum):
     LOCAL_DIRECTORY = "local_directory"
-    SHELL = "shell"
     FILE_API = "file_api"
 
 
@@ -50,7 +48,8 @@ class FileSyncStatus(StrEnum):
 
 
 def is_file_sync_enabled() -> bool:
-    return bool(getattr(get_settings().sandbox, "file_sync_enabled", False))
+    settings = get_settings()
+    return bool(settings.filesync.enabled)
 
 
 def normalize_relative_path(value: str) -> str:
@@ -114,9 +113,12 @@ def validate_sync_path(root: Path, relative_path: str) -> Path:
     return candidate
 
 
-def build_idempotency_key(*, source: str, operation: str, relative_path: str, fingerprint: str | None) -> str:
+def build_idempotency_key(*, source: str, operation: str, relative_path: str,
+                          fingerprint: str | None, object_type: str = "file") -> str:
+    if object_type not in {"file", "folder"}:
+        raise ValueError("同步对象类型无效")
     normalized = normalize_relative_path(relative_path)
-    payload = "|".join((str(source), str(operation), normalized, fingerprint or ""))
+    payload = "|".join((str(source), str(operation), object_type, normalized, fingerprint or ""))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -129,6 +131,7 @@ async def record_change(
     operation: str,
     relative_path: str,
     idempotency_key: str,
+    object_type: str = "file",
     baseline_fingerprint: str | None = None,
     observed_fingerprint: str | None = None,
     status: str = FileSyncStatus.PENDING,
@@ -141,6 +144,8 @@ async def record_change(
         raise ValueError("同步来源无效")
     if operation not in {item.value for item in FileSyncOperation}:
         raise ValueError("同步操作无效")
+    if object_type not in {"file", "folder"}:
+        raise ValueError("同步对象类型无效")
     if status not in {item.value for item in FileSyncStatus}:
         raise ValueError("同步状态无效")
     relative_path = normalize_relative_path(relative_path)
@@ -156,7 +161,8 @@ async def record_change(
     binding.revision = int(binding.revision or 0) + 1
     row = FileSyncJournal(
         binding_id=binding.id, user_id=user_id, idempotency_key=idempotency_key,
-        source=str(source), operation=str(operation), relative_path=relative_path,
+        source=str(source), operation=str(operation), object_type=object_type,
+        relative_path=relative_path,
         baseline_fingerprint=baseline_fingerprint, observed_fingerprint=observed_fingerprint,
         revision=binding.revision, status=str(status),
     )

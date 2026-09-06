@@ -1,7 +1,7 @@
 """文件同步 Admin 状态、对账和恢复编排。
 
-Admin 只负责观测和调度，文件投影仍由 ``filesync.bindings`` 处理；这样用户入口、
-Shell 收尾和后台恢复不会各自维护一套同步规则。
+Admin 只负责观测和调度，文件投影仍由 ``filesync.bindings`` 处理；实时本地目录投影
+由 worker watcher 统一执行，Admin 不再是正常同步链路中的必经步骤。
 """
 from __future__ import annotations
 

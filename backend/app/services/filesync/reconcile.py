@@ -1,7 +1,8 @@
-"""本地文件发现与 DB 投影。
+"""本地文件/文件夹发现与 DB 投影。
 
-Phase 2 先采用可重试的增量扫描作为 watcher 的安全落点：扫描结果进入同一
-journal，后续可把 OS watcher 只作为候选事件来源，而不让 watcher 直接改 DB。
+watcher 只负责发现候选，所有改变都在这里经过路径、归属、配额和稳定性校验，
+再以同一事务投影到 File/Folder 与 journal。这样外部复制、Shell 写入和 UI 文件
+操作不会各自维护一套同步逻辑。
 """
 from __future__ import annotations
 
@@ -30,6 +31,8 @@ from app.services.filesync.protocol import (
 from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
 from app.core.config import get_settings
 from app.services.filesync.snapshots import save_snapshot
+from app.services.storage.folders import folder_dir_key
+from app.services.files.previews import delete_thumb_cache
 
 
 @dataclass(frozen=True)
@@ -41,49 +44,11 @@ class SyncSummary:
     deleted: int = 0
     rejected: int = 0
     conflicts: int = 0
+    folders_created: int = 0
+    folders_updated: int = 0
+    folders_deleted: int = 0
     journal_ids: tuple[int, ...] = ()
     entity_ids: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True)
-class FileChangeCandidate:
-    relative_path: str
-    operation: str
-    fingerprint: str | None = None
-
-
-class LocalDirectoryWatcher:
-    """轻量候选发现器；不直接写 DB，丢事件由 reconcile 全量补偿。"""
-
-    def __init__(self, root: Path):
-        self.root = root.expanduser().resolve()
-        self._snapshot: dict[str, tuple[int, int]] | None = None
-
-    def poll(self) -> list[FileChangeCandidate]:
-        current: dict[str, tuple[int, int]] = {}
-        candidates: list[FileChangeCandidate] = []
-        for path in self.root.rglob("*"):
-            if not path.is_file() or path.is_symlink():
-                continue
-            try:
-                relative = validate_sync_path(self.root, path.relative_to(self.root).as_posix())
-                stat = path.stat()
-            except (OSError, ValueError):
-                continue
-            key = relative.relative_to(self.root).as_posix()
-            current[key] = (stat.st_size, stat.st_mtime_ns)
-        previous = self._snapshot
-        self._snapshot = current
-        if previous is None:
-            return []
-        for key in sorted(current.keys() - previous.keys()):
-            candidates.append(FileChangeCandidate(key, "create"))
-        for key in sorted(previous.keys() - current.keys()):
-            candidates.append(FileChangeCandidate(key, "delete"))
-        for key in sorted(current.keys() & previous.keys()):
-            if current[key] != previous[key]:
-                candidates.append(FileChangeCandidate(key, "update"))
-        return candidates
 
 
 def _fingerprint(path: Path) -> str:
@@ -92,6 +57,16 @@ def _fingerprint(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _stable_fingerprint(path: Path) -> str:
+    """只接受一次完整、稳定的读取，避免把正在复制的文件写成半成品。"""
+    before = path.stat()
+    digest = _fingerprint(path)
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise ValueError("文件仍在写入")
+    return digest
 
 
 def _root_fingerprint(root: Path) -> str:
@@ -109,6 +84,10 @@ def _safe_storage_key(storage_root: Path, path: Path) -> str:
         return path.resolve().relative_to(storage_root.resolve()).as_posix()
     except ValueError as exc:
         raise ValueError("同步文件不在本地存储根内") from exc
+
+
+def _is_sync_temporary(path: Path) -> bool:
+    return path.name.startswith(".gugu-sync-") or path.name.endswith((".gugu-part", ".gugu-tmp"))
 
 
 async def _binding_for(
@@ -144,7 +123,22 @@ async def _folder_for_path(
     project_id: int | None,
     folder_names: list[str],
 ) -> int | None:
+    folder_id, _ = await _ensure_folder_path(
+        db, user_id, space=space, project_id=project_id, folder_names=folder_names,
+    )
+    return folder_id
+
+
+async def _ensure_folder_path(
+    db: AsyncSession,
+    user_id,
+    *,
+    space: str,
+    project_id: int | None,
+    folder_names: list[str],
+) -> tuple[int | None, bool]:
     parent_id = None
+    created = False
     for name in folder_names:
         query = select(Folder).where(
             Folder.user_id == user_id, Folder.project_id == project_id,
@@ -159,8 +153,40 @@ async def _folder_for_path(
             )
             db.add(folder)
             await db.flush()
+            created = True
         parent_id = folder.id
-    return parent_id
+    return parent_id, created
+
+
+def _directory_fingerprint(directory: Path) -> str:
+    """用目录结构生成稳定指纹，不把文件正文重复写入文件夹日志。"""
+    digest = hashlib.sha256()
+    for item in sorted(directory.rglob("*"), key=lambda path: path.relative_to(directory).as_posix()):
+        if item.is_symlink() or not (item.is_file() or item.is_dir()):
+            continue
+        relative = item.relative_to(directory).as_posix()
+        marker = "d" if item.is_dir() else "f"
+        digest.update(f"{marker}:{relative}\n".encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _parse_directory_path(path: Path, user_root: Path) -> tuple[str, int | None, list[str]] | None:
+    parts = path.relative_to(user_root).parts
+    if not parts:
+        return None
+    if parts[0] == "个人文件" and len(parts) > 1:
+        return "personal", None, list(parts[1:])
+    if parts[0] == "项目文件" and len(parts) > 3:
+        project_dir = parts[3]
+        if "#" not in project_dir:
+            return None
+        try:
+            project_id = int(project_dir.rsplit("#", 1)[1].strip())
+        except ValueError:
+            return None
+        folder_names = list(parts[4:])
+        return ("project", project_id, folder_names) if folder_names else None
+    return None
 
 
 async def _classify_path(db: AsyncSession, user_id, path: Path, user_root: Path):
@@ -204,6 +230,7 @@ async def reconcile_local_directory(
     source: str = FileSyncSource.LOCAL_DIRECTORY,
     allow_delete: bool = True,
     blocked_paths: set[str] | None = None,
+    binding: FileSyncBinding | None = None,
 ) -> SyncSummary:
     """扫描一个已归属的本地根并将物理变化投影为 File/Folder。
 
@@ -241,12 +268,23 @@ async def reconcile_local_directory(
     if physical_bytes > quota_limit:
         return SyncSummary(rejected=1)
 
-    binding = await _binding_for(
-        db, user_id, source=str(source), workspace_id=workspace_id, root=root,
-    )
+    if binding is None:
+        binding = await _binding_for(
+            db, user_id, source=str(source), workspace_id=workspace_id, root=root,
+        )
     physical = []
+    physical_folders: dict[str, Path] = {}
     rejected = 0
     for item in root.rglob("*"):
+        if _is_sync_temporary(item):
+            continue
+        if item.is_dir() and not item.is_symlink():
+            try:
+                validate_sync_path(root, item.relative_to(root).as_posix())
+                physical_folders[item.relative_to(root).as_posix()] = item
+            except (OSError, ValueError):
+                rejected += 1
+            continue
         if not item.is_file():
             continue
         if item.is_symlink():
@@ -272,33 +310,94 @@ async def reconcile_local_directory(
     ).order_by(FileSyncJournal.id.desc()))).all()
     latest_by_path = {}
     for item in journal_history:
-        latest_by_path.setdefault(item.relative_path, item)
+        latest_by_path.setdefault((item.object_type or "file", item.relative_path), item)
     missing = {key: row for key, row in known.items() if key not in physical_by_key}
     orphans = {key: path for key, path in physical_by_key.items() if key not in known}
     journal_ids: list[int] = []
     entity_ids: list[int] = []
     created = updated = moved = deleted = 0
+    folders_created = folders_updated = folders_deleted = 0
     blocked_paths = blocked_paths or set()
 
     # 空目录没有 File 行可触发投影，也要补齐 Folder，便于 UI 与后续 Shell
     # 写入继续使用同一归属链；仅处理 canonical 个人/项目目录，跳过年月和项目容器。
-    for directory in sorted((item for item in root.rglob("*") if item.is_dir() and not item.is_symlink()), key=lambda item: len(item.parts)):
-        parts = directory.relative_to(user_root).parts
-        if parts and parts[0] == "个人文件" and len(parts) > 1:
-            await _folder_for_path(db, user_id, space="personal", project_id=None, folder_names=list(parts[1:]))
-        elif parts and parts[0] == "项目文件" and len(parts) > 4:
-            try:
-                project_id = int(parts[3].rsplit("#", 1)[1].strip())
-            except ValueError:
-                continue
-            folder_names = list(parts[4:])
-            if folder_names:
-                await _folder_for_path(db, user_id, space="project", project_id=project_id, folder_names=folder_names)
+    for relative, directory in sorted(physical_folders.items(), key=lambda item: (item[0].count("/"), item[0])):
+        parsed = _parse_directory_path(directory, user_root)
+        if parsed is None:
+            continue
+        space, project_id, folder_names = parsed
+        if project_id is not None and await get_owned(db, Project, project_id, user_id) is None:
+            rejected += 1
+            continue
+        folder_id, was_created = await _ensure_folder_path(
+            db, user_id, space=space, project_id=project_id, folder_names=folder_names,
+        )
+        if folder_id is None:
+            continue
+        observed = _directory_fingerprint(directory)
+        previous = latest_by_path.get(("folder", relative))
+        if previous is None:
+            operation = FileSyncOperation.CREATE if was_created else FileSyncOperation.BASELINE
+        elif previous.observed_fingerprint != observed:
+            operation = FileSyncOperation.UPDATE
+        else:
+            continue
+        journal = await record_change(
+            db, binding=binding, user_id=user_id, source=str(source), operation=operation,
+            object_type="folder", relative_path=relative,
+            idempotency_key=build_idempotency_key(
+                source=str(source), operation=str(operation), object_type="folder",
+                relative_path=relative, fingerprint=observed,
+            ), observed_fingerprint=observed, status=FileSyncStatus.SYNCED,
+        )
+        journal_ids.append(journal.id)
+        latest_by_path[("folder", relative)] = journal
+        entity_ids.append(folder_id)
+        if operation == FileSyncOperation.CREATE:
+            folders_created += 1
+        elif operation == FileSyncOperation.UPDATE:
+            folders_updated += 1
+
+    # 物理目录被改名/移动/删除后，旧 Folder 行不能继续作为 UI 的活动目录。
+    # 只处理当前绑定根下的路径，避免一个子目录绑定误删用户其他空间的目录树。
+    active_folders = (await db.scalars(select(Folder).where(
+        Folder.user_id == user_id, Folder.deleted_at.is_(None),
+    ))).all()
+    for folder in active_folders:
+        folder_key = await folder_dir_key(db, user_id, folder)
+        if not folder_key:
+            continue
+        try:
+            relative = (storage_root / folder_key).resolve().relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if relative == ".":
+            # workspace-folder 绑定的根目录本身就是绑定锚点，不属于本次根内的
+            # 子目录清单；只清理它下面实际消失的 Folder。
+            continue
+        if relative in physical_folders:
+            continue
+        folder.deleted_at = now_utc()
+        folder.version = int(folder.version or 1) + 1
+        folder.updated_at = now_utc()
+        folders_deleted += 1
+        entity_ids.append(folder.id)
+        previous = latest_by_path.get(("folder", relative))
+        journal = await record_change(
+            db, binding=binding, user_id=user_id, source=str(source),
+            operation=FileSyncOperation.DELETE, object_type="folder", relative_path=relative,
+            idempotency_key=build_idempotency_key(
+                source=str(source), operation=str(FileSyncOperation.DELETE), object_type="folder",
+                relative_path=relative, fingerprint=str(folder.version),
+            ), baseline_fingerprint=previous.observed_fingerprint if previous else None,
+            status=FileSyncStatus.SYNCED,
+        )
+        journal_ids.append(journal.id)
 
     missing_fingerprints: dict[str, list[tuple[File, str]]] = {}
     for row in missing.values():
         old_relative = row.storage_key.removeprefix(scope_prefix)
-        old_journal = latest_by_path.get(old_relative)
+        old_journal = latest_by_path.get(("file", old_relative))
         if old_journal and old_journal.observed_fingerprint:
             missing_fingerprints.setdefault(str(row.size_bytes), []).append(
                 (row, old_journal.observed_fingerprint)
@@ -314,7 +413,7 @@ async def reconcile_local_directory(
             space, project_id, folder_id, display_name, ext = await _classify_path(
                 db, user_id, path, user_root,
             )
-            observed = _fingerprint(path)
+            observed = _stable_fingerprint(path)
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -339,7 +438,7 @@ async def reconcile_local_directory(
             operation = FileSyncOperation.MOVE
             moved += 1
             entity_ids.append(candidate.id)
-            old_journal = latest_by_path.get(old_key.removeprefix(scope_prefix))
+            old_journal = latest_by_path.get(("file", old_key.removeprefix(scope_prefix)))
             baseline = old_journal.observed_fingerprint if old_journal else None
         else:
             stat = path.stat()
@@ -378,8 +477,12 @@ async def reconcile_local_directory(
         relative = path.relative_to(root).as_posix()
         if relative in blocked_paths:
             continue
-        observed = _fingerprint(path)
-        previous = latest_by_path.get(relative)
+        try:
+            observed = _stable_fingerprint(path)
+        except (OSError, ValueError):
+            rejected += 1
+            continue
+        previous = latest_by_path.get(("file", relative))
         if previous is None:
             previous = await record_change(
                 db, binding=binding, user_id=user_id, source=str(source),
@@ -391,7 +494,7 @@ async def reconcile_local_directory(
                 ),
                 observed_fingerprint=observed, status=FileSyncStatus.SYNCED,
             )
-            latest_by_path[relative] = previous
+            latest_by_path[("file", relative)] = previous
             journal_ids.append(previous.id)
             try:
                 save_snapshot(user_id, binding.id, relative, path)
@@ -404,6 +507,8 @@ async def reconcile_local_directory(
             row.size = str(path.stat().st_size)
             row.version = int(row.version or 1) + 1
             row.updated_at = now_utc()
+            # 文件正文变了，旧缩略图即使仍在磁盘也不能继续返回。
+            delete_thumb_cache(row.id, storage_root)
             updated += 1
             entity_ids.append(row.id)
             journal = await record_change(
@@ -449,5 +554,6 @@ async def reconcile_local_directory(
     return SyncSummary(
         scanned=len(physical), created=created, updated=updated, moved=moved,
         deleted=deleted, rejected=rejected, journal_ids=tuple(journal_ids),
-        entity_ids=tuple(entity_ids),
+        entity_ids=tuple(entity_ids), folders_created=folders_created,
+        folders_updated=folders_updated, folders_deleted=folders_deleted,
     )

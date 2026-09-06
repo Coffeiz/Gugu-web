@@ -33,7 +33,7 @@ async def test_admin_status_aggregates_bindings_failures_conflicts_and_outbox(db
         ),
         FileSyncJournal(
             binding_id=binding.id, user_id=user_a.id, idempotency_key="b",
-            source="shell", operation="create", relative_path="b.txt",
+            source="local_directory", operation="create", relative_path="b.txt",
             status="rejected", error_code="path_outside_binding", revision=2,
         ),
         FileSyncConflict(

@@ -216,7 +216,7 @@ async def upload_file(
     _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
 
     # 语义核心（key/配额/覆盖/落库）交 FileService；端点保留传输面：图片尺寸解出、缩略图调度、
-    # 缓存清理、响应 shape、事务与事件。覆盖不发 files 事件（复刻原行为）。
+    # 缓存清理、响应 shape、事务与事件。
     result = await FileService(db).create_file(
         current_user.id, space=space, project_id=project_id, folder_id=folder_id,
         stage_name=stage_name, mind_map_id=mind_map_id, display_name=display_name, ext=ext,
@@ -231,12 +231,11 @@ async def upload_file(
     await db.commit()
     await db.refresh(f)
     resp = to_related_file_response(f, result.project, result.folder_name)
-    if not result.was_overwrite:
-        await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=f.id,
-                             event_payload={"kind": "file", "entity": resp.model_dump(mode="json", by_alias=True)})
-    else:
-        # 覆盖上传不广播前端 files 事件，但最近更新时间/排序可能改变 snapshot 输入。
-        await events.bump_context_revision(current_user.id, "files")
+    await events.publish(
+        current_user.id, "files", origin=origin,
+        operation="update" if result.was_overwrite else "create", entity_id=f.id,
+        event_payload={"kind": "file", "entity": resp.model_dump(mode="json", by_alias=True)},
+    )
 
     if _is_img:
         background_tasks.add_task(pregenerate_thumb, f.storage_key, f.id)
@@ -357,8 +356,12 @@ async def confirm_upload(
     if result.old_storage_key is not None:
         await storage.delete(result.old_storage_key)
     response = to_related_file_response(result.file, result.project, result.folder_name)
-    await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=result.file.id,
-                         event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)})
+    await events.publish(
+        current_user.id, "files", origin=origin,
+        operation="update" if result.overwritten_file_id is not None else "create",
+        entity_id=result.file.id,
+        event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)},
+    )
 
     return response
 

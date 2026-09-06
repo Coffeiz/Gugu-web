@@ -299,7 +299,7 @@ class FileSyncBinding(Base):
 
 
 class FileSyncJournal(Base):
-    """文件变更幂等日志；路径仅允许是工作区内的规范相对路径。"""
+    """文件/文件夹变更幂等日志；路径仅允许是工作区内的规范相对路径。"""
     __tablename__ = "file_sync_journal"
     __table_args__ = (
         UniqueConstraint("binding_id", "idempotency_key", name="uq_file_sync_journal_idempotency"),
@@ -313,6 +313,7 @@ class FileSyncJournal(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128))
     source: Mapped[str] = mapped_column(String(24))
     operation: Mapped[str] = mapped_column(String(24))
+    object_type: Mapped[str] = mapped_column(String(16), default="file", server_default="file")
     relative_path: Mapped[str] = mapped_column(String(1000))
     baseline_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     observed_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

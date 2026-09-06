@@ -5,9 +5,25 @@
         <h3 class="fs-title">{{ t('filesyncAdmin.title') }}</h3>
         <p class="fs-sub">{{ t('filesyncAdmin.description') }}</p>
       </div>
-      <button class="fs-btn" :disabled="loading" @click="load">
-        {{ loading ? t('filesyncAdmin.loading') : t('filesyncAdmin.refresh') }}
-      </button>
+      <div class="fs-head-actions">
+        <div v-if="status" class="fs-setting">
+          <div class="fs-setting-copy">
+            <span>{{ t('filesyncAdmin.autoSync') }}</span>
+            <small>{{ !status.supported ? t('filesyncAdmin.autoSyncUnsupported') : status.featureEnabled ? t('filesyncAdmin.autoSyncEnabled') : t('filesyncAdmin.autoSyncDisabled') }}</small>
+          </div>
+          <ToggleSwitch
+            size="sm"
+            :model-value="status.featureEnabled"
+            :disabled="syncSaving || !status.supported"
+            :aria-label="t('filesyncAdmin.toggleAutoSync')"
+            @update:model-value="toggleSync"
+          />
+        </div>
+        <ActionButton variant="secondary" fit :disabled="loading" @click="load">
+          <Icon name="action.refresh" size="sm" />
+          {{ loading ? t('filesyncAdmin.loading') : t('filesyncAdmin.refresh') }}
+        </ActionButton>
+      </div>
     </div>
 
     <div v-if="error" class="fs-message is-error">{{ error }}</div>
@@ -36,8 +52,14 @@
             <small>{{ t('filesyncAdmin.revision') }} {{ binding.revision }} · {{ t('filesyncAdmin.conflictCount') }} {{ binding.pendingConflicts }}</small>
           </div>
           <div class="fs-actions">
-            <button class="fs-action" :disabled="actionKey === `dry-${binding.id}`" @click="dryRun(binding.id)">{{ actionKey === `dry-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.dryRun') }}</button>
-            <button class="fs-action is-primary" :disabled="actionKey === `sync-${binding.id}`" @click="reconcile(binding.id)">{{ actionKey === `sync-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.reconcile') }}</button>
+            <ActionButton variant="secondary" fit :disabled="actionKey === `dry-${binding.id}`" @click="dryRun(binding.id)">
+              <Icon name="action.search" size="sm" />
+              {{ actionKey === `dry-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.dryRun') }}
+            </ActionButton>
+            <ActionButton fit :disabled="actionKey === `sync-${binding.id}`" @click="reconcile(binding.id)">
+              <Icon name="action.refresh" size="sm" />
+              {{ actionKey === `sync-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.reconcile') }}
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -54,7 +76,12 @@
             <span>{{ t('filesyncAdmin.bindingRef') }} #{{ conflict.bindingId }} · {{ conflict.userId }}</span>
           </div>
           <div class="fs-actions">
-            <button v-for="resolution in resolutions" :key="resolution.value" class="fs-action" :class="{ 'is-danger': resolution.value === 'keep_remote' }" :disabled="actionKey === `conflict-${conflict.id}`" @click="resolve(conflict.id, resolution.value)">{{ t(resolution.label) }}</button>
+            <ActionButton v-for="resolution in resolutions" :key="resolution.value" variant="secondary" fit
+                          :class="{ 'is-danger': resolution.value === 'keep_remote' }"
+                          :disabled="actionKey === `conflict-${conflict.id}`" @click="resolve(conflict.id, resolution.value)">
+              <Icon :name="resolution.value === 'cancel' ? 'action.close' : 'status.check-circle'" size="sm" />
+              {{ t(resolution.label) }}
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -77,12 +104,16 @@ import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncActionResult } from '@/api/filesync'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 
 const { t } = useI18n()
 const adminStore = useAdminStore()
 const status = ref<FileSyncAdminStatus | null>(null)
 const dryResult = ref<FileSyncActionResult | null>(null)
 const loading = ref(false)
+const syncSaving = ref(false)
 const error = ref('')
 const actionKey = ref('')
 const resolutions = [
@@ -99,6 +130,23 @@ async function load() {
   try { status.value = await filesyncAdminApi.status(adminStore.authFetch) }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { loading.value = false }
+}
+
+async function toggleSync(enabled: boolean) {
+  if (!status.value || syncSaving.value) return
+  const previous = status.value.featureEnabled
+  status.value.featureEnabled = enabled
+  syncSaving.value = true
+  error.value = ''
+  try {
+    await filesyncAdminApi.setEnabled(adminStore.authFetch, enabled)
+    await load()
+  } catch (e) {
+    status.value.featureEnabled = previous
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    syncSaving.value = false
+  }
 }
 
 async function dryRun(bindingId: number) {
@@ -131,36 +179,36 @@ onMounted(load)
 </script>
 
 <style scoped>
-.fs-card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; color: var(--content-primary); }
+.fs-card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; color: var(--content-primary); font-family: var(--font-sans); font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .fs-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:14px; }
-.fs-title { margin:0; font-size:15px; font-weight:700; }
-.fs-sub { margin:4px 0 0; font-size:12px; color:var(--content-secondary); max-width:720px; }
-.fs-btn,.fs-action { border:1px solid var(--action-outline); background:var(--control-bg); color:var(--content-primary); border-radius:8px; padding:6px 11px; font-size:12px; cursor:pointer; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
-.fs-btn:hover:not(:disabled),.fs-action:hover:not(:disabled) { background:var(--control-bg-hover); }
-.fs-action.is-primary { background:var(--action-primary-bg); color:var(--content-on-accent); border-color:transparent; }
-.fs-action.is-danger { color:var(--status-danger); }
-.fs-btn:disabled,.fs-action:disabled { opacity:.5; cursor:default; }
-.fs-message { padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:10px; }
+.fs-head-actions { display:flex; align-items:center; justify-content:flex-end; gap:14px; flex-shrink:0; }
+.fs-setting { display:flex; align-items:center; gap:9px; }
+.fs-setting-copy { display:flex; flex-direction:column; align-items:flex-end; gap:1px; font-size:var(--font-size-sm); white-space:nowrap; }
+.fs-setting-copy small { color:var(--content-secondary); font-size:var(--font-size-xs); }
+.fs-title { margin:0; font-size:var(--font-size-md); font-weight:var(--font-weight-bold); }
+.fs-sub { margin:4px 0 0; font-size:var(--font-size-sm); color:var(--content-secondary); max-width:720px; }
+.is-danger { color:var(--status-danger); }
+.fs-message { padding:8px 12px; border-radius:8px; font-size:var(--font-size-sm); margin-bottom:10px; }
 .fs-message.is-error { color:var(--status-danger); background:color-mix(in srgb,var(--status-danger) 10%,transparent); }
-.fs-banner { display:flex; align-items:center; gap:8px; padding:9px 11px; border-radius:9px; font-size:12px; }
+.fs-banner { display:flex; align-items:center; gap:8px; padding:9px 11px; border-radius:9px; font-size:var(--font-size-sm); }
 .fs-banner.is-ok { color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); }
 .fs-banner.is-muted { color:var(--content-secondary); background:var(--control-bg); }
 .fs-dot { width:7px; height:7px; border-radius:50%; background:currentColor; flex:0 0 auto; }
 .fs-banner-meta { margin-left:auto; color:var(--content-secondary); }
 .fs-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:12px 0; }
 .fs-metric { padding:10px 12px; border:1px solid var(--border-subtle); border-radius:9px; background:var(--surface-elevated); }
-.fs-metric span { display:block; color:var(--content-secondary); font-size:11px; margin-bottom:4px; }
-.fs-metric b { font-size:18px; }
+.fs-metric span { display:block; color:var(--content-secondary); font-size:var(--font-size-xs); margin-bottom:4px; }
+.fs-metric b { font-size:var(--font-size-lg); }
 .fs-metric b.warn { color:var(--status-warning); }
-.fs-note,.fs-footnote { color:var(--content-secondary); font-size:11px; line-height:1.6; }
+.fs-note,.fs-footnote { color:var(--content-secondary); font-size:var(--font-size-xs); line-height:var(--line-height-body); }
 .fs-block { margin-top:14px; }
-.fs-block-title { font-size:12px; font-weight:700; margin-bottom:7px; }
+.fs-block-title { font-size:var(--font-size-sm); font-weight:var(--font-weight-bold); margin-bottom:7px; }
 .fs-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--border-subtle); }
-.fs-row-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; font-size:12px; }
+.fs-row-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; font-size:var(--font-size-sm); }
 .fs-row-main strong { overflow-wrap:anywhere; }
 .fs-row-main span,.fs-row-main small { color:var(--content-secondary); overflow-wrap:anywhere; }
 .fs-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; flex:0 0 auto; }
-.fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:12px; }
-.fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:11px; overflow-wrap:anywhere; }
-@media (max-width:720px) { .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } }
+.fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
+.fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
+@media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } }
 </style>

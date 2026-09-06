@@ -82,6 +82,10 @@ async function read<T>(request: Promise<Response>): Promise<T> {
 
 export const filesyncAdminApi = {
   status: (fetcher: AdminFetch) => read<FileSyncAdminStatus>(fetcher('/api/v1/admin/filesync/status')),
+  setEnabled: (fetcher: AdminFetch, enabled: boolean) => read<Record<string, unknown>>(fetcher('/api/v1/admin/config', {
+    method: 'PATCH',
+    body: JSON.stringify({ patch: { filesync: { enabled } } }),
+  })),
   dryRun: (fetcher: AdminFetch, bindingId: number) => read<FileSyncActionResult>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST' })),
   reconcile: (fetcher: AdminFetch, bindingId: number) => read<FileSyncActionResult>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true }) })),
   resolveConflict: (fetcher: AdminFetch, conflictId: number, resolution: FileSyncConflictResolution) => read<{ id: number; status: string; resolution: string }>(fetcher(`/api/v1/admin/filesync/conflicts/${conflictId}/resolve`, { method: 'POST', body: JSON.stringify({ resolution, confirm: resolution !== 'cancel' }) })),

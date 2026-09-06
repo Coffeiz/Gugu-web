@@ -18,6 +18,28 @@ _log = logging.getLogger("app.services.storage")
 _LOCAL_NEW_FILE_MODE = 0o660
 
 
+def _inherit_storage_access(path: Path) -> None:
+    """让文件库产生的 inode 继承已准备好的沙盒目录组权限。
+
+    backend 可能以 root 运行，而 rootless 沙盒使用映射后的非 root UID。
+    只把 group 设为目标父目录的 group，并补齐 group rw(X)，不开放 world
+    权限；目录权限初始化由 prepare_rootless_storage 负责。
+    """
+    try:
+        parent_stat = path.parent.stat()
+        if hasattr(os, "chown"):
+            os.chown(path, -1, parent_stat.st_gid)
+        current = path.stat(follow_symlinks=False)
+        if stat.S_ISDIR(current.st_mode):
+            mode = stat.S_IMODE(current.st_mode) | 0o070
+        else:
+            mode = stat.S_IMODE(current.st_mode) | 0o060
+        os.chmod(path, mode, follow_symlinks=False)
+    except (FileNotFoundError, OSError):
+        # 权限修复不能掩盖已经完成的文件操作；下次 watcher/对账仍可发现并修复。
+        return
+
+
 @dataclass
 class StorageObjectInfo:
     """对象元信息（P1.1；对账/迁移校验用）。"""
@@ -205,6 +227,8 @@ class LocalStorageBackend(StorageBackend):
                 # 增量备份和同步判断使用；权限、owner 与 ACL 仍保持旧文件语义。
                 os.utime(temporary, None, follow_symlinks=False)
             os.replace(temporary, path)
+            if existing_stat is None:
+                _inherit_storage_access(path)
             try:
                 directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
                 try:
@@ -236,6 +260,7 @@ class LocalStorageBackend(StorageBackend):
         new = self.root / new_key
         new.parent.mkdir(parents=True, exist_ok=True)
         old.rename(new)
+        _inherit_storage_access(new)
 
     async def rename_dir(self, old_prefix: str, new_prefix: str) -> None:
         old = self.root / old_prefix
@@ -243,6 +268,8 @@ class LocalStorageBackend(StorageBackend):
         if old.exists():
             new.parent.mkdir(parents=True, exist_ok=True)
             old.rename(new)
+            for item in new.rglob("*"):
+                _inherit_storage_access(item)
 
     def public_url(self, key: str) -> str:
         return f"/uploads/{key}"
@@ -303,6 +330,7 @@ class LocalStorageBackend(StorageBackend):
             dst = self.root / dst_key
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(self.root / src_key, dst)
+            _inherit_storage_access(dst)
         await asyncio.to_thread(_cp)
 
     async def stat(self, key: str) -> StorageObjectInfo | None:
@@ -316,7 +344,9 @@ class LocalStorageBackend(StorageBackend):
 
     async def ensure_folder(self, path: str) -> None:
         def _mk():
-            (self.root / path).mkdir(parents=True, exist_ok=True)
+            target = self.root / path
+            target.mkdir(parents=True, exist_ok=True)
+            _inherit_storage_access(target)
         await asyncio.to_thread(_mk)
 
     async def move_folder(self, old_path: str, new_path: str) -> None:
