@@ -28,21 +28,20 @@ from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import case, select, func, text, literal_column
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage
 
-_SPLIT_CACHE_PROVIDERS = ("anthropic", "minimax")
-
-
 def _effective_input_tokens(provider: str, tokens_in: int, cache_read: int, cache_write: int) -> int:
-    """按供应商 usage 约定计算完整输入 token 数。"""
-    if (provider or "").lower() in _SPLIT_CACHE_PROVIDERS:
-        return tokens_in + cache_read + cache_write
-    return tokens_in
+    """按落库统一语义计算完整输入 token 数。
+
+    provider 只保留在签名中兼容既有调用方；所有 driver 都将 tokens_in
+    归一为未命中缓存的输入，缓存读写单独落库。
+    """
+    return tokens_in + cache_read + cache_write
 
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -73,18 +72,8 @@ def _mask_key(key: str) -> str:
 
 
 def _effective_input_expr():
-    """返回统一口径的完整输入 token 表达式。
-
-    Anthropic 将 cache_read/cache_write 与 input_tokens 分开返回；其他兼容
-    OpenAI 的供应商通常已经把缓存 token 包含在 tokens_in 中，不能再次相加。
-    """
-    return case(
-        (
-            func.lower(AgentUsage.provider).in_(_SPLIT_CACHE_PROVIDERS),
-            AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write,
-        ),
-        else_=AgentUsage.tokens_in,
-    )
+    """返回统一口径的完整输入 token 表达式。"""
+    return AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write
 
 
 def _effective_input_sql(
@@ -94,12 +83,7 @@ def _effective_input_sql(
     cache_write_column: str = "cache_write",
 ) -> str:
     """生成 raw SQL 使用的统一输入 token 口径。"""
-    providers = ", ".join(f"'{provider}'" for provider in _SPLIT_CACHE_PROVIDERS)
-    return (
-        f"CASE WHEN LOWER({provider_column}) IN ({providers}) "
-        f"THEN {tokens_in_column} + {cache_read_column} + {cache_write_column} "
-        f"ELSE {tokens_in_column} END"
-    )
+    return f"{tokens_in_column} + {cache_read_column} + {cache_write_column}"
 
 
 def _ensure_presets(override: dict) -> dict:
@@ -459,7 +443,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        )
+        ).where(AgentUsage.is_byok.is_(False))
     )
     total_calls, total_in, total_out, total_cache_read, total_cache_write = total_row.one()
 
@@ -473,7 +457,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.created_at >= today_start)
+        ).where(AgentUsage.created_at >= today_start, AgentUsage.is_byok.is_(False))
     )
     today_calls, today_in, today_out, today_cache_read, today_cache_write = today_row.one()
 
@@ -487,7 +471,8 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).group_by(AgentUsage.model, AgentUsage.provider)
+        ).where(AgentUsage.is_byok.is_(False))
+        .group_by(AgentUsage.model, AgentUsage.provider)
         .order_by(func.count(AgentUsage.id).desc())
     )
     by_model = [
@@ -500,6 +485,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         text(f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM') AS m
             FROM agent_usage
+            WHERE NOT is_byok
             GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM')
             ORDER BY m DESC
             LIMIT 12
@@ -534,6 +520,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :month_start AND created_at < :month_end
+              AND NOT is_byok
     """
     daily_params = {"month_start": _utc_naive(month_start_local), "month_end": _utc_naive(month_end_local)}
     if model:
@@ -568,6 +555,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :recent_start AND created_at < :recent_end
+              AND NOT is_byok
     """
     recent_params = {
         "recent_start": _utc_naive(recent_start_local),
@@ -606,7 +594,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "daily":    daily,
         "recent_daily": recent_daily,
         "timezone": getattr(user_tz, "key", None) or str(user_tz),
-        "usage_basis": "已落库的成功 LLM 调用；输入 token 按供应商 usage 合约折算，缓存命中率按完整输入加权",
+        "usage_basis": "已落库的成功平台 LLM 调用（不含 BYOK）；输入 token 按完整输入统计，缓存命中率按完整输入加权",
     }
 
 

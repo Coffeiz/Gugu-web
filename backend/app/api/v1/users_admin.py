@@ -47,7 +47,8 @@ async def list_users(
             AgentUsage.user_id,
             func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out).label("tokens"),
         )
-        .where(and_(AgentUsage.created_at >= month_start, AgentUsage.created_at <= month_end))
+        .where(and_(AgentUsage.created_at >= month_start, AgentUsage.created_at <= month_end,
+                    AgentUsage.is_byok.is_(False)))
         .group_by(AgentUsage.user_id)
     )
     usage_result = await db.execute(usage_stmt)
@@ -56,7 +57,7 @@ async def list_users(
     week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     week_stmt = (
         select(AgentUsage.user_id, func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out).label("tokens"))
-        .where(AgentUsage.created_at >= week_start)
+        .where(AgentUsage.created_at >= week_start, AgentUsage.is_byok.is_(False))
         .group_by(AgentUsage.user_id)
     )
     week_result = await db.execute(week_stmt)
@@ -66,7 +67,7 @@ async def list_users(
     h6_start = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
     h6_stmt = (
         select(AgentUsage.user_id, func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out).label("tokens"))
-        .where(AgentUsage.created_at >= h6_start)
+        .where(AgentUsage.created_at >= h6_start, AgentUsage.is_byok.is_(False))
         .group_by(AgentUsage.user_id)
     )
     h6_result = await db.execute(h6_stmt)
