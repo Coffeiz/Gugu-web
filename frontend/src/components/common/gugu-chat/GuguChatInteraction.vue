@@ -3,10 +3,10 @@
     <div class="interaction-title">{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</div>
     <div class="interaction-body">{{ msg.interaction?.body }}</div>
     <div class="interaction-actions">
-      <button v-for="option in displayOptions" :key="option.id" type="button"
-              :disabled="resolved || expired" @click="selectOption(option)">
+      <ActionButton v-for="option in displayOptions" :key="option.id" fit
+                    :disabled="resolved || expired" @click="selectOption(option)">
         {{ option.label }}
-      </button>
+      </ActionButton>
     </div>
     <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
@@ -21,6 +21,7 @@
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { CUSTOM_REPLY_OPTION_ID, type ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()
@@ -77,10 +78,6 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-title { color: var(--content-primary); font-size: var(--font-size-md); font-weight: 650; line-height: var(--line-height-ui); }
 .interaction-body { margin-top: 5px; color: var(--content-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-body); white-space: pre-wrap; }
 .interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
-.interaction-actions button { min-height: var(--control-height-sm); border: 1px solid var(--action-primary); border-radius: var(--control-radius); padding: 5px 12px; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: var(--font-size-sm); cursor: pointer; transform: translateY(0); transition: var(--card-motion), background var(--motion-hover-card) var(--motion-ease-standard); }
-.interaction-actions button:hover:not(:disabled) { background: var(--action-primary-bg-hover); border-color: var(--action-primary-hover); box-shadow: none; transform: none; }
-.interaction-actions button:focus-visible { outline: none; box-shadow: var(--control-focus-shadow); }
-.interaction-actions button:disabled { opacity: .55; cursor: default; }
 .interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }
