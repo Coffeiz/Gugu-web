@@ -18,9 +18,9 @@
             <Icon name="action.search" size="sm" />
             {{ userScanning ? t('storageAuditUi.userScanning') : t('storageAuditUi.userScan') }}
           </button>
-          <button v-if="userReport?.users.length" class="sa-btn primary" :disabled="userCleaning" @click="cleanUsers">
+          <ActionButton v-if="userReport?.users.length" fit :disabled="userCleaning" @click="cleanUsers">
             {{ t('storageAuditUi.userClean', { count: userReport.users.length }) }}
-          </button>
+          </ActionButton>
         </div>
       </div>
       <div v-if="userMsg" class="sa-inline-msg" :class="userMsgKind">{{ userMsg }}</div>
@@ -305,6 +305,7 @@ import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { RiCheckFill } from '@remixicon/vue'
 import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
 
