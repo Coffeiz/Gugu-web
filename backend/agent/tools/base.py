@@ -544,17 +544,16 @@ class SkillRegistry:
                     handler_args = dict(args)
                     handler_args["_session_id"] = current_dispatch_session_id()
                 result: Any = await tool.handler(db, user_id, handler_args)
-                file_sync_event = (
-                    result.get("_file_sync_event")
-                    if isinstance(result, dict) else None
-                )
-                queued_file_event = None
                 # 少数由服务端明确授权的执行路径（当前是 Shell Autopilot）不会携带
                 # confirm 参数。授权事实只允许通过内部标记传到 dispatch，随后立即移除，
                 # 不能进入模型结果或轨迹；普通 destructive handler 不能借此跳过绊线。
                 autopilot_authorized = (
                     isinstance(result, dict)
                     and result.pop("_confirm_gate_authorized", None) == "shell_autopilot"
+                )
+                dispatch_risk = (
+                    result.pop("_dispatch_risk", None)
+                    if isinstance(result, dict) else None
                 )
                 # Agent 一次工具调用就是一个任务事务边界。Service 层只负责 flush，
                 # 由这里统一提交/回滚：handler 返回 error dict 说明业务校验失败，
@@ -564,19 +563,7 @@ class SkillRegistry:
                     if isinstance(result, dict) and result.get("error"):
                         await db.rollback()
                     else:
-                        if file_sync_event:
-                            from app.services.filesync import enqueue_file_event
-                            queued_file_event = await enqueue_file_event(
-                                db, user_id,
-                                operation=str(file_sync_event.get("operation") or "refresh"),
-                                entity_ids=tuple(file_sync_event.get("entity_ids") or ()),
-                                source=str(file_sync_event.get("source") or "shell"),
-                            )
                         await db.commit()
-                        if queued_file_event is not None:
-                            from app.services.filesync import deliver_file_event
-                            await deliver_file_event(db, queued_file_event)
-                            await db.commit()
         except Exception as e:
             diag_log(f"agent.tools.dispatch.{name}", e)          # 原始 → 受限诊断出口
             _safe = sanitize_error(f"{type(e).__name__}: {e}")
@@ -585,11 +572,6 @@ class SkillRegistry:
             payload = enrich_tool_error(name, {"error": f"工具 {name} 执行出错：{_safe}"})
             return json.dumps(payload, ensure_ascii=False), None
 
-        # dispatch 内部元数据必须在轨迹记录前移除，避免把事件控制字段暴露给
-        # LoopScope/模型；它们只服务于提交后的本地事件发布。
-        if isinstance(result, dict):
-            # 只在事务已经提交后移除内部事件字段；事件本身已经在提交前写入 outbox。
-            result.pop("_file_sync_event", None)
         # 脱敏工具自己返回的 error 字段（如 files.py 的 `{"error": f"…{str(e)}"}`）：只动 error、不碰正常内容；
         # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
         result = enrich_tool_error(name, result)
@@ -615,7 +597,9 @@ class SkillRegistry:
         # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
         from agent.security import confirm as _confirm
-        if (tool.destructive and _ok and not automation_tool_allowed(name)
+        if (tool.destructive and _ok
+                and dispatch_risk in (None, "dangerous")
+                and not automation_tool_allowed(name)
                 and not autopilot_authorized
                 and not _confirm.is_confirmed(args) and not _confirm.is_block(result)):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
