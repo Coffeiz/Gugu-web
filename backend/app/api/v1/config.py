@@ -18,7 +18,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, field_validator
 from typing import Any, Literal
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings, save_override
 from app.core.redaction import redact
@@ -180,6 +180,105 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
     }
 
 
+class UserStorageRepairRequest(BaseModel):
+    user_ids: list[str]
+    confirm: bool = False
+
+    @field_validator("user_ids")
+    @classmethod
+    def validate_user_ids(cls, value: list[str]) -> list[str]:
+        if not value or len(value) > 100:
+            raise ValueError("单次最多处理 100 个用户")
+        return list(dict.fromkeys(value))
+
+
+async def _scan_users_without_storage(db: AsyncSession) -> tuple[object, list[dict]]:
+    """扫描本地存储中目录缺失或 DB 文件全部没有物理对象的账号；不适用于 OSS。"""
+    from app.models import File, Project, ScheduledTask, User
+    from app.services.storage import LocalStorageBackend, get_storage
+
+    storage = get_storage()
+    if not isinstance(storage, LocalStorageBackend):
+        raise HTTPException(status_code=409, detail="用户目录对账仅支持 local 存储")
+
+    storage_keys = set(await storage.list_keys())
+    users = (await db.execute(select(User).order_by(User.created_at, User.id))).scalars().all()
+    missing = []
+    for user in users:
+        # 普通文件使用 <uid>/，早期 onboarding 使用 u/<uid>/；任一存在都视为有用户目录。
+        user_prefixes = (f"{user.id}/", f"u/{user.id}/")
+        has_user_dir = any((storage.root / prefix.rstrip("/")).is_dir() for prefix in user_prefixes)
+        physical_files = sum(1 for key in storage_keys if key.startswith(user_prefixes))
+        counts = {
+            "files": await db.scalar(select(func.count()).select_from(File).where(File.user_id == user.id)),
+            "projects": await db.scalar(select(func.count()).select_from(Project).where(Project.user_id == user.id)),
+            "scheduled_tasks": await db.scalar(select(func.count()).select_from(ScheduledTask).where(ScheduledTask.user_id == user.id)),
+        }
+        # 空目录本身不能证明账号已被删除；只有 DB 仍有 File 记录而物理对象为 0 时，
+        # 才纳入可清理列表。没有文件的新注册账号不会被误判。
+        missing_directory = not has_user_dir
+        missing_files = counts["files"] and physical_files == 0
+        if not missing_directory and not missing_files:
+            continue
+        missing.append({
+            "user_id": str(user.id),
+            "username": user.username,
+            "display_name": user.display_name,
+            "account_status": user.account_status,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "has_directory": has_user_dir,
+            "physical_files": physical_files,
+            "reason": "missing_directory" if missing_directory else "missing_files",
+            **{key: int(value or 0) for key, value in counts.items()},
+        })
+    return storage, missing
+
+
+@router.get("/reconcile-users")
+async def reconcile_users(db: AsyncSession = Depends(get_db)):
+    """扫描数据库账号与 local 用户目录；只读，不删除数据。"""
+    from app.models import User
+    storage, missing = await _scan_users_without_storage(db)
+    return {
+        "backend": "local",
+        "location": str(storage.root),
+        "user_count": await db.scalar(select(func.count()).select_from(User)),
+        "missing_directory_count": sum(item["reason"] == "missing_directory" for item in missing),
+        "missing_file_user_count": sum(item["reason"] == "missing_files" for item in missing),
+        "users": missing,
+    }
+
+
+@router.post("/reconcile-users/repair")
+async def repair_users_without_storage(body: UserStorageRepairRequest, db: AsyncSession = Depends(get_db)):
+    """删除重新核验后仍无用户目录的账号及其数据库关联数据。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="用户存储对账清理必须显式确认")
+    import uuid
+    from app.models import User
+    from app.services.account_deletion import delete_account
+
+    _, missing = await _scan_users_without_storage(db)
+    allowed = {item["user_id"] for item in missing}
+    done, skipped = [], []
+    for raw_id in body.user_ids:
+        try:
+            user_id = str(uuid.UUID(raw_id))
+        except ValueError:
+            skipped.append({"user_id": raw_id, "reason": "用户 ID 无效"})
+            continue
+        if user_id not in allowed:
+            skipped.append({"user_id": user_id, "reason": "用户目录已存在或用户不存在"})
+            continue
+        user = await db.get(User, uuid.UUID(user_id))
+        if user is None:
+            skipped.append({"user_id": user_id, "reason": "用户不存在"})
+            continue
+        await delete_account(db, user)
+        done.append(user_id)
+    return {"done": done, "skipped": skipped}
+
+
 def _fmt_size(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
@@ -298,6 +397,7 @@ async def _resolve_import_folder(db, user_id, project_id: int | None, folder_par
 class RepairRequest(BaseModel):
     action: Literal["delete", "import"]
     keys: list[str]
+    confirm: bool = False
 
 
 class PathMigrationItem(BaseModel):
@@ -374,6 +474,8 @@ async def migrate_legacy_trash(body: TrashMigrationRequest, db: AsyncSession = D
 @router.post("/reconcile-storage/repair")
 async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_db)):
     """对账修复（**会改数据**）：delete 删孤儿物理文件；import 把孤儿重建成 DB 记录。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="对账修复必须显式确认")
     from app.services.storage import get_storage
     storage = get_storage()
     done, failed = [], []

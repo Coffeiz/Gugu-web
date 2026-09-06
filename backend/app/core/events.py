@@ -116,6 +116,8 @@ async def publish(user_id, *resources: str, origin: str | None = None,
                   entity_ids: list[int | str] | None = None,
                   event_payload: Any = None,
                   notification: dict | None = None,
+                  event_id: str | None = None,
+                  source: str | None = None,
                   **extra) -> bool:
     """通知某用户：若干资源已变化（best-effort，失败不影响主流程）。
 
@@ -152,7 +154,7 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             pass
         payload.update({
             "protocol_version": "live-event-v1",
-            "event_id": f"evt-{uuid.uuid4().hex}",
+            "event_id": event_id or f"evt-{uuid.uuid4().hex}",
             "type": "resource.changed",
             "resource": canonical_resource,
             "operation": inferred_operation,
@@ -163,6 +165,8 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             payload["entity_id"] = entity_id
         if entity_ids is not None:
             payload["entity_ids"] = entity_ids
+        if source is not None:
+            payload["source"] = source
         if event_payload is not None:
             # 事件 payload 必须是 JSON 数据；API 层可以传 Pydantic 响应模型，
             # 这里统一转换，避免“业务已提交但事件因不可序列化而静默丢失”。

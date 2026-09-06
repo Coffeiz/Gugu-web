@@ -5,6 +5,42 @@
       <p class="sa-sub">{{ t('storageAudit.subtitle') }}</p>
     </div>
 
+    <FileSyncAdminPanel />
+
+    <section class="sa-card user-storage-audit">
+      <div class="sa-card-head">
+        <div>
+          <h3 class="sa-card-title">{{ t('storageAuditUi.userTitle') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAuditUi.userHint') }}</p>
+        </div>
+        <div class="sa-card-head-right">
+          <button class="sa-btn" :disabled="userScanning" @click="scanUsers">
+            <Icon name="action.search" size="sm" />
+            {{ userScanning ? t('storageAuditUi.userScanning') : t('storageAuditUi.userScan') }}
+          </button>
+          <button v-if="userReport?.users.length" class="sa-btn primary" :disabled="userCleaning" @click="cleanUsers">
+            {{ t('storageAuditUi.userClean', { count: userReport.users.length }) }}
+          </button>
+        </div>
+      </div>
+      <div v-if="userMsg" class="sa-inline-msg" :class="userMsgKind">{{ userMsg }}</div>
+      <div v-if="userReport" class="recon-report">
+        <div class="recon-summary">
+          {{ t('storageAuditUi.userSummary', { total: userReport.user_count, missing: userReport.missing_directory_count, empty: userReport.missing_file_user_count }) }}
+          <span class="recon-meta"> · {{ userReport.location }}</span>
+        </div>
+        <div v-if="!userReport.users.length" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditUi.userHealthy') }}</div>
+        <div v-else class="recon-block">
+          <div class="recon-block-title">{{ t('storageAuditUi.userMissing') }}</div>
+          <div v-for="u in userReport.users" :key="u.user_id" class="recon-row">
+            <span class="recon-name">{{ u.display_name || u.username }}</span>
+            <span class="recon-meta">{{ u.username }} · {{ u.user_id }} · {{ t(u.reason === 'missing_directory' ? 'storageAuditUi.userReasonDirectory' : 'storageAuditUi.userReasonFiles') }} · {{ t('storageAuditUi.userImpact', { files: u.files, physical: u.physical_files, projects: u.projects, tasks: u.scheduled_tasks }) }}</span>
+          </div>
+          <p class="sa-card-sub user-storage-warning">{{ t('storageAuditUi.userWarning') }}</p>
+        </div>
+      </div>
+    </section>
+
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
@@ -270,6 +306,7 @@ import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { RiCheckFill } from '@remixicon/vue'
+import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
@@ -319,6 +356,66 @@ const fileRepairing = ref(false)
 const fileReport = ref<any | null>(null)
 const fileMsg = ref('')
 const fileMsgKind = ref<'ok' | 'err'>('ok')
+
+interface UserStorageItem {
+  user_id: string
+  username: string
+  display_name: string | null
+  account_status: string
+  created_at: string | null
+  files: number
+  projects: number
+  scheduled_tasks: number
+  physical_files: number
+  reason: 'missing_directory' | 'missing_files'
+}
+interface UserStorageReport { backend: string; location: string; user_count: number; missing_directory_count: number; missing_file_user_count: number; users: UserStorageItem[] }
+const userScanning = ref(false)
+const userCleaning = ref(false)
+const userReport = ref<UserStorageReport | null>(null)
+const userMsg = ref('')
+const userMsgKind = ref<'ok' | 'err'>('ok')
+
+async function scanUsers() {
+  userScanning.value = true
+  userMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-users')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || t('storageAuditUi.userScanFailed'))
+    userReport.value = data
+  } catch (e) {
+    userMsgKind.value = 'err'
+    userMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { userScanning.value = false }
+}
+
+async function cleanUsers() {
+  const users = userReport.value?.users || []
+  if (!users.length || !await confirmDialog({
+    title: t('storageAuditUi.userCleanTitle'),
+    message: t('storageAuditUi.userCleanConfirm', { count: users.length }),
+    tone: 'danger',
+    confirmText: t('storageAuditUi.userCleanConfirmButton'),
+  })) return
+  userCleaning.value = true
+  userMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-users/repair', {
+      method: 'POST',
+      body: JSON.stringify({ user_ids: users.map(user => user.user_id), confirm: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || t('storageAuditUi.userCleanFailed'))
+    userMsgKind.value = data.skipped?.length ? 'err' : 'ok'
+    userMsg.value = t('storageAuditUi.userCleanResult', { done: data.done.length, skipped: data.skipped?.length || 0 })
+    await scanUsers()
+    await scanFiles()
+  } catch (e) {
+    userMsgKind.value = 'err'
+    userMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { userCleaning.value = false }
+}
 
 const pathScanning = ref(false)
 const pathRepairing = ref(false)
@@ -387,7 +484,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/repair', {
       method: 'POST',
-      body: JSON.stringify({ action, keys }),
+      body: JSON.stringify({ action, keys, confirm: true }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.repairFailure', { message: '' }))

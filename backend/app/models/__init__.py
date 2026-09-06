@@ -275,6 +275,103 @@ class Workspace(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
+class FileSyncBinding(Base):
+    """文件同步协议绑定；路径只保存为当前用户存储根下的相对路径。"""
+    __tablename__ = "file_sync_bindings"
+    __table_args__ = (
+        UniqueConstraint("user_id", "workspace_id", "source", name="uq_file_sync_binding_scope"),
+        Index("ix_file_sync_bindings_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[Optional[int]] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True)
+    source: Mapped[str] = mapped_column(String(24))
+    mode: Mapped[str] = mapped_column(String(24), default="bidirectional", server_default="bidirectional")
+    protocol_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(String(24), default="active", server_default="active", index=True)
+    root_path: Mapped[str] = mapped_column(String(1000), default=".", server_default=".")
+    root_fingerprint: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncJournal(Base):
+    """文件变更幂等日志；路径仅允许是工作区内的规范相对路径。"""
+    __tablename__ = "file_sync_journal"
+    __table_args__ = (
+        UniqueConstraint("binding_id", "idempotency_key", name="uq_file_sync_journal_idempotency"),
+        Index("ix_file_sync_journal_binding_revision", "binding_id", "revision"),
+        Index("ix_file_sync_journal_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    source: Mapped[str] = mapped_column(String(24))
+    operation: Mapped[str] = mapped_column(String(24))
+    relative_path: Mapped[str] = mapped_column(String(1000))
+    baseline_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    observed_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncConflict(Base):
+    """双向同步冲突；保留双方指纹，正文仍由文件存储承载。"""
+    __tablename__ = "file_sync_conflicts"
+    __table_args__ = (
+        Index("ix_file_sync_conflicts_user_status", "user_id", "status"),
+        Index("ix_file_sync_conflicts_binding_path", "binding_id", "relative_path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    relative_path: Mapped[str] = mapped_column(String(1000))
+    source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    baseline_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    local_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    remote_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    resolution: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncOutbox(Base):
+    """同步 canonical 事件的可靠投递队列；DB 提交后可安全重试发布。"""
+    __tablename__ = "file_sync_outbox"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_file_sync_outbox_event_id"),
+        Index("ix_file_sync_outbox_pending", "status", "next_attempt_at"),
+        Index("ix_file_sync_outbox_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[str] = mapped_column(String(80))
+    resource: Mapped[str] = mapped_column(String(64), default="files", server_default="files")
+    operation: Mapped[str] = mapped_column(String(24), default="refresh", server_default="refresh")
+    entity_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    revision: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
 class TerminalSessionRecord(Base):
     """共享协作终端会话；命令执行仍由 Shell 沙盒负责。"""
     __tablename__ = "terminal_sessions"

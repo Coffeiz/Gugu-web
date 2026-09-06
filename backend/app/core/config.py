@@ -131,6 +131,10 @@ class SandboxSettings(BaseModel):
         False,
         description="是否开放完整用户沙箱读写授权入口（默认关闭，需灰度开启）",
     )
+    file_sync_enabled: bool = Field(
+        False,
+        description="是否启用文件事实源同步协议（默认关闭，完成投影与冲突处理后再开启）",
+    )
     code_execution_enabled: bool = Field(
         True,
         description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",

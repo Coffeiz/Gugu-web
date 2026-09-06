@@ -74,3 +74,25 @@ async def test_path_migration_reports_missing_file_ids(db, tmp_path, monkeypatch
 
     assert result["done"] == []
     assert result["failed"] == [{"file_id": 999999, "error": "文件不存在或已删除"}]
+
+
+async def test_reconcile_users_only_reports_users_without_local_directory(db, user_a, user_b, tmp_path, monkeypatch):
+    storage = LocalStorageBackend(Path(tmp_path))
+    (storage.root / str(user_b.id)).mkdir(parents=True)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+
+    result = await config_api.reconcile_users(db=db)
+
+    assert result["backend"] == "local"
+    assert result["missing_directory_count"] == 1
+    assert result["users"][0]["user_id"] == str(user_a.id)
+
+
+async def test_reconcile_users_accepts_legacy_onboarding_directory(db, user_a, tmp_path, monkeypatch):
+    storage = LocalStorageBackend(Path(tmp_path))
+    (storage.root / "u" / str(user_a.id)).mkdir(parents=True)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+
+    result = await config_api.reconcile_users(db=db)
+
+    assert result["missing_directory_count"] == 0

@@ -18,6 +18,7 @@ from app.core.logging import setup_logging, flush_log_queue
 from app.api.v1 import config as config_router
 from app.api.v1 import admin_auth, sandbox_admin
 from app.api.v1 import auth as user_auth
+from app.api.v1 import filesync_admin as filesync_admin_router
 from app.api.v1 import projects as projects_router
 from app.api.v1 import files as files_router
 from app.api.v1 import folders as folders_router
@@ -35,6 +36,7 @@ from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import wechat_connect as wechat_connect_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import workspaces as workspaces_router
+from app.api.v1 import filesync as filesync_router
 from app.api.v1 import terminals as terminals_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
@@ -140,6 +142,21 @@ async def _db_retry_loop():
             logger.debug("DB重试尚未连通：%s: %s", type(e).__name__, e)
 
 
+async def _filesync_outbox_loop():
+    """投递已提交但尚未送达网页的文件同步事件。"""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            from app.db.session import _SessionLocal
+            if _SessionLocal is None:
+                continue
+            from app.services.filesync import deliver_pending_file_events
+            async with _SessionLocal() as db:
+                await deliver_pending_file_events(db)
+        except Exception as exc:
+            logger.debug("文件同步事件 outbox 投递失败：%s", type(exc).__name__)
+
+
 # 数据库启动超时（秒）：超时后跳过建表，后台继续重试
 # 通过环境变量 DB_STARTUP_TIMEOUT 可覆盖，例如：DB_STARTUP_TIMEOUT=10 ./start.sh start
 DB_STARTUP_TIMEOUT = int(os.getenv("DB_STARTUP_TIMEOUT", "5"))
@@ -222,14 +239,16 @@ async def lifespan(app: FastAPI):
         pass
     task       = asyncio.create_task(_auto_cleanup_loop())
     retry_task = asyncio.create_task(_db_retry_loop()) if RUN_STARTUP_MIGRATIONS else None
+    filesync_task = asyncio.create_task(_filesync_outbox_loop())
     log_task   = asyncio.create_task(flush_log_queue())
     yield
     task.cancel()
     if retry_task is not None:
         retry_task.cancel()
+    filesync_task.cancel()
     log_task.cancel()
     await asyncio.gather(
-        task, *( [retry_task] if retry_task is not None else [] ), log_task,
+        task, *( [retry_task] if retry_task is not None else [] ), filesync_task, log_task,
         return_exceptions=True,
     )
     from agent.rag.injection import shutdown_background_recall_tasks
@@ -352,6 +371,7 @@ app.include_router(mind_router.router,        prefix="/api/v1")
 app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
 app.include_router(workspaces_router.router, prefix="/api/v1")
+app.include_router(filesync_router.router, prefix="/api/v1")
 app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
@@ -421,6 +441,11 @@ app.include_router(
 )
 app.include_router(
     folder_doctor_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    filesync_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

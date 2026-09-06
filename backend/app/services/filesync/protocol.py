@@ -1,0 +1,165 @@
+"""同步协议的稳定字段、幂等键和路径安全校验。"""
+from __future__ import annotations
+
+import hashlib
+import re
+from enum import StrEnum
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.models import FileSyncBinding, FileSyncJournal
+from app.models import Workspace
+from app.core.ownership import get_owned
+
+FILE_SYNC_PROTOCOL_VERSION = 1
+
+
+class FileSyncDisabled(RuntimeError):
+    """同步功能开关关闭。"""
+
+
+class FileSyncSource(StrEnum):
+    LOCAL_DIRECTORY = "local_directory"
+    SHELL = "shell"
+    FILE_API = "file_api"
+
+
+class FileSyncMode(StrEnum):
+    MIRROR_IN = "mirror_in"
+    MIRROR_OUT = "mirror_out"
+    BIDIRECTIONAL = "bidirectional"
+
+
+class FileSyncOperation(StrEnum):
+    BASELINE = "baseline"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    MOVE = "move"
+
+
+class FileSyncStatus(StrEnum):
+    PENDING = "pending"
+    SYNCED = "synced"
+    CONFLICT = "conflict"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+def is_file_sync_enabled() -> bool:
+    return bool(getattr(get_settings().sandbox, "file_sync_enabled", False))
+
+
+def normalize_relative_path(value: str) -> str:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError("同步路径无效")
+    path = value.replace("\\", "/")
+    if path.startswith("/") or re.match(r"^[A-Za-z]:/", path):
+        raise ValueError("同步路径必须是相对路径")
+    parts = [part for part in path.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError("同步路径越界")
+    return "/".join(parts)
+
+
+async def create_binding(
+    db: AsyncSession,
+    *,
+    user_id,
+    source: str,
+    root_fingerprint: str,
+    workspace_id: int | None = None,
+    mode: str = FileSyncMode.BIDIRECTIONAL,
+    root_path: str = ".",
+) -> FileSyncBinding:
+    if not is_file_sync_enabled():
+        raise FileSyncDisabled("文件同步未开启")
+    if get_settings().storage.backend != "local":
+        raise ValueError("OSS 存储模式不支持文件同步绑定")
+    if workspace_id is not None:
+        workspace = await get_owned(db, Workspace, workspace_id, user_id)
+        if workspace is None or not workspace.enabled:
+            raise LookupError("工作区不存在或已停用")
+    if mode not in {item.value for item in FileSyncMode}:
+        raise ValueError("同步模式无效")
+    root_path = "." if (not root_path or root_path in {".", "./"}) else normalize_relative_path(root_path)
+    if not re.fullmatch(r"[0-9a-f]{64}", root_fingerprint or ""):
+        raise ValueError("同步根指纹无效")
+    if source not in {item.value for item in FileSyncSource}:
+        raise ValueError("同步来源无效")
+    row = FileSyncBinding(
+        user_id=user_id, workspace_id=workspace_id, source=str(source), mode=mode,
+        protocol_version=FILE_SYNC_PROTOCOL_VERSION, root_path=root_path,
+        root_fingerprint=root_fingerprint,
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+def validate_sync_path(root: Path, relative_path: str) -> Path:
+    """校验工作区边界、符号链接和特殊文件，不创建目标。"""
+    relative = normalize_relative_path(relative_path)
+    root = root.expanduser().resolve()
+    candidate = (root / relative).resolve(strict=False)
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("同步路径越界") from exc
+    if candidate.exists() and not (candidate.is_file() or candidate.is_dir()):
+        raise ValueError("不支持同步特殊文件")
+    return candidate
+
+
+def build_idempotency_key(*, source: str, operation: str, relative_path: str, fingerprint: str | None) -> str:
+    normalized = normalize_relative_path(relative_path)
+    payload = "|".join((str(source), str(operation), normalized, fingerprint or ""))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+async def record_change(
+    db: AsyncSession,
+    *,
+    binding: FileSyncBinding,
+    user_id,
+    source: str,
+    operation: str,
+    relative_path: str,
+    idempotency_key: str,
+    baseline_fingerprint: str | None = None,
+    observed_fingerprint: str | None = None,
+    status: str = FileSyncStatus.PENDING,
+) -> FileSyncJournal:
+    if not is_file_sync_enabled():
+        raise FileSyncDisabled("文件同步未开启")
+    if binding.user_id != user_id:
+        raise LookupError("同步绑定不存在")
+    if source not in {item.value for item in FileSyncSource}:
+        raise ValueError("同步来源无效")
+    if operation not in {item.value for item in FileSyncOperation}:
+        raise ValueError("同步操作无效")
+    if status not in {item.value for item in FileSyncStatus}:
+        raise ValueError("同步状态无效")
+    relative_path = normalize_relative_path(relative_path)
+    if len(idempotency_key) > 128 or not idempotency_key:
+        raise ValueError("幂等键无效")
+    existing = await db.scalar(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.idempotency_key == idempotency_key,
+        FileSyncJournal.user_id == user_id,
+    ))
+    if existing is not None:
+        return existing
+    binding.revision = int(binding.revision or 0) + 1
+    row = FileSyncJournal(
+        binding_id=binding.id, user_id=user_id, idempotency_key=idempotency_key,
+        source=str(source), operation=str(operation), relative_path=relative_path,
+        baseline_fingerprint=baseline_fingerprint, observed_fingerprint=observed_fingerprint,
+        revision=binding.revision, status=str(status),
+    )
+    db.add(row)
+    await db.flush()
+    return row
