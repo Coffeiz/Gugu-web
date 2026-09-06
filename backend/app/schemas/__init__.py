@@ -625,7 +625,7 @@ class PreferencesResponse(CamelModel):
     defaultView:       str = "projects"       # 应用打开时的默认入口
     shellEnabled:      bool = False            # 用户级工作区 Shell 开关
     shellSystemEnabled: bool = False           # 用户级系统范围 Shell 开关
-    shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
+    shellDangerousEnabled: bool = False       # 用户级全部 Shell 命令权限，危险操作仍需确认
     shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
     toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量

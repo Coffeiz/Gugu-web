@@ -189,7 +189,7 @@ async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
 
 
 async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
-    """读取用户危险 Shell 命令开关；管理员开关和 Autopilot 由策略层校验。"""
+    """读取用户全部 Shell 命令权限；管理员开关和确认门由策略层校验。"""
     result = await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )

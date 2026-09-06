@@ -153,11 +153,26 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
     return context
 
 
-def _capability_catalog(context):
+def _apply_capability_context(system_prompt: str, snapshot_context: str, context):
+    """按工具注入模式分配目录：简介进 system，用户 Skill 元数据进 snapshot。"""
+    if context is None:
+        return system_prompt, snapshot_context
     from agent.capabilities.injector import catalog_block
 
-    kind = "skill" if getattr(context, "metadata_only", False) else None
-    return catalog_block(context.snapshot, kind=kind, tool_order=context.snapshot.tools)
+    skill_catalog = catalog_block(
+        context.snapshot, kind="skill", tool_order=context.snapshot.tools,
+    )
+    if getattr(context, "metadata_only", False):
+        # 完整 Schema 由 Provider 的 tools 字段提供，不在消息里重复工具简介。
+        return system_prompt, "\n\n---\n\n".join((snapshot_context, skill_catalog))
+
+    tool_catalog = catalog_block(
+        context.snapshot, kind="tool", tool_order=context.snapshot.tools,
+    )
+    return (
+        "\n\n---\n\n".join((system_prompt, tool_catalog)),
+        "\n\n---\n\n".join((snapshot_context, skill_catalog)),
+    )
 
 
 async def _filter_shell_tool(
@@ -656,10 +671,11 @@ async def _run_collect_unlocked(
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)
+    system_prompt, snapshot_context = _apply_capability_context(
+        system_prompt, snapshot_context, capability_context,
+    )
     if capability_context is not None:
-        _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
-        )
+        _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
     runner = LLMRunner(tool_names, settings, capability_context=capability_context, locale=req.locale)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
     im_used_tools = False
@@ -1097,10 +1113,11 @@ async def _run_stream_unlocked(
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)
+    system_prompt, snapshot_context = _apply_capability_context(
+        system_prompt, snapshot_context, capability_context,
+    )
     if capability_context is not None:
-        _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
-        )
+        _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
     im_used_tools = False
@@ -1564,8 +1581,9 @@ async def _run_scheduled_once(
         if shell_prompt:
             system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
         capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
-        if capability_context is not None:
-            snapshot_context = f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
+        system_prompt, snapshot_context = _apply_capability_context(
+            system_prompt, snapshot_context, capability_context,
+        )
         from agent.scheduled import ScheduledLLMRunner
 
         runner = ScheduledLLMRunner(

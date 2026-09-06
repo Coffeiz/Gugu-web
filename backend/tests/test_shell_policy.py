@@ -123,7 +123,7 @@ async def test_dangerous_shell_requires_admin_and_user_switches(monkeypatch):
     decision = await shell_policy.evaluate(db, "user-1", 1, "rm -rf build", confirm=True)
 
     assert not decision.allowed
-    assert decision.reason == "管理员未开启危险 Shell 命令"
+    assert decision.reason == "管理员未开放全部 Shell 命令"
 
 
 @pytest.mark.asyncio
@@ -136,7 +136,7 @@ async def test_dangerous_shell_requires_user_switch_even_when_confirmed(monkeypa
     decision = await shell_policy.evaluate(db, "user-1", 1, "rm -rf build", confirm=True)
 
     assert not decision.allowed
-    assert decision.reason == "用户未开启危险 Shell 命令"
+    assert decision.reason == "用户未开放全部 Shell 命令"
 
 
 @pytest.mark.asyncio
@@ -163,7 +163,7 @@ async def test_dynamic_shell_prompt_reports_disabled_dangerous_state(monkeypatch
     prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
 
     assert prompt is not None
-    assert "危险 Shell：未开启" in prompt
+    assert "全部 Shell 命令：未开放" in prompt
     assert "不要向用户索要确认后继续" in prompt
     assert "Autopilot：未开启" in prompt
 
@@ -181,7 +181,7 @@ async def test_dynamic_shell_prompt_reports_confirmation_and_autopilot(monkeypat
     prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
 
     assert prompt is not None
-    assert "危险 Shell：已开启，但不是预授权" in prompt
+    assert "全部 Shell 命令：已开放，但不是预授权" in prompt
     assert "Autopilot：已开启" in prompt
     assert "仍受沙盒、范围、配额和审计限制" in prompt
 

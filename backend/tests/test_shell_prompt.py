@@ -13,6 +13,9 @@ def test_shell_prompt_only_appends_for_registered_shell_tool():
     assert "模型不能通过拆分命令、改写命令、换工具" in with_shell
     assert "Python 3.11" in with_shell
     assert "Matplotlib" in with_shell
+    assert "`/personal`：当前用户文件库的个人文件空间" in with_shell
+    assert "`/project`：当前用户文件库的项目空间" in with_shell
+    assert "Workspace 只决定默认目录" in with_shell
 
 
 def test_shell_prompt_is_idempotent():

@@ -25,6 +25,8 @@ def test_catalog_contains_short_descriptions_only():
     assert "### 工具" in block
     assert "### Skill" in block
     assert block.index("### 工具") < block.index("### Skill")
+    assert block.index("- search：") < block.index("### Skill")
+    assert block.index("联网查找资料") > block.index("### Skill")
     assert "input_schema" not in block
     assert "call_tool" in block
     assert "get_tool_schema" in block
@@ -61,6 +63,8 @@ def test_catalog_keeps_user_skill_in_separate_skill_section():
     assert "### 工具" in block
     assert "### Skill" in block
     assert "用户定义的做法" in block
+    assert block.index("- search：") < block.index("### Skill")
+    assert block.index("用户定义的做法") > block.index("### Skill")
 
 
 def test_catalog_does_not_render_misclassified_metadata_in_skill_section():
@@ -101,6 +105,56 @@ def test_skill_metadata_context_does_not_take_over_provider_tools():
     assert "### Skill" in skill_catalog
     assert "固定 Adapter 模式" not in skill_catalog
     assert "user-skill：用户定义的做法" in skill_catalog
+
+
+def test_capability_catalog_injection_places_description_tools_in_system():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+    from agent.runner import _apply_capability_context
+
+    context = CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+            skills={"user-skill": CapabilityMeta(
+                "user-skill", "skill", "用户定义的做法。", source="user"
+            )},
+        ),
+        RegistryCapabilitySelector(),
+        fixed_adapter=True,
+        metadata_only=False,
+    )
+
+    system, snapshot = _apply_capability_context("SYSTEM", "SNAPSHOT", context)
+
+    assert "search：搜索资料" in system
+    assert "search：搜索资料" not in snapshot
+    assert "user-skill：用户定义的做法" in snapshot
+
+
+def test_capability_catalog_injection_omits_tool_description_for_full_schema():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+    from agent.runner import _apply_capability_context
+
+    context = CapabilityToolContext(
+        CapabilitySnapshot(
+            generation=1,
+            tools={"search": CapabilityMeta("search", "tool", "搜索资料。")},
+            skills={"user-skill": CapabilityMeta(
+                "user-skill", "skill", "用户定义的做法。", source="user"
+            )},
+        ),
+        RegistryCapabilitySelector(),
+        fixed_adapter=False,
+        metadata_only=True,
+    )
+
+    system, snapshot = _apply_capability_context("SYSTEM", "SNAPSHOT", context)
+
+    assert "search：搜索资料" not in system
+    assert "search：搜索资料" not in snapshot
+    assert "user-skill：用户定义的做法" in snapshot
 
 
 def test_skill_lookup_rejects_tool_metadata_in_skill_map():
@@ -269,7 +323,7 @@ def test_capability_diagnostics_marks_metadata_only_skill_catalog():
     ))
 
     assert result["metadata_only"] is True
-    assert result["catalog_kind"] == "skill"
+    assert result["catalog_kind"] == "skill_snapshot"
     assert result["catalog_count"] == 1
     assert result["skill_names"] == ["user-skill"]
 
@@ -353,7 +407,7 @@ def test_fixed_adapter_context_only_exposes_stable_provider_tools():
     assert context.select_for_messages([]).tool_names == ("call_tool", "get_tool_schema", "use_skill", "ask_user")
 
 
-def test_fixed_adapter_snapshot_can_persist_all_authorized_tool_signatures():
+def test_fixed_adapter_catalog_contains_all_authorized_tool_signatures():
     from agent.capabilities.injector import build_fixed_adapter_context
 
     context = build_fixed_adapter_context(["image_search"])

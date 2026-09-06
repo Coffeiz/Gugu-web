@@ -238,9 +238,9 @@ async def evaluate(
     )
     if risk is ShellRisk.DANGEROUS:
         if not get_settings().agent.shell_dangerous_enabled:
-            return ShellDecision(False, "管理员未开启危险 Shell 命令", risk, scope=scope)
+            return ShellDecision(False, "管理员未开放全部 Shell 命令", risk, scope=scope)
         if not await effective_shell_dangerous_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启危险 Shell 命令", risk, scope=scope)
+            return ShellDecision(False, "用户未开放全部 Shell 命令", risk, scope=scope)
         if not confirm and not autopilot_enabled:
             return ShellDecision(
                 True, "危险命令需要用户确认", risk, True,
@@ -316,12 +316,12 @@ async def build_dynamic_prompt(
     ]
     if dangerous_enabled:
         lines.append(
-            "- 危险 Shell：已开启，但不是预授权；删除、覆盖、移动、提权、服务控制、"
+            "- 全部 Shell 命令：已开放，但不是预授权；删除、覆盖、移动、提权、服务控制、"
             "网络下载等危险操作仍必须经过执行器确认。"
         )
     else:
         lines.append(
-            "- 危险 Shell：未开启；只允许读取、检查和普通安全命令，禁止删除、覆盖、移动、"
+            "- 全部 Shell 命令：未开放；只允许读取、检查和普通安全命令，禁止删除、覆盖、移动、"
             "提权、服务控制、网络下载等危险操作，也不要向用户索要确认后继续。"
         )
     if safe.autopilot_enabled:

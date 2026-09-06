@@ -249,29 +249,22 @@ def catalog_block(
         if item.kind == "skill" and (include_builtin_skills or item.source != "builtin")
     )
     if kind == "tool":
-        catalog = tools
-        if tools:
-            lines.append("\n### 工具")
+        sections = (("工具", tools),)
     elif kind == "skill":
-        catalog = skills
-        if skills:
-            lines.append("\n### Skill")
+        sections = (("Skill", skills),)
     else:
-        catalog = ()
-        if tools:
-            lines.append("\n### 工具")
-            catalog += tools
-        if skills:
-            lines.append("\n### Skill")
-            catalog += skills
+        sections = (("工具", tools), ("Skill", skills))
 
-    for item in catalog:
-        description = " ".join(str(item.description_short or "").split())
-        if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
-            raise ValueError(
-                f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
-            )
-        fields = _tool_field_signature(item.name) if item.kind == "tool" else ""
-        suffix = f"；字段：{fields}" if fields else ""
-        lines.append(f"- {item.name}：{description}{suffix}")
+    for title, catalog in sections:
+        if catalog:
+            lines.append(f"\n### {title}")
+        for item in catalog:
+            description = " ".join(str(item.description_short or "").split())
+            if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
+                raise ValueError(
+                    f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
+                )
+            fields = _tool_field_signature(item.name) if item.kind == "tool" else ""
+            suffix = f"；字段：{fields}" if fields else ""
+            lines.append(f"- {item.name}：{description}{suffix}")
     return "\n".join(lines)

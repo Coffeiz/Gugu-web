@@ -457,7 +457,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # Web 后台生成与 IM 共用能力目录：简介/catalog 模式注入工具短描述和字段签名；
     # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
     from agent.runner import (
-        _capability_catalog, _capability_context, _filter_shell_tool,
+        _apply_capability_context, _capability_context, _filter_shell_tool,
         _pin_session_user_skill_metadata, _session_user_skill_metadata,
     )
     user_skill_metadata = _session_user_skill_metadata(session)
@@ -493,9 +493,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 if stored_session is not None:
                     stored_session.session_context = dict(session.session_context or {})
                     await snapshot_db.commit()
-        _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{_capability_catalog(capability_context)}"
+        system_prompt, snapshot_context = _apply_capability_context(
+            system_prompt, snapshot_context, capability_context,
         )
+        _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = run_config.use_anthropic if run_config is not None else use_anthropic_for(model_cfg)

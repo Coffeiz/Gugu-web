@@ -28,19 +28,32 @@ from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, text
+from sqlalchemy import case, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage
 
-def _effective_input_tokens(provider: str, tokens_in: int, cache_read: int, cache_write: int) -> int:
-    """按落库统一语义计算完整输入 token 数。
+# 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
+# tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
+# 报表必须兼容这批历史记录，否则会把旧 OpenAI 的缓存再次加进分母。
+_CACHE_SPLIT_PROVIDERS = ("anthropic", "minimax")
+_CACHE_USAGE_CUTOFF = datetime(2026, 9, 3, 11, 15, tzinfo=timezone.utc)
+_CACHE_USAGE_CUTOFF_SQL = "TIMESTAMPTZ '2026-09-03 11:15:00+00'"
 
-    provider 只保留在签名中兼容既有调用方；所有 driver 都将 tokens_in
-    归一为未命中缓存的输入，缓存读写单独落库。
-    """
+
+def _effective_input_tokens(
+    provider: str,
+    tokens_in: int,
+    cache_read: int,
+    cache_write: int,
+    created_at: datetime | None = None,
+) -> int:
+    """按当前及历史落库口径计算完整输入 token 数。"""
+    split_cache = (provider or "").lower() in _CACHE_SPLIT_PROVIDERS
+    if created_at is not None and created_at < _CACHE_USAGE_CUTOFF and not split_cache:
+        return tokens_in
     return tokens_in + cache_read + cache_write
 
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
@@ -72,8 +85,13 @@ def _mask_key(key: str) -> str:
 
 
 def _effective_input_expr():
-    """返回统一口径的完整输入 token 表达式。"""
-    return AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write
+    """返回兼容历史记录的完整输入 token 表达式。"""
+    full_input = AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write
+    return case(
+        (func.lower(AgentUsage.provider).in_(_CACHE_SPLIT_PROVIDERS), full_input),
+        (AgentUsage.created_at >= _CACHE_USAGE_CUTOFF, full_input),
+        else_=AgentUsage.tokens_in,
+    )
 
 
 def _effective_input_sql(
@@ -82,8 +100,13 @@ def _effective_input_sql(
     cache_read_column: str = "cache_read",
     cache_write_column: str = "cache_write",
 ) -> str:
-    """生成 raw SQL 使用的统一输入 token 口径。"""
-    return f"{tokens_in_column} + {cache_read_column} + {cache_write_column}"
+    """生成 raw SQL 使用的兼容历史记录的输入 token 口径。"""
+    full_input = f"{tokens_in_column} + {cache_read_column} + {cache_write_column}"
+    return (
+        f"CASE WHEN LOWER({provider_column}) IN ('anthropic', 'minimax') "
+        f"OR created_at >= {_CACHE_USAGE_CUTOFF_SQL} "
+        f"THEN {full_input} ELSE {tokens_in_column} END"
+    )
 
 
 def _ensure_presets(override: dict) -> dict:

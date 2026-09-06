@@ -149,7 +149,12 @@ async def _run_shell(db, user_id, args: dict):
     if network_profile not in {"none", "egress"}:
         return {"error": "后台沙盒网络策略无效", "_audit_event": "denied"}
     script_authorized = args.get("_script_authorized") is True
-    confirm_gate_authorized = False
+    # Autopilot 是服务端确认门授权，不是模型传入的 confirm。提前记录这份
+    # 授权事实，确保危险命令即使没有进入 needs_confirmation 分支，返回到
+    # dispatch 时也不会被运行时绊线误记为 bypassed。
+    confirm_gate_authorized = (
+        decision.autopilot_enabled and decision.risk.value == "dangerous"
+    )
     if subject_type == "scheduled_task" and decision.needs_confirmation and not script_authorized:
         return {
             "error": "定时任务只能执行无需交互确认的 sandbox 命令",
@@ -387,8 +392,7 @@ async def _run_shell(db, user_id, args: dict):
         "_scope": decision.scope.value,
         "_audit_event": "permission_revoked" if result.permission_revoked else "completed",
         **({"_confirm_gate_authorized": "shell_autopilot"}
-           if (confirm_gate_authorized or
-               (decision.autopilot_enabled and decision.risk.value == "dangerous")) else {}),
+           if confirm_gate_authorized else {}),
     }
 
 
