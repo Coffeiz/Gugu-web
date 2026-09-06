@@ -115,6 +115,29 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 _MIGRATIONS = [
+    # 兼容已通过旧基线初始化、但尚未执行 IM tombstone 增量迁移的数据库。
+    # 生产启动路径以 create_all_tables 为基线，不能假设所有环境都经过 Alembic upgrade。
+    """CREATE TABLE IF NOT EXISTS memory_scope_tombstones (
+        id SERIAL PRIMARY KEY,
+        owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        platform VARCHAR(20) NOT NULL,
+        bot_id VARCHAR(128) NOT NULL,
+        scope_type VARCHAR(32) NOT NULL,
+        scope_id VARCHAR(255) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        delete_version INTEGER NOT NULL DEFAULT 1,
+        reason VARCHAR(100) NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        CONSTRAINT uq_memory_scope_tombstone_scope
+          UNIQUE (owner_user_id, platform, bot_id, scope_type, scope_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_memory_scope_tombstones_owner_user_id ON memory_scope_tombstones (owner_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_memory_scope_tombstones_platform ON memory_scope_tombstones (platform)",
+    "CREATE INDEX IF NOT EXISTS ix_memory_scope_tombstones_bot_id ON memory_scope_tombstones (bot_id)",
+    "CREATE INDEX IF NOT EXISTS ix_memory_scope_tombstones_scope_type ON memory_scope_tombstones (scope_type)",
+    "CREATE INDEX IF NOT EXISTS ix_memory_scope_tombstones_scope_id ON memory_scope_tombstones (scope_id)",
+    "CREATE INDEX IF NOT EXISTS ix_memory_scope_tombstones_status ON memory_scope_tombstones (status)",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
@@ -140,16 +163,11 @@ async def create_all_tables():
     import app.models  # noqa: F401 — 导入模型让 Base 发现所有 table
     async with _engine.begin() as conn:
         # Web 多 worker、worker 进程和 Admin 初始化入口都可能同时触发这里。
-        # DDL 会锁表，不能让并发初始化无限等待业务查询；只允许一个初始化者，
-        # 其他调用直接跳过，下一次启动/重试再检查即可。
+        # 不能让未抢到锁的调用直接返回：调用方可能马上访问尚未创建的表。
+        # statement_timeout 会限制等待时间，避免数据库异常时启动永久挂起。
         await conn.execute(text("SET LOCAL lock_timeout = '3s'"))
         await conn.execute(text("SET LOCAL statement_timeout = '15s'"))
-        locked = (await conn.execute(
-            text("SELECT pg_try_advisory_xact_lock(:key)"),
-            {"key": _MIGRATION_LOCK_KEY},
-        )).scalar()
-        if not locked:
-            return
+        await conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _MIGRATION_LOCK_KEY})
         await conn.run_sync(Base.metadata.create_all)
         for sql in _MIGRATIONS:
             await conn.execute(text(sql))

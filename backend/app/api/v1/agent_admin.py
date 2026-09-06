@@ -234,7 +234,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     from agent.context.branch_types import BranchInput, BranchPolicy
     from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job, _scope_prompt
     from agent.memory.maintenance_batches import (
-        MaintenanceBatch, bounded_scope_memory, message_batches, scope_revision,
+        MaintenanceBatch, bounded_scope_memory, message_batches, resolve_maintenance_budget, scope_revision,
     )
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
@@ -268,6 +268,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                 messages,
                 lambda message: f"[{message.created_at.isoformat() if message.created_at else '未知时间'}] {_message_text(message)}",
                 lambda message: str(message.id),
+                model_cfg=settings,
             )
             if not batches:
                 batches = [MaintenanceBatch(items=tuple(), source_ids=tuple(), estimated_input_tokens=0)]
@@ -289,7 +290,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     for m in batch.items
                 )
                 prompt_input = (
-                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current)}\n\n"
+                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current, model_cfg=settings)}\n\n"
                     f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
                 )
                 branch = await ContextBranch().run(
@@ -301,7 +302,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     BranchPolicy(
                         name="reflection-preview",
                         output_mode="json",
-                        max_tokens=2500,
+                        max_tokens=resolve_maintenance_budget(settings).output_tokens,
                         thinking="disabled",
                     ),
                     settings,
