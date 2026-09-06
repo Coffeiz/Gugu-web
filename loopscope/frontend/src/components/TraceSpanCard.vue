@@ -156,6 +156,7 @@
 import { computed, nextTick, reactive, ref } from 'vue'
 import type { TraceSpan } from '../types'
 import { prettyJson } from '../utils/prettyJson'
+import { formatCompactNumber } from '../utils/formatNumber'
 
 const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSpan; depth?: number }>(), { depth: 0 })
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
@@ -175,8 +176,7 @@ function jumpToFirstDiff() {
 function fmtMs(v: number) { return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms` }
 function fmtTokens(v: number | undefined) {
   if (!v) return ''
-  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)}k`
-  return String(Math.round(v))
+  return formatCompactNumber(v, '')
 }
 function pretty(v: unknown) {
   if (v == null) return '—'

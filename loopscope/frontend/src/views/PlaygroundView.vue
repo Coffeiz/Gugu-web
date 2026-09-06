@@ -114,6 +114,7 @@ import { getRun, getRunSpans, listRuns } from '../services/api'
 import SessionMonitor from '../components/SessionMonitor.vue'
 import { buildTraceRounds } from '../utils/runExport'
 import { prettyJson } from '../utils/prettyJson'
+import { formatCompactNumber } from '../utils/formatNumber'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
@@ -427,7 +428,7 @@ function runForAssistant(messageIndex: number) {
 }
 function spanCount(run: TraceRun | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }
-function fmtTokens(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(v >= 10000 ? 1 : 2)}k` : String(Math.round(v)) }
+function fmtTokens(v: number | null | undefined) { return formatCompactNumber(v) }
 function preview(v: unknown) {
   const s = typeof v === 'string' ? v : prettyJson(v)
   return (s || '').slice(0, 700)

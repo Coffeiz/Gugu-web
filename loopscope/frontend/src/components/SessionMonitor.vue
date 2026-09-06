@@ -130,6 +130,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
+import { formatCompactNumber } from '../utils/formatNumber'
 
 const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
 const emit = defineEmits<{
@@ -324,9 +325,7 @@ function fmtMs(v: number | null | undefined) {
   return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`
 }
 function fmtTokens(v: number | null | undefined) {
-  if (v == null) return '—'
-  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)}k`
-  return String(Math.round(v))
+  return formatCompactNumber(v)
 }
 </script>
 
