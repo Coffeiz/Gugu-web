@@ -9,6 +9,10 @@ type MockTask = {
   enabled: boolean
 }
 
+async function clickActiveDatePickerToday(page: Page) {
+  await page.locator('.dp-popup:visible .dp-today').last().click()
+}
+
 async function mockScheduledTasks(page: Page) {
   let nextId = 1
   let tasks: MockTask[] = []
@@ -166,19 +170,19 @@ test('定时任务页面：精确窗口提交开始和结束边界', async ({ pa
 
   const start = page.locator('[data-testid="schedule-start-boundary"]')
   await start.locator('.dp-input').click()
-  await page.getByRole('button', { name: '今天' }).click()
+  await clickActiveDatePickerToday(page)
   await start.locator('.time-part').nth(0).fill('18')
   await start.locator('.time-part').nth(1).fill('30')
   await start.getByRole('button', { name: '清除时间范围' }).click()
   await expect(start.locator('.boundary-clear')).toHaveCount(0)
   await start.locator('.dp-input').click()
-  await page.getByRole('button', { name: '今天' }).click()
+  await clickActiveDatePickerToday(page)
   await start.locator('.time-part').nth(0).fill('18')
   await start.locator('.time-part').nth(1).fill('30')
 
   const end = page.locator('[data-testid="schedule-end-boundary"]')
   await end.locator('.dp-input').click()
-  await page.getByRole('button', { name: '今天' }).click()
+  await clickActiveDatePickerToday(page)
   await end.locator('.time-part').nth(0).fill('19')
   await end.locator('.time-part').nth(1).fill('30')
 
