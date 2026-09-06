@@ -1083,17 +1083,28 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
         # 直接 memory/pattern 缓存之外，RAG 索引还有 profile/daily/memory 文档。
         # 统一通过 MemoryAdapter 生成同一套 chunk/key，避免两套分块算法失配。
         from agent.rag.pipeline import rebuild_memory_index
-        for uid in user_ids:
-            await rebuild_memory_index(uid, operation="embedding-rebuild")
+        rag_semaphore = asyncio.Semaphore(max(1, store.VECTOR_REBUILD_CONCURRENCY))
+
+        async def rebuild_rag_index(uid):
+            async with rag_semaphore:
+                return await rebuild_memory_index(uid, operation="embedding-rebuild")
+
+        rag_results = await asyncio.gather(
+            *(rebuild_rag_index(uid) for uid in user_ids),
+            return_exceptions=True,
+        )
+        rag_failed = sum(isinstance(item, Exception) for item in rag_results)
         failed = int(res.get("failed_users") or 0)
-        status = "error" if failed else "done"
+        status = "error" if failed or rag_failed else "done"
         message = (
             f"重建完成：pattern {res.get('pattern_vectors', 0)} 条，"
             f"memory {res.get('memory_vectors', 0)} 块"
             + (f"；失败用户 {failed} 个" if failed else "")
+            + (f"；RAG 索引失败 {rag_failed} 个" if rag_failed else "")
         )
         await r.set(_REBUILD_KEY, json.dumps(
-            {"status": status, **res, "message": message, "tag": tag, "ts": time.time()}), ex=3600)
+            {"status": status, **res, "rag_failed_users": rag_failed,
+             "message": message, "tag": tag, "ts": time.time()}), ex=3600)
     except Exception as e:
         await r.set(_REBUILD_KEY, json.dumps(
             {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)

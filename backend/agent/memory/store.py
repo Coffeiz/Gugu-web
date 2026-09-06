@@ -64,6 +64,7 @@ _PATTERN_MAX_CONF          = 0.97
 # ── memory.md 长期记忆向量检索参数 ──
 MEMORY_INJECT_CHARS = 2000   # memory.md 注入预算；超出才走向量挑相关块，否则整块注入
 MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按句子边界再切）
+VECTOR_REBUILD_CONCURRENCY = 4  # 管理员重建的跨用户并发上限，避免打爆 embedding 服务
 
 
 def _key(user_id, name: str) -> str:
@@ -486,17 +487,45 @@ async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
     返回 {done, total, with_patterns}（with_patterns=有 pattern 的用户数；memory 一并重算，不单独计数）。"""
     total, done, with_patterns = len(user_ids), 0, 0
     pattern_vectors = memory_vectors = failed_users = 0
-    for uid in user_ids:
+
+    async def rebuild_user(uid) -> dict:
         try:
             patterns = await read_pattern_list(uid)
+            pattern_count = 0
+            has_patterns = bool(patterns)
             if patterns:
-                pattern_vectors += await sync_pattern_vecs(uid, patterns, force=True, strict=True)
-                with_patterns += 1
+                pattern_count = await sync_pattern_vecs(uid, patterns, force=True, strict=True)
             mem = await read_memory_doc(uid)   # 长期记忆的块向量也一并重建
+            memory_count = 0
             if mem:
-                memory_vectors += await sync_memory_vecs(uid, mem, force=True, strict=True)
+                memory_count = await sync_memory_vecs(uid, mem, force=True, strict=True)
+            return {
+                "pattern_vectors": pattern_count,
+                "memory_vectors": memory_count,
+                "with_patterns": int(has_patterns),
+                "failed": 0,
+            }
         except Exception:
-            failed_users += 1
+            return {
+                "pattern_vectors": 0,
+                "memory_vectors": 0,
+                "with_patterns": 0,
+                "failed": 1,
+            }
+
+    semaphore = asyncio.Semaphore(max(1, VECTOR_REBUILD_CONCURRENCY))
+
+    async def limited_rebuild(uid):
+        async with semaphore:
+            return await rebuild_user(uid)
+
+    tasks = [asyncio.create_task(limited_rebuild(uid)) for uid in user_ids]
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        pattern_vectors += result["pattern_vectors"]
+        memory_vectors += result["memory_vectors"]
+        with_patterns += result["with_patterns"]
+        failed_users += result["failed"]
         done += 1
         if on_progress:
             try:
