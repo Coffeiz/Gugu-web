@@ -658,7 +658,7 @@ export const agentApi = {
   rebuildSandbox: () => post<{ ok: boolean; operation: string; root_ready: boolean; reclaimed_containers: number }>('/agent/sandbox/rebuild'),
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
-  getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
+  getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
   requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/agent/sessions/${id}/filesystem-authorization/request`),

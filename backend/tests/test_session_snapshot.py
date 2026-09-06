@@ -434,7 +434,7 @@ def test_batch_messages_are_persisted_as_new_history():
     ]
 
 
-def test_single_history_cache_keeps_cross_run_baseline_and_latest_anchor():
+def test_single_history_cache_keeps_only_latest_history_anchor():
     messages = PromptMessages(
         [
             {"role": "system", "content": [{
@@ -454,8 +454,8 @@ def test_single_history_cache_keeps_cross_run_baseline_and_latest_anchor():
 
     assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
-    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[4]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in cached[2]["content"]
     assert "cache_control" not in cached[-1]["content"]
 
 
