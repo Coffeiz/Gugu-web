@@ -14,6 +14,7 @@ mutation 只 `flush`，由调用方（REST/Agent）统一 commit + 发事件 + s
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from uuid import uuid4
 
 from app.core.errors import Invalid, NotFound
@@ -24,6 +25,7 @@ from app.services.storage.folders import resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
 from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
+from app.services.filesync.protocol import record_canonical_file_change
 
 
 def _fmt_size(size_bytes: int) -> str:
@@ -122,6 +124,10 @@ class FileOps:
             existing.version = int(existing.version or 1) + 1
             existing.updated_at = now_utc()
             await self.db.flush()
+            await record_canonical_file_change(
+                self.db, user_id=user_id, storage_key=existing.storage_key,
+                observed_fingerprint=hashlib.sha256(data).hexdigest(),
+            )
             await record_usage(
                 self.db, user_id, category=FILE_LIBRARY,
                 delta_bytes=size_bytes - old_size_bytes,
@@ -245,6 +251,10 @@ class FileOps:
             existing.version = int(existing.version or 1) + 1
             existing.updated_at = now_utc()
             await self.db.flush()
+            await record_canonical_file_change(
+                self.db, user_id=user_id, storage_key=existing.storage_key,
+                observed_fingerprint=hashlib.sha256(data).hexdigest(),
+            )
             return FileResult(existing, project, folder_name or None, was_overwrite=True)
 
         base_key = self._build_key(

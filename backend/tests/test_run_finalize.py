@@ -2,8 +2,13 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent.context import run_finalize
+from agent.context.assembly import PromptMessages, assemble_turn
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from app.models import ConversationBatch, ConversationMessage, ConversationSession
 
 
 class _Db:
@@ -26,6 +31,38 @@ class _DbContext:
 
     async def __aexit__(self, *exc):
         return False
+
+
+@pytest.mark.asyncio
+async def test_insert_or_get_batch_reuses_existing_unique_row(db, user_a):
+    """canonical batch 重复收尾必须复用已有行，不得把唯一键冲突抛到 IM 出口。"""
+    from agent.context.run_finalize import _insert_or_get_batch
+    from app.models import ConversationBatch, ConversationSession
+    from sqlalchemy import select
+
+    session = ConversationSession(user_id=user_a.id)
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    values = {
+        "session_id": session.id,
+        "version": "v1",
+        "run_id": None,
+        "round_id": None,
+        "digest": "runtime-batch-digest",
+    }
+    first, first_created = await _insert_or_get_batch(db, ConversationBatch, values)
+    await db.commit()
+    second, second_created = await _insert_or_get_batch(db, ConversationBatch, values)
+
+    assert first_created is True
+    assert second_created is False
+    assert second.id == first.id
+    rows = (await db.execute(
+        select(ConversationBatch).where(ConversationBatch.session_id == session.id)
+    )).scalars().all()
+    assert len(rows) == 1
 
 
 @pytest.mark.asyncio
@@ -164,3 +201,74 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
 
     # is_byok 是内部字段：不能泄漏进配置序列化
     assert "is_byok" not in base.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a, monkeypatch):
+    """相同首轮 runtime-context 在连续 run 中只能落一个 canonical batch。"""
+    session = ConversationSession(user_id=user_a.id, title="runtime 去重", source="web")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    turn, _ = assemble_turn(
+        current_user={"role": "user", "content": "测试"},
+        extra_reminder="## 当前工作区\nworkspace=project",
+    )
+    prompt = PromptMessages()
+    prompt.append_batch(turn)
+    canonical_batches = persistable_canonical_batch_records(prompt)
+
+    async def fake_record_usage(*args, **kwargs):
+        from agent.usage import UsageResult
+
+        return UsageResult()
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr(
+        "app.services.conversation_retention.trim_session_messages",
+        lambda *_args, **_kwargs: _async_none(),
+    )
+    monkeypatch.setattr(
+        "agent.context.compress_conv.schedule_baseline_update",
+        lambda *_args, **_kwargs: None,
+    )
+
+    import app.db.session as db_session
+
+    session_factory = async_sessionmaker(
+        db_session._engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    model = SimpleNamespace(model="test-model", provider="test", context_tokens=80000)
+    for _ in range(2):
+        await run_finalize.finalize_run(
+            session_factory=session_factory,
+            session_id=session.id,
+            user_id=str(user_a.id),
+            settings=settings,
+            model_cfg=model,
+            rag_context=None,
+            messages=[],
+            initial_len=0,
+            text="",
+            files=[],
+            tokens_in=0,
+            tokens_out=0,
+            canonical_batches=canonical_batches,
+        )
+
+    async with session_factory() as check_db:
+        batches = (await check_db.scalars(select(ConversationBatch).where(
+            ConversationBatch.session_id == session.id,
+        ))).all()
+        messages = (await check_db.scalars(select(ConversationMessage).where(
+            ConversationMessage.session_id == session.id,
+        ))).all()
+    assert len(batches) == 1
+    assert len(messages) == 1
+    assert messages[0].canonical_batch_id == batches[0].id
+
+
+async def _async_none():
+    return None

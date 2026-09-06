@@ -3,7 +3,15 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from app.models import ConversationSession, File, FileSyncBinding, FileSyncConflict, FileSyncJournal
+from app.models import (
+    ConversationSession,
+    File,
+    FileSyncBinding,
+    FileSyncConflict,
+    FileSyncJournal,
+    Project,
+    Workspace,
+)
 from app.services.filesync import (
     FileSyncDisabled,
     build_idempotency_key,
@@ -40,6 +48,78 @@ def test_sync_path_rejects_symlink_escape(tmp_path):
 async def test_phase1_protocol_is_disabled_by_default(db, user_a):
     with pytest.raises(FileSyncDisabled):
         await create_binding(db, user_id=user_a.id, source="local_directory", root_fingerprint="a" * 64)
+
+
+@pytest.mark.asyncio
+async def test_canonical_file_change_is_noop_when_filesync_is_disabled_or_remote(
+    db, user_a, monkeypatch, tmp_path,
+):
+    import app.services.filesync.protocol as protocol
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=False),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    await protocol.record_canonical_file_change(
+        db,
+        user_id=user_a.id,
+        storage_key=f"{user_a.id}/个人文件/note.md",
+        observed_fingerprint="a" * 64,
+    )
+
+    settings.filesync.enabled = True
+    settings.storage.backend = "oss"
+    await protocol.record_canonical_file_change(
+        db,
+        user_id=user_a.id,
+        storage_key=f"{user_a.id}/个人文件/note.md",
+        observed_fingerprint="b" * 64,
+    )
+    assert (await db.scalars(select(FileSyncJournal))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_canonical_workspace_change_uses_resolved_workspace_root(
+    db, user_a, monkeypatch, tmp_path,
+):
+    import app.services.filesync.protocol as protocol
+    import app.services.workspaces as workspaces
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(workspaces, "get_settings", lambda: settings)
+
+    project = Project(user_id=user_a.id, name="同步项目", start_date="2026-03-15")
+    db.add(project)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="项目工作区", kind="project",
+        project_id=project.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id,
+        source="local_directory", status="active", root_path=".",
+        root_fingerprint="a" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+
+    await protocol.record_canonical_file_change(
+        db,
+        user_id=user_a.id,
+        storage_key=f"{user_a.id}/项目文件/2026/03/同步项目 #{project.id}/foo.md",
+        observed_fingerprint="b" * 64,
+    )
+
+    journal = (await db.scalars(select(FileSyncJournal))).one()
+    assert journal.binding_id == binding.id
+    assert journal.relative_path == "foo.md"
 
 
 @pytest.mark.asyncio

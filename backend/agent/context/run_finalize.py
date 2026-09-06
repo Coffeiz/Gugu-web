@@ -14,6 +14,65 @@ class FinalizeResult:
     tokens_out: int
 
 
+async def _insert_or_get_batch(db, batch_model, values: dict[str, Any]):
+    """原子写入 canonical batch，唯一键竞争时复用已有行。
+
+    同一 session 的收尾可能来自不同 worker；先查再插不是幂等操作，两个事务
+    同时查不到时，后一个事务会在唯一约束处失败。生产使用 PostgreSQL，测试使用
+    SQLite，因此在两个实际方言上都使用 ``ON CONFLICT DO NOTHING``，避免用普通
+    flush 把 IntegrityError 冒泡到 IM 出口。
+    """
+    from sqlalchemy import select
+
+    session_id = values["session_id"]
+    batch_digest = values["digest"]
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect_name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:
+        # 当前生产和测试只使用上述两个方言；其它方言保留明确的兼容路径，
+        # 但不假装它具备并发幂等能力。
+        existing = (await db.execute(
+            select(batch_model).where(
+                batch_model.session_id == session_id,
+                batch_model.digest == batch_digest,
+            )
+        )).scalars().first()
+        if existing is not None:
+            return existing, False
+        row = batch_model(**values)
+        db.add(row)
+        await db.flush()
+        return row, True
+
+    statement = (
+        insert(batch_model)
+        .values(**values)
+        .on_conflict_do_nothing(
+            index_elements=[batch_model.session_id, batch_model.digest]
+        )
+        .returning(batch_model.id)
+    )
+    result = await db.execute(statement)
+    inserted_id = result.scalar_one_or_none()
+    if inserted_id is not None:
+        row = await db.get(batch_model, inserted_id)
+        if row is not None:
+            return row, True
+
+    existing = (await db.execute(
+        select(batch_model).where(
+            batch_model.session_id == session_id,
+            batch_model.digest == batch_digest,
+        )
+    )).scalars().first()
+    if existing is None:
+        raise RuntimeError("canonical batch 插入后无法读取结果")
+    return existing, False
+
+
 async def finalize_run(
     *,
     session_factory: Callable[[], Any],
@@ -108,26 +167,32 @@ async def finalize_run(
                         continue
                     digest = str(record.get("digest") or "")
                     metadata = record.get("metadata") or {}
-                    batch_row = None
-                    if digest:
-                        batch_row = (await db.execute(
-                            select(ConversationBatch).where(
-                                ConversationBatch.session_id == session_id,
-                                ConversationBatch.digest == digest,
-                            )
-                        )).scalars().first()
+                    if not digest:
+                        from agent.context.canonical_context import digest as canonical_digest
+
+                        digest = canonical_digest({
+                            "messages": canonical_messages,
+                            "metadata": metadata,
+                        })
+                    batch_row = (await db.execute(
+                        select(ConversationBatch).where(
+                            ConversationBatch.session_id == session_id,
+                            ConversationBatch.digest == digest,
+                        )
+                    )).scalars().first()
                     is_new_batch = batch_row is None
                     if batch_row is None:
-                        from agent.context.canonical_context import digest as canonical_digest
-                        batch_row = ConversationBatch(
-                            session_id=session_id,
-                            version="v1",
-                            run_id=run_id or str(metadata.get("run_id") or "") or None,
-                            round_id=str(metadata.get("round_id") or "") or None,
-                            digest=digest or canonical_digest({"messages": canonical_messages, "metadata": metadata}),
+                        batch_row, is_new_batch = await _insert_or_get_batch(
+                            db,
+                            ConversationBatch,
+                            {
+                                "session_id": session_id,
+                                "version": "v1",
+                                "run_id": run_id or str(metadata.get("run_id") or "") or None,
+                                "round_id": str(metadata.get("round_id") or "") or None,
+                                "digest": digest,
+                            },
                         )
-                        db.add(batch_row)
-                        await db.flush()
                     if is_new_batch:
                         for message in canonical_messages:
                             db.add(ConversationMessage(

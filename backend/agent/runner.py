@@ -18,6 +18,7 @@ from agent.context import builder, loaders, session_snapshot, assembly, session_
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
+from agent.conversation.lifecycle import schedule_summary, schedule_title
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
 from agent.im.context_runtime import (

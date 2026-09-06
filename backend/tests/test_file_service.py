@@ -4,6 +4,7 @@ P0.3b：文件写操作（create/update/copy）走 KeyStrategy 抽象，逐字�
 （key/配额/覆盖/冲突改名/跨空间归属/领域异常 status）。
 """
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from sqlalchemy import select
 import app.services.storage.file_service.folders as folders_mod
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.tz import now_utc
-from app.models import File, Folder, Project
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 
@@ -208,6 +209,42 @@ async def test_create_file_overwrite(db, user_a, tmp_path):
     assert r2.was_overwrite and r2.file.id == r1.file.id and r2.file.size_bytes == 5
     assert r2.file.version == old_version + 1
     assert await svc.storage.get(r2.file.storage_key) == b"newer"
+
+
+@pytest.mark.asyncio
+async def test_create_file_overwrite_records_filesync_canonical_change(
+    db, user_a, tmp_path, monkeypatch,
+):
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+
+    svc = _svc(db, tmp_path)
+    original = await _create(svc, user_a.id, "a", "TXT", data=b"old")
+    await db.commit()
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", status="active",
+        root_path="个人文件", root_fingerprint="a" * 64,
+    )
+    db.add(binding)
+    await db.commit()
+
+    await _create(
+        svc, user_a.id, "a", "TXT", data=b"newer",
+        on_conflict="overwrite", overwrite_file_id=original.file.id,
+    )
+    await db.commit()
+
+    journal = (await db.scalars(select(FileSyncJournal))).one()
+    assert journal.relative_path == "a.txt"
+    assert journal.source == "file_api"
+    assert journal.observed_fingerprint is not None
 
 
 async def test_create_file_overwrite_target_missing(db, user_a, tmp_path):

@@ -9,6 +9,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redaction import diag_log
 from app.core.config import get_settings
 from app.models import FileSyncBinding, FileSyncJournal, Workspace
 from app.core.ownership import get_owned
@@ -106,33 +107,75 @@ async def record_canonical_file_change(
     storage_key: str,
     observed_fingerprint: str,
 ) -> None:
-    """把文件库正式写入登记到覆盖它的本地目录绑定。"""
+    """把文件库正式写入登记到覆盖它的本地目录绑定。
+
+    文件同步是文件库的可选旁路能力：开关关闭、存储后端不是 local 或绑定根
+    无法解析时，主文件写入仍然必须成功。workspace 绑定的 ``root_path`` 固定
+    为 ``.``，因此必须解析真实 workspace 根后再计算 journal 相对路径。
+    """
+    settings = get_settings()
+    if not is_file_sync_enabled():
+        return
+    if getattr(settings.storage, "backend", "local") != "local":
+        return
     prefix = f"{user_id}/"
     if not storage_key.startswith(prefix):
         return
     user_relative = storage_key.removeprefix(prefix)
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(user_id)).resolve()
+    storage_path = (user_root / user_relative).resolve()
+    try:
+        storage_path.relative_to(user_root)
+    except ValueError:
+        return
+
     bindings = (await db.scalars(select(FileSyncBinding).where(
         FileSyncBinding.user_id == user_id,
         FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
         FileSyncBinding.status == "active",
     ))).all()
     for binding in bindings:
-        root = str(binding.root_path or ".").strip("./")
-        if root and not user_relative.startswith(f"{root}/"):
+        try:
+            if binding.workspace_id is not None:
+                # 自动 workspace binding 的 root_path 是“工作区根”的占位值，
+                # 不能把它当成用户存储根来计算 journal 路径。
+                from app.services.workspaces import resolve_workspace_root
+
+                binding_root = await resolve_workspace_root(
+                    db, user_id, binding.workspace_id,
+                )
+            else:
+                # 延迟导入以避免 protocol ↔ bindings 的循环依赖。
+                from app.services.filesync.bindings import resolve_local_binding_root
+
+                _, binding_root = resolve_local_binding_root(user_id, binding.root_path)
+            if binding_root is None:
+                continue
+            relative = storage_path.relative_to(binding_root).as_posix()
+        except (OSError, ValueError):
             continue
-        relative = user_relative.removeprefix(f"{root}/") if root else user_relative
         if not relative:
             continue
         operation = FileSyncOperation.UPDATE
-        await record_change(
-            db, binding=binding, user_id=user_id, source=FileSyncSource.FILE_API,
-            operation=operation, relative_path=relative,
-            idempotency_key=build_idempotency_key(
-                source=FileSyncSource.FILE_API, operation=operation,
-                relative_path=relative, fingerprint=observed_fingerprint,
-            ), observed_fingerprint=observed_fingerprint,
-            status=FileSyncStatus.SYNCED,
-        )
+        try:
+            # 用 savepoint 隔离同步 journal；即使同步校验/唯一键遇到异常，
+            # 也不能回滚文件库本身已经完成的主事务。
+            async with db.begin_nested():
+                await record_change(
+                    db, binding=binding, user_id=user_id, source=FileSyncSource.FILE_API,
+                    operation=operation, relative_path=relative,
+                    idempotency_key=build_idempotency_key(
+                        source=FileSyncSource.FILE_API, operation=operation,
+                        relative_path=relative, fingerprint=observed_fingerprint,
+                    ), observed_fingerprint=observed_fingerprint,
+                    status=FileSyncStatus.SYNCED,
+                )
+        except FileSyncDisabled:
+            return
+        except Exception as exc:
+            # canonical journal 是可选旁路；保留受限诊断，放行主文件写入。
+            diag_log("filesync.canonical_file_change", exc)
 
 
 def validate_sync_path(root: Path, relative_path: str) -> Path:
