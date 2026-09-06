@@ -268,9 +268,32 @@ class OpenAIResponsesDriver:
         raw = result.raw
         calls = [call for call in raw.tool_calls_payload if str(call.get("id")) in dispatched_ids]
         messages = [self._asst(raw, raw.content or None, calls)]
+        visual_parts: list[dict] = []
         for tc, res in dispatched:
-            content, _images = _openai_tool_result(res, allow_images=allow_images)
+            content, images = _openai_tool_result(res, allow_images=allow_images)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
+            visual_parts.extend(images)
+        if visual_parts:
+            # _openai_tool_result 使用 Chat Completions 的 image_url 形状；Responses
+            # 要求同一内容改成 input_image，不能只把图片列表丢掉。
+            input_images = []
+            for part in visual_parts:
+                image_url = part.get("image_url") if isinstance(part, dict) else None
+                if not isinstance(image_url, dict) or not image_url.get("url"):
+                    continue
+                input_images.append({
+                    "type": "input_image",
+                    "image_url": image_url["url"],
+                    "detail": image_url.get("detail", "auto"),
+                })
+            if input_images:
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "工具返回了以下图片，请结合工具文字结果继续处理。"},
+                        *input_images,
+                    ],
+                })
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):

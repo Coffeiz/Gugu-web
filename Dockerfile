@@ -49,7 +49,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
-# 钉住明确版本，理由同 Dockerfile.prod：trixie 才有 docker-cli（沙盒兄弟容器需要）。
+# 钉住明确版本；sandbox-bootstrap/sandboxd 仍需要 Docker CLI，应用服务本身不挂载 Docker socket。
 FROM python:3.14-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
@@ -89,8 +89,10 @@ COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
+COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version
+RUN node bin/gugu-filesync-ts-worker.cjs --version
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf

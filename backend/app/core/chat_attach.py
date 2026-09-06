@@ -91,7 +91,8 @@ VIDEO_MMFILE_MAX = 90 * 1024 * 1024    # ②③ 触发转码的源文件大小�
 VIDEO_MMFILE_PURPOSE = "video_understanding"   # Files API 上传 purpose
 
 # 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
-# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg 是矢量、Pillow 不解，仍走文字提示。
+# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg
+# 保留为源码文件，由文件工具按 UTF-8 文本读取；不伪造为视觉图片。
 VISION_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif"}
 _VISION_PASSTHROUGH = {"png", "jpg", "jpeg", "gif", "webp"}   # API 原生收，达标免重编码
 _VISION_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",

@@ -178,6 +178,9 @@ class FileSyncWatcherManager:
                 except FileSyncSidecarUnavailable:
                     pending.update(self._binding_roots)
                     await self._sidecar.close()
+                    # sidecar 进程内的 watch 状态随进程一起丢失；清空本地缓存，
+                    # 下一轮启动后必须重新发送全部 watch，而不能只依赖补偿扫描。
+                    self._binding_roots.clear()
                 except asyncio.CancelledError:
                     return
                 except Exception as exc:

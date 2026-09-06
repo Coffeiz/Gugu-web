@@ -358,7 +358,6 @@ services:
     volumes:
       - *gugu-data-mount
       - sandbox_socket:/run/gugu
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
     depends_on:
       sandbox-bootstrap:
         condition: service_completed_successfully

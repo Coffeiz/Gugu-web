@@ -162,7 +162,9 @@ async def _pending_conflicts(
     return tuple(conflict_ids)
 
 
-async def _mirror_out_summary(root: Path, user_id, db: AsyncSession) -> SyncSummary:
+async def _mirror_out_summary(
+    root: Path, user_id, db: AsyncSession, *, apply: bool = True,
+) -> SyncSummary:
     """把 DB 事实源中的对象复制到绑定目录，不反向创建 DB 行。"""
     scanned = 0
     rejected = 0
@@ -190,8 +192,9 @@ async def _mirror_out_summary(root: Path, user_id, db: AsyncSession) -> SyncSumm
             rejected += 1
             continue
         try:
-            destination_key = destination.relative_to(storage_root).as_posix()
-            await storage.copy(row.storage_key, destination_key)
+            if apply:
+                destination_key = destination.relative_to(storage_root).as_posix()
+                await storage.copy(row.storage_key, destination_key)
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -209,6 +212,7 @@ async def _sync_binding(
     root: Path,
     mode: str,
     allow_delete: bool,
+    dry_run: bool = False,
 ) -> BindingSyncResult:
     binding = await _get_or_create_binding(
         db, user_id, root_path=root_path, root=root, mode=mode,
@@ -220,17 +224,19 @@ async def _sync_binding(
             FileSyncConflict.id.in_(conflict_ids),
         ))).all())
     if mode == FileSyncMode.MIRROR_OUT:
-        summary = await _mirror_out_summary(root, user_id, db)
+        summary = await _mirror_out_summary(root, user_id, db, apply=not dry_run)
     else:
         summary = await reconcile_local_directory(
             db, user_id, root=root, source=FileSyncSource.LOCAL_DIRECTORY,
-            allow_delete=allow_delete, blocked_paths=blocked,
+            allow_delete=allow_delete, blocked_paths=blocked, binding=binding,
+            dry_run=dry_run,
         )
-    binding.last_reconciled_at = now_utc()
-    await db.flush()
+    if not dry_run:
+        binding.last_reconciled_at = now_utc()
+        await db.flush()
     return BindingSyncResult(
         binding_id=binding.id, mode=mode, root_path=root_path,
-        dry_run=False, summary=SyncSummary(
+        dry_run=dry_run, summary=SyncSummary(
             scanned=summary.scanned, created=summary.created, updated=summary.updated,
             moved=summary.moved, deleted=summary.deleted, rejected=summary.rejected,
             conflicts=len(conflict_ids), journal_ids=summary.journal_ids,
@@ -297,10 +303,11 @@ async def dry_run_local_binding(
     try:
         result = await _sync_binding(
             db, user_id, root_path=relative, root=root, mode=mode, allow_delete=False,
+            dry_run=True,
         )
         return BindingSyncResult(
-            result.binding_id, result.mode, result.root_path, True,
-            result.summary, result.conflict_ids,
+            None, result.mode, result.root_path, True,
+            result.summary, (),
         )
     finally:
         await nested.rollback()

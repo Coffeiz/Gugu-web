@@ -99,6 +99,42 @@ async def create_binding(
     return row
 
 
+async def record_canonical_file_change(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    observed_fingerprint: str,
+) -> None:
+    """把文件库正式写入登记到覆盖它的本地目录绑定。"""
+    prefix = f"{user_id}/"
+    if not storage_key.startswith(prefix):
+        return
+    user_relative = storage_key.removeprefix(prefix)
+    bindings = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_id,
+        FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
+        FileSyncBinding.status == "active",
+    ))).all()
+    for binding in bindings:
+        root = str(binding.root_path or ".").strip("./")
+        if root and not user_relative.startswith(f"{root}/"):
+            continue
+        relative = user_relative.removeprefix(f"{root}/") if root else user_relative
+        if not relative:
+            continue
+        operation = FileSyncOperation.UPDATE
+        await record_change(
+            db, binding=binding, user_id=user_id, source=FileSyncSource.FILE_API,
+            operation=operation, relative_path=relative,
+            idempotency_key=build_idempotency_key(
+                source=FileSyncSource.FILE_API, operation=operation,
+                relative_path=relative, fingerprint=observed_fingerprint,
+            ), observed_fingerprint=observed_fingerprint,
+            status=FileSyncStatus.SYNCED,
+        )
+
+
 def validate_sync_path(root: Path, relative_path: str) -> Path:
     """校验工作区边界、符号链接和特殊文件，不创建目标。"""
     relative = normalize_relative_path(relative_path)

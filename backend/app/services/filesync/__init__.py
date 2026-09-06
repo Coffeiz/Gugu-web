@@ -11,6 +11,7 @@ from .protocol import (
     validate_sync_path,
     is_file_sync_enabled,
     record_change,
+    record_canonical_file_change,
     create_binding,
 )
 from .reconcile import SyncSummary, reconcile_local_directory
@@ -32,7 +33,7 @@ __all__ = [
     "FILE_SYNC_PROTOCOL_VERSION", "FileSyncDisabled", "FileSyncOperation",
     "FileSyncSource", "FileSyncMode", "FileSyncStatus", "build_idempotency_key",
     "normalize_relative_path", "validate_sync_path", "is_file_sync_enabled",
-    "record_change", "create_binding",
+    "record_change", "record_canonical_file_change", "create_binding",
     "SyncSummary", "reconcile_local_directory",
     "BindingSyncResult", "dry_run_local_binding", "sync_local_binding",
     "sync_existing_binding",

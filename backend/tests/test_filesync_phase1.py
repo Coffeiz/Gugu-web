@@ -173,6 +173,8 @@ async def test_phase3_binding_requires_dry_run_then_explicit_apply(db, user_a, m
         db, user_a.id, root_path="个人文件", mode="mirror_in",
     )
     assert preview.dry_run is True
+    assert preview.binding_id is None
+    assert preview.conflict_ids == ()
     assert preview.summary.created == 1
     assert (await db.scalars(select(FileSyncBinding))).all() == []
     assert (await db.scalars(select(File))).all() == []
@@ -185,6 +187,36 @@ async def test_phase3_binding_requires_dry_run_then_explicit_apply(db, user_a, m
     assert applied.summary.created == 1
     binding = (await db.scalars(select(FileSyncBinding))).one()
     assert binding.root_path == "个人文件"
+
+
+@pytest.mark.asyncio
+async def test_phase3_mirror_out_dry_run_does_not_copy(db, user_a, monkeypatch, tmp_path):
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    from app.services.storage import LocalStorageBackend
+
+    for module in (bindings, reconcile):
+        monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+            storage=SimpleNamespace(local_path=str(tmp_path)),
+        ))
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_storage", lambda: LocalStorageBackend(tmp_path))
+    source_root = tmp_path / str(user_a.id) / "个人文件"
+    source_root.mkdir(parents=True)
+    (source_root / "report.txt").write_text("report", encoding="utf-8")
+    await sync_local_binding(db, user_a.id, root_path="个人文件", mode="mirror_in")
+    await db.commit()
+    export_root = tmp_path / str(user_a.id) / "export"
+    export_root.mkdir()
+
+    preview = await dry_run_local_binding(
+        db, user_a.id, root_path="export", mode="mirror_out",
+    )
+    assert preview.summary.updated == 1
+    assert not (export_root / "个人文件" / "report.txt").exists()
 
 
 @pytest.mark.asyncio

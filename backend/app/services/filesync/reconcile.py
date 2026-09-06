@@ -231,6 +231,7 @@ async def reconcile_local_directory(
     allow_delete: bool = True,
     blocked_paths: set[str] | None = None,
     binding: FileSyncBinding | None = None,
+    dry_run: bool = False,
 ) -> SyncSummary:
     """扫描一个已归属的本地根并将物理变化投影为 File/Folder。
 
@@ -264,7 +265,13 @@ async def reconcile_local_directory(
         (user.storage_limit_bytes if user else None)
         or getattr(quota_settings, "default_storage_limit_bytes", 2**63 - 1)
     )
-    physical_bytes = sum(item.stat().st_size for item in root.rglob("*") if item.is_file() and not item.is_symlink())
+    # 配额属于用户存储总量，不属于某一个 workspace；否则用户可以通过
+    # 创建多个 workspace 分摊检查，最终突破统一存储上限。
+    physical_bytes = sum(
+        item.stat().st_size
+        for item in user_root.rglob("*")
+        if item.is_file() and not item.is_symlink()
+    )
     if physical_bytes > quota_limit:
         return SyncSummary(rejected=1)
 
@@ -404,6 +411,7 @@ async def reconcile_local_directory(
             )
 
     consumed: set[str] = set()
+    ambiguous_missing_keys: set[str] = set()
     for key, path in orphans.items():
         relative = path.relative_to(root).as_posix()
         if relative in blocked_paths:
@@ -417,12 +425,21 @@ async def reconcile_local_directory(
         except (OSError, ValueError):
             rejected += 1
             continue
-        candidate = None
-        for row, digest in missing_fingerprints.get(str(path.stat().st_size), []):
-            if row.id not in consumed and digest == observed:
-                candidate = row
-                consumed.add(row.id)
-                break
+        candidates = [
+            (row, digest)
+            for row, digest in missing_fingerprints.get(str(path.stat().st_size), [])
+            if row.id not in consumed and digest == observed
+        ]
+        # 相同 size/hash 不能证明两个文件的身份。歧义时保留物理文件和 DB
+        # 记录，不把 File.id 猜着交换，也不在本轮把原记录软删除。
+        candidate = candidates[0][0] if len(candidates) == 1 else None
+        if len(candidates) > 1:
+            for row, _digest in candidates:
+                ambiguous_missing_keys.add(row.storage_key)
+            rejected += 1
+            continue
+        if candidate is not None:
+            consumed.add(candidate.id)
         if candidate is not None:
             old_key = candidate.storage_key
             candidate.storage_key = key
@@ -465,10 +482,11 @@ async def reconcile_local_directory(
             status=FileSyncStatus.SYNCED,
         )
         journal_ids.append(journal.id)
-        try:
-            save_snapshot(user_id, binding.id, relative, path)
-        except OSError:
-            rejected += 1
+        if not dry_run:
+            try:
+                save_snapshot(user_id, binding.id, relative, path)
+            except OSError:
+                rejected += 1
 
     for key, row in known.items():
         if row.id in consumed or key not in physical_by_key:
@@ -496,10 +514,11 @@ async def reconcile_local_directory(
             )
             latest_by_path[("file", relative)] = previous
             journal_ids.append(previous.id)
-            try:
-                save_snapshot(user_id, binding.id, relative, path)
-            except OSError:
-                rejected += 1
+            if not dry_run:
+                try:
+                    save_snapshot(user_id, binding.id, relative, path)
+                except OSError:
+                    rejected += 1
         if row.size_bytes != path.stat().st_size or (
             previous is not None and previous.observed_fingerprint != observed
         ):
@@ -508,7 +527,8 @@ async def reconcile_local_directory(
             row.version = int(row.version or 1) + 1
             row.updated_at = now_utc()
             # 文件正文变了，旧缩略图即使仍在磁盘也不能继续返回。
-            delete_thumb_cache(row.id, storage_root)
+            if not dry_run:
+                delete_thumb_cache(row.id, storage_root)
             updated += 1
             entity_ids.append(row.id)
             journal = await record_change(
@@ -522,16 +542,17 @@ async def reconcile_local_directory(
                 observed_fingerprint=observed, status=FileSyncStatus.SYNCED,
             )
             journal_ids.append(journal.id)
-            try:
-                save_snapshot(user_id, binding.id, relative, path)
-            except OSError:
-                rejected += 1
+            if not dry_run:
+                try:
+                    save_snapshot(user_id, binding.id, relative, path)
+                except OSError:
+                    rejected += 1
 
     for key, row in missing.items():
         if row.id in consumed:
             continue
         relative = key.removeprefix(scope_prefix)
-        if relative in blocked_paths or not allow_delete:
+        if key in ambiguous_missing_keys or relative in blocked_paths or not allow_delete:
             rejected += 1
             continue
         row.deleted_at = now_utc()

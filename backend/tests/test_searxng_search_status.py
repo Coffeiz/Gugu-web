@@ -430,7 +430,8 @@ def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
     from agent.tools.files import FilesSkill
 
     read_file = next(tool for tool in FilesSkill.tools if tool.name == "read_file")
-    assert "把图片交给视觉模型查看" in read_file.description
+    assert "位图会直接交给视觉模型查看" in read_file.description
+    assert "SVG 按源码文本读取" in read_file.description
     assert "file:///" in read_file.description
 
     deep_max = tools["deep_research"].input_schema["properties"]["max_results"]

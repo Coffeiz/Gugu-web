@@ -406,9 +406,10 @@ async def _read_file(db, user_id, args: dict):
     if ext in AUDIO_EXTS or ext in VIDEO_EXTS:
         return await read_media(f)
 
-    # 图片：vision 模型 + Anthropic 通道 → 把图喂给模型「看」（结果走 tool_result 图片块）
+    # SVG 保留为源码读取；当前视觉适配器只接受可栅格化的位图，不能把 SVG
+    # 伪装成图片块，否则会既看不了图又读不到源码。
     from app.core import chat_attach
-    if ext in chat_attach.IMAGE_EXTS:
+    if ext in chat_attach.IMAGE_EXTS and ext != "svg":
         if not chat_attach.vision_ready():
             return json.dumps({"error": f"这是图片（{f.ext}），当前模型/通道无法识别图像内容"})
         if ext not in chat_attach.VISION_EXTS:
@@ -1596,7 +1597,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="read_file", label="读取文件",
             description_short='读取文件内容；图片会交给视觉模型查看。',
-            description="读取文本、文档、表格、图片、音频或视频并返回与问题相关的内容；读取文件库图片时会直接把图片交给视觉模型查看，不要把本地路径或 file:/// URI 传给 inspect_images。",
+            description="读取文本、文档、表格、图片、音频或视频并返回与问题相关的内容；文件库位图会直接交给视觉模型查看，SVG 按源码文本读取；不要把本地路径或 file:/// URI 传给 inspect_images。",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -415,7 +415,6 @@ async def update_file_content(
         raise HTTPException(error.status_code, error.detail) from error
     if f is None:
         raise HTTPException(404, "文件不存在")
-    f.updated_at = now_utc()
     await db.commit()
     await db.refresh(f)
     response = to_file_response(f)

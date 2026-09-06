@@ -125,7 +125,6 @@ services:
       - ./backend/.env
     environment:
       PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
-      DOCKER_HOST: unix:///run/gugu/docker.sock
       GUGU_LOG_FILE: /app/logs/gugu.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
@@ -166,7 +165,6 @@ services:
       - *gugu-data-mount
       - gugu_config:/config
       - sandbox_socket:/run/gugu
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
       - gugu_logs:/app/logs
     restart: unless-stopped
 
@@ -267,7 +265,6 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      DOCKER_HOST: unix:///run/gugu/docker.sock
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128

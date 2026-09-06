@@ -10,6 +10,7 @@ from agent.loop_drivers import (
     NormalizedToolCall,
     _ResponsesCtx,
 )
+from agent.providers.openai_responses import _ResponsesRaw
 
 
 def _anthropic_result():
@@ -112,3 +113,37 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
 
     followup = driver.build_tool_round(result, [(result.tool_calls[0], "日历为空")])
     assert followup[1] == {"role": "tool", "tool_call_id": "call-1", "content": "日历为空"}
+
+
+def test_responses_driver_keeps_tool_images_as_input_image_items():
+    """Responses continuation 不能丢掉 read_file/inspect_images 返回的图片。"""
+    result = RoundResult(
+        text="",
+        raw=_ResponsesRaw(
+            content="", response_id=None, previous_response_id=None,
+            tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
+            output_items=[],
+        ),
+    )
+    dispatched = [(
+        SimpleNamespace(id="call-1"),
+        [
+            {"type": "text", "text": "已打开图片。"},
+            {"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "AAAA",
+            }},
+        ],
+    )]
+
+    messages = OpenAIResponsesDriver().build_tool_round(result, dispatched)
+
+    assert messages[1] == {
+        "role": "tool", "tool_call_id": "call-1", "content": "已打开图片。",
+    }
+    assert messages[2] == {
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "工具返回了以下图片，请结合工具文字结果继续处理。"},
+            {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "auto"},
+        ],
+    }
