@@ -110,6 +110,10 @@ test.describe('GuguChat 悬浮窗', () => {
     // （排队入口是 GuguChatComposer.vue 的 v-enter，无论是否在生成中都调 onSend()）。
     const queuedText = `e2e-queue-should-not-leak-${Date.now()}`
     await textarea.fill(queuedText)
+    // ProseMirror 的 DOM 变更经 MutationObserver 异步落成事务；不等文本落地就按
+    // Enter，onSend 会读到空输入被静默吞掉（失败快照里输入框为空、气泡未出现）。
+    // toHaveText 轮询等待，间接保证 PM 文档已同步。
+    await expect(textarea).toHaveText(queuedText)
     await textarea.press('Enter')
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toBeVisible()
 
@@ -184,6 +188,8 @@ test.describe('GuguChat 悬浮窗', () => {
     // session_id 事件一定还没回来；这是一条确定性的"先排队、后拿到 id"路径）
     const queuedText = `e2e-newqueue-second-${Date.now()}`
     await textarea.fill(queuedText)
+    // 同上：等 PM 文档落地再 Enter，防空输入被静默吞掉的竞态
+    await expect(textarea).toHaveText(queuedText)
     await textarea.press('Enter')
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toBeVisible()
 
