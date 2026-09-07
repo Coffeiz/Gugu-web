@@ -215,6 +215,8 @@ export const byokApi = {
   testPreview: (data: any) => post<{ ok: boolean; status: string; message: string }>('/byok/test-preview', data),
   modelsPreview: (data: any) => post<{ models: string[] }>('/byok/models-preview', data),
   visionProbe: (data: any) => post<{ dim: string; supported: boolean | null; status: number; detail: string }>('/byok/vision-probe', data),
+  rebuildVectors: () => post<{ ok: boolean; message: string; status?: { status: string } }>('/byok/embedding-rebuild', {}),
+  rebuildVectorsStatus: () => get<{ status: string; message?: string }>('/byok/embedding-rebuild/status'),
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────

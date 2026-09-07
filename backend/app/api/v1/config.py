@@ -1101,8 +1101,10 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
         rag_semaphore = asyncio.Semaphore(max(1, store.VECTOR_REBUILD_CONCURRENCY))
 
         async def rebuild_rag_index(uid):
-            async with rag_semaphore, bind_user_embedding(embedding_cfgs.get(uid)):
-                return await rebuild_memory_index(uid, operation="embedding-rebuild")
+            # bind_user_embedding 是同步 @contextmanager，只有信号量需要 async with
+            async with rag_semaphore:
+                with bind_user_embedding(embedding_cfgs.get(uid)):
+                    return await rebuild_memory_index(uid, operation="embedding-rebuild")
 
         rag_results = await asyncio.gather(
             *(rebuild_rag_index(uid) for uid in user_ids),

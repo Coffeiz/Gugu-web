@@ -247,3 +247,91 @@ async def test_credential(credential_id: int, user: User = Depends(get_current_u
                 "message": "模型连接正常" if result["ok"] else (
                     f"模型连接失败（HTTP {result['status']}）" if result["status"] else result["detail"])}
     return {"ok": True, "status": "stored", "message": "凭据已保存且可正常解密"}
+
+
+# ── 用户侧 Embedding 向量重建：只重建当前用户自己的向量（PRD-SEC-2）──────────────
+_USER_REBUILD_KEY = "emb:rebuild:user:{user_id}"
+
+
+async def _rebuild_my_vectors_worker(user_id: str, cfg: dict) -> None:
+    """单用户后台重建：pattern + memory 向量 + RAG Memory 索引，全程绑定用户自己的 embedding 配置。"""
+    import asyncio
+    import json
+    import time
+    from uuid import UUID
+
+    from agent.memory import store
+    from app.byok.service import bind_user_embedding
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    key = _USER_REBUILD_KEY.format(user_id=user_id)
+    try:
+        res = await store.rebuild_all_vecs([user_id], bind_cfgs={user_id: cfg})
+        rag_failed = False
+        try:
+            from agent.rag.pipeline import rebuild_memory_index
+            with bind_user_embedding(cfg):
+                await rebuild_memory_index(str(UUID(user_id)), operation="embedding-rebuild")
+        except Exception:
+            rag_failed = True
+        failed = int(res.get("failed_users") or 0)
+        status = "error" if failed or rag_failed else "done"
+        message = (
+            f"重建完成：pattern {res.get('pattern_vectors', 0)} 条，"
+            f"memory {res.get('memory_vectors', 0)} 块"
+            + ("；RAG 索引失败" if rag_failed else "")
+        )
+        await r.set(key, json.dumps(
+            {"status": status, **res, "message": message, "ts": time.time()}), ex=3600)
+    except Exception as e:
+        await r.set(key, json.dumps(
+            {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)
+
+
+@router.post("/embedding-rebuild")
+async def rebuild_my_vectors(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """用当前用户生效的 embedding 凭据重建自己的向量。后台运行并立即返回；
+    进度通过 GET /embedding-rebuild/status 轮询。仅在有可用凭据时允许。"""
+    import asyncio
+    import json
+    import time
+
+    from app.byok.service import resolve_embedding_settings
+    from app.core.redis import get_redis
+
+    _gate()
+    try:
+        cfg = await resolve_embedding_settings(db, user.id, get_settings().embedding)
+    except Exception:
+        cfg = None
+    if cfg is None:
+        return {"ok": False, "message": "请先配置并启用 Embedding 凭据再重建"}
+    r = get_redis()
+    key = _USER_REBUILD_KEY.format(user_id=user.id)
+    cur = await r.get(key)
+    if cur:
+        try:
+            d = json.loads(cur if isinstance(cur, str) else cur.decode())
+            if d.get("status") == "running":
+                return {"ok": False, "message": "已有重建任务在跑", "status": d}
+        except Exception:
+            pass
+    await r.set(key, json.dumps({"status": "running", "ts": time.time()}), ex=3600)
+    asyncio.create_task(_rebuild_my_vectors_worker(str(user.id), cfg))
+    return {"ok": True, "message": "重建已启动"}
+
+
+@router.get("/embedding-rebuild/status")
+async def rebuild_my_vectors_status(user: User = Depends(get_current_user)):
+    import json
+
+    from app.core.redis import get_redis
+
+    cur = await get_redis().get(_USER_REBUILD_KEY.format(user_id=user.id))
+    if not cur:
+        return {"status": "idle"}
+    try:
+        return json.loads(cur if isinstance(cur, str) else cur.decode())
+    except Exception:
+        return {"status": "idle"}

@@ -147,7 +147,7 @@ frontend/src/i18n/sections/common.ts                        【修改】 profile
 ### Phase 2：用户链路绑定
 
 - [x] `SEC2-004` 七个 run 入口绑定（runner ×2、gateway/web ×2、scheduled_execution、reflection、im_reflection、greeting）：run 开始绑定、结束 reset，解密失败回落平台并记脱敏日志；验收：各有用户凭据/无凭据两种链路测试。
-- [x] `SEC2-005` Admin 重建 per-user：`embedding-rebuild` 前置检查与 `rebuild_all_vecs` 改为逐用户解析配置（gather 各 task 内绑定）；验收：平台未配 embedding + 存在 BYOK 用户时可重建且只用用户 key。
+- [x] `SEC2-005` Admin 重建 per-user：`embedding-rebuild` 前置检查与 `rebuild_all_vecs` 改为逐用户解析配置（gather 各 task 内绑定）；验收：平台未配 embedding + 存在 BYOK 用户时可重建且只用用户 key。补充：用户侧 `POST/GET /byok/embedding-rebuild[/status]` + 个人设置 Embedding 卡片「重建向量」按钮（仅本人向量，须有生效凭据）；修复 Admin worker 误用 `async with` 绑定同步 contextmanager 致 RAG 重建恒失败的潜在 bug。
 
 ### Phase 3：测试连接与前端
 

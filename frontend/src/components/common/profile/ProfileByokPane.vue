@@ -24,6 +24,7 @@
                 <button class="pm-style-chip" @click="openEditor(item.capability, item)">{{ t('profileByokUi.edit') }}</button>
                 <button class="pm-style-chip" :disabled="testing === item.id" @click="test(item)">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button>
                 <button v-if="item.capability === 'llm'" class="pm-style-chip" :disabled="visionTesting?.startsWith(`${item.id}:`)" @click="probeCardVisionAll(item)">{{ visionTesting === `${item.id}:all` ? t('profileByokUi.probing') : t('profileByokUi.probe') }}</button>
+                <button v-if="item.capability === 'embedding'" class="pm-style-chip" :disabled="rebuildRunning" @click="rebuildVectors(item)">{{ rebuildRunning ? t('profileByokUi.rebuilding') : t('profileByokUi.rebuildVectors') }}</button>
                 <button class="pm-style-chip" :class="{ active: item.enabled }" @click="toggle(item)">{{ item.enabled ? t('profileByokUi.enabled') : t('profileByokUi.disabled') }}</button>
                 </template>
                 <button class="pm-danger-btn" @click="remove(item)">{{ t('profileByokUi.delete') }}</button>
@@ -148,6 +149,7 @@ const visibleGroups = computed(() => props.capability ? groups.filter(group => g
 const localizedVisionDims = computed(() => visionDims.map(dim => ({ ...dim, label: t(dim.labelKey) })))
 type VisionResult = { key: string; label: string; text: string; status: 'supported' | 'unsupported' | 'unknown' }
 const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<VisionResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
+const rebuildRunning = ref(false); let rebuildTimer: ReturnType<typeof setInterval> | null = null
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
 const embeddingProviders = ['openai', 'qwen', 'glm', 'ollama', 'local']
@@ -287,6 +289,37 @@ async function probeCardVisionAll(item: Item) {
   finally { visionTesting.value = null }
 }
 async function load() { loading.value = true; error.value = ''; try { const result = await byokApi.list(); items.value = result.items as Item[]; needsReconfigure.value = result.status === 'needs_reconfigure' } catch (e) { error.value = e instanceof Error ? e.message : 'BYOK 加载失败' } finally { loading.value = false } }
+function stopRebuildPolling() { if (rebuildTimer) { clearInterval(rebuildTimer); rebuildTimer = null } }
+function startRebuildPolling() {
+  stopRebuildPolling()
+  rebuildTimer = setInterval(async () => {
+    try {
+      const status = await byokApi.rebuildVectorsStatus()
+      if (status.status === 'running') return
+      stopRebuildPolling()
+      rebuildRunning.value = false
+      messageCapability.value = 'embedding'
+      if (status.status === 'done') { message.value = status.message || '重建完成'; messageType.value = 'ok' }
+      else if (status.status === 'error') { message.value = status.message || '重建失败'; messageType.value = 'err' }
+    } catch { /* 单次轮询失败静默，下一轮再取 */ }
+  }, 2000)
+}
+async function refreshRebuildStatus() {
+  // 页面刷新后若后台重建仍在跑，恢复按钮禁用态并继续轮询
+  try {
+    const status = await byokApi.rebuildVectorsStatus()
+    if (status.status === 'running') { rebuildRunning.value = true; startRebuildPolling() }
+  } catch { /* 状态接口失败不影响面板加载 */ }
+}
+async function rebuildVectors(_item: Item) {
+  if (rebuildRunning.value) return
+  messageCapability.value = 'embedding'
+  try {
+    const body = await byokApi.rebuildVectors()
+    if (body.ok) { rebuildRunning.value = true; message.value = body.message; messageType.value = 'ok'; startRebuildPolling() }
+    else { message.value = body.message; messageType.value = 'err' }
+  } catch (e) { message.value = e instanceof Error ? e.message : '重建失败'; messageType.value = 'err' }
+}
 function setActiveEditor(id: number) { editor.value = editors.value[id] || null }
 function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', dimensions: (item as Item).dimensions ?? null, max_tokens: item.max_tokens ?? 8000, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, reasoning_persistence: normalizeReasoningPersistence(item.reasoning_persistence), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', dimensions: null, max_tokens: 8000, context_tokens: 128000, thinking: null, reasoning_effort: null, reasoning_persistence: 'off' as const, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; visionFeedback.value = ''; visionFeedbackTarget.value = null }
 function applyProviderTo(target: Editor, value: string) { applyProvider(target, value) }
@@ -322,8 +355,8 @@ function closeModelMenuOnOutside(event: MouseEvent) {
   const target = event.target
   if (modelMenuOpen.value && (!(target instanceof Element) || !target.closest('.model-picker'))) modelMenuOpen.value = false
 }
-onMounted(() => { load(); document.addEventListener('mousedown', closeModelMenuOnOutside) })
-onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOnOutside))
+onMounted(() => { load(); void refreshRebuildStatus(); document.addEventListener('mousedown', closeModelMenuOnOutside) })
+onBeforeUnmount(() => { stopRebuildPolling(); document.removeEventListener('mousedown', closeModelMenuOnOutside) })
 </script>
 
 <style scoped>
