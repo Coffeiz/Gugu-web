@@ -138,7 +138,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
-          skip-files: /usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
+          skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
 
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@v0.36.0

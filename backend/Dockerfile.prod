@@ -1,46 +1,110 @@
-# 咕咕后端生产镜像：只复制构建上下文，不挂载宿主机源码。
-# 钉住明确版本：latest 会让 Python/Debian 与预装包随时间漂移，影响构建可重现性与安全扫描。
-# 选 trixie（Debian 13）而非 bookworm：trixie 仓库才有 docker-cli（bookworm 没有）。
-FROM python:3.14-trixie
+# syntax=docker/dockerfile:1
+# 咕咕后端生产镜像：构建工具只存在于 builder，最终运行层不携带开发工具链。
+# 生产 Compose 的 backend、worker、gateway 和 sandboxd 共用本镜像。
+
+FROM python:3.14-slim-trixie AS builder
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
-# 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），生产文档预览依赖它，
-# 因此默认开；确实不需要该功能时可传 --build-arg GUGU_INSTALL_LIBREOFFICE=false 关闭。
+
+RUN sed -i \
+        -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
+        -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        libffi-dev \
+        libpq-dev \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+COPY backend/requirements.txt ./requirements.txt
+
+RUN python -m venv /opt/venv
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install --upgrade --force-reinstall \
+        -i "${PIP_INDEX_URL}" \
+        "msgpack==1.2.2" "setuptools==84.0.0" \
+    && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
+
+# TS worker 的构建物已经提交到 backend/bin；这里只准备它运行时需要的
+# Linux native 依赖，不把 TS 源码、测试或构建工具带进最终镜像。
+FROM node:22-trixie AS rag-runtime
+
+WORKDIR /rag
+COPY backend/ts/workers/rag/package.json ./package.json
+RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
+        @node-rs/jieba@2.0.1 \
+        @node-rs/jieba-linux-x64-gnu@2.0.1 \
+    && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
+
+FROM python:3.14-slim-trixie
+
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+# LibreOffice 用于 doc/docx/ppt 转 PDF 预览，默认保留；不需要文档预览时可关闭，
+# 以换取约 500MB 的镜像体积收益：--build-arg GUGU_INSTALL_LIBREOFFICE=false。
 ARG GUGU_INSTALL_LIBREOFFICE=true
 
 RUN sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
         -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
-        /etc/apt/sources.list.d/debian.sources
-
-RUN apt-get update \
-    && apt-get upgrade -y \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-        poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker-cli nodejs acl \
-        $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
+        poppler-utils \
+        fonts-noto-cjk \
+        ffmpeg \
+        curl \
+        docker-cli \
+        nodejs \
+        acl \
+        $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice; fi) \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
-
-ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt
-# python:latest 可能预装旧版 setuptools/msgpack；强制重装并校验最终版本，避免旧
-# dist-info 留在镜像中导致发布安全扫描仍识别出已修复漏洞。
-RUN pip install --no-cache-dir --upgrade --force-reinstall \
-        -i "${PIP_INDEX_URL}" \
-        "msgpack==1.2.2" "setuptools==84.0.0" \
-    && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
-
-COPY backend ./
+COPY --from=builder /opt/venv /opt/venv
+COPY backend/app ./app
+COPY backend/agent ./agent
+COPY backend/onboarding ./onboarding
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/worker.py ./worker.py
+COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY backend/compose_bootstrap.py ./compose_bootstrap.py
+COPY backend/scripts/migrate_storage_root.py ./scripts/migrate_storage_root.py
+COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
+COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
+COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
+COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs \
-    && chmod 755 docker-entrypoint.sh /usr/local/bin/prepare_rootless_storage.py
+    && chmod 755 docker-entrypoint.sh /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py \
+    && test ! -e /app/.venv \
+    && test ! -e /app/.deploy-backups \
+    && test ! -e /app/ts \
+    && test ! -e /app/tests \
+    && test ! -e /app/docs \
+    && ! command -v gcc \
+    && ! command -v g++ \
+    && ! command -v make \
+    && ! command -v git \
+    && ! command -v hg
+
+RUN node bin/gugu-rag-ts-worker.mjs --version \
+    && node bin/gugu-filesync-ts-worker.cjs --version
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -sf http://127.0.0.1:8000/health || exit 1
+    CMD curl -sf http://127.0.0.1:8000/health
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
