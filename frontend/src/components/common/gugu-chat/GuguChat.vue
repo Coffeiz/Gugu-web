@@ -727,7 +727,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 /* 咕咕回复的 `---` 分隔线：实色次级文字色，全主题可辨，与预览窗 .tv-md hr 同口径 */
 :deep(.msg-bubble.md-body hr) {
   border: none;
-  border-top: 1px solid var(--content-secondary);
+  border-top: 1px solid color-mix(in srgb, var(--content-primary) 30%, transparent);
   margin: 1.25em 0;
 }
 :deep(.msg-bubble.md-body a.chat-object-card) {
