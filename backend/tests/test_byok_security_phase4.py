@@ -97,6 +97,59 @@ async def test_decrypt_failure_does_not_fall_back_to_platform_config(db, user_a,
         await service.resolve_capability_settings(db, user_a.id, "llm", base)
 
 
+class _Cfg:
+    """仿 pydantic 配置对象：resolve_capability_settings 走 model_copy 分支。"""
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+    def model_copy(self, update):
+        merged = dict(self.__dict__)
+        merged.update(update)
+        return _Cfg(**merged)
+
+
+@pytest.mark.asyncio
+async def test_capability_settings_never_inherit_platform_base_url(db, user_a, monkeypatch):
+    """运行时目的地绑定（stt）：用户 Key 的 base_url 只来自用户凭据——空串按
+    provider 官方默认端点解析，解析不出（目的地不明）→ 放弃覆盖回落平台配置。
+    绝不继承平台 base_url，否则用户 Key 会被拼到平台 endpoint 发出去。"""
+    def active_credential(row):
+        async def _get(*_args):
+            return row
+        return _get
+    platform = _Cfg(provider="platform", api_key="platform-secret", model="platform-model",
+                    base_url="https://platform-stt.example/v1", api_format="openai",
+                    vision=False, vision_video=False, vision_audio=False, vision_detail="auto")
+
+    # provider 解析不出默认端点 + 用户没填 base_url → 覆盖整体放弃，用户 Key 不启用
+    row = SimpleNamespace(provider="user-provider", api_format="openai", base_url="",
+                          model="user-model", vision=False, vision_video=False,
+                          vision_audio=False, vision_detail="auto")
+    monkeypatch.setattr(service, "get_active_credential", active_credential(row))
+    monkeypatch.setattr(service, "decrypt_value", lambda _row: "user-secret")
+    vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
+    assert vm.api_key == "platform-secret"
+    assert vm.base_url == "https://platform-stt.example/v1"
+
+    # 有官方默认端点的 provider：空 base_url 落到 provider 默认端点，不继承平台 URL
+    row = SimpleNamespace(provider="glm", api_format="openai", base_url="",
+                          model="user-model", vision=False, vision_video=False,
+                          vision_audio=False, vision_detail="auto")
+    monkeypatch.setattr(service, "get_active_credential", active_credential(row))
+    vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
+    assert vm.api_key == "user-secret"
+    assert vm.base_url == "https://open.bigmodel.cn/api/paas/v4"
+
+    # 显式 base_url：原样作为目的地
+    row = SimpleNamespace(provider="user-provider", api_format="openai",
+                          base_url="https://user-stt.example/v1", model="user-model",
+                          vision=False, vision_video=False, vision_audio=False,
+                          vision_detail="auto")
+    monkeypatch.setattr(service, "get_active_credential", active_credential(row))
+    vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
+    assert vm.api_key == "user-secret"
+    assert vm.base_url == "https://user-stt.example/v1"
+
+
 def test_disabled_policy_blocks_all_byok_entry_points(monkeypatch):
     settings = SimpleNamespace(byok=SimpleNamespace(enabled=False), ai=SimpleNamespace(deployment_mode="hosted"))
     monkeypatch.setattr(policy, "get_settings", lambda: settings)

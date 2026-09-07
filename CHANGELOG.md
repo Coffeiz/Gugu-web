@@ -24,7 +24,7 @@
 
 ### 安全
 
-- **BYOK 凭据防跨服务商泄漏**：测试连接、获取模型列表与能力检测不再把已存 Key 带往其他 Provider 或 Endpoint——切换 Provider 或 Base URL（含清空后落到官方默认端点）都必须重新填写 Key；无鉴权的自托管 Embedding（本地 Ollama / llama.cpp 等）允许空 Key 保存与测试。
+- **BYOK 凭据防跨服务商泄漏**：测试连接、获取模型列表与能力检测不再把已存 Key 带往其他 Provider 或 Endpoint——切换 Provider 或 Base URL（含清空后落到官方默认端点）都必须重新填写 Key；保存已有凭据同样强制目的地绑定，目的地变更而未重输 Key 一律拒绝且不留任何改动；运行时解析（Embedding / 语音识别）也不再从平台配置继承 Base URL 拼用户 Key，目的地不明的凭据宁可回落平台配置；无鉴权的自托管 Embedding（本地 Ollama / llama.cpp 等）允许空 Key 保存与测试。
 
 ### 修复
 
