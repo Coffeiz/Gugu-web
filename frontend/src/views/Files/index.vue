@@ -529,6 +529,7 @@ const batchActions = useFileLibraryBatchActions({
     return {
       folderId: seg?.type === 'folder' ? (seg.folderId ?? null) : null,
       projectId: seg?.type === 'project' ? (seg.id ?? null) : (seg?.projectId ?? null),
+      workspaceDirectoryId: seg?.space === 'workspace' ? (seg.workspaceDirectoryId ?? null) : null,
     }
   },
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),

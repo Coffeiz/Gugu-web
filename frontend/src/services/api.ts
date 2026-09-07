@@ -244,11 +244,12 @@ export const filesApi = {
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
-  update: (id: number, data: Schemas['FileUpdate'], meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
+  // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
+  update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
   saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
   delete:      (id: number, meta?: RequestMeta)   => del(`/files/${id}`, meta),
   batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
-  copy: (id: number, body: Schemas['FileCopyBody']) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
+  copy: (id: number, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
   batchDownload: async (ids: number[], folderIds: number[] = [], filename = 'files.zip') => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/batch-download`, {
@@ -497,10 +498,10 @@ export const foldersApi = {
   // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
   rename: (id: number, name: string, version: number, meta?: RequestMeta) =>
     patch<ApiFolderResponse>(`/folders/${id}`, { name, version }, meta),
-  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta) =>
-    patch<ApiFolderResponse>(`/folders/${id}/parent`, { parentId, version, projectId }, meta),
-  copy:   (id: number, parentId: number | null, projectId: number | null) =>
-    post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId }),
+  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta, workspaceDirectoryId: number | null = null) =>
+    patch<ApiFolderResponse>(`/folders/${id}/parent`, { parentId, version, projectId, workspaceDirectoryId }, meta),
+  copy:   (id: number, parentId: number | null, projectId: number | null, workspaceDirectoryId: number | null = null) =>
+    post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId, workspaceDirectoryId }),
   delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
   download: async (id: number, name: string) => {
     const token = getToken()

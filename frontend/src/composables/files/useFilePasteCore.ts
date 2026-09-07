@@ -5,6 +5,8 @@ import type { ConflictDecision, ConflictItem } from '@/components/common/overlay
 export interface FilePasteDestination {
   folderId: number | null
   projectId: number | null
+  /** 目标为顶层 Workspace（或其子目录）时的目录 id；其余落点为 null。 */
+  workspaceDirectoryId: number | null
 }
 
 export interface FilePasteCoreOptions {

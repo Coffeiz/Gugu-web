@@ -83,29 +83,32 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.delete(id, meta)
   }
 
-  function moveFile(id: number, folderId: number | null, projectId: number | null = null, meta?: RequestMeta) {
+  function moveFile(id: number, folderId: number | null, projectId: number | null = null,
+    meta?: RequestMeta, workspaceDirectoryId: number | null = null) {
     assertProjectTarget(projectId)
-    return filesApi.update(id, { folderId, projectId }, meta)
+    return filesApi.update(id, { folderId, projectId, workspaceDirectoryId }, meta)
   }
 
-  function moveFolder(id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta) {
+  function moveFolder(id: number, parentId: number | null, version: number, projectId: number | null = null,
+    meta?: RequestMeta, workspaceDirectoryId: number | null = null) {
     assertProjectTarget(projectId)
-    return foldersApi.move(id, parentId, version, projectId, meta)
+    return foldersApi.move(id, parentId, version, projectId, meta, workspaceDirectoryId)
   }
 
   function copyFile(id: number, folderId: number | null, projectId: number | null = null,
-    conflict?: { onConflict?: 'keep_both' | 'overwrite'; overwriteFileId?: number | null }) {
+    conflict?: { onConflict?: 'keep_both' | 'overwrite'; overwriteFileId?: number | null },
+    workspaceDirectoryId: number | null = null) {
     assertProjectTarget(projectId)
     return filesApi.copy(id, {
-      folderId, projectId,
+      folderId, projectId, workspaceDirectoryId,
       onConflict: conflict?.onConflict ?? 'keep_both',
       ...(conflict?.overwriteFileId != null ? { overwriteFileId: conflict.overwriteFileId } : {}),
     })
   }
 
-  function copyFolder(id: number, parentId: number | null, projectId: number | null = null) {
+  function copyFolder(id: number, parentId: number | null, projectId: number | null = null, workspaceDirectoryId: number | null = null) {
     assertProjectTarget(projectId)
-    return foldersApi.copy(id, parentId, projectId)
+    return foldersApi.copy(id, parentId, projectId, workspaceDirectoryId)
   }
 
   function createFolder(projectId: number | null, name: string, parentId: number | null, workspaceDirectoryId: number | null = null) {
