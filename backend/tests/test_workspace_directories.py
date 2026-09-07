@@ -93,3 +93,39 @@ async def test_legacy_shell_scan_is_idempotent_and_reports_readable_source(db, u
     assert first[0].source_file_count == 1
     assert second[0].id == first[0].id
     assert source.exists()
+
+
+@pytest.mark.asyncio
+async def test_workspace_directory_binding_visible_to_agent_tools(db, user_a, tmp_path, monkeypatch):
+    """目录必须同步生成 kind=directory 的 Workspace 声明，agent 的 list_workspaces 才可见。"""
+    from app.core.config import get_settings
+    from app.services.workspaces import list_workspaces_for_management, workspace_payload
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+
+    row = await create_workspace_directory(db, user_a.id, name="小北的工作区")
+    await db.commit()
+
+    bindings = [b for b in await list_workspaces_for_management(db, user_a.id) if b.directory_id == row.id]
+    assert len(bindings) == 1
+    assert bindings[0].kind == "directory"
+    assert bindings[0].name == "小北的工作区"
+    assert bindings[0].enabled is True
+
+    await update_workspace_directory(db, user_a.id, row.id, name="改名的工作区")
+    await db.commit()
+    bindings = [b for b in await list_workspaces_for_management(db, user_a.id) if b.directory_id == row.id]
+    assert len(bindings) == 1
+    assert bindings[0].name == "改名的工作区"
+
+    payload = await workspace_payload(db, user_a.id, bindings[0])
+    assert payload["kind"] == "directory"
+    assert payload["directory_id"] == row.id
+    assert payload["directory_name"] == "改名的工作区"
+
+    # 删除目录时声明行一并清理（外键绑定行由 delete_workspace_directory 删除）。
+    await delete_workspace_directory(db, user_a.id, row.id)
+    await db.commit()
+    assert [b for b in await list_workspaces_for_management(db, user_a.id) if b.directory_id == row.id] == []

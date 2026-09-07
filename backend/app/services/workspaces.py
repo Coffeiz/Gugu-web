@@ -48,6 +48,27 @@ async def list_workspace_directories(db: AsyncSession, user_id) -> list[Workspac
     return list(result.scalars().all())
 
 
+async def _ensure_directory_binding(db: AsyncSession, user_id, directory: WorkspaceDirectory) -> Workspace | None:
+    """目录与工作区声明一对一同步：缺声明行时补建，保证 agent 工具可见。
+
+    网页创建的 WorkspaceDirectory 与 agent ``list_workspaces`` 读的 Workspace
+    声明是两张表；不补声明的话目录在 agent 侧不可见，也无法绑定会话/任务。
+    """
+    if not workspace_shell_supported():
+        return None
+    binding = await db.scalar(select(Workspace).where(
+        Workspace.user_id == user_id, Workspace.directory_id == directory.id,
+    ))
+    if binding is None:
+        binding = Workspace(
+            user_id=user_id, name=directory.name, kind="directory",
+            directory_id=directory.id, enabled=True,
+        )
+        db.add(binding)
+        await db.flush()
+    return binding
+
+
 async def ensure_default_workspace_directory(db: AsyncSession, user_id) -> WorkspaceDirectory:
     """为新用户补齐默认 Workspace；可重复调用且不在迁移中触碰文件系统。"""
     row = await db.scalar(select(WorkspaceDirectory).where(
@@ -65,6 +86,7 @@ async def ensure_default_workspace_directory(db: AsyncSession, user_id) -> Works
         await db.flush()
     if get_settings().storage.backend == "local":
         _workspace_directory_root(user_id, row.directory_name).mkdir(parents=True, exist_ok=True)
+    await _ensure_directory_binding(db, user_id, row)
     return row
 
 
@@ -111,6 +133,7 @@ async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) ->
     await db.flush()
     root = _workspace_directory_root(user_id, directory_name)
     root.mkdir(parents=True, exist_ok=True)
+    await _ensure_directory_binding(db, user_id, row)
     return row
 
 
@@ -140,6 +163,11 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
             old_root.rename(new_root)
         row.directory_name = new_name
         row.name = normalized
+        bindings = (await db.execute(select(Workspace).where(
+            Workspace.user_id == user_id, Workspace.directory_id == row.id,
+        ))).scalars().all()
+        for binding in bindings:
+            binding.name = normalized
     await db.flush()
     return row
 
@@ -292,6 +320,10 @@ async def workspace_payload(db: AsyncSession, user_id, row: Workspace) -> dict:
     if row.folder_id is not None:
         folder = await get_owned(db, Folder, row.folder_id, user_id)
         result["folder_name"] = folder.name if folder else None
+    if row.directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, row.directory_id, user_id)
+        result["directory_id"] = row.directory_id
+        result["directory_name"] = directory.name if directory else None
     return result
 
 
