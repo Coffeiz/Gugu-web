@@ -13,7 +13,7 @@ from app.db.session import get_db
 from app.models import User, UserProviderCredential
 from app.byok.policy import require_byok_enabled
 from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, CredentialVisionProbe
-from app.byok.service import credential_view, decrypt_value, encrypt_value, list_credentials, master_key_status_for_credentials
+from app.byok.service import credential_view, decrypt_value, encrypt_value, get_owned_credential, list_credentials, master_key_status_for_credentials
 
 router = APIRouter(prefix="/byok", tags=["byok"])
 
@@ -145,8 +145,8 @@ async def preview_models(body: CredentialModelsPreview, user: User = Depends(get
     _gate()
     row = None
     if body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 上一行按当前用户校验凭据归属
-        if row is None or row.user_id != user.id:
+        row = await get_owned_credential(db, user.id, body.credential_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="凭据不存在")
     try:
         api_key = resolve_preview_key(row, supplied_key=body.api_key,
@@ -169,8 +169,8 @@ async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_cur
     _gate()
     row = None
     if body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 上一行按当前用户校验凭据归属
-        if row is None or row.user_id != user.id:
+        row = await get_owned_credential(db, user.id, body.credential_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="凭据不存在")
     try:
         api_key = resolve_preview_key(row, supplied_key=body.api_key,
@@ -193,8 +193,8 @@ async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_cur
 @router.patch("/{credential_id}")
 async def patch_credential(credential_id: int, body: CredentialPatch, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
-    row = await db.get(UserProviderCredential, credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
-    if row is None or row.user_id != user.id:
+    row = await get_owned_credential(db, user.id, credential_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="凭据不存在")
     if body.enabled is True:
         siblings = (await db.execute(select(UserProviderCredential).where(
@@ -237,8 +237,8 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
 @router.delete("/{credential_id}", status_code=204)
 async def delete_credential(credential_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
-    row = await db.get(UserProviderCredential, credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
-    if row is None or row.user_id != user.id:
+    row = await get_owned_credential(db, user.id, credential_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="凭据不存在")
     await db.delete(row)
     await db.commit()
@@ -313,8 +313,8 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
     # endpoint origin 与已存凭据一致才复用旧 Key；显式新 Key 永远优先。
     row = None
     if not body.value and body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 上一行按当前用户校验凭据归属
-        if row is None or row.user_id != user.id:
+        row = await get_owned_credential(db, user.id, body.credential_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="凭据不存在")
     api_key = body.value
     if not api_key:
@@ -347,8 +347,8 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
 async def test_credential(credential_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """校验凭据，并对模型类配置执行一次无副作用的连通性请求。"""
     _gate()
-    row = await db.get(UserProviderCredential, credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
-    if row is None or row.user_id != user.id:
+    row = await get_owned_credential(db, user.id, credential_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="凭据不存在")
     try:
         api_key = decrypt_value(row)

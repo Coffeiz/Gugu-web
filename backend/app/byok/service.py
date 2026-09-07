@@ -75,6 +75,14 @@ async def list_credentials(db: AsyncSession, user_id: UUID) -> list[UserProvider
     return list(result.scalars().all())
 
 
+async def get_owned_credential(db: AsyncSession, user_id: UUID, credential_id: int) -> UserProviderCredential | None:
+    """按 id 取当前用户自己的凭据；不存在或归属他人一律返回 None（API 层转 404）。"""
+    row = await db.get(UserProviderCredential, credential_id)
+    if row is None or row.user_id != user_id:
+        return None
+    return row
+
+
 async def get_active_credential(db: AsyncSession, user_id: UUID, capability: str) -> UserProviderCredential | None:
     """按能力读取当前用户唯一启用凭据。"""
     if not byok_enabled():
