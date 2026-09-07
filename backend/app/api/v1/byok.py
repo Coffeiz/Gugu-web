@@ -141,12 +141,27 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         value = getattr(body, field)
         if value is not None:
             setattr(row, field, value)
+    # allow_empty / 一致性校验都基于保存后的最终配置：切换 provider/base_url 时，
+    # 旧 Key 是否允许为空、新 Provider 是否必须补 Key，都要看目标状态而不是请求前状态。
+    final_allows_empty = _embedding_allows_empty_key(row.capability, row.provider, row.base_url)
     if body.value is not None:
         try:
-            row.encrypted_value, row.nonce, row.encrypted_data_key = encrypt_value(body.value)
+            encrypted, nonce, wrapped = encrypt_value(body.value, allow_empty=final_allows_empty)
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail="BYOK 加密服务未配置，请先设置 CREDENTIALS_MASTER_KEY") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，不能为空") from exc
+        row.encrypted_value, row.nonce, row.encrypted_data_key = encrypted, nonce, wrapped
         row.key_version = int(os.getenv("CREDENTIALS_MASTER_KEY_VERSION", "1"))
+    elif not final_allows_empty:
+        # 反向一致性：切到需要 Key 的 Provider 但未提供新 Key 时，存量空 Key 会让
+        # 保存出一个必然运行失败的配置（如 OpenAI + 空 Key），直接拒绝。
+        try:
+            stored_empty = decrypt_value(row) == ""
+        except Exception:
+            stored_empty = False
+        if stored_empty:
+            raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，请填写后保存")
     await db.commit()
     await db.refresh(row)
     return credential_view(row)

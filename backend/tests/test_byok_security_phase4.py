@@ -185,3 +185,52 @@ async def test_keyless_selfhosted_embedding_create_then_resolve_empty_key(db, us
         with pytest.raises(HTTPException) as exc_info:
             await create_credential(body, user=user_a, db=db)
         assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_switch_to_local_clears_old_cloud_key(db, user_a, monkeypatch):
+    """回归：云端 Embedding 切换成本地无鉴权服务时，旧 Key 曾因「编辑不回显 +
+    falsy 不进 PATCH」留在 row 上，embed() 会拿它给新 endpoint 发 Authorization
+    （跨 Provider 凭据泄漏）。显式 PATCH value="" 必须把旧 Key 清掉。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential, patch_credential
+    from app.byok.schemas import CredentialCreate, CredentialPatch
+
+    created = await create_credential(
+        CredentialCreate(provider="openai", capability="embedding", value="sk-openai-secret",
+                         base_url="https://api.openai.com/v1", model="text-embedding-3-small"),
+        user=user_a, db=db)
+    patched = await patch_credential(
+        created["id"],
+        CredentialPatch(provider="local", base_url="http://127.0.0.1:8080/v1", value=""),
+        user=user_a, db=db)
+    assert patched["provider"] == "local"
+
+    base = SimpleNamespace(api_key="platform-key", base_url="https://platform.example", model="platform-bge")
+    resolved = await service.resolve_embedding_settings(db, user_a.id, base)
+    assert resolved is not None
+    assert resolved["api_key"] == ""  # 旧云端 Key 已清掉，不再发给本地 endpoint
+
+
+@pytest.mark.asyncio
+async def test_patch_switch_to_cloud_provider_requires_new_key(db, user_a, monkeypatch):
+    """回归：本地空 Key 切到云端 Provider 且未提供新 Key 时，曾会保存出
+    「云端 Provider + 空 Key」的必然失败配置；后端按最终配置一致性拒绝（422）。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential, patch_credential
+    from app.byok.schemas import CredentialCreate, CredentialPatch
+
+    created = await create_credential(
+        CredentialCreate(provider="local", capability="embedding", value="",
+                         base_url="http://127.0.0.1:8080/v1", model="bge-m3"),
+        user=user_a, db=db)
+    with pytest.raises(HTTPException) as exc_info:
+        await patch_credential(
+            created["id"],
+            CredentialPatch(provider="openai", base_url="https://api.openai.com/v1"),
+            user=user_a, db=db)
+    assert exc_info.value.status_code == 422

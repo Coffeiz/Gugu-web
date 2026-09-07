@@ -25,7 +25,8 @@ class CredentialCreate(BaseModel):
 
 class CredentialPatch(BaseModel):
     provider: str | None = Field(None, min_length=1, max_length=64)
-    value: str | None = Field(None, min_length=1, max_length=20000)
+    # 空字符串是合法语义：显式清空 Key（仅限无鉴权自托管 Embedding，端点里校验）。
+    value: str | None = Field(None, max_length=20000)
     api_format: str | None = Field(None, max_length=32)
     base_url: str | None = Field(None, max_length=500)
     model: str | None = Field(None, max_length=200)
@@ -58,9 +59,13 @@ class CredentialVisionProbe(CredentialModelsPreview):
 
 class CredentialTestPreview(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
-    capability: Literal["deep_research", "similar_image_search", "embedding"]
-    value: str = Field(min_length=1, max_length=20000)
-    # embedding 试呼需要完整目标：未保存配置时由表单直接携带
+    capability: Literal["deep_research", "similar_image_search", "embedding", "llm", "speech_to_text"]
+    # 允许空串：编辑已保存配置时用户往往只改 base_url/model 不重填 Key，
+    # 此时由 credential_id 回源解密已存 Key（服务端校验归属）。
+    value: str = Field("", max_length=20000)
+    # 试呼需要完整目标：未保存配置时由表单直接携带
+    api_format: str = Field("", max_length=32)
     base_url: str = Field("", max_length=500)
     model: str = Field("", max_length=200)
     dimensions: int | None = Field(None, ge=0, le=65536)
+    credential_id: int | None = None
