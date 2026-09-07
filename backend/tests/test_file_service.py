@@ -254,6 +254,30 @@ async def test_create_file_overwrite_target_missing(db, user_a, tmp_path):
     assert ei.value.public_message == "要覆盖的文件不存在"
 
 
+@pytest.mark.asyncio
+async def test_copy_overwrite_rejects_cross_workspace_target(db, user_a, tmp_path):
+    """Workspace A 的同名文件不能借 folder/name/ext 相同就覆盖 Workspace B 的文件。"""
+    from app.models import WorkspaceDirectory
+
+    ws_a = WorkspaceDirectory(user_id=user_a.id, name="工作区A", directory_name="workspace-a")
+    ws_b = WorkspaceDirectory(user_id=user_a.id, name="工作区B", directory_name="workspace-b")
+    db.add_all([ws_a, ws_b])
+    await db.commit()
+    svc = _svc(db, tmp_path)
+    in_a = await _create(svc, user_a.id, "a", "TXT", data=b"A", space="workspace",
+                         workspace_directory_id=ws_a.id)
+    in_b = await _create(svc, user_a.id, "a", "TXT", data=b"B", space="workspace",
+                         workspace_directory_id=ws_b.id)
+    await db.commit()
+    with pytest.raises(Invalid) as ei:
+        await svc.copy_file(user_a.id, in_b.file.id, folder_id=None, project_id=None,
+                            workspace_directory_id=ws_b.id,
+                            on_conflict="overwrite", overwrite_file_id=in_a.file.id)
+    assert ei.value.public_message == "覆盖目标不在当前文件夹"
+    assert await svc.storage.get(in_a.file.storage_key) == b"A"      # A 内容原封不动
+    await db.commit()
+
+
 async def test_create_file_quota_full(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     with pytest.raises(Invalid) as ei:

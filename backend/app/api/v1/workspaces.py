@@ -1,6 +1,8 @@
 """工作区与会话绑定 API（Phase 0-2）。"""
 from __future__ import annotations
 
+import shutil
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,12 +98,15 @@ async def delete_workspace_directory_view(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
     try:
-        terminal_ids = await delete_workspace_directory(db, user.id, directory_id)
+        terminal_ids, tombstone = await delete_workspace_directory(db, user.id, directory_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
+    # DB 已落账才允许物理清理；commit 失败时磁盘墓碑还能改名救回。
+    if tombstone is not None:
+        shutil.rmtree(tombstone, ignore_errors=True)
     manager = get_pty_manager()
     for terminal_id in terminal_ids:
         if manager.get(terminal_id) is not None:

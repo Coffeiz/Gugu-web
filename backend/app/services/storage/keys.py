@@ -10,6 +10,11 @@ import re
 
 _INVALID_RE = re.compile(r'[\\/:*?"<>|]')
 
+# 用户存储根（<uid>/）下的系统保留顶层目录名——个人文件/项目文件/思维/素材板/默认
+# 工作区/旧 shell 迁移目录。Workspace 物理目录与它们平级，任何情况下不得占用这些
+# 名称；本集合是唯一事实源，新增系统顶层目录时在此登记。
+RESERVED_USER_ROOTS = frozenset({"workspace", "shell", "个人文件", "项目文件", "思维", "素材板"})
+
 
 def _safe_name(name: str) -> str:
     return _INVALID_RE.sub("_", name)

@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import shutil
 import os
 
 from sqlalchemy import func, select
@@ -19,7 +18,7 @@ from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
-from app.services.storage.keys import _safe_name, compose_logical_path
+from app.services.storage.keys import RESERVED_USER_ROOTS, _safe_name, compose_logical_path
 from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT, DEFAULT_WORKSPACE_FOLDER_NAME
 
 
@@ -51,16 +50,19 @@ def _prepare_workspace_root(root: Path) -> None:
 
 
 async def list_workspace_directories(db: AsyncSession, user_id) -> list[WorkspaceDirectory]:
-    await ensure_default_workspace_directory(db, user_id)
+    # 只读：默认 Workspace 在注册事务内创建（见 auth.register），GET 不做 ensure/mkdir，
+    # 否则 get_db 的请求末 rollback 会丢掉这里 INSERT 出来的 ID（磁盘目录却已创建）。
     result = await db.execute(select(WorkspaceDirectory).where(
         WorkspaceDirectory.user_id == user_id,
         WorkspaceDirectory.deleted_at.is_(None),
     ).order_by(WorkspaceDirectory.is_default.desc(), WorkspaceDirectory.name))
     rows = list(result.scalars().all())
-    # 顺带自愈历史目录的沙盒可写权限（幂等，代价一次 chmod）。
+    # 顺带自愈历史目录的沙盒可写权限（只 chmod 已存在的目录，不创建任何东西）。
     if get_settings().storage.backend == "local":
         for row in rows:
-            _prepare_workspace_root(_workspace_directory_root(user_id, row.directory_name))
+            root = _workspace_directory_root(user_id, row.directory_name)
+            if root.exists():
+                root.chmod(0o777)
     return rows
 
 
@@ -134,20 +136,25 @@ async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) ->
         raise ValueError("当前存储后端不支持本地 Workspace")
     await ensure_default_workspace_directory(db, user_id)
     normalized = name.strip()
-    directory_name = _safe_name(normalized)
-    if not directory_name or directory_name in {".", ".."}:
-        raise ValueError("Workspace 名称无效")
+    if not normalized or _safe_name(normalized) in RESERVED_USER_ROOTS:
+        # 只拦显示名与系统空间同名造成的认知混淆；物理目录名下面按 id 生成，结构上不碰撞。
+        raise ValueError("Workspace 名称与系统目录冲突")
     existing = await db.scalar(select(WorkspaceDirectory).where(
         WorkspaceDirectory.user_id == user_id,
-        WorkspaceDirectory.directory_name == directory_name,
+        WorkspaceDirectory.name == normalized,
         WorkspaceDirectory.deleted_at.is_(None),
     ))
     if existing:
         raise ValueError("Workspace 已存在")
-    row = WorkspaceDirectory(user_id=user_id, name=normalized, directory_name=directory_name)
+    row = WorkspaceDirectory(user_id=user_id, name=normalized, directory_name="")
     db.add(row)
     await db.flush()
-    root = _workspace_directory_root(user_id, directory_name)
+    # 物理目录用不可变 id（workspace-<id>）：File.storage_key 永久引用物理路径，
+    # 若按显示名建目录，rename 后所有 key 失效（download/preview 全挂）。
+    # id 命名也结构性地排除了与系统保留根目录的碰撞。
+    row.directory_name = f"workspace-{row.id}"
+    await db.flush()
+    root = _workspace_directory_root(user_id, row.directory_name)
     _prepare_workspace_root(root)
     await _ensure_directory_binding(db, user_id, row)
     return row
@@ -170,16 +177,7 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
             WorkspaceDirectory.id != row.id,
         )):
             raise ValueError("Workspace 已存在")
-        old_root = _workspace_directory_root(user_id, row.directory_name)
-        new_name = _safe_name(normalized)
-        new_root = _workspace_directory_root(user_id, new_name)
-        if old_root != new_root and new_root.exists():
-            raise ValueError("目标 Workspace 目录已存在")
-        if old_root.exists():
-            old_root.rename(new_root)
-        # 兼容旧目录：重命名后按当前约定补齐沙盒可写权限。
-        _prepare_workspace_root(new_root)
-        row.directory_name = new_name
+        # 物理目录（workspace-<id>）不可变：File.storage_key 永久引用它，rename 只改显示名。
         row.name = normalized
         bindings = (await db.execute(select(Workspace).where(
             Workspace.user_id == user_id, Workspace.directory_id == row.id,
@@ -222,13 +220,15 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
             ScheduledTask.user_id == user_id,
             ScheduledTask.workspace_id.in_(binding_ids),
         ).values(workspace_id=None, enabled=False))
-        await db.execute(Workspace.__table__.delete().where(Workspace.id.in_(binding_ids)))
-    if binding_ids:
+        # 先改 terminal 状态再删 Workspace：ON DELETE SET NULL 会在 DELETE 后把
+        # workspace_id 置空，之后按 workspace_id IN 匹配的 UPDATE 将一无所获，
+        # 留下 workspace_id=NULL + status=running 的僵尸行。
         await db.execute(TerminalSessionRecord.__table__.update().where(
             TerminalSessionRecord.owner_id == user_id,
             TerminalSessionRecord.workspace_id.in_(binding_ids),
             TerminalSessionRecord.closed_at.is_(None),
         ).values(status="terminated", closed_at=deleted_at, updated_at=deleted_at))
+        await db.execute(Workspace.__table__.delete().where(Workspace.id.in_(binding_ids)))
     await db.execute(File.__table__.update().where(
         File.user_id == user_id, File.workspace_directory_id == row.id, File.deleted_at.is_(None),
     ).values(deleted_at=deleted_at, updated_at=deleted_at))
@@ -239,9 +239,13 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
         WorkspaceDirectory.id == row.id, WorkspaceDirectory.user_id == user_id,
     ).values(deleted_at=deleted_at, updated_at=deleted_at))
     await db.flush()
+    # 磁盘先原子改名成墓碑，真正的 rmtree 由 API 在 DB commit 成功后执行：
+    # 若顺序相反（先 rmtree 后 commit），commit 失败会让 DB 显示文件健在而磁盘已永久丢失。
+    tombstone: Path | None = None
     if root.exists():
-        shutil.rmtree(root)
-    return terminal_ids
+        tombstone = root.with_name(f".{root.name}.deleted-{deleted_at.strftime('%Y%m%d%H%M%S')}-{row.id}")
+        root.rename(tombstone)
+    return terminal_ids, tombstone
 
 
 async def scan_legacy_shell_directories(db: AsyncSession, user_id=None) -> list[WorkspaceMigrationReport]:
