@@ -237,18 +237,37 @@ async def _test_special_capability(provider: str, capability: str, api_key: str)
 
 
 @router.post("/test-preview")
-async def test_credential_preview(body: CredentialTestPreview, user: User = Depends(get_current_user)):
+async def test_credential_preview(body: CredentialTestPreview, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """按表单草稿试呼（不落库）：编辑已保存配置时可不保存直接测试预填内容。"""
     _gate()
     if body.provider == "__server_default__":
         return {"ok": False, "status": 0, "message": "服务器默认配置不支持用户侧测试"}
-    if not body.value:
-        return {"ok": False, "status": 0, "message": "请输入 API Key 后再测试"}
+    # Key 缺省时回源已存凭据：用户往往只改 base_url/model 不重填 Key。
+    api_key = body.value
+    if not api_key:
+        if body.credential_id is None:
+            return {"ok": False, "status": 0, "message": "请输入 API Key 后再测试"}
+        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
+        if row is None or row.user_id != user.id:
+            raise HTTPException(status_code=404, detail="凭据不存在")
+        try:
+            api_key = decrypt_value(row)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="凭据无法解密，请重新保存") from exc
     if body.capability == "embedding":
         if not body.base_url or not body.model:
             return {"ok": False, "status": 0, "message": "Embedding 测试需要填写 Base URL 和模型名"}
-        return await _test_embedding_credential(api_key=body.value, base_url=body.base_url,
+        return await _test_embedding_credential(api_key=api_key, base_url=body.base_url,
                                                 model=body.model, dimensions=body.dimensions)
-    return await _test_special_capability(body.provider, body.capability, body.value)
+    if body.capability in ("llm", "speech_to_text"):
+        from app.services.provider_diagnostics import test_provider_credential
+        result = await test_provider_credential(provider=body.provider, api_key=api_key,
+                                                 base_url=body.base_url, model=body.model,
+                                                 api_format=body.api_format)
+        return {"ok": result["ok"], "status": result["status"],
+                "message": "模型连接正常" if result["ok"] else (
+                    f"模型连接失败（HTTP {result['status']}）" if result["status"] else result["detail"])}
+    return await _test_special_capability(body.provider, body.capability, api_key)
 
 
 @router.post("/{credential_id}/test")

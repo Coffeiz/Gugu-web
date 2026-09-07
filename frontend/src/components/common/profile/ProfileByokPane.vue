@@ -47,7 +47,7 @@
               <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeVision" />
             </div>
-            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === String(item.id) && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === item.id" @click="test({ id: item.id, capability: editors[item.id].capability })">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === String(item.id) && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === item.id" @click="test(item, editors[item.id])">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
             </div>
             </Transition>
             </template>
@@ -73,7 +73,7 @@
               <template v-if="newEditor.capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: newEditor.reasoning_persistence === option.key }" @click="newEditor.reasoning_persistence = option.key">{{ option.label }}</button></div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeNewVision" />
             </div>
-            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || (keyRequiredFor(newEditor) && !newEditor.value)" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === -1 || !newEditor.provider || !newEditor.value" @click="testNewEditor">{{ testing === -1 ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || (keyRequiredFor(newEditor) && !newEditor.value)" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
           </div>
           </Transition>
           </Teleport>
@@ -336,13 +336,40 @@ function notifyQuotaChanged() { window.dispatchEvent(new Event('gugu-quota-chang
 async function saveNewEditor() { if (!newEditor.value) return; saving.value = true; try { const draft = newEditor.value; await byokApi.create({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }); newEditor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉：主密钥校验状态与同能力旧行的停用状态都由服务端裁决，本地拼 items 拿不到
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 function probeNewVision(dim: string) { if (!newEditor.value) return; const previous = editor.value; editor.value = newEditor.value; void probeVision(dim as typeof visionDims[number]['key']).finally(() => { if (newEditor.value) newEditor.value = editor.value; editor.value = previous }) }
+// 新建卡无已存凭据可回源，Key 必填才能试呼；能力受限的 provider 由后端提示。
+async function testNewEditor() { if (!newEditor.value) return; const draft = newEditor.value; testing.value = -1; messageCapability.value = draft.capability; try { const body = await byokApi.testPreview({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, dimensions: draft.capability === 'embedding' ? (draft.dimensions ?? undefined) : undefined }); message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败')); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
 function clearClosingEditor(id: number) { closingEditors.value.delete(id) }
 function closeEditor(id?: number) { if (id !== undefined) { closingEditors.value.add(id); delete editors.value[id] }; editor.value = id !== undefined && editor.value?.id === id ? null : editor.value; modelMenuOpen.value = false }
 async function saveEditor(id: number) { const draft = editors.value[id]; if (!draft) return; saving.value = true; message.value = ''; try { const payload: Record<string, unknown> = { provider: draft.provider, capability: draft.capability, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }; // 切到无鉴权本地服务时显式 PATCH 空串，把旧云端 Key 清掉——漏发会把旧 Key 留给新 endpoint（跨 Provider 泄漏）
 if (draft.value || !keyRequiredFor(draft)) payload.value = draft.value; await byokApi.update(id, payload); delete editors.value[id]; if (editor.value?.id === id) editor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉让 needsReconfigure 提示随最新校验状态即时消失，不必手动刷新页面
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 async function toggle(item: Item) { try { const enabled = !item.enabled; Object.assign(item, await byokApi.update(item.id, { enabled })); if (enabled) items.value.filter(row => row.capability === item.capability && row.id !== item.id).forEach(row => { row.enabled = false }); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '更新失败'; messageType.value = 'err' } }
-async function test(item: { id: number; capability: string }) { testing.value = item.id; messageCapability.value = item.capability; try { const body = await byokApi.test(item.id); message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败')); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
+async function test(item: Item, draft?: Editor) {
+  testing.value = item.id
+  messageCapability.value = item.capability
+  try {
+    // 展开编辑卡时按草稿试呼（test-preview 不落库），预填的 base_url/model/Key 立即可测；
+    // Key 没重填就由后端按 credential_id 解密已存 Key，不必先保存。
+    if (draft) {
+      const body = await byokApi.testPreview({
+        provider: draft.provider,
+        capability: draft.capability,
+        value: draft.value,
+        api_format: draft.api_format,
+        base_url: draft.base_url,
+        model: draft.model,
+        dimensions: draft.capability === 'embedding' ? (draft.dimensions ?? undefined) : undefined,
+        credential_id: draft.id,
+      })
+      message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败'))
+      messageType.value = body.ok ? 'ok' : 'err'
+      return
+    }
+    const body = await byokApi.test(item.id)
+    message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败'))
+    messageType.value = body.ok ? 'ok' : 'err'
+  } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null }
+}
 async function remove(item: Item) {
   if (!await confirmDialog({
     title: t('profileByokUi.deleteTitle'),
