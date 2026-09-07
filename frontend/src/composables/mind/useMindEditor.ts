@@ -191,7 +191,7 @@ function tokenizeMarks(text: string): MarkToken[] {
 }
 
 /** marks → Markdown 包裹符号，跟 tokenizeMarks 认的语法对应（序列化用） */
-function wrapMd(text: string, marks?: { type: string; attrs?: Record<string, any> }[]): string {
+export function wrapMd(text: string, marks?: { type: string; attrs?: Record<string, any> }[]): string {
   if (!marks?.length) return text
   let out = text
   for (const mk of marks) {

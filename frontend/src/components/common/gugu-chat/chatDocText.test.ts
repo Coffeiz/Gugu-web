@@ -60,6 +60,34 @@ describe('chatTextFromDoc', () => {
     expect(result.trim().length).toBeGreaterThan(50)
   })
 
+  it('行内标记序列化成 markdown 语法，气泡端可渲染回来', () => {
+    const doc = { type: 'doc', content: [para(
+      { type: 'text', text: '加粗', marks: [{ type: 'bold' }] },
+      text(' 和 '),
+      { type: 'text', text: 'code', marks: [{ type: 'code' }] },
+    )] }
+    expect(chatTextFromDoc(doc as any)).toBe('**加粗** 和 `code`')
+  })
+
+  it('列表/代码块序列化成 markdown 块级语法，嵌套列表缩进', () => {
+    const doc = { type: 'doc', content: [
+      bulletList(
+        listItem(para(text('甲')), para(text('乙'))),
+        listItem(para(text('丙')), bulletList(listItem(para(text('丁'))))),
+      ),
+      { type: 'codeBlock', attrs: { language: 'ts' }, content: [text('const a = 1')] },
+    ] }
+    expect(chatTextFromDoc(doc as any)).toBe(
+      '- 甲\n'
+      + '  乙\n'
+      + '- 丙\n'
+      + '  - 丁\n'
+      + '```ts\n'
+      + 'const a = 1\n'
+      + '```',
+    )
+  })
+
   it('块级节点之间插入换行，段落内 inline 直连', () => {
     const doc = { type: 'doc', content: [
       bulletList(
@@ -68,7 +96,7 @@ describe('chatTextFromDoc', () => {
       ),
       para(text('丁')),
     ] }
-    expect(chatTextFromDoc(doc as any)).toBe('甲\n乙\n丙\n丁')
+    expect(chatTextFromDoc(doc as any)).toBe('- 甲\n  乙\n- 丙\n丁')
   })
 
   it('chatDoc 往返：按 \\n 分段的 paragraph 数组序列化还原原文本', () => {

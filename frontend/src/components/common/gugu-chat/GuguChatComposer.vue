@@ -278,6 +278,12 @@ function onOutsidePointerdown(event: PointerEvent) {
 const chatEditor = useEditor({
   extensions: mindExtensions(t('chat.placeholder')),
   content: chatDoc(props.modelValue, props.references),
+  // 聊天输入框不做 md 渲染：**加粗**/`代码`/# 标题等保持字面文本发出去，
+  // 由消息气泡端 renderChatMd 统一渲染（产品要求：只气泡渲染，输入框不转）。
+  // @ 引用走自定义联想选择器（syncReferencePicker），不依赖 tiptap 输入规则；
+  // NoteEditor 同配置已验证。粘贴规则一并关掉，外部 md 文本粘贴也保持字面。
+  enableInputRules: false,
+  enablePasteRules: false,
   editorProps: {
     attributes: { class: 'chat-prosemirror' },
     handleKeyDown: (_view, event) => {

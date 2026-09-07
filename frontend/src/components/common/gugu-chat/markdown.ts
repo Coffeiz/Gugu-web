@@ -132,20 +132,11 @@ function renderChatReference(reference: ChatReference, safeLabel: string) {
     `<span class="mind-ref-label">${safeLabel}</span></span>`
 }
 
-/** 聊天中的 @ 引用直接复用笔记 mind-ref 的结构、图标和样式契约。 */
+/** 聊天中的 @ 引用直接复用笔记 mind-ref 的结构、图标和样式契约。
+ *  用户消息与 AI 消息同走这条 MD 链路（sanitize 后），紫底气泡的配色差异
+ *  由 .user-md 样式覆盖，不在这里分叉。 */
 export function renderChatMd(text: string, references: ChatReference[] = []) {
   let html = renderMd(text)
-  for (const reference of references) {
-    const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-    html = html.replace(new RegExp(`@${label}`, 'g'), renderChatReference(reference, safeLabel))
-  }
-  return html
-}
-
-/** 用户消息保持纯文本排版，仅把已选中的 @ 对象替换成可点击引用标签。 */
-export function renderChatText(text: string, references: ChatReference[] = []) {
-  let html = text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char)).replace(/\n/g, '<br>')
   for (const reference of references) {
     const label = reference.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const safeLabel = reference.label.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))

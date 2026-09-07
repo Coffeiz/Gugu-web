@@ -18,7 +18,9 @@
     </template>
   </div>
   <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat /></div>
-  <div v-else-if="msg.text" class="msg-bubble" @click="onBodyClick"><MarkdownView v-if="msg.references?.length" :html="renderChatText(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /><template v-else>{{ displayQQFaces(msg.text) }}</template></div>
+  <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
+       .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
+  <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /></div>
   <div v-if="msg.files && msg.files.length" class="msg-files">
     <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
     <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
@@ -74,7 +76,7 @@ import MarkdownView from '@/components/common/content/MarkdownView.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import GuguChatInteraction from './GuguChatInteraction.vue'
 import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
-import { renderMdStream, renderChatMd, renderChatText } from './markdown'
+import { renderMdStream, renderChatMd } from './markdown'
 import {
   isImageFile, isAnimatedImageFile, canPreview,
   fmtSize, fmtDur, voiceBar, displayQQFaces,
