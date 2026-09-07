@@ -107,13 +107,14 @@ async def has_active_credential(db: AsyncSession, capability: str, user_id: UUID
     return (await db.execute(stmt)).first() is not None
 
 
-def _user_base_url(provider: str, base_url: str) -> str:
+def resolve_user_base_url(provider: str, base_url: str) -> str:
     """把用户凭据的 base_url 解析成真实请求目的地；**绝不读平台配置**。
 
     空串表示 provider 官方默认端点（与保存链路 _effective_origin 同一口径）：
     先走 provider adapter 的 default_base_url，再兜百炼系官方端点；都解析不出
     返回空串，由调用方按「目的地不明」拒绝覆盖——宁可回落平台配置，也不能把
-    平台 base_url 拼上用户 Key 发出去。
+    平台 base_url 拼上用户 Key 发出去。所有用户 Key 的运行时目的地解析
+    （embedding / capability / 主 LLM）都必须走这里，不许各自实现平台回退。
     """
     url = (base_url or "").strip()
     if url:
@@ -144,7 +145,7 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
     if row is None:
         return base
     api_key = decrypt_value(row)  # 损坏信封在这里炸出来，不许静默回落平台配置
-    base_url = _user_base_url(row.provider, row.base_url)
+    base_url = resolve_user_base_url(row.provider, row.base_url)
     if not base_url:
         return base
     updates = {"api_key": api_key, "provider": row.provider,
@@ -179,7 +180,7 @@ async def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
     目的地绑定（运行时侧收口）：用户 Key 的目的地只来自用户凭据本身——
     base_url 与 model 都**绝不继承平台配置**（平台 URL 拼用户 Key 就是跨服务商
     泄漏；平台模型名发去用户端点也必然失败）。base_url 空串按 provider 官方
-    默认端点解析（_user_base_url，与保存链路同口径），解析不出 → None，调用方
+    默认端点解析（resolve_user_base_url，与保存链路同口径），解析不出 → None，调用方
     沿用平台配置——BYOK 配置不完整只该降级到平台或词法检索，不能把记忆链路
     打炸。覆盖字段只有 embedding 相关五个；不使用 resolve_capability_settings
     （它会无条件注入 vision 等 LLM 专属字段）。
@@ -192,7 +193,7 @@ async def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
     except Exception:
         _log.warning("byok embedding 凭据解密失败，回落平台配置 user=%s", str(user_id)[:8])
         return None
-    base_url = _user_base_url(row.provider, row.base_url)
+    base_url = resolve_user_base_url(row.provider, row.base_url)
     model = (row.model or "").strip()
     if not model or not base_url:
         return None
