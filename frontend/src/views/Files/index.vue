@@ -6,7 +6,7 @@
     :selection-mode="inSelectionMode"
     :show-selection="currentType !== 'root'"
     :show-view-toggle="currentType !== 'trash'"
-    :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder'"
+    :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder' || currentType === 'workspace'"
     :show-new-workspace-button="preferencesStore.shellEnabled && currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
     :workspace-exists="Boolean(currentWorkspace)"
     :show-sort="currentType !== 'root'"
@@ -67,6 +67,9 @@
     </template>
 
     <template #toolbar-extra>
+      <ActionButton v-if="currentType === 'root'" variant="primary" fit @click="workspaceDirectoryPanel?.openCreate()">
+        <Icon name="admin.stack" :size="13" />{{ t('workspaceUi.createWorkspace') }}
+      </ActionButton>
       <FileTrashToolbarActions v-if="currentType === 'trash'"
         :has-items="Boolean(contents.files.length || trashFolders.length)"
         :all-selected="allTrashSelected"
@@ -91,6 +94,10 @@
         style="position:relative"
       >
         <FileUploadDropOverlay :visible="isDragging" @drop="handleDrop" />
+
+        <KeepAlive>
+          <WorkspaceDirectoryPanel v-if="currentType === 'root'" ref="workspaceDirectoryPanel" @open="openWorkspaceDirectory" />
+        </KeepAlive>
 
         <!-- 框选矩形 -->
         <div v-if="selectionRect" class="selection-rect" :style="{
@@ -202,12 +209,14 @@ import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryF
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
-import { workspacesApi, CLIENT_ID } from '@/services/api'
+import { workspacesApi, CLIENT_ID, type WorkspaceDirectory } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/shared/useSorting'
 import { projectStatusLabelKey } from '@/utils/projectStages'
 import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
+import WorkspaceDirectoryPanel from '@/views/Files/components/WorkspaceDirectoryPanel.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
@@ -243,6 +252,7 @@ function navSegmentLabel(segment: NavSeg): string {
 const viewMode    = ref<'grid' | 'list'>('grid')
 const loading     = ref(false)
 const mainRef     = ref<HTMLElement | null>(null)
+const workspaceDirectoryPanel = ref<InstanceType<typeof WorkspaceDirectoryPanel> | null>(null)
 const live        = useLiveStore()
 let directoryLoader: () => void = () => {}
 function loadContents() { directoryLoader() }
@@ -338,6 +348,16 @@ const {
 } = useFilesNav({ loadContents, clearSelection })
 
 function enterFolder(folder: FolderCardMeta): void { withDirectNav(() => rawEnterFolder(folder)) }
+function openWorkspaceDirectory(directory: WorkspaceDirectory): void {
+  enterFolder({
+    id: `workspace:${directory.id}`,
+    type: 'workspace',
+    displayName: directory.name,
+    count: directory.fileCount + directory.folderCount,
+    space: 'workspace',
+    workspaceDirectoryId: directory.id,
+  })
+}
 function navigateTo(idx: number): void { withDirectNav(() => rawNavigateTo(idx)) }
 function goBack(): void { withDirectNav(() => rawGoBack()) }
 function goForward(): void { withDirectNav(() => rawGoForward()) }
@@ -388,11 +408,18 @@ onMounted(async () => {
     if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
     return
   }
-  await Promise.all([
-    projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
-    cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
-  ])
-  if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
+  // 冷缓存：先亮 loading 让骨架屏顶住内容区，数据到位后再投影，避免空白后整批卡片突现
+  loading.value = true
+  try {
+    await Promise.all([
+      projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
+      cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
+    ])
+    if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
+  } finally {
+    // 回收站路径的 loading 由 loadContents 自己管理（异步拉取），这里不能提前清掉
+    if (currentType.value !== 'trash') loading.value = false
+  }
 })
 
 // 已在文件库页时再点搜索结果 → 监听信号直接定位

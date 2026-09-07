@@ -31,6 +31,7 @@
     </RuntimeFileCard>
     <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress" :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" data-flip-target />
     <FileUploadButton v-if="canUpload" mode="grid" data-flip-target @select="handleFileInput" />
+    <FileBrowserSkeleton v-if="loading && contents.folders.length === 0 && contents.files.length === 0" variant="grid" />
   </FileBrowserGrid>
   <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="grid" />
 </template>
@@ -44,6 +45,7 @@ import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vu
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
+import FileBrowserSkeleton from '@/components/common/file-browser/FileBrowserSkeleton.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
 import { useI18n } from 'vue-i18n'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
