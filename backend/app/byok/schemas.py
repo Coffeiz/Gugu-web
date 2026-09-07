@@ -60,8 +60,9 @@ class CredentialVisionProbe(CredentialModelsPreview):
 class CredentialTestPreview(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
     capability: Literal["deep_research", "similar_image_search", "embedding", "llm", "speech_to_text"]
-    # 允许空串：编辑已保存配置时用户往往只改 base_url/model 不重填 Key，
-    # 此时由 credential_id 回源解密已存 Key（服务端校验归属）。
+    # 允许空串：编辑已保存配置时用户往往只改 model 不重填 Key，此时由
+    # credential_id 回源解密已存 Key；但仅当草稿 provider 与 endpoint origin
+    # 都和存量一致才允许复用（目的地绑定，见 byok.resolve_preview_key）。
     value: str = Field("", max_length=20000)
     # 试呼需要完整目标：未保存配置时由表单直接携带
     api_format: str = Field("", max_length=32)

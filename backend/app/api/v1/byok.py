@@ -1,6 +1,7 @@
 """用户 BYOK 凭据管理接口；只返回元数据和掩码状态。"""
 from datetime import datetime
 import os
+from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +40,41 @@ def _embedding_allows_empty_key(capability: str, provider: str, base_url: str) -
     if provider == "local":
         return True
     return provider == "ollama" and "ollama.com" not in (base_url or "")
+
+
+class PreviewKeyReuseDenied(ValueError):
+    """草稿试呼无法安全取得 Key（无凭据可回源，或目的地与存量凭据不一致）。"""
+
+
+def _url_origin(url: str | None) -> tuple[str, str, int | None]:
+    """Endpoint 身份取 scheme + host + port；/v1 等路径差异不构成「换目的地」。"""
+    parts = urlsplit(url or "")
+    scheme = (parts.scheme or "").lower()
+    port = parts.port if parts.port is not None else {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
+def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str,
+                        target_provider: str, target_base_url: str,
+                        allow_keyless: bool = False) -> str:
+    """草稿试呼（test-preview / models-preview / vision-probe 共用）的 Key 来源裁决。
+
+    已存 Key 只属于它保存时的目的地：显式填写的新 Key 永远优先；目标是无鉴权
+    自托管 Embedding 时直接用空串；否则仅当 provider 与 endpoint origin
+    （scheme+host+port）都和存量一致才解密复用，防止把 A 家 Key 静默发到
+    B 家 endpoint。拒绝时抛 PreviewKeyReuseDenied，调用方按各自响应形态转换。
+    """
+    if supplied_key:
+        return supplied_key
+    if allow_keyless:
+        return ""
+    if row is None:
+        raise PreviewKeyReuseDenied("请填写 API Key 后再测试")
+    # 草稿未填 base_url 表示走该 provider 的默认端点，不构成换目的地。
+    if row.provider != target_provider or (
+            target_base_url and _url_origin(row.base_url) != _url_origin(target_base_url)):
+        raise PreviewKeyReuseDenied("Provider 或 Endpoint 已变更，为避免旧 Key 发往其他服务商，请重新填写 API Key")
+    return decrypt_value(row)
 
 
 @router.post("", status_code=201)
@@ -84,12 +120,16 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
 async def preview_models(body: CredentialModelsPreview, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """用当前表单或已保存凭据读取 Provider 模型列表，不保存配置。"""
     _gate()
-    api_key = body.api_key
-    if not api_key and body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
+    row = None
+    if body.credential_id is not None:
+        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 上一行按当前用户校验凭据归属
         if row is None or row.user_id != user.id:
             raise HTTPException(status_code=404, detail="凭据不存在")
-        api_key = decrypt_value(row)
+    try:
+        api_key = resolve_preview_key(row, supplied_key=body.api_key,
+                                      target_provider=body.provider, target_base_url=body.base_url)
+    except PreviewKeyReuseDenied as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not api_key:
         raise HTTPException(status_code=422, detail="请先填写 API Key 或保存后再获取模型列表")
     from app.api.v1.agent_admin import _fetch_provider_models
@@ -104,12 +144,16 @@ async def preview_models(body: CredentialModelsPreview, user: User = Depends(get
 async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """检测用户模型的单项多模态能力，不修改配置。"""
     _gate()
-    api_key = body.api_key
-    if not api_key and body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
+    row = None
+    if body.credential_id is not None:
+        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 上一行按当前用户校验凭据归属
         if row is None or row.user_id != user.id:
             raise HTTPException(status_code=404, detail="凭据不存在")
-        api_key = decrypt_value(row)
+    try:
+        api_key = resolve_preview_key(row, supplied_key=body.api_key,
+                                      target_provider=body.provider, target_base_url=body.base_url)
+    except PreviewKeyReuseDenied as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not api_key:
         raise HTTPException(status_code=422, detail="请先填写 API Key 或保存后再检测")
     from app.api.v1.agent_admin import _do_vision_probe
@@ -242,16 +286,22 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
     _gate()
     if body.provider == "__server_default__":
         return {"ok": False, "status": 0, "message": "服务器默认配置不支持用户侧测试"}
-    # Key 缺省时回源已存凭据：用户往往只改 base_url/model 不重填 Key。
-    api_key = body.value
-    if not api_key:
-        if body.credential_id is None:
-            return {"ok": False, "status": 0, "message": "请输入 API Key 后再测试"}
-        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
+    # Key 缺省时按目的地裁决回源（resolve_preview_key）：只有草稿 provider 和
+    # endpoint origin 与已存凭据一致才复用旧 Key；显式新 Key 永远优先。
+    row = None
+    if not body.value and body.credential_id is not None:
+        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 上一行按当前用户校验凭据归属
         if row is None or row.user_id != user.id:
             raise HTTPException(status_code=404, detail="凭据不存在")
+    api_key = body.value
+    if not api_key:
         try:
-            api_key = decrypt_value(row)
+            api_key = resolve_preview_key(
+                row, supplied_key="", target_provider=body.provider,
+                target_base_url=body.base_url,
+                allow_keyless=_embedding_allows_empty_key(body.capability, body.provider, body.base_url))
+        except PreviewKeyReuseDenied as exc:
+            return {"ok": False, "status": 0, "message": str(exc)}
         except Exception as exc:
             raise HTTPException(status_code=422, detail="凭据无法解密，请重新保存") from exc
     if body.capability == "embedding":
