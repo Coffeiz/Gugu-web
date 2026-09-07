@@ -389,6 +389,56 @@ async def test_verify_round_cap_after_tool_round_has_safe_finalization(monkeypat
     assert ev["_usage"] == 1
 
 
+async def test_verify_round_cap_prompts_and_resumes_after_unlimited_selected(monkeypatch, dispatched):
+    """核实轮上限触顶先弹窗询问；点击解除限制后必须继续原 run 补查并收束。"""
+    class Prompt:
+        id = 902
+        kind = "choice"
+        title = "要继续这个长任务吗？"
+        body = "本次已经达到轮次上限。"
+        expires_at = SimpleNamespace(isoformat=lambda: "2026-09-07T00:00:00+08:00")
+
+    async def fake_create_prompt(*, user_id, session_id):
+        return Prompt(), [{"id": "continue", "label": "解除本轮调用限制", "token": "token"}]
+
+    shown = []
+
+    async def on_interaction(interaction):
+        shown.append(interaction)
+
+    async def fake_wait_for_resolution(**_kwargs):
+        assert [item["prompt_id"] for item in shown] == [902]
+        return {"status": "selected", "option_id": "continue"}
+
+    monkeypatch.setattr("app.services.interactions.create_goal_mode_prompt", fake_create_prompt)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+
+    script = [
+        msg([TU("create_project", "create", {})]),
+        *[msg([TU("update_todo", f"update-{i}", {"todo_id": i + 1})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
+        # 最后一轮补做的 did_mutate 因周期耗尽未消费，会泄漏到下一轮触发一次强查；
+        # 弹窗续跑（无限模式）后这条强查是真查，因此需要两次读取再收束。
+        msg([TU("get_project", "verify-1", {})]),
+        msg([TU("get_project", "verify-2", {})]),
+        msg([TX("解除限制后完成核实")]),           # 收束轮
+    ]
+    patch_anthropic(monkeypatch, script)
+    messages = [{"role": "user", "content": "连续调整并核实"}]
+
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic(
+            "u", "sys", messages, AI, session_id=1, on_interaction=on_interaction
+        )
+    )
+
+    assert ev["interaction_required"] == 1
+    assert [item["prompt_id"] for item in shown] == [902]
+    assert ev["_new_round"] >= 1
+    assert "解除限制后完成核实" in text
+    assert "核实轮次已达到上限" not in text
+    assert errors == []
+
+
 async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
     """Anthropic / OpenAI 两路同构：同样的"干净核实通过"场景，OpenAI 路行为一致。"""
     patch_openai(monkeypatch, [
