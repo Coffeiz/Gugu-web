@@ -51,7 +51,6 @@
       </template>
     </FileUploadGhostCard>
 
-    <FileBrowserSkeleton v-if="loading && contents.folders.length === 0 && contents.files.length === 0" variant="list" />
     <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="list" />
     <FileUploadButton v-if="canUpload" mode="list" data-flip-target @select="handleFileInput" />
   </FileBrowserList>
@@ -63,7 +62,6 @@ import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vu
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
-import FileBrowserSkeleton from '@/components/common/file-browser/FileBrowserSkeleton.vue'
 import RuntimeFolderListRow from '@/views/Files/components/RuntimeFolderListRow.vue'
 import RuntimeFileListRow from '@/views/Files/components/RuntimeFileListRow.vue'
 import { computed } from 'vue'
