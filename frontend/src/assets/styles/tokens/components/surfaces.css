@@ -334,8 +334,8 @@ html[data-theme='dark'][data-family] {
   --gugu-chat-assistant-bg: var(--surface-raised);
   --gugu-chat-assistant-border: var(--border-subtle);
   /* 暗色玻璃 hover 的通用值是透明白叠层，透出页面暗底比不透明气泡更暗；
-     从气泡底色向白偏移 14%，hover 明确提亮。 */
-  --gugu-chat-tool-bubble-hover: color-mix(in srgb, var(--gugu-chat-assistant-bg) 86%, #fff);
+     从气泡底色向白偏移 7%，hover 微亮可辨但不刺眼（14% 用户实测过亮）。 */
+  --gugu-chat-tool-bubble-hover: color-mix(in srgb, var(--gugu-chat-assistant-bg) 93%, #fff);
   --gugu-chat-member-bg: var(--action-soft);
   --gugu-chat-member-border: var(--action-outline);
   --gugu-chat-voice-highlight: var(--highlight-soft);
