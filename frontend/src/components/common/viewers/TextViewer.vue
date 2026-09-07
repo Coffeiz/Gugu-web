@@ -1011,10 +1011,9 @@ onBeforeUnmount(() => {
 .tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
-  /* 分割线从正文色派生而不是用 border token：玻璃亮色的 border 系列是白色系，
-     浅色玻璃底上任何透明度都看不清；content 派生在全部主题下都有对比 */
+  /* 分割线从正文色派生而不是用 border token：1px 半透明线合成后仍偏淡，换实色次级文字色：绝对可辨且随主题自适应 */
   border: none;
-  border-top: 1px solid color-mix(in srgb, var(--content-primary) 45%, transparent);
+  border-top: 1px solid var(--content-secondary);
   margin: 1.5em 0;
 }
 
