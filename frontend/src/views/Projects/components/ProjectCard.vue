@@ -487,9 +487,38 @@ async function setPriority(n: number) {
 .drop-overlay-enter-active, .drop-overlay-leave-active { transition: opacity 0.15s; }
 .drop-overlay-enter-from, .drop-overlay-leave-to { opacity: 0; }
 /* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
-   这里补文件卡同款阴影。内部控件按住时不能覆盖根卡的
+   这里补文件卡同款阴影和项目卡的 sheen 契约。内部控件按住时不能覆盖根卡的
    hover transform，否则卡片会从 translateY(-2px) 突然回到 0，看起来像被按下。 */
 .proj-card:hover { border-color: var(--project-card-hover-border); box-shadow: var(--project-card-hover-shadow); }
+/* 常驻微光底层 + hover 亮色渐变增强层，与设计页示例卡/画布抽屉卡同一份 sheen 契约
+   （--project-card-sheen-rest/-hover）。linear-gradient 不能做 transition 插值，
+   hover 层改用 opacity 淡入淡出；强弱由各主题令牌自定（暗色取 7.5~8% 白的克制值）。 */
+.proj-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  corner-shape: squircle;   /* corner-shape 不随 border-radius:inherit 继承，需显式声明，否则圆角与卡片不重合 → 双层圆角 */
+  background: var(--project-card-sheen-rest);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-rest);
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.25s ease-out;
+}
+.proj-card.is-grabbed:not([data-runtime-phase="landing"])::before,
+.proj-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
+.proj-card[data-runtime-phase="landing"]::before { opacity: 1; }
+.proj-card::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  corner-shape: squircle;
+  background: var(--project-card-sheen-hover);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
+  opacity: 0;
+  transition: opacity var(--card-overlay-motion);
+  pointer-events: none;
+}
+.proj-card:hover::after { opacity: 1; }
 
 .card-body { position: relative; z-index: 1; flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
