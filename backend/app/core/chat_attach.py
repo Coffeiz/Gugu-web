@@ -1256,18 +1256,26 @@ def _fit_image_for_vision(raw: bytes, ext: str):
         return None
 
 
-def vision_ready() -> bool:
-    """当前模型已开启视觉能力。
+def vision_ready(model_cfg=None) -> bool:
+    """当前实际运行模型已开启视觉能力。
 
     工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
     转成 ``image_url``，因此 DeepSeek Vision 也可以读取工具返回的图片。
+
+    工具 handler 通常不会显式收到 model_cfg，因此默认优先读取本轮
+    ``modelctx`` 绑定的实际模型；只有没有运行上下文时才回退到全局配置。
+    不能直接只读 ``settings.ai``，否则用户 BYOK/pool 选中的视觉模型会被误判。
     """
     try:
         from app.core.config import get_settings
         from agent import providers
         s = get_settings()
-        capabilities = providers.adapter_for(s.ai).capabilities(getattr(s.ai, "model", "") or "")
-        return _vision_enabled() and (capabilities.vision or capabilities.api_format == "anthropic")
+        if model_cfg is None:
+            from agent.llm import modelctx
+            model_cfg = modelctx.get_model_cfg()
+        ai = model_cfg or s.ai
+        capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
+        return _vision_enabled(ai) and (capabilities.vision or capabilities.api_format == "anthropic")
     except Exception:
         return False
 
