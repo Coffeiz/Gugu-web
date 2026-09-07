@@ -163,19 +163,21 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
       const segment = currentSeg.value
       if (segment?.folderId == null) return
       if (segment.space === 'workspace' && segment.workspaceDirectoryId != null) {
+        // 守卫收窄不跨异步回调：先落常量，避免 null 流入 FolderCard（严格类型检查）
+        const workspaceDirectoryId = segment.workspaceDirectoryId
         loading.value = true
         // 目录是异步加载的：先同步清空旧投影，避免上一目录的卡片在请求期间
         // 残留一帧、随面板卸载整体跳位（进入工作区时闪一下的根因）。
         contents.value = { folders: [], files: [] }
         Promise.all([
-          filesApi.list({ space: 'workspace', folderId: segment.folderId, workspaceDirectoryId: segment.workspaceDirectoryId }),
-          foldersApi.list({ parentId: segment.folderId, workspaceDirectoryId: segment.workspaceDirectoryId }),
+          filesApi.list({ space: 'workspace', folderId: segment.folderId, workspaceDirectoryId }),
+          foldersApi.list({ parentId: segment.folderId, workspaceDirectoryId }),
         ]).then(([files, folders]) => {
           contents.value = {
             folders: folders.map(folder => ({
               id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
               displayName: folder.name, color: null, space: 'workspace',
-              workspaceDirectoryId: segment.workspaceDirectoryId, count: folder.fileCount ?? 0,
+              workspaceDirectoryId, count: folder.fileCount ?? 0,
             })),
             files: files as FileMeta[],
           }
