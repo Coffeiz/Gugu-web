@@ -664,6 +664,40 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 然后在 Admin → Shell 沙盒打开总开关。若 Docker daemon、固定 digest 镜像或 `sandboxd` 不可用，Shell 会返回明确失败，**不会回退到本机执行器**。部署代码已包含 sandboxd 接入，但在 devserver/生产执行 `make install` 并完成真实容器验证前，不应把它宣称为已启用。
 
+#### 沙盒镜像（`backend/Dockerfile.sandbox`）
+
+默认沙盒镜像是官方 `debian:bookworm-slim`（仅基础工具）。生产/开发机推荐使用仓库维护的
+工具链镜像 `backend/Dockerfile.sandbox`（bookworm-slim + git / nodejs / python3 / ffmpeg /
+Noto CJK 字体等，运行用户 uid 65532）。镜像只放通用工具链：**不预置任何 git 凭据或用户
+身份**（`user.name`/`user.email` 由使用方在会话内设置），系统级 gitconfig 仅设置
+`init.defaultBranch=main` 和 `safe.directory=*`（沙盒 bind 目录属主是宿主机 uid，属预期）。
+
+构建与更新流程（在目标机器的 Rootless daemon 上执行；拉取基础镜像需代理环境）：
+
+```bash
+# 1) 构建（tag 含日期与版本序号，便于回退）
+docker build -f backend/Dockerfile.sandbox \
+  -t gugu-sandbox:bookworm-tools-cjk-$(date +%Y%m%d)-v1 .
+
+# 2) trivy 预扫（HIGH/CRITICAL、ignore-unfixed；DB 缓存挂持久目录）
+docker save gugu-sandbox:<tag> -o /tmp/sandbox-scan.tar
+docker run --rm -e HTTPS_PROXY=<代理> \
+  -v ~/.cache/trivy-db:/root/.cache/trivy -v /tmp/sandbox-scan.tar:/scan.tar \
+  aquasec/trivy:latest image --ignore-unfixed --severity HIGH,CRITICAL --input /scan.tar
+
+# 3) 功能验证（断网容器内确认工具可用）
+docker run --rm --network none --user 65532:65532 gugu-sandbox:<tag> \
+  bash --noprofile --norc -c 'git --version && node --version && python3 --version'
+
+# 4) 取 manifest digest（本地构建镜像的 RepoDigests 即 manifest list digest）
+docker image inspect gugu-sandbox:<tag> --format '{{index .RepoDigests 0}}'
+```
+
+然后把 `image` / `image_digest` 写入沙盒配置（`config.override.json` 的 `sandbox` 段或
+Admin → Shell 沙盒），**先备份配置、只改这两个字段、原子写回并校验 JSON**，再重启
+`gugu-backend` / `gugu-worker`。运行时校验（digest 格式 + `docker image inspect
+<image>@<digest>` + `--pull=never`）不变；官方基础镜像有安全更新时，重建镜像并换 digest。
+
 > ⚠️ **`gugu-backend` 一直重启（`activating → failed → activating` 循环）/ `systemctl restart` 起不来、每次都要手动 pkill？根因永远是「8000 有两个主人」。**
 > systemd 的 gugu-backend 想绑 8000，但端口被**另一个非 systemd 的 uvicorn**占着（你手动前台跑的、或 dev 机的手动启动器没停）→ systemd 绑不上「address already in use」→ `Restart=on-failure` 每 3s 拉起 → 死循环。`systemctl restart` 也停不掉那个手动进程（它不归 systemd 管）→ 你只能手动 pkill。
 >
