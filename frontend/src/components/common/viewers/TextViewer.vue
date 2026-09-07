@@ -829,8 +829,8 @@ onBeforeUnmount(() => {
   line-height: 1.3;
   color: var(--content-primary, #1a1c24);
 }
-.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid color-mix(in srgb, var(--content-primary) 30%, transparent); padding-bottom: 0.3em; }
-.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid color-mix(in srgb, var(--content-primary) 30%, transparent); padding-bottom: 0.25em; }
+.tv-md :deep(h1) { font-size: 1.8em; }
+.tv-md :deep(h2) { font-size: 1.4em; }
 .tv-md :deep(h3) { font-size: 1.15em; }
 
 .tv-md :deep(p)  { margin: 0.8em 0; }
