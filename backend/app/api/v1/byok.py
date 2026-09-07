@@ -56,6 +56,7 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
         vision=body.vision,
         vision_video=body.vision_video, vision_audio=body.vision_audio,
         vision_detail=body.vision_detail,
+        dimensions=body.dimensions,
     )
     db.add(row)
     await db.commit()
@@ -120,7 +121,7 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         ))).scalars().all()
         for item in siblings:
             item.enabled = False
-    for field in ("provider", "api_format", "base_url", "model", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video", "vision_audio", "vision_detail", "enabled"):
+    for field in ("provider", "api_format", "base_url", "model", "dimensions", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video", "vision_audio", "vision_detail", "enabled"):
         value = getattr(body, field)
         if value is not None:
             setattr(row, field, value)

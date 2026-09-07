@@ -6,10 +6,12 @@ from pydantic import BaseModel, Field
 class CredentialCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
     api_format: str = Field("", max_length=32)
-    capability: Literal["llm", "deep_research", "similar_image_search", "speech_to_text"]
+    capability: Literal["llm", "deep_research", "similar_image_search", "speech_to_text", "embedding"]
     value: str = Field("", max_length=20000)
     base_url: str = Field("", max_length=500)
     model: str = Field("", max_length=200)
+    # embedding 专用：请求维度（0/None=用模型默认维度）；其他能力忽略。
+    dimensions: int | None = Field(None, ge=0, le=65536)
     max_tokens: int | None = None
     context_tokens: int | None = None
     thinking: Literal["disabled", "adaptive"] | None = None
@@ -27,6 +29,8 @@ class CredentialPatch(BaseModel):
     api_format: str | None = Field(None, max_length=32)
     base_url: str | None = Field(None, max_length=500)
     model: str | None = Field(None, max_length=200)
+    # embedding 专用：请求维度（0/None=用模型默认维度）；其他能力忽略。
+    dimensions: int | None = Field(None, ge=0, le=65536)
     max_tokens: int | None = None
     context_tokens: int | None = None
     thinking: Literal["disabled", "adaptive"] | None = None

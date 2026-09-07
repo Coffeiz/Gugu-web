@@ -1,6 +1,6 @@
 # BYOK 用户 Embedding 凭据
 
-> 状态：🔲 待实施——embedding 记忆/RAG 向量化目前只走平台 `settings.embedding`，用户无法用自己的 embedding key
+> 状态：🚧 Phase 1 已完成（迁移/解析器/embedding 生效配置基建），Phase 2～4 待实施（run 入口绑定、测试连接与前端）
 > 创建：2026-09-08
 > 最近更新：2026-09-08
 > 关联模块：`backend/agent/memory/embedding.py`、`backend/app/byok/service.py`、`backend/app/byok/schemas.py`、`backend/app/api/v1/byok.py`、`backend/agent/llm/llm_select.py`、`backend/app/api/v1/config.py`、`frontend/src/components/common/profile/ProfileByokPane.vue`
@@ -12,7 +12,7 @@
 |---|---|---|
 | BYOK 凭据管理（llm / deep_research / similar_image_search / speech_to_text） | ✅ 已完成 | 凭据加密落库、测试连接、Profile 卡片齐备（SEC-1） |
 | 聊天/语音/深度研究走用户凭据 | ✅ 已完成 | run 级解析绑定，用量标记 `is_byok` 随 run 落库 |
-| Embedding 走用户凭据 | 🔲 待实施 | `embed()`/`model_tag()` 只读平台 `settings.embedding`，BYOK 用户的记忆检索与 RAG 向量化仍消耗平台 key；平台未配 embedding 时 BYOK 用户无法使用向量检索 |
+| Embedding 走用户凭据 | 🚧 进行中 | 解析器/ContextVar/model_tag 基建已落地并有单测；run 入口绑定未接，行为尚未对用户生效 | `embed()`/`model_tag()` 只读平台 `settings.embedding`，BYOK 用户的记忆检索与 RAG 向量化仍消耗平台 key；平台未配 embedding 时 BYOK 用户无法使用向量检索 |
 | BYOK 用量记账（embedding） | 🔲 待评估 | embedding 调用目前不进 usage 表，无记账载体，本 PRD 不做 |
 
 ## 1. 背景与目标
@@ -140,9 +140,9 @@ frontend/src/i18n/sections/common.ts                        【修改】 profile
 
 ### Phase 1：数据模型与解析基础
 
-- [ ] `SEC2-001` 迁移 + 模型列：`user_provider_credentials.dimensions` nullable 整数列；验收：迁移上下行通过，现有行不受影响。
-- [ ] `SEC2-002` schema 与解析器：capability Literal 加 `"embedding"`、创建/编辑 schema 加 dimensions；`resolve_embedding_settings` 按逐字段回退返回生效配置（不完整返回 None）；验收：单测覆盖完整/不完整/无凭据/`dimensions=0` 不继承平台值。
-- [ ] `SEC2-003` embedding.py 生效配置改造：`effective_settings()` + ContextVar 覆盖 + `bind_user_embedding` 上下文管理器；`embed/embed_multimodal/is_enabled/model_tag` 改读生效配置，multimodal bailian 分支保持平台配置；验收：单测覆盖绑定生效、未绑定回落、tag 跟随。
+- [x] `SEC2-001` 迁移 + 模型列：`user_provider_credentials.dimensions` nullable 整数列；验收：迁移上下行通过，现有行不受影响。
+- [x] `SEC2-002` schema 与解析器：capability Literal 加 `"embedding"`、创建/编辑 schema 加 dimensions；`resolve_embedding_settings` 按逐字段回退返回生效配置（不完整返回 None）；验收：单测覆盖完整/不完整/无凭据/`dimensions=0` 不继承平台值。
+- [x] `SEC2-003` embedding.py 生效配置改造：`effective_settings()` + ContextVar 覆盖 + `bind_user_embedding` 上下文管理器；`embed/embed_multimodal/is_enabled/model_tag` 改读生效配置，multimodal bailian 分支保持平台配置；验收：单测覆盖绑定生效、未绑定回落、tag 跟随。
 
 ### Phase 2：用户链路绑定
 

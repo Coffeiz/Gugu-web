@@ -1,4 +1,7 @@
 """BYOK 凭据查询、元数据输出和用户级加解密。"""
+import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from uuid import UUID
 
 from sqlalchemy import select
@@ -7,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.byok.crypto import decrypt_envelope, encrypt_envelope
 from app.models import UserProviderCredential
 from app.byok.policy import byok_enabled
+
+_log = logging.getLogger(__name__)
 
 _master_key_status = "unknown"
 
@@ -101,6 +106,58 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
             updates["reasoning_effort"] = row.reasoning_effort
         updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     return base.model_copy(update=updates) if hasattr(base, "model_copy") else base
+
+
+# ── Embedding BYOK ────────────────────────────────────────────────────────────
+# embed() 是无用户上下文的共享基建（7 个调用点全在存储层，拿不到 db/session），
+# 与 LLM BYOK 的 modelctx 同构：run 开始时解析一次并绑定到 ContextVar，
+# agent.memory.embedding 的 embed/is_enabled/model_tag 优先读绑定值，无绑定回落平台。
+
+_embedding_override: ContextVar[object | None] = ContextVar("byok_embedding_cfg", default=None)
+
+
+def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
+    """返回用户 embedding 生效配置（凭据逐字段覆盖，回退语义与其他能力一致）。
+
+    无凭据/解密失败/解析不完整（缺 model 或 base_url）→ 返回 None，调用方沿用
+    平台配置——BYOK 配置不完整只该降级到平台或词法检索，不能把记忆链路打炸。
+    覆盖字段只有 embedding 相关五个；不使用 resolve_capability_settings
+    （它会无条件注入 vision 等 LLM 专属字段）。
+    """
+    row = get_active_credential(db, user_id, "embedding")
+    if row is None:
+        return None
+    try:
+        api_key = decrypt_value(row)
+    except Exception:
+        _log.warning("byok embedding 凭据解密失败，回落平台配置 user=%s", str(user_id)[:8])
+        return None
+    model = row.model or getattr(base, "model", "")
+    base_url = row.base_url or getattr(base, "base_url", "")
+    if not model or not base_url:
+        return None
+    return {"provider": row.provider, "api_key": api_key, "base_url": base_url,
+            "model": model,
+            # dimensions 用户值为 0/None 表示明确用其模型默认维度，不继承平台值。
+            "dimensions": row.dimensions or 0}
+
+
+def effective_embedding_override() -> dict | None:
+    """当前上下文绑定的用户 embedding 配置；未绑定返回 None。"""
+    return _embedding_override.get()
+
+
+@contextmanager
+def bind_user_embedding(cfg: dict | None):
+    """在用户链路 run 开始时调用；cfg 为 resolve_embedding_settings 的结果（可为 None）。
+
+    reset 必须配对执行，避免 ContextVar 泄漏到复用该任务的后续调用。
+    """
+    token = _embedding_override.set(cfg)
+    try:
+        yield
+    finally:
+        _embedding_override.reset(token)
 
 
 def encrypt_value(value: str, key_version: int | None = None) -> tuple[str, str, str]:
