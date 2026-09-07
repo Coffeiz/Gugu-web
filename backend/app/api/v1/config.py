@@ -1069,9 +1069,24 @@ _REBUILD_KEY = "emb:rebuild"
 async def _rebuild_worker(user_ids: list[str]) -> None:
     """后台批量重算。进度写 Redis（跨 worker 可读）。best-effort，末尾标 done/error。"""
     from agent.memory import embedding, store
+    from app.byok.service import bind_user_embedding, resolve_embedding_settings
     from app.core.redis import get_redis
+    from uuid import UUID
     r = get_redis()
-    tag = embedding.model_tag()
+    tag = embedding.model_tag() if embedding.is_enabled() else "byok"
+    # 逐用户解析生效配置：有 BYOK embedding 凭据的用户用自己的 key 重建，
+    # 其余用户回落平台配置（PRD-SEC-2）。解析失败=平台，绝不中断整批。
+    embedding_cfgs: dict[str, dict | None] = {}
+    import app.db.session as _sess
+    if _sess._engine is None:
+        _sess._build_engine()
+    async with _sess._SessionLocal() as rdb:
+        for uid in user_ids:
+            try:
+                embedding_cfgs[uid] = await resolve_embedding_settings(
+                    rdb, UUID(uid), get_settings().embedding)
+            except Exception:
+                embedding_cfgs[uid] = None
 
     async def prog(done: int, total: int) -> None:
         if done % 5 == 0 or done == total:
@@ -1079,14 +1094,14 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
                 {"status": "running", "done": done, "total": total, "tag": tag, "ts": time.time()}))
 
     try:
-        res = await store.rebuild_all_vecs(user_ids, on_progress=prog)
+        res = await store.rebuild_all_vecs(user_ids, on_progress=prog, bind_cfgs=embedding_cfgs)
         # 直接 memory/pattern 缓存之外，RAG 索引还有 profile/daily/memory 文档。
         # 统一通过 MemoryAdapter 生成同一套 chunk/key，避免两套分块算法失配。
         from agent.rag.pipeline import rebuild_memory_index
         rag_semaphore = asyncio.Semaphore(max(1, store.VECTOR_REBUILD_CONCURRENCY))
 
         async def rebuild_rag_index(uid):
-            async with rag_semaphore:
+            async with rag_semaphore, bind_user_embedding(embedding_cfgs.get(uid)):
                 return await rebuild_memory_index(uid, operation="embedding-rebuild")
 
         rag_results = await asyncio.gather(
@@ -1117,8 +1132,13 @@ async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
     from agent.memory import embedding
     from app.core.redis import get_redis
     from app.models import User
-    if not embedding.is_enabled():
-        return {"ok": False, "message": "请先启用并配置 embedding 模型（保存后再重建）"}
+    from app.models import UserProviderCredential
+    cred_exists = (await db.execute(select(UserProviderCredential.id).where(
+        UserProviderCredential.capability == "embedding",
+        UserProviderCredential.enabled.is_(True),
+    ))).first() is not None
+    if not embedding.is_enabled() and not cred_exists:
+        return {"ok": False, "message": "请先启用并配置 embedding 模型（平台配置或用户 BYOK 凭据至少其一）"}
     r = get_redis()
     cur = await r.get(_REBUILD_KEY)
     if cur:

@@ -160,6 +160,21 @@ def bind_user_embedding(cfg: dict | None):
         _embedding_override.reset(token)
 
 
+async def resolve_and_bind_user_embedding(settings, db: AsyncSession, user_id: UUID) -> None:
+    """解析用户 embedding 生效配置并绑定到当前任务上下文。
+
+    与 modelctx.set_model_cfg 同一纪律：不 reset，上下文随请求/任务结束消亡，
+    派生的后台任务（反思/压缩）经 create_task 继承同一绑定。解析或查询失败
+    按 None（回落平台配置）处理，绝不影响 run 本身。
+    """
+    try:
+        cfg = await resolve_embedding_settings(db, user_id, settings.embedding)
+    except Exception:
+        _log.warning("byok embedding 绑定失败，回落平台配置 user=%s", str(user_id)[:8])
+        cfg = None
+    _embedding_override.set(cfg)
+
+
 def encrypt_value(value: str, key_version: int | None = None) -> tuple[str, str, str]:
     return encrypt_envelope(value, key_version=key_version)
 

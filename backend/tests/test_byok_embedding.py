@@ -147,3 +147,60 @@ def test_resolve_dimensions_zero_means_model_default(monkeypatch):
                           encrypted_value="x")
     _patch_resolver(monkeypatch, row, decrypt=lambda r: "k")
     assert resolve_embedding_settings(None, "uid", BASE)["dimensions"] == 0
+
+
+# ── Phase 2：run 入口绑定与 Admin 重建 ────────────────────────────────────────
+
+def test_resolve_and_bind_swallows_resolver_failure(monkeypatch, _clean_override):
+    """绑定入口绝不抛：解析失败按 None 处理（回落平台），不影响 run。
+    绑定与读取必须在同一任务上下文内（asyncio.run 的任务上下文是拷贝）。"""
+    import asyncio
+
+    settings = SimpleNamespace(embedding=SimpleNamespace())
+    def boom(*a, **kw):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(byok_service, "resolve_embedding_settings", boom)
+
+    async def fail_case():
+        await byok_service.resolve_and_bind_user_embedding(settings, None, "uid")
+        return effective_embedding_override()
+
+    assert asyncio.run(fail_case()) is None
+
+    async def fake_resolve(*a, **kw):
+        return dict(OVERRIDE)
+    monkeypatch.setattr(byok_service, "resolve_embedding_settings", fake_resolve)
+
+    async def bind_case():
+        await byok_service.resolve_and_bind_user_embedding(settings, None, "uid")
+        return effective_embedding_override()
+
+    assert asyncio.run(bind_case()) == OVERRIDE
+
+
+def test_rebuild_all_vecs_binds_per_user(monkeypatch, tmp_path, _clean_override):
+    """批量重建逐用户绑定：每个用户任务内读到自己的配置，任务外互不影响。"""
+    import asyncio
+    from agent.memory import store
+
+    seen = {}
+
+    async def fake_sync(uid, items, force, *, strict=False):
+        seen[uid] = dict(effective_embedding_override() or {})
+        return len(items)
+
+    monkeypatch.setattr(store, "read_pattern_list", lambda uid: _ret(["p"]))
+    monkeypatch.setattr(store, "read_memory_doc", lambda uid: _ret(""))
+    monkeypatch.setattr(store, "sync_pattern_vecs", fake_sync)
+    monkeypatch.setattr(store, "sync_memory_vecs", fake_sync)
+
+    cfgs = {"u1": dict(OVERRIDE), "u2": None}
+    summary = asyncio.run(store.rebuild_all_vecs(["u1", "u2"], bind_cfgs=cfgs))
+    assert summary["failed_users"] == 0
+    assert seen["u1"] == OVERRIDE
+    assert seen["u2"] == {}
+    assert effective_embedding_override() is None   # 汇总任务上下文不被污染
+
+
+async def _ret(v):
+    return v

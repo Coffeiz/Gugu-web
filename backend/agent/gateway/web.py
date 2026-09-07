@@ -58,6 +58,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         run_config = await resolve_run_config_for_user(settings, db, user_id, req)
         model_cfg = run_config.model
         modelctx.set_model_cfg(model_cfg)   # 后台任务（标题/总结/反思/问候）经 create_task 继承此绑定
+        from app.byok.service import resolve_and_bind_user_embedding
+        await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
         # ── 精力耗尽硬拦判定（与 IM/定时任务 runner 同口径，走 quota.is_exhausted 的 CST 6h/周窗口）──
         quota_exceeded = await quota.is_exhausted(db, user_id, settings)
 
@@ -378,6 +380,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             run_config = await resolve_run_config_for_user(settings, db, user_id, req)
             model_cfg = run_config.model
             modelctx.set_model_cfg(model_cfg)   # 后台任务经 create_task 继承此绑定
+            from app.byok.service import resolve_and_bind_user_embedding
+            await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
         tool_names = await _filter_shell_tool(
             db, user_id, session_id, list(profile.tool_names), session=session,
         )

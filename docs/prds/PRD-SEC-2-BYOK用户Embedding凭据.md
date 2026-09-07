@@ -1,6 +1,6 @@
 # BYOK 用户 Embedding 凭据
 
-> 状态：🚧 Phase 1 已完成（迁移/解析器/embedding 生效配置基建），Phase 2～4 待实施（run 入口绑定、测试连接与前端）
+> 状态：🚧 Phase 1～2 已完成（解析基建 + 七处 run 入口绑定 + Admin 重建逐用户化），Phase 3～4 待实施（测试连接、前端卡片、验收）
 > 创建：2026-09-08
 > 最近更新：2026-09-08
 > 关联模块：`backend/agent/memory/embedding.py`、`backend/app/byok/service.py`、`backend/app/byok/schemas.py`、`backend/app/api/v1/byok.py`、`backend/agent/llm/llm_select.py`、`backend/app/api/v1/config.py`、`frontend/src/components/common/profile/ProfileByokPane.vue`
@@ -12,7 +12,7 @@
 |---|---|---|
 | BYOK 凭据管理（llm / deep_research / similar_image_search / speech_to_text） | ✅ 已完成 | 凭据加密落库、测试连接、Profile 卡片齐备（SEC-1） |
 | 聊天/语音/深度研究走用户凭据 | ✅ 已完成 | run 级解析绑定，用量标记 `is_byok` 随 run 落库 |
-| Embedding 走用户凭据 | 🚧 进行中 | 解析器/ContextVar/model_tag 基建已落地并有单测；run 入口绑定未接，行为尚未对用户生效 | `embed()`/`model_tag()` 只读平台 `settings.embedding`，BYOK 用户的记忆检索与 RAG 向量化仍消耗平台 key；平台未配 embedding 时 BYOK 用户无法使用向量检索 |
+| Embedding 走用户凭据 | 🚧 进行中 | 解析基建 + 全部用户链路绑定（主对话/网关/定时任务/反思/IM 反思/问候）+ Admin 重建逐用户化已完成；测试连接与前端卡片待实施 | `embed()`/`model_tag()` 只读平台 `settings.embedding`，BYOK 用户的记忆检索与 RAG 向量化仍消耗平台 key；平台未配 embedding 时 BYOK 用户无法使用向量检索 |
 | BYOK 用量记账（embedding） | 🔲 待评估 | embedding 调用目前不进 usage 表，无记账载体，本 PRD 不做 |
 
 ## 1. 背景与目标
@@ -146,8 +146,8 @@ frontend/src/i18n/sections/common.ts                        【修改】 profile
 
 ### Phase 2：用户链路绑定
 
-- [ ] `SEC2-004` 七个 run 入口绑定（runner ×2、gateway/web ×2、scheduled_execution、reflection、im_reflection、greeting）：run 开始绑定、结束 reset，解密失败回落平台并记脱敏日志；验收：各有用户凭据/无凭据两种链路测试。
-- [ ] `SEC2-005` Admin 重建 per-user：`embedding-rebuild` 前置检查与 `rebuild_all_vecs` 改为逐用户解析配置（gather 各 task 内绑定）；验收：平台未配 embedding + 存在 BYOK 用户时可重建且只用用户 key。
+- [x] `SEC2-004` 七个 run 入口绑定（runner ×2、gateway/web ×2、scheduled_execution、reflection、im_reflection、greeting）：run 开始绑定、结束 reset，解密失败回落平台并记脱敏日志；验收：各有用户凭据/无凭据两种链路测试。
+- [x] `SEC2-005` Admin 重建 per-user：`embedding-rebuild` 前置检查与 `rebuild_all_vecs` 改为逐用户解析配置（gather 各 task 内绑定）；验收：平台未配 embedding + 存在 BYOK 用户时可重建且只用用户 key。
 
 ### Phase 3：测试连接与前端
 
