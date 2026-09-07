@@ -220,19 +220,21 @@ export function useChatConversation(options: {
     else sessionStorage.removeItem(SESSION_KEY)   // 新对话只清当前标签；localStorage 留最后一段供重开接续
   })
 
-  // 会话切换时的草稿存/取（helper 定义在 inputText 旁；这里才拿得到已初始化的 sessionId）
+  // 会话切换时的草稿存/取（helper 定义在 inputText 旁；这里才拿得到已初始化的 sessionId）。
+  // 只处理「真正的 load/switch」；新对话首条消息的 SSE session_id 落地走
+  // bindNewSessionId（下方），不能在这里用 null → id 推断——刷新恢复、侧栏点击
+  // 已有会话同样是 null → id，但那两种需要恢复目标会话的草稿，语义相反。
   watch(sessionId, (nv, ov) => {
-    if (!ov && nv) {
-      // 新对话首条消息回传 session_id（null → id）是**同一会话的指针落地**，不是切换：
-      // 此刻输入框里的文字（用户正打着的那条，或排队入队瞬间）仍属于这个新会话，
-      // 草稿直接记到新 id 名下。不能走下面的分支——那会把输入当成「旧会话遗留」
-      // 无声清掉（新 id 名下还没有草稿，还原出来是空串，用户正在打的字就丢了）。
-      _saveDraft(nv, inputText.value)
-      return
-    }
     _saveDraft(ov, inputText.value)
     inputText.value = nv ? (_loadDrafts()[String(nv)] ?? '') : ''
   })
+  // 新对话首条消息：SSE session_id 事件把会话身份落到真实 id。这是同一会话的
+  // 指针落地而不是切换——先把当前输入（用户正打的字/刚排队的消息）记到新 id
+  // 名下再赋值；随后触发的切换 watcher 按新 id 还原出同一份文本，输入框不动。
+  function bindNewSessionId(id: number) {
+    _saveDraft(id, inputText.value)
+    sessionId.value = id
+  }
   // 输入即存（防抖）：只靠切换时存会有脏条目——发送/清空后草稿表里还是旧文，
   // 重开浏览器接续同一会话时会把已发出的内容当草稿复活。
   let _draftTimer: ReturnType<typeof setTimeout> | null = null
@@ -393,7 +395,7 @@ export function useChatConversation(options: {
   // ── SSE 收发（send/stopStreaming/resumeStream），见 useChatStream.ts ──
   const streamApi = useChatStream({
     messages, mkid, now, inputText, inputReferences, sessionId, sessions,
-    getViewGeneration,
+    getViewGeneration, bindNewSessionId,
     pendingAtt: options.pendingAtt,
     composerRef: options.composerRef,
     setStatus, clearStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
