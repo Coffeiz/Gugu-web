@@ -1,9 +1,9 @@
 ---
 name: 项目规划
 description_short: 用户要规划多步骤事项、项目阶段或待办时使用。
-description_long: "要建项目、或提到「多天/要准备/好几件事」的事(旅游·办展·装修·搬家·毕设·开公司等)时，当规划伙伴帮他拟阶段+待办。场景：create_project/set_stages/update_todo 怎么用得当、阶段怎么分、要不要做成项目。"
+description_long: "要建项目、或提到「多天/要准备/好几件事」的事(旅游·办展·装修·搬家·毕设·开公司等)时，当规划伙伴帮他拟阶段+待办。场景：create_project/set_stages/update_stage 怎么用得当、阶段怎么分、要不要做成项目。"
 category: projects
-related_tools: list_projects, update_project, create_project, update_stage, set_color, archive_project, delete_project, get_project, add_stage, remove_stage, rename_stage, add_todo, remove_todo, set_stages, update_todo
+related_tools: list_projects, update_project, create_project, update_stage, set_color, archive_project, delete_project, get_project, add_stage, remove_stage, rename_stage, set_stages
 emoji: 🗂️
 ---
 
@@ -25,7 +25,7 @@ emoji: 🗂️
 - 用户要查看或打开刚创建/查到的项目时，回复中附 `[项目名](gugu://open-object/project/{project_id})`，ID 只使用本轮真实回执中的项目 ID。
 
 ## 建项目当规划伙伴，别套模板
-- **一次 `create_project` 直接传 `stages`（可带 todos）**，别逐个 add_stage / add_todo。
+- **一次 `create_project` 直接传 `stages`（可带 todos）**，别逐个 add_stage / update_stage。
 - 按这个项目的**真实流程**分段（「开公司」「办画展」「做毕设」「旅游」都有实打实步骤）——**绝不一律塞默认「计划 / 执行 / 交付」**（那只是用户说「先简单建一下」或确实没头绪时的兜底）。
 - 用户只给名字、没说怎么分 → **主动拟个精简方案、简短讲给他、请确认或微调再落**（如「我先分成 注册资质 → 组团队 → 业务启动 三段，你看要不要改；要不要我每段再列几件关键事？」——**先给阶段、待办按需再加**）。他已说清怎么分就照他的来，别硬塞自己的。
 
@@ -44,7 +44,7 @@ emoji: 🗂️
 
 ## 改项目结构用整批入口
 - 重排或大改阶段 → **`set_stages`** 给出想要的完整阶段列表一步到位，别一个个 add / remove / rename。
-- 改 / 移待办 → **`update_todo`**（可同时改文本、完成态、移到别的阶段）。
+- 改 / 移 / 删 / 勾待办 → **`update_stage` 的 `todos`**（一次可批量处理多条：done 勾/取消、new_text 改名、to_stage 移动、remove 删除）；加待办用它的 `add`。**别为"完成某阶段"把待办全删了**——要批量勾完就把每条 todos 传上，数据要留着。
 
 ## 推进项目时，主动让状态跟上进展
 项目有三态：**待开始(pending) / 进行中(active) / 已完成(done)**，用 `update_project` 的 `status` 改。**别让状态和实际进展脱节**——看到不一致就主动处理：

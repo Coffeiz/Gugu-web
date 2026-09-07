@@ -24,6 +24,7 @@
                 <button class="pm-style-chip" @click="openEditor(item.capability, item)">{{ t('profileByokUi.edit') }}</button>
                 <button class="pm-style-chip" :disabled="testing === item.id" @click="test(item)">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button>
                 <button v-if="item.capability === 'llm'" class="pm-style-chip" :disabled="visionTesting?.startsWith(`${item.id}:`)" @click="probeCardVisionAll(item)">{{ visionTesting === `${item.id}:all` ? t('profileByokUi.probing') : t('profileByokUi.probe') }}</button>
+                <button v-if="item.capability === 'embedding'" class="pm-style-chip" :disabled="rebuildRunning" @click="rebuildVectors(item)">{{ rebuildRunning ? t('profileByokUi.rebuilding') : t('profileByokUi.rebuildVectors') }}</button>
                 <button class="pm-style-chip" :class="{ active: item.enabled }" @click="toggle(item)">{{ item.enabled ? t('profileByokUi.enabled') : t('profileByokUi.disabled') }}</button>
                 </template>
                 <button class="pm-danger-btn" @click="remove(item)">{{ t('profileByokUi.delete') }}</button>
@@ -41,11 +42,12 @@
               <InterfaceTypeSelect v-else-if="editors[item.id].provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="editors[item.id].api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="editors[item.id].api_format = String($event)" />
               <input v-model="editors[item.id].base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
               <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKeyKeep')" />
-              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><button v-for="model in modelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <input v-if="editors[item.id].capability === 'embedding'" v-model.number="editors[item.id].dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
               <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeVision" />
             </div>
-            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === String(item.id) && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === item.id" @click="test({ id: item.id, capability: editors[item.id].capability })">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === String(item.id) && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === item.id" @click="test(item, editors[item.id])">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
             </div>
             </Transition>
             </template>
@@ -66,11 +68,12 @@
               <InterfaceTypeSelect v-else-if="newEditor.provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="newEditor.api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="newEditor.api_format = String($event)" />
               <input v-model="newEditor.base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
               <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
-              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><button v-for="model in modelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
+              <input v-if="newEditor.capability === 'embedding'" v-model.number="newEditor.dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
               <template v-if="newEditor.capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: newEditor.reasoning_persistence === option.key }" @click="newEditor.reasoning_persistence = option.key">{{ option.label }}</button></div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeNewVision" />
             </div>
-            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" :disabled="testing === -1 || !newEditor.provider || !newEditor.value" @click="testNewEditor">{{ testing === -1 ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || (keyRequiredFor(newEditor) && !newEditor.value)" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
           </div>
           </Transition>
           </Teleport>
@@ -102,12 +105,13 @@ import { MODEL_PROVIDERS, type ModelProvider } from '@/utils/modelProviders'
 type ReasoningPersistence = 'off' | 'summary' | 'continuation'
 type Item = { id: number; capability: string; provider: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; vision: boolean; vision_video: boolean; vision_audio: boolean; vision_detail: string; has_value: boolean; enabled: boolean; [key: string]: any }
 type ThinkingMode = 'default' | 'disabled' | 'adaptive' | 'low' | 'medium' | 'high' | 'max'
-type Editor = { id?: number; capability: string; provider: string; value: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; thinking_mode: ThinkingMode; vision: boolean; vision_video: boolean; vision_audio: boolean; vision_detail: string; local_runtime?: string; ollama_mode?: string }
+type Editor = { id?: number; capability: string; provider: string; value: string; api_format: string; base_url: string; model: string; dimensions: number | null; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; thinking_mode: ThinkingMode; vision: boolean; vision_video: boolean; vision_audio: boolean; vision_detail: string; local_runtime?: string; ollama_mode?: string }
 type ThinkingOption = { value: ThinkingMode; label: string }
 type ProviderOption = ModelProvider
 const modelProviders: readonly ProviderOption[] = MODEL_PROVIDERS
 const groups = [
   { value: 'llm', labelKey: 'profileByokUi.generalModel' }, { value: 'speech_to_text', labelKey: 'profileByokUi.speechModel' },
+  { value: 'embedding', labelKey: 'profileByokUi.embeddingModel' },
 ]
 const visionDims = [{ key: 'image', labelKey: 'profileByokUi.image', field: 'vision' }, { key: 'video', labelKey: 'profileByokUi.video', field: 'vision_video' }, { key: 'audio', labelKey: 'profileByokUi.audio', field: 'vision_audio' }] as const
 const reasoningPersistenceOptions = computed(() => [
@@ -145,10 +149,14 @@ const visibleGroups = computed(() => props.capability ? groups.filter(group => g
 const localizedVisionDims = computed(() => visionDims.map(dim => ({ ...dim, label: t(dim.labelKey) })))
 type VisionResult = { key: string; label: string; text: string; status: 'supported' | 'unsupported' | 'unknown' }
 const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<VisionResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
+const rebuildRunning = ref(false); let rebuildTimer: ReturnType<typeof setInterval> | null = null
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
+const embeddingProviders = ['openai', 'qwen', 'glm', 'ollama', 'local']
 function providersFor(capability: string): readonly ProviderOption[] {
-  return capability === 'speech_to_text' ? modelProviders.filter(item => ['openai', 'qwen', 'local'].includes(item.value)) : modelProviders
+  if (capability === 'speech_to_text') return modelProviders.filter(item => ['openai', 'qwen', 'local'].includes(item.value))
+  if (capability === 'embedding') return modelProviders.filter(item => embeddingProviders.includes(item.value))
+  return modelProviders
 }
 function thinkingEffortsFor(draft: Pick<Editor, 'provider' | 'model'>): ThinkingMode[] {
   if (draft.provider === 'qwen' && !/^qwen3/i.test(draft.model || '')) return []
@@ -193,12 +201,17 @@ function childSelectionFor(draft: Pick<Editor, 'provider' | 'base_url' | 'local_
   if (draft.provider === 'ollama') return draft.ollama_mode || ((draft.base_url || '').includes('ollama.com') ? 'cloud' : 'local')
   return ''
 }
+const embeddingModelSeeds: Record<string, string> = {
+  openai: 'text-embedding-3-small', qwen: 'text-embedding-v4', glm: 'embedding-3',
+}
 function applyProvider(draft: Editor, value: string) {
   draft.provider = value
   const provider = modelProviders.find(item => item.value === value)
   if (!provider) return
   draft.base_url = provider.base_url
-  draft.model = provider.model
+  draft.model = draft.capability === 'embedding'
+    ? (embeddingModelSeeds[value] ?? '')
+    : provider.model
   draft.api_format = value === 'mimo' ? 'openai' : value === 'ollama' ? 'native' : ''
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
 }
@@ -212,6 +225,14 @@ function applyProviderChild(draft: Editor, value: string) {
     draft.base_url = value === 'cloud' ? 'https://ollama.com/v1' : 'http://127.0.0.1:11434/v1'
     if (value === 'local') draft.value = ''
   }
+}
+// 自托管 Embedding（本地 Ollama / llama.cpp 等本地推理）通常无鉴权，允许空 API Key 保存；
+// Ollama Cloud 与其余 provider 保存仍必须填 Key。
+function keyRequiredFor(draft: Pick<Editor, 'capability' | 'provider' | 'base_url' | 'local_runtime' | 'ollama_mode'>): boolean {
+  if (draft.capability !== 'embedding') return true
+  if (draft.provider === 'local') return false
+  if (draft.provider === 'ollama') return childSelectionFor(draft) === 'cloud'
+  return true
 }
 async function fetchModels(event?: MouseEvent) {
   if (event?.currentTarget instanceof HTMLElement) modelAnchor.value = event.currentTarget.closest('.model-picker') as HTMLElement | null
@@ -227,6 +248,14 @@ async function fetchModels(event?: MouseEvent) {
   finally { modelLoading.value = false }
 }
 function selectModel(model: string) { const draft = editor.value || newEditor.value; if (draft) draft.model = model; modelMenuOpen.value = false }
+// 「获取列表」结果按模型输入框的预填内容过滤（类似搜索）：预填 qwen 就只看得到含 qwen 的项；
+// 关键词取自当前展开的编辑草稿，输入变化实时生效。清空输入恢复完整列表。
+const filteredModelOptions = computed(() => {
+  const kw = (editor.value?.model || newEditor.value?.model || '').trim().toLowerCase()
+  if (!kw) return modelOptions.value
+  return modelOptions.value.filter(model => model.toLowerCase().includes(kw))
+})
+const modelFilterKeyword = computed(() => (editor.value?.model || newEditor.value?.model || '').trim())
 function stripStatusMarks(value: string) { return value.replace(/\s*[✅✔☑]\s*$/gu, '').trim() }
 async function probeVision(dim: string) {
   const draft = editor.value
@@ -276,20 +305,79 @@ async function probeCardVisionAll(item: Item) {
   finally { visionTesting.value = null }
 }
 async function load() { loading.value = true; error.value = ''; try { const result = await byokApi.list(); items.value = result.items as Item[]; needsReconfigure.value = result.status === 'needs_reconfigure' } catch (e) { error.value = e instanceof Error ? e.message : 'BYOK 加载失败' } finally { loading.value = false } }
+function stopRebuildPolling() { if (rebuildTimer) { clearInterval(rebuildTimer); rebuildTimer = null } }
+function startRebuildPolling() {
+  stopRebuildPolling()
+  rebuildTimer = setInterval(async () => {
+    try {
+      const status = await byokApi.rebuildVectorsStatus()
+      if (status.status === 'running') return
+      stopRebuildPolling()
+      rebuildRunning.value = false
+      messageCapability.value = 'embedding'
+      if (status.status === 'done') { message.value = status.message || '重建完成'; messageType.value = 'ok' }
+      else if (status.status === 'error') { message.value = status.message || '重建失败'; messageType.value = 'err' }
+    } catch { /* 单次轮询失败静默，下一轮再取 */ }
+  }, 2000)
+}
+async function refreshRebuildStatus() {
+  // 页面刷新后若后台重建仍在跑，恢复按钮禁用态并继续轮询
+  try {
+    const status = await byokApi.rebuildVectorsStatus()
+    if (status.status === 'running') { rebuildRunning.value = true; startRebuildPolling() }
+  } catch { /* 状态接口失败不影响面板加载 */ }
+}
+async function rebuildVectors(_item: Item) {
+  if (rebuildRunning.value) return
+  messageCapability.value = 'embedding'
+  try {
+    const body = await byokApi.rebuildVectors()
+    if (body.ok) { rebuildRunning.value = true; message.value = body.message; messageType.value = 'ok'; startRebuildPolling() }
+    else { message.value = body.message; messageType.value = 'err' }
+  } catch (e) { message.value = e instanceof Error ? e.message : '重建失败'; messageType.value = 'err' }
+}
 function setActiveEditor(id: number) { editor.value = editors.value[id] || null }
-function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', max_tokens: item.max_tokens ?? 8000, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, reasoning_persistence: normalizeReasoningPersistence(item.reasoning_persistence), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', max_tokens: 8000, context_tokens: 128000, thinking: null, reasoning_effort: null, reasoning_persistence: 'off' as const, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; visionFeedback.value = ''; visionFeedbackTarget.value = null }
+function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', dimensions: (item as Item).dimensions ?? null, max_tokens: item.max_tokens ?? 8000, context_tokens: item.context_tokens ?? 128000, thinking: item.thinking, reasoning_effort: item.reasoning_effort, reasoning_persistence: normalizeReasoningPersistence(item.reasoning_persistence), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), vision: Boolean(item.vision), vision_video: Boolean(item.vision_video), vision_audio: Boolean(item.vision_audio), vision_detail: item.vision_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', dimensions: null, max_tokens: 8000, context_tokens: 128000, thinking: null, reasoning_effort: null, reasoning_persistence: 'off' as const, thinking_mode: 'default', vision: false, vision_video: false, vision_audio: false, vision_detail: 'auto' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; visionFeedback.value = ''; visionFeedbackTarget.value = null }
 function applyProviderTo(target: Editor, value: string) { applyProvider(target, value) }
 function closeNewEditor() { newEditor.value = null }
 function notifyQuotaChanged() { window.dispatchEvent(new Event('gugu-quota-changed')) }
-async function saveNewEditor() { if (!newEditor.value) return; saving.value = true; try { const draft = newEditor.value; await byokApi.create({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }); newEditor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉：主密钥校验状态与同能力旧行的停用状态都由服务端裁决，本地拼 items 拿不到
+async function saveNewEditor() { if (!newEditor.value) return; saving.value = true; try { const draft = newEditor.value; await byokApi.create({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }); newEditor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉：主密钥校验状态与同能力旧行的停用状态都由服务端裁决，本地拼 items 拿不到
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 function probeNewVision(dim: string) { if (!newEditor.value) return; const previous = editor.value; editor.value = newEditor.value; void probeVision(dim as typeof visionDims[number]['key']).finally(() => { if (newEditor.value) newEditor.value = editor.value; editor.value = previous }) }
+// 新建卡无已存凭据可回源，Key 必填才能试呼；能力受限的 provider 由后端提示。
+async function testNewEditor() { if (!newEditor.value) return; const draft = newEditor.value; testing.value = -1; messageCapability.value = draft.capability; try { const body = await byokApi.testPreview({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, dimensions: draft.capability === 'embedding' ? (draft.dimensions ?? undefined) : undefined }); message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败')); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
 function clearClosingEditor(id: number) { closingEditors.value.delete(id) }
 function closeEditor(id?: number) { if (id !== undefined) { closingEditors.value.add(id); delete editors.value[id] }; editor.value = id !== undefined && editor.value?.id === id ? null : editor.value; modelMenuOpen.value = false }
-async function saveEditor(id: number) { const draft = editors.value[id]; if (!draft) return; saving.value = true; message.value = ''; try { const payload: Record<string, unknown> = { provider: draft.provider, capability: draft.capability, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }; if (draft.value) payload.value = draft.value; await byokApi.update(id, payload); delete editors.value[id]; if (editor.value?.id === id) editor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉让 needsReconfigure 提示随最新校验状态即时消失，不必手动刷新页面
+async function saveEditor(id: number) { const draft = editors.value[id]; if (!draft) return; saving.value = true; message.value = ''; try { const payload: Record<string, unknown> = { provider: draft.provider, capability: draft.capability, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, vision: draft.vision, vision_video: draft.vision_video, vision_audio: draft.vision_audio, vision_detail: draft.vision_detail }; // 切到无鉴权本地服务时显式 PATCH 空串，把旧云端 Key 清掉——漏发会把旧 Key 留给新 endpoint（跨 Provider 泄漏）
+if (draft.value || !keyRequiredFor(draft)) payload.value = draft.value; await byokApi.update(id, payload); delete editors.value[id]; if (editor.value?.id === id) editor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉让 needsReconfigure 提示随最新校验状态即时消失，不必手动刷新页面
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 async function toggle(item: Item) { try { const enabled = !item.enabled; Object.assign(item, await byokApi.update(item.id, { enabled })); if (enabled) items.value.filter(row => row.capability === item.capability && row.id !== item.id).forEach(row => { row.enabled = false }); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '更新失败'; messageType.value = 'err' } }
-async function test(item: { id: number; capability: string }) { testing.value = item.id; messageCapability.value = item.capability; try { const body = await byokApi.test(item.id); message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败')); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
+async function test(item: Item, draft?: Editor) {
+  testing.value = item.id
+  messageCapability.value = item.capability
+  try {
+    // 展开编辑卡时按草稿试呼（test-preview 不落库），预填的 base_url/model/Key 立即可测；
+    // Key 没重填就由后端按 credential_id 解密已存 Key，不必先保存。
+    if (draft) {
+      const body = await byokApi.testPreview({
+        provider: draft.provider,
+        capability: draft.capability,
+        value: draft.value,
+        api_format: draft.api_format,
+        base_url: draft.base_url,
+        model: draft.model,
+        dimensions: draft.capability === 'embedding' ? (draft.dimensions ?? undefined) : undefined,
+        credential_id: draft.id,
+      })
+      message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败'))
+      messageType.value = body.ok ? 'ok' : 'err'
+      return
+    }
+    const body = await byokApi.test(item.id)
+    message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败'))
+    messageType.value = body.ok ? 'ok' : 'err'
+  } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null }
+}
 async function remove(item: Item) {
   if (!await confirmDialog({
     title: t('profileByokUi.deleteTitle'),
@@ -311,8 +399,8 @@ function closeModelMenuOnOutside(event: MouseEvent) {
   const target = event.target
   if (modelMenuOpen.value && (!(target instanceof Element) || !target.closest('.model-picker'))) modelMenuOpen.value = false
 }
-onMounted(() => { load(); document.addEventListener('mousedown', closeModelMenuOnOutside) })
-onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOnOutside))
+onMounted(() => { load(); void refreshRebuildStatus(); document.addEventListener('mousedown', closeModelMenuOnOutside) })
+onBeforeUnmount(() => { stopRebuildPolling(); document.removeEventListener('mousedown', closeModelMenuOnOutside) })
 </script>
 
 <style scoped>
@@ -346,7 +434,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeModelMenuOn
 .byok-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .byok-card-head { flex: 1; min-width: 0; }
 .byok-card-main { min-width: 0; }
-.byok-name { min-width: 0; color: var(--text-primary); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.byok-name { min-width: 0; color: var(--text-primary); font-size: 13px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .byok-capability-tag { display: inline-flex; margin-left: 5px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--accent-color, #7b7fb2) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
 .byok-meta { color: var(--text-secondary); font-size: 11px; margin-top: 3px; }
 .byok-expired { color: var(--color-danger, #c66); }

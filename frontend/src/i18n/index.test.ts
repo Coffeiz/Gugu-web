@@ -26,6 +26,8 @@ describe('i18n locale policy', () => {
     expect(messages['en-US'].layout.followSystemOption).toBe('Follow system')
   })
 
+  // 用例要对三个语言包全量路径逐一编译解析，空跑就要数秒；CI 与其他套件并行时
+  // 默认 5s 超时会误报（devserver 全量 CI 实测 5.6s 超时、单独跑 0.3s 通过）。
   it('所有语言包文案都能被 vue-i18n 正常解析', () => {
     const paths = messagePaths(messages['en-US'])
     for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
@@ -34,7 +36,7 @@ describe('i18n locale policy', () => {
         expect(() => localI18n.global.t(path)).not.toThrow()
       }
     }
-  })
+  }, 30_000)
   it('模型级推理状态选项在三个语言包中都使用公共 llmExtraUi 文案', () => {
     for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
       const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).llmExtraUi

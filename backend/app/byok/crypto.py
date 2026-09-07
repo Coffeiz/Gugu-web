@@ -60,8 +60,11 @@ def _master_key(version: int = 1) -> bytes:
     return hashlib.sha256(raw.encode("utf-8")).digest()
 
 
-def encrypt_envelope(plaintext: str, *, key_version: int | None = None) -> tuple[str, str, str]:
-    if not plaintext:
+def encrypt_envelope(plaintext: str, *, key_version: int | None = None,
+                     allow_empty: bool = False) -> tuple[str, str, str]:
+    # allow_empty 只给无鉴权的自托管服务（本地 Ollama / llama.cpp 等）用：
+    # 空串仍走完整 AES-GCM 信封加密，解密回 ""，不落明文。
+    if not plaintext and not allow_empty:
         raise ValueError("凭据不能为空")
     key_version = key_version or int(os.getenv("CREDENTIALS_MASTER_KEY_VERSION", "1"))
     data_key = AESGCM.generate_key(bit_length=256)

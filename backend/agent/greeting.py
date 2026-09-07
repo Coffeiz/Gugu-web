@@ -175,6 +175,8 @@ async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str
     try:
         model = (await resolve_run_config_for_user(settings, db, user_id, None)).model
         modelctx.set_model_cfg(model)
+        from app.byok.service import resolve_and_bind_user_embedding
+        await resolve_and_bind_user_embedding(settings, db, user_id)   # 与主链路同口径绑定 embedding（PRD-SEC-2）
         language_instruction = _LOCALE_INSTRUCTIONS.get(locale, _LOCALE_INSTRUCTIONS["zh-CN"])
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id)) + "\n" + language_instruction
         from agent import providers

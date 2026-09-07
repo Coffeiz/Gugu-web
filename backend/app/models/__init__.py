@@ -210,6 +210,8 @@ class UserProviderCredential(Base):
     vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_detail: Mapped[str] = mapped_column(String(16), default="auto")
+    # BYOK embedding 凭据专用：请求维度（NULL=用模型默认）；其他能力不读。
+    dimensions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     last_verified_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)

@@ -10,7 +10,7 @@ import { i18n } from '@/i18n'
 // 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面。
 // 与后端 RESOURCE_BY_TOOL（app/core/events.py）保持一致——漏了哪个工具，对应视图就不会实时刷新。
 // consumeStream() 的 tool_done 分支也要按同一份集合即时 bump 对应资源，故导出。
-export const PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_stages','update_todo'])
+export const PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','set_stages'])
 export const CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
 export const FILE_TOOLS = new Set(['edit_file','create_file','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
 export const SCHEDULED_TASK_TOOLS = new Set(['create_scheduled_task', 'update_scheduled_task', 'delete_scheduled_task'])

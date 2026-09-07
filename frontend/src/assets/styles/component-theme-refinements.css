@@ -40,7 +40,8 @@ html[data-theme='dark'][data-family] .glass-card:not(.topbar):not(.cal-toolbar):
   border-color: var(--glass-card-border);
 }
 html[data-theme='dark'][data-family] .user-card:hover { background: var(--sidebar-user-bg); }
-html[data-theme='dark'][data-family] .proj-card:hover::after,
+/* .proj-card:hover::after 不再在此强灭：项目卡 sheen 已改为消费各主题令牌，
+   暗色取主题自身定义的克制白（7.5~8%），明暗手感一致（2026-09-08）。 */
 html[data-theme='dark'][data-family] .sample-project-card:hover::after,
 html[data-theme='dark'][data-family] .task-card:hover::after {
   opacity: 0 !important;

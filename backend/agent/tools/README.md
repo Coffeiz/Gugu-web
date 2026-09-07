@@ -173,7 +173,7 @@ flowchart LR
 短简介的推荐形状：
 
 ```text
-创建项目；后续可用 add_stage/add_todo 补充结构
+创建项目；后续可用 add_stage/update_stage 补充结构
 给活动加提醒；支持一次设置多个通知渠道
 搜索公网网页；需要实时外部资料时使用
 ```

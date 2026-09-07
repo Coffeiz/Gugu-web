@@ -60,7 +60,7 @@
 
             <div class="modal-field">
               <label>{{ t('adminLlmUi.modelName') }}</label>
-              <div class="model-picker" @focusout="$emit('close-model-menu')">
+              <div class="model-picker">
                 <div class="model-picker-row">
                   <input v-model="draft.model" placeholder="qwen-max" class="modal-input"
                     @focus="$emit('open-model-menu')" />
@@ -70,14 +70,20 @@
                     {{ modelLoading ? t('adminLlmUi.gettingModels') : t('adminLlmUi.getModels') }}
                   </button>
                 </div>
-                <div v-if="modelMenuOpen" class="model-options" @mousedown.stop>
-                  <div v-if="modelError" class="model-option-hint error">{{ modelError }}</div>
-                  <div v-else-if="!modelOptions.length" class="model-option-hint">
-                    {{ t('llmExtraUi.fetchModelsHint') }}
+                <!-- 与公共 PopupMenu 同款 menu-pop 进出场动画（全局样式），替代原来的瞬间显隐 -->
+                <Transition name="menu-pop">
+                  <div v-if="modelMenuOpen" class="model-options" @mousedown.stop>
+                    <div v-if="modelError" class="model-option-hint error">{{ modelError }}</div>
+                    <div v-else-if="!modelOptions.length" class="model-option-hint">
+                      {{ t('llmExtraUi.fetchModelsHint') }}
+                    </div>
+                    <div v-else-if="!filteredModels.length" class="model-option-hint">
+                      {{ t('llmExtraUi.noModelsMatch', { kw: String(draft.model || '').trim() }) }}
+                    </div>
+                    <button v-for="model in filteredModels" :key="model" type="button" class="model-option"
+                      @mousedown.prevent="$emit('select-model', model)">{{ model }}</button>
                   </div>
-                  <button v-for="model in filteredModels" :key="model" type="button" class="model-option"
-                    @mousedown.prevent="$emit('select-model', model)">{{ model }}</button>
-                </div>
+                </Transition>
               </div>
             </div>
 
@@ -229,7 +235,7 @@ const reasoningPersistenceOptions = computed(() => [
 ] as const)
 const $emit = defineEmits<{
   (event: 'close'): void; (event: 'after-close'): void; (event: 'save'): void; (event: 'set-provider', key: string): void; (event: 'open-model-menu'): void
-  (event: 'close-model-menu'): void; (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
+  (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
   (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-vision', id: string | number | undefined, dim: string): void
 }>()
 function forwardCapabilityOverride(key: string, enabled: boolean) {

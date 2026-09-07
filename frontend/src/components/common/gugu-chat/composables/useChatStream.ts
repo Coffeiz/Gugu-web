@@ -40,6 +40,9 @@ export function useChatStream(options: {
   sessionId: Ref<number | null>
   sessions: Ref<ChatSession[]>
   getViewGeneration: () => number
+  // SSE session_id 落地专用：保留当前输入并把它记为新会话草稿（不是会话切换，
+  // 不能走普通 watcher 的「存旧还原新」语义，那会清掉正在输入的文字）
+  bindNewSessionId: (id: number) => void
   pendingAtt: Ref<ChatFile[]>
   composerRef: Ref<InstanceType<typeof GuguChatComposer> | null>
   setStatus: (item: StatusItem) => void
@@ -185,9 +188,11 @@ export function useChatStream(options: {
           let evt; try { evt = JSON.parse(raw) } catch { continue }
           if (evt.type === 'session_id') {
             const isNew = sessionId.value !== evt.session_id
-            // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话
+            // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话。
+            // 走 bindNewSessionId：身份落地要保留当前输入并记为新会话草稿（普通赋值
+            // 会触发切换 watcher 把输入当「旧会话遗留」还原成空串，正在打的字就丢了）。
             if (viewGeneration === options.getViewGeneration() && sessionId.value === (sid ?? ownerSid)) {
-              sessionId.value = evt.session_id
+              options.bindNewSessionId(evt.session_id)
             }
             // 真实 id 到位后立即回填排队项：上面分支只在视图未切换时才更新 sessionId.value，
             // 但排队项仍可能在视图已切换的情况下属于旧视图——这里只看"是否本流视图"，
