@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import account_is_active, decode_user_token, get_current_user, get_current_user_id, is_user_active
@@ -18,7 +19,7 @@ from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
-from app.models import User
+from app.models import User, TerminalSessionRecord, Workspace
 from app.services.terminals import (
     create_terminal, delete_terminal, get_terminal, list_terminals,
     terminate_terminal as terminate_terminal_record,
@@ -166,6 +167,42 @@ async def get_terminal_detail(terminal_id: str, user: User = Depends(get_current
     return serialize_terminal(row)
 
 
+async def _revalidate_pty_start(state_db: AsyncSession, user_id, terminal_id: str,
+                                authorized_workspace_id) -> TerminalSessionRecord:
+    """PTY 宣布 RUNNING 前的 server-owned 复核（持行锁）。
+
+    auth 阶段的授权在 PTY 启动期间可能已失效（典型：Workspace 删除事务把终端标
+    terminated，但删除路径对 manager 只扫描一次，扫不到之后才启动的 PTY）。这里用
+    SELECT … FOR UPDATE 与 DELETE 的 UPDATE 串行化：DELETE 先提交 → 本复核看到
+    terminated/绑定消失，拒绝启动；本复核先拿锁 → DELETE 等待，提交后一定能看到
+    这个 manager 里的活 PTY 并 terminate 它。
+    """
+    state_row = (await state_db.execute(
+        select(TerminalSessionRecord).where(
+            TerminalSessionRecord.id == terminal_id,
+            TerminalSessionRecord.owner_id == user_id,
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if state_row is None:
+        raise HTTPException(status_code=404, detail="交互式终端不存在")
+    # closed 终端必须走显式 reopen，setup 阶段不得直接复活。
+    if state_row.closed_at is not None or state_row.status == TerminalStatus.TERMINATED.value:
+        raise HTTPException(status_code=403, detail="终端已终止，请先重新打开")
+    if state_row.workspace_id != authorized_workspace_id:
+        raise HTTPException(status_code=403, detail="终端工作区绑定已变化，请刷新后重试")
+    if authorized_workspace_id is not None:
+        binding = await state_db.get(Workspace, authorized_workspace_id)
+        if binding is None:
+            raise HTTPException(status_code=403, detail="终端绑定的 Workspace 已删除")
+    access = await authorize_operation(
+        state_db, user_id, owner_id=state_row.owner_id, session_id=state_row.session_id,
+        workspace_id=state_row.workspace_id, operation=TerminalOperation.INPUT,
+    )
+    if not access.allowed:
+        raise HTTPException(status_code=403, detail=access.reason)
+    return state_row
+
+
 @router.websocket("/{terminal_id}/ws")
 async def terminal_websocket(terminal_id: str, websocket: WebSocket):
     """交互式 PTY 网关；agent-events 终端继续使用原有事件接口。"""
@@ -204,6 +241,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             row_id = row.id
             row_shell_mode = row.shell_mode
             row_network_profile = row.network_profile
+            row_workspace_id = row.workspace_id
         if root is None:
             raise HTTPException(status_code=403, detail="终端没有可用的沙盒目录")
         # 先完成 WebSocket 握手，再启动 PTY/发布状态事件，避免慢沙盒或事件总线让
@@ -229,17 +267,26 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         if not attached:
             await manager.attach(row_id)
             attached = True
-        async with db_session._SessionLocal() as state_db:
-            state_row = await get_terminal(state_db, user_id, row_id)
-            if state_row is None:
-                raise HTTPException(status_code=404, detail="交互式终端不存在")
-            state_row.status = TerminalStatus.RUNNING.value
-            state_row.pty_pid = session.handle.pid
-            state_row.pty_sandbox_id = session.handle.sandbox_id
-            state_row.pty_cols, state_row.pty_rows = session.cols, session.rows
-            state_row.updated_at = now_utc()
-            await state_db.commit()
-            state_payload = serialize_terminal(state_row)
+        try:
+            async with db_session._SessionLocal() as state_db:
+                # RUNNING 落库前先持行锁复核授权仍成立；复核失败时 runtime 侧必须
+                # fail-closed——把刚启动/仍存活的 PTY 一起 terminate，不能留着收输入。
+                state_row = await _revalidate_pty_start(state_db, user_id, row_id, row_workspace_id)
+                state_row.status = TerminalStatus.RUNNING.value
+                state_row.pty_pid = session.handle.pid
+                state_row.pty_sandbox_id = session.handle.sandbox_id
+                state_row.pty_cols, state_row.pty_rows = session.cols, session.rows
+                state_row.updated_at = now_utc()
+                await state_db.commit()
+                state_payload = serialize_terminal(state_row)
+        except Exception:
+            try:
+                await manager.terminate(row_id, force=True)
+            except LookupError:
+                pass
+            queue = None
+            attached = False
+            raise
         terminal_status = TerminalStatus.RUNNING.value
         await events.publish(user_id, "terminals", operation="update", entity_id=row_id,
                              event_payload=state_payload)
