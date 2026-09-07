@@ -106,7 +106,8 @@ def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
     assert "db" not in signature(stream_terminal_events).parameters
 
     session_source = Path(__file__).parents[1].joinpath("app/db/session.py").read_text(encoding="utf-8")
-    assert "await asyncio.shield(session.close())" in session_source
+    assert "await session.rollback()" in session_source
+    assert "await asyncio.shield(_cleanup())" in session_source
 
 
 @pytest.mark.asyncio

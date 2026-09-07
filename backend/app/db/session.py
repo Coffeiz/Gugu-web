@@ -9,6 +9,9 @@ _engine = None
 _SessionLocal = None
 _engine_loop = None   # 引擎创建时绑定的事件循环，见 ensure_engine() 的跨循环检测
 _MIGRATION_LOCK_KEY = 834271
+# 查询完成后仍停留在事务中的连接会持有 AccessShareLock，阻塞 ALTER TABLE。
+# 正常业务事务不会在这里超时；只限制真正 idle in transaction 的连接。
+_IDLE_IN_TRANSACTION_TIMEOUT_MS = "60000"
 
 
 def _current_loop():
@@ -26,6 +29,11 @@ def _build_engine():
     _engine = create_async_engine(
         settings.db.url,
         echo=settings.debug,
+        connect_args={
+            "server_settings": {
+                "idle_in_transaction_session_timeout": _IDLE_IN_TRANSACTION_TIMEOUT_MS,
+            },
+        },
         pool_pre_ping=True,
         pool_size=15,       # 稳定保持连接数
         max_overflow=25,    # 峰值最多 40/进程；web+worker ≤ 80，留 20 给 pgAdmin
@@ -109,9 +117,17 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     try:
         yield session
     finally:
+        async def _cleanup() -> None:
+            # 显式 rollback 结束异常/取消后遗留的事务；close 通常也会做这件事，
+            # 但不能把连接清理契约寄托在 Session 的隐式行为上。
+            try:
+                await session.rollback()
+            finally:
+                await session.close()
+
         # 客户端断开 SSE/流式请求时，Starlette 可能取消当前 task。用 shield
-        # 保证连接归还连接池，避免取消沿着 asyncpg terminate 路径再次打断清理。
-        await asyncio.shield(session.close())
+        # 保护 rollback + close，避免取消沿着 asyncpg terminate 路径打断清理。
+        await asyncio.shield(_cleanup())
 
 
 _MIGRATIONS = [
