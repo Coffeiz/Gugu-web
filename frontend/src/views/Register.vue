@@ -129,7 +129,9 @@ async function handleRegister() {
   background: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.76);
   border-radius: 10px; font-size: 14px; color: #1e2028;
   font-family: var(--font-sans); outline: none;
-  box-shadow: inset 0 1px 3px rgba(80,90,110,0.06);
+  /* 基础态带一层零尺寸透明外阴影占位：与聚焦态的 ring+inset 两层结构逐层对齐，
+     否则 inset/非 inset 混排会让 box-shadow 整体退化为离散插值，泛光瞬间出现。 */
+  box-shadow: 0 0 0 0 transparent, inset 0 1px 3px rgba(80,90,110,0.06);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .field input:focus {
