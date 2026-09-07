@@ -805,17 +805,17 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   display: block; width: 112px; height: 112px; margin-top: 5px; object-fit: cover;
   border-radius: 8px; cursor: pointer; border: 1px solid rgba(123,127,178,0.18);
 }
-/* 非图片引用文件 chip：和缩略图同族蓝灰描边，别用 --surface-hover（暗色是
-   transparent，chip 会隐形）。inline-block 自身做省略，长文件名截断不撑破引用条。 */
+/* 非图片引用文件 chip：surface 走 token（主题契约禁止本文件硬编码 background），
+   描边与缩略图同族蓝灰。inline-block 自身做省略，长文件名截断不撑破引用条。 */
 :deep(.msg-quoted-file) {
   display: inline-block; margin-top: 5px; margin-right: 6px; padding: 3px 8px;
   max-width: 100%; box-sizing: border-box;
   font-size: 12px; line-height: 1.5; color: var(--text-secondary);
-  background: rgba(123,127,178,0.12); border: 1px solid rgba(123,127,178,0.18);
+  background: var(--gugu-chat-quoted-chip-bg); border: 1px solid rgba(123,127,178,0.18);
   border-radius: 6px; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-:deep(.msg-quoted-file:hover) { background: rgba(123,127,178,0.22); }
+:deep(.msg-quoted-file:hover) { background: var(--gugu-chat-quoted-chip-bg-hover); }
 :deep(.msg-face-image-wrap) {
   max-width: 150px; margin-top: 5px; cursor: pointer; line-height: 0;
 }

@@ -8,6 +8,10 @@
   --gugu-chat-assistant-border: var(--border-subtle);
   --gugu-chat-member-bg: var(--action-soft);
   --gugu-chat-member-border: var(--action-outline);
+  /* 引用条内非图片文件 chip：从引用条边框色派生叠色（≈13.6% 实际覆盖，
+     与原蓝灰 12% 观感一致）；暗色覆盖见下方 dark[data-family] 段。 */
+  --gugu-chat-quoted-chip-bg: color-mix(in srgb, var(--gugu-chat-member-border) 40%, transparent);
+  --gugu-chat-quoted-chip-bg-hover: color-mix(in srgb, var(--gugu-chat-member-border) 64%, transparent);
   --gugu-chat-user-fg: var(--content-on-accent);
   --gugu-chat-file-ext-bg: var(--action-primary-bg);
   --gugu-chat-file-name: var(--content-primary);
@@ -413,6 +417,10 @@ html[data-theme='dark'][data-family] {
   /* 暗色用户气泡不能直接用 action-primary（暗色主题下是浅亮紫）：白色文字下
      对比不足且整块偏亮。混入深色卡面后保持品牌紫身份但收敛亮度。 */
   --gugu-chat-user-bg: color-mix(in srgb,var(--action-primary) 68%,var(--surface-card-solid));
+  /* 暗色引用 chip：暗色 action-primary 是浅亮紫，按日历 chip 定案收敛到
+     ≈5% 亮色叠层，避免过曝；亮色值见 :root 段。 */
+  --gugu-chat-quoted-chip-bg: color-mix(in srgb, var(--gugu-chat-member-border) 15%, transparent);
+  --gugu-chat-quoted-chip-bg-hover: color-mix(in srgb, var(--gugu-chat-member-border) 28%, transparent);
   --gugu-chat-file-bg: var(--gugu-chat-assistant-bg);
   --gugu-chat-file-border: var(--border-subtle);
   --gugu-chat-file-highlight: color-mix(in srgb,var(--border-highlight) 70%,transparent);
