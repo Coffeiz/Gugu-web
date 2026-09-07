@@ -258,7 +258,7 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     patch_anthropic(monkeypatch, [
         msg([TX("好的"), TU("create_project", "1", {})]),          # R1 建
         msg([TU("get_project", "2", {})]),                         # R2 核实：查（只读，无字）
-        msg([TX("发现漏了一个待办，补一下"), TU("add_todo", "3", {})]),  # R3 发现+补 → 说明应发出
+        msg([TX("发现漏了一个待办，补一下"), TU("update_stage", "3", {})]),  # R3 发现+补 → 说明应发出
         msg([TU("get_project", "4", {})]),                         # R4 补做后立即复查
         msg([TX("都核实过了")]),                                    # R5 核验轮文字（静默）
         msg([TX("项目已补全，所有内容都核实通过")]),                 # R6 最终收束回复
@@ -267,7 +267,7 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert "好的" in text, "普通 round draft 应实时展示"
     assert "发现漏了一个待办" in text, f"补做说明没发出来：{text!r}"
-    assert "add_todo" in dispatched
+    assert "update_stage" in dispatched
     assert "项目已补全" in text
     assert n_verify(messages) == 2, f"应注入 2 次系统自检（补做触发再核实），实际 {n_verify(messages)}"
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -338,7 +338,7 @@ async def test_verify_capped_at_max_verify(monkeypatch, dispatched):
         msg([TU("create_project", "0", {})]),   # R1 建（tool）→ did_mutate
     ]
     for i in range(MAX_VERIFY):   # 每轮核实都"又补一刀"，应被封顶在 MAX_VERIFY
-        script.append(msg([TU("update_todo", f"u{i}", {"todo_id": i + 1})]))
+        script.append(msg([TU("update_stage", f"u{i}", {"todo_id": i + 1})]))
     script.append(msg([TX("已完成")]))
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "建项目并补全"}]
@@ -353,7 +353,7 @@ async def test_unlimited_mode_releases_verification_budget(monkeypatch, dispatch
     # 只读查询，让主循环可以正常收束，而不是靠撞到预算退出。
     script = [
         msg([TU("create_project", "create", {})]),
-        msg([TU("update_todo", "update", {})]),
+        msg([TU("update_stage", "update", {})]),
         msg([TU("get_project", "verify", {})]),
         msg([TX("无限模式下完成核实")]),
     ]
@@ -378,7 +378,7 @@ async def test_verify_round_cap_after_tool_round_has_safe_finalization(monkeypat
     """最后一轮仍在执行工具时撞到核实上限，也要正常收尾而不是误报续轮失败。"""
     patch_anthropic(monkeypatch, [
         msg([TU("create_project", "create", {})]),
-        *[msg([TU("update_todo", f"update-{i}", {"todo_id": i + 1})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
+        *[msg([TU("update_stage", f"update-{i}", {"todo_id": i + 1})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
     ])
     messages = [{"role": "user", "content": "连续调整并核实"}]
 
@@ -415,7 +415,7 @@ async def test_verify_round_cap_prompts_and_resumes_after_unlimited_selected(mon
 
     script = [
         msg([TU("create_project", "create", {})]),
-        *[msg([TU("update_todo", f"update-{i}", {"todo_id": i + 1})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
+        *[msg([TU("update_stage", f"update-{i}", {"todo_id": i + 1})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
         # 最后一轮补做的 did_mutate 因周期耗尽未消费，会泄漏到下一轮触发一次强查；
         # 弹窗续跑（无限模式）后这条强查是真查，因此需要两次读取再收束。
         msg([TU("get_project", "verify-1", {})]),

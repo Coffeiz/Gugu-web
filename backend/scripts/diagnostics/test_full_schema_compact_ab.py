@@ -32,7 +32,7 @@ CASES = [
     ("copy_file", "把文件 42 复制到文件夹 7。", {"file_id": 42, "target": {"folder_id": 7}}),
     ("send_file", "把文件 42 发给我。", {"file_id": 42}),
     ("save_uploaded_file", "把我刚刚上传且唯一的附件保存到个人文件区。", {"source": "latest"}),
-    ("update_todo", "把项目‘网站重构’里的待办‘补充接口文档’标记为完成。", {"project": "网站重构", "todo": "补充接口文档", "action": "complete", "done": True}),
+    ("update_stage", "把项目‘网站重构’准备阶段的待办‘补充接口文档’和‘联调环境’一次勾完。", {"project": "网站重构", "stage": "准备", "todos": [{"text": "补充接口文档", "done": True}, {"text": "联调环境", "done": True}]}),
     ("add_event_reminder", "给标题为‘活动 11’的活动添加提前 60 分钟的网页提醒。", {"event": "活动 11", "lead_minutes": 60, "channels": ["web"]}),
     ("web_search", "搜索公开网页‘TypeScript 5.9 release notes’，返回 3 条结果。", {"query": "TypeScript 5.9 release notes", "max_results": 3}),
     ("image_search", "按关键词搜索‘低饱和配色’，找图片候选。", {"query": "低饱和配色"}),
