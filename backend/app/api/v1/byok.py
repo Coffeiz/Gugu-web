@@ -30,6 +30,17 @@ async def get_credentials(user: User = Depends(get_current_user), db: AsyncSessi
     return {"enabled": True, "status": master_key_status_for_credentials(rows), "items": [credential_view(row) for row in rows]}
 
 
+def _embedding_allows_empty_key(capability: str, provider: str, base_url: str) -> bool:
+    """自托管无鉴权服务允许空 API Key（与前端 keyRequiredFor 同一口径）：
+    仅限 Embedding 的本地推理（local / 非云端的 Ollama）；Ollama Cloud 与其余
+    provider 的空 Key 一律拒绝。"""
+    if capability != "embedding":
+        return False
+    if provider == "local":
+        return True
+    return provider == "ollama" and "ollama.com" not in (base_url or "")
+
+
 @router.post("", status_code=201)
 async def create_credential(body: CredentialCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
@@ -41,9 +52,14 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
     for item in existing:
         item.enabled = False
     try:
-        encrypted, nonce, wrapped = encrypt_value(body.value)
+        encrypted, nonce, wrapped = encrypt_value(
+            body.value,
+            allow_empty=_embedding_allows_empty_key(body.capability, body.provider, body.base_url))
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="BYOK 加密服务未配置，请先设置 CREDENTIALS_MASTER_KEY") from exc
+    except ValueError as exc:
+        # 不允许空 Key 的 provider 传了空值：业务校验失败，返回 422 而不是裸 500。
+        raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，不能为空") from exc
     row = UserProviderCredential(
         user_id=user.id, provider=body.provider, api_format=body.api_format,
         capability=body.capability,

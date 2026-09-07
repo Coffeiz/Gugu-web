@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import pytest
+from fastapi import HTTPException
 
 from app.byok import crypto, policy, service
 from app.models import UserProviderCredential
@@ -146,3 +147,41 @@ async def test_credential_view_returns_dimensions_and_patch_preserves_it(db, use
         CredentialPatch(base_url="https://dashscope.example.com/compatible-mode/v1"),
         user=user_a, db=db)
     assert patched["dimensions"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_keyless_selfhosted_embedding_create_then_resolve_empty_key(db, user_a, monkeypatch):
+    """回归：自托管 Embedding 空 Key 创建曾在 encrypt_envelope 里 ValueError
+    未被捕获而 500。空 Key 必须能信封加密落库（allow_empty 显式语义，不落明文），
+    resolve_embedding_settings 解析出 api_key 为空串；Ollama Cloud 与普通云
+    provider 的空 Key 返回 422 业务错误而不是 500。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential
+    from app.byok.schemas import CredentialCreate
+
+    created = await create_credential(
+        CredentialCreate(provider="ollama", capability="embedding", value="",
+                         base_url="http://127.0.0.1:11434/v1", model="nomic-embed-text"),
+        user=user_a, db=db)
+    assert created["has_value"] is True  # 空串也走信封加密落库
+
+    base = SimpleNamespace(api_key="platform-key", base_url="https://platform.example", model="platform-bge")
+    resolved = await service.resolve_embedding_settings(db, user_a.id, base)
+    assert resolved is not None
+    assert resolved["api_key"] == ""
+    assert resolved["provider"] == "ollama"
+    assert resolved["base_url"] == "http://127.0.0.1:11434/v1"
+
+    for body in (
+        # Ollama Cloud 需要 Key
+        CredentialCreate(provider="ollama", capability="embedding", value="",
+                         base_url="https://ollama.com/v1", model="nomic-embed-text"),
+        # 普通云 provider 需要 Key
+        CredentialCreate(provider="openai", capability="embedding", value="",
+                         model="text-embedding-3-small"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_credential(body, user=user_a, db=db)
+        assert exc_info.value.status_code == 422

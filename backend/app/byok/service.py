@@ -177,8 +177,9 @@ async def resolve_and_bind_user_embedding(settings, db: AsyncSession, user_id: U
     _embedding_override.set(cfg)
 
 
-def encrypt_value(value: str, key_version: int | None = None) -> tuple[str, str, str]:
-    return encrypt_envelope(value, key_version=key_version)
+def encrypt_value(value: str, key_version: int | None = None,
+                  allow_empty: bool = False) -> tuple[str, str, str]:
+    return encrypt_envelope(value, key_version=key_version, allow_empty=allow_empty)
 
 
 def decrypt_value(row: UserProviderCredential) -> str:
