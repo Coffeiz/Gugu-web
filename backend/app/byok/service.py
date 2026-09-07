@@ -57,6 +57,8 @@ def credential_view(row: UserProviderCredential) -> dict:
             "capability": row.capability,
             "base_url": row.base_url, "model": row.model,
             "max_tokens": getattr(row, "max_tokens", None), "vision": row.vision,
+            # dimensions 必须回给前端：漏掉会让编辑器拿到 null，保存时发 0 把已存维度清零。
+            "dimensions": getattr(row, "dimensions", None),
             "context_tokens": getattr(row, "context_tokens", None),
             "thinking": getattr(row, "thinking", None),
             "reasoning_effort": getattr(row, "reasoning_effort", None),

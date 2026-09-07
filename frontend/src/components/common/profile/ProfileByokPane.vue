@@ -73,7 +73,7 @@
               <template v-if="newEditor.capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: newEditor.reasoning_persistence === option.key }" @click="newEditor.reasoning_persistence = option.key">{{ option.label }}</button></div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="localizedVisionDims" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="visionTesting" @probe="probeNewVision" />
             </div>
-            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || !newEditor.value" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
+            <div class="byok-editor-actions"><div v-if="visionFeedbackTarget === 'new' && visionFeedback" class="byok-editor-feedback pm-msg" :class="visionFeedbackType" role="status">{{ visionFeedback }}</div><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || (keyRequiredFor(newEditor) && !newEditor.value)" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
           </div>
           </Transition>
           </Teleport>
@@ -225,6 +225,14 @@ function applyProviderChild(draft: Editor, value: string) {
     draft.base_url = value === 'cloud' ? 'https://ollama.com/v1' : 'http://127.0.0.1:11434/v1'
     if (value === 'local') draft.value = ''
   }
+}
+// 自托管 Embedding（本地 Ollama / llama.cpp 等本地推理）通常无鉴权，允许空 API Key 保存；
+// Ollama Cloud 与其余 provider 保存仍必须填 Key。
+function keyRequiredFor(draft: Pick<Editor, 'capability' | 'provider' | 'base_url' | 'local_runtime' | 'ollama_mode'>): boolean {
+  if (draft.capability !== 'embedding') return true
+  if (draft.provider === 'local') return false
+  if (draft.provider === 'ollama') return childSelectionFor(draft) === 'cloud'
+  return true
 }
 async function fetchModels(event?: MouseEvent) {
   if (event?.currentTarget instanceof HTMLElement) modelAnchor.value = event.currentTarget.closest('.model-picker') as HTMLElement | null

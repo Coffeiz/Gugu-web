@@ -198,6 +198,15 @@ async def _update_stage(db, user_id, args: dict):
             changed = True
             continue
 
+        # 先验证目标阶段再动内存对象：失败项必须零副作用，否则同批有成功项令
+        # changed=True 时，这条已做的 rename/done 会被一起提交（静默数据损坏）。
+        dest_stage = scope
+        if item.get("to_stage"):
+            dest_stage = find_project_stage(stages, str(item["to_stage"]))
+            if not dest_stage:
+                entry["error"] = f"目标阶段不存在: {item['to_stage']}"
+                continue
+
         ops: list[str] = []
         if item.get("new_text"):
             found["text"] = str(item["new_text"])
@@ -205,16 +214,10 @@ async def _update_stage(db, user_id, args: dict):
         if "done" in item and item.get("done") is not None:
             found["done"] = bool(item["done"])
             ops.append("done")
-        dest_stage = scope
-        if item.get("to_stage"):
-            dest_stage = find_project_stage(stages, str(item["to_stage"]))
-            if not dest_stage:
-                entry["error"] = f"目标阶段不存在: {item['to_stage']}"
-                continue
-            if dest_stage is not scope:
-                scope["todos"] = [t for t in scope.get("todos", []) if t is not found]
-                dest_stage.setdefault("todos", []).append(found)
-                ops.append("move")
+        if dest_stage is not scope:
+            scope["todos"] = [t for t in scope.get("todos", []) if t is not found]
+            dest_stage.setdefault("todos", []).append(found)
+            ops.append("move")
         if not ops:
             entry["error"] = "未指定操作（done/new_text/to_stage/remove 至少一个）"
             continue

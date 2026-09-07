@@ -240,3 +240,31 @@ async def test_update_stage_rejects_noop_and_missing_text(db, user_a):
         "project_id": project.id, "todos": [{"text": "不存在的待办", "done": True}],
     }))
     assert "error" in missing
+
+
+@pytest.mark.asyncio
+async def test_update_stage_failed_item_has_zero_side_effects(db, user_a):
+    """回归：批量里某条 to_stage 不存在时，旧实现会先改内存对象（new_text/done）
+    再校验目标阶段；同批成功项令 changed=True 后整份 stages 照常提交，失败项的
+    改名/勾选也被静默保存。失败项必须零副作用，成功项正常生效。"""
+    from agent.tools.projects import _update_stage
+
+    project = await _make_staged_project(db, user_a)
+    res = _tool_res(await _update_stage(db, user_a.id, {
+        "project_id": project.id,
+        "stage": "s0",
+        "todos": [
+            {"text": "写稿", "new_text": "写稿改", "done": True, "to_stage": "不存在的阶段"},
+            {"text": "录屏", "done": True},
+        ],
+    }))
+    assert res["success"] is True  # 成功项让整批照常提交——这正是旧实现漏数据的场景
+    failed = next(r for r in res["results"] if r.get("todo") == "写稿")
+    assert "目标阶段不存在" in failed["error"]
+    await db.commit()
+    await db.refresh(project)
+    s0, s1 = _as_stages(project.stages_json)
+    assert [t["text"] for t in s0["todos"]] == ["写稿", "录屏"]  # 没被改名、没被移走
+    assert next(t for t in s0["todos"] if t["text"] == "写稿")["done"] is False  # 没被勾选
+    assert next(t for t in s0["todos"] if t["text"] == "录屏")["done"] is True  # 成功项生效
+    assert [t["text"] for t in s1["todos"]] == []  # 失败项没有被移动到目标阶段

@@ -116,6 +116,33 @@ def test_credential_view_contains_metadata_but_not_encrypted_fields():
     view = service.credential_view(row)
 
     assert view["has_value"] is True
+    assert "dimensions" in view
     assert "encrypted_value" not in view
     assert "nonce" not in view
     assert "encrypted_data_key" not in view
+
+
+@pytest.mark.asyncio
+async def test_credential_view_returns_dimensions_and_patch_preserves_it(db, user_a, monkeypatch):
+    """回归：credential_view 曾漏返 dimensions，编辑器拿到的存量凭据维度是 null，
+    前端保存时固定发 dimensions:0——哪怕只改 Base URL 也会把已存维度清零（静默
+    数据损坏）。create→GET→只 patch base_url 后，维度必须原样保留。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential, get_credentials, patch_credential
+    from app.byok.schemas import CredentialCreate, CredentialPatch
+
+    created = await create_credential(
+        CredentialCreate(provider="qwen", capability="embedding", value="sk-test-dims",
+                         model="text-embedding-v4", dimensions=1024),
+        user=user_a, db=db)
+    assert created["dimensions"] == 1024
+
+    listed = await get_credentials(user=user_a, db=db)
+    assert [item["dimensions"] for item in listed["items"]] == [1024]
+
+    patched = await patch_credential(
+        created["id"],
+        CredentialPatch(base_url="https://dashscope.example.com/compatible-mode/v1"),
+        user=user_a, db=db)
+    assert patched["dimensions"] == 1024
