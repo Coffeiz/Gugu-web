@@ -162,13 +162,46 @@ export const projectsApi = {
 }
 
 // ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
+export type ScheduledTaskKind = 'cron' | 'interval' | 'once'
+export interface ScheduledTaskInput {
+  name: string
+  schedule_kind?: 'cron' | 'interval' | 'once'
+  cron?: string | null
+  interval_minutes?: number | null
+  start_at?: string | null
+  end_at?: string | null
+  payload?: string
+  channels?: string[]
+  enabled?: boolean
+  event_id?: number | null
+  authorized_tools?: string[]
+  workspace_id?: number | null
+}
+export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedule_kind'> {
+  id: number
+  schedule_kind: ScheduledTaskKind
+  cron: string
+  payload: string
+  channels: string[]
+  enabled: boolean
+  schedule_status?: 'active' | 'disabled' | 'ended'
+  last_run_at?: string | null
+  last_run_failed?: boolean
+  delivery_targets?: unknown
+  authorized_tools: string[]
+  filesystem_authorized: boolean
+}
+
 export const scheduledTasksApi = {
-  list:         ()                  => get('/scheduled-tasks'),
+  list:         ()                  => get<{ tasks: ScheduledTaskResponse[] }>('/scheduled-tasks'),
   listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
-  create:       (data: any)         => post('/scheduled-tasks', data),
-  update:       (id: number, data: any, meta?: RequestMeta) => patch(`/scheduled-tasks/${id}`, data, meta),
+  create:       (data: Partial<ScheduledTaskInput>)         => post<ScheduledTaskResponse>('/scheduled-tasks', data),
+  update:       (id: number, data: Partial<ScheduledTaskInput>, meta?: RequestMeta) => patch<ScheduledTaskResponse>(`/scheduled-tasks/${id}`, data, meta),
   delete:       (id: number)        => del(`/scheduled-tasks/${id}`),
   run:          (id: number)        => post(`/scheduled-tasks/${id}/run`),
+  requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/scheduled-tasks/${id}/filesystem-authorization/request`),
+  confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/scheduled-tasks/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
+  revokeFilesystemAuthorization: (id: number) => del(`/scheduled-tasks/${id}/filesystem-authorization`),
   testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
@@ -189,16 +222,18 @@ interface FileListParams {
   space?: string
   projectId?: number
   folderId?: number
+  workspaceDirectoryId?: number
   mindMapId?: number
   ext?: string
   q?: string
 }
 export const filesApi = {
-  list: ({ space, projectId, folderId, mindMapId, ext, q }: FileListParams = {}) => {
+  list: ({ space, projectId, folderId, workspaceDirectoryId, mindMapId, ext, q }: FileListParams = {}) => {
     const p: Record<string, any> = {}
     if (space      != null) p.space       = space
     if (projectId  != null) p.project_id  = projectId
     if (folderId   != null) p.folder_id   = folderId
+    if (workspaceDirectoryId != null) p.workspace_directory_id = workspaceDirectoryId
     if (mindMapId  != null) p.mind_map_id = mindMapId
     if (ext        != null) p.ext         = ext
     if (q          != null) p.q           = q
@@ -209,11 +244,12 @@ export const filesApi = {
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
-  update: (id: number, data: Schemas['FileUpdate'], meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
+  // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
+  update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
   saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
   delete:      (id: number, meta?: RequestMeta)   => del(`/files/${id}`, meta),
   batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
-  copy: (id: number, body: Schemas['FileCopyBody']) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
+  copy: (id: number, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
   batchDownload: async (ids: number[], folderIds: number[] = [], filename = 'files.zip') => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/batch-download`, {
@@ -238,9 +274,9 @@ export const filesApi = {
   presign: (data: any) => post('/files/presign', data),
   confirm: (data: any) => post('/files/confirm', data),
   // 批量探测同名冲突（上传前调用），items: [{filename, space, projectId?, folderId?}]
-  checkConflicts: (items: { filename: string; space: string; projectId?: number | null; folderId?: number | null }[]) =>
+  checkConflicts: (items: { filename: string; space: string; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null }[]) =>
     post<{ filename: string; conflict: boolean; existing_file: any }[]>('/files/check-conflicts', {
-      items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null })),
+      items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null, workspace_directory_id: it.workspaceDirectoryId ?? null })),
     }),
   // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
   getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
@@ -441,28 +477,31 @@ export const mindApi = {
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
+export type ApiFolderResponse = Schemas['FolderResponse'] & { workspaceDirectoryId?: number | null }
 export const foldersApi = {
-  all:  ()                              => get<Schemas['FolderResponse'][]>('/folders/all'),
-  list: ({ projectId, parentId }: { projectId?: number; parentId?: number } = {}) => {
+  all:  ()                              => get<ApiFolderResponse[]>('/folders/all'),
+  list: ({ projectId, parentId, workspaceDirectoryId }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number } = {}) => {
     const params = new URLSearchParams()
     if (projectId != null) params.set('project_id', String(projectId))
     if (parentId  != null) params.set('parent_id',  String(parentId))
+    if (workspaceDirectoryId != null) params.set('workspace_directory_id', String(workspaceDirectoryId))
     const qs = params.toString()
-    return get<Schemas['FolderResponse'][]>(qs ? `/folders?${qs}` : '/folders')
+    return get<ApiFolderResponse[]>(qs ? `/folders?${qs}` : '/folders')
   },
-  create: (projectId: number | null, name: string, parentId: number | null = null) => post<Schemas['FolderResponse']>('/folders', {
+  create: (projectId: number | null, name: string, parentId: number | null = null, workspaceDirectoryId: number | null = null) => post<ApiFolderResponse>('/folders', {
     ...(projectId != null ? { projectId } : {}),
     ...(parentId  != null ? { parentId  } : {}),
+    ...(workspaceDirectoryId != null ? { workspaceDirectoryId } : {}),
     name,
   }),
   // version：乐观锁，必传当前文件夹的 version（改名/移动即失效，见 stores/filesCache 的更新逻辑）；
   // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
   rename: (id: number, name: string, version: number, meta?: RequestMeta) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }, meta),
-  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version, projectId }, meta),
-  copy:   (id: number, parentId: number | null, projectId: number | null) =>
-    post<Schemas['FolderResponse']>(`/folders/${id}/copy`, { parentId, projectId }),
+    patch<ApiFolderResponse>(`/folders/${id}`, { name, version }, meta),
+  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta, workspaceDirectoryId: number | null = null) =>
+    patch<ApiFolderResponse>(`/folders/${id}/parent`, { parentId, version, projectId, workspaceDirectoryId }, meta),
+  copy:   (id: number, parentId: number | null, projectId: number | null, workspaceDirectoryId: number | null = null) =>
+    post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId, workspaceDirectoryId }),
   delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
   download: async (id: number, name: string) => {
     const token = getToken()
@@ -516,8 +555,8 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; items: unknown[] }>('/workspaces'),
-  create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
+  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
+  create: (data: { name: string; kind: 'folder' | 'project' | 'directory'; folderId?: number; projectId?: number; directoryId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
@@ -525,13 +564,31 @@ export const workspacesApi = {
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
 }
 
+export interface WorkspaceDirectory {
+  id: number
+  name: string
+  directoryName: string
+  isDefault: boolean
+  isSystem: boolean
+  fileCount: number
+  folderCount: number
+  boundSessionCount: number
+  boundTaskCount: number
+}
+
+export const workspaceDirectoriesApi = {
+  list: () => get<WorkspaceDirectory[]>('/workspace-directories'),
+  create: (name: string) => post<WorkspaceDirectory>('/workspace-directories', { name }),
+  update: (id: number, name: string) => request<WorkspaceDirectory>('PATCH', `/workspace-directories/${id}`, { name }),
+  previewDelete: (id: number) => get<WorkspaceDirectory>(`/workspace-directories/${id}/delete-preview`),
+  delete: (id: number) => del(`/workspace-directories/${id}`),
+}
+
 export type TerminalAccessStatus = Awaited<ReturnType<typeof workspacesApi.status>>
 
 /** 终端入口与后端 page_access 保持同一套 Shell 能力判定。 */
 export function canAccessTerminals(status: TerminalAccessStatus): boolean {
-  return status.sandboxEnabled && status.globalEnabled && (
-    status.userEnabled || (status.systemGlobalEnabled && status.userSystemEnabled)
-  )
+  return status.terminalEntryEnabled
 }
 
 export type TerminalItem = {
@@ -569,7 +626,7 @@ export type TerminalEventItem = {
 }
 
 export const terminalsApi = {
-  list: () => get<{ enabled: boolean; items: TerminalItem[] }>('/terminals'),
+  list: () => get<{ enabled: boolean; ptyEnabled: boolean; items: TerminalItem[] }>('/terminals'),
   create: (data: { name?: string; sessionId?: number; workspaceId?: number; mode?: TerminalItem['mode'] }) => post<TerminalItem>('/terminals', data),
   detail: (id: string) => get<TerminalItem>(`/terminals/${encodeURIComponent(id)}`),
   events: async (id: string, after = 0, signal?: AbortSignal, onEvent?: (event: TerminalEventItem) => void): Promise<void> => {
@@ -627,9 +684,12 @@ export const agentApi = {
   rebuildSandbox: () => post<{ ok: boolean; operation: string; root_ready: boolean; reclaimed_containers: number }>('/agent/sandbox/rebuild'),
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
-  getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
+  getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/agent/sessions/${id}/filesystem-authorization/request`),
+  confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/agent/sessions/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
+  revokeFilesystemAuthorization: (id: number) => del(`/agent/sessions/${id}/filesystem-authorization`),
   cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
   // 知道属于哪个会话才能 loadSession + 定位滚动

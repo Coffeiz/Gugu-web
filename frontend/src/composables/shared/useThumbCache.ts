@@ -2,8 +2,13 @@ import { reactive } from 'vue'
 import { pLimit, THUMB_CONCURRENCY } from '@/utils/concurrency'
 
 const BASE    = import.meta.env.VITE_API_URL ?? '/api/v1'
-const cache   = new Map() // `${id}_${size}` → blobUrl
-const pending = new Map() // `${id}_${size}` → Promise<string|null>
+const cache   = new Map<string, string>() // `${id}_${size}` 或 `${id}_${size}_${revision}` → blobUrl
+const pending = new Map<string, Promise<string | null>>()
+
+type ThumbRevision = number | string
+function thumbKey(id: number | string, size: string, revision?: ThumbRevision): string {
+  return revision == null ? `${id}_${size}` : `${id}_${size}_${revision}`
+}
 
 // 并发限流：浏览器 HTTP/1.1 单域名约 6 连接，批量加载几十张缩略图会导致尾部超时；
 // 与上传共用 @/utils/concurrency 的限流器实现，阈值集中在那里调
@@ -14,19 +19,21 @@ export const thumbLoadedIds   = reactive(new Set())
 // 二次访问同一文件时 fc-loaded 直接就绪，跳过渐进动画直接显示
 export const cardBlobReadyIds = reactive(new Set())
 
-export function getCachedThumb(id: number | string, size = 'card') {
-  const url = cache.get(`${id}_${size}`)
+export function getCachedThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
+  const url = cache.get(thumbKey(id, size, revision))
   if (url && size === 'card') thumbLoadedIds.add(id)
   return url ?? null
 }
 
-export function getThumb(id: number | string, size = 'card') {
-  const key = `${id}_${size}`
-  if (cache.has(key)) {
+export function getThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
+  const key = thumbKey(id, size, revision)
+  const cached = cache.get(key)
+  if (cached) {
     if (size === 'card') thumbLoadedIds.add(id)
-    return Promise.resolve(cache.get(key))
+    return Promise.resolve(cached)
   }
-  if (pending.has(key)) return pending.get(key)
+  const existing = pending.get(key)
+  if (existing) return existing
 
   const token = localStorage.getItem('user_token') ?? ''
   const p = thumbLimit(() => {
@@ -35,7 +42,8 @@ export function getThumb(id: number | string, size = 'card') {
     //   abort 后 reject → 释放槽位 + 让懒加载指令下次进视口重试。
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 15000)
-    return fetch(`${BASE}/files/${id}/thumb?size=${size}`, {
+    const revisionQuery = revision == null ? '' : `&revision=${encodeURIComponent(String(revision))}`
+    return fetch(`${BASE}/files/${id}/thumb?size=${size}${revisionQuery}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: 'no-cache',
       signal: ctrl.signal,
@@ -62,8 +70,10 @@ export function getCachedThumbUrl(key: string) {
 }
 
 export function getThumbUrl(key: string, url: string) {
-  if (cache.has(key)) return Promise.resolve(cache.get(key))
-  if (pending.has(key)) return pending.get(key)
+  const cached = cache.get(key)
+  if (cached) return Promise.resolve(cached)
+  const existing = pending.get(key)
+  if (existing) return existing
 
   const token = localStorage.getItem('user_token') ?? ''
   const p = thumbLimit(() => {
@@ -91,19 +101,22 @@ export function getThumbUrl(key: string, url: string) {
 
 const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif','svg'])
 
-export function preloadTinyThumbs(files: Array<{ id: number | string; ext?: string | null }>) {
+export function preloadTinyThumbs(files: Array<{ id: number | string; ext?: string | null; version?: ThumbRevision }>) {
   for (const f of files) {
-    if (_IMG_EXTS.has((f.ext || '').toLowerCase()) && !cache.has(`${f.id}_tiny`)) {
-      getThumb(f.id, 'tiny').catch(() => {})
+    const key = thumbKey(f.id, 'tiny', f.version)
+    if (_IMG_EXTS.has((f.ext || '').toLowerCase()) && !cache.has(key)) {
+      getThumb(f.id, 'tiny', f.version).catch(() => {})
     }
   }
 }
 
 export function clearThumbCache(id: number | string) {
-  for (const size of ['tiny', 'card', 'full']) {
-    const key = `${id}_${size}`
-    const url = cache.get(key)
-    if (url) { URL.revokeObjectURL(url); cache.delete(key) }
+  const prefix = `${id}_`
+  for (const [key, url] of cache) {
+    if (key.startsWith(prefix)) {
+      URL.revokeObjectURL(url)
+      cache.delete(key)
+    }
   }
   thumbLoadedIds.delete(id)
   cardBlobReadyIds.delete(id)

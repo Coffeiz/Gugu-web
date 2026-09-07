@@ -19,10 +19,13 @@ async def delete_account(db: AsyncSession, user: User) -> int:
     for fid in fids:
         delete_thumb_cache(fid)
 
-    # ② 存储层：整个 {user_id}/ 前缀（上传文件 + .agent/ 记忆 + .voice/ + .chat_staging/ 全在其下）
+    # ② 存储层：清理历史账号前缀。普通文件使用 {user_id}/，onboarding 早期使用
+    # u/{user_id}/；两种前缀都必须处理，避免删除测试账号后留下引导素材。
     from app.services.storage import get_storage
     try:
-        removed = await get_storage().delete_prefix(f"{user.id}/")
+        storage = get_storage()
+        removed = await storage.delete_prefix(f"{user.id}/")
+        removed += await storage.delete_prefix(f"u/{user.id}/")
     except Exception as e:
         # 存储清理失败不拦 DB 删除（人工可重清），但必须留痕
         print(f"[account_deletion] 注销清存储失败 user={user.username}: {type(e).__name__}: {e}", flush=True)

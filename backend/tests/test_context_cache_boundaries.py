@@ -2,6 +2,7 @@ from agent.context.context_diagnostics import first_diff_index, request_diagnost
 from agent.context.context_assembly import build_messages
 from agent.context.canonical_tool_history import render_events_for_provider
 from agent.loop_drivers import _history_cache_state, _with_single_history_cache
+from agent.providers.message_utils import _with_system_cache_control
 from agent.context.assembly import PromptMessages, reminder
 
 
@@ -210,3 +211,31 @@ def test_history_cache_copy_preserves_dynamic_tail_boundary():
                    for message in cached.dynamic_tail
                    for block in (message.get("content") or [])
                    if isinstance(block, dict))
+
+
+def test_single_history_cache_replaces_old_anchor_instead_of_emitting_two():
+    messages = PromptMessages([
+        {"role": "system", "content": "stable"},
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "tool call"},
+        {"role": "tool", "content": "tool result"},
+        {"role": "user", "content": "latest"},
+    ])
+
+    cached = _with_single_history_cache(messages)
+
+    assert messages.cache_anchor_indices == [4]
+    assert "cache_control" in cached[4]["content"][0]
+    assert not isinstance(cached[1].get("content"), list)
+
+
+def test_system_cache_control_does_not_mutate_history():
+    messages = PromptMessages([
+        {"role": "system", "content": [{"type": "text", "text": "stable"}]},
+        {"role": "user", "content": "question"},
+    ])
+
+    outbound = _with_system_cache_control(messages)
+
+    assert "cache_control" not in messages[0]["content"][0]
+    assert outbound[0]["content"][0]["cache_control"] == {"type": "ephemeral"}

@@ -59,22 +59,38 @@ def _bounded_memory_parts(parts: list[tuple[str, Any]], budget: int = MEMORY_INJ
 
 
 def format_attachment_refs(message) -> str:
-    """为历史消息保留轻量附件引用，不把图片内容重新塞进上下文。"""
+    """为历史消息保留轻量附件引用，不把附件内容重新塞进上下文。
+
+    图片走 inspect_images 回读通道；其余文件必须保留 attach_id +
+    save_uploaded_file 转存指引——附件正文只在到达那一轮注入过一次，
+    历史回放若不给引用，文字/二进制附件从下一轮起就从模型上下文里
+    彻底消失（QQ 引用文件消息「没法回读」的根因）。语音是对话内容，
+    到达时已转写，不需要回读通道。"""
     files = getattr(message, "files", None)
     if not isinstance(files, list):
         return ""
-    refs = []
+    image_refs: list[str] = []
+    file_refs: list[str] = []
     for item in files:
         if not isinstance(item, dict) or not item.get("attach_id"):
             continue
         kind = str(item.get("kind") or "").lower()
         ext = str(item.get("ext") or "").lower()
-        if kind != "image" and ext not in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tiff", "tif"}:
-            continue
-        refs.append(f"attach_id={item['attach_id']}" + (f"，名称={item['name']}" if item.get("name") else ""))
-    if not refs:
+        name = str(item.get("name") or "")
+        if kind == "image" or ext in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tiff", "tif"}:
+            image_refs.append(f"attach_id={item['attach_id']}" + (f"，名称={name}" if name else ""))
+        elif kind != "voice":
+            label = f"{name}.{ext}" if name and ext else (name or ext or "未命名")
+            file_refs.append(f"attach_id={item['attach_id']}，文件={label}")
+    if not image_refs and not file_refs:
         return ""
-    return "\n[历史图片附件，仅在用户要求回看/分析时调用 inspect_images 读取：" + "；".join(refs) + "]"
+    parts = []
+    if image_refs:
+        parts.append("[历史图片附件，仅在用户要求回看/分析时调用 inspect_images 读取：" + "；".join(image_refs) + "]")
+    if file_refs:
+        parts.append("[历史文件附件，仅在用户要求回看/读取内容时，先调用 save_uploaded_file(attach_id) "
+                     "把附件转存进文件库再读：" + "；".join(file_refs) + "]")
+    return "\n" + "\n".join(parts)
 
 
 def quoted_context_prefix(quoted_text: str | None) -> str:

@@ -2,8 +2,13 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent.context import run_finalize
+from agent.context.assembly import PromptMessages, assemble_turn
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from app.models import ConversationBatch, ConversationMessage, ConversationSession
 
 
 class _Db:
@@ -29,9 +34,40 @@ class _DbContext:
 
 
 @pytest.mark.asyncio
+async def test_insert_or_get_batch_reuses_existing_unique_row(db, user_a):
+    """canonical batch 重复收尾必须复用已有行，不得把唯一键冲突抛到 IM 出口。"""
+    from agent.context.run_finalize import _insert_or_get_batch
+    from app.models import ConversationBatch, ConversationSession
+    from sqlalchemy import select
+
+    session = ConversationSession(user_id=user_a.id)
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    values = {
+        "session_id": session.id,
+        "version": "v1",
+        "run_id": None,
+        "round_id": None,
+        "digest": "runtime-batch-digest",
+    }
+    first, first_created = await _insert_or_get_batch(db, ConversationBatch, values)
+    await db.commit()
+    second, second_created = await _insert_or_get_batch(db, ConversationBatch, values)
+
+    assert first_created is True
+    assert second_created is False
+    assert second.id == first.id
+    rows = (await db.execute(
+        select(ConversationBatch).where(ConversationBatch.session_id == session.id)
+    )).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
 async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch):
     db = _Db()
-    baseline_calls = []
     trim_calls = []
 
     async def cap_usage(*args):
@@ -40,12 +76,9 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     async def trim(session_id):
         trim_calls.append(session_id)
 
-    def schedule(*args, **kwargs):
-        baseline_calls.append((args, kwargs))
-
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
-    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", schedule)
+    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "agent.context.assembly.newly_appended",
         lambda messages, initial_len: messages[initial_len:],
@@ -73,17 +106,12 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         cache_read=4,
         cache_write=5,
         tools_used=["test_tool"],
-        actual_usage_tokens=1234,
-        compaction_applied=True,
     )
 
     assert result.tokens_in == 12
     assert result.tokens_out == 3
     assert len(db.items) == 4  # RAG、tool turn、assistant、usage
     assert trim_calls == [7]
-    assert baseline_calls[0][0][0:2] == (7, "user-test")
-    assert baseline_calls[0][1]["actual_usage_tokens"] == 1234
-    assert baseline_calls[0][1]["compaction_applied"] is True
 
 
 @pytest.mark.asyncio
@@ -146,8 +174,7 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
     monkeypatch.setattr(
         "app.services.conversation_retention.trim_session_messages", _trim)
     monkeypatch.setattr(
-        "agent.context.compress_conv.schedule_baseline_update", lambda *a, **k: None)
-
+        "agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
     # 模拟 resolve_run_config_for_user：model_copy(update=...) 注入 is_byok（llm_select.py）
     base = AIPresetItem(model="MiniMax-M3", provider="minimax", context_tokens=80000)
     model = base.model_copy(update={"api_key": "sk-test", "is_byok": True})
@@ -174,3 +201,74 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
 
     # is_byok 是内部字段：不能泄漏进配置序列化
     assert "is_byok" not in base.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a, monkeypatch):
+    """相同首轮 runtime-context 在连续 run 中只能落一个 canonical batch。"""
+    session = ConversationSession(user_id=user_a.id, title="runtime 去重", source="web")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    turn, _ = assemble_turn(
+        current_user={"role": "user", "content": "测试"},
+        extra_reminder="## 当前工作区\nworkspace=project",
+    )
+    prompt = PromptMessages()
+    prompt.append_batch(turn)
+    canonical_batches = persistable_canonical_batch_records(prompt)
+
+    async def fake_record_usage(*args, **kwargs):
+        from agent.usage import UsageResult
+
+        return UsageResult()
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr(
+        "app.services.conversation_retention.trim_session_messages",
+        lambda *_args, **_kwargs: _async_none(),
+    )
+    monkeypatch.setattr(
+        "agent.context.compress_conv.schedule_baseline_update",
+        lambda *_args, **_kwargs: None,
+    )
+
+    import app.db.session as db_session
+
+    session_factory = async_sessionmaker(
+        db_session._engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    model = SimpleNamespace(model="test-model", provider="test", context_tokens=80000)
+    for _ in range(2):
+        await run_finalize.finalize_run(
+            session_factory=session_factory,
+            session_id=session.id,
+            user_id=str(user_a.id),
+            settings=settings,
+            model_cfg=model,
+            rag_context=None,
+            messages=[],
+            initial_len=0,
+            text="",
+            files=[],
+            tokens_in=0,
+            tokens_out=0,
+            canonical_batches=canonical_batches,
+        )
+
+    async with session_factory() as check_db:
+        batches = (await check_db.scalars(select(ConversationBatch).where(
+            ConversationBatch.session_id == session.id,
+        ))).all()
+        messages = (await check_db.scalars(select(ConversationMessage).where(
+            ConversationMessage.session_id == session.id,
+        ))).all()
+    assert len(batches) == 1
+    assert len(messages) == 1
+    assert messages[0].canonical_batch_id == batches[0].id
+
+
+async def _async_none():
+    return None

@@ -31,6 +31,8 @@ def test_build_split_includes_default_profile_policy_in_static_prompt():
     static, dynamic, _ = builder.build_split("default", "u", [], [])
     assert "当前、最新、最近" in static
     assert "先用搜索核实" in static
+    assert "## 记忆与知识使用规则" in static
+    assert "当前问题明显需要历史依据" in static
     assert "当前、最新、最近" not in dynamic
 
 

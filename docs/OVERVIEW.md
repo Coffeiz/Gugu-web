@@ -21,7 +21,7 @@
 1. [产品总览](product/OVERVIEW.md)：产品边界、页面、技术栈和开发入口。
 2. [Agent 文档索引](agent/00-INDEX.md)：Agent 架构、上下文、工具、记忆、渠道和可靠性。
 3. [后端现状](backend/OVERVIEW.md)：Python/FastAPI 服务、数据层、进程和接口边界。
-4. [部署与运维](ops/DEPLOY.md)：本地、devserver、生产服务、Compose 和常见排障。
+4. [部署与运维](ops/deploy.md)：本地、devserver、生产服务、Compose 和常见排障。
 5. [PRD 规范](prds/README.md)：需求状态、唯一实施 TODO 和文档更新规则。
 
 ## Agent 与 AI
@@ -60,7 +60,7 @@
 
 ## 运维与性能
 
-- [部署与运维](ops/DEPLOY.md)：开发服务、生产服务、Compose、systemd、同步和回滚。
+- [部署与运维](ops/deploy.md)：开发服务、生产服务、Compose、systemd、同步和回滚。
 - [性能记录](ops/PERFORMANCE.md)：性能问题、优化结果和验证方式。
 - [已知问题](ops/KNOWN-ISSUES.md)：当前已知缺陷、边界和排查入口。
 

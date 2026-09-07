@@ -42,19 +42,40 @@ _FUNCTION_LEAK = re.compile(r"<function=.*", re.DOTALL)
 
 # 系统提示词被吐出的锚词：正常陪伴对话绝不会出现这些（多为 prompt injection 套出来）
 _PROMPT_LEAK_ANCHORS = (
-    "工具使用准则", "真实性铁律", "对外口径", "内容政策（红线", "执行规则",
-    "不可逆操作", "四种相处状态", "主动思考（陪着", "高风险内容",
+    "工具使用准则", "真实性铁律", "对外口径", "内容政策（红线",
+    "四种相处状态", "主动思考（陪着", "高风险内容",
 )
 
 _DEFLECT = "我是咕咕呀~ 这个就不展开啦，你今天想做点啥？"
 
 
+def _diag_sanitize(event: str, *, text_len: int, cleaned_len: int = 0, anchors: tuple[str, ...] = ()) -> None:
+    """记录出口清洗分支，但不把回复正文写入日志。"""
+    try:
+        from app.core.redaction import diag_log_raw
+
+        matched = ",".join(anchors) if anchors else "-"
+        diag_log_raw(
+            "agent.outbound.sanitize",
+            f"event={event} text_len={text_len} cleaned_len={cleaned_len} anchors={matched}",
+        )
+    except Exception:
+        # 诊断日志不可用时不能影响正常回复出口。
+        pass
+
+
 def sanitize_outbound(text: str) -> str:
-    """清洗咕咕要发给用户的回复。返回清洗后的文本（大泄露则整条换成安全话术）。"""
+    """清洗咕咕要发给用户的回复。
+
+    提示词泄露和空响应必须区分：前者需要替换为安全话术，后者保持为空，
+    由上层决定是否发送，不能伪装成一条与当前请求无关的身份回复。
+    """
     if not text:
         return text
     # 大泄露：系统提示词/规则被复述 → 整条换掉
-    if any(a in text for a in _PROMPT_LEAK_ANCHORS):
+    matched_anchors = tuple(a for a in _PROMPT_LEAK_ANCHORS if a in text)
+    if matched_anchors:
+        _diag_sanitize("prompt_leak_deflect", text_len=len(text), anchors=matched_anchors)
         return _DEFLECT
     # 伪工具调用语法泄露：截掉泄露开始往后的全部内容，前面的正常文字保留
     text = _FUNCTION_LEAK.sub("", text).rstrip()
@@ -64,4 +85,7 @@ def sanitize_outbound(text: str) -> str:
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)      # 抹完留下的多余空格
         cleaned = re.sub(r"\(\s*\)|（\s*）", "", cleaned)   # 残留空括号
         cleaned = cleaned.strip()
-    return cleaned or _DEFLECT
+    if not cleaned:
+        _diag_sanitize("empty_after_clean", text_len=len(text), cleaned_len=0)
+        return ""
+    return cleaned

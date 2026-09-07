@@ -64,10 +64,10 @@
 
           <div class="permission-item">
             <div class="permission-label">
-              <span>{{ t('agent.dangerousShell') }}</span>
-              <span class="permission-desc">{{ t('agent.dangerousShellHint') }}</span>
+              <span>{{ t('profileWorkspacesUi.allShell') }}</span>
+              <span class="permission-desc">{{ t('profileWorkspacesUi.allShellHint') }}</span>
             </div>
-            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_dangerous_enabled === true" :disabled="!sandboxEnabled || agent.shell_enabled !== true" :aria-label="t('agent.dangerousShell')" @update:model-value="setAgentFlag('shell_dangerous_enabled', $event)" />
+            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_dangerous_enabled === true" :disabled="!sandboxEnabled || agent.shell_enabled !== true" :aria-label="t('profileWorkspacesUi.allShell')" @update:model-value="setAgentFlag('shell_dangerous_enabled', $event)" />
           </div>
         </div>
       </section>

@@ -825,14 +825,18 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 
 .add-stage-btn {
   display: flex; align-items: center; gap: 6px;
-  border: 1.5px dashed rgba(0,0,0,0.12);
+  border: 1.5px dashed var(--inline-action-border);
   border-radius: var(--radius-sm); padding: 6px 9px;
-  background: none; font-size: 12px; color: var(--text-secondary);
+  background: var(--inline-action-bg); font-size: 12px; color: var(--inline-action-fg);
   cursor: pointer; font-family: var(--font-sans);
   transition: all 0.15s; margin-left: 27px; margin-right: 29px;
   box-sizing: border-box;
 }
-.add-stage-btn:hover { background: rgba(255,255,255,0.72); color: var(--text-primary); border-color: rgba(123,127,178,0.3); }
+.add-stage-btn:hover {
+  background: var(--inline-action-bg-hover);
+  color: var(--inline-action-fg-hover);
+  border-color: var(--inline-action-border-hover);
+}
 
 /* ── 底部 ── */
 .modal-footer {

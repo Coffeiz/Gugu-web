@@ -6,12 +6,15 @@
   <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? t('chatUi.gugu') : msg.speakerLabel }}</div>
   <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
        （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
-  <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || t('chat.quotedQQ')">
+  <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || t('chat.quotedMessage')">
     <span v-if="msg.quotedText">{{ displayQQFaces(msg.quotedText) }}</span>
     <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_id || f.attach_id}`">
       <img v-if="f.qq_face || isAnimatedImageFile(f)" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
       <img v-else-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
       <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
+      <!-- 非图片引用文件（文档/压缩包等）：小 chip 展示文件名，可点开预览。
+           之前两头都不渲染（msg-files 又排除 quoted），引用条看起来是空的。 -->
+      <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
     </template>
   </div>
   <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat /></div>

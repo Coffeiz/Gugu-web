@@ -8,6 +8,7 @@ export type UnifiedRecallOptions = {
   maxPerSource?: number;
   maxPerParent?: number;
   excludeContentHashes?: string[];
+  selectionMode?: "confidence" | "top_k";
 };
 
 export type UnifiedRecallDiagnostics = {
@@ -153,7 +154,7 @@ export function rankCandidates(
   const normalized = normalizeBySource(eligible);
   const scored = eligible.map((candidate) => {
     const normalizedScore = normalized.get(candidate.id) ?? 0;
-    const fused = candidate.fused_score !== undefined
+    const fused = candidate.fused_score !== undefined && candidate.fused_score !== null
       ? Number(candidate.fused_score)
       : candidate.fusion === "hybrid-rrf"
         ? Number(candidate.raw_score || 0)
@@ -168,9 +169,12 @@ export function rankCandidates(
     || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version))
     || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
   );
+  const selectionMode = options.selectionMode ?? "confidence";
   const preferred = orderedScored.filter((item) => item.value >= 0.55);
   const fallback = orderedScored.filter((item) => item.value >= 0.35 && item.value < 0.55);
-  const confidenceSelected = (preferred.length ? preferred : fallback)
+  const confidenceSelected = (selectionMode === "top_k"
+    ? orderedScored
+    : (preferred.length ? preferred : fallback))
     .slice(0, Math.max(1, Number(options.limit ?? 5)));
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
@@ -218,11 +222,14 @@ export function rankCandidates(
   const stats = {
     ...unified.diagnostics,
     accepted_count: results.length,
-    rejected_low_score: scored.filter((item) => item.value < 0.35).length,
-    rejected_not_preferred: scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length,
+    rejected_low_score: selectionMode === "confidence" ? scored.filter((item) => item.value < 0.35).length : 0,
+    rejected_not_preferred: selectionMode === "confidence"
+      ? scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length
+      : 0,
     top_confidence: Math.max(0, ...scored.map((item) => item.value)),
     threshold: 0.35,
     preferred_threshold: 0.55,
+    selection_mode: selectionMode,
     scoring_version: "confidence-v1",
     source_diagnostics: sourceDiagnostics,
     elapsed_ms: Math.round(performance.now() - started),
@@ -248,6 +255,10 @@ export function selectUnifiedRecall(
   let rejectedParent = 0;
   let rejectedSource = 0;
   let rejectedSimilarity = 0;
+  // 主动 search_memory 已经由 rankCandidates 按最终分数完成 Top-K 截断，
+  // 不再用来源/父文档/相似度配额替模型做第二次相关性筛选。被动 RAG
+  // 仍保留这些多样性约束，避免自动注入被同源内容占满。
+  const diversityLimited = options.selectionMode !== "top_k";
 
   const ordered = [...candidates].sort(
     (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id),
@@ -261,16 +272,16 @@ export function selectUnifiedRecall(
       continue;
     }
     const parent = document.parent_id || document.id;
-    if ((parentCounts.get(parent) ?? 0) >= maxPerParent) {
+    if (diversityLimited && (parentCounts.get(parent) ?? 0) >= maxPerParent) {
       rejectedParent += 1;
       continue;
     }
-    if ((sourceCounts.get(document.source_type) ?? 0) >= maxPerSource) {
+    if (diversityLimited && (sourceCounts.get(document.source_type) ?? 0) >= maxPerSource) {
       rejectedSource += 1;
       continue;
     }
     const tokens = tokenSet(document);
-    if (selectedTokens.some((previous) => similarity(tokens, previous) >= 0.85)) {
+    if (diversityLimited && selectedTokens.some((previous) => similarity(tokens, previous) >= 0.85)) {
       rejectedSimilarity += 1;
       continue;
     }

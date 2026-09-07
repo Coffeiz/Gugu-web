@@ -1,17 +1,25 @@
 """工作区与会话绑定 API（Phase 0-2）。"""
 from __future__ import annotations
 
+import shutil
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
+from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import ConversationSession, User, Workspace
-from app.schemas import WorkspaceCreate, WorkspaceResponse, WorkspaceUpdate
+from app.models import ConversationSession, User, Workspace, WorkspaceDirectory
+from app.schemas import (
+    WorkspaceCreate, WorkspaceDirectoryCreate, WorkspaceDirectoryResponse,
+    WorkspaceDirectoryUpdate, WorkspaceResponse, WorkspaceUpdate,
+)
 from app.services.workspaces import (
     bind_session,
+    create_workspace_directory,
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
@@ -19,17 +27,111 @@ from app.services.workspaces import (
     effective_shell_system_enabled,
     get_workspace,
     delete_workspace,
+    delete_workspace_directory,
     update_workspace,
+    update_workspace_directory,
+    list_workspace_directories,
+    workspace_directory_payload,
+    workspace_shell_supported,
 )
 from agent.sandbox.docker_runtime import sandbox_readiness
+from agent.terminal.policy import configured_terminal_mode, terminal_capabilities
+from agent.terminal.runtime import get_pty_manager
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+
+workspace_directories_router = APIRouter(prefix="/workspace-directories", tags=["workspace-directories"])
+
+
+@workspace_directories_router.get("", response_model=list[WorkspaceDirectoryResponse])
+async def list_workspace_directory_view(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    rows = await list_workspace_directories(db, user.id)
+    return [await workspace_directory_payload(db, user.id, row) for row in rows]
+
+
+@workspace_directories_router.post("", response_model=WorkspaceDirectoryResponse, status_code=201)
+async def create_workspace_directory_view(
+    body: WorkspaceDirectoryCreate,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await create_workspace_directory(db, user.id, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await db.commit()
+    return await workspace_directory_payload(db, user.id, row)
+
+
+@workspace_directories_router.patch("/{directory_id}", response_model=WorkspaceDirectoryResponse)
+async def update_workspace_directory_view(
+    directory_id: int, body: WorkspaceDirectoryUpdate,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await update_workspace_directory(db, user.id, directory_id, name=body.name)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await db.commit()
+    return await workspace_directory_payload(db, user.id, row)
+
+
+@workspace_directories_router.get("/{directory_id}/delete-preview")
+async def preview_workspace_directory_delete(
+    directory_id: int,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    row = await get_owned(db, WorkspaceDirectory, directory_id, user.id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Workspace 不存在")
+    if row.is_default or row.is_system:
+        raise HTTPException(status_code=409, detail="默认 Workspace 不可删除")
+    return await workspace_directory_payload(db, user.id, row)
+
+
+@workspace_directories_router.delete("/{directory_id}")
+async def delete_workspace_directory_view(
+    directory_id: int,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    try:
+        terminal_ids, root = await delete_workspace_directory(db, user.id, directory_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # fail-closed 顺序：DB 暂存 → 断开活 PTY（可能握着挂载点）→ commit → 原子改名
+    # → rmtree。terminate 失败（沙盒 RPC 出错）时回滚事务返回 500，不让 DB 权限
+    # 已撤销而旧 PTY 还能继续写；PTY 被提前关闭的代价只是用户重开终端。
+    # commit 成功后磁盘清理失败只留下可回收 orphan。
+    manager = get_pty_manager()
+    try:
+        for terminal_id in terminal_ids:
+            if manager.get(terminal_id) is not None:
+                await manager.terminate(terminal_id, force=True)
+    except Exception:
+        await db.rollback()
+        raise
+    await db.commit()
+    if root.exists():
+        tombstone = root.with_name(
+            f".{root.name}.deleted-{now_utc().strftime('%Y%m%d%H%M%S')}")
+        try:
+            root.rename(tombstone)
+            shutil.rmtree(tombstone, ignore_errors=True)
+        except OSError:
+            pass
+    return {"ok": True, "workspaceDirectoryId": directory_id}
 
 
 def _response(row: Workspace, count: int = 0) -> WorkspaceResponse:
     return WorkspaceResponse(
         id=row.id, name=row.name, kind=row.kind, folderId=row.folder_id,
-        projectId=row.project_id, enabled=row.enabled, isDefault=row.is_default,
+        projectId=row.project_id, directoryId=row.directory_id, enabled=row.enabled, isDefault=row.is_default,
         boundSessionCount=count,
     )
 
@@ -38,25 +140,43 @@ def _response(row: Workspace, count: int = 0) -> WorkspaceResponse:
 async def list_workspaces(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    rows = (await db.execute(
+    rows = [] if not workspace_shell_supported() else (await db.execute(
         select(Workspace).where(Workspace.user_id == user.id).order_by(Workspace.updated_at.desc())
     )).scalars().all()
-    counts = dict((await db.execute(
+    counts = {} if not workspace_shell_supported() else dict((await db.execute(
         select(ConversationSession.workspace_id, func.count(ConversationSession.id))
         .where(ConversationSession.user_id == user.id, ConversationSession.workspace_id.is_not(None))
         .group_by(ConversationSession.workspace_id)
     )).all())
-    sandbox_ready, _ = sandbox_readiness(get_settings().sandbox)
+    settings = get_settings()
+    sandbox_ready, _ = sandbox_readiness(settings.sandbox)
+    terminal_entry_by_policy, pty_by_policy = terminal_capabilities(settings, sandbox_ready=sandbox_ready)
+    from app.services.filesystem_authorization import filesystem_authorization_enabled
+
+    shell_available = bool(settings.agent.shell_enabled) and (
+        await effective_shell_enabled(db, user.id)
+        or (
+            bool(settings.agent.shell_system_enabled)
+            and await effective_shell_system_enabled(db, user.id)
+        )
+    )
+
     return {
-        "globalEnabled": bool(get_settings().agent.shell_enabled),
+        "globalEnabled": bool(settings.agent.shell_enabled),
         "sandboxEnabled": sandbox_ready,
-        "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
-        "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
-        "autopilotGlobalEnabled": bool(get_settings().agent.shell_autopilot_enabled),
+        "systemGlobalEnabled": bool(settings.agent.shell_system_enabled),
+        "dangerousGlobalEnabled": bool(settings.agent.shell_dangerous_enabled),
+        "autopilotGlobalEnabled": bool(settings.agent.shell_autopilot_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
         "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
         "userAutopilotEnabled": await effective_shell_autopilot_enabled(db, user.id),
+        "filesystemAuthorizationEnabled": filesystem_authorization_enabled(),
+        "workspaceSupported": workspace_shell_supported(),
+        "storageBackend": settings.storage.backend,
+        "terminalMode": configured_terminal_mode(settings),
+        "terminalEntryEnabled": bool(terminal_entry_by_policy and shell_available),
+        "ptyEnabled": bool(pty_by_policy and shell_available),
         "items": [_response(row, counts.get(row.id, 0)) for row in rows],
     }
 
@@ -70,9 +190,10 @@ async def add_workspace(
         row = await create_workspace(
             db, user.id, name=body.name, kind=body.kind,
             folder_id=body.folderId, project_id=body.projectId, enabled=body.enabled,
+            directory_id=body.directoryId,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return _response(row)
 
@@ -109,6 +230,8 @@ async def remove_workspace(
         await delete_workspace(db, user.id, workspace_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return {"ok": True, "workspaceId": workspace_id}
 
@@ -122,6 +245,8 @@ async def bind_workspace(
         await bind_session(db, user.id, session_id, workspace_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     row = await get_workspace(db, user.id, workspace_id)
     await db.commit()
     return _response(row, 1)

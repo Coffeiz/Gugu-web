@@ -191,6 +191,7 @@ class TsSidecarClient:
         self, query: str, candidates: list[dict], *, limit: int,
         max_chars: int, max_per_source: int, max_per_parent: int,
         exclude_content_hashes: set[str] | None = None,
+        selection_mode: str = "confidence",
     ) -> tuple[list[dict], dict]:
         """调用 TS 完成来源归一化、confidence 过滤和统一预算。"""
         response = (await self._request({
@@ -202,6 +203,7 @@ class TsSidecarClient:
             "max_per_source": max(1, int(max_per_source)),
             "max_per_parent": max(1, int(max_per_parent)),
             "exclude_content_hashes": sorted(exclude_content_hashes or set()),
+            "selection_mode": selection_mode,
         })).response
         return list(response.get("selected") or []), dict(response.get("stats") or {})
 
@@ -421,6 +423,7 @@ async def rank_candidates_with_cache(
     max_per_source: int,
     max_per_parent: int,
     exclude_content_hashes: set[str] | None = None,
+    selection_mode: str = "confidence",
 ) -> tuple[list[tuple[RecallCandidate, str, dict]], dict]:
     """调用 TS 完成完整的候选评分、过滤、去重和预算。"""
     if not candidates:
@@ -431,6 +434,7 @@ async def rank_candidates_with_cache(
             "output_chars": 0, "rejected_low_score": 0,
             "rejected_not_preferred": 0, "top_confidence": 0.0,
             "threshold": 0.35, "preferred_threshold": 0.55,
+            "selection_mode": selection_mode,
             "scoring_version": "confidence-v1",
         }
     from app.core.config import get_settings
@@ -480,6 +484,7 @@ async def rank_candidates_with_cache(
         query, payload, limit=limit, max_chars=max_chars,
         max_per_source=max_per_source, max_per_parent=max_per_parent,
         exclude_content_hashes=exclude_content_hashes,
+        selection_mode=selection_mode,
     )
     output = []
     for item in selected:

@@ -1,5 +1,5 @@
 from app.api.v1.search import run_global_search
-from app.models import File, MindNode, Project
+from app.models import File, MindNode, Project, UserSkill
 from agent.tools.global_search import _global_search
 import app.api.v1.search as search_api
 
@@ -96,6 +96,36 @@ async def test_global_search_ranks_note_title_before_body_only_hit(db, user_a):
     result = await run_global_search(db, user_a.id, "发布", types=["note"])
 
     assert result["groups"][0]["items"][0]["title"] == "发布"
+
+
+async def test_global_search_finds_owned_user_skill_without_exposing_body(db, user_a, user_b):
+    await _mk(db, UserSkill(
+        owner_id=user_a.id,
+        slug="f1-data",
+        name="F1 数据分析",
+        description_short="整理排位和圈速数据",
+        body="这是不应进入全局搜索结果的 Skill 正文",
+        related_tools=["create_file"],
+        content_digest="digest-a",
+    ))
+    await _mk(db, UserSkill(
+        owner_id=user_b.id,
+        slug="private-f1",
+        name="私有 F1 技能",
+        description_short="别人的 Skill",
+        body="secret",
+        related_tools=[],
+        content_digest="digest-b",
+    ))
+
+    result = await run_global_search(db, user_a.id, "F1", types=["skill"])
+
+    assert result["total"] == 1
+    assert result["groups"][0]["type"] == "skill"
+    item = result["groups"][0]["items"][0]
+    assert item["title"] == "F1 数据分析"
+    assert item["slug"] == "f1-data"
+    assert "body" not in item
 
 
 async def test_global_search_tool_requires_query(db, user_a):

@@ -5,7 +5,7 @@ const previewCache = new Map<string, string>()
 
 export function previewBlobCacheKey(file: Partial<FileMeta>): string {
   if (file.attach_id) return `attach:${file.attach_id}`
-  if (file.id != null) return `file:${file.id}`
+  if (file.id != null) return `file:${file.id}:${file.version ?? 0}`
   return ''
 }
 

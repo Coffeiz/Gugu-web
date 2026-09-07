@@ -66,6 +66,7 @@ export async function resolveFolderTree(
   opts: {
     projectId?: number | null
     baseFolderId?: number | null
+    workspaceDirectoryId?: number | null
     /** 每新建一个文件夹（非复用已有的）就同步回调一次——宿主用它把新文件夹实时插进自己的
      * 本地缓存/列表（如 filesCache store 的 addFolder），否则上传完文件夹「看不见」，得等
      * 手动刷新页面重新拉取才会出现（本地缓存不会自己知道服务端多了这条）。 */
@@ -88,7 +89,7 @@ export async function resolveFolderTree(
   // 避免把「项目 A 下的 docs」错认成「项目 B 下同名 docs」
   const byParentName = new Map<string, number>()
   for (const f of all) {
-    if ((f.projectId ?? null) !== projectId) continue
+    if ((f.projectId ?? null) !== projectId || (f.workspaceDirectoryId ?? null) !== (opts.workspaceDirectoryId ?? null)) continue
     byParentName.set(`${f.parentId ?? 'root'}:${f.name}`, f.id)
   }
 
@@ -104,7 +105,7 @@ export async function resolveFolderTree(
     const key = `${parentId ?? 'root'}:${name}`
     let id = byParentName.get(key)
     if (id == null) {
-      const created = await foldersApi.create(projectId, name, parentId)
+      const created = await foldersApi.create(projectId, name, parentId, opts.workspaceDirectoryId ?? null)
       id = created.id
       byParentName.set(key, id)
       opts.onFolderCreated?.(created)
@@ -131,7 +132,7 @@ export async function resolveFolderTree(
 // relativePath，供宿主按 relativePath 记决策），喂 UploadConflictDialog；无冲突返回空数组。
 export async function checkUploadConflicts(
   items: UploadItem[],
-  opts: { space: string; projectId?: number | null; folderId?: number | null },
+  opts: { space: string; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null },
 ): Promise<{ filename: string; existingFile: any }[]> {
   const baseFolderId = opts.folderId ?? null
   const projectId = opts.projectId ?? null
@@ -159,14 +160,14 @@ export async function checkUploadConflicts(
   }
 
   // 只查目标文件夹已存在（落点/根/复用的已有文件夹）的文件
-  const reqs: { relativePath: string; check: { filename: string; space: string; projectId?: number | null; folderId?: number | null } }[] = []
+  const reqs: { relativePath: string; check: { filename: string; space: string; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null } }[] = []
   for (const it of items) {
     const i = it.relativePath.lastIndexOf('/')
     const dir  = i > -1 ? it.relativePath.slice(0, i) : ''
     const base = i > -1 ? it.relativePath.slice(i + 1) : it.relativePath
     const targetFolderId = resolveDir(dir)
     if (targetFolderId === undefined) continue   // 目标是新文件夹，里面不会有冲突
-    reqs.push({ relativePath: it.relativePath, check: { filename: base, space: opts.space, projectId, folderId: targetFolderId } })
+    reqs.push({ relativePath: it.relativePath, check: { filename: base, space: opts.space, projectId, folderId: targetFolderId, workspaceDirectoryId: opts.workspaceDirectoryId } })
   }
   if (!reqs.length) return []
   const res = await filesApi.checkConflicts(reqs.map(r => r.check))   // 按输入顺序返回，按 index 映射回 relativePath
@@ -190,6 +191,7 @@ export async function uploadFilesWithFolders(
   opts: {
     projectId?: number | null
     baseFolderId?: number | null
+    workspaceDirectoryId?: number | null
     concurrency?: number
     onFolderCreated?: (folder: { id: number; projectId?: number | null; parentId?: number | null; name: string }) => void
     uploadOne: (file: File, folderId: number | null, relativePath: string) => Promise<any>

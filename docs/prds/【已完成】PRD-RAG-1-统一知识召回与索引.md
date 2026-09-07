@@ -494,7 +494,9 @@ Capability Registry      → Capability IndexDocument ↗
 ```
 
 显式 `search_memory` 可以直接请求指定策略，但仍然必须经过 scope、权限、去重和预算
-限制。后续跨来源服务复用同一策略，不在 Web、IM 或各领域工具中复制检索分支。
+限制。主动搜索由调用方通过 `limit` 决定 Top-K，不应用自动 RAG 的 confidence 阈值；
+仍要求候选已经通过底层词法/向量检索，避免用无关文档凑满结果。后续跨来源服务复用同一策略，
+不在 Web、IM 或各领域工具中复制检索分支。
 
 自动 RAG 不因为“每条消息都执行 BM25”就把空结果写入 history；只有至少一个结果通过
 相关性阈值和内容预算过滤后，才生成 knowledge-context history。没有合格结果时只记录

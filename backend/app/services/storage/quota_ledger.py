@@ -20,6 +20,7 @@ from app.models import File, StorageQuotaEvent, StorageQuotaLedger, User
 FILE_LIBRARY = "file_library"
 SHELL_PERSISTENT = "shell_persistent"
 SHELL_EPHEMERAL = "shell_ephemeral"
+DEFAULT_WORKSPACE_FOLDER_NAME = "workspace"
 _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
 _UNLIMITED_BYTES = 2**63 - 1
 
@@ -38,7 +39,24 @@ def _limits(user: User) -> dict[str, int]:
 
 
 def _shell_root(user_id: Any) -> Path:
-    return (Path(get_settings().storage.local_path).resolve() / str(user_id) / "shell").resolve()
+    return (Path(get_settings().storage.local_path).resolve() / str(user_id) / DEFAULT_WORKSPACE_FOLDER_NAME).resolve()
+
+
+async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) -> int:
+    """工作区与 Shell 共用物理根时，Shell 配额只统计没有文件库记录的字节。"""
+    rows = (await db.execute(select(File.storage_key, File.size_bytes).where(
+        File.user_id == user_id, File.workspace_directory_id.isnot(None), File.deleted_at.is_(None)
+    ))).all()
+    registered = 0
+    for storage_key, size_bytes in rows:
+        path = (root.parent.parent / storage_key).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        if path.is_file():
+            registered += int(size_bytes or 0)
+    return max(0, measure_directory(root) - registered)
 
 
 async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[StorageQuotaLedger]:
@@ -54,7 +72,7 @@ async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[
     existing_file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
-    existing_shell_bytes = measure_directory(root)
+    existing_shell_bytes = await _unregistered_shell_bytes(db, user_id, root)
     result: list[StorageQuotaLedger] = []
     for category in _CATEGORIES:
         row = (await db.execute(select(StorageQuotaLedger).where(
@@ -146,7 +164,7 @@ async def reconcile_user_storage(db: AsyncSession, user_id: Any) -> dict[str, in
     shell_root = ensure_sandbox_root(_shell_root(user_id))
     measured = {
         FILE_LIBRARY: file_bytes,
-        SHELL_PERSISTENT: measure_directory(shell_root),
+        SHELL_PERSISTENT: await _unregistered_shell_bytes(db, user_id, shell_root),
         SHELL_EPHEMERAL: 0,
     }
     for category, actual in measured.items():
@@ -187,7 +205,7 @@ async def verify_user_storage_space(db: AsyncSession, user_id: Any) -> dict[str,
 
 
 __all__ = [
-    "FILE_LIBRARY", "SHELL_PERSISTENT", "SHELL_EPHEMERAL",
+    "FILE_LIBRARY", "SHELL_PERSISTENT", "SHELL_EPHEMERAL", "DEFAULT_WORKSPACE_FOLDER_NAME",
     "ensure_user_storage_space", "ensure_all_user_storage_spaces", "get_quota",
     "record_usage", "reconcile_user_storage", "verify_user_storage_space",
 ]

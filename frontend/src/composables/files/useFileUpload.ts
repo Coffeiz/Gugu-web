@@ -45,6 +45,7 @@ export function useFileUpload(options: FileUploadOptions) {
     await executeUploadLifecycle(prepared.items, {
       projectId: context.projectId,
       baseFolderId: context.folderId,
+      workspaceDirectoryId: context.workspaceDirectoryId,
       folderGroups: prepared.folderGroups,
       decisions: prepared.decisions,
       createGhost: queue.createGhost,
@@ -69,6 +70,7 @@ export function useFileUpload(options: FileUploadOptions) {
         form.append('space', context.space)
         if (context.projectId != null) form.append('project_id', String(context.projectId))
         if (resolvedFolderId != null) form.append('folder_id', String(resolvedFolderId))
+        if (context.workspaceDirectoryId != null) form.append('workspace_directory_id', String(context.workspaceDirectoryId))
         const overwriteId = decision?.action === 'overwrite' ? decision.existingFileId : null
         if (overwriteId != null) {
           form.append('on_conflict', 'overwrite')

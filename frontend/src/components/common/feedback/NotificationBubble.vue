@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { onUnmounted, reactive, ref, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/content/MarkdownView.vue'
@@ -42,13 +42,12 @@ let _vk = 0                 // 气泡本地 key（与后端 id 解耦）
 
 // 状态气泡那套「类 SSE 逐字流式」搬到通知上：新通知不直接出全文，而是标题先逐字冒出、
 // 再正文逐字流式（正文渲染「已打出的子串」，与咕咕回复的流式 markdown 同源）。
-let _typeTimer: ReturnType<typeof setTimeout> | null = null      // 全局单计时器：同一时刻只让最新那条打字
-let _typingId: number | null = null      // 正在打字的 item id（手动关掉它时要停表）
 const TITLE_MS = 30        // 标题每字间隔
 const BODY_MS  = 15        // 正文每字间隔（比标题快，长文不拖沓）
-const PAUSE_TOKEN = '[[p]]'  // 文案里的停顿标记（不显示）
 const PAUSE_MS = 1000        // 打到停顿标记时暂停时长
 const SLOW_MS  = 400         // [[slow]]…[[/slow]] 段内逐字慢速冒出的每字间隔
+type TypingTimer = ReturnType<typeof setTimeout>
+const _typeTimers = new Map<number, TypingTimer>()
 
 // 气泡 = 纯「实时到达」的瞬态弹层，**只监听 uiStore.liveNotification**（SSE 实时置位）——
 // 关浏览器重开拉回来的历史通知**不弹气泡**（那是导航栏通知中心的事）。气泡与导航栏彻底分开：
@@ -67,35 +66,52 @@ watch(() => uiStore.liveNotification, (n) => {
 })
 
 // 标题逐字 → 正文逐字。正文较长时一拍多推几字，避免长通知打太久。
+// 每条气泡使用独立 timer，连续通知到达时不会中断旧气泡的播放。
 // 文案标记（不显示）：[[p]]=停顿 PAUSE_MS；[[slow]]…[[/slow]]=段内每字 SLOW_MS 慢速冒出。
+function clearTypingTimer(id: number) {
+  const timer = _typeTimers.get(id)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    _typeTimers.delete(id)
+  }
+}
+
+function scheduleTyping(item: BubbleItem, delay: number, callback: () => void) {
+  clearTypingTimer(item.id)
+  const timer = setTimeout(() => {
+    if (_typeTimers.get(item.id) !== timer) return
+    _typeTimers.delete(item.id)
+    callback()
+  }, delay)
+  _typeTimers.set(item.id, timer)
+}
+
 function startTyping(item: BubbleItem) {
-  if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
   const raw = item.content || ''
   const hasMarkers = raw.includes('[[')
   const STRIP_RE = /\[\[\/?(?:p(?::\d+)?|slow)\]\]/g   // 去 [[p]] / [[p:1500]] / [[slow]] / [[/slow]]
   const fullTitle = (item.title || '').replace(STRIP_RE, '')
   const fullBody = raw.replace(STRIP_RE, '')   // 去所有标记，用于空判断
   if (!fullTitle && !fullBody) { item.typing = false; return }
-  _typingId = item.id
   item.phase = fullTitle ? 'title' : 'body'
   let ti = 0
-  const run = (ms: number, tick: () => void) => { if (_typeTimer) clearInterval(_typeTimer); _typeTimer = setInterval(tick, ms) }
   // 打完字后停在原地，只能点 ✕ 关闭。
   const stop = () => {
-    if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
+    clearTypingTimer(item.id)
     item.typing = false
-    if (_typingId === item.id) _typingId = null
   }
 
+  let typeTitle: () => void
   let typeBody: () => void
   if (!hasMarkers) {
     // 快路径：无标记，按 slice 推进（长文一拍多推几字）
     const bodyStep = fullBody.length > 150 ? 3 : 1
     let bi = 0
-    typeBody = () => run(BODY_MS, () => {
+    typeBody = () => scheduleTyping(item, BODY_MS, () => {
       bi = Math.min(fullBody.length, bi + bodyStep)
       item.tContent = fullBody.slice(0, bi)
       if (bi >= fullBody.length) stop()
+      else typeBody()
     })
   } else {
     // 标记路径：解析成 ops（普通字 / 慢字 / 纯停顿），逐 op 用 setTimeout 推进，速度可变
@@ -116,28 +132,32 @@ function startTyping(item: BubbleItem) {
       if (oi >= ops.length) { stop(); return }
       const op = ops[oi++]
       if (op.ch) { acc += op.ch; item.tContent = acc }
-      _typeTimer = setTimeout(() => { if (_typingId === item.id) typeBody() }, op.ms)
+      scheduleTyping(item, op.ms, typeBody)
     }
   }
   if (item.phase === 'title') {
-    run(TITLE_MS, () => {
+    typeTitle = () => scheduleTyping(item, TITLE_MS, () => {
       item.tTitle = fullTitle.slice(0, ++ti)
       if (ti >= fullTitle.length) {
         item.phase = 'body'
-        if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }  // 清掉标题 interval 再进正文（两路都安全）
         fullBody ? typeBody() : stop()
-      }
+      } else typeTitle()
     })
+    typeTitle()
   } else { typeBody() }
 }
 
 function dismiss(id: number) {
-  // 关掉的正是当前在打字的那条 → 停表，别让计时器空转
-  if (_typingId === id && _typeTimer) { clearInterval(_typeTimer); _typeTimer = null; _typingId = null }
+  clearTypingTimer(id)
   const item = visible.value.find(n => n.id === id)
   if (item?.notifId != null) uiStore.markRead(item.notifId)
   visible.value = visible.value.filter(n => n.id !== id)
 }
+
+onUnmounted(() => {
+  for (const timer of _typeTimers.values()) clearTimeout(timer)
+  _typeTimers.clear()
+})
 </script>
 
 <style scoped>

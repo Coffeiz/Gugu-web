@@ -72,8 +72,13 @@ async def _review_once(patterns: list[dict], settings) -> dict | None:
     from agent.context.provider_runner import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
-    # merge 需要返回合并后的表述；老用户 pattern 可能有上百条，800 token 容易在 JSON 收尾前被截断。
-    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=2000, thinking="disabled")
+    # 输出预算跟随当前模型，避免维护入口再维护一套 provider 无关的上限。
+    from agent.memory.maintenance_batches import resolve_maintenance_budget
+    result = await complete_json(
+        _REVIEW_SYS_PROMPT, lines, settings,
+        max_tokens=resolve_maintenance_budget(settings).output_tokens,
+        thinking="disabled",
+    )
     if "remove" not in result and "merge" not in result:
         return None
     remove = result.get("remove", [])
@@ -127,7 +132,7 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
 
     from agent.memory.maintenance_batches import pattern_batches
 
-    batches = pattern_batches(patterns)
+    batches = pattern_batches(patterns, model_cfg=settings)
     if any(batch.has_oversized_item for batch in batches):
         return {
             "total": len(patterns), "removed": 0,
@@ -273,7 +278,13 @@ async def _split_once(patterns: list[dict], settings) -> set[int] | None:
     from agent.context.provider_runner import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
-    result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, thinking="disabled")
+    from agent.memory.maintenance_batches import resolve_maintenance_budget
+
+    result = await complete_json(
+        _SPLIT_SYS_PROMPT, lines, settings,
+        max_tokens=resolve_maintenance_budget(settings).output_tokens,
+        thinking="disabled",
+    )
     idxs = result.get("move")
     if not isinstance(idxs, list):
         return None
@@ -293,7 +304,7 @@ async def _split_profile(user_id: str, settings, dry_run: bool,
 
     from agent.memory.maintenance_batches import pattern_batches
 
-    batches = pattern_batches(patterns)
+    batches = pattern_batches(patterns, model_cfg=settings)
     if any(batch.has_oversized_item for batch in batches):
         return {
             "total": len(patterns), "moved": 0,

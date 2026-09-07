@@ -33,7 +33,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     # 日历
     "create_event": "calendar", "update_event": "calendar", "delete_event": "calendar",
     # 文件库
-    "edit_file": "files", "create_document": "files", "rename_file": "files",
+    "edit_file": "files", "create_file": "files", "rename_file": "files",
     "move_items": "files", "copy_file": "files", "create_folder": "files",
     "delete_file": "files", "rename_folder": "files", "delete_folder": "files",
     "save_uploaded_file": "files",
@@ -114,7 +114,11 @@ async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, operation: str | None = None,
                   entity_id: int | str | None = None,
                   entity_ids: list[int | str] | None = None,
-                  event_payload: Any = None, **extra) -> None:
+                  event_payload: Any = None,
+                  notification: dict | None = None,
+                  event_id: str | None = None,
+                  source: str | None = None,
+                  **extra) -> bool:
     """通知某用户：若干资源已变化（best-effort，失败不影响主流程）。
 
     - origin：发起这次改动的浏览器标签页 client-id（来自请求头 X-Client-Id）。前端收到
@@ -150,7 +154,7 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             pass
         payload.update({
             "protocol_version": "live-event-v1",
-            "event_id": f"evt-{uuid.uuid4().hex}",
+            "event_id": event_id or f"evt-{uuid.uuid4().hex}",
             "type": "resource.changed",
             "resource": canonical_resource,
             "operation": inferred_operation,
@@ -161,6 +165,8 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             payload["entity_id"] = entity_id
         if entity_ids is not None:
             payload["entity_ids"] = entity_ids
+        if source is not None:
+            payload["source"] = source
         if event_payload is not None:
             # 事件 payload 必须是 JSON 数据；API 层可以传 Pydantic 响应模型，
             # 这里统一转换，避免“业务已提交但事件因不可序列化而静默丢失”。
@@ -187,18 +193,23 @@ async def publish(user_id, *resources: str, origin: str | None = None,
         }
         if session_payload:
             payload["payload"] = session_payload
+    if notification is not None:
+        # 通知不是资源变更事件，允许在没有 resources 时独立发布到用户频道。
+        # 定时任务和指定用户的管理员通知都走这里；广播通知仍由 broadcast() 负责。
+        payload["notification"] = notification
     if not payload:
-        return
+        return False
     try:
         await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
     except Exception:
-        pass
+        return False
     for resource in res:
         if resource in _DATA_RUNTIME_RESOURCES:
             invalidation_operation = inferred_operation if res else (operation or "refresh")
             if invalidation_operation == "append":
                 invalidation_operation = "update"
             await publish_data_runtime_invalidation(user_id, resource, operation=invalidation_operation)
+    return True
 
 
 BROADCAST_CHANNEL = "events:__broadcast__"

@@ -53,6 +53,7 @@
                 v-for="d in calDays"
                 :key="d.key"
                 class="dp-day"
+                :aria-label="d.iso"
                 :class="{
                   'other': d.other,
                   'today': d.iso === todayIso,

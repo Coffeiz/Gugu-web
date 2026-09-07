@@ -521,14 +521,14 @@ async def _async_true():
 
 
 def test_owner_group_reflection_excludes_assistant_reply_and_other_members():
-    from agent.runner import _reflection_input
+    from agent.memory.reflection_input import build_reflection_input
 
     request = SimpleNamespace(chat_id="group-1", message="我喜欢简短一点", source="qq")
     messages = [
         {"role": "assistant", "content": "群友说了不应进入 owner memory"},
         {"role": "tool", "content": "查询到 owner 的项目结果"},
     ]
-    user_text, private_text = _reflection_input(request, messages, 0, "整轮群聊回复")
+    user_text, private_text = build_reflection_input(request, messages, 0, "整轮群聊回复")
     assert user_text == "我喜欢简短一点"
     assert "查询到 owner 的项目结果" in private_text
     assert "群友说了不应进入 owner memory" not in private_text

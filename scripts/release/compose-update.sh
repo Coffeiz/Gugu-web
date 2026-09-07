@@ -116,7 +116,13 @@ fi
 
 echo '开始拉取 manifest 指定的业务镜像...'
 # 不带 --profile sandbox，不会因为普通更新拉取 egress-proxy 或其他沙盒镜像。
-docker compose -f "$COMPOSE_FILE" pull backend worker gateway frontend migrate
+docker compose -f "$COMPOSE_FILE" pull backend worker gateway frontend migrate data-migrate
+
+# 文件迁移必须在旧业务容器停止后执行，避免旧进程在复制期间继续写入 named volume。
+# stop 不删除卷；不存在的服务由 Compose 忽略，兼容默认单容器和分离部署两种编排。
+docker compose -f "$COMPOSE_FILE" stop backend worker gateway app nginx sandboxd >/dev/null 2>&1 || true
+echo '迁移旧版用户数据到 GUGU_DATA_HOST_DIR...'
+docker compose -f "$COMPOSE_FILE" up --no-deps --force-recreate data-migrate
 
 SERVICES=(backend worker gateway frontend nginx)
 if docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx sandboxd; then

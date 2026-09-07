@@ -5,7 +5,7 @@ import { useFileUpload } from './useFileUpload'
 
 export interface FileLibraryUploadOptions {
   currentType: Ref<string>
-  currentSeg: Ref<{ type?: string; id?: number | null; projectId?: number | null; folderId?: number | null } | null>
+  currentSeg: Ref<{ type?: string; id?: number | null; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null; space?: string } | null>
   canUpload: Ref<boolean>
   fileCacheStore: {
     addFile: (file: FileMeta) => void
@@ -33,12 +33,16 @@ export function useFileLibraryUpload(options: FileLibraryUploadOptions) {
         projectId = segment.id ?? null
       } else if (options.currentType.value === 'folder' && segment) {
         folderId = segment.folderId ?? null
-        if (segment.projectId != null) {
+        if (segment.space === 'workspace') {
+          space = 'workspace'
+        } else if (segment.projectId != null) {
           space = 'project'
           projectId = segment.projectId
         }
+      } else if (options.currentType.value === 'workspace' && segment) {
+        space = 'workspace'
       }
-      return { space, projectId, folderId }
+      return { space, projectId, folderId, workspaceDirectoryId: segment?.workspaceDirectoryId ?? null }
     },
     refreshAfterUpload: async () => {
       options.loadContents()

@@ -82,7 +82,7 @@ export function useMindRefActions() {
       showAppNotice(i18n.global.t('mindUi.referenceMissing'))
       return
     }
-    if (isPreviewable(file.ext)) previewStore.open(file)
+    if (isPreviewable(file.ext, file.mimeType)) previewStore.open(file)
     else filesApi.download(file.id, `${file.displayName}.${file.ext}`).catch(() => {})
   }
 

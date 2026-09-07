@@ -55,7 +55,7 @@ import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
-import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { usePreviewStore, isPreviewable, isTextMime } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { resolveRelativeFileLink } from '@/utils/fileLinks'
 
@@ -125,8 +125,7 @@ const LANG_LOADERS: Record<string, () => Promise<any>> = {
   scss:       () => import('highlight.js/lib/languages/scss'),
 }
 
-// 能编辑的扩展名：跟后端 app/core/chat_attach.py 的 TEXT_EXTS 保持一致（那边才是真正决定
-// PUT /files/{id}/content 接不接受的地方），两边各自维护、改一边记得同步另一边。
+// 常见扩展名保留语法高亮；未知但被后端标为 text/* 的自定义文件也走同样的文本编辑能力。
 const EDITABLE_EXTS = new Set([
   'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx',
   'vue', 'html', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
@@ -200,14 +199,15 @@ const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
 // 可编辑 = 后端认得的文本类扩展名 + 真实文件（md 走「编辑」按钮切换态用得到；txt/代码类扩展名
 // 不看这个——它们不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
-const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isEditableDocument.value)
+const isTextDocument = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) || isTextMime(props.fileContext?.mimeType))
+const editable = computed(() => isTextDocument.value && isEditableDocument.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
 // 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
 // 只有 md 保留「渲染预览 + 编辑」双视图——渲染后的排版本身就是预览价值。
 const isCodeExt = computed(() => {
   const e = (props.ext || '').toLowerCase()
-  return EDITABLE_EXTS.has(e) && !isMarkdownFile.value
+  return isTextDocument.value && !isMarkdownFile.value
 })
 const loading     = ref(false)
 const error       = ref<string | null>(null)
@@ -542,7 +542,7 @@ async function onMdClick(e: MouseEvent) {
   if (!resolved) return
 
   e.preventDefault()
-  if (resolved.kind === 'file' && isPreviewable(resolved.file.ext)) {
+  if (resolved.kind === 'file' && isPreviewable(resolved.file.ext, resolved.file.mimeType)) {
     previewStore.open(resolved.file)
     return
   }

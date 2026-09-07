@@ -74,7 +74,10 @@ async def get_summary(exclude_dev: bool = Query(False),
     async def _active_user_ids(since: datetime) -> Set[UUID]:
         """统一活跃口径：网页事件（含登录）∪ 网页活跃时间 ∪ AgentUsage（网页和 IM）。"""
         chat_ids = set((await db.execute(_xd(
-            select(distinct(AgentUsage.user_id)).where(AgentUsage.created_at >= since),
+            select(distinct(AgentUsage.user_id)).where(
+                AgentUsage.created_at >= since,
+                AgentUsage.is_byok.is_(False),
+            ),
             AgentUsage.user_id, xd)
         )).scalars().all())
         event_ids = set((await db.execute(_xd(
@@ -124,7 +127,7 @@ async def get_summary(exclude_dev: bool = Query(False),
             func.count().label("calls"),
             func.coalesce(func.sum(AgentUsage.tokens_in), 0).label("tokens_in"),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0).label("tokens_out"),
-        ).select_from(AgentUsage)
+        ).select_from(AgentUsage).where(AgentUsage.is_byok.is_(False))
         if where is not None:
             s = s.where(where)
         return _xd(s, AgentUsage.user_id, xd)
@@ -149,7 +152,11 @@ async def get_summary(exclude_dev: bool = Query(False),
         # 对话：存在一条落在自己第 n 天或之后的用量（IM 走 worker 不更新 last_active_at，靠这条纳入）
         chat_s = (select(distinct(User.id))
                   .join(AgentUsage, AgentUsage.user_id == User.id)
-                  .where(User.created_at < cutoff, AgentUsage.created_at >= thresh))
+                  .where(
+                      User.created_at < cutoff,
+                      AgentUsage.created_at >= thresh,
+                      AgentUsage.is_byok.is_(False),
+                  ))
         if xd:
             web_s = web_s.where(User.is_developer == False)
             chat_s = chat_s.where(User.is_developer == False)
@@ -261,13 +268,14 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     labels = [(start_local + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
 
     nd = _DEV_NOT_IN if exclude_dev else ""
+    agent_nd = nd + " AND NOT is_byok "
 
     agent_rows = (await db.execute(text(f"""
         SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d,
                COUNT(*)::int AS calls,
                COALESCE(SUM(tokens_in + tokens_out), 0)::bigint AS tokens
         FROM agent_usage
-        WHERE created_at >= :start {nd}
+        WHERE created_at >= :start {agent_nd}
         GROUP BY DATE(created_at AT TIME ZONE {tz_expr})
     """), {"start": start_utc})).all()
     agent_map = {r.d: (r.calls, int(r.tokens)) for r in agent_rows}
@@ -304,7 +312,7 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     active_rows = (await db.execute(text(f"""
         SELECT d, COUNT(DISTINCT uid)::int AS cnt FROM (
             SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, user_id AS uid
-            FROM agent_usage WHERE created_at >= :start {nd}
+            FROM agent_usage WHERE created_at >= :start {agent_nd}
             UNION
             SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d, user_id AS uid
             FROM frontend_events WHERE created_at >= :start {nd}
@@ -360,12 +368,13 @@ async def get_chat_funnel(exclude_dev: bool = Query(False), db: AsyncSession = D
 async def get_tool_distribution(exclude_dev: bool = Query(False), db: AsyncSession = Depends(get_db)):
     """工具调用频次分布（按工具名聚合，降序 Top 20）。"""
     nd = _DEV_NOT_IN if exclude_dev else ""
+    agent_nd = nd + " AND NOT is_byok "
     rows = (await db.execute(text(f"""
         SELECT elem AS tool_name, COUNT(*)::int AS calls
         FROM agent_usage,
              jsonb_array_elements_text(tools_used::jsonb) AS elem
         WHERE tools_used IS NOT NULL
-          AND jsonb_typeof(tools_used::jsonb) = 'array' {nd}
+          AND jsonb_typeof(tools_used::jsonb) = 'array' {agent_nd}
         GROUP BY elem
         ORDER BY calls DESC
         LIMIT 20
@@ -420,7 +429,11 @@ async def get_active_dimensions(exclude_dev: bool = Query(False), db: AsyncSessi
         s = select(func.count(distinct(col))).where(*where)
         return (await db.execute(_xd(s, col, xd))).scalar() or 0
 
-    chat     = await _cnt(AgentUsage.user_id, AgentUsage.created_at >= d7)
+    chat     = await _cnt(
+        AgentUsage.user_id,
+        AgentUsage.created_at >= d7,
+        AgentUsage.is_byok.is_(False),
+    )
     project  = await _cnt(Project.user_id, Project.updated_at >= d7)
     calendar = await _cnt(CalendarEvent.user_id, CalendarEvent.created_at >= d7)
     file_    = await _cnt(File.user_id, File.updated_at >= d7, File.deleted_at.is_(None))

@@ -4,6 +4,7 @@
     <input
       class="rename-input-inline"
       :value="modelValue"
+      @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       v-enter="commit"
       @keydown.esc="cancel"
       @blur="commit"
@@ -19,7 +20,11 @@
  * 用法：v-model 绑定当前编辑文本，@commit 在确认（Enter / 失焦）时触发，@cancel 在 Esc 时触发。
  */
 const props = defineProps<{ modelValue: string }>()
-const emit = defineEmits<{ commit: []; cancel: [] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  commit: []
+  cancel: []
+}>()
 
 function commit() {
   emit('commit')

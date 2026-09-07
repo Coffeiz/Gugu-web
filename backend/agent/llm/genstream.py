@@ -10,16 +10,22 @@
 - 刷新后：先读快照(已生成的部分) → 再订阅频道看后续。
 - 生成完：后台任务持久化回复并 `end()`，之后正常从 DB 读。
 
+快照中的 `tools` 保留真实工具调用 ID、参数及 run/round 身份，供刷新后的
+前端恢复同一工具气泡；没有正文或工具调用时，前端续接会继续显示思考状态。
+
 与 `app/core/events.py`（资源变更通知）不同：这是**按会话的流式输出**通道。
 IM 流式（飞书卡片）将来也复用这条频道。
 """
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 from app.core.redis import get_redis
 
-TTL = 180   # 活跃标志/快照存活秒数；生成中每次 publish 刷新，卡死/崩溃后自动过期
+TTL = 300   # 活跃标志/快照存活秒数；生成中每次 publish/touch 刷新，卡死/崩溃后自动过期
+LEASE_TTL = 300  # 后台任务租约；必须覆盖压缩/工具调用等长于普通请求的阶段
+DONE_GRACE_TTL = 60  # 终态快照短暂保留，覆盖 done 广播与下一次续看之间的竞态
 
 
 def _ch(session_id) -> str:
@@ -34,12 +40,64 @@ def _cancel_key(session_id) -> str:
     return f"genstream:cancel:{session_id}"
 
 
-async def begin(session_id) -> None:
+def _lease_key(session_id) -> str:
+    return f"genstream:lease:{session_id}"
+
+
+def new_run_id() -> str:
+    """生成 Web 生成流的归属 ID，与 provider round ID 保持不同。"""
+    return f"run-{uuid4().hex[:16]}"
+
+
+def _owner_key(session_id) -> str:
+    return f"genstream:owner:{session_id}"
+
+
+_END_SCRIPT = """
+local owner = redis.call('GET', KEYS[4])
+local requested = ARGV[1]
+-- 新实现必须校验 owner；没有 owner key 的旧快照只允许兼容性清理。
+if owner and owner ~= '' and owner ~= requested then
+    return 0
+end
+local lease_owner = redis.call('GET', KEYS[3])
+if (not owner or owner == '') and lease_owner and lease_owner ~= '' and lease_owner ~= requested then
+    return 0
+end
+
+local state_raw = redis.call('GET', KEYS[1])
+local done = false
+if state_raw then
+    local ok, state = pcall(cjson.decode, state_raw)
+    if ok and state and state['done'] then
+        done = true
+    end
+end
+if state_raw and done then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+else
+    redis.call('DEL', KEYS[1])
+end
+redis.call('DEL', KEYS[2], KEYS[3], KEYS[4])
+return 1
+"""
+
+
+async def begin(session_id, owner_run_id: str | None = None) -> None:
     """开始一轮生成：初始化空快照 + 标记活跃。"""
-    state = {"text": "", "tool": "", "files": [], "done": False, "error": None}
+    owner_run_id = str(owner_run_id or "")
+    state = {
+        "text": "", "files": [], "done": False, "error": None,
+        "run_id": "", "round_id": "", "tools": [], "timeline": [],
+        "owner_run_id": owner_run_id,
+    }
     try:
         r = get_redis()
+        # owner 先于 state 写入，旧任务的延迟 finally 在整个切换窗口内
+        # 都会因 owner 不匹配而拒绝清理新一轮状态。
+        await r.set(_owner_key(session_id), owner_run_id, ex=LEASE_TTL)
         await r.delete(_cancel_key(session_id))
+        await r.delete(_lease_key(session_id))
         await r.set(_state_key(session_id), json.dumps(state, ensure_ascii=False), ex=TTL)
     except Exception:
         pass
@@ -68,22 +126,73 @@ async def publish(session_id, event: dict) -> None:
     # is_active() 可能仍读到上一轮的 active 状态，误订阅上一轮的频道。
     try:
         raw = await r.get(_state_key(session_id))
-        st = json.loads(raw) if raw else {"text": "", "tool": "", "files": [], "done": False, "error": None}
+        st = json.loads(raw) if raw else {
+            "text": "", "files": [], "done": False, "error": None,
+            "run_id": "", "round_id": "", "tools": [], "timeline": [],
+            "owner_run_id": "",
+        }
+        st.setdefault("timeline", [])
         et = event.get("type")
+        if event.get("run_id"):
+            st["run_id"] = event["run_id"]
+        if event.get("round_id"):
+            st["round_id"] = event["round_id"]
         if et == "token":
             st["text"] += event.get("content", "")
+            timeline = st["timeline"]
+            event_run_id = event.get("run_id") or st.get("run_id") or ""
+            event_round_id = event.get("round_id") or st.get("round_id") or ""
+            if (timeline and timeline[-1].get("type") == "token"
+                    and timeline[-1].get("run_id") == event_run_id
+                    and timeline[-1].get("round_id") == event_round_id):
+                timeline[-1]["content"] += event.get("content", "")
+            else:
+                timeline.append({
+                    "type": "token", "content": event.get("content", ""),
+                    "run_id": event_run_id,
+                    "round_id": event_round_id,
+                })
+        elif et in ("round_start", "_new_round"):
+            st["timeline"].append({
+                key: event.get(key) or st.get(key) or ""
+                for key in ("type", "run_id", "round_id")
+            })
         elif et == "tool_call":
-            st["tool"] = event.get("label") or event.get("name") or ""
+            # 保存完整调用，而不是只保存展示标签；刷新恢复必须能重建真实工具气泡。
+            tool_call = {
+                "run_id": event.get("run_id") or st.get("run_id") or "",
+                "round_id": event.get("round_id") or st.get("round_id") or "",
+                "tool_call_id": event.get("tool_call_id") or "",
+                "name": event.get("name") or "",
+                "label": event.get("label") or event.get("name") or "",
+                "input": event.get("input"),
+                "status": event.get("status") or "running",
+            }
+            st.setdefault("tools", []).append(tool_call)
+            st["timeline"].append({"type": "tool_call", **tool_call})
         elif et == "tool_done":
-            st["tool"] = ""
+            call_id = str(event.get("tool_call_id") or "")
+            for tool_call in reversed(st.setdefault("tools", [])):
+                if call_id and str(tool_call.get("tool_call_id") or "") == call_id:
+                    tool_call["status"] = event.get("status") or "success"
+                    if "result" in event:
+                        tool_call["result"] = event["result"]
+                    break
+            for timeline_item in reversed(st["timeline"]):
+                if (timeline_item.get("type") == "tool_call"
+                        and call_id
+                        and str(timeline_item.get("tool_call_id") or "") == call_id):
+                    timeline_item["status"] = event.get("status") or "success"
+                    if "result" in event:
+                        timeline_item["result"] = event["result"]
+                    break
         elif et == "file" and event.get("file"):
             st["files"].append(event["file"])
+            st["timeline"].append({"type": "file", "file": event["file"]})
         elif et == "done":
             st["done"] = True
-            st["tool"] = ""
         elif et == "error":
             st["done"] = True
-            st["tool"] = ""
             st["error"] = event.get("message") or event.get("detail")
         await r.set(_state_key(session_id), json.dumps(st, ensure_ascii=False), ex=TTL)
     except Exception:
@@ -94,18 +203,52 @@ async def publish(session_id, event: dict) -> None:
         return
 
 
-async def end(session_id) -> None:
-    """生成结束：清掉活跃快照（回复此时已持久化，之后从 DB 读）。"""
+async def end(session_id, owner_run_id: str | None = None) -> None:
+    """生成结束：释放租约，短暂保留终态快照供迟到的订阅者确认完成。"""
     try:
-        await get_redis().delete(_state_key(session_id), _cancel_key(session_id))
+        r = get_redis()
+        requested_owner = str(owner_run_id or "")
+        await r.eval(
+            _END_SCRIPT,
+            4,
+            _state_key(session_id),
+            _cancel_key(session_id),
+            _lease_key(session_id),
+            _owner_key(session_id),
+            requested_owner,
+            DONE_GRACE_TTL,
+        )
+    except AttributeError:
+        # 兼容测试替身及旧 Redis 客户端；真实 Redis 使用上面的原子脚本。
+        try:
+            r = get_redis()
+            current_owner = await r.get(_owner_key(session_id))
+            current_lease = await r.get(_lease_key(session_id))
+            if current_owner and str(current_owner) != requested_owner:
+                return
+            if not current_owner and current_lease and str(current_lease) != requested_owner:
+                return
+            raw = await r.get(_state_key(session_id))
+            state = json.loads(raw) if raw else None
+            if state and state.get("done"):
+                await r.expire(_state_key(session_id), DONE_GRACE_TTL)
+            else:
+                await r.delete(_state_key(session_id))
+            await r.delete(_cancel_key(session_id), _lease_key(session_id), _owner_key(session_id))
+        except Exception:
+            pass
     except Exception:
+        # Redis 脚本执行失败时宁可保留状态，也不能退回非原子清理，避免再次
+        # 让旧任务误删新任务的快照。
         pass
 
 
 async def touch(session_id) -> None:
     """续期活跃快照；交互等待期间没有普通事件，也不能让 Run 变成离线。"""
     try:
-        await get_redis().expire(_state_key(session_id), TTL)
+        r = get_redis()
+        await r.expire(_state_key(session_id), TTL)
+        await r.expire(_owner_key(session_id), LEASE_TTL)
     except Exception:
         pass
 
@@ -119,8 +262,62 @@ async def snapshot(session_id) -> dict | None:
         return None
 
 
+async def claim_lease(session_id, run_id: str) -> None:
+    """把会话生成归属到已取得 session gate 的后台任务。"""
+    try:
+        await get_redis().set(_lease_key(session_id), str(run_id), ex=LEASE_TTL)
+    except Exception:
+        pass
+
+
+async def renew_lease(session_id, run_id: str) -> bool:
+    """仅续期仍属于本 run 的租约，避免旧任务续活新任务。"""
+    try:
+        r = get_redis()
+        key = _lease_key(session_id)
+        owner = await r.get(key)
+        if str(owner or "") != str(run_id):
+            return False
+        await r.expire(key, LEASE_TTL)
+        await r.expire(_owner_key(session_id), LEASE_TTL)
+        return True
+    except Exception:
+        return False
+
+
+async def release_lease(session_id, run_id: str) -> None:
+    """只删除当前 run 持有的租约。"""
+    try:
+        r = get_redis()
+        key = _lease_key(session_id)
+        owner = await r.get(key)
+        if str(owner or "") == str(run_id):
+            await r.delete(key)
+    except Exception:
+        pass
+
+
+async def has_live_lease(session_id) -> bool:
+    try:
+        return bool(await get_redis().exists(_lease_key(session_id)))
+    except Exception:
+        # Redis 不可用时保持原有 fail-open，避免把正常生成误判成孤儿。
+        return True
+
+
+async def close_subscription(session_id, pubsub) -> None:
+    """关闭预先建立的 Redis 订阅，供续看在快照判定后提前退出时复用。"""
+    try:
+        await pubsub.unsubscribe(_ch(session_id))
+        await pubsub.aclose()
+    except Exception:
+        pass
+
+
 async def is_active(session_id) -> bool:
     snap = await snapshot(session_id)
+    # 生成状态以快照终态为准；lease 只表示后台任务的进程所有权，不能作为
+    # 前端续看或取消的业务事实，否则任务刚启动时会出现 false inactive。
     return bool(snap) and not snap.get("done")
 
 
@@ -156,8 +353,9 @@ async def subscribe(session_id, pubsub=None):
     """订阅某会话的生成频道，逐条 yield SSE 行。无消息时定期 keepalive。
     可传入 open_subscription() 预先订好的 pubsub（避免订阅前丢消息）。"""
     ch = _ch(session_id)
+    r = get_redis()
     if pubsub is None:
-        pubsub = get_redis().pubsub()
+        pubsub = r.pubsub()
         await pubsub.subscribe(ch)
     try:
         while True:
@@ -167,6 +365,24 @@ async def subscribe(session_id, pubsub=None):
                 yield ": retry\n\n"
                 continue
             if msg is None:
+                # 后台任务和 HTTP/SSE 转发解耦；快照只用于确认业务终态，
+                # lease 只负责并发归属，不能作为流状态或失败依据。
+                try:
+                    raw_state = await r.get(_state_key(session_id))
+                    state = json.loads(raw_state) if raw_state else None
+                except Exception:
+                    # Redis 短暂不可用时不要误判业务终态，继续等待下一次心跳。
+                    state = {"done": False}
+                if state and state.get("done"):
+                    # 终态事件可能已经错过，但快照仍是权威结果；补发 done
+                    # 让前端正常结束当前流，不制造中断气泡。
+                    yield "data: " + json.dumps({"type": "done", "replayed": True}) + "\n\n"
+                    return
+                if not state:
+                    # 没有快照只说明这条传输没有可续接的生成；不能把连接状态
+                    # 推断成业务失败。实际失败必须由后台任务发布 error 事件。
+                    yield "data: " + json.dumps({"type": "done", "idle": True}) + "\n\n"
+                    return
                 yield ": ping\n\n"
                 continue
             data = msg.get("data")
@@ -178,8 +394,4 @@ async def subscribe(session_id, pubsub=None):
                 except Exception:
                     pass
     finally:
-        try:
-            await pubsub.unsubscribe(ch)
-            await pubsub.aclose()
-        except Exception:
-            pass
+        await close_subscription(session_id, pubsub)

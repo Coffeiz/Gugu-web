@@ -71,7 +71,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
                 notes: list[dict] | None = None) -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
-    静态部分（每轮重建）：人格/profile policy/政策/工具定义/风格/技能索引
+    静态部分（每轮重建）：人格/profile policy/政策/工具使用协议/风格/技能索引
     动态部分（可能变化）：记忆/项目/笔记/文件/时间/消息格式
 
     返回 (static_text, dynamic_text, now_str)，调用方将静态部分放在 system，

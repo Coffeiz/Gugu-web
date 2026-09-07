@@ -126,6 +126,9 @@ import ProjectFilesPanel from '@/views/Projects/components/ProjectFilesPanel.vue
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useUiStore } from '@/stores/ui'
+import { workspacesApi } from '@/services/api'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { useProjectFileWorkspace } from '@/composables/files/useProjectFileWorkspace'
 import { useFileActions } from '@/composables/files/useFileActions'
@@ -167,6 +170,64 @@ const fileActions      = useFileActions({
 const fileCacheStore   = useFilesCacheStore()
 const liveStore        = useLiveStore()
 const prefsStore       = usePreferencesStore()
+const uiStore          = useUiStore()
+const workspaceSupported = ref(false)
+const projectWorkspace = ref<{ id: number } | null>(null)
+const workspaceLoading = ref(false)
+
+async function refreshProjectWorkspace() {
+  const projectId = props.project?.id
+  if (!projectId) {
+    workspaceSupported.value = false
+    projectWorkspace.value = null
+    return
+  }
+  workspaceLoading.value = true
+  try {
+    const status = await workspacesApi.status()
+    workspaceSupported.value = status.workspaceSupported === true
+    const items = Array.isArray(status.items) ? status.items as Array<{ id: number; kind?: string; projectId?: number | null }> : []
+    projectWorkspace.value = items.find(item => item.kind === 'project' && item.projectId === projectId) ?? null
+  } catch {
+    workspaceSupported.value = false
+    projectWorkspace.value = null
+  } finally {
+    workspaceLoading.value = false
+  }
+}
+
+watch(() => props.project?.id, refreshProjectWorkspace, { immediate: true })
+
+async function toggleProjectWorkspace() {
+  const project = props.project
+  if (!project || !workspaceSupported.value || workspaceLoading.value) return
+  workspaceLoading.value = true
+  try {
+    if (projectWorkspace.value) {
+      if (!await confirmDialog({
+        title: t('files.deleteWorkspaceTitle'),
+        message: t('files.deleteWorkspaceMessage', { name: project.name }),
+        tone: 'danger',
+        confirmText: t('files.deleteWorkspace'),
+      })) return
+      await workspacesApi.delete(projectWorkspace.value.id)
+      projectWorkspace.value = null
+    } else {
+      await workspacesApi.create({ name: project.name, kind: 'project', projectId: project.id })
+      await refreshProjectWorkspace()
+    }
+    uiStore.pushNotification({
+      title: t('files.workspace'),
+      content: t(projectWorkspace.value ? 'files.workspaceCreated' : 'files.workspaceDeleted', { name: project.name }),
+      bubble: true,
+      persist: false,
+    })
+  } catch {
+    uiStore.pushNotification({ title: t('files.workspace'), content: t('files.workspaceCreateFailed'), bubble: true, persist: false })
+  } finally {
+    workspaceLoading.value = false
+  }
+}
 const {
   localName,
   localStages,
@@ -609,6 +670,9 @@ const filePanelContext = {
   pmSortDir,
   onPmSortSelect,
   closeProjectModal,
+  workspaceAvailable: computed(() => prefsStore.shellEnabled && workspaceSupported.value && !workspaceLoading.value),
+  workspaceExists: computed(() => Boolean(projectWorkspace.value)),
+  toggleWorkspace: toggleProjectWorkspace,
   pmIsDragging,
   pmSelectionRect,
   pmGridRef,

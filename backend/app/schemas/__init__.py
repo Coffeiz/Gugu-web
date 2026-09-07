@@ -285,6 +285,7 @@ class FileResponse(CamelModel):
     display_name: str
     ext: str
     space: str
+    workspace_directory_id: Optional[int] = None
     project_id: Optional[int]
     project_name: Optional[str]
     project_color: Optional[str]
@@ -299,6 +300,8 @@ class FileResponse(CamelModel):
     deleted_at: Optional[str] = None
     img_width: Optional[int] = None
     img_height: Optional[int] = None
+    # 文件正文版本：外部同步、覆盖上传或正文编辑后递增，供客户端失效内容缓存。
+    version: int = 1
 
 
 class BatchDeleteBody(CamelModel):
@@ -311,6 +314,7 @@ class BatchDownloadBody(CamelModel):
 class FileCopyBody(CamelModel):
     folder_id:  Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     on_conflict: str = "keep_both"
     overwrite_file_id: Optional[int] = None
 
@@ -320,6 +324,7 @@ class FileUpdate(CamelModel):
     stage_name: Optional[str] = None
     folder_id: Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
 
     @field_validator("display_name")
     @classmethod
@@ -333,6 +338,7 @@ class FileUpdate(CamelModel):
 
 class FolderCreate(CamelModel):
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     parent_id:  Optional[int] = None
     name: str
 
@@ -355,17 +361,20 @@ class FolderRename(CamelModel):
 class FolderMove(CamelModel):
     parent_id: Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     version: int   # 乐观锁：必传，同 FolderRename（P2.6）
 
 
 class FolderCopy(CamelModel):
     parent_id: Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
 
 
 class FolderResponse(CamelModel):
     id: int
     project_id: Optional[int]
+    workspace_directory_id: Optional[int] = None
     parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
@@ -623,7 +632,7 @@ class PreferencesResponse(CamelModel):
     defaultView:       str = "projects"       # 应用打开时的默认入口
     shellEnabled:      bool = False            # 用户级工作区 Shell 开关
     shellSystemEnabled: bool = False           # 用户级系统范围 Shell 开关
-    shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
+    shellDangerousEnabled: bool = False       # 用户级全部 Shell 命令权限，危险操作仍需确认
     shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
     toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量
@@ -706,9 +715,10 @@ class PreferencesUpdate(CamelModel):
 
 class WorkspaceCreate(CamelModel):
     name: str = Field(min_length=1, max_length=200)
-    kind: Literal["folder", "project"] = "folder"
+    kind: Literal["folder", "project", "directory"] = "folder"
     folderId: Optional[int] = None
     projectId: Optional[int] = None
+    directoryId: Optional[int] = None
     enabled: bool = True
 
 
@@ -723,6 +733,37 @@ class WorkspaceResponse(CamelModel):
     kind: str
     folderId: Optional[int] = None
     projectId: Optional[int] = None
+    directoryId: Optional[int] = None
     enabled: bool
     isDefault: bool
     boundSessionCount: int = 0
+
+
+class WorkspaceDirectoryCreate(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def name_valid(cls, value: str) -> str:
+        return _validate_name(value)
+
+
+class WorkspaceDirectoryUpdate(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def name_valid(cls, value: str) -> str:
+        return _validate_name(value)
+
+
+class WorkspaceDirectoryResponse(CamelModel):
+    id: int
+    name: str
+    directory_name: str
+    is_default: bool
+    is_system: bool
+    file_count: int = 0
+    folder_count: int = 0
+    bound_session_count: int = 0
+    bound_task_count: int = 0

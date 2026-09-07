@@ -22,15 +22,20 @@ DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留�
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import re
 import secrets
 import time
 
 from app.services.storage import get_storage
 
+_log = logging.getLogger("agent.memory.store")
+
 _DIR = ".agent"
+_list_write_locks: dict[str, asyncio.Lock] = {}
 DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数
 DAILY_INJECT_CHARS = 2000  # 注入 prompt 时只取最新内容，避免近期流水撑爆上下文
 DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
@@ -59,10 +64,23 @@ _PATTERN_MAX_CONF          = 0.97
 # ── memory.md 长期记忆向量检索参数 ──
 MEMORY_INJECT_CHARS = 2000   # memory.md 注入预算；超出才走向量挑相关块，否则整块注入
 MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按句子边界再切）
+VECTOR_REBUILD_CONCURRENCY = 4  # 管理员重建的跨用户并发上限，避免打爆 embedding 服务
 
 
 def _key(user_id, name: str) -> str:
     return f"{user_id}/{_DIR}/{name}"
+
+
+def _list_write_lock(key: str) -> asyncio.Lock:
+    lock = _list_write_locks.get(key)
+    if lock is None:
+        lock = _list_write_locks[key] = asyncio.Lock()
+    return lock
+
+
+def _list_digest(items: list[dict]) -> str:
+    payload = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 async def _read(key: str) -> str:
@@ -195,7 +213,29 @@ def _migrate_md(md: str) -> list[dict]:
 async def read_pattern_list(user_id) -> list[dict]:
     """读结构化 pattern。pattern.json 不存在 → 依次找旧 facts.json(2026-07-08 前的名字)、
     再旧的 facts.md，找到就迁移并写回 pattern.json(一次性)；旧文件保留不删，但不再写。"""
-    raw = await _read(_key(user_id, PATTERN_FILE))
+    pattern_key = _key(user_id, PATTERN_FILE)
+    raw = await _read(pattern_key)
+    # 空文件不是合法的 pattern 快照：通常是进程在旧式截断写入期间退出留下的残骸。
+    # 既然目标文件已经存在，就把它视为用户明确的空状态，不再回退读取旧 facts，避免
+    # “清空后下一次读取又复活旧数据”；只写入规范 JSON，不恢复任何历史内容。
+    if not raw.strip():
+        try:
+            storage = get_storage()
+            if await storage.exists(pattern_key):
+                async with _list_write_lock(pattern_key):
+                    current = await storage.get(pattern_key)
+                    if not current.decode("utf-8", errors="replace").strip():
+                        await storage.put(pattern_key, b"[]", "application/json")
+                        vector_key = _key(user_id, PATTERN_VEC_FILE)
+                        if await storage.exists(vector_key):
+                            # pattern 文本已明确重置，旧向量只可能是孤儿缓存，不能再参与检索。
+                            await storage.put(vector_key, b"{}", "application/json")
+                        _log.info("pattern 空文件已规范化为 JSON 空数组 user_fp=%s", hashlib.sha256(str(user_id).encode()).hexdigest()[:8])
+                        return []
+        except Exception as exc:
+            # 保持记忆读取的 best-effort 语义；失败不伪造迁移成功，后续写入仍会重试。
+            _log.warning("pattern 空文件规范化失败 error_type=%s", type(exc).__name__)
+        # 文件不存在时才允许继续走旧 facts 迁移链。
     if not raw.strip():
         raw = await _read(_key(user_id, "facts.json"))   # 拆分前的旧名字，一次性兼容
     if raw.strip():
@@ -218,7 +258,35 @@ async def read_pattern_list(user_id) -> list[dict]:
 
 
 async def write_pattern_list(user_id, patterns: list[dict]) -> None:
-    await _write(_key(user_id, PATTERN_FILE), json.dumps(patterns, ensure_ascii=False, indent=2))
+    key = _key(user_id, PATTERN_FILE)
+    async with _list_write_lock(key):
+        await _write(key, json.dumps(patterns, ensure_ascii=False, indent=2))
+
+
+def pattern_list_digest(patterns: list[dict]) -> str:
+    """计算 pattern 快照摘要，供远程整理完成后的 CAS 提交使用。"""
+    return _list_digest(patterns)
+
+
+async def write_pattern_list_if_unchanged(
+    user_id, expected_digest: str, patterns: list[dict],
+) -> bool:
+    """仅在 pattern 仍等于快照时写入，避免覆盖期间新增的记忆。"""
+    key = _key(user_id, PATTERN_FILE)
+    async with _list_write_lock(key):
+        current_raw = (await _read(key)).strip()
+        try:
+            data = json.loads(current_raw) if current_raw else []
+        except (TypeError, ValueError):
+            return False
+        current = [
+            item for item in data
+            if isinstance(item, dict) and (item.get("text") or "").strip()
+        ] if isinstance(data, list) else []
+        if pattern_list_digest(current) != expected_digest:
+            return False
+        await _write(key, json.dumps(patterns, ensure_ascii=False, indent=2))
+        return True
 
 
 async def read_pattern_maintenance(user_id) -> dict:
@@ -256,7 +324,39 @@ async def read_profile_list(user_id) -> list[dict]:
 async def write_profile_list(user_id, profile: list[dict]) -> None:
     normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
     normalized = [item for item in normalized if item]
-    await _write(_key(user_id, PROFILE_FILE), json.dumps(normalized, ensure_ascii=False, indent=2))
+    key = _key(user_id, PROFILE_FILE)
+    async with _list_write_lock(key):
+        await _write(key, json.dumps(normalized, ensure_ascii=False, indent=2))
+
+
+def profile_list_digest(profile: list[dict]) -> str:
+    """计算 profile 规范化快照摘要，供远程整理完成后的 CAS 提交使用。"""
+    normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+    return _list_digest([item for item in normalized if item])
+
+
+async def write_profile_list_if_unchanged(
+    user_id, expected_digest: str, profile: list[dict],
+) -> bool:
+    """仅在 profile 仍等于快照时写入，避免覆盖期间新增的画像。"""
+    key = _key(user_id, PROFILE_FILE)
+    async with _list_write_lock(key):
+        current_raw = (await _read(key)).strip()
+        try:
+            data = json.loads(current_raw) if current_raw else []
+        except (TypeError, ValueError):
+            return False
+        current = (
+            [_normalize_profile_item(item, keep_ts=True) for item in data]
+            if isinstance(data, list) else []
+        )
+        current = [item for item in current if item]
+        if profile_list_digest(current) != expected_digest:
+            return False
+        normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+        normalized = [item for item in normalized if item]
+        await _write(key, json.dumps(normalized, ensure_ascii=False, indent=2))
+        return True
 
 
 def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:
@@ -387,17 +487,45 @@ async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
     返回 {done, total, with_patterns}（with_patterns=有 pattern 的用户数；memory 一并重算，不单独计数）。"""
     total, done, with_patterns = len(user_ids), 0, 0
     pattern_vectors = memory_vectors = failed_users = 0
-    for uid in user_ids:
+
+    async def rebuild_user(uid) -> dict:
         try:
             patterns = await read_pattern_list(uid)
+            pattern_count = 0
+            has_patterns = bool(patterns)
             if patterns:
-                pattern_vectors += await sync_pattern_vecs(uid, patterns, force=True, strict=True)
-                with_patterns += 1
+                pattern_count = await sync_pattern_vecs(uid, patterns, force=True, strict=True)
             mem = await read_memory_doc(uid)   # 长期记忆的块向量也一并重建
+            memory_count = 0
             if mem:
-                memory_vectors += await sync_memory_vecs(uid, mem, force=True, strict=True)
+                memory_count = await sync_memory_vecs(uid, mem, force=True, strict=True)
+            return {
+                "pattern_vectors": pattern_count,
+                "memory_vectors": memory_count,
+                "with_patterns": int(has_patterns),
+                "failed": 0,
+            }
         except Exception:
-            failed_users += 1
+            return {
+                "pattern_vectors": 0,
+                "memory_vectors": 0,
+                "with_patterns": 0,
+                "failed": 1,
+            }
+
+    semaphore = asyncio.Semaphore(max(1, VECTOR_REBUILD_CONCURRENCY))
+
+    async def limited_rebuild(uid):
+        async with semaphore:
+            return await rebuild_user(uid)
+
+    tasks = [asyncio.create_task(limited_rebuild(uid)) for uid in user_ids]
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        pattern_vectors += result["pattern_vectors"]
+        memory_vectors += result["memory_vectors"]
+        with_patterns += result["with_patterns"]
+        failed_users += result["failed"]
         done += 1
         if on_progress:
             try:

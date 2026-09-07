@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
-from app.models import File, Folder, Project
+from app.models import File, Folder, Project, WorkspaceDirectory
 from app.services.storage import get_storage
 from app.services.storage.keys import _build_key, _resolve_conflict, compose_logical_path
 
@@ -15,7 +15,12 @@ async def folder_dir_key(db: AsyncSession, user_id, folder: Folder) -> Optional[
     与该文件夹下文件 key 的目录部分同构。坏链/越权/项目缺失 → None。
     FolderOps（建夹物化 / 改名移动对账）与 folder_doctor（对账）共用一处路径真源。"""
     project_id = folder.project_id
-    space = "project" if project_id is not None else "personal"
+    workspace_directory = None
+    if folder.workspace_directory_id is not None:
+        workspace_directory = await get_owned(db, WorkspaceDirectory, folder.workspace_directory_id, user_id)
+        if not workspace_directory or workspace_directory.deleted_at is not None:
+            return None
+    space = "workspace" if workspace_directory else ("project" if project_id is not None else "personal")
     project_name = project_year = project_month = ""
     if project_id is not None:
         proj = await get_owned(db, Project, project_id, user_id)
@@ -24,13 +29,14 @@ async def folder_dir_key(db: AsyncSession, user_id, folder: Folder) -> Optional[
         project_name = proj.name
         date_str = proj.start_date or proj.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
-    resolved = await resolve_folder_path(db, user_id, folder.id, project_id)
+    resolved = await resolve_folder_path(db, user_id, folder.id, project_id, folder.workspace_directory_id)
     if not resolved:
         return None
     _, folder_path = resolved
     logical = compose_logical_path(
         space, project_name=project_name, project_id=project_id or 0,
-        project_year=project_year, project_month=project_month, folder_path=folder_path)
+        project_year=project_year, project_month=project_month, folder_path=folder_path,
+        workspace_directory_name=workspace_directory.directory_name if workspace_directory else "")
     return f"{user_id}/{logical}"
 
 
@@ -39,17 +45,18 @@ async def resolve_folder_path(
     user_id,
     folder_id: int,
     project_id: Optional[int],
+    workspace_directory_id: Optional[int] = None,
 ) -> Optional[Tuple[Folder, str]]:
     """返回归属已验证的文件夹和根到叶的路径；空间/项目不一致或坏链一律视为无效。"""
     folder = await get_owned(db, Folder, folder_id, user_id)
-    if not folder or folder.project_id != project_id:
+    if not folder or folder.project_id != project_id or folder.workspace_directory_id != workspace_directory_id:
         return None
 
     parts = []
     current = folder
     seen = set()
     while current:
-        if current.id in seen or current.project_id != project_id:
+        if current.id in seen or current.project_id != project_id or current.workspace_directory_id != workspace_directory_id:
             return None
         seen.add(current.id)
         parts.append(current.name)
@@ -127,13 +134,19 @@ async def relocate_folder_tree_files(
             date_value = project.start_date or project.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_value[:4], date_value[5:7]
 
-        resolved = await resolve_folder_path(db, user_id, folder.id, project_id)
+        resolved = await resolve_folder_path(db, user_id, folder.id, project_id, folder.workspace_directory_id)
         if not resolved:
             raise ValueError("文件夹层级无效")
         _, folder_path = resolved
+        workspace_directory = None
+        if folder.workspace_directory_id is not None:
+            workspace_directory = await get_owned(db, WorkspaceDirectory, folder.workspace_directory_id, user_id)
+            if workspace_directory is None or workspace_directory.deleted_at is not None:
+                raise ValueError("文件夹 Workspace 不存在")
+        file_space = "workspace" if workspace_directory else ("project" if project_id is not None else "personal")
         new_key = _build_key(
             uid=user_id,
-            space="project" if project_id is not None else "personal",
+            space=file_space,
             display_name=file.display_name,
             ext=file.ext,
             project_name=project_name,
@@ -141,6 +154,7 @@ async def relocate_folder_tree_files(
             project_year=project_year,
             project_month=project_month,
             folder_path=folder_path,
+            workspace_directory_name=workspace_directory.directory_name if workspace_directory else "",
         )
         new_name = file.display_name
         if new_key != file.storage_key:
@@ -149,6 +163,7 @@ async def relocate_folder_tree_files(
             file.storage_key = new_key
             file.display_name = new_name
             moved += 1
-        file.space = "project" if project_id is not None else "personal"
+        file.space = file_space
         file.project_id = project_id
+        file.workspace_directory_id = folder.workspace_directory_id
     return moved

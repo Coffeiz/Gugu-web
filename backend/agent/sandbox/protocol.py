@@ -20,6 +20,12 @@ class ExecuteRequest:
     network_profile: Literal["none", "egress"] = "none"
     egress_expires_at: float | None = None
     request_id: str | None = None
+    personal_root: str | None = None
+    project_root: str | None = None
+    personal_read_only: bool = True
+    project_read_only: bool = True
+    allow_script_execution: bool = False
+    environment: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExecuteRequest":
@@ -54,6 +60,15 @@ class ExecuteRequest:
             raise ValueError("sandboxd timeout 超出允许范围")
         if not 1 <= max_output_chars <= 120_000:
             raise ValueError("sandboxd 输出上限超出允许范围")
+        environment = value.get("environment")
+        if environment is not None:
+            if not isinstance(environment, dict) or len(environment) > 32:
+                raise ValueError("sandboxd environment 无效")
+            for key, env_value in environment.items():
+                if not isinstance(key, str) or not key or not key[0].isalpha() or not key.replace("_", "").isalnum():
+                    raise ValueError("sandboxd environment 名称无效")
+                if not isinstance(env_value, str) or len(env_value) > 4096 or "\x00" in env_value:
+                    raise ValueError("sandboxd environment 值无效")
         return cls(
             request_id=str(value.get("request_id") or "").strip() or None,
             root=root,
@@ -65,6 +80,12 @@ class ExecuteRequest:
             quota_bytes=quota_bytes,
             network_profile=network_profile,
             egress_expires_at=egress_expires_at,
+            personal_root=str(value.get("personal_root") or "").strip() or None,
+            project_root=str(value.get("project_root") or "").strip() or None,
+            personal_read_only=bool(value.get("personal_read_only", True)),
+            project_read_only=bool(value.get("project_read_only", True)),
+            allow_script_execution=bool(value.get("allow_script_execution", False)),
+            environment=environment,
         )
 
     def to_json(self) -> bytes:
@@ -80,6 +101,12 @@ class ExecuteRequest:
             "quota_bytes": self.quota_bytes,
             "network_profile": self.network_profile,
             "egress_expires_at": self.egress_expires_at,
+            "personal_root": self.personal_root,
+            "project_root": self.project_root,
+            "personal_read_only": self.personal_read_only,
+            "project_read_only": self.project_read_only,
+            "allow_script_execution": self.allow_script_execution,
+            "environment": self.environment,
         }, ensure_ascii=False) + "\n").encode("utf-8")
 
 

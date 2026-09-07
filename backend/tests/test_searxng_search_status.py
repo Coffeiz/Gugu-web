@@ -354,6 +354,59 @@ async def test_inspect_images_can_read_historical_attachment(monkeypatch):
     assert result["_vision_images"][0]["attach_id"] == "abc123"
 
 
+async def test_inspect_images_can_read_owned_file_id(monkeypatch):
+    search_tools.reset_image_inspection_budget()
+    from app.core import chat_attach
+
+    image_file = SimpleNamespace(
+        id=2872,
+        ext="png",
+        size_bytes=4,
+        storage_key="user-a/personal/F1/quali.png",
+        display_name="quali",
+    )
+
+    async def _get_user_file(db, user_id, file_id):
+        assert db == "db"
+        assert user_id == "user-a"
+        assert file_id == 2872
+        return image_file
+
+    class _Storage:
+        async def get(self, key):
+            assert key == image_file.storage_key
+            return b"image"
+
+    monkeypatch.setattr(search_tools, "get_user_file", _get_user_file)
+    monkeypatch.setattr(search_tools, "get_storage", lambda: _Storage())
+    monkeypatch.setattr(chat_attach, "vision_ready", lambda: True)
+    monkeypatch.setattr(chat_attach, "vision_block", lambda data, ext: {
+        "type": "image", "source": {"type": "base64", "data": "x"},
+    })
+
+    result = await search_tools._inspect_images("db", "user-a", {
+        "images": [{"file_id": 2872, "title": "蒙扎排位图"}],
+    })
+
+    assert result["inspected_count"] == 1
+    assert result["_vision_images"][0]["file_id"] == 2872
+    assert result["_vision_images"][0]["title"] == "蒙扎排位图"
+
+
+async def test_inspect_images_file_id_keeps_ownership_boundary(monkeypatch):
+    async def _get_user_file(db, user_id, file_id):
+        return None
+
+    monkeypatch.setattr(search_tools, "get_user_file", _get_user_file)
+
+    result = await search_tools._inspect_images("db", "user-a", {
+        "images": [{"file_id": 999}],
+    })
+
+    assert result["inspected_count"] == 0
+    assert result["failed"] == [{"result_id": "", "file_id": 999, "error": "文件不存在"}]
+
+
 def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
     tools = {tool.name: tool for tool in search_tools.SearchSkill.tools}
 
@@ -370,6 +423,16 @@ def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
     assert image_properties["max_results"]["maximum"] == 20
     assert "inspect_images" not in image_properties
     assert tools["inspect_images"].input_schema["properties"]["images"]["maxItems"] == 20
+    image_item = tools["inspect_images"].input_schema["properties"]["images"]["items"]
+    assert image_item["properties"]["file_id"] == {"type": "integer"}
+    assert {"required": ["file_id"]} in image_item["anyOf"]
+
+    from agent.tools.files import FilesSkill
+
+    read_file = next(tool for tool in FilesSkill.tools if tool.name == "read_file")
+    assert "位图会直接交给视觉模型查看" in read_file.description
+    assert "SVG 按源码文本读取" in read_file.description
+    assert "file:///" in read_file.description
 
     deep_max = tools["deep_research"].input_schema["properties"]["max_results"]
     assert deep_max["minimum"] == 1

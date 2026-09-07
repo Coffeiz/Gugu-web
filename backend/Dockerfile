@@ -23,7 +23,7 @@ ARG GUGU_INSTALL_DOCKER_CLI=false
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils fonts-noto-cjk ffmpeg curl build-essential nodejs \
+        poppler-utils fonts-noto-cjk ffmpeg curl build-essential nodejs acl \
         $(if [ "${GUGU_INSTALL_DOCKER_CLI}" = "true" ]; then echo docker.io; fi)
 
 WORKDIR /app
@@ -51,7 +51,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 COPY . .
+COPY scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs
+RUN chmod 755 /usr/local/bin/prepare_rootless_storage.py
 
 # 不像 systemd 单元那样切非 root 用户跑（那份加固对生产才有意义）——这个镜像的
 # docker-compose.yml 用法会把 ./backend 整个 bind mount 进 /app，运行时的文件属主

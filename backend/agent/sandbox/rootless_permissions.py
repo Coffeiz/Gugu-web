@@ -87,21 +87,38 @@ def build_permission_plan(
     subgid: tuple[SubordinateRange, ...],
     container_uid: int = 65532,
     container_gid: int = 65532,
+    mapped_uid: int | None = None,
+    mapped_gid: int | None = None,
 ) -> WorkspacePermissionPlan:
-    """生成安全的 workspace ACL 初始化计划，不执行任何命令。"""
+    """生成安全的 workspace ACL 初始化计划，不执行任何命令。
+
+    Rootless Docker 使用 subordinate UID/GID 映射；rootful Docker 则直接使用
+    容器 UID/GID。调用方可以显式传入已从目标 daemon 解析出的宿主 ID，避免把
+    rootless 映射规则错误地应用到另一个 Docker daemon。
+    """
     resolved = Path(root).expanduser().resolve(strict=False)
     if not resolved.is_absolute() or resolved == Path("/"):
         raise ValueError("workspace 根目录必须是非根绝对路径")
     if resolved.name in {"", ".", ".."}:
         raise ValueError("workspace 根目录无效")
-    uid = mapped_id(subuid, container_uid)
-    gid = mapped_id(subgid, container_gid)
-    # 保留宿主机登录用户为 owner，用 ACL 给映射组读写执行权限。
+    uid = mapped_uid if mapped_uid is not None else mapped_id(subuid, container_uid)
+    gid = mapped_gid if mapped_gid is not None else mapped_id(subgid, container_gid)
+    # 保留宿主机目录 owner，同时显式给宿主服务用户和沙盒映射组访问权限。
+    # 沙盒容器会在 bind mount 中创建脚本/缓存目录；这些 inode 的 owner 是
+    # subordinate UID。若只给映射组权限，宿主 backend 无法在该目录创建原子
+    # 替换文件，表现为 edit_file 的 PermissionError。login 可以是用户名，也
+    # 可以是数字 UID；后者适用于权限初始化容器未携带宿主机 passwd 的情况。
     commands = (
         ("install", "-d", "-o", login, "-g", str(gid), "-m", "0770", str(resolved)),
         ("setfacl", "-m", f"u:{login}:rwx,g:{gid}:rwx", str(resolved)),
-        ("setfacl", "-d", "-m", f"u::{"rwx"},g::{"rwx"},g:{gid}:rwx,m::rwx", str(resolved)),
-        ("setfacl", "-R", "-m", f"g:{gid}:rwX", str(resolved)),
+        ("setfacl", "-d", "-m", f"u::rwx,u:{login}:rwx,g::rwx,g:{gid}:rwx,m::rwx", str(resolved)),
+        ("setfacl", "-R", "-m", f"u:{login}:rwX,g:{gid}:rwX", str(resolved)),
+        # 仅给根目录设置 default ACL 不够：文件库里已经存在的子目录不会
+        # 继承它。对每一级目录设置 default ACL，保证后续 mkdir/上传都可写。
+        (
+            "find", str(resolved), "-type", "d", "-exec", "setfacl", "-m",
+            f"u:{login}:rwx,g:{gid}:rwx,m::rwx,d:u:{login}:rwx,d:g:{gid}:rwx,d:m::rwx", "{}", "+",
+        ),
     )
     return WorkspacePermissionPlan(resolved, login, uid, gid, commands)
 

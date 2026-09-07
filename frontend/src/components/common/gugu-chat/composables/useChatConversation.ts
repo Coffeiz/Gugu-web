@@ -1,5 +1,6 @@
 import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
+import { i18n } from '@/i18n'
 import { useLiveStore } from '@/stores/live'
 import { getGreeting } from '@/composables/shared/useGreeting'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
@@ -69,6 +70,7 @@ export function useChatConversation(options: {
   const inputText = ref('')
   const inputReferences = ref<ChatReference[]>([])
   const thinkingLabels = ref<string[]>([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
+  const contextCompactingLabels = ref<string[]>([]) // 自动压缩状态文案（后台「状态命名」_context_compaction）
   // 状态气泡贯穿整个生成期：工具/复查/思考只替换同一个气泡的内容，直到真实输出或中断。
   const statusKind = ref('')   // '' | 'text'（工具/自定义思考）| 'dots'（默认思考三点）
   const statusTyped = ref('')  // 当前显示的文字（dots 时为空）
@@ -82,6 +84,11 @@ export function useChatConversation(options: {
     // 「思考中」：设了自定义文案就随机取一条；否则三个点。
     const c = thinkingLabels.value
     return c.length ? { kind: 'text', label: c[Math.floor(Math.random() * c.length)] } : { kind: 'dots' }
+  }
+
+  function _contextCompactingItem(): StatusItem {
+    const c = contextCompactingLabels.value
+    return { kind: 'text', label: c.length ? c[Math.floor(Math.random() * c.length)] : i18n.global.t('chatUi.contextCompacting') }
   }
 
   function cancelPendingStatus() {
@@ -344,7 +351,7 @@ export function useChatConversation(options: {
     getViewGeneration,
     pendingAtt: options.pendingAtt,
     composerRef: options.composerRef,
-    setStatus, clearStatus, thinkingItem: _thinkingItem,
+    setStatus, clearStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
     scrollBottom, fetchSessions,
     refreshAfterTools: options.refreshAfterTools,
     loadQuota: options.loadQuota,
@@ -366,7 +373,7 @@ export function useChatConversation(options: {
     waitForStableScrollLayout,
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
-  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, loadSession, newSession, deleteSession, renameSession } = sessionsApi
+  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession } = sessionsApi
 
   // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
   watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -415,10 +422,11 @@ export function useChatConversation(options: {
 
   return {
     messages, mkid, now, sessionSettling,
-    inputText, inputReferences, thinkingLabels, streaming, statusKind, statusTyped,
+    inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,
     sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
+    currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
     stick, lastTop: _lastTop,
     fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,

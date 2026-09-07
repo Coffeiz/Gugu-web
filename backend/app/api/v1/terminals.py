@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import account_is_active, decode_user_token, get_current_user, get_current_user_id, is_user_active
@@ -18,7 +19,7 @@ from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
-from app.models import User
+from app.models import User, TerminalSessionRecord, Workspace
 from app.services.terminals import (
     create_terminal, delete_terminal, get_terminal, list_terminals,
     terminate_terminal as terminate_terminal_record,
@@ -26,13 +27,14 @@ from app.services.terminals import (
     append_shell_result, append_terminal_status,
 )
 from agent.interactions.confirmations import redeem_confirmation
-from agent.terminal.access import TerminalOperation, authorize_operation, page_access
+from agent.terminal.access import TerminalOperation, authorize_operation, page_access, pty_access
 from agent.terminal.contracts import TerminalMode
 from agent.terminal.contracts import TerminalStatus
 from agent.terminal.protocol import PtyClientMessage
 from agent.terminal.pty_manager import PtyLaunchSpec
 from agent.terminal.runtime import get_pty_manager
-from app.services.workspaces import resolve_shell_root
+from app.services.workspaces import resolve_project_root, resolve_shell_root, resolve_user_personal_root
+from app.services.filesystem_authorization import resolve_filesystem_policy
 from agent.tools.shell import _shell
 from agent.sandbox.client import SandboxdClient
 from app.core.config import get_settings
@@ -127,7 +129,8 @@ async def get_terminals(user: User = Depends(get_current_user), db: AsyncSession
     await prune_terminals(db, user.id)
     await db.commit()
     rows = await list_terminals(db, user.id)
-    return {"enabled": True, "items": [serialize_terminal(row) for row in rows]}
+    pty_status = await pty_access(db, user.id)
+    return {"enabled": True, "ptyEnabled": pty_status.allowed, "items": [serialize_terminal(row) for row in rows]}
 
 
 @router.get("/metrics")
@@ -145,6 +148,8 @@ async def add_terminal(body: TerminalCreate, user: User = Depends(get_current_us
                                     workspace_id=body.workspaceId, mode=body.mode)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await db.commit()
@@ -160,6 +165,42 @@ async def get_terminal_detail(terminal_id: str, user: User = Depends(get_current
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
     return serialize_terminal(row)
+
+
+async def _revalidate_pty_start(state_db: AsyncSession, user_id, terminal_id: str,
+                                authorized_workspace_id) -> TerminalSessionRecord:
+    """PTY 宣布 RUNNING 前的 server-owned 复核（持行锁）。
+
+    auth 阶段的授权在 PTY 启动期间可能已失效（典型：Workspace 删除事务把终端标
+    terminated，但删除路径对 manager 只扫描一次，扫不到之后才启动的 PTY）。这里用
+    SELECT … FOR UPDATE 与 DELETE 的 UPDATE 串行化：DELETE 先提交 → 本复核看到
+    terminated/绑定消失，拒绝启动；本复核先拿锁 → DELETE 等待，提交后一定能看到
+    这个 manager 里的活 PTY 并 terminate 它。
+    """
+    state_row = (await state_db.execute(
+        select(TerminalSessionRecord).where(
+            TerminalSessionRecord.id == terminal_id,
+            TerminalSessionRecord.owner_id == user_id,
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if state_row is None:
+        raise HTTPException(status_code=404, detail="交互式终端不存在")
+    # closed 终端必须走显式 reopen，setup 阶段不得直接复活。
+    if state_row.closed_at is not None or state_row.status == TerminalStatus.TERMINATED.value:
+        raise HTTPException(status_code=403, detail="终端已终止，请先重新打开")
+    if state_row.workspace_id != authorized_workspace_id:
+        raise HTTPException(status_code=403, detail="终端工作区绑定已变化，请刷新后重试")
+    if authorized_workspace_id is not None:
+        binding = await state_db.get(Workspace, authorized_workspace_id)
+        if binding is None:
+            raise HTTPException(status_code=403, detail="终端绑定的 Workspace 已删除")
+    access = await authorize_operation(
+        state_db, user_id, owner_id=state_row.owner_id, session_id=state_row.session_id,
+        workspace_id=state_row.workspace_id, operation=TerminalOperation.INPUT,
+    )
+    if not access.allowed:
+        raise HTTPException(status_code=403, detail=access.reason)
+    return state_row
 
 
 @router.websocket("/{terminal_id}/ws")
@@ -185,10 +226,22 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             )
             if not access.allowed:
                 raise HTTPException(status_code=403, detail=access.reason)
+            pty_status = await pty_access(auth_db, user_id)
+            if not pty_status.allowed:
+                raise HTTPException(status_code=403, detail=pty_status.reason)
             root = await resolve_shell_root(auth_db, user_id, row.shell_mode, row.workspace_id)
+            personal_root = await resolve_user_personal_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
+            project_root = await resolve_project_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
+            code_execution_enabled = bool(get_settings().sandbox.code_execution_enabled)
+            filesystem_policy = (
+                await resolve_filesystem_policy(auth_db, user_id, subject_id=row.session_id)
+                if row.shell_mode == "sandbox" and row.session_id is not None
+                else None
+            )
             row_id = row.id
             row_shell_mode = row.shell_mode
             row_network_profile = row.network_profile
+            row_workspace_id = row.workspace_id
         if root is None:
             raise HTTPException(status_code=403, detail="终端没有可用的沙盒目录")
         # 先完成 WebSocket 握手，再启动 PTY/发布状态事件，避免慢沙盒或事件总线让
@@ -197,6 +250,11 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         manager = get_pty_manager()
         spec = PtyLaunchSpec(
             terminal_id=row_id, root=str(root), shell_mode=row_shell_mode,
+            personal_root=str(personal_root) if personal_root else None,
+            project_root=str(project_root) if project_root else None,
+            personal_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+            project_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+            code_execution_enabled=code_execution_enabled,
             network_profile=row_network_profile, cols=120, rows=32,
         )
         session = manager.get(row_id)
@@ -209,17 +267,26 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
         if not attached:
             await manager.attach(row_id)
             attached = True
-        async with db_session._SessionLocal() as state_db:
-            state_row = await get_terminal(state_db, user_id, row_id)
-            if state_row is None:
-                raise HTTPException(status_code=404, detail="交互式终端不存在")
-            state_row.status = TerminalStatus.RUNNING.value
-            state_row.pty_pid = session.handle.pid
-            state_row.pty_sandbox_id = session.handle.sandbox_id
-            state_row.pty_cols, state_row.pty_rows = session.cols, session.rows
-            state_row.updated_at = now_utc()
-            await state_db.commit()
-            state_payload = serialize_terminal(state_row)
+        try:
+            async with db_session._SessionLocal() as state_db:
+                # RUNNING 落库前先持行锁复核授权仍成立；复核失败时 runtime 侧必须
+                # fail-closed——把刚启动/仍存活的 PTY 一起 terminate，不能留着收输入。
+                state_row = await _revalidate_pty_start(state_db, user_id, row_id, row_workspace_id)
+                state_row.status = TerminalStatus.RUNNING.value
+                state_row.pty_pid = session.handle.pid
+                state_row.pty_sandbox_id = session.handle.sandbox_id
+                state_row.pty_cols, state_row.pty_rows = session.cols, session.rows
+                state_row.updated_at = now_utc()
+                await state_db.commit()
+                state_payload = serialize_terminal(state_row)
+        except Exception:
+            try:
+                await manager.terminate(row_id, force=True)
+            except LookupError:
+                pass
+            queue = None
+            attached = False
+            raise
         terminal_status = TerminalStatus.RUNNING.value
         await events.publish(user_id, "terminals", operation="update", entity_id=row_id,
                              event_payload=state_payload)
@@ -388,6 +455,10 @@ async def rename_terminal_route(terminal_id: str, body: TerminalUpdate, user: Us
 @router.post("/{terminal_id}/input")
 async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     row = _require(await get_terminal(db, user.id, terminal_id))
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value:
+        pty_status = await pty_access(db, user.id)
+        if not pty_status.allowed:
+            raise HTTPException(status_code=403, detail=pty_status.reason)
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, workspace_id=row.workspace_id, operation=TerminalOperation.INPUT)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
@@ -543,6 +614,10 @@ async def reopen_terminal_view(terminal_id: str, user: User = Depends(get_curren
                                        workspace_id=row.workspace_id, operation=TerminalOperation.REOPEN)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value:
+        pty_status = await pty_access(db, user.id)
+        if not pty_status.allowed:
+            raise HTTPException(status_code=403, detail=pty_status.reason)
     try:
         await reopen_terminal(db, row)
     except ValueError as exc:

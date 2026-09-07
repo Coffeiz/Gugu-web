@@ -49,7 +49,8 @@ async def test_scheduled_task_api_returns_existing_event_reminder(db, user_a):
     body = TaskCreate(
         name="合成测试活动提醒",
         payload="提醒合成测试活动",
-        cron="@once:2099-01-02T09:30",
+        schedule_kind="once",
+        start_at="2099-01-02T09:30:00",
         event_id=event.id,
     )
 

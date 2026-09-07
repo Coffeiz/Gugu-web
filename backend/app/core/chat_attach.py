@@ -91,7 +91,8 @@ VIDEO_MMFILE_MAX = 90 * 1024 * 1024    # ②③ 触发转码的源文件大小�
 VIDEO_MMFILE_PURPOSE = "video_understanding"   # Files API 上传 purpose
 
 # 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
-# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg 是矢量、Pillow 不解，仍走文字提示。
+# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg
+# 保留为源码文件，由文件工具按 UTF-8 文本读取；不伪造为视觉图片。
 VISION_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif"}
 _VISION_PASSTHROUGH = {"png", "jpg", "jpeg", "gif", "webp"}   # API 原生收，达标免重编码
 _VISION_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -1255,18 +1256,26 @@ def _fit_image_for_vision(raw: bytes, ext: str):
         return None
 
 
-def vision_ready() -> bool:
-    """当前模型已开启视觉能力。
+def vision_ready(model_cfg=None) -> bool:
+    """当前实际运行模型已开启视觉能力。
 
     工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
     转成 ``image_url``，因此 DeepSeek Vision 也可以读取工具返回的图片。
+
+    工具 handler 通常不会显式收到 model_cfg，因此默认优先读取本轮
+    ``modelctx`` 绑定的实际模型；只有没有运行上下文时才回退到全局配置。
+    不能直接只读 ``settings.ai``，否则用户 BYOK/pool 选中的视觉模型会被误判。
     """
     try:
         from app.core.config import get_settings
         from agent import providers
         s = get_settings()
-        capabilities = providers.adapter_for(s.ai).capabilities(getattr(s.ai, "model", "") or "")
-        return _vision_enabled() and (capabilities.vision or capabilities.api_format == "anthropic")
+        if model_cfg is None:
+            from agent.llm import modelctx
+            model_cfg = modelctx.get_model_cfg()
+        ai = model_cfg or s.ai
+        capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
+        return _vision_enabled(ai) and (capabilities.vision or capabilities.api_format == "anthropic")
     except Exception:
         return False
 

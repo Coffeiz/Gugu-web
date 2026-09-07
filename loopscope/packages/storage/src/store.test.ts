@@ -71,8 +71,8 @@ test('TraceStore 保留用户已有的会话标题并按 before 分页', () => {
     store.ingestRun({ ...base, id: 'run-title-3', started_at: 3, title: '新标题不应覆盖' })
 
     assert.equal(store.listSessions()[0]?.title, '用户自定义标题')
-    assert.deepEqual(store.listRuns('session-title-1', { limit: 2 }).map(run => run.id), ['run-title-2', 'run-title-3'])
-    assert.deepEqual(store.listRuns('session-title-1', { limit: 2, before: 3 }).map(run => run.id), ['run-title-1', 'run-title-2'])
+    assert.deepEqual(store.listRuns('session-title-1', { limit: 2 }).map(run => run.id), ['run-title-3', 'run-title-2'])
+    assert.deepEqual(store.listRuns('session-title-1', { limit: 2, before: 3 }).map(run => run.id), ['run-title-2', 'run-title-1'])
   } finally {
     store.close()
     fs.rmSync(directory, { recursive: true, force: true })

@@ -312,6 +312,67 @@ def test_schema_normalization_does_not_guess_required_empty_numbers():
     assert adaptations == ["include_content:empty_omitted", "types:item_wrapper_unwrapped"]
 
 
+def _create_file_like_schema():
+    """create_file 的结构骨架：files 是 array-of-objects，target 是可选对象。"""
+    return {
+        "type": "object",
+        "properties": {
+            "target": {
+                "type": "object",
+                "properties": {"space": {"type": "string", "enum": ["project", "personal"]}},
+                "additionalProperties": False,
+            },
+            "files": {
+                "type": "array", "minItems": 1, "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "content": {"type": "string"},
+                        "space": {"type": "string", "enum": ["project", "personal"]},
+                    },
+                    "required": ["name", "content"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["files"],
+        "additionalProperties": False,
+    }
+
+
+def test_schema_normalization_hoists_flattened_array_items():
+    """拍平形态解除：item 字段全部上提到顶层、容器传空串 → 重装回数组。"""
+    normalized, adaptations = normalize_input_by_schema(_create_file_like_schema(), {
+        "target": "", "files": "",
+        "name": "_token_test.py", "content": "print(1)", "space": "personal",
+    })
+
+    assert normalized == {
+        "files": [{"name": "_token_test.py", "content": "print(1)", "space": "personal"}],
+    }
+    assert adaptations == ["files:flattened_items_hoisted", "target:empty_omitted"]
+
+
+def test_schema_normalization_does_not_hoist_with_unplaceable_top_level_keys():
+    """顶层存在 items 也装不下的多余键时无法确认是拍平，保留原样让校验报错。"""
+    raw = {"files": "", "name": "a.py", "content": "x", "bogus": 1}
+    normalized, adaptations = normalize_input_by_schema(_create_file_like_schema(), raw)
+
+    assert normalized == raw
+    assert adaptations == []
+
+
+def test_schema_normalization_keeps_real_array_values_untouched():
+    """files 已有真实数组时不做拍平解除，item 内部仍走常规归一化。"""
+    normalized, adaptations = normalize_input_by_schema(_create_file_like_schema(), {
+        "files": [{"name": "a.py", "content": "x"}],
+    })
+
+    assert normalized == {"files": [{"name": "a.py", "content": "x"}]}
+    assert adaptations == []
+
+
 async def test_dispatch_applies_schema_normalization_before_handler():
     seen = None
 

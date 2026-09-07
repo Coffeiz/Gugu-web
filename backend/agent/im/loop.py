@@ -388,7 +388,8 @@ async def finalize_im_response(platform: str, platform_user_id: str,
 
 
 async def handle_im_command(user_id, message: str, session_id: Optional[int] = None,
-                            *, allow_leading_mention: bool = False) -> Optional[str]:
+                            *, allow_leading_mention: bool = False,
+                            locale: str | None = None) -> Optional[str]:
     """处理不需要模型的 IM 命令，返回回复文本或 ``None``。"""
     from agent import commands
 
@@ -397,6 +398,7 @@ async def handle_im_command(user_id, message: str, session_id: Optional[int] = N
         message,
         session_id=session_id,
         allow_leading_mention=allow_leading_mention,
+        locale=locale,
     )
 
 
@@ -781,6 +783,10 @@ async def dispatch_im_message(payload: dict):
             interaction_result = None
         if interaction_result is not None:
             result_payload = interaction_result.get("result") or {}
+            if result_payload.get("status") == "awaiting_text":
+                await send_text(payload, "请直接发送你的回复，咕咕会继续处理。")
+                trace.finish_run("success")
+                return None
             selected_text = str(
                 result_payload.get("text")
                 or interaction_result.get("option_id")
@@ -857,7 +863,7 @@ async def dispatch_im_message(payload: dict):
     if cmd_reply is not None and not goal_start:
         if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
             await _send_interaction_prompts(payload, [cmd_reply.get("prompt") or {}])
-            trace.finish_run("success", "已发送工作区删除确认")
+            trace.finish_run("success", "已发送命令确认交互")
             return None
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)
@@ -871,6 +877,39 @@ async def dispatch_im_message(payload: dict):
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
+    # IM 运行同时镜像到 Web 的 genstream：Web 可以观察同一条 IM 会话的实时
+    # token、工具和交互状态，但不重复持久化消息，也不改变平台发送逻辑。
+    from agent.llm import genstream
+    web_stream_session_id = req.session_id
+    web_stream_owner_id = genstream.new_run_id()
+    web_stream_started = bool(web_stream_session_id)
+    web_stream_failed = False
+    if web_stream_started:
+        await genstream.begin(web_stream_session_id, owner_run_id=web_stream_owner_id)
+
+    async def _publish_web_event(event: dict) -> None:
+        if not web_stream_started or not isinstance(event, dict):
+            return
+        mirrored = dict(event)
+        mirrored.setdefault("source", platform)
+        await genstream.publish(web_stream_session_id, mirrored)
+
+    async def _mirror_stream(source):
+        """转发 IM 流，同时把可展示事件复制到 Web genstream。"""
+        async for line in source:
+            if isinstance(line, str) and line.startswith("data: "):
+                try:
+                    event = json.loads(line[6:])
+                except (TypeError, ValueError):
+                    event = None
+                # 工具与交互事件由 runner 回调镜像，避免流包装器和回调各发一份，
+                # 导致 Web 重复创建工具气泡。
+                if isinstance(event, dict) and event.get("type") not in {
+                    "done", "error", "tool_call", "tool_done", "interaction_required",
+                }:
+                    await _publish_web_event(event)
+            yield line
+
     shown_interaction_ids: set[int] = set()
     sent_round_indices: set[int] = set()
     immediate_round_index = 0
@@ -886,6 +925,7 @@ async def dispatch_im_message(payload: dict):
             qq_private_streaming = False
     async def _show_tool_event(event: dict) -> None:
         """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
+        await _publish_web_event(event)
         if not show_tool_interactions:
             return
         from agent.im.replies import send_tool_event
@@ -898,6 +938,7 @@ async def dispatch_im_message(payload: dict):
 
         if not str(text or "").strip():
             return True
+        await _publish_web_event({"type": "token", "content": str(text)})
         index = immediate_round_index
         immediate_round_index += 1
         # 发送失败后不能再把后续 round 当成连续前缀；最终收尾会按已成功
@@ -913,6 +954,7 @@ async def dispatch_im_message(payload: dict):
 
     async def _show_im_interaction(interaction: dict) -> None:
         """在共享 Runner 进入等待前发送交互，并结束 IM typing。"""
+        await _publish_web_event({"type": "interaction_required", **interaction})
         # ask_user 会让 Runner 等待用户选择；typing 不能持续到下一条消息，
         # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
         await stop_im_typing(activity)
@@ -939,7 +981,7 @@ async def dispatch_im_message(payload: dict):
                 on_tool_event=_show_tool_event,
             )
             stream_sent, resp = await feishu.send_text_stream(
-                str(receive_id or ""), token_iter,
+                str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
             )
             if resp is None:
@@ -960,7 +1002,7 @@ async def dispatch_im_message(payload: dict):
                 on_tool_event=_show_tool_event,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
-                payload, token_iter
+                payload, _mirror_stream(token_iter)
             )
         else:
             resp = await agent_loop.run_collect(
@@ -971,10 +1013,21 @@ async def dispatch_im_message(payload: dict):
             )
             reply_text = ""
     except BaseException:
+        web_stream_failed = True
+        if web_stream_started:
+            await _publish_web_event({
+                "type": "error",
+                "message": "IM 运行失败，请稍后重试。",
+                "message_key": "chatUi.genericError",
+            })
         trace.finish_run("error")
         raise
     finally:
         await finish_im_activity(activity)
+        if web_stream_started:
+            if not web_stream_failed:
+                await _publish_web_event({"type": "done", "source": platform})
+            await genstream.end(web_stream_session_id, owner_run_id=web_stream_owner_id)
 
     await persist_im_session(
         platform,

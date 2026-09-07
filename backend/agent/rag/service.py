@@ -31,7 +31,7 @@ from agent.rag.scope import (
 from agent.rag.vector_cache import cache_key
 
 
-MAX_ACTIVE_RESULTS = 10
+MAX_ACTIVE_RESULTS = 25
 DEFAULT_RESULTS = 5
 MAX_OUTPUT_CHARS = 3000
 MAX_PER_SOURCE = 3
@@ -328,6 +328,7 @@ class UnifiedRecallService:
         strategy: str = "auto",
         limit: int = DEFAULT_RESULTS,
         exclude_content_hashes: set[str] | None = None,
+        mode: str = "automatic",
     ) -> dict:
         requested_limit = max(1, min(int(limit or DEFAULT_RESULTS), MAX_ACTIVE_RESULTS))
         from agent.rag.context import (
@@ -385,6 +386,7 @@ class UnifiedRecallService:
             }
             if exclude_content_hashes is not None:
                 rank_kwargs["exclude_content_hashes"] = exclude_content_hashes
+            rank_kwargs["selection_mode"] = "top_k" if mode == "tool" else "confidence"
             ranked_candidates, rank_stats = await rank_candidates_with_cache(
                 candidate_values[0].scope.owner_user_id if candidate_values else "",
                 query, candidate_values, **rank_kwargs,
@@ -398,6 +400,7 @@ class UnifiedRecallService:
                 "top_confidence": 0.0,
                 "threshold": 0.35,
                 "preferred_threshold": 0.55,
+                "selection_mode": "top_k" if mode == "tool" else "confidence",
                 "scoring_version": "confidence-v1",
                 "rejected_duplicate": 0,
                 "rejected_parent": 0,
@@ -483,6 +486,7 @@ class UnifiedRecallService:
             "top_confidence": rank_stats.get("top_confidence", 0),
             "confidence_threshold": rank_stats.get("threshold", 0.35),
             "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
+            "selection_mode": rank_stats.get("selection_mode", "confidence"),
             "scoring_version": rank_stats.get("scoring_version", "confidence-v1"),
             "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
             "cache_hit": bool(cache_values) and all(cache_values),
@@ -527,6 +531,7 @@ async def search_memory(
         scope=query_scopes,
         strategy=strategy,
         limit=limit,
+        mode=mode,
     )
     scope_type, scope_key = _scope_record_fields(query_scopes)
     record_recall(
@@ -610,6 +615,7 @@ async def search_knowledge(
     result = await service.search(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
         exclude_content_hashes=exclude_content_hashes,
+        mode=mode,
     )
     scope_type, scope_key = _scope_record_fields(scope)
     record_recall(
@@ -660,6 +666,7 @@ async def search_conversations(
         scope=owner_scope(user_id),
         strategy="bm25",
         limit=max(1, min(int(limit or 6), 20)),
+        mode=mode,
     )
     record_recall(
         namespace="conversation", source_type="conversation",
@@ -686,17 +693,21 @@ async def search_conversations(
 
 
 async def _load_cached_vectors(user_id, documents) -> dict[str, list[float]]:
-    """读取已有 memory/pattern cache，不在查询热路径生成文档向量。"""
+    """读取 Memory、Knowledge 和 pattern 专属缓存，不在查询热路径生成向量。"""
     from agent.memory import embedding, store
+    from agent.knowledge.vector_cache import read_vectors as read_knowledge_vectors
 
     tag = embedding.model_tag()
     pattern = await store.read_pattern_vecs(user_id)
     memory = await store.read_memory_vecs(user_id)
+    knowledge = await read_knowledge_vectors(user_id)
     result: dict[str, list[float]] = {}
     for doc in documents:
         key = doc.metadata.get("vector_key")
         if doc.source_id == "pattern":
             cached = pattern.get(key or "")
+        elif doc.source_type == "knowledge":
+            cached = knowledge.get(cache_key(doc) or "")
         else:
             cached = memory.get(cache_key(doc) or "")
         if cached and cached.get("t") == tag and isinstance(cached.get("v"), list):

@@ -1,14 +1,14 @@
 """/unlimited 命令：切换当前会话的无限工具调用模式。"""
 from __future__ import annotations
 
-async def handle(user_id, session_id: int | None, arg: str) -> str:
+async def handle(user_id, session_id: int | None, arg: str, locale: str | None = None) -> str:
     """切换当前会话的无限工具调用模式。"""
     from app.db import session as db_session
     from app.models import ConversationSession
     from agent.commands.help import command_help, is_help_arg
 
     if is_help_arg(arg):
-        return command_help("unlimited")
+        return command_help("unlimited", locale)
     if not session_id:
         return "当前还没有可设置工具调用额度的对话。"
     value = (arg or "").strip().lower()

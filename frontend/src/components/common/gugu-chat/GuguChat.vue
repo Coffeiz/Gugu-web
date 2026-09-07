@@ -23,6 +23,15 @@
     @canplay="onCanPlay"
   />
 
+  <FilesystemAuthorizationDialog
+    :show="sessionAuthorization.open.value"
+    :busy="sessionAuthorization.busy.value"
+    subject-type="session"
+    :subject-name="currentSessionTitle"
+    @close="sessionAuthorization.close"
+    @confirm="confirmSessionAuthorization"
+  />
+
   <!-- 悬浮球 -->
   <GuguChatFab
     ref="fabRef"
@@ -46,6 +55,8 @@
       :current-session-workspace-name="currentSessionWorkspaceName"
       :current-session-goal-active="currentSessionGoalActive"
       :current-session-goal-status="currentSessionGoalStatus"
+      :filesystem-authorized="sessionFilesystemAuthorized"
+      :filesystem-authorization-enabled="currentSessionFilesystemAuthorizationEnabled"
       :session-id="sessionId"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
@@ -59,12 +70,13 @@
       :on-remove-att="removeAtt"
       :on-start-record="startRecord" :on-cancel-record="cancelRecord" :on-stop-record="stopRecord"
       :on-file-picked="onFilePicked" :on-paste="onPaste"
-      :on-send="() => send()" :on-stop-streaming="stopStreaming"
+      :on-send="onChatSend" :on-stop-streaming="stopStreaming"
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-interaction-select="onInteractionSelect"
       :on-reference-click="onReferenceClick"
       :on-prompt-connect="promptConnectIM"
+      :on-filesystem-authorization="toggleSessionAuthorization"
       :on-rename-session="renameSession"
       :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
       :on-close="closeChat" :on-raise-chat="raiseChat"
@@ -112,7 +124,8 @@ import GuguChatMiniPlayer from './GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './GuguChatSidebar.vue'
 import GuguChatBindDialog from './GuguChatBindDialog.vue'
 import GuguChatWindow from './GuguChatWindow.vue'
-import type { ChatMessage, ChatFile, ChatReference, ImPlatformKey } from './chatTypes'
+import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
+import { CUSTOM_REPLY_OPTION_ID, type ChatMessage, type ChatFile, type ChatReference, type ImPlatformKey } from './chatTypes'
 import { API_BASE } from './chatConstants'
 import { renderMd } from './markdown'
 import { canPreview, fmtSize } from './messageDisplay'
@@ -123,6 +136,8 @@ import { useChatConversation } from './composables/useChatConversation'
 import { useChatImConnect } from './composables/useChatImConnect'
 import { useChatWindow } from './composables/useChatWindow'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
+import { useFilesystemAuthorization, type FilesystemAuthorizationApi } from '@/composables/useFilesystemAuthorization'
+import { errorMessage } from '@/composables/core/useAppToast'
 const { t } = useI18n()
 
 interface QuotaInfo {
@@ -301,9 +316,14 @@ async function exitExpanded() {
 onMounted(() => {
   window.addEventListener('gugu-quota-changed', onQuotaChanged)
   window.addEventListener('beforeunload', saveProgress)
-  // 拉一次状态显示名（目前只用到「思考中」候选文案；失败就保持默认三个点）
+  // 小窗也需要会话权限摘要，避免只有展开聊天窗口后才知道当前 Session 的授权状态。
+  void fetchSessions()
+  // 拉一次状态显示名；失败就保持前端默认文案。
   agentApi.getUiLabels?.().then(r => {
     thinkingLabels.value = Array.isArray(r?.thinking) ? r.thinking : (r?.thinking ? [r.thinking] : [])
+    contextCompactingLabels.value = Array.isArray(r?.contextCompacting)
+      ? r.contextCompacting
+      : (r?.contextCompacting ? [r.contextCompacting] : [])
   }).catch(() => {})
   // 恢复上次会话：① 本标签刷新 → sessionStorage 仍在，直接接续；② 重开浏览器（sessionStorage 已清）
   //   → 仅当设置「重开接续上次」打开时，从 localStorage 的最近一段接续；否则开新对话。
@@ -342,7 +362,7 @@ const {
   recording, recordSecs, startRecord, stopRecord, cancelRecord,
 } = useChatAttachments({
   onError: (text) => _chatTip(text),
-  onVoiceSent: () => { send() },   // 录完即发（含可能已输入的文字）
+  onVoiceSent: () => { onChatSend() },   // 录完即发（含可能已输入的文字）
 })
 
 // 对话引擎（消息/会话/SSE 流式收发/状态气泡/滚动跟随）唯一状态所有权，见该文件头注释。
@@ -356,9 +376,10 @@ const conversation = useChatConversation({
 })
 const {
   messages, mkid, now, sessionSettling,
-  inputText, inputReferences, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
+  inputText, inputReferences, thinkingLabels, contextCompactingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, ownerPlatformUserId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
+  currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
   stick, lastTop,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
@@ -366,10 +387,79 @@ const {
   animateGreeting, clearStatus,
 } = conversation
 
+// 授权/撤销成功后立即更新标题栏；会话列表刷新只负责把本地状态重新校准到服务端。
+const sessionFilesystemAuthorized = ref(false)
+watch([sessionId, currentSessionFilesystemAuthorized], ([id, authorized]) => {
+  sessionFilesystemAuthorized.value = id != null && Boolean(authorized)
+}, { immediate: true })
+
+const sessionAuthorizationApi: FilesystemAuthorizationApi = {
+  request: agentApi.requestFilesystemAuthorization,
+  confirm: agentApi.confirmFilesystemAuthorization,
+  revoke: agentApi.revokeFilesystemAuthorization,
+}
+const sessionAuthorization = useFilesystemAuthorization(sessionAuthorizationApi)
+
+async function toggleSessionAuthorization() {
+  if (sessionId.value == null || !currentSessionFilesystemAuthorizationEnabled.value) return
+  try {
+    if (sessionFilesystemAuthorized.value) {
+      await sessionAuthorization.revoke(sessionId.value)
+      const session = sessions.value.find(item => item.id === sessionId.value)
+      if (session) session.filesystemAuthorized = false
+      sessionFilesystemAuthorized.value = false
+      await fetchSessions()
+      return
+    }
+    await sessionAuthorization.request({ id: sessionId.value, name: currentSessionTitle.value })
+  } catch (error) {
+    _chatTip(errorMessage(error))
+  }
+}
+
+async function confirmSessionAuthorization() {
+  try {
+    await sessionAuthorization.confirm()
+    sessionFilesystemAuthorized.value = true
+    await fetchSessions()
+    sessionAuthorization.close()
+  } catch (error) {
+    _chatTip(errorMessage(error))
+  }
+}
+
+const pendingCustomPromptId = ref<number | null>(null)
+watch(sessionId, () => { pendingCustomPromptId.value = null })
+
 async function onInteractionSelect(_msg: ChatMessage, option: { id: string; label: string; token: string }) {
   const promptId = _msg.interaction?.promptId
   if (!promptId || !sessionId.value) return
+  if (option.id === CUSTOM_REPLY_OPTION_ID) {
+    if (!_msg.interaction?.allowTextInput || _msg.interaction.kind === 'confirm') return
+    try {
+      const token = getToken()
+      const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ token: option.token }),
+      })
+      if (!res.ok) {
+        _chatTip(t('chatUi.interactionSubmitFailed'))
+        return
+      }
+      pendingCustomPromptId.value = promptId
+      _msg.interaction.customInputActive = true
+      inputText.value = ''
+      await nextTick()
+      composerRef.value?.focus?.()
+    } catch {
+      _chatTip(t('chatUi.interactionSubmitFailed'))
+    }
+    return
+  }
+  pendingCustomPromptId.value = null
   if (_msg.interaction) {
+    _msg.interaction.customInputActive = false
     _msg.interaction.resolved = true
     _msg.interaction.selectedOptionId = option.id
   }
@@ -395,6 +485,40 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
       _msg.interaction.resolved = false
       _msg.interaction.selectedOptionId = null
     }
+  }
+}
+
+async function onChatSend() {
+  const promptId = pendingCustomPromptId.value
+  if (!promptId) {
+    await send()
+    return
+  }
+  const message = messages.value.find(item => item.interaction?.promptId === promptId)
+  const text = inputText.value.trim()
+  if (!message?.interaction?.allowTextInput || message.interaction.kind === 'confirm' || !text) return
+  try {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/resume-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ text }),
+    })
+    if (!res.ok) {
+      _chatTip(t('chatUi.interactionSubmitFailed'))
+      return
+    }
+    message.interaction.resolved = true
+    message.interaction.selectedOptionId = CUSTOM_REPLY_OPTION_ID
+    message.interaction.responseText = text
+    message.interaction.customInputActive = false
+    inputText.value = ''
+    pendingCustomPromptId.value = null
+    composerRef.value?.resetHeight()
+    await nextTick()
+    await scrollBottom()
+  } catch {
+    _chatTip(t('chatUi.interactionSubmitFailed'))
   }
 }
 
@@ -647,6 +771,11 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   font-size: var(--gugu-body-size); line-height: var(--gugu-body-line); max-width: 88%;
   word-break: break-word; overflow-wrap: break-word;
 }
+:deep(.msg-bubble.md-body .md-table-scroll) { width: 100%; box-sizing: border-box; }
+:deep(.msg-bubble.md-body .md-table-scroll th),
+:deep(.msg-bubble.md-body .md-table-scroll td) {
+  white-space: nowrap; word-break: normal; overflow-wrap: normal;
+}
 :deep(.msg.ai .msg-bubble) {
   background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
   border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
@@ -676,6 +805,17 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   display: block; width: 112px; height: 112px; margin-top: 5px; object-fit: cover;
   border-radius: 8px; cursor: pointer; border: 1px solid rgba(123,127,178,0.18);
 }
+/* 非图片引用文件 chip：surface 走 token（主题契约禁止本文件硬编码 background），
+   描边与缩略图同族蓝灰。inline-block 自身做省略，长文件名截断不撑破引用条。 */
+:deep(.msg-quoted-file) {
+  display: inline-block; margin-top: 5px; margin-right: 6px; padding: 3px 8px;
+  max-width: 100%; box-sizing: border-box;
+  font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+  background: var(--gugu-chat-quoted-chip-bg); border: 1px solid rgba(123,127,178,0.18);
+  border-radius: 6px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:deep(.msg-quoted-file:hover) { background: var(--gugu-chat-quoted-chip-bg-hover); }
 :deep(.msg-face-image-wrap) {
   max-width: 150px; margin-top: 5px; cursor: pointer; line-height: 0;
 }

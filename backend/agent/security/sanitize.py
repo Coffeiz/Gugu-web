@@ -88,17 +88,6 @@ def strip_disallowed_emoji(text: str) -> str:
     return _EMOJI_RE.sub(lambda m: m.group(0) if m.group(1) in _KEEP_EMOJI else "", text)
 
 
-def _is_time_reminder_block(block: dict) -> bool:
-    """识别可与同一轮用户消息合并的时间块，保留其他 reminder 的边界。"""
-    if not isinstance(block, dict) or block.get("type") != "text":
-        return False
-    text = str(block.get("text") or "").strip()
-    if not text.startswith("[system-reminder]") or not text.endswith("[/system-reminder]"):
-        return False
-    body = text[len("[system-reminder]"):-len("[/system-reminder]")].strip()
-    return bool(re.fullmatch(r"(?:\d{1,2}-\d{1,2} \d{1,2}:\d{2}|当前时间：.+)", body))
-
-
 _CANONICAL_BOUNDARY_TYPES = frozenset({
     "tool_call",
     "tool_use",
@@ -125,15 +114,8 @@ def _contains_canonical_boundary(blocks: list) -> bool:
 # token 预算窗口「整条进出」裁剪，但不守 tool_use/tool_result 配对：窗口可能从一个
 # 带 tool_result 的 user 消息开头（对应的 assistant tool_use 被裁掉）→ 孤儿 tool_result，
 # MiniMax 直接报 `invalid params, tool result's...`（有时返回畸形流让 SDK 抛 IndexError）。
-# 这里在发送前清洗：去孤儿 tool_use/tool_result、去空消息、保证首条 user、合并连续同角色。
-
-def _to_blocks(content) -> list:
-    """把消息 content 规整成 block 列表（字符串 → 单个 text block）。"""
-    if isinstance(content, list):
-        return content
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}] if content.strip() else []
-    return []
+# 这里在 canonical history 进入 Anthropic driver 前清洗：去孤儿
+# tool_use/tool_result、去空消息、保证首条 user、合并连续同角色。
 
 
 def _nonempty_block(b) -> bool:
@@ -256,7 +238,6 @@ def sanitize_messages(messages: list) -> list:
                     isinstance(block, dict)
                     and block.get("type") == "text"
                     and str(block.get("text") or "").startswith("[system-reminder]")
-                    and not _is_time_reminder_block(block)
                 )
                 or (isinstance(block, dict) and block.get("type") == "time-context")
                 for block in merged[-1]["content"]
@@ -267,7 +248,6 @@ def sanitize_messages(messages: list) -> list:
                 isinstance(block, dict)
                 and block.get("type") == "text"
                 and str(block.get("text") or "").startswith("[system-reminder]")
-                and not _is_time_reminder_block(block)
             )
             or (isinstance(block, dict) and block.get("type") == "time-context")
             for block in m["content"]

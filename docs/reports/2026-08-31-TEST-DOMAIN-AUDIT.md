@@ -13,7 +13,7 @@
 
 ## 上下文/会话（context）
 
-资产数：43；源码声明数：228；待审查重复候选：0（未自动判定删除）。
+资产数：45；源码声明数：235；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -37,26 +37,27 @@
 | backend/tests/test_agent_context_tz.py | pytest | L1 | backend/context | 7 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_canonical_context.py | pytest | L1 | backend/context | 5 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_canonical_tool_history.py | pytest | L1 | backend/context | 12 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_compaction.py | pytest | L1 | backend/context | 39 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_compaction.py | pytest | L1 | backend/context | 33 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_context_assembly.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_context_audit.py | pytest | L1 | backend/context | 1 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_context_branch.py | pytest | L1 | backend/context | 9 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_context_branch.py | pytest | L1 | backend/context | 10 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_context_budget.py | pytest | L1 | backend/context | 8 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_context_cache_boundaries.py | pytest | L1 | backend/context | 8 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_context_history.py | pytest | L1 | backend/context | 22 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_context_revision.py | pytest | L1 | backend/context | 2 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_cross_run_cache_prefix.py | pytest | L1 | backend/context | 5 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_cross_run_cache_prefix.py | pytest | L1 | backend/context | 6 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_daily_compaction.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_history_attachment_refs.py | pytest | L1 | backend/context | 1 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_history_persist_filter.py | pytest | L1 | backend/context | 10 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_history_persist_filter.py | pytest | L1 | backend/context | 9 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_context_loader.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_owner_session.py | pytest | L1 | backend/context | 5 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_session_reuse.py | pytest | L1 | backend/context | 13 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_llm_cache_capability.py | pytest | L1 | backend/context | 6 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_memory_compaction_retrieval.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_longterm_compaction.py | pytest | L1 | backend/context | 5 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_memory_compaction_retrieval.py | pytest | L1 | backend/context | 5 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_message_compaction_boundary.py | pytest | L1 | backend/context | 11 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_modelctx.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_preferences_cache_contract.py | pytest | L1 | backend/context | 3 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_preferences_cache_contract.py | pytest | L1 | backend/context | 4 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_preferences_context_contract.py | pytest | L1 | backend/context | 4 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_provider_history_adapters.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_quoted_context.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
@@ -65,11 +66,12 @@
 | backend/tests/test_session_history.py | pytest | L1 | backend/context | 3 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_session_snapshot.py | pytest | L1 | backend/context | 30 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_session_title_prompt.py | pytest | L1 | backend/context | 2 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_tool_history_request_boundary.py | pytest | L1 | backend/context | 3 | 否 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_video_cache_snapshots_api.py | pytest | L1 | backend/context | 5 | 是 | 否 | 保留 backend/context 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 
 ## IM（im）
 
-资产数：32；源码声明数：310；待审查重复候选：0（未自动判定删除）。
+资产数：35；源码声明数：327；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -89,18 +91,18 @@
 | backend/tests/test_im_media_ingress.py | pytest | L1 | backend/im | 10 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_members.py | pytest | L1 | backend/im | 35 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_memory_admin.py | pytest | L1 | backend/im | 2 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_im_memory_scopes.py | pytest | L1 | backend/im | 23 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_im_memory_scopes.py | pytest | L1 | backend/im | 24 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_permissions_types.py | pytest | L1 | backend/im | 2 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_protocol.py | pytest | L1 | backend/im | 14 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_replies.py | pytest | L1 | backend/im | 19 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_im_shortcut_fallback.py | pytest | L1 | backend/im | 3 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_interaction_events.py | pytest | L1 | backend/im | 2 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_interaction_phase5_7.py | pytest | L1 | backend/im | 5 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_interaction_protocol.py | pytest | L1 | backend/im | 14 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_interaction_protocol.py | pytest | L1 | backend/im | 20 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_message_format.py | pytest | L1 | backend/im | 6 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_notifications.py | pytest | L1 | backend/im | 2 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_qface.py | pytest | L1 | backend/im | 3 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_qq_binding_code.py | pytest | L1 | backend/im | 4 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_qq_binding_code.py | pytest | L1 | backend/im | 5 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_qq_connect_scan_url.py | pytest | L1 | backend/im | 3 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_qq_error_contract.py | pytest | L1 | backend/im | 12 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_qq_group_history.py | pytest | L1 | backend/im | 1 | 否 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
@@ -111,10 +113,13 @@
 | backend/tests/test_start_im_activity_order.py | pytest | L1 | backend/im | 2 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_wechat_quotes.py | pytest | L1 | backend/im | 8 | 是 | 否 | 保留 backend/im 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | frontend/src/interaction/runtime/canvas.test.ts | Vitest | L0 | frontend/im | 1 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/interaction/sync/InteractionSyncReconciler.test.ts | Vitest | L0 | frontend/im | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/test/interactionSync.test.ts | Vitest | L0 | frontend/im | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/test/interactionSyncPhase23.test.ts | Vitest | L0 | frontend/im | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 
 ## 存储/文件（storage）
 
-资产数：44；源码声明数：392；待审查重复候选：0（未自动判定删除）。
+资产数：49；源码声明数：413；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -141,20 +146,25 @@
 | backend/tests/test_io_retry_contract.py | pytest | L1 | backend/storage | 23 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_key_strategy.py | pytest | L1 | backend/storage | 4 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_path_migration.py | pytest | L1 | backend/storage | 3 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_phase3_filesystem_policy.py | pytest | L1 | backend/storage | 7 | 否 | 是 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_phase4_filesystem_authorization.py | pytest | L1 | backend/storage | 5 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_send_file_url_streaming.py | pytest | L1 | backend/storage | 7 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_storage_cleanup.py | pytest | L1 | backend/storage | 5 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_storage_contract.py | pytest | L1 | backend/storage | 15 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_storage_contract.py | pytest | L1 | backend/storage | 18 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_storage_keys.py | pytest | L1 | backend/storage | 8 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_storage_quota_ledger.py | pytest | L1 | backend/storage | 3 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_storage_root_migration.py | pytest | L1 | backend/storage | 2 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_storage_snapshots.py | pytest | L1 | backend/storage | 5 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_tool_video_media_dispatch.py | pytest | L1 | backend/storage | 2 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_trash_folders.py | pytest | L1 | backend/storage | 13 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_video_cache.py | pytest | L1 | backend/storage | 15 | 是 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_web_download.py | pytest | L1 | backend/storage | 3 | 否 | 否 | 保留 backend/storage 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | frontend/e2e/file-drag-runtime.spec.ts | Playwright | L3 | frontend/e2e | 13 | 是 | 是 | 保留实验 E2E；含环境数据 skip，不进入稳定 CI |
-| frontend/e2e/file-lifecycle.spec.ts | Playwright | L3 | frontend/e2e | 1 | 是 | 否 | 保留稳定 E2E；验证真实浏览器入口 |
+| frontend/e2e/file-lifecycle.spec.ts | Playwright | L3 | frontend/e2e | 2 | 是 | 否 | 保留稳定 E2E；验证真实浏览器入口 |
 | frontend/e2e/filesystem-phases.spec.ts | Playwright | L3 | frontend/e2e | 10 | 是 | 是 | 保留实验 E2E；含环境数据 skip，不进入稳定 CI |
-| frontend/src/assets/styles/file-browser-visual-regression.test.ts | Vitest | L0 | frontend/storage | 20 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/assets/styles/file-browser-visual-regression.test.ts | Vitest | L0 | frontend/storage | 19 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/files/useFileLibrarySelection.test.ts | Vitest | L0 | frontend/storage | 1 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/useFilesystemAuthorization.test.ts | Vitest | L0 | frontend/storage | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/src/utils/fileLinks.test.ts | Vitest | L0 | frontend/storage | 4 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/src/views/Admin/Ops/storageChart.test.ts | Vitest | L0 | frontend/storage | 1 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/test/fileActionsScope.test.ts | Vitest | L0 | frontend/storage | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
@@ -173,7 +183,7 @@
 
 ## Agent/Provider（agent-provider）
 
-资产数：34；源码声明数：259；待审查重复候选：0（未自动判定删除）。
+资产数：38；源码声明数：324；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -190,38 +200,42 @@
 | backend/scripts/diagnostics/test_schema_accumulation_5tools.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 是 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
 | backend/tests/test_agent_prompt_language.py | pytest | L1 | backend/agent-provider | 2 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_behaviors.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_capability_injection.py | pytest | L1 | backend/agent-provider | 16 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_capability_registry.py | pytest | L1 | backend/agent-provider | 5 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_byok_user_scope_guard.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_capability_injection.py | pytest | L1 | backend/agent-provider | 29 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_capability_registry.py | pytest | L1 | backend/agent-provider | 8 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_capability_selector.py | pytest | L1 | backend/agent-provider | 5 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_commands.py | pytest | L1 | backend/agent-provider | 19 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_commands.py | pytest | L1 | backend/agent-provider | 23 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_core_continuation_recovery.py | pytest | L1 | backend/agent-provider | 2 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_core_loop_characterization.py | pytest | L1 | backend/agent-provider | 24 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_core_loop_characterization.py | pytest | L1 | backend/agent-provider | 30 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_deep_research_providers.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_genstream_cancel.py | pytest | L1 | backend/agent-provider | 1 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_live_stream.py | pytest | L1 | backend/agent-provider | 5 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_llm15_preferences_api.py | pytest | L1 | backend/agent-provider | 6 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_live_stream.py | pytest | L1 | backend/agent-provider | 8 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_llm15_preferences_api.py | pytest | L1 | backend/agent-provider | 7 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_llm7_p3.py | pytest | L1 | backend/agent-provider | 7 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_local_deployment_admin.py | pytest | L1 | backend/agent-provider | 4 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_loop_driver_vision.py | pytest | L1 | backend/agent-provider | 10 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_loop_driver_usage_semantics.py | pytest | L1 | backend/agent-provider | 5 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_loop_driver_vision.py | pytest | L1 | backend/agent-provider | 12 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_mind_agent_tools.py | pytest | L1 | backend/agent-provider | 11 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_preferences_api_contract.py | pytest | L1 | backend/agent-provider | 4 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_provider_history.py | pytest | L1 | backend/agent-provider | 5 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_providers.py | pytest | L1 | backend/agent-provider | 37 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_providers.py | pytest | L1 | backend/agent-provider | 39 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_reflection_byok.py | pytest | L1 | backend/agent-provider | 1 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_runner_collect.py | pytest | L1 | backend/agent-provider | 14 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_schema_diagnostic_validation.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_schema_diagnostic_validation.py | pytest | L1 | backend/agent-provider | 4 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_stream_round_retry.py | pytest | L1 | backend/agent-provider | 4 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_stream_sanitize.py | pytest | L1 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_streaming_regressions.py | pytest | L1 | backend/agent-provider | 8 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_terminal_streaming.py | pytest | L2 | backend/agent-provider | 3 | 否 | 否 | 保留 backend/agent-provider 的 L2 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_tool_intent_guard.py | pytest | L1 | backend/agent-provider | 7 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_tool_intent_guard.py | pytest | L1 | backend/agent-provider | 9 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_tool_isolation.py | pytest | L1 | backend/agent-provider | 24 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_tool_schema_digest.py | pytest | L1 | backend/agent-provider | 1 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_tool_schema_validation.py | pytest | L1 | backend/agent-provider | 21 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_tool_schema_validation.py | pytest | L1 | backend/agent-provider | 32 | 是 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_user_skills.py | pytest | L1 | backend/agent-provider | 8 | 否 | 否 | 保留 backend/agent-provider 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | frontend/src/utils/byokCredentials.test.ts | Vitest | L0 | frontend/agent-provider | 2 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 
 ## RAG/Memory（memory-rag）
 
-资产数：34；源码声明数：186；待审查重复候选：0（未自动判定删除）。
+资产数：35；源码声明数：196；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -234,14 +248,15 @@
 | 文件 | 类型 | 层级 | owner | 声明数 | 外部依赖 | skip | 处置依据 |
 |---|---|---|---|---:|---|---|---|
 | backend/tests/test_compare_index_metrics.py | pytest | L1 | backend/memory-rag | 1 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_event_memory.py | pytest | L1 | backend/memory-rag | 7 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_event_memory.py | pytest | L1 | backend/memory-rag | 8 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_global_search.py | pytest | L1 | backend/memory-rag | 13 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_knowledge_index_cache.py | pytest | L1 | backend/memory-rag | 6 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_knowledge.py | pytest | L1 | backend/memory-rag | 13 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_memory_event_scopes.py | pytest | L1 | backend/memory-rag | 3 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_memory_injection_budget.py | pytest | L1 | backend/memory-rag | 3 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_memory_maintenance_batches.py | pytest | L1 | backend/memory-rag | 3 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_memory_migration.py | pytest | L1 | backend/memory-rag | 25 | 是 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_memory_periodic.py | pytest | L1 | backend/memory-rag | 4 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_memory_periodic.py | pytest | L1 | backend/memory-rag | 7 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_rag_daily_freshness.py | pytest | L1 | backend/memory-rag | 2 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_rag_hybrid.py | pytest | L1 | backend/memory-rag | 2 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_rag_index_gc.py | pytest | L1 | backend/memory-rag | 1 | 是 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
@@ -251,13 +266,13 @@
 | backend/tests/test_rag_models.py | pytest | L1 | backend/memory-rag | 3 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_rag_retriever.py | pytest | L1 | backend/memory-rag | 13 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_rag_tokenizer_parity.py | pytest | L1 | backend/memory-rag | 1 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_rag_ts_sidecar.py | pytest | L1 | backend/memory-rag | 5 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_rag_ts_sidecar.py | pytest | L1 | backend/memory-rag | 6 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_rag_vector_cache.py | pytest | L1 | backend/memory-rag | 1 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_scoped_store.py | pytest | L1 | backend/memory-rag | 4 | 是 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_search_query.py | pytest | L1 | backend/memory-rag | 4 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_search_scenarios.py | pytest | L1 | backend/memory-rag | 8 | 是 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_search_settings.py | pytest | L1 | backend/memory-rag | 2 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_search_tools.py | pytest | L1 | backend/memory-rag | 1 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_search_tools.py | pytest | L1 | backend/memory-rag | 3 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_searxng_search_status.py | pytest | L1 | backend/memory-rag | 18 | 是 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_stance_history.py | pytest | L1 | backend/memory-rag | 2 | 否 | 否 | 保留 backend/memory-rag 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/ts/packages/data-runtime/test/rag-loader.test.ts | Node/TS | L1 | backend/ts | 3 | 否 | 否 | 保留 TS/Node 独立运行时边界，不与 Python pytest 合并 |
@@ -266,11 +281,11 @@
 | backend/ts/workers/rag/test/snapshot-cache.test.ts | Node/TS | L1 | backend/ts | 2 | 否 | 否 | 保留 TS/Node 独立运行时边界，不与 Python pytest 合并 |
 | backend/ts/workers/rag/test/source-adapters.test.ts | Node/TS | L1 | backend/ts | 4 | 否 | 否 | 保留 TS/Node 独立运行时边界，不与 Python pytest 合并 |
 | backend/ts/workers/rag/test/worker.protocol.test.ts | Node/TS | L1 | backend/ts | 9 | 否 | 否 | 保留 TS/Node 独立运行时边界，不与 Python pytest 合并 |
-| frontend/src/views/Calendar/composables/useCalendarDrag.test.ts | Vitest | L0 | frontend/memory-rag | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/calendar/useCalendarDrag.test.ts | Vitest | L0 | frontend/memory-rag | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 
 ## Mind/项目（mind-project）
 
-资产数：23；源码声明数：201；待审查重复候选：0（未自动判定删除）。
+资产数：27；源码声明数：217；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -282,15 +297,19 @@
 | 文件 | 类型 | 层级 | owner | 声明数 | 外部依赖 | skip | 处置依据 |
 |---|---|---|---|---:|---|---|---|
 | backend/scripts/diagnostics/test_reminder_role_cache.py | 诊断脚本 | L2 | backend/diagnostics | 0 | 否 | 否 | 保留独立诊断入口；观测外部服务或长链路，不并入标准测试 |
-| backend/tests/test_canvas_layout.py | pytest | L1 | backend/mind-project | 4 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_mind_api.py | pytest | L1 | backend/mind-project | 32 | 是 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_calendar_reminders.py | pytest | L1 | backend/mind-project | 3 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_canvas_layout.py | pytest | L1 | backend/mind-project | 7 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_event_reminder_migration.py | pytest | L1 | backend/mind-project | 1 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_mind_api.py | pytest | L1 | backend/mind-project | 33 | 是 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_mind_canvas_tools.py | pytest | L1 | backend/mind-project | 21 | 是 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_mind_p0_model.py | pytest | L1 | backend/mind-project | 24 | 是 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_projects_core.py | pytest | L1 | backend/mind-project | 10 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_projects_live_events.py | pytest | L1 | backend/mind-project | 1 | 否 | 否 | 保留 backend/mind-project 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | frontend/e2e/mind-canvas-runtime.spec.ts | Playwright | L3 | frontend/e2e | 2 | 是 | 否 | 保留稳定 E2E；验证真实浏览器入口 |
-| frontend/src/composables/useMindCanvas.test.ts | Vitest | L0 | frontend/mind-project | 2 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
-| frontend/src/composables/useMindEditor.test.ts | Vitest | L0 | frontend/mind-project | 41 | 是 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/mind/useMindCanvas.test.ts | Vitest | L0 | frontend/mind-project | 6 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/mind/useMindEditor.test.ts | Vitest | L0 | frontend/mind-project | 41 | 是 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/mind/useMindRefActions.test.ts | Vitest | L0 | frontend/mind-project | 1 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/composables/projects/useProjectDraft.test.ts | Vitest | L0 | frontend/mind-project | 3 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/src/utils/canvasRelationGeometry.test.ts | Vitest | L0 | frontend/mind-project | 2 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/src/views/Mind/utils/canvasItemMeasurements.test.ts | Vitest | L0 | frontend/mind-project | 1 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/src/views/Mind/utils/relationRuntimeConnection.test.ts | Vitest | L0 | frontend/mind-project | 2 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
@@ -307,7 +326,7 @@
 
 ## 系统安全（security）
 
-资产数：24；源码声明数：168；待审查重复候选：0（未自动判定删除）。
+资产数：26；源码声明数：177；待审查重复候选：0（未自动判定删除）。
 
 ### 初步审查
 
@@ -329,7 +348,7 @@
 | backend/tests/test_chat_attachments_ownership.py | pytest | L1 | backend/security | 25 | 是 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_config_password_override.py | pytest | L1 | backend/security | 11 | 是 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_config_reconcile.py | pytest | L1 | backend/security | 4 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_confirm_gate.py | pytest | L1 | backend/security | 12 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_confirm_gate.py | pytest | L1 | backend/security | 14 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_error_redaction_contract.py | pytest | L1 | backend/security | 11 | 是 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_onboarding_state.py | pytest | L1 | backend/security | 3 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_ownership_security_events.py | pytest | L1 | backend/security | 3 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
@@ -337,10 +356,12 @@
 | backend/tests/test_security_alerts.py | pytest | L1 | backend/security | 2 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_security_retention.py | pytest | L1 | backend/security | 1 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_security_risk_policy.py | pytest | L1 | backend/security | 7 | 是 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
-| backend/tests/test_tool_schema_security_contract.py | pytest | L1 | backend/security | 15 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_terminal_confirm_input.py | pytest | L1 | backend/security | 3 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
+| backend/tests/test_tool_schema_security_contract.py | pytest | L1 | backend/security | 17 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_upload_confirm.py | pytest | L1 | backend/security | 12 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | backend/tests/test_url_security.py | pytest | L1 | backend/security | 13 | 否 | 否 | 保留 backend/security 的 L1 契约；与 API、E2E 或其他领域入口分层 |
 | frontend/src/assets/styles/onboarding-focus-regression.test.ts | Vitest | L0 | frontend/security | 15 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
+| frontend/src/components/common/profile/ProfileAccountPane.test.ts | Vitest | L0 | frontend/security | 2 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 | frontend/test/accountBoundary.test.ts | Vitest | L0 | frontend/security | 1 | 否 | 否 | 保留前端 L0；按纯逻辑/样式/组件契约独立执行 |
 
 ## 独立 TypeScript 测试

@@ -23,8 +23,11 @@
             <pre>{{ formatValue(msg.toolInput) }}</pre>
           </div>
           <div v-if="msg.toolResult !== undefined" class="tool-event-section">
-            <span class="tool-event-caption">{{ t('chatUi.result') }}</span>
-            <pre>{{ formatValue(msg.toolResult) }}</pre>
+            <span class="tool-event-caption">
+              {{ t('chatUi.result') }}
+              <span v-if="resultDisplayTruncated" class="tool-event-limit">{{ t('chatUi.outputDisplayLimited', { count: OUTPUT_DISPLAY_LIMIT.toLocaleString() }) }}</span>
+            </span>
+            <pre>{{ displayResult }}</pre>
           </div>
         </div>
       </div>
@@ -41,10 +44,23 @@ import type { ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()
 const expanded = ref(false)
+const OUTPUT_DISPLAY_LIMIT = 32_000
+const resolvedToolName = computed(() => {
+  if (props.msg.toolName !== 'call_tool' || !props.msg.toolInput || typeof props.msg.toolInput !== 'object') {
+    return props.msg.toolName || ''
+  }
+  const target = (props.msg.toolInput as { name?: unknown }).name
+  return typeof target === 'string' && target.trim() ? target.trim() : 'call_tool'
+})
 const toolLabel = computed(() => {
-  const toolName = props.msg.toolName || ''
-  const key = `chatUi.toolLabels.${toolName}`
-  return toolName && te(key) ? t(key) : props.msg.toolLabel || toolName || t('chatUi.toolCall')
+  const toolName = resolvedToolName.value
+  const key = `toolNames.${toolName}`
+  // 固定 Adapter 会把业务工具通过 call_tool 转发。旧事件的真实工具名在
+  // toolInput.name 中；已知工具必须优先走当前语言，避免后端旧中文 label
+  // 覆盖英文/日文翻译。
+  const backendLabel = props.msg.toolLabel?.trim()
+  if (toolName && te(key)) return t(key)
+  return backendLabel || toolName || t('chatUi.toolCall')
 })
 const statusText = computed(() => ({
   running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
@@ -58,6 +74,11 @@ function formatValue(value: unknown) {
   if (typeof value === 'string') return value
   try { return JSON.stringify(value, null, 2) } catch { return String(value) }
 }
+const formattedResult = computed(() => formatValue(props.msg.toolResult))
+const resultDisplayTruncated = computed(() => formattedResult.value.length > OUTPUT_DISPLAY_LIMIT)
+const displayResult = computed(() => resultDisplayTruncated.value
+  ? `${formattedResult.value.slice(0, OUTPUT_DISPLAY_LIMIT)}\n…`
+  : formattedResult.value)
 
 const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis), opacity var(--motion-hover-card) var(--motion-ease-standard)'
 
@@ -131,6 +152,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-detail { padding: 10px 12px 11px; border-top: 1px solid var(--border-default); background: var(--gugu-chat-assistant-bg); color: var(--content-secondary); }
 .tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-default); }
 .tool-event-caption { display: block; margin-bottom: 4px; color: var(--content-tertiary); font-size: var(--font-size-xs); font-weight: 600; }
+.tool-event-limit { margin-left: 6px; color: var(--content-tertiary); font-weight: 400; }
 pre { max-height: 180px; margin: 0; overflow: auto; color: var(--content-primary); white-space: pre-wrap; word-break: break-word; font: var(--font-size-xs)/var(--line-height-body) var(--font-family-mono); }
 .tool-detail-shell { min-height: 0; overflow: hidden; }
 .tool-detail-shell > .tool-event-detail { min-height: 0; overflow: hidden; }

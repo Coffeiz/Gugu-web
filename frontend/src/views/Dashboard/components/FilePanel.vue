@@ -107,7 +107,7 @@ const uploadOpen    = ref(false)
 const store         = useFilesCacheStore()
 const { t } = useI18n()
 const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a.id))
-const thumbMap      = shallowRef<Record<number, { tiny?: string | null; card?: string | null }>>({}) // id → { tiny, card }，shallowRef 批量更新减少 trigger 次数
+const thumbMap      = shallowRef<Record<number, { version?: number; tiny?: string | null; card?: string | null }>>({}) // id → 当前正文版本的缩略图，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref<number | string | null>(null)
 const renameText    = ref('')
 const renameInputRef = ref<any>(null)
@@ -120,13 +120,19 @@ function loadThumbs(list: any[]) {
   const imgFiles = list.filter(f => isImageExt(f.ext))
   const snap = { ...thumbMap.value }
   imgFiles.forEach(f => {
-    snap[f.id] = { tiny: getCachedThumb(f.id, 'tiny'), card: thumbMap.value[f.id]?.card ?? null }
+    const previous = thumbMap.value[f.id]
+    const sameVersion = previous?.version === f.version
+    snap[f.id] = {
+      version: f.version,
+      tiny: getCachedThumb(f.id, 'tiny', f.version),
+      card: sameVersion ? previous?.card ?? null : null,
+    }
   })
   thumbMap.value = snap
   imgFiles.forEach(f => {
     if (snap[f.id]?.tiny) return
-    getThumb(f.id, 'tiny').then((url: any) => {
-      if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], tiny: url } }
+    getThumb(f.id, 'tiny', f.version).then((url: any) => {
+      if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], version: f.version, tiny: url } }
     })
   })
 }
@@ -137,9 +143,9 @@ function loadCards(list: any[]) {
   const snap = { ...thumbMap.value }
   let hasNew = false
   imgFiles.forEach(f => {
-    const cached = getCachedThumb(f.id, 'card')
+    const cached = getCachedThumb(f.id, 'card', f.version)
     if (cached && snap[f.id]?.card !== cached) {
-      snap[f.id] = { ...snap[f.id], card: cached }
+      snap[f.id] = { ...snap[f.id], version: f.version, card: cached }
       hasNew = true
     }
   })
@@ -147,17 +153,20 @@ function loadCards(list: any[]) {
 
   const uncached = imgFiles.filter(f => !snap[f.id]?.card)
   if (uncached.length) {
-    Promise.all(uncached.map(f => getThumb(f.id, 'card').then((url: any) => ({ id: f.id, url }))))
+    Promise.all(uncached.map(f => getThumb(f.id, 'card', f.version).then((url: any) => ({ id: f.id, url }))))
       .then(results => {
         const m = { ...thumbMap.value }
-        for (const { id, url } of results) if (url) m[id] = { ...m[id], card: url }
+        for (const { id, url } of results) {
+          const file = imgFiles.find(item => item.id === id)
+          if (url) m[id] = { ...m[id], version: file?.version, card: url }
+        }
         thumbMap.value = m
         preDecodeBlobs(m)
       })
   }
 }
 
-function preDecodeBlobs(map: Record<number, { tiny?: string | null; card?: string | null }>) {
+function preDecodeBlobs(map: Record<number, { version?: number; tiny?: string | null; card?: string | null }>) {
   for (const entry of Object.values(map)) {
     for (const url of [entry?.tiny, entry?.card]) {
       if (url) { const i = new Image(); i.src = url; i.decode().catch(() => {}) }
@@ -171,7 +180,7 @@ function preDecodeBlobs(map: Record<number, { tiny?: string | null; card?: strin
 function openUpload() { uploadOpen.value = true }
 function openFile(f: any) {
   if (renamingId.value === f.id) return
-  if (isPreviewable(f.ext)) previewStore.open(f._raw)
+  if (isPreviewable(f.ext, f._raw?.mimeType)) previewStore.open(f._raw)
 }
 
 async function startRename(f: any) {

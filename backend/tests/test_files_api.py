@@ -68,9 +68,11 @@ async def test_check_conflicts_keeps_batch_response_shape(db, user_a):
 
 async def test_upload_overwrite(db, user_a):
     r1 = await _do_upload(db, user_a, b"old", "a.txt")
+    old_version = r1.version
     r2 = await _do_upload(db, user_a, b"newer", "a.txt",
                           on_conflict="overwrite", overwrite_file_id=r1.id)
     assert r2.id == r1.id and r2.size_bytes == 5
+    assert r2.version == old_version + 1
 
 
 async def test_upload_project_shapes_response(db, user_a):

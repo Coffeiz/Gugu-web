@@ -133,6 +133,14 @@ class PromptMessages(list):
         # 第一个锚点是本轮 baseline，必须跨工具续轮保留；只替换最新尾部锚点。
         self._cache_anchor_indices = [anchors[0], anchors[-1]][:limit]
 
+    def replace_cache_anchors(self, indices: Iterable[int]) -> None:
+        """替换 provider 缓存锚点，不把旧的历史锚点带入下一次请求。"""
+        conversation_len = len(self.conversation)
+        self._cache_anchor_indices = sorted({
+            int(index) for index in indices
+            if 0 <= int(index) < conversation_len
+        })
+
     def newly_appended(self, initial_conversation_len: int) -> list[dict]:
         return self.conversation[initial_conversation_len:]
 

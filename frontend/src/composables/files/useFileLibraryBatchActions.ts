@@ -24,7 +24,7 @@ export interface FileLibraryBatchActionOptions {
   loadContents: () => void
   pruneHistoryForFolders: (ids: number[]) => void
   fetchStorage: () => void | Promise<void>
-  getDestination: () => { folderId: number | null; projectId: number | null }
+  getDestination: () => { folderId: number | null; projectId: number | null; workspaceDirectoryId: number | null }
   showConflicts?: (items: ConflictItem[]) => Promise<Map<string, ConflictDecision>>
 }
 
@@ -104,24 +104,24 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
       await InteractionSync.execute({
         scope: 'file.move-paste', entityKey: `file-paste:${fileIds.join(',')}:${folderIds.join(',')}`,
         apply: () => {
-          fileIds.forEach(id => options.cacheStore.updateFile(id, { folderId: destination.folderId, projectId: destination.projectId }))
-          folderIds.forEach(id => options.cacheStore.updateFolder(id, { parentId: destination.folderId, projectId: destination.projectId }))
+          fileIds.forEach(id => options.cacheStore.updateFile(id, { folderId: destination.folderId, projectId: destination.projectId, workspaceDirectoryId: destination.workspaceDirectoryId }))
+          folderIds.forEach(id => options.cacheStore.updateFolder(id, { parentId: destination.folderId, projectId: destination.projectId, workspaceDirectoryId: destination.workspaceDirectoryId }))
           options.clipboardStore.clear()
         },
         afterMutate: options.loadContents,
         request: async mutation => {
           await Promise.all([
-            Promise.all(fileBackups.map(file => options.fileActions.moveFile(file.id, destination.folderId, destination.projectId, { mutationId: mutation.mutationId }))),
+            Promise.all(fileBackups.map(file => options.fileActions.moveFile(file.id, destination.folderId, destination.projectId, { mutationId: mutation.mutationId }, destination.workspaceDirectoryId))),
             Promise.all(folderIds.map(id => options.fileActions.moveFolder(
               id, destination.folderId, folderBackups.find(folder => folder.id === id)?.version ?? 1, destination.projectId,
-              { mutationId: mutation.mutationId },
+              { mutationId: mutation.mutationId }, destination.workspaceDirectoryId,
             ))).then(result => { movedFolders = result }),
           ])
           return null
         },
         rollback: () => {
-          fileBackups.forEach(file => options.cacheStore.updateFile(file.id, { folderId: file.folderId, projectId: file.projectId }))
-          folderBackups.forEach(folder => options.cacheStore.updateFolder(folder.id, { parentId: folder.parentId, projectId: folder.projectId }))
+          fileBackups.forEach(file => options.cacheStore.updateFile(file.id, { folderId: file.folderId, projectId: file.projectId, workspaceDirectoryId: file.workspaceDirectoryId ?? null }))
+          folderBackups.forEach(folder => options.cacheStore.updateFolder(folder.id, { parentId: folder.parentId, projectId: folder.projectId, workspaceDirectoryId: folder.workspaceDirectoryId ?? null }))
         },
         onCommit: () => movedFolders.forEach(folder => options.cacheStore.updateFolder(folder.id, { version: folder.version })),
         onError: error => console.error('[Files] 粘贴失败:', error),
@@ -147,7 +147,8 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
         const decision = decisions?.get(name)
         const target = decision?.existingFileId
         return options.fileActions.copyFile(id, destination.folderId, destination.projectId,
-          decision?.action === 'overwrite' ? { onConflict: 'overwrite', overwriteFileId: target } : undefined)
+          decision?.action === 'overwrite' ? { onConflict: 'overwrite', overwriteFileId: target } : undefined,
+          destination.workspaceDirectoryId)
       }))
       created.forEach((file, index) => {
         const sourceId = copyIds[index]
@@ -159,9 +160,10 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
           options.cacheStore.updateFile(decision.existingFileId, { ...file, thumbRevision: Date.now() })
         } else options.cacheStore.addFile(file)
       })
-      const copiedFolders = await Promise.all(folderIds.map(id => options.fileActions.copyFolder(id, destination.folderId, destination.projectId)))
+      const copiedFolders = await Promise.all(folderIds.map(id => options.fileActions.copyFolder(id, destination.folderId, destination.projectId, destination.workspaceDirectoryId)))
       copiedFolders.forEach(folder => options.cacheStore.addFolder({
         id: folder.id, projectId: folder.projectId, parentId: folder.parentId, name: folder.name, fileCount: 0, version: folder.version,
+        workspaceDirectoryId: destination.workspaceDirectoryId,
       }))
       options.loadContents()
       await options.fetchStorage()

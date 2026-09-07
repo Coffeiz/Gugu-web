@@ -35,10 +35,20 @@ RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
     && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
 
 # ── Stage 2：后端依赖构建（venv 与最终镜像分离） ─────────────────────────────
-FROM python:3.14-trixie AS backend-deps
+FROM python:3.14-slim-trixie AS backend-deps
 
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 WORKDIR /build
+
+RUN sed -i \
+        -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
+        -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential libffi-dev libpq-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./requirements.txt
 RUN python -m venv /opt/venv \
@@ -49,8 +59,8 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
-# 钉住明确版本，理由同 Dockerfile.prod：trixie 才有 docker-cli（沙盒兄弟容器需要）。
-FROM python:3.14-trixie
+# 钉住明确版本；sandbox-bootstrap/sandboxd 仍需要 Docker CLI，应用服务本身不挂载 Docker socket。
+FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 # 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），
@@ -63,15 +73,16 @@ RUN sed -i \
         /etc/apt/sources.list.d/debian.sources
 
 RUN apt-get update \
-    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs \
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
         $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-ENV PATH=/opt/venv/bin:${PATH}
+ENV PATH=/opt/venv/bin:${PATH} \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
@@ -83,19 +94,33 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
+COPY backend/scripts/migrate_storage_root.py ./scripts/migrate_storage_root.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
+COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
+COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version
+RUN node bin/gugu-filesync-ts-worker.cjs --version
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
-    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh
+    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py \
+    && test ! -e /app/.venv \
+    && test ! -e /app/ts \
+    && test ! -e /app/tests \
+    && test ! -e /app/docs \
+    && test ! -e /app/node_modules \
+    && ! command -v gcc \
+    && ! command -v g++ \
+    && ! command -v make \
+    && ! command -v git \
+    && ! command -v hg
 
 EXPOSE 8000
 

@@ -87,7 +87,7 @@ async def test_run_agent_group_target_sets_imctx(monkeypatch, db, user_a):
 
     execution = AsyncMock(return_value=('{"summary":"执行结果","context":"","status":"success"}', False, {"tool_names": [], "mutated": False}))
     report = AsyncMock()
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     target_map = {
         "qq": {
@@ -125,7 +125,7 @@ async def test_run_agent_private_target_no_imctx(monkeypatch, db, user_a):
     monkeypatch.setattr("agent.im.imctx.set_im", fake_set_im)
 
     execution = AsyncMock(return_value=('{"summary":"ok","context":"","status":"success"}', False, {"tool_names": [], "mutated": False}))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     # 私聊目标
     target_map = {
@@ -164,7 +164,7 @@ async def test_run_agent_group_injects_group_memory(monkeypatch, db, user_a):
         captured_prompts["execution"] = prompt
         return ('{"summary":"执行结果","context":"","status":"success"}', False, {"tool_names": [], "mutated": False})
 
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", fake_execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", fake_execution)
 
     target_map = {
         "qq": {
@@ -204,7 +204,7 @@ async def test_run_agent_group_message_id_none(monkeypatch, db, user_a):
         AsyncMock(return_value={}),
     )
     execution = AsyncMock(return_value=('{"summary":"ok","context":"","status":"success"}', False, {"tool_names": [], "mutated": False}))
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     target_map = {
         "qq": {
@@ -230,7 +230,7 @@ async def test_run_agent_no_group_memory_when_no_target(monkeypatch, db, user_a)
         captured_prompts["execution"] = prompt
         return ('{"summary":"ok","context":"","status":"success"}', False, {"tool_names": [], "mutated": False})
 
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", fake_execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", fake_execution)
 
     # 不传 target_map
     await scheduled._run_agent(user_a.id, "原始 prompt", trial=True)
@@ -276,7 +276,7 @@ async def test_run_agent_group_missing_bot_id_skips_memory(monkeypatch, db, user
         captured_prompts["execution"] = prompt
         return ('{"summary":"ok","context":"","status":"success"}', False, {"tool_names": [], "mutated": False})
 
-    monkeypatch.setattr("agent.runner.run_scheduled_execution", fake_execution)
+    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", fake_execution)
 
     target_map = {
         "qq": {

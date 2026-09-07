@@ -27,7 +27,7 @@
     <div v-else-if="showNewFolderButton" class="new-folder-inline" @click.stop>
       <input ref="folderInput" class="new-folder-input" :value="newFolderName" :placeholder="t('sharedUi.folderName')"
         @input="emit('update:new-folder-name', ($event.target as HTMLInputElement).value)"
-        @keydown.enter="emit('create-folder')" @keyup.esc="cancelFolder" autofocus />
+        v-enter.prevent="() => emit('create-folder')" @keyup.esc="cancelFolder" autofocus />
       <button class="btn-confirm-sm" :disabled="folderLoading" @click="emit('create-folder')">{{ t('sharedUi.confirm') }}</button>
       <button class="btn-cancel-sm" @click="cancelFolder">✕</button>
     </div>

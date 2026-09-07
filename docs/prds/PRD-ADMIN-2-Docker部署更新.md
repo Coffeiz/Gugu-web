@@ -3,8 +3,8 @@
 > 状态：Phase 1 已实现，首次 GitHub tag 发布与远端镜像验证待执行
 > 创建：2026-08-31
 > 最近更新：2026-08-31
-> 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/DEPLOY.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
-> 背景参考：`PRD-ADMIN-1-Admin咕咕球管理助手.md`、`docs/ops/DEPLOY.md`
+> 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/deploy.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
+> 背景参考：`PRD-ADMIN-1-Admin咕咕球管理助手.md`、`docs/ops/deploy.md`
 
 ## 0. 实际状态
 
@@ -222,7 +222,7 @@ Gugu-web/
 ├── backend/Dockerfile.prod                            # 现有：backend 生产镜像构建入口
 ├── frontend/Dockerfile.prod                           # 现有：frontend 生产镜像构建入口
 ├── docs/
-│   ├── ops/DEPLOY.md                                  # 修改：补充标准镜像更新和回滚操作
+│   ├── ops/deploy.md                                  # 修改：补充标准镜像更新和回滚操作
 │   └── prds/
 │       ├── PRD-ADMIN-1-Admin咕咕球管理助手.md          # 关联：Admin 助手工具边界
 │       └── PRD-ADMIN-2-Docker部署更新.md              # 本文档

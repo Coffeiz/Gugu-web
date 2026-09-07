@@ -15,10 +15,10 @@ ssh <devserver用户名>@<测试网络地址>
 cd <devserver仓库根目录>/Gugu-web
 
 # 方式 1：直接运行
-python3 scripts/minimax_cache_test.py
+python3 backend/scripts/diagnostics/minimax_cache_test.py
 
 # 方式 2：后台运行并查看日志
-nohup python3 scripts/minimax_cache_test.py > /tmp/minimax_cache_test.log 2>&1 &
+nohup python3 backend/scripts/diagnostics/minimax_cache_test.py > /tmp/minimax_cache_test.log 2>&1 &
 sleep 10
 tail -100 /tmp/minimax_cache_test.log
 ```
@@ -27,7 +27,7 @@ tail -100 /tmp/minimax_cache_test.log
 
 ```bash
 cd <本地用户目录>/Desktop/workspace/Gugu-web
-PYTHONPATH=<本地用户目录>/Desktop/workspace/Gugu-web/backend python3 scripts/minimax_cache_test.py
+PYTHONPATH=<本地用户目录>/Desktop/workspace/Gugu-web/backend python3 backend/scripts/diagnostics/minimax_cache_test.py
 ```
 
 ## 测试内容

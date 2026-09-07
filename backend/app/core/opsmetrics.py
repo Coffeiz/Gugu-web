@@ -76,7 +76,32 @@ SECURITY_EVENTS = (
     "ownership.denied",
     "confirm-gate.bypassed",
     "security_event.write_failed",
+    "filesystem.authorization.denied",
 )
+
+FILESYSTEM_AUTH_OUTCOMES = ("requested", "granted", "revoked", "denied")
+
+
+def record_filesystem_authorization(outcome: str, subject_type: str) -> None:
+    """记录沙箱授权生命周期指标；只接受固定枚举，不写入主体或路径。"""
+    if _DISABLED or outcome not in FILESYSTEM_AUTH_OUTCOMES:
+        return
+    subject = subject_type if subject_type in {"session", "scheduled_task"} else "unknown"
+
+    async def _run():
+        try:
+            from app.core.redis import get_redis
+            r = get_redis()
+            key = f"ops:filesystem-auth:{_day()}"
+            await r.hincrby(key, f"{subject}:{outcome}", 1)
+            await r.expire(key, TTL)
+        except Exception:
+            pass
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
 
 
 def record_security(event: str) -> None:
@@ -168,6 +193,18 @@ async def summary(days: int = 1) -> dict:
     email["avg_ms"] = int(email["ms_sum"] / email["calls"]) if email["calls"] else 0
     email["fail_rate"] = round(email["failed"] / email["calls"], 4) if email["calls"] else 0.0
 
+    filesystem_authorization = {
+        subject: {outcome: 0 for outcome in FILESYSTEM_AUTH_OUTCOMES}
+        for subject in ("session", "scheduled_task")
+    }
+    for i in range(max(1, days)):
+        day = (now - timedelta(days=i)).strftime("%Y%m%d")
+        auth_hash = await r.hgetall(f"ops:filesystem-auth:{day}") or {}
+        for key, value in auth_hash.items():
+            subject, _, outcome = str(key).partition(":")
+            if subject in filesystem_authorization and outcome in FILESYSTEM_AUTH_OUTCOMES:
+                filesystem_authorization[subject][outcome] += int(value)
+
     rows = []
     for tool, d in tools.items():
         calls = d.get("calls", 0) or 0
@@ -199,5 +236,6 @@ async def summary(days: int = 1) -> dict:
         "latency_buckets": {b: lat.get(b, 0) for b in [str(x) for x in BUCKETS] + ["inf"]},
         "tools": rows,
         "security": sec,           # 安全旁路计数：正常应恒为 0
+        "filesystem_authorization": filesystem_authorization,
         "email_delivery": email,   # 只含计数/耗时/错误码，不含邮件内容或地址
     }

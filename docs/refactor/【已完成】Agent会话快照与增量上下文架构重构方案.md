@@ -1,6 +1,6 @@
 # Agent 会话快照与增量上下文架构重构方案
 
-> 状态：P0-P5 已完成，已切换到 session snapshot 主链路；旧 summary / system-reminder 仅保留为兼容格式，未再作为第二套业务上下文来源。2026-08-21 收尾清理了旧 builder、无效快照字段和临时诊断脚本。
+> 状态：P0-P5 已完成，已切换到 session snapshot 主链路；旧 summary / system-reminder 仅保留为兼容格式，未再作为第二套业务上下文来源。2026-08-21 收尾清理了旧 builder、无效快照字段和临时诊断脚本；2026-09-06 固化 Web 后台生成 Run 与 SSE 展示/回放边界，清理 lease/EOF 时序误判。
 >
 > 基线：`dev @ 77b6a0e`（2026-08-20）
 
@@ -263,6 +263,74 @@ checkpoint hash / covered message cursor 在 run 完成或压缩完成后更新�
 反思事件不能把原始用户消息、assistant 正文或 LLM 验证日志写进可见日志，也不能把事件
 元数据放进模型 prompt；事件只负责使 section 失效。
 
+### 4.8 Web 生成 Run 与流式传输边界
+
+Web 生成必须拆成两个生命周期：后台 Run 的业务生命周期，以及 SSE 的传输生命周期。
+后台 Run 脱离 HTTP 请求执行，负责模型调用、工具调用、业务持久化和最终 `done/error`；
+SSE 只负责实时展示、快照回放和刷新后的续接。浏览器刷新或传输断开不能取消后台 Run，
+也不能被展示层推断为业务失败。
+
+```text
+POST /chat
+  open subscription -> begin snapshot -> create background Run -> subscribe
+
+background Run
+  publish progress: snapshot first -> channel event
+  finalize business data
+  publish done/error: terminal snapshot first -> terminal event
+  end: release lease, retain terminal snapshot briefly
+
+GET /stream after refresh
+  subscribe first -> read snapshot
+  active snapshot: replay/keepalive and await events
+  done snapshot: replay done and finish
+  missing snapshot: idle done and let the client reload persisted messages
+```
+
+#### 状态责任
+
+| 状态/通道 | 唯一责任 | 不得承担的责任 |
+| --- | --- | --- |
+| 后台 Run 与数据库终态 | 判断业务成功、失败、取消和持久化结果 | 不依赖浏览器连接是否存在 |
+| 生成快照 | 保存当前展示进度与可回放终态 | 不把传输断开解释为失败 |
+| Redis channel / SSE | 实时转发、刷新续接和 keepalive | 不自行生成业务 `error` |
+| lease | 后台任务归属、续期和并发控制 | 不判断 `is_active`、成功/失败或是否中断 |
+| 前端流消费 | 渲染明确事件并在终态后刷新数据 | 不从 EOF、超时或连接断开合成中断消息 |
+
+#### 强制顺序与禁止事项
+
+1. 创建后台 Run 前先建立 subscription，再初始化快照，避免短回复的首个事件丢失。
+2. 每个事件先更新快照再广播；终态快照至少保留一个短暂窗口供迟到订阅者确认。
+3. `is_active` 只读取业务快照的存在和 `done` 字段；lease 缺失不能返回 inactive。
+4. SSE 无消息时只能 keepalive；没有快照时返回 `idle done`，不得返回生成失败。
+5. 前端只有收到后台 `error` 才展示生成失败；EOF、网络断开、keepalive 间隔和 lease
+   状态都不是失败依据。
+6. lease 的 fail-open/fail-closed 策略只能影响后台归属控制，不能泄漏到用户可见流状态。
+
+该边界与上下文 snapshot 的原则一致：持久化状态是事实，传输和观测是旁路。任何新 Web、
+IM 或续接入口都必须复用这组状态语义，不得新增“根据连接/租约/时间推断 Run 结果”的
+第二套收尾逻辑。
+
+#### IM 适配边界
+
+IM 与 Web 复用同一套业务 Run、session gate、上下文组装、持久化和 baseline barrier，
+但不强行复用 Web 的浏览器 SSE 回放协议。IM 的 worker 已经是后台 Run 的持有者，平台
+Gateway 只是出站传输观察者：
+
+- `worker._dispatch/_flush_loop` 负责队列、防抖、并发和 Run 调度；Gateway 断开不能作为
+  Run 失败依据。
+- `run_collect()` 在最终回复发送前完成业务持久化和 baseline 更新等待；普通 IM 出站失败
+  不会回滚已经完成的 Run。
+- `run_stream()` 只保留飞书 CardKit、QQ 私聊等平台所需的 token 消费差异。流式发送失败
+  后必须继续消费到 `final`，确保共享 Runner 完成收尾；现有 QQ drain 与飞书 fallback
+  回归测试锁定该约束。
+- 微信当前使用非流式出站，不另建一套模型执行或终态逻辑。
+- IM 取消、交互等待和平台发送失败是不同事实：只有显式取消或 Runner 产生的业务错误
+  才能改变 Run 终态，typing、reaction、卡片更新失败只能影响展示。
+
+IM 如果未来需要跨进程重连或消息回放，应新增基于 Run 事件的持久化消费协议，并复用上述
+  终态顺序；不得通过平台回执、发送超时或连接断开推断生成失败。
+
 ## 5. 观测平面隔离
 
 以下内容只允许写入 trace / audit / diagnostics，不得进入 `ConversationMessage` 或
@@ -355,6 +423,7 @@ messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核�
 - [x] 明确 trace schema 与 ConversationMessage 的边界。
 - [x] 增加 snapshot hash、covered cursor、TTL 命中/重建的脱敏 trace。
 - [x] 增加 Web/IM、普通 run、tool round、TTL、压缩、群聊的回归测试。
+- [x] 固化 Web 后台 Run 与 SSE 展示/回放边界；移除 lease/EOF 推断业务失败的时序逻辑。
 - [x] 使用相同对话连续运行 3 轮，确认第二轮以后只新增真实消息尾部。
 - [x] 在 LoopScope 对比 `input_tokens`、`cache_read_input_tokens` 和 snapshot hash。
 
@@ -376,3 +445,8 @@ messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核�
 6. trace、probe、ack 和性能日志不进入 LLM input。
 7. 历史消息保留发送时间，模型侧时间格式稳定且不破坏缓存前缀。
 8. Web 与各 IM 入口的最终 messages 结构一致。
+9. Web 刷新或 SSE 断开不能取消后台 Run，也不能自动生成“生成中断”业务消息。
+10. lease 缺失、SSE EOF、keepalive 间隔和 transport disconnect 不得单独触发业务 `error`。
+11. `done/error` 始终先写入快照再广播；迟到订阅者可以从终态快照正常结束。
+12. 没有生成快照时，流返回 `idle done`，前端回到数据库消息加载路径。
+13. 新增流式入口必须复用后台 Run、快照、终态事件和 lease 责任边界，不得增加时序推断。

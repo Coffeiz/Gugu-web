@@ -87,11 +87,12 @@ class AISettings(BaseModel):
     context_tokens: int = Field(128000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
+    reasoning_persistence: Literal["off", "summary", "continuation"] = Field("off", description="跨请求推理状态: off | summary | continuation")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
     vision_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
     vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
     vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
-    api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
+    api_format: str = Field("", description="API 格式: openai | responses | anthropic | 空=按 provider/base_url 自动判（Responses 与 Chat Completions 分开）")
     ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
     ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
     ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
@@ -126,6 +127,18 @@ class SandboxSettings(BaseModel):
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
     enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
+    filesystem_authorization_enabled: bool = Field(
+        False,
+        description="是否开放完整用户沙箱读写授权入口（默认关闭，需灰度开启）",
+    )
+    code_execution_enabled: bool = Field(
+        True,
+        description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",
+    )
+    terminal_mode: Literal["auto", "pty_disabled", "entry_disabled"] = Field(
+        "auto",
+        description="用户终端策略：自动、关闭交互式 PTY 或关闭终端入口；不影响咕咕 Shell 执行器",
+    )
     host_data_root: str | None = Field(
         None,
         description="宿主 Docker daemon 视角的数据根目录（compose 注入 GUGU_DATA_HOST_DIR/users）；"
@@ -146,6 +159,8 @@ class SandboxSettings(BaseModel):
     memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
     pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
     timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
+
+
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
     pty_output_limit_bytes: int = Field(120 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 单会话输出上限")
     pty_output_rate_bytes: int = Field(256 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 每秒输出上限")
@@ -160,6 +175,15 @@ class SandboxSettings(BaseModel):
     )
 
 
+class FileSyncSettings(BaseModel):
+    """本地文件事实源同步配置。"""
+
+    enabled: bool = Field(
+        False,
+        description="是否启用本地文件事实源自动同步（默认关闭）",
+    )
+
+
 class AIPresetItem(BaseModel):
     id: str = ""
     name: str = ""
@@ -171,11 +195,12 @@ class AIPresetItem(BaseModel):
     context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
+    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
     vision: bool = False
     vision_detail: str = "auto"
     vision_video: bool = False
     vision_audio: bool = False
-    api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
+    api_format: str = ""         # API 格式: openai | responses | anthropic | 空=自动
     ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
     ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
     ollama_keep_alive: str = "5m"     # Ollama 模型驻留时间
@@ -200,7 +225,7 @@ class AgentBehaviorSettings(BaseModel):
     # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
     shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")
     shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
-    shell_dangerous_enabled: bool = Field(False, description="是否允许危险 Shell 命令进入确认流程（默认关闭）")
+    shell_dangerous_enabled: bool = Field(False, description="是否开放全部 Shell 命令（危险操作仍需确认，默认关闭）")
     shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")
     personality_preference_enabled: bool = Field(True, description="是否启用用户人格偏好（托管服务由后台权益开关控制，本地默认开启）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
@@ -360,6 +385,7 @@ class AppSettings(BaseSettings):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    filesync: FileSyncSettings = Field(default_factory=FileSyncSettings)
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
@@ -469,6 +495,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["sandbox"] = SandboxSettings.model_construct(**merged)
 
+            if "filesync" in override:
+                raw_filesync = override["filesync"] or {}
+                merged = {**self.filesync.model_dump(), **{
+                    k: v for k, v in raw_filesync.items()
+                    if k in FileSyncSettings.model_fields
+                }}
+                updates["filesync"] = FileSyncSettings.model_validate(merged)
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{
                     k: v for k, v in override["quota"].items()
@@ -525,7 +558,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "byok"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -632,6 +665,14 @@ async def save_override(patch: dict) -> AppSettings:
             **patch["embedding"],
             "dimensions": normalize_dimensions(patch["embedding"].get("dimensions")),
         }}
+    if "filesync" in patch:
+        raw_filesync = patch["filesync"]
+        if not isinstance(raw_filesync, dict):
+            raise ValueError("filesync 配置必须是对象")
+        FileSyncSettings.model_validate({
+            **get_settings().filesync.model_dump(),
+            **raw_filesync,
+        })
     existing = {}
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))

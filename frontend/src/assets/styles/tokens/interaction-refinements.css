@@ -161,12 +161,6 @@ html[data-theme][data-family] .task-card {
   background: color-mix(in srgb,var(--surface-raised) 78%,transparent);
   border-color: var(--border-default);
   box-shadow: var(--elevation-card);
-  transition:
-    transform var(--motion-hover-card) var(--motion-ease-emphasis),
-    box-shadow var(--hover-motion-card),
-    background-color var(--hover-motion-card),
-    border-color var(--hover-motion-card),
-    opacity var(--hover-motion-control);
 }
 html[data-theme][data-family] .task-card::after {
   background: var(--card-hover-overlay);

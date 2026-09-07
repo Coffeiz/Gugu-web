@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from agent.capabilities.errors import CapabilityRegistrationError
 from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.skill_registry import SkillCapabilityRegistry, validate_user_skill
 from agent.tools import registry as tool_registry
-from agent.tools.meta import _create_skill
+from agent.tools.skill_management import _create_skill
 from agent.tools.meta import _use_skill
+from agent.interactions.confirmations import confirmation_payload, redeem_confirmation
+from app.models import UserSkill
 
 
 def _payload(**overrides):
@@ -112,11 +115,28 @@ async def test_use_skill_loads_owned_body_and_refreshes_digest(db, user_a):
     assert first["_capability_usage"]["owner_fingerprint"]
     first_digest = first["_capability_usage"]["content_digest"]
 
+    from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    loaded_state = {row.slug: first_digest}
+    dispatch_token = set_dispatch_session(
+        None, skill_state=loaded_state,
+    )
+    try:
+        already_loaded = await _use_skill(db, user_a.id, {"name": row.slug})
+    finally:
+        reset_dispatch_session(dispatch_token)
+    assert already_loaded["already_loaded"] is True
+
     row = await registry.update_user_skill(
         db, user_a.id, row.slug, allowed_tool_names=set(tool_registry._tools),
         body="更新后的用户 Skill 正文。",
     )
-    second = await _use_skill(db, user_a.id, {"name": row.slug})
+    dispatch_token = set_dispatch_session(
+        None, skill_state=loaded_state,
+    )
+    try:
+        second = await _use_skill(db, user_a.id, {"name": row.slug})
+    finally:
+        reset_dispatch_session(dispatch_token)
     assert second["content"] == "更新后的用户 Skill 正文。"
     assert second["_capability_usage"]["content_digest"] != first_digest
 
@@ -128,14 +148,40 @@ async def test_use_skill_loads_owned_body_and_refreshes_digest(db, user_a):
 
 @pytest.mark.asyncio
 async def test_create_skill_adapter_uses_registry_and_returns_structured_result(db, user_a):
-    result = await _create_skill(db, user_a.id, {
+    args = {
         "name": "夜间复盘",
         "description_short": "把当天事项整理成复盘清单",
         "related_tools": [],
         "body": "按完成、阻塞和下一步三个部分输出。",
-    })
+    }
+    blocked = await _create_skill(db, user_a.id, args)
+    payload = confirmation_payload(blocked)
+    assert payload is not None
+    assert redeem_confirmation(user_a.id, payload["confirm_code"]) == 5
+    result = await _create_skill(db, user_a.id, args)
     assert result["success"] is True
     assert result["skill"]["slug"].startswith("user-skill-")
+
+
+@pytest.mark.asyncio
+async def test_create_skill_requires_confirmation_before_persisting(db, user_a):
+    """创建 Skill 必须先进入统一确认门，不能只因关联工具是只读工具就直接落库。"""
+    args = {
+        "name": "带确认的复盘",
+        "description_short": "保存复盘方法",
+        "related_tools": ["http_get"],
+        "body": "先收集资料，再整理结论。",
+    }
+    blocked = await _create_skill(db, user_a.id, args)
+    payload = confirmation_payload(blocked)
+    assert payload is not None
+    assert payload["status"] == "waiting_confirmation"
+    assert payload["confirm_code"]
+    assert await db.scalar(select(UserSkill).where(UserSkill.owner_id == user_a.id)) is None
+
+    assert redeem_confirmation(user_a.id, payload["confirm_code"]) == 5
+    created = await _create_skill(db, user_a.id, args)
+    assert created["success"] is True
 
 
 @pytest.mark.asyncio

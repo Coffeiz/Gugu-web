@@ -45,6 +45,7 @@ export function useChatStream(options: {
   setStatus: (item: StatusItem) => void
   clearStatus: () => void
   thinkingItem: () => StatusItem
+  contextCompactingItem: () => StatusItem
   scrollBottom: (force?: boolean) => Promise<void>
   fetchSessions: () => Promise<void>
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
@@ -86,6 +87,10 @@ export function useChatStream(options: {
       const sameSession = next.sessionId == null || next.sessionId === sessionId.value
       pendingQueue.value.shift()
       if (!sameView || !sameSession) continue
+      // 在前一条流的 finally 与下一条 POST 之间也保持思考态；否则排队消息
+      // 已经在消息列表里，但状态气泡会短暂消失，看起来像“没有收到”。
+      options.clearStatus()
+      options.setStatus(options.thinkingItem())
       await send(next.text, next.attachments, next.references)
       break
     }
@@ -113,6 +118,16 @@ export function useChatStream(options: {
     const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
     let buf = '', aiIdx = -1, aborted = false, interactionPaused = false
+    // token 到达速度由 Provider 决定；滚动只是展示副作用，不能让每个 token 等待一次
+    // nextTick。按帧合并滚动请求，避免把快速到达的 token 人为变成固定打字速度。
+    let streamScrollRaf: number | null = null
+    const scheduleStreamScroll = () => {
+      if (streamScrollRaf !== null) return
+      streamScrollRaf = window.requestAnimationFrame(() => {
+        streamScrollRaf = null
+        void options.scrollBottom()
+      })
+    }
     // 多 round 流中 aiIdx 会在 round_start 时归零；它只表示“当前气泡”，不能用来
     // 判断整条流是否已经收到过正文。否则第一轮有回复、第二轮空回合时会误加兜底气泡。
     let receivedAssistantContent = false
@@ -202,21 +217,32 @@ export function useChatStream(options: {
             currentRunId = String(evt.run_id || currentRunId)
             if (evt.round_id) currentRoundId = String(evt.round_id)
           } else if (evt.type === 'tool_call') {
-            if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
+            if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)
             const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIndexes.size + 1}`)
             if (live() && !evt.name?.startsWith('_')) {
-              const messageId = mkid()
-              messages.value.push({
-                id: messageId, role: 'tool', text: '', time: now(),
-                _timelineOrder: nextTimelineOrder(),
-                runId: evt.run_id, roundId: evt.round_id || currentRoundId,
-                toolCallId, toolName: evt.name, toolLabel: evt.label,
-                toolStatus: evt.status || 'running', toolInput: evt.input,
-                _toolStartedAt: Date.now(),
-              })
-              sortLiveTimeline()
-              toolMessageIndexes.set(toolCallId, messages.value.findIndex(item => item.id === messageId))
-              await options.scrollBottom()
+              const existingIndex = toolMessageIndexes.get(toolCallId)
+              if (existingIndex !== undefined && messages.value[existingIndex]) {
+                const existing = messages.value[existingIndex]
+                existing.runId = evt.run_id || existing.runId
+                existing.roundId = evt.round_id || existing.roundId
+                existing.toolName = evt.name || existing.toolName
+                existing.toolLabel = evt.label || existing.toolLabel
+                existing.toolStatus = evt.status || existing.toolStatus || 'running'
+                if (evt.input !== undefined) existing.toolInput = evt.input
+              } else {
+                const messageId = mkid()
+                messages.value.push({
+                  id: messageId, role: 'tool', text: '', time: now(),
+                  _timelineOrder: nextTimelineOrder(),
+                  runId: evt.run_id, roundId: evt.round_id || currentRoundId,
+                  toolCallId, toolName: evt.name, toolLabel: evt.label,
+                  toolStatus: evt.status || 'running', toolInput: evt.input,
+                  _toolStartedAt: Date.now(),
+                })
+                sortLiveTimeline()
+                toolMessageIndexes.set(toolCallId, messages.value.findIndex(item => item.id === messageId))
+                await options.scrollBottom()
+              }
             }
             // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；气泡常驻，仅替换文字。
             if (live()) options.setStatus({ kind: 'text', label: evt.label || evt.name })
@@ -240,7 +266,12 @@ export function useChatStream(options: {
             if (live()) options.setStatus(options.thinkingItem())
           } else if (evt.type === 'interaction_required') {
             interactionPaused = true
-            if (live() && evt.prompt_id && Array.isArray(evt.options)) {
+            const eventSessionId = evt.session_id == null ? null : Number(evt.session_id)
+            const interactionBelongsToView = viewGeneration === options.getViewGeneration()
+              && (eventSessionId == null
+                ? live()
+                : eventSessionId === Number(sessionId.value))
+            if (interactionBelongsToView && evt.prompt_id && Array.isArray(evt.options)) {
               const promptId = Number(evt.prompt_id)
               const existing = messages.value.find(item =>
                 item.role === 'interaction' && item.interaction?.promptId === promptId,
@@ -254,6 +285,8 @@ export function useChatStream(options: {
                 existing.interaction.title = String(evt.title || existing.interaction.title || i18n.global.t('chatUi.confirmRequired'))
                 existing.interaction.body = String(evt.body || existing.interaction.body || '')
                 existing.interaction.expiresAt = evt.expires_at ? String(evt.expires_at) : existing.interaction.expiresAt
+                existing.interaction.allowTextInput = Boolean(evt.allow_text_input ?? existing.interaction.allowTextInput)
+                existing.interaction.customInputActive = Boolean(evt.custom_input_active ?? existing.interaction.customInputActive)
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
                 messages.value.push({
@@ -265,6 +298,8 @@ export function useChatStream(options: {
                     toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
                     title: String(evt.title || i18n.global.t('chatUi.confirmRequired')), body: String(evt.body || ''),
                     options: evt.options,
+                    allowTextInput: Boolean(evt.allow_text_input),
+                    customInputActive: Boolean(evt.custom_input_active),
                     expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
                   },
                 })
@@ -272,6 +307,16 @@ export function useChatStream(options: {
               }
               options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.waitingConfirmation') })
               await options.scrollBottom()
+            }
+          } else if (evt.type === '_context_compaction') {
+            // 自动压缩可能需要等待 provider；单独显示状态，避免用户把这段等待误认为卡死。
+            if (live()) {
+              const phase = String(evt.phase || '')
+              if (phase === 'started') {
+                options.setStatus(options.contextCompactingItem())
+              } else if (phase === 'completed' || evt.applied === true) {
+                options.setStatus(options.thinkingItem())
+              }
             }
           } else if (evt.type === 'token') {
             if (live()) {
@@ -297,7 +342,7 @@ export function useChatStream(options: {
                 aiIdx = messages.value.findIndex(item => item.id === messageId)
               }
               messages.value[aiIdx].text += evt.content
-              await options.scrollBottom()
+              scheduleStreamScroll()
             }
           } else if (evt.type === 'file') {
             if (live()) {
@@ -318,7 +363,7 @@ export function useChatStream(options: {
               const m = messages.value[aiIdx]
               if (!m.files) m.files = []
               m.files.push(evt.file)
-              await options.scrollBottom()
+              scheduleStreamScroll()
             }
           } else if (evt.type === 'done') {
             if (live()) options.clearStatus()
@@ -336,6 +381,10 @@ export function useChatStream(options: {
         }
       }
     } finally {
+      if (streamScrollRaf !== null) {
+        window.cancelAnimationFrame(streamScrollRaf)
+        streamScrollRaf = null
+      }
       if (!detached && viewGeneration === options.getViewGeneration() && aiIdx !== -1 && messages.value[aiIdx]) {
         const m = messages.value[aiIdx]
         // 新会话打开时默认问候已经展示在列表里。若模型仍原样复述，
@@ -413,6 +462,26 @@ export function useChatStream(options: {
     }
   }
 
+  // 后端重启、SSE 断开或 Redis 活跃快照过期后，浏览器可能还保留本地 streaming=true。
+  // 这种状态不能把新消息永久塞进 pendingQueue；只有明确读到服务端已无活跃生成时才复位，
+  // 查询失败则保留原状态，避免 Redis 短暂不可用时与正在运行的任务并发。
+  async function reconcileStaleStreaming(): Promise<void> {
+    if (!streaming.value) return
+    const sid = activeSessionId ?? sessionId.value
+    if (sid == null) return
+    try {
+      const state = await agentApi.getMessages(String(sid)) as { active?: boolean }
+      if (state.active !== false) return
+      abortCtrl.value?.abort()
+      abortCtrl.value = null
+      if (activeSessionId === sid) activeSessionId = null
+      options.clearStatus()
+      streaming.value = false
+    } catch {
+      // 状态查询失败时不擅自放行，等待现有流或用户重试。
+    }
+  }
+
   async function send(forcedText?: string, forcedAttachments?: ChatFile[], forcedReferences?: ChatReference[]) {
     // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
     const fromInput = forcedText === undefined
@@ -441,6 +510,7 @@ export function useChatStream(options: {
     }
     // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）。
     // 带上此刻的会话身份——真正发出去之前会再核对一次，身份对不上就丢弃，不发进别的会话。
+    if (streaming.value) await reconcileStaleStreaming()
     if (streaming.value) {
       pendingQueue.value.push({
         text, attachments: atts, references: refs,

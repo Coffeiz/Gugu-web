@@ -11,7 +11,7 @@ import json
 
 from sqlalchemy import (
     String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
-    UniqueConstraint, CheckConstraint, Index,
+    UniqueConstraint, CheckConstraint, Index, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -63,7 +63,13 @@ class User(Base):
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
     user_skills:    Mapped[list["UserSkill"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    workspace_directories: Mapped[list["WorkspaceDirectory"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
     provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
+    provider_reasoning_states: Mapped[list["ProviderReasoningState"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
     smtp_config: Mapped[Optional["UserSmtpConfig"]] = relationship(
@@ -75,6 +81,33 @@ class User(Base):
     email_change_requests: Mapped[list["EmailChangeRequest"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+
+
+class FilesystemAuthorizationGrant(Base):
+    """用户沙箱完整读写授权；授权主体可以是会话或定时任务。"""
+
+    __tablename__ = "filesystem_authorization_grants"
+    __table_args__ = (
+        Index(
+            "ix_filesystem_grants_subject_active",
+            "user_id", "subject_type", "subject_id", "revoked_at", "expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    subject_type: Mapped[str] = mapped_column(String(24), default="session", server_default="session")
+    subject_id: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(32), default="user_sandbox", server_default="user_sandbox")
+    permission: Mapped[str] = mapped_column(String(32), default="read_write", server_default="read_write")
+    granted_by: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
+    granted_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
 class SecurityEvent(Base):
@@ -172,6 +205,7 @@ class UserProviderCredential(Base):
     context_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     thinking: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     reasoning_effort: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    reasoning_persistence: Mapped[str] = mapped_column(String(20), default="off", server_default="off", nullable=False)
     vision: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
     vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -238,8 +272,168 @@ class Workspace(Base):
     kind:       Mapped[str] = mapped_column(String(20), default="folder")
     folder_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    directory_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspace_directories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="bindings")
     enabled:    Mapped[bool] = mapped_column(Boolean, default=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class WorkspaceDirectory(Base):
+    """文件库根目录下的用户 Workspace 元数据，与运行时绑定声明分离。"""
+
+    __tablename__ = "workspace_directories"
+    __table_args__ = (
+        Index(
+            "uq_workspace_directory_name",
+            "user_id", "directory_name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+        # 显示名唯一性也要 DB 兜底：directory_name 现在按 id 生成（workspace-<id>）
+        # 永不冲突，并发创建同名 Workspace 只能靠这条部分唯一索引拦截。
+        Index(
+            "uq_workspace_directory_display_name",
+            "user_id", "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    directory_name: Mapped[str] = mapped_column(String(200))
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="workspace_directories")
+    bindings: Mapped[list["Workspace"]] = relationship(back_populates="directory")
+    files: Mapped[list["File"]] = relationship(back_populates="workspace_directory")
+    folders: Mapped[list["Folder"]] = relationship(back_populates="workspace_directory")
+
+class WorkspaceMigrationReport(Base):
+    """旧 Shell 目录迁移扫描结果；只保存状态和计数，不保存用户文件内容。"""
+
+    __tablename__ = "workspace_migration_reports"
+    __table_args__ = (
+        UniqueConstraint("user_id", "source_directory", name="uq_workspace_migration_report_source"),
+        Index("ix_workspace_migration_reports_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    source_directory: Mapped[str] = mapped_column(String(500))
+    target_directory: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(24), default="not_found", server_default="not_found")
+    source_file_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    scanned_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+
+
+class FileSyncBinding(Base):
+    """文件同步协议绑定；路径只保存为当前用户存储根下的相对路径。"""
+    __tablename__ = "file_sync_bindings"
+    __table_args__ = (
+        UniqueConstraint("user_id", "workspace_id", "source", name="uq_file_sync_binding_scope"),
+        Index("ix_file_sync_bindings_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[Optional[int]] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True)
+    source: Mapped[str] = mapped_column(String(24))
+    mode: Mapped[str] = mapped_column(String(24), default="bidirectional", server_default="bidirectional")
+    protocol_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(String(24), default="active", server_default="active", index=True)
+    root_path: Mapped[str] = mapped_column(String(1000), default=".", server_default=".")
+    root_fingerprint: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncJournal(Base):
+    """文件/文件夹变更幂等日志；路径仅允许是工作区内的规范相对路径。"""
+    __tablename__ = "file_sync_journal"
+    __table_args__ = (
+        UniqueConstraint("binding_id", "idempotency_key", name="uq_file_sync_journal_idempotency"),
+        Index("ix_file_sync_journal_binding_revision", "binding_id", "revision"),
+        Index("ix_file_sync_journal_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    source: Mapped[str] = mapped_column(String(24))
+    operation: Mapped[str] = mapped_column(String(24))
+    object_type: Mapped[str] = mapped_column(String(16), default="file", server_default="file")
+    relative_path: Mapped[str] = mapped_column(String(1000))
+    baseline_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    observed_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncConflict(Base):
+    """双向同步冲突；保留双方指纹，正文仍由文件存储承载。"""
+    __tablename__ = "file_sync_conflicts"
+    __table_args__ = (
+        Index("ix_file_sync_conflicts_user_status", "user_id", "status"),
+        Index("ix_file_sync_conflicts_binding_path", "binding_id", "relative_path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    relative_path: Mapped[str] = mapped_column(String(1000))
+    source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    baseline_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    local_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    remote_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    resolution: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncOutbox(Base):
+    """同步 canonical 事件的可靠投递队列；DB 提交后可安全重试发布。"""
+    __tablename__ = "file_sync_outbox"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_file_sync_outbox_event_id"),
+        Index("ix_file_sync_outbox_pending", "status", "next_attempt_at"),
+        Index("ix_file_sync_outbox_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[str] = mapped_column(String(80))
+    resource: Mapped[str] = mapped_column(String(64), default="files", server_default="files")
+    operation: Mapped[str] = mapped_column(String(24), default="refresh", server_default="refresh")
+    entity_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    revision: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
@@ -339,8 +533,11 @@ class File(Base):
     user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     display_name: Mapped[str]           = mapped_column(String(300))
     ext:          Mapped[str]           = mapped_column(String(20))
-    # 所属空间：project | mind | asset | personal
+    # 所属空间：project | mind | asset | personal | workspace
     space:        Mapped[str]           = mapped_column(String(20), default="personal")
+    workspace_directory_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspace_directories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     project_id:   Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     folder_id:    Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
     stage_name:   Mapped[str]           = mapped_column(String(100), default="")
@@ -362,6 +559,7 @@ class File(Base):
     project:  Mapped[Optional["Project"]] = relationship(back_populates="files")
     folder:   Mapped[Optional["Folder"]]  = relationship(back_populates="files")
     mind_map: Mapped[Optional["MindMap"]] = relationship(back_populates="files")
+    workspace_directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="files")
 
 
 # ── Folder（项目内用户文件夹）────────────────────────────────────────────────
@@ -372,6 +570,9 @@ class Folder(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    workspace_directory_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspace_directories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
@@ -385,6 +586,7 @@ class Folder(Base):
     # 软删后不再靠 DB 级联清子文件夹（那是硬删）——子树由 FolderTree 显式递归软删/恢复；
     # cascade 只在整个 Folder 行被硬删时（如所属 Project 被删）才触发，属既有行为，P2 不动。
     children: Mapped[list["Folder"]]      = relationship(back_populates="parent", cascade="all, delete-orphan")
+    workspace_directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="folders")
     parent:   Mapped[Optional["Folder"]]  = relationship(back_populates="children", remote_side="Folder.id")
 
 
@@ -602,7 +804,7 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     # P1-3：手动重命名后置 True，永久禁止自动标题覆盖（与 generated_at 配合，
     # 任何后续自动标题任务直接跳过本 session）。rename_session API 写入 True，
-    # _gen_title_bg 在改 title 前查并跳过。
+    # conversation.lifecycle.generate_title_bg 在改 title 前查并跳过。
     title_locked: Mapped[bool]   = mapped_column(Boolean, default=False)
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
@@ -646,6 +848,62 @@ class ConversationSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="ConversationBatch.created_at",
+    )
+    provider_reasoning_states: Mapped[list["ProviderReasoningState"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class ProviderReasoningState(Base):
+    """独立于 canonical history 的 Provider 推理状态。
+
+    同一会话只保留一行当前状态；更新靠 ``version`` 做乐观 CAS，失效时清空密文，
+    只留下受限诊断元数据。这样旧状态不会以历史快照形式重新参与后续请求。
+    """
+
+    __tablename__ = "provider_reasoning_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE")
+    )
+    # 行版本用于并发 CAS；state_version 是 envelope 协议版本，两者不能混用。
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    state_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    api_format: Mapped[str] = mapped_column(String(32))
+    model_id: Mapped[str] = mapped_column(String(200))
+    reasoning_persistence: Mapped[str] = mapped_column(String(20))
+    config_digest: Mapped[str] = mapped_column(String(64))
+    reasoning_config_digest: Mapped[str] = mapped_column(String(64))
+    source_run_id: Mapped[str] = mapped_column(String(128))
+    source_round_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state_kind: Mapped[str] = mapped_column(String(80))
+    encrypted_payload: Mapped[str] = mapped_column(Text, default="")
+    payload_nonce: Mapped[str] = mapped_column(String(64), default="")
+    encrypted_data_key: Mapped[str] = mapped_column(Text, default="")
+    key_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    payload_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state_summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    invalidated_reason: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, default=None)
+    invalidated_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    last_used_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="provider_reasoning_states")
+    session: Mapped["ConversationSession"] = relationship(back_populates="provider_reasoning_states")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_provider_reasoning_states_session"),
+        Index("ix_provider_reasoning_states_session_status", "session_id", "status"),
     )
 
 
@@ -1160,17 +1418,31 @@ class ScheduledTask(Base):
     # 绑定的日历事件 id（活动编辑面板里加的提醒）；null = 普通独立任务。
     # 故意不设 DB 外键：删事件时由应用层显式删其提醒任务（_delete_event），避免 FK 命名/迁移复杂度、更可移植。
     event_id:    Mapped[Optional[int]]      = mapped_column(Integer, nullable=True, index=True)
+    # 可选工作区是任务 Shell 和文件操作的完整边界；不保存宿主机路径。
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # 任务级完整用户沙箱授权；与创建它的 Session 授权完全隔离。
+    filesystem_authorization_grant_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("filesystem_authorization_grants.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     name:        Mapped[str]                = mapped_column(String(100))
     payload:     Mapped[str]                = mapped_column(Text, default="")   # 到点要执行的指令（交给 agent 跑）
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
+    schedule_kind: Mapped[str]              = mapped_column(String(16), nullable=False, default="cron", server_default="cron", index=True)
+    interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    start_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    end_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
     # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时仅沿用 owner 私聊地址，拒绝群聊最近地址。
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     # 用户创建任务时明确授权的自动工具；当前仅允许 send_email，空值表示不自动授权。
     authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+    # 定时任务可执行的唯一脚本；为空时不暴露 run_script。
+    script_authorization: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
-    # 只对一次性任务（cron 形如 "@once:..."）有意义：last_run_at 非空但这个是 True，
+    # 只对 schedule_kind=once 的任务有意义：last_run_at 非空但这个是 True，
     # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；
     # None/False 且 last_run_at 非空 = 已成功（成功后本来就会删行，理论上不会读到）。
     last_run_failed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)

@@ -21,8 +21,8 @@ svg { shape-rendering: geometricPrecision; }
 
 /* 全局勾选框样式：注册页确认勾选（原 .ack-box）与 markdown 预览 task list 用的同一套视觉，
    统一收到这里，避免各处各抄一份字面量。16px 圆角 5px，紫灰边白底，选中紫色渐变 + 阴影 + 白勾。
-   排除掉 arco 组件自带的 checkbox（它们有自己的 class，不吃这条全局规则）。 */
-input[type="checkbox"]:not(.arco-checkbox-icon) {
+   排除掉 arco 组件和公共 Checkbox 的自定义输入（它们各自拥有可见盒子，不吃这条全局规则）。 */
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input) {
   appearance: none; -webkit-appearance: none;
   width: var(--control-checkbox-size); height: var(--control-checkbox-size); flex-shrink: 0;
   border: var(--control-checkbox-border-width) solid var(--action-outline);
@@ -32,15 +32,15 @@ input[type="checkbox"]:not(.arco-checkbox-icon) {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-input[type="checkbox"]:not(.arco-checkbox-icon):hover {
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):hover {
   border-color: var(--action-primary);
 }
-input[type="checkbox"]:not(.arco-checkbox-icon):checked {
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked {
   background: var(--action-primary-bg);
   border-color: transparent;
   box-shadow: none;
 }
-input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
+input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):checked::after {
   content: '';
   position: absolute;
   left: 50%; top: 50%; right: auto; bottom: auto;

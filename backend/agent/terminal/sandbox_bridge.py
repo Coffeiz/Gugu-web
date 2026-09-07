@@ -66,6 +66,6 @@ class SandboxPtyBridge:
 
 
 __all__ = [
-    "PtyBridge", "PtyLaunchSpec", "PtyManager", "SandboxPtyBridge", "SandboxPtyPolicy",
+    "PtyBridge", "PtyLaunchSpec", "SandboxPtyBridge", "SandboxPtyPolicy",
     "SandboxPtyTransport",
 ]

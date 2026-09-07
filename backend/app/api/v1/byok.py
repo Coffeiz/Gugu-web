@@ -52,6 +52,7 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
         base_url=body.base_url, model=body.model, max_tokens=body.max_tokens,
         context_tokens=body.context_tokens,
         thinking=body.thinking, reasoning_effort=body.reasoning_effort,
+        reasoning_persistence=body.reasoning_persistence,
         vision=body.vision,
         vision_video=body.vision_video, vision_audio=body.vision_audio,
         vision_detail=body.vision_detail,
@@ -119,7 +120,7 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         ))).scalars().all()
         for item in siblings:
             item.enabled = False
-    for field in ("provider", "api_format", "base_url", "model", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video", "vision_audio", "vision_detail", "enabled"):
+    for field in ("provider", "api_format", "base_url", "model", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video", "vision_audio", "vision_detail", "enabled"):
         value = getattr(body, field)
         if value is not None:
             setattr(row, field, value)

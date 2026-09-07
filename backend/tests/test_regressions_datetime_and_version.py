@@ -7,17 +7,6 @@ import pytest
 from sqlalchemy.exc import DBAPIError
 
 
-def test_once_expired_accepts_legacy_naive_and_aware_iso():
-    from app.scheduled_tasks import _once_expired
-    from app.core.tz import local_now
-
-    now = local_now()
-    old = now - timedelta(minutes=3)
-    assert _once_expired(f"@once:{old.replace(tzinfo=None).isoformat()}", now)
-    assert _once_expired(f"@once:{old.isoformat()}", now)
-    assert not _once_expired(f"@once:{(now + timedelta(minutes=3)).isoformat()}", now)
-
-
 @pytest.mark.asyncio
 async def test_list_tasks_does_not_delete_expired_but_failed_once_task(db, user_a):
     """过期的一次性任务面板打开时会被清掉——但如果它是"触发过但失败"的，不能跟着
@@ -27,15 +16,17 @@ async def test_list_tasks_does_not_delete_expired_but_failed_once_task(db, user_
     from app.core.tz import local_now
     from app.models import ScheduledTask
 
-    old = (local_now() - _td(minutes=10)).isoformat()
+    old = local_now() - _td(minutes=10)
     failed_task = ScheduledTask(
         user_id=user_a.id, name="失败的任务", payload="占位",
-        cron=f"@once:{old}", channels="qq", delivery_targets=None,
+        cron=f"@once:{old.isoformat()}", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=old,
         last_run_at=local_now(), last_run_failed=True,
     )
     succeeded_style_task = ScheduledTask(
         user_id=user_a.id, name="早就过期没标失败", payload="占位",
-        cron=f"@once:{old}", channels="qq", delivery_targets=None,
+        cron=f"@once:{old.isoformat()}", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=old,
     )
     db.add_all([failed_task, succeeded_style_task])
     await db.commit()
@@ -64,10 +55,11 @@ async def test_list_tasks_marks_crashed_once_task_as_failed_instead_of_deleting(
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(exists=fake_exists))
 
-    old_scheduled = (local_now() - _td(minutes=10)).isoformat()
+    old_scheduled = local_now() - _td(minutes=10)
     crashed_task = ScheduledTask(
         user_id=user_a.id, name="执行中途崩溃的任务", payload="占位",
-        cron=f"@once:{old_scheduled}", channels="qq", delivery_targets=None,
+        cron=f"@once:{old_scheduled.isoformat()}", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=old_scheduled,
         last_run_at=now_utc() - _td(seconds=700),   # 早就超过锁的 600s timeout
         last_run_failed=False,
     )
@@ -97,10 +89,11 @@ async def test_list_tasks_keeps_in_flight_once_task_untouched(db, user_a, monkey
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(exists=fake_exists))
 
-    old_scheduled = (local_now() - _td(minutes=10)).isoformat()
+    old_scheduled = local_now() - _td(minutes=10)
     running_task = ScheduledTask(
         user_id=user_a.id, name="正在跑的任务", payload="占位",
-        cron=f"@once:{old_scheduled}", channels="qq", delivery_targets=None,
+        cron=f"@once:{old_scheduled.isoformat()}", channels="qq", delivery_targets=None,
+        schedule_kind="once", start_at=old_scheduled,
         last_run_at=now_utc() - _td(seconds=700),
         last_run_failed=False,
     )

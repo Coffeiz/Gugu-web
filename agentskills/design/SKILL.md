@@ -37,6 +37,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
   禁止另画透明底、无过渡的按钮**；改动契约时 `card-actions.css` 与 `CardAffordances.vue`
   两处声明同步（归属说明见 `assets/styles/STYLE-OWNERS.md`）。
 - 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
+- 单选下拉：统一使用 `frontend/src/components/common/controls/SelectPopup.vue`；Admin 普通选项通过 `AdminSelect` 使用，Provider 分组等特殊场景在其基础上扩展，不使用页面专用原生 `<select>` 或重复绘制列表弹窗；保存中或不可用时使用公共组件的 `disabled` 状态。
 - 卡片：`--surface-card-solid` 或毛玻璃背景，圆角 12-16px
 - 侧边栏：220px 固定宽度，Glassmorphism 背景
 

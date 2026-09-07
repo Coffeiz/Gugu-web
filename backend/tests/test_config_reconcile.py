@@ -8,6 +8,26 @@ from app.services import storage as storage_module
 from app.services.storage import LocalStorageBackend
 
 
+def test_reconcile_skips_runtime_managed_user_namespaces(user_a):
+    user_id = str(user_a.id)
+
+    assert config_api._is_internal_key(f"{user_id}/.system/rag/ts-index/index.json")
+    assert config_api._is_internal_key(f"{user_id}/.agent/pattern.json")
+    assert config_api._is_internal_key(f"{user_id}/shell/plot_test.py")
+    assert config_api._is_internal_key(f"{user_id}/shell/shell_recover_test.txt")
+    assert config_api._is_internal_key(f"{user_id}/.voice/attachment.ogg")
+    assert config_api._is_internal_key(f"{user_id}/.video_cache/transcoded.mp4")
+    assert config_api._is_internal_key(f"u/{user_id}/.system/rag/index.json")
+    assert config_api._is_internal_key(f"u/{user_id}/shell/terminal.txt")
+
+
+def test_reconcile_does_not_skip_same_names_in_regular_user_directory(user_a):
+    user_id = str(user_a.id)
+
+    assert not config_api._is_internal_key(f"{user_id}/个人文件/shell/note.txt")
+    assert not config_api._is_internal_key(f"{user_id}/个人文件/.system/note.txt")
+
+
 async def test_import_orphan_uses_stat_and_rejects_unresolved_project(db, user_a, user_b, tmp_path, monkeypatch):
     storage = LocalStorageBackend(Path(tmp_path))
     project = Project(user_id=user_b.id, name="他人的项目", start_date="2026-08-01")
@@ -74,3 +94,25 @@ async def test_path_migration_reports_missing_file_ids(db, tmp_path, monkeypatch
 
     assert result["done"] == []
     assert result["failed"] == [{"file_id": 999999, "error": "文件不存在或已删除"}]
+
+
+async def test_reconcile_users_only_reports_users_without_local_directory(db, user_a, user_b, tmp_path, monkeypatch):
+    storage = LocalStorageBackend(Path(tmp_path))
+    (storage.root / str(user_b.id)).mkdir(parents=True)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+
+    result = await config_api.reconcile_users(db=db)
+
+    assert result["backend"] == "local"
+    assert result["missing_directory_count"] == 1
+    assert result["users"][0]["user_id"] == str(user_a.id)
+
+
+async def test_reconcile_users_accepts_legacy_onboarding_directory(db, user_a, tmp_path, monkeypatch):
+    storage = LocalStorageBackend(Path(tmp_path))
+    (storage.root / "u" / str(user_a.id)).mkdir(parents=True)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+
+    result = await config_api.reconcile_users(db=db)
+
+    assert result["missing_directory_count"] == 0

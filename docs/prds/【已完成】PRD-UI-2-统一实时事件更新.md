@@ -82,7 +82,7 @@ Web API / QQ / 飞书 / 微信 / 定时任务 / Agent 工具
 - 后端事件发布：`backend/app/core/events.py`
 - 业务 SSE：`backend/app/api/v1/live.py`
 - 前端统一连接与解析：`frontend/src/stores/live.ts`
-- 通用 revision watcher：`frontend/src/composables/useLiveRefresh.ts`
+- 各领域 composable/store 的事件消费与资源级补偿刷新
 - 文件细粒度消费：`frontend/src/stores/filesCache.ts`
 - 会话消息增量消费：`frontend/src/components/common/gugu-chat/composables/useChatConversation.ts`
 
@@ -264,7 +264,7 @@ Phase 0 交付物：
 
 - [x] 新增前端业务事件 envelope 类型和运行时校验。
 - [x] `live.ts` 统一解析 canonical envelope；必要的领域 refetch 仅作为 payload 不完整时的安全回退。
-- [x] 将 `useLiveRefresh` 保留为事件分发层的兼容适配器。
+- [x] 领域消费者已统一接入 canonical event 与资源级 revision 补偿，不再保留通用 watcher 入口。
 - [x] 保留必要的领域 refetch 行为，确保本阶段不改变业务正确性。
 - [x] 交付统一事件 parser；沿用现有重连补刷与旧事件兼容路径，并完成 canonical 契约测试。
 
@@ -337,7 +337,7 @@ Phase 2 交付物：
 
 - [x] 断线补偿采用“重连后资源级错峰 refetch”方案。它不依赖短生命周期 SSE 重放，直接以服务端资源状态校正本地状态；终端另有 sequence 补偿。该方案是本 PRD 约定的明确持久化状态补偿方案。
 - [x] QQ、飞书、微信连接状态变更发布 `im_channels` canonical event；连接设置 API 与连接回收路径共用 `bump_context_revision`/事件发布边界。
-- [x] 领域事件 handler 是增量更新入口；`useLiveRefresh` 仅保留为旧页面兼容适配器，不再新增调用点，现有调用与 canonical revision 共用同一补偿语义。
+- [x] 领域事件 handler 是增量更新入口；旧通用 watcher 已删除，领域 handler 与 canonical revision 共用同一补偿语义。
 - [x] revision 改为 `live-revision:{user_id}:{resource}` 资源级计数，前端 `lastCanonicalRevision` 的比较边界与后端契约一致。
 - [x] 已补充 Live SSE、资源 revision、RAG/Agent 写入后事件消费的回归测试；跨 Web/IM/Agent 的生产者均经过同一 canonical publisher。
 
@@ -362,7 +362,6 @@ backend/
 
 frontend/src/
 ├─ stores/live.ts                     # 统一连接、解析、分发和重连
-├─ composables/useLiveRefresh.ts      # 当前保留的 refetch 兼容适配器
 ├─ stores/projects.ts                  # 项目事件 patch
 ├─ stores/filesCache.ts                # 文件事件 patch
 ├─ stores/mind.ts                      # 画布/笔记事件 patch
@@ -406,7 +405,7 @@ frontend/src/
 - `backend/app/api/v1/projects.py`、`events.py`、`files.py`、`folders.py`、`trash.py`、`user_bots.py` 及其他写入 API：统一接入 canonical publisher。
 - `backend/app/api/v1/terminals.py`：改为发布终端状态/输出事件，不再依赖每个终端各自轮询。
 - `frontend/src/stores/live.ts`：从 `resources/rev` 兼容模式升级为 envelope 分发。
-- `frontend/src/composables/useLiveRefresh.ts`：暂时保留为 refetch 回退层，最终由领域 handler 替代。
+- 通用 revision watcher：已由领域 handler、`InteractionSyncEventQueue` 和各 store 的资源级补偿逻辑替代。
 - `frontend/src/stores/filesCache.ts`、`projects.ts`、`mind.ts` 以及日历、任务、会话相关消费模块：增加事件 patch 和 revision 缺口回退。
 
 #### 当前保留的兼容和独立流
@@ -414,7 +413,6 @@ frontend/src/
 下面的旧迁移说明不再作为执行计划；当前后端仍由 Python/FastAPI 负责。
 
 - FastAPI `/api/v1/live/stream` 入口：由 `backend/app/api/v1/live.py` 提供；TS Live 实现和 `gugu-live.service` 已删除。
-- `frontend/src/composables/useLiveRefresh.ts`：当前仍作为 refetch 兼容适配器，待事件消费完全收口后再评估删除。
 - `backend/app/core/events.py`：保留为业务写入侧 publisher；所有事件统一生成 canonical envelope，不再接受 mind 的旧位置参数调用。
 - `backend/app/api/v1/terminals.py`：终端事件仍保留 sequence 补偿和独立输出流。
 
@@ -485,6 +483,5 @@ frontend/src/
 - [`backend/app/core/events.py`](../../backend/app/core/events.py)
 - [`backend/app/api/v1/live.py`](../../backend/app/api/v1/live.py)
 - [`frontend/src/stores/live.ts`](../../frontend/src/stores/live.ts)
-- [`frontend/src/composables/useLiveRefresh.ts`](../../frontend/src/composables/useLiveRefresh.ts)
 - [`frontend/src/stores/filesCache.ts`](../../frontend/src/stores/filesCache.ts)
 - [`frontend/src/components/common/gugu-chat/composables/useChatConversation.ts`](../../frontend/src/components/common/gugu-chat/composables/useChatConversation.ts)

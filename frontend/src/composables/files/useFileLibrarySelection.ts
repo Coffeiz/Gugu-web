@@ -13,7 +13,7 @@ export interface FileLibrarySelectionOptions {
   getTrashFolders: () => TrashFolderMeta[]
   enterFolder: (folder: FolderCardMeta) => void
   openPreview: (file: FileMeta) => void
-  isPreviewable: (ext: string) => boolean
+  isPreviewable: (ext: string, mimeType?: string | null) => boolean
 }
 
 /** 文件库页面的统一选择协调器；批量副作用仍由 action composable 负责。 */
@@ -130,7 +130,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
       return
     }
     if (event.ctrlKey || event.metaKey || inSelectionMode.value) { state.toggleFile(file.id); selectModeForced.value = true; anchor('file', file.id); return }
-    if (options.isPreviewable(file.ext)) options.openPreview(file); else state.toggleExclusiveFile(file.id)
+    if (options.isPreviewable(file.ext, file.mimeType)) options.openPreview(file); else state.toggleExclusiveFile(file.id)
     anchor('file', file.id)
   }
   function handleTrashFileClick(file: FileMeta, event: MouseEvent) {

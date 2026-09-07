@@ -16,7 +16,7 @@ class ProviderCapabilities:
     供应商适配器可以按 model 覆盖，避免把同一供应商的所有模型误认为能力相同。
     """
 
-    api_format: Literal["anthropic", "openai"]
+    api_format: Literal["anthropic", "openai", "responses"]
     cache_mode: str = "none"
     thinking: bool = False
     structured_json: bool = False
@@ -36,7 +36,7 @@ class ProviderAdapter:
     """
 
     name = "unknown"
-    api_format: Literal["anthropic", "openai"] = "anthropic"
+    api_format: Literal["anthropic", "openai", "responses"] = "anthropic"
     default_base_url = ""
     cache_mode = "active"
     supports_thinking_toggle = False
@@ -99,6 +99,15 @@ class ProviderAdapter:
             path = "/messages" if not base_url or base_url.endswith("/v1") else "/v1/messages"
             payload = {"model": getattr(ai, "model", ""), "max_tokens": 1,
                        "messages": [{"role": "user", "content": "hi"}]}
+        elif protocol == "responses":
+            headers = {"content-type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            path = "/responses"
+            payload = {
+                "model": getattr(ai, "model", ""), "max_output_tokens": 1,
+                "input": [{"role": "user", "content": "hi"}],
+            }
         else:
             headers = {"content-type": "application/json"}
             if api_key:
@@ -122,7 +131,7 @@ class ProviderAdapter:
         """构造后台模型列表请求，统一协议路径和鉴权头。"""
         protocol = self.protocol_format(ai)
         base_url = self.resolve_base_url(ai)
-        path = "/models" if protocol == "openai" or base_url.endswith("/v1") else "/v1/models"
+        path = "/models" if protocol in {"openai", "responses"} or base_url.endswith("/v1") else "/v1/models"
         headers = {"Accept": "application/json"}
         from app.core.credentials import normalize_ascii_api_key
         api_key = normalize_ascii_api_key(
@@ -153,11 +162,11 @@ class ProviderAdapter:
     def supports_audio(self, model: str = "") -> bool:
         return self.capabilities(model).audio
 
-    def protocol_format(self, ai) -> Literal["anthropic", "openai"]:
+    def protocol_format(self, ai) -> Literal["anthropic", "openai", "responses"]:
         """解析本次请求使用的协议格式，集中处理显式配置和地址兼容规则。"""
         configured = (getattr(ai, "api_format", "") or "").lower()
-        if configured in ("anthropic", "openai"):
-            return configured
+        if configured in ("anthropic", "openai", "responses", "openai_responses"):
+            return "responses" if configured == "openai_responses" else configured
         if self.name in ("anthropic", "minimax"):
             return "anthropic"
         if "anthropic" in (getattr(ai, "base_url", "") or "").lower():

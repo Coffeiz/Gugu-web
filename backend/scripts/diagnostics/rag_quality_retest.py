@@ -24,20 +24,36 @@ from agent.rag.models import RecallCandidate, Scope
 from agent.rag.scope import owner_scope, group_scope
 from agent.rag.service import _load_cached_vectors
 from agent.rag.index_cache import search_documents_with_cache
-from agent.rag.ts_sidecar import rank_candidates_with_cache
+from agent.rag.ts_sidecar import (
+    close_lexical_clients,
+    close_rank_clients,
+    rank_candidates_with_cache,
+)
 from app.models import MemoryReflectionCursor, User
 
 
 QUERIES = (
+    ("gugu", "咕咕"),
+    ("technology", "科技 大模型 AI Claude GPT"),
+    ("shell", "Shell 沙盒 危险命令"),
+    ("files", "文件 文件同步 文件库"),
+    ("knowledge", "Knowledge 知识库 搜索"),
+    ("project", "项目 工作区"),
+    ("workspace", "工作区 个人文件 项目目录"),
+    ("model", "模型 provider MiniMax DeepSeek"),
+    ("memory", "记忆 压缩"),
+    ("schedule", "定时任务 调度"),
+    ("image", "图片 读图 SVG PNG"),
+    ("network", "网络 egress DNS"),
+    ("frontend", "前端 主题 UI 组件"),
+    ("rag", "RAG BM25 向量"),
+    ("prompt", "提示词 工具 schema"),
     ("gta", "GTA 6"),
     ("canvas", "画布 卡片"),
-    ("project", "项目文件"),
     ("reminder", "提醒"),
-    ("image", "图片搜索"),
-    ("memory", "记忆"),
     ("game", "最近好玩的游戏"),
     ("search", "搜索工具"),
-    ("schedule", "日历安排"),
+    ("calendar", "日历安排"),
     ("work", "当前工作计划"),
 )
 
@@ -95,7 +111,9 @@ async def quality_views(
     owner_id: str, query: str, results, *, top_k: int, full: bool = False,
 ) -> dict[str, Any]:
     """输出四种离线策略；confidence 直接复用 TS worker，避免 Python 分词漂移。"""
-    raw = list(results[:max(top_k, 20)])
+    # 诊断只需要评估实际的 Top-K；对真实长正文再额外请求 20 条会让
+    # JSONL worker 的单行响应超过 asyncio stream 上限，掩盖真正的评分结果。
+    raw = list(results[:top_k])
     candidates = [
         RecallCandidate.from_result(item, rank=index)
         for index, item in enumerate(raw, start=1)
@@ -104,15 +122,26 @@ async def quality_views(
         owner_id, query, candidates, limit=top_k, max_chars=3000,
         max_per_source=3, max_per_parent=3,
     )
+    active_kept, active_stats = await rank_candidates_with_cache(
+        owner_id, query, candidates, limit=top_k, max_chars=3000,
+        max_per_source=3, max_per_parent=3, selection_mode="top_k",
+    )
     return {
         "unfiltered": [public(item, item.score, mode="unfiltered", full=full) for item in raw[:top_k]],
         "raw_score": [public(item, item.score, mode="raw_score", full=full) for item in raw[:top_k]],
         "normalized_score": [],
         "confidence": [
-            public(item.document, item.get("confidence", 0), mode="confidence", norm=item.get("confidence", 0), full=full)
-            for _, _, item in confidence_kept
+            public(candidate.document, item.get("confidence", 0), mode="confidence",
+                   norm=item.get("confidence", 0), full=full)
+            for candidate, _, item in confidence_kept
         ],
         "confidence_stats": confidence_stats,
+        "active_top_k": [
+            public(candidate.document, item.get("confidence", 0), mode="top_k",
+                   norm=item.get("confidence", 0), full=full)
+            for candidate, _, item in active_kept
+        ],
+        "active_top_k_stats": active_stats,
     }
 
 
@@ -140,7 +169,7 @@ async def one_scope(
     }
     for query_label, query in queries:
         started = time.perf_counter()
-        lexical_results = await lexical(user_id, documents, query, max(top_k, 20))
+        lexical_results = await lexical(user_id, documents, query, top_k)
         lexical_ms = round((time.perf_counter() - started) * 1000, 2)
         vector_results = []
         vector_ms = None
@@ -219,23 +248,27 @@ async def main() -> None:
         scopes.append((f"group-{len(seen)}", group_scope(user_id, platform, bot_id, group_id)))
         if len(scopes) >= 4:
             break
-    results = []
-    for label, scope in scopes:
-        results.append(await one_scope(
-            user_id, label, scope, QUERIES, args.top_k, full=bool(args.full_report),
-        ))
-    payload = {
-        "embedding_enabled": embedding.is_enabled(),
-        "embedding_model": embedding.model_tag(),
-        "query_count": len(QUERIES),
-        "scope_count": len(results),
-        "scopes": results,
-    }
-    if args.full_report:
-        path = _write_full_report(args.full_report, payload)
-        print(json.dumps({"report": str(path), "scope_count": len(results)}, ensure_ascii=False))
-    else:
-        print(json.dumps(payload, ensure_ascii=False))
+    try:
+        results = []
+        for label, scope in scopes:
+            results.append(await one_scope(
+                user_id, label, scope, QUERIES, args.top_k, full=bool(args.full_report),
+            ))
+        payload = {
+            "embedding_enabled": embedding.is_enabled(),
+            "embedding_model": embedding.model_tag(),
+            "query_count": len(QUERIES),
+            "scope_count": len(results),
+            "scopes": results,
+        }
+        if args.full_report:
+            path = _write_full_report(args.full_report, payload)
+            print(json.dumps({"report": str(path), "scope_count": len(results)}, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False))
+    finally:
+        await close_rank_clients()
+        await close_lexical_clients()
 
 
 def _md(value: object) -> str:

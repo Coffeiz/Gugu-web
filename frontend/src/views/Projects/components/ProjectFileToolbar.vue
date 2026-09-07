@@ -12,6 +12,8 @@
     :show-new-folder="showNewFolder"
     :new-folder-name="newFolderName"
     :folder-loading="folderLoading"
+    :show-new-workspace-button="workspaceAvailable"
+    :workspace-exists="workspaceExists"
     :sort-options="PM_SORT_OPTIONS"
     :sort-key="pmSortKey"
     :sort-dir="pmSortDir"
@@ -21,6 +23,7 @@
     @update:show-new-folder="value => showNewFolder = value"
     @update:new-folder-name="value => newFolderName = value"
     @create-folder="createFolder"
+    @create-workspace="toggleWorkspace"
     @sort-select="onPmSortSelect"
     @close="closeProjectModal"
   >
@@ -52,6 +55,7 @@ const {
   pmNavigateTo, folderStack, pmCbStore, pmCtxPaste, pmInSelectionMode,
   togglePmSelectionMode, fileViewMode, showNewFolder, newFolderName, folderLoading, createFolder,
   PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal, runtimeScope,
+  workspaceAvailable, workspaceExists, toggleWorkspace,
 } = props.context
 </script>
 

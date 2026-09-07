@@ -4479,6 +4479,8 @@ export interface components {
             thinking?: ("disabled" | "adaptive") | null;
             /** Reasoning Effort */
             reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
+            /** Reasoning Persistence */
+            reasoning_persistence: "off" | "summary" | "continuation";
             /**
              * Vision
              * @default false
@@ -4548,6 +4550,8 @@ export interface components {
             thinking?: ("disabled" | "adaptive") | null;
             /** Reasoning Effort */
             reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
+            /** Reasoning Persistence */
+            reasoning_persistence?: "off" | "summary" | "continuation" | null;
             /** Vision */
             vision?: boolean | null;
             /** Vision Video */
@@ -5449,6 +5453,8 @@ export interface components {
              * @default
              */
             reasoning_effort: string;
+            /** Reasoning Persistence */
+            reasoning_persistence: "off" | "summary" | "continuation";
             /**
              * Vision
              * @default false
@@ -5536,6 +5542,8 @@ export interface components {
             thinking?: string | null;
             /** Reasoning Effort */
             reasoning_effort?: string | null;
+            /** Reasoning Persistence */
+            reasoning_persistence?: "off" | "summary" | "continuation" | null;
             /** Vision */
             vision?: boolean | null;
             /** Vision Detail */

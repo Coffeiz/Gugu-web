@@ -36,8 +36,10 @@ def test_narration_guard_keeps_object_context_for_read_claims():
 
 
 def test_colon_ended_file_action_is_guarded_in_chinese_and_english():
-    assert _announces_intent("先把文件移动到目标文件夹：")
-    assert _announces_intent("Let me move the file to the target folder:")
+    assert _announces_intent("先把文件移动到目标文件夹：", "zh-CN")
+    assert _announces_intent("先把文件移动到目标文件夹:", "zh-CN")
+    assert _announces_intent("Let me move the file to the target folder:", "en-US")
+    assert _announces_intent("Let me move the file to the target folder：", "en-US")
 
 
 def test_colon_ended_explanation_is_not_treated_as_action_intent():

@@ -12,9 +12,23 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 _model_cfg: ContextVar[object | None] = ContextVar("model_cfg", default=None)
 _user_scope: ContextVar[bool] = ContextVar("modelctx_user_scope", default=False)
+
+
+@dataclass(frozen=True)
+class UsageContext:
+    """当前用户链路的用量归属。后台派生任务会继承父任务的上下文。"""
+
+    user_id: object
+    session_id: int | None = None
+
+
+_usage_context: ContextVar[UsageContext | None] = ContextVar(
+    "modelctx_usage_context", default=None
+)
 
 logger = logging.getLogger("agent.modelctx")
 
@@ -25,6 +39,15 @@ def set_model_cfg(ai) -> None:
 
 def get_model_cfg():
     return _model_cfg.get()
+
+
+def set_usage_context(user_id, session_id: int | None = None) -> None:
+    """绑定当前用户链路，供非对话 provider 调用统一记录用量。"""
+    _usage_context.set(UsageContext(user_id=user_id, session_id=session_id))
+
+
+def get_usage_context() -> UsageContext | None:
+    return _usage_context.get()
 
 
 def mark_user_scope() -> None:

@@ -25,23 +25,36 @@ from app.core.tz import now_utc, resolve_tz
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import case, select, func, text, literal_column
+from sqlalchemy import case, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage
 
-_SPLIT_CACHE_PROVIDERS = ("anthropic", "minimax")
+# 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
+# tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
+# 报表必须兼容这批历史记录，否则会把旧 OpenAI 的缓存再次加进分母。
+_CACHE_SPLIT_PROVIDERS = ("anthropic", "minimax")
+_CACHE_USAGE_CUTOFF = datetime(2026, 9, 3, 11, 15, tzinfo=timezone.utc)
+_CACHE_USAGE_CUTOFF_SQL = "TIMESTAMPTZ '2026-09-03 11:15:00+00'"
 
 
-def _effective_input_tokens(provider: str, tokens_in: int, cache_read: int, cache_write: int) -> int:
-    """按供应商 usage 约定计算完整输入 token 数。"""
-    if (provider or "").lower() in _SPLIT_CACHE_PROVIDERS:
-        return tokens_in + cache_read + cache_write
-    return tokens_in
+def _effective_input_tokens(
+    provider: str,
+    tokens_in: int,
+    cache_read: int,
+    cache_write: int,
+    created_at: datetime | None = None,
+) -> int:
+    """按当前及历史落库口径计算完整输入 token 数。"""
+    split_cache = (provider or "").lower() in _CACHE_SPLIT_PROVIDERS
+    if created_at is not None and created_at < _CACHE_USAGE_CUTOFF and not split_cache:
+        return tokens_in
+    return tokens_in + cache_read + cache_write
 
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -72,16 +85,11 @@ def _mask_key(key: str) -> str:
 
 
 def _effective_input_expr():
-    """返回统一口径的完整输入 token 表达式。
-
-    Anthropic 将 cache_read/cache_write 与 input_tokens 分开返回；其他兼容
-    OpenAI 的供应商通常已经把缓存 token 包含在 tokens_in 中，不能再次相加。
-    """
+    """返回兼容历史记录的完整输入 token 表达式。"""
+    full_input = AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write
     return case(
-        (
-            func.lower(AgentUsage.provider).in_(_SPLIT_CACHE_PROVIDERS),
-            AgentUsage.tokens_in + AgentUsage.cache_read + AgentUsage.cache_write,
-        ),
+        (func.lower(AgentUsage.provider).in_(_CACHE_SPLIT_PROVIDERS), full_input),
+        (AgentUsage.created_at >= _CACHE_USAGE_CUTOFF, full_input),
         else_=AgentUsage.tokens_in,
     )
 
@@ -92,12 +100,12 @@ def _effective_input_sql(
     cache_read_column: str = "cache_read",
     cache_write_column: str = "cache_write",
 ) -> str:
-    """生成 raw SQL 使用的统一输入 token 口径。"""
-    providers = ", ".join(f"'{provider}'" for provider in _SPLIT_CACHE_PROVIDERS)
+    """生成 raw SQL 使用的兼容历史记录的输入 token 口径。"""
+    full_input = f"{tokens_in_column} + {cache_read_column} + {cache_write_column}"
     return (
-        f"CASE WHEN LOWER({provider_column}) IN ({providers}) "
-        f"THEN {tokens_in_column} + {cache_read_column} + {cache_write_column} "
-        f"ELSE {tokens_in_column} END"
+        f"CASE WHEN LOWER({provider_column}) IN ('anthropic', 'minimax') "
+        f"OR created_at >= {_CACHE_USAGE_CUTOFF_SQL} "
+        f"THEN {full_input} ELSE {tokens_in_column} END"
     )
 
 
@@ -115,6 +123,7 @@ def _ensure_presets(override: dict) -> dict:
         "base_url": ai.get("base_url", ""),
         "model": ai.get("model", ""),
         "thinking": ai.get("thinking", "disabled"),
+        "reasoning_persistence": ai.get("reasoning_persistence", "off"),
         "ollama_mode": ai.get("ollama_mode", "local"),
     }
     presets = {"active_id": "default", "items": [item]}
@@ -232,7 +241,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     from agent.context.branch_types import BranchInput, BranchPolicy
     from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job, _scope_prompt
     from agent.memory.maintenance_batches import (
-        MaintenanceBatch, bounded_scope_memory, message_batches, scope_revision,
+        MaintenanceBatch, bounded_scope_memory, message_batches, resolve_maintenance_budget, scope_revision,
     )
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
@@ -266,6 +275,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                 messages,
                 lambda message: f"[{message.created_at.isoformat() if message.created_at else '未知时间'}] {_message_text(message)}",
                 lambda message: str(message.id),
+                model_cfg=settings,
             )
             if not batches:
                 batches = [MaintenanceBatch(items=tuple(), source_ids=tuple(), estimated_input_tokens=0)]
@@ -287,7 +297,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     for m in batch.items
                 )
                 prompt_input = (
-                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current)}\n\n"
+                    f"已有群组/用户记忆（受限视图）：\n{bounded_scope_memory(current, model_cfg=settings)}\n\n"
                     f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
                 )
                 branch = await ContextBranch().run(
@@ -299,7 +309,7 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                     BranchPolicy(
                         name="reflection-preview",
                         output_mode="json",
-                        max_tokens=2500,
+                        max_tokens=resolve_maintenance_budget(settings).output_tokens,
                         thinking="disabled",
                     ),
                     settings,
@@ -456,7 +466,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        )
+        ).where(AgentUsage.is_byok.is_(False))
     )
     total_calls, total_in, total_out, total_cache_read, total_cache_write = total_row.one()
 
@@ -470,7 +480,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.created_at >= today_start)
+        ).where(AgentUsage.created_at >= today_start, AgentUsage.is_byok.is_(False))
     )
     today_calls, today_in, today_out, today_cache_read, today_cache_write = today_row.one()
 
@@ -484,7 +494,8 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).group_by(AgentUsage.model, AgentUsage.provider)
+        ).where(AgentUsage.is_byok.is_(False))
+        .group_by(AgentUsage.model, AgentUsage.provider)
         .order_by(func.count(AgentUsage.id).desc())
     )
     by_model = [
@@ -497,6 +508,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         text(f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM') AS m
             FROM agent_usage
+            WHERE NOT is_byok
             GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM')
             ORDER BY m DESC
             LIMIT 12
@@ -531,6 +543,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :month_start AND created_at < :month_end
+              AND NOT is_byok
     """
     daily_params = {"month_start": _utc_naive(month_start_local), "month_end": _utc_naive(month_end_local)}
     if model:
@@ -565,6 +578,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :recent_start AND created_at < :recent_end
+              AND NOT is_byok
     """
     recent_params = {
         "recent_start": _utc_naive(recent_start_local),
@@ -603,7 +617,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "daily":    daily,
         "recent_daily": recent_daily,
         "timezone": getattr(user_tz, "key", None) or str(user_tz),
-        "usage_basis": "已落库的成功 LLM 调用；输入 token 按供应商 usage 合约折算，缓存命中率按完整输入加权",
+        "usage_basis": "已落库的成功平台 LLM 调用（不含 BYOK）；输入 token 按完整输入统计，缓存命中率按完整输入加权",
     }
 
 
@@ -656,11 +670,11 @@ async def set_llm_strategy(body: StrategyUpdate):
 # 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
-                 "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
+                 "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video",
                  "vision_detail", "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
-                "thinking": "disabled", "reasoning_effort": "", "vision": False,
+                "thinking": "disabled", "reasoning_effort": "", "reasoning_persistence": "off", "vision": False,
                 "vision_detail": "auto", "vision_video": False, "vision_audio": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
                 "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
@@ -682,6 +696,7 @@ class PresetCreate(BaseModel):
     context_tokens: int = 128000
     thinking: str = "disabled"
     reasoning_effort: str = ""
+    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
     vision: bool = False
     vision_detail: str = "auto"
     vision_video: bool = False
@@ -713,6 +728,7 @@ async def create_llm_preset(body: PresetCreate):
         "context_tokens": body.context_tokens,
         "thinking": body.thinking,
         "reasoning_effort": body.reasoning_effort,
+        "reasoning_persistence": body.reasoning_persistence,
         "vision": body.vision,
         "vision_detail": body.vision_detail if body.vision_detail in ("auto", "low", "high", "original") else "auto",
         "vision_video": body.vision_video,
@@ -745,6 +761,7 @@ class PresetUpdate(BaseModel):
     context_tokens: int | None = None
     thinking: str | None = None
     reasoning_effort: str | None = None
+    reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
     vision: bool | None = None
     vision_detail: str | None = None
     vision_video: bool | None = None
@@ -784,6 +801,8 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["thinking"] = body.thinking
     if body.reasoning_effort is not None:
         item["reasoning_effort"] = body.reasoning_effort
+    if body.reasoning_persistence is not None:
+        item["reasoning_persistence"] = body.reasoning_persistence
     if body.vision is not None:
         item["vision"] = body.vision
     if body.vision_detail is not None:

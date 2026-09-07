@@ -96,8 +96,8 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
   font-family:var(--font-sans);
   transition:background .14s ease,color .14s ease,border-color .14s ease;
 }
-.im-plat-head:hover { color:var(--content-primary); background:var(--gugu-chat-session-hover); }
-.im-plat-head.open { color:var(--content-primary); background:var(--surface-soft); border-color:var(--border-hairline); }
+.im-plat-head:hover { color:var(--content-primary); background:var(--sidebar-item-hover); }
+.im-plat-head.open { color:var(--content-primary); background:var(--surface-soft); }
 /* Disclosure 统一约定：源图形默认向下，因此收起态左转 90° 指向右，展开态回到向下。 */
 .im-plat-chev { color:var(--content-tertiary); transform:rotate(-90deg); transition:transform .18s ease; flex-shrink:0; }
 .im-plat-chev.open { transform:rotate(0deg); }

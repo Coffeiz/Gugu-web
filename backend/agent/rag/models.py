@@ -92,6 +92,10 @@ class IndexDocument:
                 if self.metadata.get(key):
                     result[key] = self.metadata[key]
         if self.source_type == "conversation":
+            if self.metadata.get("session_id") is not None:
+                # conversation 的 source_id 在旧索引中可能是命中消息 ID；
+                # 完整读取必须使用明确的父会话 ID，不能让调用方猜语义。
+                result["session_id"] = self.metadata["session_id"]
             for key in ("message_id", "role", "session_source", "session_updated_at"):
                 if self.metadata.get(key) is not None:
                     result[key] = self.metadata[key]

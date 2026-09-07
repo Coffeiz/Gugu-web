@@ -129,7 +129,7 @@ const previewBlobCache = usePreviewBlobCache()
 const currentCacheKey = ref('')
 
 const isImage  = computed(() => isImageExt(props.file?.ext))
-const isText   = computed(() => isTextExt(props.file?.ext))
+const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
 const isOffice = computed(() => isOfficeExt(props.file?.ext))
@@ -155,7 +155,14 @@ function revoke() {
   currentCacheKey.value = ''
 }
 
+function withCacheBust(url: string, refresh: boolean): string {
+  if (!refresh) return url
+  return `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`
+}
+
+let loadSequence = 0
 async function load(file: Partial<FileMeta>, refresh = false) {
+  const sequence = ++loadSequence
   revoke()
   currentCacheKey.value = ''   // 先按旧 key 判定上一个 blob 是否在缓存里，再清掉防串位
   loading.value    = true
@@ -170,16 +177,19 @@ async function load(file: Partial<FileMeta>, refresh = false) {
   try {
     if (isVideoExt(file.ext)) {
       const { url } = await filesApi.getStreamUrl(file.id!)
-      videoSrc.value = url
+      if (sequence !== loadSequence) return
+      videoSrc.value = withCacheBust(url, refresh)
     } else if (isOfficeExt(file.ext)) {
       converting.value = true
       const officeUrl = file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/preview-pdf`
         : `${BASE_URL}/files/${file.id!}/preview-pdf`
-      const res = await fetch(officeUrl, { headers })
+      const res = await fetch(withCacheBust(officeUrl, refresh), { headers, cache: 'no-cache' })
+      if (sequence !== loadSequence) return
       converting.value = false
       if (!res.ok) throw new Error(`转换失败 (${res.status})`)
       let blob = await res.blob()
+      if (sequence !== loadSequence) return
       // iframe 内嵌渲染要求 application/pdf，转换结果若非此类型则重包一层
       if (blob.type !== 'application/pdf') blob = new Blob([blob], { type: 'application/pdf' })
       blobUrl.value = URL.createObjectURL(blob)
@@ -194,9 +204,11 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       const dlUrl = (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
         : `${BASE_URL}/files/${file.id!}/download`) + bust
-      const res = await fetch(dlUrl, { headers })
+      const res = await fetch(dlUrl, { headers, cache: 'no-cache' })
+      if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
+      if (sequence !== loadSequence) return
       // PDF 走 iframe 原生渲染，blob 必须是 application/pdf，否则浏览器可能当下载/空白
       if (file.ext?.toUpperCase() === 'PDF' && blob.type !== 'application/pdf') {
         blob = new Blob([blob], { type: 'application/pdf' })
@@ -208,10 +220,13 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       currentCacheKey.value = key
     }
   } catch (e) {
+    if (sequence !== loadSequence) return
     error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })
   } finally {
-    loading.value    = false
-    converting.value = false
+    if (sequence === loadSequence) {
+      loading.value    = false
+      converting.value = false
+    }
   }
 }
 
@@ -224,7 +239,7 @@ const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
   if (event?.resource !== 'files') return
   if (event?.origin === CLIENT_ID) return
-  if (props.show && props.file && isText.value) load(props.file, true)
+  if (props.show && props.file && !props.file.attach_id) load(props.file, true)
 })
 
 // 窗口层级:打开领新 z、点击置顶;ESC 统一走 windowz(只关最顶层)

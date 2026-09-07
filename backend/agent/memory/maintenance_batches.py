@@ -15,8 +15,6 @@ from typing import Callable, Sequence, TypeVar
 
 T = TypeVar("T")
 
-MAINTENANCE_MAX_INPUT_TOKENS = 6000
-MAINTENANCE_MAX_ITEM_TOKENS = 3500
 CHARS_PER_ESTIMATED_TOKEN = 4
 
 
@@ -24,8 +22,21 @@ CHARS_PER_ESTIMATED_TOKEN = 4
 class MaintenanceContextBudget:
     """维护模型输入的统一预算契约。"""
 
-    max_input_tokens: int = MAINTENANCE_MAX_INPUT_TOKENS
-    max_item_tokens: int = MAINTENANCE_MAX_ITEM_TOKENS
+    max_input_tokens: int
+    max_item_tokens: int
+    output_tokens: int
+
+
+def resolve_maintenance_budget(model_cfg) -> MaintenanceContextBudget:
+    """从当前模型配置派生维护预算，不维护独立的维护预算常量。"""
+    config = getattr(model_cfg, "ai", model_cfg)
+    context_tokens = int(getattr(config, "context_tokens", 0) or 0)
+    output_tokens = int(getattr(config, "max_tokens", 0) or 0)
+    if context_tokens <= 1 or output_tokens <= 0:
+        raise ValueError("当前模型缺少有效的 context_tokens/max_tokens")
+    output_tokens = min(output_tokens, context_tokens - 1)
+    input_tokens = max(1, context_tokens - output_tokens)
+    return MaintenanceContextBudget(input_tokens, input_tokens, output_tokens)
 
 
 def estimate_tokens(text: str) -> int:
@@ -49,8 +60,8 @@ def split_batches(
     render: Callable[[T], str],
     source_id: Callable[[T], str],
     *,
-    max_tokens: int = MAINTENANCE_MAX_INPUT_TOKENS,
-    max_item_tokens: int = MAINTENANCE_MAX_ITEM_TOKENS,
+    max_tokens: int,
+    max_item_tokens: int,
 ) -> list[MaintenanceBatch[T]]:
     """按完整条目切批，不拆分单条内容。
 
@@ -95,24 +106,27 @@ def split_batches(
     return batches
 
 
-def pattern_batches(patterns: Sequence[dict], *, max_tokens: int = MAINTENANCE_MAX_INPUT_TOKENS) -> list[MaintenanceBatch[dict]]:
+def pattern_batches(patterns: Sequence[dict], *, model_cfg) -> list[MaintenanceBatch[dict]]:
     """按 pattern 稳定 ID 切批，保留完整 pattern 条目。"""
+    budget = resolve_maintenance_budget(model_cfg)
     return split_batches(
         patterns,
         lambda item: f"({item.get('kind')}) {item.get('text', '')}",
         lambda item: str(item.get("id") or ""),
-        max_tokens=max_tokens,
+        max_tokens=budget.max_input_tokens,
+        max_item_tokens=budget.max_item_tokens,
     )
 
 
-def message_batches(messages: Sequence[T], render: Callable[[T], str], source_id: Callable[[T], str], *, max_tokens: int = 4500) -> list[MaintenanceBatch[T]]:
+def message_batches(messages: Sequence[T], render: Callable[[T], str], source_id: Callable[[T], str], *, model_cfg) -> list[MaintenanceBatch[T]]:
     """按完整 IM 消息切批，消息正文不会跨批拆分。"""
+    budget = resolve_maintenance_budget(model_cfg)
     return split_batches(
         messages,
         render,
         source_id,
-        max_tokens=max_tokens,
-        max_item_tokens=MAINTENANCE_MAX_ITEM_TOKENS,
+        max_tokens=budget.max_input_tokens,
+        max_item_tokens=budget.max_item_tokens,
     )
 
 
@@ -127,9 +141,9 @@ def scope_revision(current: object, source_ids: Sequence[object], source_text: s
     return hashlib.sha256(payload).hexdigest()
 
 
-def bounded_scope_memory(current: dict, *, max_tokens: int = 2500) -> str:
+def bounded_scope_memory(current: dict, *, model_cfg) -> str:
     """只为维护模型提供受限的已有记忆视图，不静默返回完整 scope JSON。"""
-    budget = max_tokens * CHARS_PER_ESTIMATED_TOKEN
+    budget = resolve_maintenance_budget(model_cfg).max_input_tokens * CHARS_PER_ESTIMATED_TOKEN
     parts: list[str] = []
     used = 0
     for key in ("summary", "profile", "pattern", "memory", "daily"):

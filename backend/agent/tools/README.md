@@ -1,3 +1,39 @@
+# Tool 目录职责
+
+`backend/agent/tools/` 只放 Agent 可调用的业务工具定义和执行适配器；工具通过
+`Tool` / `BaseSkill` 注册到全局 registry。职责按资源边界拆分，避免把多个领域的
+数据库读写和工具 Schema 堆进一个文件。
+
+## 文件职责
+
+| 文件 | 职责 | 不负责 |
+| --- | --- | --- |
+| `base.py` | `Tool`、`BaseSkill`、registry、Schema 校验、统一 dispatch | 具体业务和资源查询 |
+| `meta.py` | 固定 Adapter（`call_tool`、`get_tool_schema`）、Skill 正文加载（`use_skill`）和元能力组合 | 用户 Skill 的创建、更新、删除实现 |
+| `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；以独立的按需工具组注册，复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
+| `line_edit.py` | 正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
+| `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |
+| `files.py` / `trash.py` | 文件库与回收站领域工具；写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
+| `shell.py` | 受控 Shell 与显式 `run_script` 执行入口 | 绕过 sandbox 或提供任意脚本命令 |
+| 其他领域文件 | 项目、文件、日历、记忆、画布等各自资源的工具 | 跨领域的通用 Adapter |
+
+新增 Skill 生命周期能力放在 `skill_management.py`；新增固定协议或工具 Schema
+获取能力放在 `meta.py`。两个文件都不得直接绕过 `SkillCapabilityRegistry` 写入
+`UserSkill`，也不得在工具之外复制权限或确认逻辑。
+
+依赖方向固定为：
+
+```text
+meta.py ───────────────┐
+skill_management.py ───┼─> SkillCapabilityRegistry
+                        └─> agent.tools.base registry / confirm
+```
+
+`SkillManagementSkill` 将生命周期工具注册到全局 registry，但不加入默认 Profile；因此
+`create_skill`、`update_skill`、`delete_skill` 不会常驻 Provider Schema。模型需要管理用户
+Skill 时，先通过常驻的 `get_tool_schema` 获取对应 Schema，再通过 `call_tool` 调用，仍然只走
+同一套 registry、权限校验、参数校验和确认门。
+
 # Tool 注册格式
 
 工具仍由 `Tool` 和 `BaseSkill` 注册，执行、Schema 校验、确认门和权限检查不变。
@@ -13,6 +49,29 @@ Tool(
     handler=example_search,
 )
 ```
+
+## 工具名称与 i18n
+
+工具名称分为三层，不能混用：
+
+| 字段/位置 | 职责 | 约束 |
+| --- | --- | --- |
+| `Tool.name` | 稳定的机器标识，用于 Schema、dispatch、历史记录、LoopScope 和前端映射 | 使用稳定的 `资源_动作` 名称；不得为了翻译或修改显示文案而变更 |
+| `Tool.label` / 后端标签 | 后端、管理端、IM 等无法使用前端 i18n 时的默认显示名 | 保留简短中文 fallback；不作为前端多语言文案的唯一来源 |
+| `frontend/src/i18n/sections/toolNames.ts` | Web 工具气泡的用户可见名称 | 每个内置工具同时补 `zh-CN`、`ja-JP`、`en-US`；key 必须与 `Tool.name` 一致 |
+
+工具的 `description` 和 `description_short` 是模型能力说明，不是界面标题，也不应当作为工具气泡的显示名。不要把翻译文案写入工具注册表、动态 Prompt、工具返回值或持久化历史；历史事件只保存稳定的工具名，界面按当前语言重新渲染。
+
+固定 Adapter `call_tool` 只负责转发实际工具调用。前端遇到 `call_tool` 事件时，必须优先读取其参数中的实际工具名（例如 `toolInput.name`），再使用 `toolNames.<实际工具名>` 翻译，不能把 `call_tool` 直接显示给用户。
+
+新增工具时按以下顺序完成：
+
+1. 在后端用稳定的 `Tool.name` 注册工具，并提供简短的后端 fallback 标签。
+2. 在 `frontend/src/i18n/sections/toolNames.ts` 的三种语言中补上同名 key。
+3. 确认 `messages.ts` 已组装 `toolNames`，并检查实时气泡、历史气泡和 `call_tool` 转发调用都显示实际工具名。
+4. 运行前端 i18n 扫描、类型检查和相关测试；缺少任一语言 key 不得合并。
+
+未知工具名必须保留可读 fallback（后端标签或稳定机器名），不能因缺少翻译导致气泡为空、显示 `call_tool` 或阻断工具事件渲染。
 
 `description_short` 为 1-100 个 Unicode 字符，建议通常控制在 30-60 字、目标约 50 字。
 它只说明“能做什么、什么时候用、必要的相邻工具关系”；不要在这里重复字段名、类型、必填项或完整示例、
@@ -98,7 +157,7 @@ flowchart LR
 - [ ] 每个可选字段都有独立业务语义或低风险便利性，不是为了兼容、空操作或重复默认值保留。
 - [ ] 同一资源的多个互斥修改动作使用 `action`，并为每个 action 条件必填对应字段。
 - [ ] handler 不猜测缺失字段、不承担字段优先级；最终业务不变量由 service 校验。
-- [ ] 所有权、权限和 destructive confirm 由 registry/dispatch/确认门负责，不写入动态提示词。
+- [ ] 所有权、权限和确认门由 registry/dispatch/确认门负责；需要确认但可撤销的写操作使用 `requires_confirmation`，不可逆操作使用 `destructive`，不写入动态提示词。
 - [ ] 已添加合法正例、缺字段反例、互斥字段反例和历史兼容测试。
 - [ ] 已运行工具 description 审计、Schema validator 和能力注入回归。
 

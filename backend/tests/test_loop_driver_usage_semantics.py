@@ -12,6 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.context.assembly import PromptMessages
+from agent.context.canonical_tool_history import render_events_for_provider
+from agent.core import _sanitize_anthropic_history
 from agent.loop_drivers import AnthropicDriver, OpenAIDriver
 
 
@@ -135,3 +138,26 @@ async def test_anthropic_split_usage_passes_through(monkeypatch):
     assert result.usage_in == 20
     assert result.cache_tokens == 80
     assert result.usage_out == 5
+
+
+def test_anthropic_history_sanitizes_before_provider_render():
+    """canonical time-context 保持独立边界，不应在每轮渲染后重复清洗。"""
+    messages = PromptMessages([
+        {"role": "system", "content": [{"type": "text", "text": "snapshot"}]},
+        {"role": "user", "content": [{
+            "type": "text",
+            "text": "[system-reminder]\n姿态提醒\n[/system-reminder]",
+        }]},
+        {"role": "user", "content": [{"type": "text", "text": "当前任务"}]},
+        {"role": "user", "content": [{
+            "type": "time-context",
+            "text": "[system-reminder]\n当前时间：2026-09-05 12:45\n[/system-reminder]",
+        }]},
+    ])
+
+    before_count, after_count, changed = _sanitize_anthropic_history(messages)
+
+    assert (before_count, after_count, changed) == (4, 4, False)
+    rendered = render_events_for_provider(messages)
+    assert len(rendered) == 4
+    assert rendered[-1]["content"][0]["type"] == "text"

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import User, Project, File, UserPreferences
+from app.services.storage import get_storage
 from onboarding import seed, state
 from onboarding.guide_state import GUIDE_VERSION, should_show
 
@@ -86,9 +87,16 @@ async def dev_reseed(
     st = await state.get_state(db, uid)
     old_pid = st["seed"].get("project_id")
     if old_pid:
+        old_files = (await db.execute(select(File).where(
+            File.user_id == uid, File.project_id == old_pid,
+        ))).scalars().all()
         await db.execute(delete(File).where(File.user_id == uid, File.project_id == old_pid))
         await db.execute(delete(Project).where(Project.id == old_pid, Project.user_id == uid))
         await db.commit()
+        # reseed 会生成新的随机 key；旧引导文件不能只删 DB 行，否则会持续积累孤儿对象。
+        storage = get_storage()
+        for old_file in old_files:
+            await storage.delete(old_file.storage_key)
     await state.update_seed_state(db, uid, {"seeded": False, "project_id": None, "project_name": None})
     prefs = (await db.execute(select(UserPreferences).where(UserPreferences.user_id == uid))).scalar_one_or_none()
     locale = (prefs.data if prefs else {}).get("locale")

@@ -68,6 +68,23 @@ def _is_legacy_persisted_time_context(message: Any) -> bool:
     return all(block.get("type") == "time-context" for block in blocks)
 
 
+def _effective_history(history: list, user_message: Any = None,
+                       resume_interaction: bool = False) -> list:
+    """返回本轮可恢复的历史，不重复当前已提交的用户行。"""
+    current_message_id = (
+        getattr(user_message, "id", None)
+        if user_message is not None and not resume_interaction else None
+    )
+    return [
+        message for message in history
+        if not _is_legacy_persisted_time_context(message)
+        and (
+            current_message_id is None
+            or getattr(message, "id", None) != current_message_id
+        )
+    ]
+
+
 async def prepare_run(
     *,
     system_prompt: str,
@@ -95,10 +112,18 @@ async def prepare_run(
     # 兼容曾经误写入 canonical history 的动态 now/message-time 行。数据库旧行可以
     # 留给后续压缩/清理，但运行时只认真实 user row 的 sent_at，避免重复时间块污染
     # provider 前缀和 RAG 输入。
-    effective_history = [
-        message for message in history
-        if not _is_legacy_persisted_time_context(message)
-    ]
+    # Web 后台任务在提交用户消息后会重新读取 history。当前用户行已经落库，
+    # 但本轮必须由 ``current_user`` 统一构造（图片、媒体、引用等 provider 投影
+    # 只有这里是完整版本），否则会先恢复一份纯文本历史，再追加一份图文消息，
+    # 造成同一正文重复并改变 cache prefix。按主键排除，不能按正文排除：连续两条
+    # 相同文本是合法对话。
+    effective_history = _effective_history(
+        history, user_message=user_message, resume_interaction=resume_interaction,
+    )
+    current_message_id = (
+        getattr(user_message, "id", None)
+        if user_message is not None and not resume_interaction else None
+    )
     history_parts = build_history_parts(
         effective_history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking,
@@ -112,10 +137,6 @@ async def prepare_run(
     # asyncio task 一起复制，因此即使超时后任务后台收尾，也不会串到其它请求。
     from agent.rag import context as rag_request_context
     from agent.rag.injection import build_automatic_rag_context
-    current_message_id = (
-        getattr(user_message, "id", None)
-        if user_message is not None and not resume_interaction else None
-    )
     watermark_token = rag_request_context.set_conversation_before_message_id(
         current_message_id
     )

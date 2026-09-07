@@ -18,9 +18,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, field_validator
 from typing import Any, Literal
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import get_settings, save_override
+from app.core.config import FileSyncSettings, get_settings, save_override
 from app.core.redaction import redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from agent.sandbox.docker_runtime import sandbox_readiness
@@ -59,6 +59,18 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
     try:
         agent_patch = body.patch.get("agent")
         sandbox_patch = body.patch.get("sandbox")
+        filesync_patch = body.patch.get("filesync")
+        if isinstance(filesync_patch, dict):
+            if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
+                raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
+            FileSyncSettings.model_validate({
+                **get_settings().filesync.model_dump(),
+                **filesync_patch,
+            })
+            if filesync_patch.get("enabled") is True and get_settings().storage.backend != "local":
+                raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
+        elif filesync_patch is not None:
+            raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
         if isinstance(agent_patch, dict) and any(
             agent_patch.get(field) is True
             for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled")
@@ -83,7 +95,7 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         if (
             isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch)
         ) or (
-            isinstance(sandbox_patch, dict) and "enabled" in sandbox_patch
+            isinstance(sandbox_patch, dict) and ({"enabled", "terminal_mode"} & sandbox_patch.keys())
         ):
             from app.core import events
             from app.models import User
@@ -125,10 +137,30 @@ async def init_db():
 # ── 存储 ↔ DB 对账（只读）────────────────────────────────────────────────
 
 def _is_internal_key(k: str) -> bool:
-    """非 File 表管理的内部对象：记忆 .agent/、聊天暂存 .chat_staging/、缩略图 .thumbs/、
-    用户头像 avatars/。对账时跳过，避免误报成孤儿。"""
-    return (".agent/" in k or ".chat_staging" in k or ".thumbs" in k
-            or "_thumb" in k or ".thumbcache" in k or k.startswith("avatars/"))
+    """判断是否为不由 ``File`` 表管理的存储对象。
+
+    用户文件的 key 形如 ``<user_id>/<path>``（旧版也可能是
+    ``u/<user_id>/<path>``）。用户根目录下的 ``.system``（RAG 等系统索引）、
+    ``.agent``（记忆）、``shell``（持久化 Shell 工作区）、``.voice``（语音暂存）
+    和 ``.video_cache``（视频转码缓存）由运行时直接管理，不会创建 ``File`` 记录，
+    不能作为孤儿文件参与对账。这里只忽略用户根目录下的这些命名空间，避免误伤
+    用户在普通目录中创建的同名文件夹。
+    """
+    key = str(k)
+    parts = [part for part in key.split("/") if part]
+    user_path_parts = parts[2:] if len(parts) >= 3 and parts[0] == "u" else parts[1:]
+    internal_user_root = bool(user_path_parts) and user_path_parts[0] in {
+        ".system", ".agent", "shell", ".voice", ".video_cache",
+    }
+    return (
+        internal_user_root
+        or ".agent/" in key
+        or ".chat_staging" in key
+        or ".thumbs" in key
+        or "_thumb" in key
+        or ".thumbcache" in key
+        or key.startswith("avatars/")
+    )
 
 
 @router.get("/reconcile-storage")
@@ -178,6 +210,105 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         "misplaced_files": doctor_report.misplaced_files[:300],
         "truncated": len(ghosts) > 300 or len(orphans) > 300 or doctor_report.truncated,
     }
+
+
+class UserStorageRepairRequest(BaseModel):
+    user_ids: list[str]
+    confirm: bool = False
+
+    @field_validator("user_ids")
+    @classmethod
+    def validate_user_ids(cls, value: list[str]) -> list[str]:
+        if not value or len(value) > 100:
+            raise ValueError("单次最多处理 100 个用户")
+        return list(dict.fromkeys(value))
+
+
+async def _scan_users_without_storage(db: AsyncSession) -> tuple[object, list[dict]]:
+    """扫描本地存储中目录缺失或 DB 文件全部没有物理对象的账号；不适用于 OSS。"""
+    from app.models import File, Project, ScheduledTask, User
+    from app.services.storage import LocalStorageBackend, get_storage
+
+    storage = get_storage()
+    if not isinstance(storage, LocalStorageBackend):
+        raise HTTPException(status_code=409, detail="用户目录对账仅支持 local 存储")
+
+    storage_keys = set(await storage.list_keys())
+    users = (await db.execute(select(User).order_by(User.created_at, User.id))).scalars().all()
+    missing = []
+    for user in users:
+        # 普通文件使用 <uid>/，早期 onboarding 使用 u/<uid>/；任一存在都视为有用户目录。
+        user_prefixes = (f"{user.id}/", f"u/{user.id}/")
+        has_user_dir = any((storage.root / prefix.rstrip("/")).is_dir() for prefix in user_prefixes)
+        physical_files = sum(1 for key in storage_keys if key.startswith(user_prefixes))
+        counts = {
+            "files": await db.scalar(select(func.count()).select_from(File).where(File.user_id == user.id)),
+            "projects": await db.scalar(select(func.count()).select_from(Project).where(Project.user_id == user.id)),
+            "scheduled_tasks": await db.scalar(select(func.count()).select_from(ScheduledTask).where(ScheduledTask.user_id == user.id)),
+        }
+        # 空目录本身不能证明账号已被删除；只有 DB 仍有 File 记录而物理对象为 0 时，
+        # 才纳入可清理列表。没有文件的新注册账号不会被误判。
+        missing_directory = not has_user_dir
+        missing_files = counts["files"] and physical_files == 0
+        if not missing_directory and not missing_files:
+            continue
+        missing.append({
+            "user_id": str(user.id),
+            "username": user.username,
+            "display_name": user.display_name,
+            "account_status": user.account_status,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "has_directory": has_user_dir,
+            "physical_files": physical_files,
+            "reason": "missing_directory" if missing_directory else "missing_files",
+            **{key: int(value or 0) for key, value in counts.items()},
+        })
+    return storage, missing
+
+
+@router.get("/reconcile-users")
+async def reconcile_users(db: AsyncSession = Depends(get_db)):
+    """扫描数据库账号与 local 用户目录；只读，不删除数据。"""
+    from app.models import User
+    storage, missing = await _scan_users_without_storage(db)
+    return {
+        "backend": "local",
+        "location": str(storage.root),
+        "user_count": await db.scalar(select(func.count()).select_from(User)),
+        "missing_directory_count": sum(item["reason"] == "missing_directory" for item in missing),
+        "missing_file_user_count": sum(item["reason"] == "missing_files" for item in missing),
+        "users": missing,
+    }
+
+
+@router.post("/reconcile-users/repair")
+async def repair_users_without_storage(body: UserStorageRepairRequest, db: AsyncSession = Depends(get_db)):
+    """删除重新核验后仍无用户目录的账号及其数据库关联数据。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="用户存储对账清理必须显式确认")
+    import uuid
+    from app.models import User
+    from app.services.account_deletion import delete_account
+
+    _, missing = await _scan_users_without_storage(db)
+    allowed = {item["user_id"] for item in missing}
+    done, skipped = [], []
+    for raw_id in body.user_ids:
+        try:
+            user_id = str(uuid.UUID(raw_id))
+        except ValueError:
+            skipped.append({"user_id": raw_id, "reason": "用户 ID 无效"})
+            continue
+        if user_id not in allowed:
+            skipped.append({"user_id": user_id, "reason": "用户目录已存在或用户不存在"})
+            continue
+        user = await db.get(User, uuid.UUID(user_id))
+        if user is None:
+            skipped.append({"user_id": user_id, "reason": "用户不存在"})
+            continue
+        await delete_account(db, user)
+        done.append(user_id)
+    return {"done": done, "skipped": skipped}
 
 
 def _fmt_size(n: float) -> str:
@@ -298,6 +429,7 @@ async def _resolve_import_folder(db, user_id, project_id: int | None, folder_par
 class RepairRequest(BaseModel):
     action: Literal["delete", "import"]
     keys: list[str]
+    confirm: bool = False
 
 
 class PathMigrationItem(BaseModel):
@@ -374,6 +506,8 @@ async def migrate_legacy_trash(body: TrashMigrationRequest, db: AsyncSession = D
 @router.post("/reconcile-storage/repair")
 async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_db)):
     """对账修复（**会改数据**）：delete 删孤儿物理文件；import 把孤儿重建成 DB 记录。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="对账修复必须显式确认")
     from app.services.storage import get_storage
     storage = get_storage()
     done, failed = [], []
@@ -949,17 +1083,28 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
         # 直接 memory/pattern 缓存之外，RAG 索引还有 profile/daily/memory 文档。
         # 统一通过 MemoryAdapter 生成同一套 chunk/key，避免两套分块算法失配。
         from agent.rag.pipeline import rebuild_memory_index
-        for uid in user_ids:
-            await rebuild_memory_index(uid, operation="embedding-rebuild")
+        rag_semaphore = asyncio.Semaphore(max(1, store.VECTOR_REBUILD_CONCURRENCY))
+
+        async def rebuild_rag_index(uid):
+            async with rag_semaphore:
+                return await rebuild_memory_index(uid, operation="embedding-rebuild")
+
+        rag_results = await asyncio.gather(
+            *(rebuild_rag_index(uid) for uid in user_ids),
+            return_exceptions=True,
+        )
+        rag_failed = sum(isinstance(item, Exception) for item in rag_results)
         failed = int(res.get("failed_users") or 0)
-        status = "error" if failed else "done"
+        status = "error" if failed or rag_failed else "done"
         message = (
             f"重建完成：pattern {res.get('pattern_vectors', 0)} 条，"
             f"memory {res.get('memory_vectors', 0)} 块"
             + (f"；失败用户 {failed} 个" if failed else "")
+            + (f"；RAG 索引失败 {rag_failed} 个" if rag_failed else "")
         )
         await r.set(_REBUILD_KEY, json.dumps(
-            {"status": status, **res, "message": message, "tag": tag, "ts": time.time()}), ex=3600)
+            {"status": status, **res, "rag_failed_users": rag_failed,
+             "message": message, "tag": tag, "ts": time.time()}), ex=3600)
     except Exception as e:
         await r.set(_REBUILD_KEY, json.dumps(
             {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)

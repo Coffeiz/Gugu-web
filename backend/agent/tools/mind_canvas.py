@@ -927,6 +927,7 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": [],
             },
+            repeat_safe=True,
             handler=_canvas_list,
         ),
         Tool(
@@ -951,6 +952,7 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
+            repeat_safe=True,
             handler=_canvas_get,
         ),
         Tool(
@@ -971,6 +973,7 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
+            repeat_safe=True,
             handler=_canvas_search,
         ),
         Tool(
@@ -991,6 +994,7 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": [],
             },
+            repeat_safe=True,
             handler=_canvas_search_placeable,
         ),
         Tool(

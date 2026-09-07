@@ -208,6 +208,14 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
         await db.commit()
         try:
             scope = MemoryScope(job.owner_user_id, job.platform, job.bot_id, job.scope_type, job.scope_id)
+            # 反思任务在独立 worker 中执行，重新解析用户 BYOK，随后由 provider 用量
+            # 记录器把本任务的调用归属到该用户。
+            from agent.llm import modelctx
+            from agent.llm.llm_select import resolve_run_config_for_user
+            modelctx.mark_user_scope()
+            run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)
+            modelctx.set_model_cfg(run_config.model)
+            modelctx.set_usage_context(scope.owner_user_id)
             existing_entry = (await db.execute(
                 select(MemoryEntry).where(
                     MemoryEntry.owner_user_id == scope.owner_user_id,

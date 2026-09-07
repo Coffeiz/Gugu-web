@@ -80,7 +80,7 @@ def ensure_sandbox_root(root: str | Path) -> Path:
     初始化逻辑；OSS 的对象存储不应被误当成本地执行挂载。
     """
     base = Path(root).expanduser().resolve()
-    if base.name != "shell" or base.parent.name == "":
+    if base.name not in {"shell", "workspace"} or base.parent.name == "":
         raise ValueError("沙盒目录不是受支持的用户 Shell 根目录")
     base.mkdir(parents=True, exist_ok=True)
     # 生产部署中沙盒容器由 backend 通过 docker.sock 作为兄弟容器启动；rootless

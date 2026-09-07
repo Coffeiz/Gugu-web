@@ -87,8 +87,8 @@
                   @click.stop="pmHandleFileClick(file, $event)"
                   >
                   <template #thumb>
-                    <img class="fc-thumb-tiny" v-lazy-src="{ id: file.id, size: 'tiny', revision: file.thumbRevision }" decoding="async" draggable="false" alt="" />
-                    <img class="fc-thumb-full" v-lazy-src="{ id: file.id, size: 'card', revision: file.thumbRevision }"
+                    <img class="fc-thumb-tiny" v-lazy-src="{ id: file.id, size: 'tiny', revision: file.thumbRevision ?? file.version }" decoding="async" draggable="false" alt="" />
+                    <img class="fc-thumb-full" v-lazy-src="{ id: file.id, size: 'card', revision: file.thumbRevision ?? file.version }"
                       :class="{ 'fc-loaded': thumbLoadedIds.has(file.id) }"
                       decoding="async" draggable="false" alt=""
                       @load="thumbLoadedIds.add(file.id)"

@@ -6,6 +6,25 @@
 import pytest
 
 
+def test_vision_ready_uses_active_model_context(monkeypatch):
+    """文件库工具必须按本轮实际模型判断，不能被全局默认模型遮蔽。"""
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    default_ai = SimpleNamespace(provider="qwen", model="qwen3.8", vision=False)
+    active_ai = SimpleNamespace(provider="minimax", model="abab-m3", vision=True)
+    monkeypatch.setattr(chat_attach, "get_settings", lambda: SimpleNamespace(ai=default_ai), raising=False)
+    monkeypatch.setattr("agent.llm.modelctx.get_model_cfg", lambda: active_ai)
+    monkeypatch.setattr(
+        "agent.providers.adapter_for",
+        lambda _ai: SimpleNamespace(
+            capabilities=lambda _model: SimpleNamespace(vision=False, api_format="anthropic")
+        ),
+    )
+
+    assert chat_attach.vision_ready() is True
+
+
 # ── _should_compress_video：压缩触发判断 ─────────────────────────────────────
 def test_should_compress_4k_high_bitrate():
     from app.core.chat_attach import _should_compress_video

@@ -124,9 +124,10 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
 def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """按工具 Schema 做无歧义的 JSON 类型归一化。
 
-    模型常把 JSON Schema 中的原生标量序列化成字符串；可选数字/布尔字段还可能以
-    空字符串表示“未填写”。这里只处理能从 Schema 唯一确定的数字和布尔字段，不修复
-    数组/对象的形状，也不把必填空值猜成 0/false，避免容错层掩盖真实参数错误。
+    模型常把 JSON Schema 中的原生标量序列化成字符串；可选字段还可能以空字符串
+    表示“未填写”。这里只处理能从 Schema 唯一确定的转换，不把必填空值猜成
+    0/false，避免容错层掩盖真实参数错误。仅有的两类结构性修复都是模型侧稳定
+    形态：``{"item": [...]}`` 单键包装，以及数组 item 字段被拍平到顶层（见下）。
     """
     adaptations: list[str] = []
 
@@ -196,16 +197,20 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 item_schema = field_schema.get("items")
                 return [normalize_value(unwrapped, item_schema, f"{path}[0]", True)]
 
-        if not isinstance(value, str) or not types.intersection({"boolean", "integer", "number"}):
+        if not isinstance(value, str):
             return value
         text = value.strip()
         if not text:
-            if not required and "null" in types:
-                adaptations.append(f"{path}:empty_to_null")
-                return None
+            # 空串统一表示“未填写”：可选字段（含对象/数组容器）剔除或转 null；
+            # 必填字段原样保留，让校验报出真实的形状错误。
             if not required:
+                if "null" in types:
+                    adaptations.append(f"{path}:empty_to_null")
+                    return None
                 adaptations.append(f"{path}:empty_omitted")
                 return _OMIT
+            return value
+        if not types.intersection({"boolean", "integer", "number"}):
             return value
 
         if "boolean" in types:
@@ -230,6 +235,38 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 adaptations.append(f"{path}:string_to_number")
                 return number
         return value
+
+    # 「数组拍平」形态解除：模型偶发把 array-of-objects 的 item 字段全部上提到
+    # 顶层，同时把数组容器传成空串或直接省略（create_file 实测 schema_hints 两轮
+    # 修不动）。只在无歧义时修复：容器缺失或为空串，且顶层多余键恰好全部是 items
+    # 的属性键——顶层 additionalProperties: false 下这些键本来就无处合法安放。
+    if isinstance(instance, dict):
+        top_properties = schema.get("properties")
+        if isinstance(top_properties, dict):
+            for field_name, field_schema in top_properties.items():
+                if not isinstance(field_schema, dict) or "array" not in schema_types(field_schema):
+                    continue
+                current = instance.get(field_name)
+                if current is not None and not (isinstance(current, str) and not current.strip()):
+                    continue
+                items_schema = field_schema.get("items")
+                item_properties = items_schema.get("properties") if isinstance(items_schema, dict) else None
+                if not isinstance(item_properties, dict) or not item_properties:
+                    continue
+                hoisted_keys = [
+                    key for key in instance
+                    if key not in top_properties and key in item_properties
+                ]
+                unknown_keys = [
+                    key for key in instance
+                    if key not in top_properties and key != field_name
+                    and key not in item_properties
+                ]
+                if not hoisted_keys or unknown_keys:
+                    continue
+                item = {key: instance.pop(key) for key in hoisted_keys}
+                instance[field_name] = [item]
+                adaptations.append(f"{field_name}:flattened_items_hoisted")
 
     normalized = normalize_value(instance, schema, "", True)
     return ({} if normalized is _OMIT else normalized), adaptations

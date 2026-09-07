@@ -16,7 +16,10 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 
 SECURITY_EVENT_RETENTION_DAYS = 90
-_ALLOWED_METADATA_KEYS = frozenset({"client_type", "endpoint", "source", "applied"})
+_ALLOWED_METADATA_KEYS = frozenset({
+    "client_type", "endpoint", "source", "applied",
+    "subject_type", "subject_id", "grant_id", "scope", "operation", "outcome",
+})
 _request_context: ContextVar[dict[str, Any] | None] = ContextVar("security_request_context", default=None)
 
 
@@ -105,6 +108,53 @@ async def record_ownership_denied(
     async with db_session._SessionLocal() as event_db:
         event_db.add(event)
         await event_db.commit()
+
+
+def build_filesystem_authorization_event(
+    *, user_id: Any, subject_type: str, subject_id: Any,
+    outcome: str, grant_id: Any = None, source: str = "system",
+) -> dict[str, Any]:
+    """构造沙箱授权生命周期事件；只保存主体/授权 ID 和固定结果，不保存路径正文。"""
+    safe_subject_type = subject_type if subject_type in {"session", "scheduled_task"} else "unknown"
+    safe_outcome = outcome if outcome in {"requested", "granted", "revoked", "denied"} else "unknown"
+    safe_source = source if source in {"user", "askuser", "system"} else "system"
+    return {
+        "user_id": user_id,
+        "event_type": "filesystem.authorization",
+        "resource_type": f"filesystem:{safe_subject_type}",
+        "resource_fingerprint": security_fingerprint(subject_id),
+        "owner_fingerprint": None,
+        "client_fingerprint": None,
+        "ip_fingerprint": None,
+        "user_agent_fingerprint": None,
+        "action": "logged",
+        "reason_code": safe_outcome,
+        "metadata_json": sanitize_metadata({
+            "subject_type": safe_subject_type,
+            "subject_id": subject_id,
+            "grant_id": grant_id,
+            "scope": "user_sandbox",
+            "operation": "authorization",
+            "outcome": safe_outcome,
+            "source": safe_source,
+        }),
+        "occurred_at": now_utc(),
+        "expires_at": now_utc() + timedelta(days=SECURITY_EVENT_RETENTION_DAYS),
+    }
+
+
+def add_filesystem_authorization_event(
+    db,
+    *, user_id: Any, subject_type: str, subject_id: Any,
+    outcome: str, grant_id: Any = None, source: str = "system",
+) -> None:
+    """把授权事件加入当前事务，保证 grant 与审计记录同事务提交。"""
+    from app.models import SecurityEvent
+
+    db.add(SecurityEvent(**build_filesystem_authorization_event(
+        user_id=user_id, subject_type=subject_type, subject_id=subject_id,
+        outcome=outcome, grant_id=grant_id, source=source,
+    )))
 
 
 async def cleanup_expired_security_events(db, *, now: datetime | None = None) -> int:

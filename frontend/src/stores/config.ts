@@ -79,6 +79,8 @@ export const useConfigStore = defineStore('config', () => {
       enabled: false,
       image: 'debian:bookworm-slim',
       image_digest: '',
+      code_execution_enabled: true,
+      terminal_mode: 'auto' as 'auto' | 'pty_disabled' | 'entry_disabled',
       rootless_required: true,
       cpu_limit: 1,
       memory_limit_bytes: 536870912,
@@ -92,6 +94,9 @@ export const useConfigStore = defineStore('config', () => {
       egress_network_name: 'gugu-sandbox-egress',
       egress_ttl_seconds: 600,
       egress_isolation_enabled: false,
+    },
+    filesync: {
+      enabled: false,
     },
     agent: {
       shell_enabled: false,
@@ -167,6 +172,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.voice) { secretSet.voiceApiKey = data.voice.api_key === '****'; Object.assign(cfg.voice, sanitizeForEdit(data.voice)) }
       if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
       if (data.sandbox) Object.assign(cfg.sandbox, data.sandbox)
+      if (data.filesync) Object.assign(cfg.filesync, data.filesync)
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))

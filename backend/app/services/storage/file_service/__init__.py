@@ -32,14 +32,16 @@ class FileService:
         self._files = FileOps(self.db, self.folder_tree, self.storage, self.key_strategy)
 
     # ── 文件夹（薄门面 → _folders）─────────────────────────────────────────────
-    async def create_folder(self, user_id, *, name, parent_id, project_id):
-        return await self._folders.create(user_id, name=name, parent_id=parent_id, project_id=project_id)
+    async def create_folder(self, user_id, *, name, parent_id, project_id, workspace_directory_id=None):
+        return await self._folders.create(user_id, name=name, parent_id=parent_id, project_id=project_id,
+                                          workspace_directory_id=workspace_directory_id)
 
     async def rename_folder(self, user_id, folder_id, new_name, *, client_version):
         return await self._folders.rename(user_id, folder_id, new_name, client_version=client_version)
 
     async def move_folder(self, user_id, folder_id, new_parent_id, *, client_version,
-                          target_project_id=None, target_project_set=False):
+                          target_project_id=None, target_project_set=False,
+                          target_workspace_directory_id=None, target_workspace_set=False):
         # 直接调用门面时，非 None 的目标项目就是显式跨项目移动；REST 仍用
         # target_project_set 区分“未传 project_id”和“明确移动到个人空间”。
         target_project_set = target_project_set or target_project_id is not None
@@ -47,6 +49,8 @@ class FileService:
             user_id, folder_id, new_parent_id, client_version=client_version,
             target_project_id=target_project_id,
             target_project_set=target_project_set,
+            target_workspace_directory_id=target_workspace_directory_id,
+            target_workspace_set=target_workspace_set,
         )
 
     async def delete_folder(self, user_id, folder_id):
@@ -55,17 +59,18 @@ class FileService:
     async def restore_folder(self, user_id, folder_id):
         return await self._folders.restore(user_id, folder_id)
 
-    async def copy_folder(self, user_id, folder_id, *, parent_id=None, project_id=None):
+    async def copy_folder(self, user_id, folder_id, *, parent_id=None, project_id=None, workspace_directory_id=None):
         """复制存活文件夹子树及其文件，目标冲突时给根文件夹自动加序号。"""
         source = await self.folder_tree.get(user_id, folder_id)
         if source is None:
             raise NotFound("folder.not_found", "文件夹不存在")
         target_project_id = source.project_id if project_id is None else project_id
+        target_workspace_id = source.workspace_directory_id if workspace_directory_id is None else workspace_directory_id
         if parent_id is not None:
             parent = await self.folder_tree.get(user_id, parent_id)
             if parent is None:
                 raise NotFound("folder.target_not_found", "目标文件夹不存在")
-            if parent.project_id != target_project_id:
+            if parent.project_id != target_project_id or parent.workspace_directory_id != target_workspace_id:
                 raise Invalid("folder.cross_space", "目标文件夹不属于目标空间")
         source_ids = await self.folder_tree.descendants(user_id, source.id)
         if parent_id in source_ids:
@@ -85,6 +90,7 @@ class FileService:
                     copied[current.id] = await self._folders.create(
                         user_id, name=copy_name, parent_id=target_parent_id,
                         project_id=target_project_id,
+                        workspace_directory_id=target_workspace_id,
                     )
                     break
                 except Conflict:
@@ -98,6 +104,7 @@ class FileService:
                 await self._files.copy_file(
                     user_id, file.id, folder_id=copied[current.id].id,
                     project_id=target_project_id,
+                    workspace_directory_id=target_workspace_id,
                 )
         return copied[source.id]
 

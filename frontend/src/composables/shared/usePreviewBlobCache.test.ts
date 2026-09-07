@@ -16,7 +16,7 @@ describe('usePreviewBlobCache', () => {
   })
 
   it('按文件 id 区分库文件和聊天附件，并命中后刷新 LRU 顺序', () => {
-    expect(previewBlobCacheKey({ id: 7 })).toBe('file:7')
+    expect(previewBlobCacheKey({ id: 7 })).toBe('file:7:0')
     expect(previewBlobCacheKey({ attach_id: 'a-7', id: 7 })).toBe('attach:a-7')
 
     const cache = usePreviewBlobCache()
@@ -25,6 +25,11 @@ describe('usePreviewBlobCache', () => {
     expect(cache.get('file:1')).toBe('blob:1')
     cache.put('file:3', 'blob:3')
     expect(cache.get('file:2')).toBe('blob:2')
+  })
+
+  it('文件正文版本变化时使用不同缓存键', () => {
+    expect(previewBlobCacheKey({ id: 7, version: 1 })).toBe('file:7:1')
+    expect(previewBlobCacheKey({ id: 7, version: 2 })).toBe('file:7:2')
   })
 
   it('超过 20 条时只释放最久未使用的 blob，缓存中的 URL 不随组件卸载释放', () => {

@@ -9,7 +9,7 @@
         <div class="pm-tool-rows">
           <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.shellSandbox') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.shellSandboxHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellEnabled" :aria-label="t('profileWorkspacesUi.toggleShellSandbox')" @update:model-value="prefsStore.saveShellEnabled($event)" /></div>
           <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.systemShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.systemShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellSystemEnabled" :aria-label="t('profileWorkspacesUi.toggleSystemShell')" @update:model-value="prefsStore.saveShellSystemEnabled($event)" /></div>
-          <div v-if="dangerousGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.dangerousShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.dangerousShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellDangerousEnabled" :aria-label="t('profileWorkspacesUi.toggleDangerousShell')" @update:model-value="prefsStore.saveShellDangerousEnabled($event)" /></div>
+          <div v-if="dangerousGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.allShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.allShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellDangerousEnabled" :aria-label="t('profileWorkspacesUi.toggleAllShell')" @update:model-value="prefsStore.saveShellDangerousEnabled($event)" /></div>
           <div v-if="autopilotGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell Autopilot</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.autopilotHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellAutopilotEnabled" :aria-label="t('profileWorkspacesUi.toggleAutopilot')" @update:model-value="prefsStore.saveShellAutopilotEnabled($event)" /></div>
         </div>
         <div class="pm-shell-reset-row">
@@ -24,7 +24,7 @@
     </div>
     <div class="pm-sep"></div>
     </template>
-    <div class="pm-section">
+    <div v-if="workspaceSupported" class="pm-section">
       <div class="pm-section-label">{{ t('profileWorkspacesUi.workspaceManagement') }}</div>
       <p class="pm-workspaces-intro">{{ t('profileWorkspacesUi.workspaceIntro') }}</p>
       <div v-if="loading" class="pm-workspaces-empty">{{ t('profileWorkspacesUi.loadingWorkspaces') }}</div>
@@ -80,6 +80,7 @@ const globalEnabled = ref(false)
 const systemGlobalEnabled = ref(false)
 const dangerousGlobalEnabled = ref(false)
 const autopilotGlobalEnabled = ref(false)
+const workspaceSupported = ref(false)
 const resetting = ref(false)
 const rebuilding = ref(false)
 const shellMessage = ref('')
@@ -101,9 +102,11 @@ async function load() {
     systemGlobalEnabled.value = response.systemGlobalEnabled
     dangerousGlobalEnabled.value = response.dangerousGlobalEnabled
     autopilotGlobalEnabled.value = response.autopilotGlobalEnabled === true
+    workspaceSupported.value = response.workspaceSupported === true
     items.value = response.items as WorkspaceItem[]
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileWorkspacesUi.workspaceLoadFailed')
+    workspaceSupported.value = false
   } finally {
     loading.value = false
     shellLoading.value = false

@@ -113,10 +113,13 @@ export const useProjectStore = defineStore('projects', () => {
   }
 
   async function addProject(fields: ProjectDraft) {
+    const status: ProjectStatus = fields.status === 'active' || fields.status === 'done'
+      ? fields.status
+      : 'pending'
     const payload = {
       name:         fields.name,
       client:       fields.client || null,
-      status:       fields.status || 'pending',
+      status,
       // normalizeStages 产出具名 ProjectStage[]，create 的 wire 类型要松散索引签名数组，边界收口
       stages:       normalizeStages(fields.stages) as unknown as Record<string, unknown>[],
       currentStage: fields.stages[0] ? `s${fields.currentStageIdx ?? 0}` : null,

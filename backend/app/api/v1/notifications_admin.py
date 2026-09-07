@@ -68,7 +68,10 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db)):
 async def history(limit: int = 50, db: AsyncSession = Depends(get_db)):
     """最近发送的通知记录。"""
     rows = (await db.execute(
-        select(SiteNotification).order_by(desc(SiteNotification.created_at)).limit(limit)
+        select(SiteNotification)
+        .where(SiteNotification.created_by == "admin")
+        .order_by(desc(SiteNotification.created_at))
+        .limit(max(1, min(limit, 100)))
     )).scalars().all()
     return [
         {
@@ -85,7 +88,10 @@ async def history(limit: int = 50, db: AsyncSession = Depends(get_db)):
 
 @router.delete("/history/{nid}")
 async def delete_record(nid: int, db: AsyncSession = Depends(get_db)):
-    rec = await db.get(SiteNotification, nid)
+    rec = await db.scalar(select(SiteNotification).where(
+        SiteNotification.id == nid,
+        SiteNotification.created_by == "admin",
+    ))
     if rec:
         await db.delete(rec)
         await db.commit()

@@ -113,11 +113,11 @@ async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkey
 
 def test_im_identity_context_is_not_injected_into_webchat():
     from agent.models import AgentRequest
-    from agent.runner import _im_identity_block
+    from agent.im.context_runtime import im_identity_block
 
     request = AgentRequest(message="你好", user_id="u1", user_name="coffeiz")
 
-    assert _im_identity_block(request, []) == ""
+    assert im_identity_block(request, []) == ""
 
 
 def test_member_context_policy_does_not_load_owner_context():
@@ -529,7 +529,7 @@ def test_im_identity_context_marks_group_and_compares_history():
     from types import SimpleNamespace
 
     from agent.models import AgentRequest
-    from agent.runner import _im_identity_block
+    from agent.im.context_runtime import im_identity_block
 
     request = AgentRequest(
         message="我是谁",
@@ -540,7 +540,7 @@ def test_im_identity_context_marks_group_and_compares_history():
         platform_user_id="member-a",
         im_role="member",
     )
-    block = _im_identity_block(request, [SimpleNamespace(role="user", platform_user_id="member-a")])
+    block = im_identity_block(request, [SimpleNamespace(role="user", platform_user_id="member-a")])
 
     assert "会话类型：群聊" in block
     assert "当前权限角色：群成员" in block

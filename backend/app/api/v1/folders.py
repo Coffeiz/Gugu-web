@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import Project, User
+from app.models import Project, User, WorkspaceDirectory
 from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
@@ -37,6 +37,7 @@ async def list_all_folders(
     return [
         FolderResponse(
             id=f.id, project_id=f.project_id, parent_id=f.parent_id,
+            workspace_directory_id=f.workspace_directory_id,
             name=f.name, file_count=file_count, version=f.version,
         )
         for f, file_count in folder_rows
@@ -48,6 +49,7 @@ async def list_all_folders(
 @router.get("", response_model=list[FolderResponse])
 async def list_folders(
     project_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
     parent_id:  Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -56,12 +58,17 @@ async def list_folders(
         proj = await get_owned(db, Project, project_id, current_user.id)
         if not proj:
             raise HTTPException(404, "项目不存在")
+    if workspace_directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, current_user.id)
+        if directory is None or directory.deleted_at is not None:
+            raise HTTPException(404, "Workspace 不存在")
 
     folder_rows = await list_folder_rows_with_file_counts(
-        db, current_user.id, project_id=project_id, parent_id=parent_id)
+        db, current_user.id, project_id=project_id, parent_id=parent_id,
+        workspace_directory_id=workspace_directory_id)
 
     return [
-        FolderResponse(id=f.id, project_id=f.project_id, parent_id=f.parent_id,
+        FolderResponse(id=f.id, project_id=f.project_id, workspace_directory_id=f.workspace_directory_id, parent_id=f.parent_id,
                        name=f.name, file_count=file_count, version=f.version)
         for f, file_count in folder_rows
     ]
@@ -78,10 +85,12 @@ async def create_folder(
 ):
     folder = await FileService(db).create_folder(
         current_user.id, name=body.name, parent_id=body.parent_id, project_id=body.project_id,
+        workspace_directory_id=body.workspace_directory_id,
     )   # 校验（项目归属/同名）在 FolderTree，失败抛领域异常 → 全局 handler 映射 404/409
     await db.commit()
     await db.refresh(folder)
     response = FolderResponse(id=folder.id, project_id=folder.project_id,
+                          workspace_directory_id=folder.workspace_directory_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=0,
                           version=folder.version)
     await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=folder.id,
@@ -134,7 +143,8 @@ async def rename_folder(
     await db.commit()
     await db.refresh(folder)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
-    response = FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name,
+    response = FolderResponse(id=folder.id, project_id=folder.project_id,
+                          workspace_directory_id=folder.workspace_directory_id, name=folder.name,
                           file_count=cnt, version=folder.version)
     await events.publish(current_user.id, "files", origin=origin, operation="update", entity_id=folder.id,
                          event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
@@ -154,12 +164,15 @@ async def move_folder(
     folder = await FileService(db).move_folder(current_user.id, fid, body.parent_id,
                                                client_version=body.version,
                                                target_project_id=body.project_id,
-                                               target_project_set='project_id' in body.model_fields_set)
+                                               target_project_set='project_id' in body.model_fields_set,
+                                               target_workspace_directory_id=body.workspace_directory_id,
+                                               target_workspace_set='workspace_directory_id' in body.model_fields_set)
     # 归属/循环/跨空间校验在 FolderTree、物理归位在 FileService（relocate），失败抛领域异常
     await db.commit()
     await db.refresh(folder)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
     response = FolderResponse(id=folder.id, project_id=folder.project_id,
+                          workspace_directory_id=folder.workspace_directory_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)
     await events.publish(current_user.id, "files", origin=origin, operation="move", entity_id=folder.id,
@@ -177,11 +190,13 @@ async def copy_folder(
 ):
     folder = await FileService(db).copy_folder(
         current_user.id, fid, parent_id=body.parent_id, project_id=body.project_id,
+        workspace_directory_id=body.workspace_directory_id,
     )
     await db.commit()
     await db.refresh(folder)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
     response = FolderResponse(id=folder.id, project_id=folder.project_id,
+                          workspace_directory_id=folder.workspace_directory_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)
     await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=folder.id,
