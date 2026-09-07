@@ -1198,6 +1198,7 @@ function resetPermissions() {
 .dot-deepseek  { background: #6090d8; }
 .dot-minimax   { background: #9590c4; }
 .dot-mimo      { background: #ff6a00; }
+.dot-glm       { background: #3f6af5; }
 .preset-card-body { flex: 1; min-width: 0; }
 .preset-card-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .preset-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); }
