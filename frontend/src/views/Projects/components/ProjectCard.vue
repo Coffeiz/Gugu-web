@@ -515,7 +515,8 @@ async function setPriority(n: number) {
   background: var(--project-card-sheen-hover);
   box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
   opacity: 0;
-  transition: opacity var(--card-overlay-motion);
+  /* --card-overlay-motion 本身已含 opacity 前缀，不能重复写，否则整条 transition 非法被丢弃 → 瞬间出现/消失 */
+  transition: var(--card-overlay-motion);
   pointer-events: none;
 }
 .proj-card:hover::after { opacity: 1; }
