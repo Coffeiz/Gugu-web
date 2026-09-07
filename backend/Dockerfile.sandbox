@@ -1,0 +1,36 @@
+# Shell 沙盒基础镜像配方（devserver 现行 gugu-sandbox:bookworm-tools-cjk-* 的落库版本）。
+# 构建后必须钉 digest 使用，流程见 docs/ops/deploy.md「沙盒镜像」：
+#   docker build -f backend/Dockerfile.sandbox -t gugu-sandbox:bookworm-tools-cjk-<日期>-v<N> .
+#   docker image inspect 取 RepoDigests，写入沙盒配置的 image / image_digest
+# 镜像只放通用工具链；不预置任何 git 凭据或用户身份（user.name/user.email 由会话内自行设置）。
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 HOME=/ \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN sed -i \
+        -e 's|deb.debian.org/debian|mirrors.tuna.tsinghua.edu.cn/debian|g' \
+        -e 's|security.debian.org/debian-security|mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install --no-install-recommends -y \
+        bash ca-certificates curl ffmpeg fontconfig fonts-noto-cjk git jq less libssh2-1 nodejs npm \
+        python-is-python3 python3 python3-matplotlib python3-pil python3-pip python3-venv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && fc-cache -f \
+    && groupadd --gid 65532 sandbox \
+    && useradd --uid 65532 --gid 65532 --no-create-home --home-dir / --shell /bin/bash sandbox \
+    # git 系统级配置：默认主分支名；沙盒 bind 目录属主是宿主机 uid，与容器内用户不一致属预期，
+    # 关闭 safe.directory 校验避免 git 在工作区目录拒绝操作。凭据一律不由镜像提供。
+    && git config --system init.defaultBranch main \
+    && git config --system --add safe.directory '*' \
+    && test -z "$(git config --system user.name 2>/dev/null || true)" \
+    && test ! -e /root/.gitconfig \
+    && git --version
+
+ENV XDG_CACHE_HOME=/tmp/.cache
+USER 65532:65532
+WORKDIR /
+CMD ["bash", "--noprofile", "--norc"]
