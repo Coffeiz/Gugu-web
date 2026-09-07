@@ -116,7 +116,7 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
 _embedding_override: ContextVar[object | None] = ContextVar("byok_embedding_cfg", default=None)
 
 
-def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
+async def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
     """返回用户 embedding 生效配置（凭据逐字段覆盖，回退语义与其他能力一致）。
 
     无凭据/解密失败/解析不完整（缺 model 或 base_url）→ 返回 None，调用方沿用
@@ -124,7 +124,7 @@ def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
     覆盖字段只有 embedding 相关五个；不使用 resolve_capability_settings
     （它会无条件注入 vision 等 LLM 专属字段）。
     """
-    row = get_active_credential(db, user_id, "embedding")
+    row = await get_active_credential(db, user_id, "embedding")
     if row is None:
         return None
     try:

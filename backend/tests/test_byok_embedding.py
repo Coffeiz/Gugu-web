@@ -99,8 +99,11 @@ def test_bind_resets_on_exception(_clean_override):
 
 
 def _patch_resolver(monkeypatch, row, decrypt=None):
-    monkeypatch.setattr(byok_service, "get_active_credential",
-                        lambda db, uid, cap: row)
+    # 桩必须是 async（与真实 get_active_credential 同签名），否则 resolve 里
+    # await 一个同步返回值会 TypeError，掩盖真实路径。
+    async def _get(db, uid, cap):
+        return row
+    monkeypatch.setattr(byok_service, "get_active_credential", _get)
     if decrypt is not None:
         monkeypatch.setattr(byok_service, "decrypt_value", decrypt)
 
@@ -108,45 +111,50 @@ def _patch_resolver(monkeypatch, row, decrypt=None):
 BASE = SimpleNamespace(model="plat-model", base_url="https://platform.example/v1")
 
 
-def test_resolve_full_override(monkeypatch):
+@pytest.mark.asyncio
+async def test_resolve_full_override(monkeypatch):
     row = SimpleNamespace(provider="openai", model="", base_url="https://user.example/v1",
                           dimensions=1024, encrypted_value="x")
     _patch_resolver(monkeypatch, row, decrypt=lambda r: "user-key")
-    cfg = resolve_embedding_settings(None, "uid", BASE)
+    cfg = await resolve_embedding_settings(None, "uid", BASE)
     # model 留空回退平台（与其他能力同语义）；key/base_url/dimensions 以用户为准
     assert cfg == {"provider": "openai", "api_key": "user-key",
                    "base_url": "https://user.example/v1",
                    "model": "plat-model", "dimensions": 1024}
 
 
-def test_resolve_incomplete_returns_none(monkeypatch):
+@pytest.mark.asyncio
+async def test_resolve_incomplete_returns_none(monkeypatch):
     """model/base_url 都留空且平台也没有 → 解析不完整，回落平台配置（None=不覆盖）。"""
     empty_base = SimpleNamespace(model="", base_url="")
     row = SimpleNamespace(provider="openai", model="", base_url="",
                           dimensions=None, encrypted_value="x")
     _patch_resolver(monkeypatch, row, decrypt=lambda r: "user-key")
-    assert resolve_embedding_settings(None, "uid", empty_base) is None
+    assert await resolve_embedding_settings(None, "uid", empty_base) is None
 
 
-def test_resolve_no_credential_or_decrypt_failure(monkeypatch):
+@pytest.mark.asyncio
+async def test_resolve_no_credential_or_decrypt_failure(monkeypatch):
     _patch_resolver(monkeypatch, None)
-    assert resolve_embedding_settings(None, "uid", BASE) is None
+    assert await resolve_embedding_settings(None, "uid", BASE) is None
 
     def boom(_row):
         raise ValueError("corrupt")
     row = SimpleNamespace(provider="openai", model="m", base_url="https://u.example/v1",
                           dimensions=None, encrypted_value="x")
     _patch_resolver(monkeypatch, row, decrypt=boom)
-    assert resolve_embedding_settings(None, "uid", BASE) is None
+    assert await resolve_embedding_settings(None, "uid", BASE) is None
 
 
-def test_resolve_dimensions_zero_means_model_default(monkeypatch):
+@pytest.mark.asyncio
+async def test_resolve_dimensions_zero_means_model_default(monkeypatch):
     """dimensions=0/None = 用模型默认维度，不继承平台值。"""
     row = SimpleNamespace(provider="openai", model="user-model",
                           base_url="https://u.example/v1", dimensions=0,
                           encrypted_value="x")
     _patch_resolver(monkeypatch, row, decrypt=lambda r: "k")
-    assert resolve_embedding_settings(None, "uid", BASE)["dimensions"] == 0
+    cfg = await resolve_embedding_settings(None, "uid", BASE)
+    assert cfg["dimensions"] == 0
 
 
 # ── Phase 2：run 入口绑定与 Admin 重建 ────────────────────────────────────────
@@ -253,3 +261,37 @@ def test_test_embedding_credential_pass_and_fail(monkeypatch, _clean_override):
     result = asyncio.run(_test_embedding_credential(
         api_key="k", base_url="https://u.example/v1", model="m"))
     assert result["ok"] is False and "格式异常" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_awaits_real_credential_query(_clean_override, caplog):
+    """回归：resolve 必须真正 await 凭据查询。
+
+    漏 await 时 get_active_credential 返回 coroutine（永非 None），无凭据用户
+    也会误入解密分支打 warning；此处不 mock 查询层，用 stub db 走真实代码路径，
+    断言「无凭据 → 静默返回 None 且零 warning」。"""
+    import logging
+    from uuid import uuid4
+
+    import app.byok.service as svc
+
+    class _Result:
+        def scalars(self):
+            return self
+        def all(self):
+            return []
+
+    class _DB:
+        async def execute(self, _query):
+            return _Result()
+
+    monkey = getattr(svc, "byok_enabled", None)
+    svc.byok_enabled = lambda: True
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.byok.service"):
+            cfg = await svc.resolve_embedding_settings(_DB(), uuid4(), PLATFORM)
+    finally:
+        if monkey is not None:
+            svc.byok_enabled = monkey
+    assert cfg is None
+    assert caplog.text == "", f"无凭据不应产生任何 warning: {caplog.text}"
