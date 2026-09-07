@@ -204,3 +204,52 @@ def test_rebuild_all_vecs_binds_per_user(monkeypatch, tmp_path, _clean_override)
 
 async def _ret(v):
     return v
+
+
+# ── Phase 3：测试连接（/embeddings 试呼）─────────────────────────────────────
+
+def test_test_embedding_credential_pass_and_fail(monkeypatch, _clean_override):
+    import asyncio
+    from app.api.v1.byok import _test_embedding_credential
+
+    class Resp:
+        def __init__(self, status, payload=None, text=""):
+            self.status_code, self._p, self.text = status, payload, text
+        def json(self):
+            if self._p is None:
+                raise ValueError("not json")
+            return self._p
+
+    class Client(_FakeClient):
+        response: Resp
+        async def post(self, url, json=None, headers=None):
+            _FakeClient.last_request = {"url": url, "json": json, "headers": headers}
+            return Client.response
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    Client.response = Resp(200, {"data": [{"embedding": [0.5]}]})
+    result = asyncio.run(_test_embedding_credential(
+        api_key="sk-user", base_url="https://u.example/v1", model="emb-1", dimensions=1024))
+    assert result["ok"] is True and result["status"] == 200
+    req = _FakeClient.last_request
+    assert req["url"] == "https://u.example/v1/embeddings"
+    assert req["json"] == {"model": "emb-1", "input": "ping", "dimensions": 1024}
+    assert req["headers"]["Authorization"] == "Bearer sk-user"
+
+    # 非 200：状态与脱敏摘要进 message，不带 Authorization 回显
+    Client.response = Resp(401, text='{"error":"bad key sk-user"}')
+    result = asyncio.run(_test_embedding_credential(
+        api_key="sk-user", base_url="https://u.example/v1", model="emb-1"))
+    assert result["ok"] is False and result["status"] == 401
+
+    # 200 但无向量数据 → 格式异常
+    Client.response = Resp(200, {"data": []})
+    result = asyncio.run(_test_embedding_credential(
+        api_key="k", base_url="https://u.example/v1", model="m"))
+    assert result["ok"] is False and result["status"] == 200 and "格式异常" in result["message"]
+
+    # 非 JSON 响应 → 同样判格式异常而非抛异常
+    Client.response = Resp(200, None)
+    result = asyncio.run(_test_embedding_credential(
+        api_key="k", base_url="https://u.example/v1", model="m"))
+    assert result["ok"] is False and "格式异常" in result["message"]

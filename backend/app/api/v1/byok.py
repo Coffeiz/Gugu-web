@@ -146,6 +146,40 @@ async def delete_credential(credential_id: int, user: User = Depends(get_current
     await db.commit()
 
 
+async def _test_embedding_credential(*, api_key: str, base_url: str, model: str,
+                                     dimensions: int | None = None) -> dict:
+    """向 OpenAI 兼容 /embeddings 发一次最小试呼；HTTP 200 且返回向量才算通过。
+
+    只支持文本 embedding；百炼多模态专用端点不做用户侧探测（PRD-SEC-2）。
+    错误摘要经 redact()，不回显凭据或完整上游响应。
+    """
+    import httpx
+    from app.core.credentials import normalize_ascii_api_key
+    from app.core.redaction import redact
+    url = (base_url or "").rstrip("/") + "/embeddings"
+    payload: dict = {"model": model or "", "input": "ping"}
+    if dimensions:
+        payload["dimensions"] = dimensions
+    headers = ({"Authorization": f"Bearer {normalize_ascii_api_key(api_key, label='Embedding API Key')}"}
+               if api_key else {})
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            response = await client.post(url, headers=headers, json=payload)
+    except Exception:
+        return {"ok": False, "status": 0, "message": "无法连接 Embedding 服务，请检查 Base URL 与网络"}
+    if response.status_code != 200:
+        detail = redact((response.text or "").strip()[:200])
+        return {"ok": False, "status": response.status_code,
+                "message": f"Embedding 测试失败（HTTP {response.status_code}）{('：' + detail) if detail else ''}"}
+    try:
+        vec = (response.json().get("data") or [{}])[0].get("embedding")
+    except Exception:
+        vec = None
+    if not isinstance(vec, list) or not vec:
+        return {"ok": False, "status": 200, "message": "Embedding 服务已连通，但返回格式异常（无向量数据）"}
+    return {"ok": True, "status": 200, "message": "Embedding 连接正常"}
+
+
 async def _test_special_capability(provider: str, capability: str, api_key: str) -> dict:
     if capability == "deep_research":
         try:
@@ -178,6 +212,11 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
         return {"ok": False, "status": 0, "message": "服务器默认配置不支持用户侧测试"}
     if not body.value:
         return {"ok": False, "status": 0, "message": "请输入 API Key 后再测试"}
+    if body.capability == "embedding":
+        if not body.base_url or not body.model:
+            return {"ok": False, "status": 0, "message": "Embedding 测试需要填写 Base URL 和模型名"}
+        return await _test_embedding_credential(api_key=body.value, base_url=body.base_url,
+                                                model=body.model, dimensions=body.dimensions)
     return await _test_special_capability(body.provider, body.capability, body.value)
 
 
@@ -194,6 +233,11 @@ async def test_credential(credential_id: int, user: User = Depends(get_current_u
         raise HTTPException(status_code=422, detail="凭据无法解密，请重新保存") from exc
     if row.capability in ("deep_research", "similar_image_search"):
         return await _test_special_capability(row.provider, row.capability, api_key)
+    if row.capability == "embedding":
+        if not row.base_url or not row.model:
+            return {"ok": False, "status": 0, "message": "请先填写 Base URL 和模型名再测试"}
+        return await _test_embedding_credential(api_key=api_key, base_url=row.base_url,
+                                                model=row.model, dimensions=row.dimensions)
     if row.capability in ("llm", "speech_to_text"):
         from app.services.provider_diagnostics import test_provider_credential
         result = await test_provider_credential(provider=row.provider, api_key=api_key,

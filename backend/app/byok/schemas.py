@@ -58,5 +58,9 @@ class CredentialVisionProbe(CredentialModelsPreview):
 
 class CredentialTestPreview(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
-    capability: Literal["deep_research", "similar_image_search"]
+    capability: Literal["deep_research", "similar_image_search", "embedding"]
     value: str = Field(min_length=1, max_length=20000)
+    # embedding 试呼需要完整目标：未保存配置时由表单直接携带
+    base_url: str = Field("", max_length=500)
+    model: str = Field("", max_length=200)
+    dimensions: int | None = Field(None, ge=0, le=65536)

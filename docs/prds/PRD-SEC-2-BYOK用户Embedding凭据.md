@@ -1,6 +1,6 @@
 # BYOK 用户 Embedding 凭据
 
-> 状态：🚧 Phase 1～2 已完成（解析基建 + 七处 run 入口绑定 + Admin 重建逐用户化），Phase 3～4 待实施（测试连接、前端卡片、验收）
+> 状态：🚧 Phase 1～3 已完成（解析基建 + run 入口绑定 + Admin 重建逐用户化 + 测试连接与前端卡片），Phase 4 手工验收待生产/devserver 实测
 > 创建：2026-09-08
 > 最近更新：2026-09-08
 > 关联模块：`backend/agent/memory/embedding.py`、`backend/app/byok/service.py`、`backend/app/byok/schemas.py`、`backend/app/api/v1/byok.py`、`backend/agent/llm/llm_select.py`、`backend/app/api/v1/config.py`、`frontend/src/components/common/profile/ProfileByokPane.vue`
@@ -12,7 +12,7 @@
 |---|---|---|
 | BYOK 凭据管理（llm / deep_research / similar_image_search / speech_to_text） | ✅ 已完成 | 凭据加密落库、测试连接、Profile 卡片齐备（SEC-1） |
 | 聊天/语音/深度研究走用户凭据 | ✅ 已完成 | run 级解析绑定，用量标记 `is_byok` 随 run 落库 |
-| Embedding 走用户凭据 | 🚧 进行中 | 解析基建 + 全部用户链路绑定（主对话/网关/定时任务/反思/IM 反思/问候）+ Admin 重建逐用户化已完成；测试连接与前端卡片待实施 | `embed()`/`model_tag()` 只读平台 `settings.embedding`，BYOK 用户的记忆检索与 RAG 向量化仍消耗平台 key；平台未配 embedding 时 BYOK 用户无法使用向量检索 |
+| Embedding 走用户凭据 | 🚧 进行中 | 解析基建 + 全部用户链路绑定 + Admin 重建逐用户化 + 测试连接（/embeddings 试呼）+ 前端 Embedding 卡片（三语言）已完成；手工验收待实测 | `embed()`/`model_tag()` 只读平台 `settings.embedding`，BYOK 用户的记忆检索与 RAG 向量化仍消耗平台 key；平台未配 embedding 时 BYOK 用户无法使用向量检索 |
 | BYOK 用量记账（embedding） | 🔲 待评估 | embedding 调用目前不进 usage 表，无记账载体，本 PRD 不做 |
 
 ## 1. 背景与目标
@@ -151,8 +151,8 @@ frontend/src/i18n/sections/common.ts                        【修改】 profile
 
 ### Phase 3：测试连接与前端
 
-- [ ] `SEC2-006` 测试连接支持 embedding：`/embeddings` 最小试呼，200 且有向量即通过；验收：单测 mock 上游通过/失败两路，错误信息经 redact。
-- [ ] `SEC2-007` 前端 Embedding 卡片：provider/base_url/model/dimensions/api_key 字段组、无 LLM 专属字段，i18n 三语言；验收：`npm run i18n:scan` 与 `typecheck:strict` 通过，卡片保存/测试/启停走通。
+- [x] `SEC2-006` 测试连接支持 embedding：`/embeddings` 最小试呼，200 且有向量即通过；验收：单测 mock 上游通过/失败两路，错误信息经 redact。
+- [x] `SEC2-007` 前端 Embedding 卡片：provider/base_url/model/dimensions/api_key 字段组、无 LLM 专属字段，i18n 三语言；验收：`npm run i18n:scan` 与 `typecheck:strict` 通过，卡片保存/测试/启停走通。
 
 ### Phase 4：验收
 
