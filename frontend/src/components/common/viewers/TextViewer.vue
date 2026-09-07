@@ -1014,7 +1014,7 @@ onBeforeUnmount(() => {
   /* 分割线从正文色派生而不是用 border token：玻璃亮色的 border 系列是白色系，
      浅色玻璃底上任何透明度都看不清；content 派生在全部主题下都有对比 */
   border: none;
-  border-top: 1px solid color-mix(in srgb, var(--content-primary) 30%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--content-primary) 45%, transparent);
   margin: 1.5em 0;
 }
 
