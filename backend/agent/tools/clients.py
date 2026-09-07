@@ -113,6 +113,7 @@ class ClientsSkill(BaseSkill):
             description_short='查询当前用户的客户列表；无需参数',
             description="列出当前用户的所有客户。",
             input_schema={"type": "object", "properties": {}},
+            repeat_safe=True,
             handler=_list_clients,
         ),
         Tool(

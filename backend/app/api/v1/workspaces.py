@@ -104,13 +104,19 @@ async def delete_workspace_directory_view(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await db.commit()
-    # 顺序：DB 落账 → 断开活 PTY（可能握着挂载点）→ 原子改名 → rmtree。
-    # commit 失败时磁盘完全未动；commit 后清理失败只留下可回收 orphan。
+    # fail-closed 顺序：DB 暂存 → 断开活 PTY（可能握着挂载点）→ commit → 原子改名
+    # → rmtree。terminate 失败（沙盒 RPC 出错）时回滚事务返回 500，不让 DB 权限
+    # 已撤销而旧 PTY 还能继续写；PTY 被提前关闭的代价只是用户重开终端。
+    # commit 成功后磁盘清理失败只留下可回收 orphan。
     manager = get_pty_manager()
-    for terminal_id in terminal_ids:
-        if manager.get(terminal_id) is not None:
-            await manager.terminate(terminal_id, force=True)
+    try:
+        for terminal_id in terminal_ids:
+            if manager.get(terminal_id) is not None:
+                await manager.terminate(terminal_id, force=True)
+    except Exception:
+        await db.rollback()
+        raise
+    await db.commit()
     if root.exists():
         tombstone = root.with_name(
             f".{root.name}.deleted-{now_utc().strftime('%Y%m%d%H%M%S')}")

@@ -54,7 +54,17 @@ def dispatched(monkeypatch):
     monkeypatch.setattr(registry, "anthropic_schemas", lambda names: [])
     monkeypatch.setattr(registry, "openai_schemas", lambda names: [])
     monkeypatch.setattr(registry, "labels", lambda: {})
+    # 熔断按 tool.repeat_safe 白名单累积；默认全 False＝本文件其他用例不受熔断影响，
+    # 熔断专项用例里再按需打开（见 _stub_registry_get）。
+    monkeypatch.setattr(registry, "get", lambda name: None)
     return calls
+
+
+def _stub_registry_get(monkeypatch, repeat_safe_names):
+    """把 registry.get 打成按名单返回 repeat_safe 标记的桩。"""
+    monkeypatch.setattr(
+        registry, "get",
+        lambda name: SimpleNamespace(repeat_safe=name in repeat_safe_names))
 
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
@@ -797,8 +807,9 @@ def test_goal_completion_requires_explicit_marker():
 
 
 async def test_identical_consecutive_tool_calls_are_breakered(monkeypatch, dispatched):
-    """同名工具 + 完全相同参数连续调用：前 3 次真实执行，第 4 次起熔断不 dispatch，
-    直接回引导收束的结果（治核实阶段反复重读同一资源的行为死循环）。"""
+    """repeat_safe 观察工具 + 完全相同参数连续调用：前 3 次真实执行，第 4 次起熔断
+    不 dispatch，直接回引导收束的结果（治核实阶段反复重读同一资源的行为死循环）。"""
+    _stub_registry_get(monkeypatch, {"canvas_get"})
     identical = {"canvas_id": 589, "include_nodes": True, "include_relations": True}
     script = [
         msg([TX("调整画布节点"), TU("canvas_update_node", "t1", {"canvas_id": 589, "item_id": 3, "x": 1, "y": 2})]),
@@ -826,6 +837,7 @@ async def test_identical_consecutive_tool_calls_are_breakered(monkeypatch, dispa
 
 async def test_identical_breaker_resets_on_different_call(monkeypatch, dispatched):
     """交替查询不同资源不误伤：相同调用被打断后重新计数。"""
+    _stub_registry_get(monkeypatch, {"canvas_get"})
     a = {"canvas_id": 1}
     b = {"canvas_id": 2}
     script = [
@@ -846,15 +858,21 @@ async def test_identical_breaker_resets_on_different_call(monkeypatch, dispatche
     assert dispatched == ["canvas_get"] * 6, "换参数重置计数，只有 a 的第 4 次被熔断"
 
 
-async def test_ask_user_is_excluded_from_breaker(monkeypatch, dispatched):
-    """用户交互类工具不参与熔断（由用户节奏驱动）。"""
+async def test_non_repeat_safe_call_resets_breaker_count(monkeypatch, dispatched):
+    """任何非 repeat_safe 的调用（含 ask_user）都打断「连续」语义并重置计数：
+    3 次 canvas_get 之后插一次 ask_user，再问同样的 canvas_get 仍真实执行。"""
+    _stub_registry_get(monkeypatch, {"canvas_get"})
+    identical = {"canvas_id": 7}
     script = [
-        *[msg([TU("ask_user", str(i), {"prompt": "选哪个？"})]) for i in range(4)],
-        msg([TX("好的")]),
+        *[msg([TU("canvas_get", str(i), identical)]) for i in range(3)],
+        msg([TU("ask_user", "a", {"prompt": "选哪个？"})]),
+        msg([TU("canvas_get", "x", identical)]),
+        msg([TX("完成")]),
     ]
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "问我吧"}]
     async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI):
         pass
 
-    assert dispatched.count("ask_user") == 4
+    assert dispatched == ["canvas_get"] * 3 + ["ask_user"] + ["canvas_get"], \
+        "ask_user 重置连续计数，后续相同查询不被熔断"

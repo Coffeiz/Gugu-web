@@ -157,7 +157,6 @@ _REPEAT_CALL_STOP_RESULT = (
     "检测到你已连续多次以完全相同的参数调用同一工具，结果不会再发生变化。"
     "请不要重复这一调用：基于已经获得的信息执行下一步操作，或直接总结回复用户。"
 )
-_REPEAT_BREAKER_EXCLUDED_TOOLS = frozenset({"ask_user"})  # 用户交互类工具由用户节奏驱动，不参与熔断
 _DEFAULT_BUDGET = object()
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
@@ -1311,9 +1310,12 @@ class LLMRunner:
                                            status="skipped", result=_TOOL_BUDGET_EXHAUSTED)
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
-                    # 连续相同调用熔断：同名工具 + 完全相同参数已真实执行满阈值后，
-                    # 不再 dispatch，回一条引导收束的结果（不占工具预算）。
-                    if effective_tool_name not in _REPEAT_BREAKER_EXCLUDED_TOOLS and protocol_error is None and not tc.parse_error:
+                    # 连续相同调用熔断：只对显式声明 repeat_safe 的观察类工具生效
+                    # （写工具每次调用都有真实副作用、联网读取结果可能变化，都不能拦）。
+                    # 任何非 repeat_safe 的调用（含 ask_user）都会打断「连续」语义，
+                    # 重置计数——中间穿插过一次别的调用就不算连续了。
+                    if protocol_error is None and not tc.parse_error:
+                        repeat_tool = registry.get(effective_tool_name)
                         try:
                             call_sig = (
                                 effective_tool_name,
@@ -1321,7 +1323,9 @@ class LLMRunner:
                             )
                         except (TypeError, ValueError):
                             call_sig = None
-                        if call_sig is not None:
+                        if repeat_tool is None or not repeat_tool.repeat_safe:
+                            repeat_sig, repeat_count = None, 0
+                        elif call_sig is not None:
                             if call_sig == repeat_sig:
                                 repeat_count += 1
                             else:

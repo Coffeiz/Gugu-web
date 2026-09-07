@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+_log = logging.getLogger(__name__)
 
 
 class PtyBridge(Protocol):
@@ -206,11 +209,20 @@ class PtyManager:
         await handle.signal(signal_name)
 
     async def terminate(self, terminal_id: str, *, force: bool = False) -> None:
+        # fail-closed：先把 session 从 manager 摘除（write/attach 立刻拿不到它），
+        # 再关沙盒 handle。close 失败不把 session 放回去——否则会出现「上层已撤销
+        # 权限（如 Workspace 删除），旧 PTY 却还能继续收输入」的窗口；close 异常
+        # 向上抛给调用方决定重试/回滚。
         async with self._lock:
-            session = self._require(terminal_id)
-            handle = session.handle
-        await handle.close(force=force)
-        await self._remove(terminal_id)
+            session = self._sessions.pop(terminal_id, None)
+        if session is None:
+            raise LookupError("PTY 终端不存在")
+        try:
+            await session.handle.close(force=force)
+        finally:
+            if session.output_task and session.output_task is not asyncio.current_task():
+                session.output_task.cancel()
+                await asyncio.gather(session.output_task, return_exceptions=True)
 
     async def reap_detached(self, *, now: float | None = None) -> list[str]:
         current = time.monotonic() if now is None else now

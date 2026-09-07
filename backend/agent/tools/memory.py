@@ -225,6 +225,7 @@ class MemorySkill(BaseSkill):
                 },
                 "required": ["query"],
             },
+            repeat_safe=True,
             handler=_search_memory,
         ),
     ]

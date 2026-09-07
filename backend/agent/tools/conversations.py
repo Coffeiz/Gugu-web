@@ -199,6 +199,7 @@ class ConversationsSkill(BaseSkill):
                     {"not": {"anyOf": [{"required": ["query"]}, {"required": ["keyword"]}, {"required": ["queries"]}]}},
                 ],
             },
+            repeat_safe=True,
             handler=_search_conversations,
         ),
         Tool(
@@ -213,6 +214,7 @@ class ConversationsSkill(BaseSkill):
                 },
                 "required": ["session_id"],
             },
+            repeat_safe=True,
             handler=_read_conversation,
         ),
         Tool(

@@ -99,7 +99,7 @@ class WorkspacesSkill(BaseSkill):
                 "type": "object", "properties": {
                     "workspace_id": {"type": "integer"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
-            }, handler=_get_workspace,
+            }, repeat_safe=True, handler=_get_workspace,
         ),
         Tool(
             name="create_workspace", label="新建工作区",

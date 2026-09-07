@@ -272,7 +272,8 @@ class Tool:
                  permissions: tuple[str, ...] = (),
                  platforms: tuple[str, ...] = (),
                  related_skills: tuple[str, ...] = (),
-                 source: str = "builtin", schema_version: int = 1):
+                 source: str = "builtin", schema_version: int = 1,
+                 repeat_safe: bool = False):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -290,6 +291,11 @@ class Tool:
         # confirm 二次确认，跟这个是两件事：写操作不一定不可逆（destructive），
         # 但只要写了就不能自动重放（mutates）。
         self.mutates = mutates
+        # 纯观察类工具（同参数重复调用只读同一内部状态、无副作用且结果确定）才允许
+        # 进入主循环的「连续相同调用熔断」。默认 False：写工具（create_event 每调一次
+        # 都真产生副作用）和联网/外部状态读取（结果随时可能变化）都不算 repeat-safe，
+        # 熔断误杀它们等于 runtime 静默改变用户请求。
+        self.repeat_safe = repeat_safe
         # IM 慢工具进度声明用（仅 IM、每个 Busy Session 最多发一次，见 dispatch）：固定文案或
         # 按调用参数变化措辞的函数——只能读 dispatch 时已知的参数，不能猜返回结果（见设计文档 §2.3
         # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。

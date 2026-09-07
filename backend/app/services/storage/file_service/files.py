@@ -220,7 +220,11 @@ class FileOps:
         if new_wid is not None:
             new_space = "workspace"
             new_pid = None
-            new_fid = None
+            # 跨空间移动且没有显式给目标文件夹时才落 Workspace 根；显式 folder_id
+            # （剪切到 Workspace 子目录再粘贴）必须保留，归属由下方 resolve_folder_path
+            # 按 (folder_id, new_wid) 校验，指错空间会被拒绝。
+            if not folder_set and f.workspace_directory_id != new_wid:
+                new_fid = None
         else:
             new_space = "project" if new_pid else "personal"
 

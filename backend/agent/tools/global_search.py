@@ -58,6 +58,7 @@ class GlobalSearchSkill(BaseSkill):
                 # query / queries 至少传一个；具体校验由 handler 统一完成，避免只传 queries 时被 schema 拦截。
                 "required": [],
             },
+            repeat_safe=True,
             handler=_global_search,
         ),
     ]

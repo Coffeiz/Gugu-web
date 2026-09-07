@@ -143,6 +143,15 @@ def _validate_workspace_display_name(name: str) -> str:
     return normalized
 
 
+async def _flush_workspace_name_unique(db: AsyncSession) -> None:
+    """显示名 (user_id, name) 部分唯一索引兜底：precheck 之后的并发同名竞争
+    在 flush 时撞索引，统一映射成 ValueError（API 层转 409）。"""
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        raise ValueError("Workspace 已存在") from exc
+
+
 async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) -> WorkspaceDirectory:
     if get_settings().storage.backend != "local":
         raise ValueError("当前存储后端不支持本地 Workspace")
@@ -157,11 +166,7 @@ async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) ->
         raise ValueError("Workspace 已存在")
     row = WorkspaceDirectory(user_id=user_id, name=normalized, directory_name="")
     db.add(row)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        # 并发创建同名时靠 (user_id, name) 部分唯一索引兜底，冲突映射成 409。
-        raise ValueError("Workspace 已存在") from exc
+    await _flush_workspace_name_unique(db)
     # 物理目录用不可变 id（workspace-<id>）：File.storage_key 永久引用物理路径，
     # 若按显示名建目录，rename 后所有 key 失效（download/preview 全挂）。
     # id 命名也结构性地排除了与系统保留根目录的碰撞。
@@ -195,7 +200,8 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
         ))).scalars().all()
         for binding in bindings:
             binding.name = normalized
-    await db.flush()
+    # rename 与 create 共用同一份唯一索引兜底映射，避免并发同名 rename 漏成 500。
+    await _flush_workspace_name_unique(db)
     return row
 
 
@@ -250,10 +256,10 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
         WorkspaceDirectory.id == row.id, WorkspaceDirectory.user_id == user_id,
     ).values(deleted_at=deleted_at, updated_at=deleted_at))
     await db.flush()
-    # 磁盘操作（terminate PTY → 原子改名 → rmtree）全部由 API 层在 DB commit
-    # 成功之后执行：commit 失败时磁盘完全未动，回滚后文件仍然可用；commit 成功
-    # 后清理失败只留下可回收的 orphan 目录，不会出现"DB 说文件健在而磁盘已
-    # 消失"的破坏性状态，也不会在重试删除时遗留墓碑。
+    # 磁盘操作由 API 层执行，顺序为 fail-closed：terminate PTY → commit DB →
+    # 原子改名 → rmtree。terminate 失败会回滚事务（权限未撤销、文件仍可用）；
+    # commit 成功后清理失败只留下可回收 orphan 目录，不会出现"DB 说文件健在而
+    # 磁盘已消失"的破坏性状态，也不会在重试删除时遗留墓碑。
     return terminal_ids, root
 
 

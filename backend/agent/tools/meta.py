@@ -191,6 +191,7 @@ class MetaSkill(BaseSkill):
                 "required": ["tools"],
                 "additionalProperties": False,
             },
+            repeat_safe=True,
             handler=_get_tool_schema,
         ),
         Tool(

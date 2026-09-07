@@ -279,6 +279,7 @@ class CalendarSkill(BaseSkill):
                     "type": {"type": "string", "enum": ["event", "deadline"]},
                 },
             },
+            repeat_safe=True,
             handler=_list_events,
         ),
         Tool(
@@ -374,6 +375,7 @@ class CalendarSkill(BaseSkill):
                 },
                 "required": [],
             },
+            repeat_safe=True,
             handler=_list_event_reminders,
         ),
         Tool(

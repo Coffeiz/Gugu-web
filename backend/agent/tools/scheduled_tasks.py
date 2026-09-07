@@ -444,6 +444,7 @@ class ScheduledTasksSkill(BaseSkill):
             description=("列出我的全部独立定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。"
                          "注意：日历活动的提醒不在此列——那是活动自带、在日历里单独管理，与定时任务两套互不影响。"),
             input_schema={"type": "object", "properties": {}},
+            repeat_safe=True,
             handler=_list_scheduled_tasks,
         ),
         Tool(

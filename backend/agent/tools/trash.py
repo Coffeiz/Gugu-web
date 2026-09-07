@@ -217,6 +217,7 @@ class TrashSkill(BaseSkill):
             description_short='查看回收站文件和顶层文件夹；无需参数',
             description="列出回收站里的独立文件和顶层文件夹（软删除、30 天内可还原）；文件夹内的文件随文件夹整体恢复，不重复列出。",
             input_schema={"type": "object", "properties": {}},
+            repeat_safe=True,
             handler=_list_trash,
         ),
         Tool(
