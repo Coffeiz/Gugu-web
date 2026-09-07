@@ -87,6 +87,17 @@ async def get_active_credential(db: AsyncSession, user_id: UUID, capability: str
     return next(iter(result.scalars().all()), None)
 
 
+async def has_active_credential(db: AsyncSession, capability: str, user_id: UUID | None = None) -> bool:
+    """是否存在启用的指定能力凭据；user_id 缺省时不限用户（Admin 全局检查用）。"""
+    stmt = select(UserProviderCredential.id).where(
+        UserProviderCredential.capability == capability,
+        UserProviderCredential.enabled.is_(True),
+    )
+    if user_id is not None:
+        stmt = stmt.where(UserProviderCredential.user_id == user_id)
+    return (await db.execute(stmt)).first() is not None
+
+
 async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capability: str, base):
     """返回带用户凭据覆盖的配置副本；没有用户凭据时保留平台配置。"""
     row = await get_active_credential(db, user_id, capability)

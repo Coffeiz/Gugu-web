@@ -1134,11 +1134,9 @@ async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
     from agent.memory import embedding
     from app.core.redis import get_redis
     from app.models import User
-    from app.models import UserProviderCredential
-    cred_exists = (await db.execute(select(UserProviderCredential.id).where(
-        UserProviderCredential.capability == "embedding",
-        UserProviderCredential.enabled.is_(True),
-    ))).first() is not None
+    from app.byok import service as byok_service
+    # 凭据查询走 BYOK service，不在 API 层直接摸 ORM 边界（ORM 阶段 1 棘轮）。
+    cred_exists = await byok_service.has_active_credential(db, "embedding")
     if not embedding.is_enabled() and not cred_exists:
         return {"ok": False, "message": "请先启用并配置 embedding 模型（平台配置或用户 BYOK 凭据至少其一）"}
     r = get_redis()
