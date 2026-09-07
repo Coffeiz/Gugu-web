@@ -3,7 +3,7 @@ import { zhCN } from './locales/zh-CN'
 import { jaJP } from './locales/ja-JP'
 import { enUS } from './locales/en-US'
 import { terminalUi } from './sections/terminal'
-import { filesUi, filesViewUi } from './sections/files'
+import { filesUi, filesViewUi, workspaceUi } from './sections/files'
 import { calendarUi } from './sections/calendar'
 import { mindUi, mindEditorUi } from './sections/mind'
 import { scheduleUi } from './sections/schedules'
@@ -29,5 +29,8 @@ export const messages = {
   'ja-JP': { ...jaJP, toolNames: toolNames['ja-JP'], terminalUi: terminalUi['ja-JP'], filesUi: filesUi['ja-JP'], filesViewUi: filesViewUi['ja-JP'], profileGuguUi: profileGuguUi['ja-JP'], chatUi: chatUi['ja-JP'], perceptionUi: perceptionUi['ja-JP'], mindEditorUi: mindEditorUi['ja-JP'], memorySettingsUi: memorySettingsUi['ja-JP'], memoryMaintenanceUi: memoryMaintenanceUi['ja-JP'], calendarUi: calendarUi['ja-JP'], mindUi: mindUi['ja-JP'], scheduleUi: scheduleUi['ja-JP'], adminLlmUi: adminLlmUi['ja-JP'], personalityUi: personalityUi['ja-JP'], adminAnalyticsUi: adminAnalyticsUi['ja-JP'], adminStorageUi: adminStorageUi['ja-JP'], adminRuntimeUi: adminRuntimeUi['ja-JP'], adminUsageUi: adminUsageUi['ja-JP'], filesyncAdmin: filesyncAdminUi['ja-JP'], adminAgentUi: {}, agentConfigUi: {}, configUi: { ...configUi['ja-JP'], ...configExtraUi['ja-JP'] }, adminExtraUi: adminExtraUi['ja-JP'], adminEmailUi: adminEmailUi['ja-JP'], subscriptionUi: subscriptionUi['ja-JP'] },
   'en-US': { ...enUS, toolNames: toolNames['en-US'], terminalUi: terminalUi['en-US'], filesUi: filesUi['en-US'], filesViewUi: filesViewUi['en-US'], profileGuguUi: profileGuguUi['en-US'], chatUi: chatUi['en-US'], perceptionUi: perceptionUi['en-US'], mindEditorUi: mindEditorUi['en-US'], memorySettingsUi: memorySettingsUi['en-US'], memoryMaintenanceUi: memoryMaintenanceUi['en-US'], calendarUi: calendarUi['en-US'], mindUi: mindUi['en-US'], scheduleUi: scheduleUi['en-US'], adminLlmUi: adminLlmUi['en-US'], personalityUi: personalityUi['en-US'], adminAnalyticsUi: adminAnalyticsUi['en-US'], adminStorageUi: adminStorageUi['en-US'], adminRuntimeUi: adminRuntimeUi['en-US'], adminUsageUi: adminUsageUi['en-US'], filesyncAdmin: filesyncAdminUi['en-US'], adminAgentUi: {}, agentConfigUi: {}, configUi: { ...configUi['en-US'], ...configExtraUi['en-US'] }, adminExtraUi: adminExtraUi['en-US'], adminEmailUi: adminEmailUi['en-US'], subscriptionUi: subscriptionUi['en-US'] },
 }
+Object.assign(messages['zh-CN'], { workspaceUi: workspaceUi['zh-CN'] })
+Object.assign(messages['ja-JP'], { workspaceUi: workspaceUi['ja-JP'] })
+Object.assign(messages['en-US'], { workspaceUi: workspaceUi['en-US'] })
 applyLocalePatches(messages)
 export type MessageSchema = typeof zhCN

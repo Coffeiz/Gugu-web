@@ -61,6 +61,7 @@ async def list_files(
     space: Optional[str] = None,
     project_id: Optional[int] = None,
     folder_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
     mind_map_id: Optional[int] = None,
     ext: Optional[str] = None,
     q: Optional[str] = None,
@@ -73,6 +74,7 @@ async def list_files(
         space=space,
         project_id=project_id,
         folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id,
         mind_map_id=mind_map_id,
         ext=ext,
         query=q,
@@ -154,6 +156,7 @@ class ConflictCheckItem(_BaseModel):
     space: str = "personal"
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
 
 
 class ConflictCheckRequest(_BaseModel):
@@ -170,7 +173,7 @@ async def check_conflicts(
     conflicts = await check_upload_conflicts(
         db,
         current_user.id,
-        ((item.filename, item.space, item.project_id, item.folder_id) for item in body.items),
+        ((item.filename, item.space, item.project_id, item.folder_id, item.workspace_directory_id) for item in body.items),
     )
     for filename, existing in conflicts:
         out.append({
@@ -190,6 +193,7 @@ async def upload_file(
     space: str = Form("personal"),
     project_id: Optional[int] = Form(None),
     folder_id: Optional[int] = Form(None),
+    workspace_directory_id: Optional[int] = Form(None),
     stage_name: str = Form(""),
     mind_map_id: Optional[int] = Form(None),
     on_conflict: str = Form("keep_both"),          # keep_both（默认，同名自动加后缀）| overwrite
@@ -198,6 +202,11 @@ async def upload_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
+    # 直接调用路由函数（测试/内部适配器）时，FastAPI 的 Form 默认值会保留为
+    # ``Form(None)``；真实 HTTP 请求则已经完成类型转换。统一在 API 边界解包，
+    # 避免把参数对象误传进文件服务的空间校验。
+    if hasattr(workspace_directory_id, "default"):
+        workspace_directory_id = workspace_directory_id.default
     original_name = file.filename or "file"
     display_name, ext = parse_upload_filename(original_name)
     mime_type = file.content_type
@@ -219,6 +228,7 @@ async def upload_file(
     # 缓存清理、响应 shape、事务与事件。
     result = await FileService(db).create_file(
         current_user.id, space=space, project_id=project_id, folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id,
         stage_name=stage_name, mind_map_id=mind_map_id, display_name=display_name, ext=ext,
         mime_type=mime_type, data=data, img_width=img_width, img_height=img_height,
         on_conflict=on_conflict, overwrite_file_id=overwrite_file_id,
@@ -251,6 +261,7 @@ class PresignRequest(_BaseModel):
     space: str = "personal"
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     stage_name: str = ""
     on_conflict: str = "keep_both"          # keep_both | overwrite
     overwrite_file_id: Optional[int] = None
@@ -277,6 +288,7 @@ async def presign_upload(
             body.on_conflict,
             body.overwrite_file_id,
             current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
+            workspace_directory_id=body.workspace_directory_id,
         )
     except UploadTargetError as error:
         raise HTTPException(error.status_code, error.detail) from error
@@ -308,6 +320,7 @@ class ConfirmRequest(_BaseModel):
     space: str = "personal"
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     stage_name: str = ""
     overwrite_file_id: Optional[int] = None   # presign 阶段返回的目标文件 id，覆盖时原地更新而非新建
 
@@ -339,6 +352,7 @@ async def confirm_upload(
             space=body.space,
             project_id=body.project_id,
             folder_id=body.folder_id,
+            workspace_directory_id=body.workspace_directory_id,
             stage_name=body.stage_name,
             overwrite_file_id=body.overwrite_file_id,
             storage_limit_bytes=current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
@@ -384,6 +398,8 @@ async def update_file(
         folder_id=body.folder_id, project_id=body.project_id,
         folder_set='folder_id' in body.model_fields_set,
         project_set='project_id' in body.model_fields_set,
+        workspace_directory_id=body.workspace_directory_id,
+        workspace_directory_set='workspace_directory_id' in body.model_fields_set,
     )
     await db.commit()
     await db.refresh(result.file)
@@ -437,7 +453,8 @@ async def copy_file(
     # 文件库」这类跨空间粘贴会静默失败，复制出的文件还留在原项目里（两处前端调用都会显式带上
     # 目标 project_id，个人空间传 null）。物理拷贝 + key + 落库交 FileService。
     result = await FileService(db).copy_file(
-        current_user.id, fid, folder_id=body.folder_id, project_id=body.project_id,
+    current_user.id, fid, folder_id=body.folder_id, project_id=body.project_id,
+        workspace_directory_id=body.workspace_directory_id,
         on_conflict=body.on_conflict, overwrite_file_id=body.overwrite_file_id)
     await db.commit()
     await db.refresh(result.file)

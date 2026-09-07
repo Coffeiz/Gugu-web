@@ -19,7 +19,8 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
                project_name: str = "", project_id: int = 0,
                project_year: str = "", project_month: str = "",
                folder_name: str = "", folder_path: str = "",
-               mind_map_title: str = "", mind_map_id: int = 0) -> str:
+               mind_map_title: str = "", mind_map_id: int = 0,
+               workspace_directory_name: str = "") -> str:
     """构造存储 key。folder_path 是根到叶的目录链，folder_name 仅为旧调用兼容。"""
     fname = f"{_safe_name(display_name)}.{ext.lower()}"
     # 旧 folder_name 的斜杠一直按非法文件名替换，不能因为新增层级能力悄悄变成真实目录；
@@ -39,6 +40,9 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
         return f"{uid}/思维/{map_dir}/{fname}"
     if space == "asset":
         return f"{uid}/素材板/{fname}"
+    if space == "workspace":
+        base = f"{uid}/{_safe_name(workspace_directory_name)}"
+        return f"{base}/{safe_folder_path}/{fname}" if safe_folder_path else f"{base}/{fname}"
     # personal — 有文件夹时放进子目录
     if safe_folder_path:
         return f"{uid}/个人文件/{safe_folder_path}/{fname}"
@@ -51,6 +55,7 @@ def compose_logical_path(
     project_year: str = "", project_month: str = "",
     folder_name: str = "", folder_path: str = "",
     mind_map_title: str = "", mind_map_id: int = 0,
+    workspace_directory_name: str = "",
 ) -> str:
     """业务命名：把 space/项目/年月/文件夹 组成「可浏览逻辑路径」——**不含 uid 前缀、不含文件名**。
 
@@ -72,6 +77,9 @@ def compose_logical_path(
         return f"思维/{_safe_name(mind_map_title)} #{mind_map_id}"
     if space == "asset":
         return "素材板"
+    if space == "workspace":
+        base = _safe_name(workspace_directory_name)
+        return f"{base}/{safe_folder_path}" if safe_folder_path else base
     # personal
     return f"个人文件/{safe_folder_path}" if safe_folder_path else "个人文件"
 

@@ -108,9 +108,9 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.copy(id, parentId, projectId)
   }
 
-  function createFolder(projectId: number | null, name: string, parentId: number | null) {
+  function createFolder(projectId: number | null, name: string, parentId: number | null, workspaceDirectoryId: number | null = null) {
     assertProjectTarget(projectId)
-    return foldersApi.create(projectId, name, parentId)
+    return foldersApi.create(projectId, name, parentId, workspaceDirectoryId)
   }
 
   function batchDownload(fileIds: number[], folderIds: number[], filename?: string) {

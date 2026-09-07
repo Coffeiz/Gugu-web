@@ -35,7 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
-from app.models import File, Folder, Project
+from app.models import File, Folder, Project, WorkspaceDirectory
 from app.services.storage import LocalStorageBackend, StorageBackend
 from app.services.storage.factory import get_key_strategy
 from app.services.storage.folders import folder_dir_key, resolve_folder_path
@@ -86,6 +86,10 @@ async def _expected_and_containers(db: AsyncSession, user_id) -> tuple[set[str],
         pstmt = pstmt.where(Project.user_id == user_id)
     folders = list((await db.execute(fstmt)).scalars().all())
     projects = list((await db.execute(pstmt)).scalars().all())
+    dstmt = select(WorkspaceDirectory).where(WorkspaceDirectory.deleted_at.is_(None))
+    if user_id is not None:
+        dstmt = dstmt.where(WorkspaceDirectory.user_id == user_id)
+    directories = list((await db.execute(dstmt)).scalars().all())
 
     expected: set[str] = set()
     for f in folders:
@@ -103,6 +107,8 @@ async def _expected_and_containers(db: AsyncSession, user_id) -> tuple[set[str],
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         y, m = date_str[:4], date_str[5:7]
         containers.add(f"{p.user_id}/项目文件/{y}/{m}/{_safe_name(p.name)} #{p.id}")
+    for directory in directories:
+        containers.add(f"{directory.user_id}/{_safe_name(directory.directory_name)}")
     return expected, containers, len(folders)
 
 
@@ -112,6 +118,11 @@ async def _expected_file_key(db: AsyncSession, key_strategy, file: File) -> Opti
     project = None
     project_year = project_month = ""
     folder_path = ""
+    directory = None
+    if file.workspace_directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, file.workspace_directory_id, file.user_id)
+        if directory is None or directory.deleted_at is not None:
+            return None
     if file.project_id is not None:
         project = await get_owned(db, Project, file.project_id, file.user_id)
         if not project:
@@ -119,14 +130,15 @@ async def _expected_file_key(db: AsyncSession, key_strategy, file: File) -> Opti
         date_str = project.start_date or project.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if file.folder_id is not None:
-        resolved = await resolve_folder_path(db, file.user_id, file.folder_id, file.project_id)
+        resolved = await resolve_folder_path(db, file.user_id, file.folder_id, file.project_id, file.workspace_directory_id)
         if not resolved:
             return None
         _, folder_path = resolved
     logical = compose_logical_path(
-        file.space, project_name=project.name if project else "",
+        "workspace" if directory else file.space, project_name=project.name if project else "",
         project_id=file.project_id or 0, project_year=project_year,
-        project_month=project_month, folder_path=folder_path)
+        project_month=project_month, folder_path=folder_path,
+        workspace_directory_name=directory.directory_name if directory else "")
     ctx = KeyContext(user_id=file.user_id, file_id=file.id, name=file.display_name,
                      ext=file.ext, logical_path=logical)
     return key_strategy.build_key(ctx)

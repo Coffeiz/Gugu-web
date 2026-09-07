@@ -22,6 +22,7 @@ def to_file_response(
         display_name=file.display_name,
         ext=file.ext,
         space=file.space,
+        workspace_directory_id=file.workspace_directory_id,
         project_id=file.project_id,
         project_name=project_name,
         project_color=project_color,

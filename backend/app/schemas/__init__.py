@@ -285,6 +285,7 @@ class FileResponse(CamelModel):
     display_name: str
     ext: str
     space: str
+    workspace_directory_id: Optional[int] = None
     project_id: Optional[int]
     project_name: Optional[str]
     project_color: Optional[str]
@@ -313,6 +314,7 @@ class BatchDownloadBody(CamelModel):
 class FileCopyBody(CamelModel):
     folder_id:  Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     on_conflict: str = "keep_both"
     overwrite_file_id: Optional[int] = None
 
@@ -322,6 +324,7 @@ class FileUpdate(CamelModel):
     stage_name: Optional[str] = None
     folder_id: Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
 
     @field_validator("display_name")
     @classmethod
@@ -335,6 +338,7 @@ class FileUpdate(CamelModel):
 
 class FolderCreate(CamelModel):
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     parent_id:  Optional[int] = None
     name: str
 
@@ -357,17 +361,20 @@ class FolderRename(CamelModel):
 class FolderMove(CamelModel):
     parent_id: Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
     version: int   # 乐观锁：必传，同 FolderRename（P2.6）
 
 
 class FolderCopy(CamelModel):
     parent_id: Optional[int] = None
     project_id: Optional[int] = None
+    workspace_directory_id: Optional[int] = None
 
 
 class FolderResponse(CamelModel):
     id: int
     project_id: Optional[int]
+    workspace_directory_id: Optional[int] = None
     parent_id:  Optional[int] = None
     name: str
     file_count: int = 0
@@ -708,9 +715,10 @@ class PreferencesUpdate(CamelModel):
 
 class WorkspaceCreate(CamelModel):
     name: str = Field(min_length=1, max_length=200)
-    kind: Literal["folder", "project"] = "folder"
+    kind: Literal["folder", "project", "directory"] = "folder"
     folderId: Optional[int] = None
     projectId: Optional[int] = None
+    directoryId: Optional[int] = None
     enabled: bool = True
 
 
@@ -725,6 +733,37 @@ class WorkspaceResponse(CamelModel):
     kind: str
     folderId: Optional[int] = None
     projectId: Optional[int] = None
+    directoryId: Optional[int] = None
     enabled: bool
     isDefault: bool
     boundSessionCount: int = 0
+
+
+class WorkspaceDirectoryCreate(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def name_valid(cls, value: str) -> str:
+        return _validate_name(value)
+
+
+class WorkspaceDirectoryUpdate(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def name_valid(cls, value: str) -> str:
+        return _validate_name(value)
+
+
+class WorkspaceDirectoryResponse(CamelModel):
+    id: int
+    name: str
+    directory_name: str
+    is_default: bool
+    is_system: bool
+    file_count: int = 0
+    folder_count: int = 0
+    bound_session_count: int = 0
+    bound_task_count: int = 0

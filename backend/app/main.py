@@ -48,6 +48,7 @@ from app.api.v1 import admin_debug as admin_debug_router
 from app.api.v1 import admin_analytics as admin_analytics_router
 from app.api.v1 import ops_admin as ops_admin_router
 from app.api.v1 import folder_doctor_admin as folder_doctor_admin_router
+from app.api.v1 import workspace_migration_admin as workspace_migration_admin_router
 from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import email_admin as email_admin_router
 from app.api.v1 import notifications as notifications_router
@@ -371,6 +372,7 @@ app.include_router(mind_router.router,        prefix="/api/v1")
 app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
 app.include_router(workspaces_router.router, prefix="/api/v1")
+app.include_router(workspaces_router.workspace_directories_router, prefix="/api/v1")
 app.include_router(filesync_router.router, prefix="/api/v1")
 app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
@@ -441,6 +443,11 @@ app.include_router(
 )
 app.include_router(
     folder_doctor_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
+    workspace_migration_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

@@ -92,7 +92,7 @@ for _fmt, _ext in _DOC_EXT.items():
     _DOC_EXT_ALIASES.setdefault(_ext, set()).add(_fmt)
 
 _CREATE_NAME_EXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-]{0,19}$")
-_CREATE_SPACES = {"project", "personal"}
+_CREATE_SPACES = {"project", "personal", "workspace"}
 _CREATE_BINARY_EXTS = frozenset({
     "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods",
     "ppt", "pptx", "odp",
@@ -272,8 +272,8 @@ async def _bound_workspace_target(db, user_id):
     return await resolve_workspace_target(db, user_id, workspace_id)
 
 
-def _workspace_location(target: dict) -> tuple[str, int | None, int | None]:
-    return target["space"], target.get("project_id"), target.get("folder_id")
+def _workspace_location(target: dict) -> tuple[str, int | None, int | None, int | None]:
+    return target["space"], target.get("project_id"), target.get("folder_id"), target.get("workspace_directory_id")
 
 
 async def _location_matches(db, user_id, space, project_id, folder_id, target: dict) -> bool:
@@ -322,12 +322,13 @@ async def _resolve_create_location(db, user_id, args: dict):
             args.get("project_id"), args.get("folder_id"),
         )
         if error:
-            return None, None, None, error
+            return None, None, None, None, error
         if not await _location_matches(db, user_id, space, project_id, folder_id, target):
-            return None, None, None, _workspace_conflict(target)
-        return space, project_id, folder_id, None
+            return None, None, None, None, _workspace_conflict(target)
+        return space, project_id, folder_id, None, None
     space = args.get("space", "personal")
-    return _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    space, project_id, folder_id, error = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    return space, project_id, folder_id, None, error
 
 
 # ── handlers ──
@@ -372,6 +373,7 @@ async def _list_files(db, user_id, args: dict):
         space=args.get("space"),
         project_id=args.get("project_id"),
         folder_id=folder_id,
+        workspace_directory_id=workspace_target.get("workspace_directory_id") if workspace_target else None,
         ext=args.get("ext"),
         queries=file_queries,
         mode=args.get("mode"),
@@ -578,14 +580,14 @@ async def _create_file(db, user_id, args: dict):
         location_args = {**defaults, **{
             key: item[key] for key in ("space", "project_id", "folder_id") if key in item
         }}
-        space, project_id, folder_id, loc_err = await _resolve_create_location(
+        space, project_id, folder_id, workspace_directory_id, loc_err = await _resolve_create_location(
             db, user_id, location_args,
         )
         if loc_err:
             failed.append({"index": index, "name": name, "error": loc_err})
             continue
         if space not in _CREATE_SPACES:
-            failed.append({"index": index, "name": name, "error": "create_file 只支持 personal/project 空间"})
+            failed.append({"index": index, "name": name, "error": "create_file 只支持 personal/project/workspace 空间"})
             continue
         access_error = await write_access_error(
             db, user_id, space=space, project_id=project_id, folder_id=folder_id,
@@ -607,6 +609,7 @@ async def _create_file(db, user_id, args: dict):
                 # 未知后缀也按文本落库，保证 read/edit/前端预览使用同一事实。
                 mime_type=("text/plain" if ext == "svg" else _DOC_MIME.get(ext, "text/plain")),
                 data=data,
+                workspace_directory_id=workspace_directory_id,
             )
             await db.commit()
         except Exception as e:
@@ -631,7 +634,7 @@ async def _create_file(db, user_id, args: dict):
     }
 
 
-async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id):
+async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id, workspace_directory_id=None):
     """把一个已解析好的暂存附件 meta 落成文件库记录，返回 (ok, item)。供单个/批量 save 共用。"""
     access_error = await write_access_error(
         db, user_id, space=space, project_id=project_id, folder_id=folder_id,
@@ -651,6 +654,7 @@ async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder
             space=space,
             project_id=project_id if space == "project" else None,
             folder_id=folder_id,
+            workspace_directory_id=workspace_directory_id,
             stage_name="",
             mind_map_id=None,
             display_name=display_name,
@@ -682,7 +686,7 @@ async def _save_uploaded_file(db, user_id, args: dict):
     elif source == "attach_ids" and not args.get("attach_ids"):
         return {"error": "source=attach_ids 时必须提供 attach_ids"}
 
-    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
+    space, project_id, folder_id, workspace_directory_id, loc_err = await _resolve_create_location(db, user_id, args)
     if loc_err:
         return loc_err
 
@@ -698,7 +702,8 @@ async def _save_uploaded_file(db, user_id, args: dict):
                                "error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"})
                 continue
             ok, item = await _save_one_attach(db, user_id, meta, space=space,
-                                              project_id=project_id, folder_id=folder_id)
+                                              project_id=project_id, folder_id=folder_id,
+                                              workspace_directory_id=workspace_directory_id)
             (saved if ok else failed).append(item)
         return {"success": True, "saved_count": len(saved), "failed_count": len(failed),
                 "saved": saved, "failed": failed}
@@ -708,7 +713,8 @@ async def _save_uploaded_file(db, user_id, args: dict):
     if not meta:
         return json.dumps({"error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"
                                     "麻烦让用户重新发一下～"}, ensure_ascii=False)
-    ok, item = await _save_one_attach(db, user_id, meta, space=space, project_id=project_id, folder_id=folder_id)
+    ok, item = await _save_one_attach(db, user_id, meta, space=space, project_id=project_id,
+                                      folder_id=folder_id, workspace_directory_id=workspace_directory_id)
     if not ok:
         return json.dumps(item, ensure_ascii=False)
     return {**item, **({"note": note} if note else {})}

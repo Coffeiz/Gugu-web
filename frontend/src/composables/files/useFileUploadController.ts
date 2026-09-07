@@ -12,6 +12,7 @@ export interface UploadConflictContext {
   space: string
   projectId: number | null
   folderId: number | null
+  workspaceDirectoryId?: number | null
 }
 
 export interface PreparedUploadBatch {
@@ -23,6 +24,7 @@ export interface PreparedUploadBatch {
 export interface UploadLifecycleOptions<G, F extends { id: number; projectId?: number | null; parentId?: number | null; name: string }> {
   projectId: number | null
   baseFolderId: number | null
+  workspaceDirectoryId?: number | null
   folderGroups: UploadGroup[]
   decisions: Map<string, ConflictDecision>
   createGhost: (name: string, ext: string) => G
@@ -100,6 +102,7 @@ export async function executeUploadLifecycle<
   await uploadFilesWithFolders(items, {
     projectId: options.projectId,
     baseFolderId: options.baseFolderId,
+    workspaceDirectoryId: options.workspaceDirectoryId,
     onFolderCreated: (folder) => {
       options.onFolderCreated(
         folder as F,

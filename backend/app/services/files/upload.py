@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import File, Project, User
+from app.models import File, Project, User, WorkspaceDirectory
 from app.services.storage import OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.folders import resolve_folder_path
@@ -85,14 +85,16 @@ async def presign_upload_url(storage, target: PresignTarget, mime_type: str) -> 
 async def check_upload_conflicts(
     db: AsyncSession,
     user_id: int,
-    items: Iterable[tuple[str, str, Optional[int], Optional[int]]],
+    items: Iterable[tuple[str, str, Optional[int], Optional[int]] | tuple[str, str, Optional[int], Optional[int], Optional[int]]],
 ) -> list[tuple[str, Optional[File]]]:
     """批量查询上传冲突；只读，不落库、不改变配额或存储。"""
     conflicts = []
-    for filename, space, project_id, folder_id in items:
+    for item in items:
+        filename, space, project_id, folder_id = item[:4]
+        workspace_directory_id = item[4] if len(item) > 4 else None
         display_name, ext = parse_upload_filename(filename)
         existing = await find_conflict(
-            db, user_id, space, project_id, folder_id, display_name, ext,
+            db, user_id, space, project_id, folder_id, display_name, ext, workspace_directory_id,
         )
         conflicts.append((filename, existing))
     return conflicts
@@ -145,6 +147,7 @@ async def find_conflict(
     folder_id: Optional[int],
     display_name: str,
     ext: str,
+    workspace_directory_id: Optional[int] = None,
 ) -> Optional[File]:
     stmt = select(File).where(
         File.user_id == user_id,
@@ -155,6 +158,7 @@ async def find_conflict(
     )
     stmt = stmt.where(File.project_id == project_id) if project_id is not None else stmt.where(File.project_id.is_(None))
     stmt = stmt.where(File.folder_id == folder_id) if folder_id is not None else stmt.where(File.folder_id.is_(None))
+    stmt = stmt.where(File.workspace_directory_id == workspace_directory_id) if workspace_directory_id is not None else stmt.where(File.workspace_directory_id.is_(None))
     return (await db.execute(stmt)).scalars().first()
 
 
@@ -170,10 +174,19 @@ async def prepare_presign_target(
     on_conflict: str,
     overwrite_file_id: Optional[int],
     storage_limit_bytes: Optional[int],
+    workspace_directory_id: Optional[int] = None,
 ) -> PresignTarget:
     """校验上传范围并计算直传目标，不执行写入或签发 URL。"""
     display_name, ext = parse_upload_filename(filename)
     project_name = project_year = project_month = folder_path = ""
+    workspace_directory = None
+    if space == "workspace":
+        workspace_directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, user_id)
+        if workspace_directory is None or workspace_directory.deleted_at is not None:
+            raise UploadTargetError(400, "Workspace 不存在")
+        project_id = None
+    elif workspace_directory_id is not None:
+        raise UploadTargetError(400, "workspace_directory_id 只能用于 Workspace 空间")
 
     if space == "project" and project_id:
         project = await get_owned(db, Project, project_id, user_id)
@@ -186,7 +199,7 @@ async def prepare_presign_target(
         raise UploadTargetError(400, "project 空间需要提供 project_id")
 
     if folder_id is not None:
-        resolved = await resolve_folder_path(db, user_id, folder_id, project_id)
+        resolved = await resolve_folder_path(db, user_id, folder_id, project_id, workspace_directory.id if workspace_directory else None)
         if not resolved or resolved[0].deleted_at is not None:
             raise UploadTargetError(400, "文件夹不存在，或不属于指定的项目/个人空间")
         folder_path = resolved[1]
@@ -196,7 +209,7 @@ async def prepare_presign_target(
         existing = await get_owned(db, File, overwrite_file_id, user_id)
         if not existing or existing.deleted_at is not None:
             raise UploadTargetError(400, "要覆盖的文件不存在")
-        if (existing.space, existing.project_id, existing.folder_id) != (space, project_id, folder_id):
+        if (existing.space, existing.project_id, existing.folder_id, existing.workspace_directory_id) != (space, project_id, folder_id, workspace_directory.id if workspace_directory else None):
             raise UploadTargetError(400, "覆盖目标与上传位置不一致")
         final_key, final_name = existing.storage_key, existing.display_name
         if storage_limit_bytes is not None:
@@ -214,6 +227,7 @@ async def prepare_presign_target(
             project_year=project_year,
             project_month=project_month,
             folder_path=folder_path,
+            workspace_directory_name=workspace_directory.directory_name if workspace_directory else "",
         )
         final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
         if storage_limit_bytes is not None:
@@ -244,6 +258,7 @@ async def confirm_oss_upload(
     space: str,
     project_id: Optional[int],
     folder_id: Optional[int],
+    workspace_directory_id: Optional[int] = None,
     stage_name: str,
     overwrite_file_id: Optional[int],
     storage_limit_bytes: Optional[int],
@@ -274,8 +289,16 @@ async def confirm_oss_upload(
     project = None
     folder_name = None
     project_name = project_year = project_month = folder_path = ""
-    if space not in {"personal", "project"}:
+    if space not in {"personal", "project", "workspace"}:
         raise UploadTargetError(400, "无效的文件空间")
+    workspace_directory = None
+    if space == "workspace":
+        workspace_directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, user_id)
+        if workspace_directory is None or workspace_directory.deleted_at is not None:
+            raise UploadTargetError(400, "Workspace 不存在")
+        project_id = None
+    elif workspace_directory_id is not None:
+        raise UploadTargetError(400, "workspace_directory_id 只能用于 Workspace 空间")
     if space == "project" and project_id is None:
         raise UploadTargetError(400, "project 空间需要提供 project_id")
     if space == "personal" and project_id is not None:
@@ -288,7 +311,7 @@ async def confirm_oss_upload(
         date_str = project.start_date or project.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
     if folder_id is not None:
-        resolved = await resolve_folder_path(db, user_id, folder_id, project_id)
+        resolved = await resolve_folder_path(db, user_id, folder_id, project_id, workspace_directory.id if workspace_directory else None)
         if not resolved or resolved[0].deleted_at is not None:
             raise UploadTargetError(400, "文件夹不存在，或不属于指定的项目/个人空间")
         folder_name = resolved[0].name
@@ -298,7 +321,7 @@ async def confirm_oss_upload(
         existing = await get_owned(db, File, overwrite_file_id, user_id)
         if not existing or existing.deleted_at is not None:
             raise UploadTargetError(400, "要覆盖的文件不存在")
-        if (existing.space, existing.project_id, existing.folder_id) != (space, project_id, folder_id):
+        if (existing.space, existing.project_id, existing.folder_id, existing.workspace_directory_id) != (space, project_id, folder_id, workspace_directory.id if workspace_directory else None):
             raise UploadTargetError(400, "覆盖目标与上传位置不一致")
         if storage_limit_bytes is not None and used - existing.size_bytes + size_bytes > storage_limit_bytes:
             raise UploadTargetError(400, "存储空间已满，无法上传")
@@ -328,6 +351,7 @@ async def confirm_oss_upload(
         ext=ext,
         project_name=project_name,
         project_id=project_id or 0,
+        workspace_directory_name=workspace_directory.directory_name if workspace_directory else "",
         project_year=project_year,
         project_month=project_month,
         folder_path=folder_path,
@@ -344,6 +368,7 @@ async def confirm_oss_upload(
         space=space,
         project_id=project_id if space == "project" else None,
         folder_id=folder_id,
+        workspace_directory_id=workspace_directory.id if workspace_directory else None,
         stage_name=stage_name,
         storage_key=final_key,
         size=_fmt_size(size_bytes),

@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
+import { filesApi, foldersApi, trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
@@ -162,6 +162,27 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     if (type === 'folder') {
       const segment = currentSeg.value
       if (segment?.folderId == null) return
+      if (segment.space === 'workspace' && segment.workspaceDirectoryId != null) {
+        loading.value = true
+        // 目录是异步加载的：先同步清空旧投影，避免上一目录的卡片在请求期间
+        // 残留一帧、随面板卸载整体跳位（进入工作区时闪一下的根因）。
+        contents.value = { folders: [], files: [] }
+        Promise.all([
+          filesApi.list({ space: 'workspace', folderId: segment.folderId, workspaceDirectoryId: segment.workspaceDirectoryId }),
+          foldersApi.list({ parentId: segment.folderId, workspaceDirectoryId: segment.workspaceDirectoryId }),
+        ]).then(([files, folders]) => {
+          contents.value = {
+            folders: folders.map(folder => ({
+              id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
+              displayName: folder.name, color: null, space: 'workspace',
+              workspaceDirectoryId: segment.workspaceDirectoryId, count: folder.fileCount ?? 0,
+            })),
+            files: files as FileMeta[],
+          }
+        }).catch(error => console.error('[Files] Workspace 文件夹加载失败:', error instanceof Error ? error.message : error))
+          .finally(() => { loading.value = false })
+        return
+      }
       const folderId = segment.folderId
       const folderItems = cacheStore.getSubFolders(folderId).map(folder => ({
         id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
@@ -169,6 +190,29 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         count: cacheStore.getFolderFiles(folder.id).length,
       }))
       contents.value = { folders: folderItems, files: cacheStore.getFolderFiles(folderId) }
+      return
+    }
+
+    if (type === 'workspace') {
+      const directoryId = currentSeg.value?.workspaceDirectoryId
+      if (directoryId == null) return
+      loading.value = true
+      // 同上：先清空旧投影（根目录卡片），避免请求期间残留跳位。
+      contents.value = { folders: [], files: [] }
+      Promise.all([
+        filesApi.list({ space: 'workspace', workspaceDirectoryId: directoryId }),
+        foldersApi.list({ workspaceDirectoryId: directoryId }),
+      ]).then(([files, folders]) => {
+        contents.value = {
+          folders: folders.filter(folder => folder.parentId == null).map(folder => ({
+            id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
+            displayName: folder.name, color: null, space: 'workspace',
+            workspaceDirectoryId: directoryId, count: folder.fileCount ?? 0,
+          })),
+          files: files.filter(file => file.folderId == null) as FileMeta[],
+        }
+      }).catch(error => console.error('[Files] Workspace 加载失败:', error instanceof Error ? error.message : error))
+        .finally(() => { loading.value = false })
     }
   }
 

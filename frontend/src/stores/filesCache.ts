@@ -17,7 +17,10 @@ export type FileMeta = components['schemas']['FileResponse'] & {
   attach_id?: number | string | null    // 聊天附件预览时携带（非库文件）
   file_id?: number | null
 }
-export type FolderMeta = components['schemas']['FolderResponse']
+export type FolderMeta = components['schemas']['FolderResponse'] & {
+  /** 新增的顶层 Workspace 目录边界；旧 OpenAPI 类型生成前先由前端领域类型承接。 */
+  workspaceDirectoryId?: number | null
+}
 
 let _lastVersion: string | number | null = null
 let _visibilityBound = false
@@ -155,10 +158,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
   // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
   // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
-  function addFolder(folder: { id: number; name: string; projectId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
+  function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
     allFolders.value = [...allFolders.value, {
       id: folder.id, name: folder.name,
       projectId: folder.projectId ?? null,
+      workspaceDirectoryId: folder.workspaceDirectoryId ?? null,
       parentId:  folder.parentId ?? null,
       fileCount: folder.fileCount ?? 0,
       version:   folder.version ?? 1,

@@ -222,16 +222,18 @@ interface FileListParams {
   space?: string
   projectId?: number
   folderId?: number
+  workspaceDirectoryId?: number
   mindMapId?: number
   ext?: string
   q?: string
 }
 export const filesApi = {
-  list: ({ space, projectId, folderId, mindMapId, ext, q }: FileListParams = {}) => {
+  list: ({ space, projectId, folderId, workspaceDirectoryId, mindMapId, ext, q }: FileListParams = {}) => {
     const p: Record<string, any> = {}
     if (space      != null) p.space       = space
     if (projectId  != null) p.project_id  = projectId
     if (folderId   != null) p.folder_id   = folderId
+    if (workspaceDirectoryId != null) p.workspace_directory_id = workspaceDirectoryId
     if (mindMapId  != null) p.mind_map_id = mindMapId
     if (ext        != null) p.ext         = ext
     if (q          != null) p.q           = q
@@ -271,9 +273,9 @@ export const filesApi = {
   presign: (data: any) => post('/files/presign', data),
   confirm: (data: any) => post('/files/confirm', data),
   // 批量探测同名冲突（上传前调用），items: [{filename, space, projectId?, folderId?}]
-  checkConflicts: (items: { filename: string; space: string; projectId?: number | null; folderId?: number | null }[]) =>
+  checkConflicts: (items: { filename: string; space: string; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null }[]) =>
     post<{ filename: string; conflict: boolean; existing_file: any }[]>('/files/check-conflicts', {
-      items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null })),
+      items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null, workspace_directory_id: it.workspaceDirectoryId ?? null })),
     }),
   // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
   getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
@@ -474,28 +476,31 @@ export const mindApi = {
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
+export type ApiFolderResponse = Schemas['FolderResponse'] & { workspaceDirectoryId?: number | null }
 export const foldersApi = {
-  all:  ()                              => get<Schemas['FolderResponse'][]>('/folders/all'),
-  list: ({ projectId, parentId }: { projectId?: number; parentId?: number } = {}) => {
+  all:  ()                              => get<ApiFolderResponse[]>('/folders/all'),
+  list: ({ projectId, parentId, workspaceDirectoryId }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number } = {}) => {
     const params = new URLSearchParams()
     if (projectId != null) params.set('project_id', String(projectId))
     if (parentId  != null) params.set('parent_id',  String(parentId))
+    if (workspaceDirectoryId != null) params.set('workspace_directory_id', String(workspaceDirectoryId))
     const qs = params.toString()
-    return get<Schemas['FolderResponse'][]>(qs ? `/folders?${qs}` : '/folders')
+    return get<ApiFolderResponse[]>(qs ? `/folders?${qs}` : '/folders')
   },
-  create: (projectId: number | null, name: string, parentId: number | null = null) => post<Schemas['FolderResponse']>('/folders', {
+  create: (projectId: number | null, name: string, parentId: number | null = null, workspaceDirectoryId: number | null = null) => post<ApiFolderResponse>('/folders', {
     ...(projectId != null ? { projectId } : {}),
     ...(parentId  != null ? { parentId  } : {}),
+    ...(workspaceDirectoryId != null ? { workspaceDirectoryId } : {}),
     name,
   }),
   // version：乐观锁，必传当前文件夹的 version（改名/移动即失效，见 stores/filesCache 的更新逻辑）；
   // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
   rename: (id: number, name: string, version: number, meta?: RequestMeta) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}`, { name, version }, meta),
+    patch<ApiFolderResponse>(`/folders/${id}`, { name, version }, meta),
   move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta) =>
-    patch<Schemas['FolderResponse']>(`/folders/${id}/parent`, { parentId, version, projectId }, meta),
+    patch<ApiFolderResponse>(`/folders/${id}/parent`, { parentId, version, projectId }, meta),
   copy:   (id: number, parentId: number | null, projectId: number | null) =>
-    post<Schemas['FolderResponse']>(`/folders/${id}/copy`, { parentId, projectId }),
+    post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId }),
   delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
   download: async (id: number, name: string) => {
     const token = getToken()
@@ -550,12 +555,32 @@ export const preferencesApi = {
 
 export const workspacesApi = {
   status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
-  create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
+  create: (data: { name: string; kind: 'folder' | 'project' | 'directory'; folderId?: number; projectId?: number; directoryId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
   bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
+}
+
+export interface WorkspaceDirectory {
+  id: number
+  name: string
+  directoryName: string
+  isDefault: boolean
+  isSystem: boolean
+  fileCount: number
+  folderCount: number
+  boundSessionCount: number
+  boundTaskCount: number
+}
+
+export const workspaceDirectoriesApi = {
+  list: () => get<WorkspaceDirectory[]>('/workspace-directories'),
+  create: (name: string) => post<WorkspaceDirectory>('/workspace-directories', { name }),
+  update: (id: number, name: string) => request<WorkspaceDirectory>('PATCH', `/workspace-directories/${id}`, { name }),
+  previewDelete: (id: number) => get<WorkspaceDirectory>(`/workspace-directories/${id}/delete-preview`),
+  delete: (id: number) => del(`/workspace-directories/${id}`),
 }
 
 export type TerminalAccessStatus = Awaited<ReturnType<typeof workspacesApi.status>>

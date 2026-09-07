@@ -11,7 +11,7 @@ import json
 
 from sqlalchemy import (
     String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
-    UniqueConstraint, CheckConstraint, Index,
+    UniqueConstraint, CheckConstraint, Index, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -63,6 +63,9 @@ class User(Base):
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
     user_skills:    Mapped[list["UserSkill"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    workspace_directories: Mapped[list["WorkspaceDirectory"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
     provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
@@ -269,10 +272,63 @@ class Workspace(Base):
     kind:       Mapped[str] = mapped_column(String(20), default="folder")
     folder_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    directory_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspace_directories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="bindings")
     enabled:    Mapped[bool] = mapped_column(Boolean, default=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class WorkspaceDirectory(Base):
+    """文件库根目录下的用户 Workspace 元数据，与运行时绑定声明分离。"""
+
+    __tablename__ = "workspace_directories"
+    __table_args__ = (
+        Index(
+            "uq_workspace_directory_name",
+            "user_id", "directory_name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    directory_name: Mapped[str] = mapped_column(String(200))
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="workspace_directories")
+    bindings: Mapped[list["Workspace"]] = relationship(back_populates="directory")
+    files: Mapped[list["File"]] = relationship(back_populates="workspace_directory")
+    folders: Mapped[list["Folder"]] = relationship(back_populates="workspace_directory")
+
+class WorkspaceMigrationReport(Base):
+    """旧 Shell 目录迁移扫描结果；只保存状态和计数，不保存用户文件内容。"""
+
+    __tablename__ = "workspace_migration_reports"
+    __table_args__ = (
+        UniqueConstraint("user_id", "source_directory", name="uq_workspace_migration_report_source"),
+        Index("ix_workspace_migration_reports_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    source_directory: Mapped[str] = mapped_column(String(500))
+    target_directory: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(24), default="not_found", server_default="not_found")
+    source_file_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    scanned_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
 
 
 class FileSyncBinding(Base):
@@ -468,8 +524,11 @@ class File(Base):
     user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     display_name: Mapped[str]           = mapped_column(String(300))
     ext:          Mapped[str]           = mapped_column(String(20))
-    # 所属空间：project | mind | asset | personal
+    # 所属空间：project | mind | asset | personal | workspace
     space:        Mapped[str]           = mapped_column(String(20), default="personal")
+    workspace_directory_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspace_directories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     project_id:   Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     folder_id:    Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
     stage_name:   Mapped[str]           = mapped_column(String(100), default="")
@@ -491,6 +550,7 @@ class File(Base):
     project:  Mapped[Optional["Project"]] = relationship(back_populates="files")
     folder:   Mapped[Optional["Folder"]]  = relationship(back_populates="files")
     mind_map: Mapped[Optional["MindMap"]] = relationship(back_populates="files")
+    workspace_directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="files")
 
 
 # ── Folder（项目内用户文件夹）────────────────────────────────────────────────
@@ -501,6 +561,9 @@ class Folder(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    workspace_directory_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspace_directories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
@@ -514,6 +577,7 @@ class Folder(Base):
     # 软删后不再靠 DB 级联清子文件夹（那是硬删）——子树由 FolderTree 显式递归软删/恢复；
     # cascade 只在整个 Folder 行被硬删时（如所属 Project 被删）才触发，属既有行为，P2 不动。
     children: Mapped[list["Folder"]]      = relationship(back_populates="parent", cascade="all, delete-orphan")
+    workspace_directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="folders")
     parent:   Mapped[Optional["Folder"]]  = relationship(back_populates="children", remote_side="Folder.id")
 
 

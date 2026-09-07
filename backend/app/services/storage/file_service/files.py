@@ -20,7 +20,7 @@ from uuid import uuid4
 from app.core.errors import Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import File, Project
+from app.models import File, Project, WorkspaceDirectory
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
@@ -55,7 +55,7 @@ class FileOps:
         await reconcile_user_storage(self.db, user_id)
         return (await get_quota(self.db, user_id, FILE_LIBRARY)).used_bytes
 
-    async def _resolve_target(self, user_id, space, project_id, folder_id, *,
+    async def _resolve_target(self, user_id, space, project_id, folder_id, workspace_directory_id=None, *,
                               folder_msg, project_msg="项目不存在"):
         """解析目标项目/文件夹 → (project, project_year, project_month, folder_name, folder_path)。
         项目缺失/需 project_id/文件夹非法均抛 Invalid（复刻 files.py 的 400）。
@@ -63,6 +63,14 @@ class FileOps:
         project = None
         project_year = project_month = ""
         folder_name = folder_path = ""
+        workspace_directory = None
+        if space == "workspace":
+            workspace_directory = await get_owned(self.db, WorkspaceDirectory, workspace_directory_id, user_id)
+            if workspace_directory is None or workspace_directory.deleted_at is not None:
+                raise Invalid("workspace.not_found", "Workspace 不存在")
+            project_id = None
+        elif workspace_directory_id is not None:
+            raise Invalid("workspace.invalid_scope", "workspace_directory_id 只能用于 Workspace 空间")
         if space == "project" and project_id:
             project = await get_owned(self.db, Project, project_id, user_id)
             if not project:
@@ -72,23 +80,24 @@ class FileOps:
         elif space == "project":
             raise Invalid("project.id_required", "project 空间需要提供 project_id")
         if folder_id is not None:
-            resolved = await resolve_folder_path(self.db, user_id, folder_id, project_id)
+            resolved = await resolve_folder_path(self.db, user_id, folder_id, project_id, workspace_directory.id if workspace_directory else None)
             # resolve_folder_path 本身不认 deleted_at（folder_dir_key 等内部用途需要在软删后
             # 仍能解析），新内容的落点这里额外拦一道：不能把文件传进已经软删的文件夹（P2）。
             if not resolved or resolved[0].deleted_at is not None:
                 raise Invalid("folder.not_found", folder_msg)
             fo, folder_path = resolved
             folder_name = fo.name
-        return project, project_year, project_month, folder_name, folder_path
+        return project, project_year, project_month, folder_name, folder_path, workspace_directory
 
     def _build_key(self, user_id, *, file_id, space, name, ext, project, project_id,
-                   project_year, project_month, folder_path) -> str:
+                   project_year, project_month, folder_path, workspace_directory=None) -> str:
         logical = compose_logical_path(
             space,
             project_name=project.name if project else "",
             project_id=project_id or 0,
             project_year=project_year, project_month=project_month,
             folder_path=folder_path,
+            workspace_directory_name=workspace_directory.directory_name if workspace_directory else "",
         )
         return self.key_strategy.build_key(
             KeyContext(user_id=user_id, file_id=file_id, name=name, ext=ext, logical_path=logical)
@@ -99,9 +108,10 @@ class FileOps:
                           mind_map_id, display_name, ext, mime_type, data,
                           img_width=None, img_height=None,
                           on_conflict="keep_both", overwrite_file_id=None,
+                          workspace_directory_id=None,
                           storage_limit_bytes=None, ledger_operation="file_upload") -> FileResult:
-        project, project_year, project_month, folder_name, folder_path = await self._resolve_target(
-            user_id, space, project_id, folder_id,
+        project, project_year, project_month, folder_name, folder_path, workspace_directory = await self._resolve_target(
+            user_id, space, project_id, folder_id, workspace_directory_id,
             folder_msg="文件夹不存在，或不属于指定的项目/个人空间")
         size_bytes = len(data)
 
@@ -141,7 +151,8 @@ class FileOps:
         base_key = self._build_key(
             user_id, file_id=None, space=space, name=display_name, ext=ext,
             project=project, project_id=project_id,
-            project_year=project_year, project_month=project_month, folder_path=folder_path)
+            project_year=project_year, project_month=project_month, folder_path=folder_path,
+            workspace_directory=workspace_directory)
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, display_name, ext)
         final_key, final_name = resolved.key, resolved.name
 
@@ -153,7 +164,8 @@ class FileOps:
         db_file = File(
             user_id=user_id, display_name=final_name, ext=ext, space=space,
             project_id=project_id if space == "project" else None,
-            folder_id=folder_id, stage_name=stage_name,
+            folder_id=folder_id, workspace_directory_id=workspace_directory.id if workspace_directory else None,
+            stage_name=stage_name,
             mind_map_id=mind_map_id if space == "mind" else None,
             storage_key=final_key, size=_fmt_size(size_bytes), size_bytes=size_bytes,
             mime_type=mime_type, img_width=img_width, img_height=img_height,
@@ -169,7 +181,8 @@ class FileOps:
 
     # ── 改名 / 移动（PATCH）─────────────────────────────────────────────────────
     async def update_file(self, user_id, fid, *, display_name, stage_name,
-                          folder_id, project_id, folder_set, project_set) -> FileResult:
+                          folder_id, project_id, folder_set, project_set,
+                          workspace_directory_id=None, workspace_directory_set=False) -> FileResult:
         f = await get_owned(self.db, File, fid, user_id)
         if not f:
             raise NotFound("file.not_found", "文件不存在")
@@ -179,19 +192,30 @@ class FileOps:
         # 不带这两字段，不能被当成「移到个人空间」。
         new_fid = folder_id if folder_set else f.folder_id
         new_pid = project_id if project_set else f.project_id
-        new_space = "project" if new_pid else "personal"
+        new_wid = workspace_directory_id if workspace_directory_set else f.workspace_directory_id
+        if new_wid is not None:
+            new_space = "workspace"
+            new_pid = None
+            new_fid = None
+        else:
+            new_space = "project" if new_pid else "personal"
 
         project = None
+        workspace_directory = None
         project_year = project_month = ""
         folder_name = folder_path = ""
-        if new_space == "project" and new_pid:
+        if new_space == "workspace":
+            workspace_directory = await get_owned(self.db, WorkspaceDirectory, new_wid, user_id)
+            if workspace_directory is None or workspace_directory.deleted_at is not None:
+                raise Invalid("workspace.not_found", "Workspace 不存在")
+        elif new_space == "project" and new_pid:
             project = await get_owned(self.db, Project, new_pid, user_id)
             if not project:
                 raise Invalid("project.not_found", "目标项目不存在")
             date_str = project.start_date or project.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_str[:4], date_str[5:7]
         if new_fid:
-            resolved = await resolve_folder_path(self.db, user_id, new_fid, new_pid)
+            resolved = await resolve_folder_path(self.db, user_id, new_fid, new_pid, new_wid)
             if not resolved or resolved[0].deleted_at is not None:   # 不能移进已软删的文件夹（P2）
                 raise Invalid("folder.not_found", "目标文件夹不存在，或不属于目标项目/个人空间")
             fo, folder_path = resolved
@@ -200,7 +224,8 @@ class FileOps:
         new_key = self._build_key(
             user_id, file_id=f.id, space=new_space, name=new_display, ext=f.ext,
             project=project, project_id=new_pid,
-            project_year=project_year, project_month=project_month, folder_path=folder_path)
+            project_year=project_year, project_month=project_month, folder_path=folder_path,
+            workspace_directory=workspace_directory)
         if new_key != f.storage_key:
             resolved = await self.key_strategy.resolve_conflict(self.storage, new_key, new_display, f.ext)
             new_key, new_display = resolved.key, resolved.name
@@ -213,19 +238,20 @@ class FileOps:
         f.folder_id = new_fid
         f.project_id = new_pid
         f.space = new_space
+        f.workspace_directory_id = new_wid
         f.updated_at = now_utc()
         await self.db.flush()
         return FileResult(f, project, folder_name or None)
 
     # ── 复制 ───────────────────────────────────────────────────────────────────
-    async def copy_file(self, user_id, fid, *, folder_id, project_id,
+    async def copy_file(self, user_id, fid, *, folder_id, project_id, workspace_directory_id=None,
                         on_conflict="keep_both", overwrite_file_id=None) -> FileResult:
         f = await get_owned(self.db, File, fid, user_id)
         if not f or f.deleted_at:
             raise NotFound("file.not_found", "文件不存在")
-        new_space = "project" if project_id else "personal"
-        project, project_year, project_month, folder_name, folder_path = await self._resolve_target(
-            user_id, new_space, project_id, folder_id,
+        new_space = "workspace" if workspace_directory_id is not None else ("project" if project_id else "personal")
+        project, project_year, project_month, folder_name, folder_path, workspace_directory = await self._resolve_target(
+            user_id, new_space, project_id, folder_id, workspace_directory_id,
             folder_msg="目标文件夹不存在，或不属于目标项目/个人空间",
             project_msg="目标项目不存在")
 
@@ -260,7 +286,8 @@ class FileOps:
         base_key = self._build_key(
             user_id, file_id=None, space=new_space, name=f.display_name, ext=f.ext,
             project=project, project_id=project_id,
-            project_year=project_year, project_month=project_month, folder_path=folder_path)
+            project_year=project_year, project_month=project_month, folder_path=folder_path,
+            workspace_directory=workspace_directory)
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, f.display_name, f.ext)
         new_key, new_display = resolved.key, resolved.name
 
@@ -268,7 +295,9 @@ class FileOps:
         new_file = File(
             user_id=user_id, display_name=new_display, ext=f.ext, storage_key=new_key,
             size=f.size, size_bytes=f.size_bytes, mime_type=f.mime_type, space=new_space,
-            project_id=project_id, folder_id=folder_id, stage_name=f.stage_name,
+            project_id=project_id, folder_id=folder_id,
+            workspace_directory_id=workspace_directory.id if workspace_directory else None,
+            stage_name=f.stage_name,
         )
         self.db.add(new_file)
         await self.db.flush()

@@ -56,7 +56,7 @@ export function useFilesNav(deps: FilesNavDeps) {
   })
   const currentSeg = computed(() => navPath.value[navPath.value.length - 1] ?? null)
   const projectSeg = computed(() => navPath.value.find(s => s.type === 'project') ?? null)
-  const canUpload = computed(() => ['personal', 'project', 'folder'].includes(currentType.value))
+  const canUpload = computed(() => ['personal', 'project', 'folder', 'workspace'].includes(currentType.value))
 
   const NAV_KEY = 'files_nav_path'
   function saveNav() {

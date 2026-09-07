@@ -4,16 +4,23 @@
 """
 from __future__ import annotations
 
+import shutil
+import os
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 
-from app.models import ConversationSession, Folder, Project, ScheduledTask, UserPreferences, Workspace
+from app.models import (
+    ConversationSession, File, Folder, Project, ScheduledTask, UserPreferences,
+    User, Workspace, WorkspaceDirectory, WorkspaceMigrationReport, TerminalSessionRecord,
+)
 from app.core.ownership import get_owned
 from app.core.config import get_settings
+from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
-from app.services.storage.keys import compose_logical_path
-from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT
+from app.services.storage.keys import _safe_name, compose_logical_path
+from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT, DEFAULT_WORKSPACE_FOLDER_NAME
 
 
 def workspace_shell_supported() -> bool:
@@ -25,6 +32,216 @@ async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspa
     if not workspace_shell_supported():
         return None
     return await get_owned(db, Workspace, workspace_id, user_id)
+
+
+def _workspace_directory_root(user_id, directory_name: str) -> Path:
+    settings = get_settings()
+    return (Path(settings.storage.local_path).expanduser().resolve() / str(user_id) / directory_name).resolve()
+
+
+async def list_workspace_directories(db: AsyncSession, user_id) -> list[WorkspaceDirectory]:
+    await ensure_default_workspace_directory(db, user_id)
+    result = await db.execute(select(WorkspaceDirectory).where(
+        WorkspaceDirectory.user_id == user_id,
+        WorkspaceDirectory.deleted_at.is_(None),
+    ).order_by(WorkspaceDirectory.is_default.desc(), WorkspaceDirectory.name))
+    return list(result.scalars().all())
+
+
+async def ensure_default_workspace_directory(db: AsyncSession, user_id) -> WorkspaceDirectory:
+    """为新用户补齐默认 Workspace；可重复调用且不在迁移中触碰文件系统。"""
+    row = await db.scalar(select(WorkspaceDirectory).where(
+        WorkspaceDirectory.user_id == user_id,
+        WorkspaceDirectory.directory_name == DEFAULT_WORKSPACE_FOLDER_NAME,
+        WorkspaceDirectory.deleted_at.is_(None),
+    ))
+    if row is None:
+        row = WorkspaceDirectory(
+            user_id=user_id, name="默认工作区",
+            directory_name=DEFAULT_WORKSPACE_FOLDER_NAME,
+            is_default=True, is_system=True,
+        )
+        db.add(row)
+        await db.flush()
+    if get_settings().storage.backend == "local":
+        _workspace_directory_root(user_id, row.directory_name).mkdir(parents=True, exist_ok=True)
+    return row
+
+
+async def workspace_directory_payload(db: AsyncSession, user_id, row: WorkspaceDirectory) -> dict:
+    file_count = await db.scalar(select(func.count(File.id)).where(
+        File.user_id == user_id, File.workspace_directory_id == row.id, File.deleted_at.is_(None),
+    ))
+    folder_count = await db.scalar(select(func.count(Folder.id)).where(
+        Folder.user_id == user_id, Folder.workspace_directory_id == row.id, Folder.deleted_at.is_(None),
+    ))
+    bound_workspace_ids = select(Workspace.id).where(Workspace.user_id == user_id, Workspace.directory_id == row.id)
+    session_count = await db.scalar(select(func.count(ConversationSession.id)).where(
+        ConversationSession.user_id == user_id, ConversationSession.workspace_id.in_(bound_workspace_ids)
+    ))
+    task_count = await db.scalar(select(func.count(ScheduledTask.id)).where(
+        ScheduledTask.user_id == user_id, ScheduledTask.workspace_id.in_(bound_workspace_ids)
+    ))
+    return {
+        "id": row.id, "name": row.name, "directory_name": row.directory_name,
+        "is_default": row.is_default, "is_system": row.is_system,
+        "file_count": int(file_count or 0), "folder_count": int(folder_count or 0),
+        "bound_session_count": int(session_count or 0),
+        "bound_task_count": int(task_count or 0),
+    }
+
+
+async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) -> WorkspaceDirectory:
+    if get_settings().storage.backend != "local":
+        raise ValueError("当前存储后端不支持本地 Workspace")
+    await ensure_default_workspace_directory(db, user_id)
+    normalized = name.strip()
+    directory_name = _safe_name(normalized)
+    if not directory_name or directory_name in {".", ".."}:
+        raise ValueError("Workspace 名称无效")
+    existing = await db.scalar(select(WorkspaceDirectory).where(
+        WorkspaceDirectory.user_id == user_id,
+        WorkspaceDirectory.directory_name == directory_name,
+        WorkspaceDirectory.deleted_at.is_(None),
+    ))
+    if existing:
+        raise ValueError("Workspace 已存在")
+    row = WorkspaceDirectory(user_id=user_id, name=normalized, directory_name=directory_name)
+    db.add(row)
+    await db.flush()
+    root = _workspace_directory_root(user_id, directory_name)
+    root.mkdir(parents=True, exist_ok=True)
+    return row
+
+
+async def update_workspace_directory(db: AsyncSession, user_id, directory_id: int, *, name: str) -> WorkspaceDirectory:
+    row = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
+    if row is None or row.deleted_at is not None:
+        raise LookupError("Workspace 不存在")
+    if row.is_system:
+        raise ValueError("默认 Workspace 不可重命名")
+    normalized = name.strip()
+    if not normalized:
+        raise ValueError("Workspace 名称不能为空")
+    if normalized != row.name:
+        if await db.scalar(select(WorkspaceDirectory).where(
+            WorkspaceDirectory.user_id == user_id,
+            WorkspaceDirectory.name == normalized,
+            WorkspaceDirectory.deleted_at.is_(None),
+            WorkspaceDirectory.id != row.id,
+        )):
+            raise ValueError("Workspace 已存在")
+        old_root = _workspace_directory_root(user_id, row.directory_name)
+        new_name = _safe_name(normalized)
+        new_root = _workspace_directory_root(user_id, new_name)
+        if old_root != new_root and new_root.exists():
+            raise ValueError("目标 Workspace 目录已存在")
+        if old_root.exists():
+            old_root.rename(new_root)
+        row.directory_name = new_name
+        row.name = normalized
+    await db.flush()
+    return row
+
+
+async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: int) -> list[str]:
+    row = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
+    if row is None or row.deleted_at is not None:
+        raise LookupError("Workspace 不存在")
+    if row.is_default or row.is_system:
+        raise ValueError("默认 Workspace 不可删除")
+    root = _workspace_directory_root(user_id, row.directory_name)
+    user_root = Path(get_settings().storage.local_path).expanduser().resolve() / str(user_id)
+    try:
+        root.relative_to(user_root)
+    except ValueError as exc:
+        raise ValueError("Workspace 目录不在用户存储根内") from exc
+    deleted_at = now_utc()
+    bindings = (await db.execute(select(Workspace).where(
+        Workspace.user_id == user_id, Workspace.directory_id == row.id
+    ))).scalars().all()
+    binding_ids = [binding.id for binding in bindings]
+    terminal_ids: list[str] = []
+    if binding_ids:
+        terminal_ids = list((await db.scalars(select(TerminalSessionRecord.id).where(
+            TerminalSessionRecord.owner_id == user_id,
+            TerminalSessionRecord.workspace_id.in_(binding_ids),
+            TerminalSessionRecord.closed_at.is_(None),
+        ))).all())
+        await db.execute(ConversationSession.__table__.update().where(
+            ConversationSession.user_id == user_id,
+            ConversationSession.workspace_id.in_(binding_ids),
+        ).values(workspace_id=None))
+        await db.execute(ScheduledTask.__table__.update().where(
+            ScheduledTask.user_id == user_id,
+            ScheduledTask.workspace_id.in_(binding_ids),
+        ).values(workspace_id=None, enabled=False))
+        await db.execute(Workspace.__table__.delete().where(Workspace.id.in_(binding_ids)))
+    if binding_ids:
+        await db.execute(TerminalSessionRecord.__table__.update().where(
+            TerminalSessionRecord.owner_id == user_id,
+            TerminalSessionRecord.workspace_id.in_(binding_ids),
+            TerminalSessionRecord.closed_at.is_(None),
+        ).values(status="terminated", closed_at=deleted_at, updated_at=deleted_at))
+    await db.execute(File.__table__.update().where(
+        File.user_id == user_id, File.workspace_directory_id == row.id, File.deleted_at.is_(None),
+    ).values(deleted_at=deleted_at, updated_at=deleted_at))
+    await db.execute(Folder.__table__.update().where(
+        Folder.user_id == user_id, Folder.workspace_directory_id == row.id, Folder.deleted_at.is_(None),
+    ).values(deleted_at=deleted_at, updated_at=deleted_at, version=Folder.version + 1))
+    await db.execute(WorkspaceDirectory.__table__.update().where(
+        WorkspaceDirectory.id == row.id, WorkspaceDirectory.user_id == user_id,
+    ).values(deleted_at=deleted_at, updated_at=deleted_at))
+    await db.flush()
+    if root.exists():
+        shutil.rmtree(root)
+    return terminal_ids
+
+
+async def scan_legacy_shell_directories(db: AsyncSession, user_id=None) -> list[WorkspaceMigrationReport]:
+    """只读盘点旧 ``shell`` 目录并持久化可重试的迁移状态。"""
+    if get_settings().storage.backend != "local":
+        return []
+    stmt = select(User).where(User.is_active.is_(True))
+    if user_id is not None:
+        stmt = stmt.where(User.id == user_id)
+    users = list((await db.execute(stmt)).scalars().all())
+    reports: list[WorkspaceMigrationReport] = []
+    for user in users:
+        source = _workspace_directory_root(user.id, "shell")
+        target = _workspace_directory_root(user.id, DEFAULT_WORKSPACE_FOLDER_NAME)
+        status = "not_found"
+        count = 0
+        error_message = None
+        if source.exists():
+            try:
+                count = sum(1 for item in source.rglob("*") if item.is_file())
+                if not os.access(source, os.R_OK):
+                    raise PermissionError("旧 Shell 目录不可读")
+                status = "ready"
+            except OSError as exc:
+                status = "failed"
+                error_message = type(exc).__name__
+        report = await db.scalar(select(WorkspaceMigrationReport).where(
+            WorkspaceMigrationReport.user_id == user.id,
+            WorkspaceMigrationReport.source_directory == str(source),
+        ))
+        values = {
+            "target_directory": str(target), "status": status,
+            "source_file_count": count, "error_message": error_message,
+            "scanned_at": now_utc(),
+        }
+        if report is None:
+            report = WorkspaceMigrationReport(
+                user_id=user.id, source_directory=str(source), **values,
+            )
+            db.add(report)
+        else:
+            for key, value in values.items():
+                setattr(report, key, value)
+        reports.append(report)
+    await db.flush()
+    return reports
 
 
 async def list_workspaces(db: AsyncSession, user_id) -> list[Workspace]:
@@ -81,6 +298,7 @@ async def workspace_payload(db: AsyncSession, user_id, row: Workspace) -> dict:
 async def create_workspace(
     db: AsyncSession, user_id, *, name: str, kind: str,
     folder_id: int | None = None, project_id: int | None = None,
+    directory_id: int | None = None,
     enabled: bool = True,
 ) -> Workspace:
     if not workspace_shell_supported():
@@ -93,12 +311,17 @@ async def create_workspace(
         if project_id is None or await get_owned(db, Project, project_id, user_id) is None:
             raise ValueError("项目不存在")
         folder_id = None
+    elif kind == "directory":
+        directory = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
+        if directory is None or directory.deleted_at is not None:
+            raise ValueError("Workspace 目录不存在")
+        folder_id = project_id = None
     else:
         raise ValueError("工作区类型无效")
 
     workspace = Workspace(
         user_id=user_id, name=name.strip(), kind=kind,
-        folder_id=folder_id, project_id=project_id, enabled=enabled,
+        folder_id=folder_id, project_id=project_id, directory_id=directory_id if kind == "directory" else None, enabled=enabled,
     )
     db.add(workspace)
     await db.flush()
@@ -235,6 +458,17 @@ async def resolve_workspace_target(
             "project_id": project.id, "folder_id": None,
             "project_name": project.name,
         }
+    if workspace.kind == "directory" and workspace.directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, workspace.directory_id, user_id)
+        if directory is None or directory.deleted_at is not None:
+            return None
+        return {
+            "workspace_id": workspace.id, "workspace_name": workspace.name,
+            "kind": "directory", "space": "workspace",
+            "workspace_directory_id": directory.id,
+            "workspace_directory_name": directory.directory_name,
+            "project_id": None, "folder_id": None,
+        }
     if workspace.kind == "folder" and workspace.folder_id is not None:
         folder = await get_owned(db, Folder, workspace.folder_id, user_id)
         if folder is None or folder.deleted_at is not None:
@@ -280,6 +514,11 @@ async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -
             "project", project_name=project.name, project_id=project.id,
             project_year=date_str[:4], project_month=date_str[5:7],
         )
+    elif workspace.kind == "directory" and workspace.directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, workspace.directory_id, user_id)
+        if directory is None or directory.deleted_at is not None:
+            return None
+        logical = compose_logical_path("workspace", workspace_directory_name=directory.directory_name)
     elif workspace.kind == "folder" and workspace.folder_id is not None:
         folder = await get_owned(db, Folder, workspace.folder_id, user_id)
         if folder is None or folder.deleted_at is not None:
@@ -306,7 +545,7 @@ async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -
 
 
 async def resolve_sandbox_root(db: AsyncSession, user_id) -> Path | None:
-    """解析用户独立 Shell 持久根目录，不与文件库个人根目录混用。"""
+    """解析文件库个人空间下的默认沙盒工作区目录。"""
     settings = get_settings()
     if settings.storage.backend not in {"local", "oss"}:
         return None
@@ -314,7 +553,7 @@ async def resolve_sandbox_root(db: AsyncSession, user_id) -> Path | None:
         # 纯路径解析测试/启动探测没有数据库上下文，不能伪造配额登记；正式
         # Shell 请求始终传入 AsyncSession，并走统一账本初始化。
         from agent.sandbox.quota import ensure_sandbox_root
-        root = (Path(settings.storage.local_path).resolve() / str(user_id) / "shell").resolve()
+        root = (Path(settings.storage.local_path).resolve() / str(user_id) / DEFAULT_WORKSPACE_FOLDER_NAME).resolve()
         return ensure_sandbox_root(root)
     rows = await ensure_user_storage_space(db, user_id)
     row = next(item for item in rows if item.category == SHELL_PERSISTENT)
