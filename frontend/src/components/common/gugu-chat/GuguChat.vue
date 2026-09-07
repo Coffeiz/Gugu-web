@@ -724,11 +724,11 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
-/* 咕咕回复的 `---` 分隔线：hr 无默认样式可用（浏览器 1px 灰在亮色下看不清），
-   与预览窗 .tv-md hr 同口径用 border-strong */
+/* 咕咕回复的 `---` 分隔线：从正文色派生保证全主题可见（玻璃亮色的
+   border 系列是白色系，浅底上不可见），与预览窗 .tv-md hr 同口径 */
 :deep(.msg-bubble.md-body hr) {
   border: none;
-  border-top: 1px solid var(--border-strong);
+  border-top: 1px solid color-mix(in srgb, var(--content-primary) 30%, transparent);
   margin: 1.25em 0;
 }
 :deep(.msg-bubble.md-body a.chat-object-card) {

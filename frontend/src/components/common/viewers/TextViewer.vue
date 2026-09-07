@@ -1011,10 +1011,10 @@ onBeforeUnmount(() => {
 .tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
-  /* 分割线是章节级分隔，用比控件边框实一档的 token；border-subtle
-     亮色只有 8% 透明度（mono-light），白底上完全看不见 */
+  /* 分割线从正文色派生而不是用 border token：玻璃亮色的 border 系列是白色系，
+     浅色玻璃底上任何透明度都看不清；content 派生在全部主题下都有对比 */
   border: none;
-  border-top: 1px solid var(--border-strong);
+  border-top: 1px solid color-mix(in srgb, var(--content-primary) 30%, transparent);
   margin: 1.5em 0;
 }
 
