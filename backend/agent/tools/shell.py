@@ -603,6 +603,7 @@ class ShellSkill(BaseSkill):
                 "也支持 /workspace、/personal、/project 下的逻辑绝对路径；不能经过软链接或硬链接。root 可选 workspace/personal/project，"
                 "省略 root 时从逻辑绝对路径推断，否则必须与路径根目录一致；是否可用以本轮权限状态为准。默认使用 python3，"
                 "脚本仍复用 Shell 的沙盒、workspace/cwd、超时、输出、网络隔离和进程清理边界；"
+                "timeout 单位是秒（0.1–300），不是毫秒；max_output_chars 单位是字符；"
                 "网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络）；"
                 "不要根据默认配置或脚本错误臆测当前网络状态；"
                 "personal/project 需要完整用户沙箱授权，不能传任意 Shell command、eval 参数或 positional args；"

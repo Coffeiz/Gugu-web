@@ -1696,7 +1696,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="create_file", label="创建文件",
             description_short='批量创建 UTF-8 文本文件；支持自定义扩展名。',
-            description="批量创建 UTF-8 文本文件；每项填写完整文件名（如 script.py、page.html、config.custom）和 content，未知扩展名也按文本保存。可用 target 指定默认 personal/project、project_id、folder_id，单项可覆盖；不做格式转换、不执行内容，同名自动保留副本。",
+            description="批量创建 UTF-8 文本文件；files 必须是数组，name 和 content 写在数组项内，不要放到顶层。每项填写完整文件名（如 script.py、page.html、config.custom）和 content，未知扩展名也按文本保存。可用 target 指定默认 personal/project、project_id、folder_id，单项可覆盖；不做格式转换、不执行内容，同名自动保留副本。",
             input_schema={
                 "type": "object",
                 "properties": {
