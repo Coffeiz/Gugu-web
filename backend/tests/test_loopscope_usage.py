@@ -31,7 +31,7 @@ from agent.runtime.loopscope_trace.state import (
     _scope_run,
     record_reasoning_state_diagnostics,
 )
-from agent.runtime.loopscope_trace.utils import _usage_payload
+from agent.runtime.loopscope_trace.utils import _extract_last_user, _usage_payload
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
                      provider="anthropic", max_tokens=100, temperature=0.7,
@@ -66,6 +66,16 @@ def test_loopscope_separates_session_snapshot_from_history_display():
     legacy_messages = [{"role": "system", "content": "[system-reminder]\n旧历史\n[/system-reminder]"}]
     assert _trace_snapshot(legacy_messages) is None
     assert _trace_conversation_messages(legacy_messages, "system_param") == legacy_messages
+
+
+def test_loopscope_input_uses_real_user_after_internal_context():
+    messages = [
+        {"role": "user", "content": "用户真正的问题"},
+        {"role": "user", "content": "[system-reminder]\n工作区\n[/system-reminder]"},
+        {"role": "user", "content": [{"type": "knowledge-context", "text": "知识召回"}]},
+    ]
+
+    assert _extract_last_user(messages) == "用户真正的问题"
 
 
 def test_context_threshold_uses_cache_tokens_for_anthropic():

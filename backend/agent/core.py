@@ -26,6 +26,7 @@ from app.core.redaction import diag_log
 from app.core.tz import now_utc
 from agent.interactions.stream_events import encode_event
 from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_name
+from agent.context.message_roles import last_user_index, user_text_from_message
 
 _log = logging.getLogger("agent.core")
 
@@ -263,15 +264,6 @@ from agent.security.core_guards import (
     _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
     guard_locale,
 )
-
-
-def _user_text(content) -> str:
-    """从 user 消息 content 取纯文本（content 可能是 str，或带图时的 [{text}, {image}] 列表）。"""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-    return ""
 
 
 # 增删改工具的命名约定：写动词前缀。新功能的工具照此命名（create_/update_/delete_/...），
@@ -687,7 +679,12 @@ class LLMRunner:
         # 当前用户消息是本轮 run 的保护边界。压缩时只处理它之前的历史，
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
         _run_conversation = getattr(messages, "conversation", messages)
-        _run_start_message = _run_conversation[-1] if _run_conversation else None
+        _run_start_index = last_user_index(_run_conversation)
+        _run_start_message = (
+            _run_conversation[_run_start_index]
+            if _run_start_index is not None
+            else (_run_conversation[-1] if _run_conversation else None)
+        )
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
@@ -697,7 +694,11 @@ class LLMRunner:
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
         _request_conversation = getattr(messages, "conversation", messages)
-        _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
+        _request_user_index = last_user_index(_request_conversation)
+        _user_req = (
+            user_text_from_message(_request_conversation[_request_user_index])
+            if _request_user_index is not None else ""
+        )
         # 初始用户图片只需要首轮完整发送；首轮结束后折叠成稳定文本，避免下一轮和下一次
         # run 在同一历史位置分别出现 base64 与占位文本，导致 provider 从图片处断缓存。
         initial_volatile_indices = loop_drivers._volatile_message_indices(messages)

@@ -9,6 +9,17 @@ from typing import Any, Awaitable, Callable
 from app.core.tz import now_utc, resolve_tz, LOCAL_TZ
 
 DEFAULT_IDLE_TTL = timedelta(minutes=30)
+_SNAPSHOT_KEY_UNSET = object()
+_WORKSPACE_BINDING_FIELDS = (
+    "workspace_id",
+    "workspace_name",
+    "kind",
+    "space",
+    "project_id",
+    "folder_id",
+    "project_name",
+    "folder_name",
+)
 
 # 这是固定 snapshot 规则，只发送一次；不要放进每轮动态 reminder，避免增加
 # 请求体和破坏跨轮缓存前缀。它约束模型如何处理后续所有内部上下文注入。
@@ -51,6 +62,28 @@ def current_date_text(user_tz=None) -> str:
 def reminder_message(content: str) -> dict:
     """生成不带观测元数据的 reminder 消息。"""
     return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
+
+
+def workspace_binding_key(target: dict | None) -> dict:
+    """返回可比较、可持久化的工作区绑定身份。"""
+    target = target if isinstance(target, dict) else {}
+    return {field: target.get(field) for field in _WORKSPACE_BINDING_FIELDS}
+
+
+def workspace_snapshot_block(target: dict | None) -> str:
+    """把低频变化的工作区绑定写入固定 snapshot，而不是每轮尾部。"""
+    if not isinstance(target, dict) or target.get("workspace_id") is None:
+        return ""
+    workspace_name = target.get("workspace_name") or "当前工作区"
+    return (
+        "## 当前会话工作区（文件工具必须遵守）\n"
+        f"当前绑定：{workspace_name}；"
+        f"规范落点 space={target.get('space')}, "
+        f"project_id={target.get('project_id')}, "
+        f"folder_id={target.get('folder_id')}。\n"
+        "workspace_id 与 project_id/folder_id 不同命名空间；创建、保存、移动、复制、"
+        "按名称查找文件时，省略目标参数即使用上述落点，不要把 workspace_id 当作 project_id。"
+    )
 
 
 def snapshot_message(content: str) -> dict:
@@ -141,7 +174,13 @@ def baseline_hash(messages: list) -> str:
     return digest(normalized)
 
 
-def snapshot_is_usable(session, now: datetime | None = None, *, locale: str | None = None) -> bool:
+def snapshot_is_usable(
+    session,
+    now: datetime | None = None,
+    *,
+    locale: str | None = None,
+    workspace_binding: Any = _SNAPSHOT_KEY_UNSET,
+) -> bool:
     """判断当前 session 是否已有未过期的可复用 snapshot。"""
     context = getattr(session, "session_context", None)
     return bool(
@@ -150,6 +189,10 @@ def snapshot_is_usable(session, now: datetime | None = None, *, locale: str | No
         and context.get("session_info") is not None
         and not is_expired(session, now)
         and (locale is None or context.get("locale", "zh-CN") == locale)
+        and (
+            workspace_binding is _SNAPSHOT_KEY_UNSET
+            or context.get("workspace_binding") == workspace_binding_key(workspace_binding)
+        )
     )
 
 
@@ -182,6 +225,7 @@ def snapshot_context(session) -> dict:
             or getattr(session, "baseline_message_id", 0)
             or 0
         ),
+        "workspace_binding": workspace_binding_key(context.get("workspace_binding")),
     }
 
 
@@ -246,6 +290,7 @@ def initialize_snapshot(
     covered_messages: list[dict] | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
+    workspace_binding: dict | None = None,
 ) -> str:
     """建立或重建 snapshot，返回 snapshot hash。"""
     current = now or now_utc()
@@ -287,6 +332,7 @@ def initialize_snapshot(
         "locale": locale,
         "snapshot_context_hash": digest(snapshot_context),
         "history_baseline_message_id": int(getattr(session, "baseline_message_id", 0) or 0),
+        "workspace_binding": workspace_binding_key(workspace_binding),
         **preserved_control,
     }
     _set_rag_snapshot_context(snapshot_context, context_revision)
@@ -340,6 +386,13 @@ def update_baseline_snapshot(
     return session.snapshot_hash
 
 
+def invalidate_snapshot(session) -> None:
+    """标记 snapshot 失效，保留旧正文等待下一轮按当前状态重建。"""
+    session.snapshot_expires_at = now_utc()
+    session.context_epoch = int(getattr(session, "context_epoch", 0) or 0) + 1
+    _record_snapshot_event(session, "invalidate")
+
+
 async def ensure_snapshot(
     db,
     session,
@@ -348,6 +401,7 @@ async def ensure_snapshot(
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
     locale: str | None = None,
+    workspace_binding: Any = _SNAPSHOT_KEY_UNSET,
 ) -> dict:
     """返回本会话冻结的动态上下文。
 
@@ -359,7 +413,12 @@ async def ensure_snapshot(
     ``load_context`` 返回已经渲染好的 prompt 输入，避免 runner、Web 各自维护一套
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。
     """
-    if snapshot_is_usable(session, now, locale=locale):
+    if snapshot_is_usable(
+        session,
+        now,
+        locale=locale,
+        workspace_binding=workspace_binding,
+    ):
         _record_snapshot_event(session, "hit")
         context = snapshot_context(session)
         _set_rag_snapshot_context(context["snapshot_context"], context.get("rag_revision"))
@@ -392,6 +451,9 @@ async def ensure_snapshot(
         covered_messages=payload.get("covered_messages") or [],
         now=now,
         ttl=ttl,
+        workspace_binding=(
+            None if workspace_binding is _SNAPSHOT_KEY_UNSET else workspace_binding
+        ),
     )
     await db.flush()
     _record_snapshot_event(session, "rebuild")

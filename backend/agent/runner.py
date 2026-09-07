@@ -208,6 +208,7 @@ async def _run_collect_unlocked(
         workspace_target = await resolve_workspace_target(
             db, user_id, session.workspace_id,
         ) if session.workspace_id is not None else None
+        workspace_binding = session_snapshot.workspace_binding_key(workspace_target)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -226,6 +227,9 @@ async def _run_collect_unlocked(
                 snapshot_context, data.im_memory, req,
                 restricted=context_policy.restricted,
             )
+            workspace_block = session_snapshot.workspace_snapshot_block(workspace_target)
+            if workspace_block:
+                snapshot_context = "\n\n---\n\n".join((snapshot_context, workspace_block))
             return {
                 "system_prompt": static_prompt,
                 "snapshot_context": snapshot_context,
@@ -248,6 +252,7 @@ async def _run_collect_unlocked(
 
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot,
+            workspace_binding=workspace_binding,
         )
         snapshot_user_tz = snapshot["user_tz"]
         snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
@@ -380,18 +385,6 @@ async def _run_collect_unlocked(
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
-    if workspace_target:
-        _workspace_name = workspace_target.get("workspace_name") or "当前工作区"
-        _dynamic_extra_parts.append(
-            "## 当前会话工作区（文件工具必须遵守）\n"
-            f"当前绑定：{_workspace_name}；"
-            f"规范落点 space={workspace_target['space']}, "
-            f"project_id={workspace_target.get('project_id')}, "
-            f"folder_id={workspace_target.get('folder_id')}。\n"
-            "workspace_id 与 project_id/folder_id 不同命名空间；创建、保存、移动、复制、"
-            "按名称查找文件时，省略目标参数即使用上述落点，不要把 workspace_id 当作 project_id。"
-        )
-
     from agent.context import compress_conv
 
     # 本轮动态上下文用 [system-reminder] 包裹，避免和 snapshot 固定前缀混淆。
@@ -672,6 +665,7 @@ async def _run_stream_unlocked(
         workspace_target = await resolve_workspace_target(
             db, user_id, session.workspace_id,
         ) if session.workspace_id is not None else None
+        workspace_binding = session_snapshot.workspace_binding_key(workspace_target)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -690,6 +684,9 @@ async def _run_stream_unlocked(
                 snapshot_context, data.im_memory, req,
                 restricted=context_policy.restricted,
             )
+            workspace_block = session_snapshot.workspace_snapshot_block(workspace_target)
+            if workspace_block:
+                snapshot_context = "\n\n---\n\n".join((snapshot_context, workspace_block))
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": req.source,
                                       "chat_id": req.chat_id, "profile": profile.prompt_file},
@@ -707,6 +704,7 @@ async def _run_stream_unlocked(
 
         snapshot = await session_snapshot.ensure_snapshot(
             db, session, load_context=_load_snapshot,
+            workspace_binding=workspace_binding,
         )
         snapshot_user_tz = snapshot["user_tz"]
         snapshot["system_prompt"] = await _load_system_prompt(snapshot_user_tz)
@@ -824,18 +822,6 @@ async def _run_stream_unlocked(
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
-    if workspace_target:
-        _workspace_name = workspace_target.get("workspace_name") or "当前工作区"
-        _dynamic_extra_parts.append(
-            "## 当前会话工作区（文件工具必须遵守）\n"
-            f"当前绑定：{_workspace_name}；"
-            f"规范落点 space={workspace_target['space']}, "
-            f"project_id={workspace_target.get('project_id')}, "
-            f"folder_id={workspace_target.get('folder_id')}。\n"
-            "workspace_id 与 project_id/folder_id 不同命名空间；创建、保存、移动、复制、"
-            "按名称查找文件时，省略目标参数即使用上述落点，不要把 workspace_id 当作 project_id。"
-        )
-
     from agent.context import compress_conv
 
     # 本轮动态上下文用 [system-reminder] 包裹，避免和 snapshot 固定前缀混淆。

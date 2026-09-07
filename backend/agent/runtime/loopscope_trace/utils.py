@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from agent.context.message_roles import last_user_index, user_text_from_message
+
 _TOKENIZER_CACHE: dict[str, Any] = {}
 _TOKENIZER_FAILURES: set[str] = set()
 
@@ -253,21 +255,8 @@ def _usage_payload(result: Any, api_format: str = "") -> dict[str, Any]:
     }
 
 def _extract_last_user(messages: Any) -> str:
-    if not isinstance(messages, list):
-        return ""
-    for message in reversed(messages):
-        if not isinstance(message, dict) or message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            bits = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    bits.append(str(block.get("text") or ""))
-            return "\n".join(bits)
-    return ""
+    index = last_user_index(messages)
+    return user_text_from_message(messages[index]) if index is not None else ""
 
 def _round_result(result: Any, api_format: str = "") -> dict[str, Any]:
     if result is None:
