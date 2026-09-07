@@ -222,6 +222,14 @@ export function useChatConversation(options: {
 
   // 会话切换时的草稿存/取（helper 定义在 inputText 旁；这里才拿得到已初始化的 sessionId）
   watch(sessionId, (nv, ov) => {
+    if (!ov && nv) {
+      // 新对话首条消息回传 session_id（null → id）是**同一会话的指针落地**，不是切换：
+      // 此刻输入框里的文字（用户正打着的那条，或排队入队瞬间）仍属于这个新会话，
+      // 草稿直接记到新 id 名下。不能走下面的分支——那会把输入当成「旧会话遗留」
+      // 无声清掉（新 id 名下还没有草稿，还原出来是空串，用户正在打的字就丢了）。
+      _saveDraft(nv, inputText.value)
+      return
+    }
     _saveDraft(ov, inputText.value)
     inputText.value = nv ? (_loadDrafts()[String(nv)] ?? '') : ''
   })
