@@ -137,7 +137,9 @@ function cleanupDetailTransition(element: Element) {
 
 <style scoped>
 .tool-event-bubble { width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: background var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
-.tool-event-bubble:has(.tool-event-head:hover) { background: var(--surface-glass-hover); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
+/* hover 底色从气泡自身底色派生（向内容主色微偏移）：通用 --surface-glass-hover 在
+   暗色玻璃主题是透明白叠层，透出页面暗底反而比不透明气泡更暗（用户反馈变暗）。 */
+.tool-event-bubble:has(.tool-event-head:hover) { background: color-mix(in srgb, var(--gugu-chat-assistant-bg) 92%, var(--content-primary)); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
 .tool-event-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 9px; width: 100%; min-height: 54px; border: 0; padding: 10px 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tool-event-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--border-focus); }
 .tool-event-state { grid-row: 1 / span 2; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--content-tertiary); }
