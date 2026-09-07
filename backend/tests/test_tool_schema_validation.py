@@ -640,3 +640,46 @@ def test_item_wrapper_unwrap_does_not_touch_plain_objects():
     assert args["options"] == {"item": "keep"}
     assert args["weird"] == {"other": ["x"], "item": ["y"]}
     assert adaptations == []
+
+
+async def test_dispatch_warns_unknown_top_level_fields_in_success_result():
+    """模型按旧参数形状多传的字段：执行不被拦，但成功回执必须带 ignored_fields 让它一轮自纠。"""
+    reg, _tool = _make_registry({
+        "type": "object",
+        "properties": {"stage": {"type": "string"}},
+    })
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
+        "stage": "s1",
+        "todo": {"text": "旧形状字段"},
+    })
+    payload = json.loads(raw)
+    assert payload["ok"] is True
+    assert payload["ignored_fields"] == ["todo"]
+    assert "get_tool_schema" in payload["hint"]
+
+
+async def test_dispatch_no_warning_when_all_fields_known():
+    reg, _tool = _make_registry({
+        "type": "object",
+        "properties": {"stage": {"type": "string"}},
+    })
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {"stage": "s1"})
+    payload = json.loads(raw)
+    assert "ignored_fields" not in payload and "hint" not in payload
+
+
+async def test_dispatch_unknown_field_warning_not_added_to_error_result():
+    """错误回执已有固定形状（error），不再掺入 ignored_fields 提示。"""
+    async def err_handler(db, user_id, args):
+        return {"error": "业务校验失败"}
+
+    reg, _tool = _make_registry({
+        "type": "object",
+        "properties": {"stage": {"type": "string"}},
+    }, handler=err_handler)
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
+        "stage": "s1", "legacy": True,
+    })
+    payload = json.loads(raw)
+    assert payload.get("error") == "业务校验失败"
+    assert "ignored_fields" not in payload
