@@ -39,13 +39,29 @@ def _workspace_directory_root(user_id, directory_name: str) -> Path:
     return (Path(settings.storage.local_path).expanduser().resolve() / str(user_id) / directory_name).resolve()
 
 
+def _prepare_workspace_root(root: Path) -> None:
+    """创建工作区目录并保证沙盒容器进程可写。
+
+    rootless docker 下沙盒进程映射 uid 与宿主机部署用户不同，默认 755 会让
+    沙盒内在 /workspace 写文件直接 PermissionError；与 ensure_sandbox_root
+    保持同一套全员可写的兼容性取舍（见其注释），目录内条目仍受容器权限约束。
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    root.chmod(0o777)
+
+
 async def list_workspace_directories(db: AsyncSession, user_id) -> list[WorkspaceDirectory]:
     await ensure_default_workspace_directory(db, user_id)
     result = await db.execute(select(WorkspaceDirectory).where(
         WorkspaceDirectory.user_id == user_id,
         WorkspaceDirectory.deleted_at.is_(None),
     ).order_by(WorkspaceDirectory.is_default.desc(), WorkspaceDirectory.name))
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+    # 顺带自愈历史目录的沙盒可写权限（幂等，代价一次 chmod）。
+    if get_settings().storage.backend == "local":
+        for row in rows:
+            _prepare_workspace_root(_workspace_directory_root(user_id, row.directory_name))
+    return rows
 
 
 async def _ensure_directory_binding(db: AsyncSession, user_id, directory: WorkspaceDirectory) -> Workspace | None:
@@ -85,7 +101,7 @@ async def ensure_default_workspace_directory(db: AsyncSession, user_id) -> Works
         db.add(row)
         await db.flush()
     if get_settings().storage.backend == "local":
-        _workspace_directory_root(user_id, row.directory_name).mkdir(parents=True, exist_ok=True)
+        _prepare_workspace_root(_workspace_directory_root(user_id, row.directory_name))
     await _ensure_directory_binding(db, user_id, row)
     return row
 
@@ -132,7 +148,7 @@ async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) ->
     db.add(row)
     await db.flush()
     root = _workspace_directory_root(user_id, directory_name)
-    root.mkdir(parents=True, exist_ok=True)
+    _prepare_workspace_root(root)
     await _ensure_directory_binding(db, user_id, row)
     return row
 
@@ -161,6 +177,8 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
             raise ValueError("目标 Workspace 目录已存在")
         if old_root.exists():
             old_root.rename(new_root)
+        # 兼容旧目录：重命名后按当前约定补齐沙盒可写权限。
+        _prepare_workspace_root(new_root)
         row.directory_name = new_name
         row.name = normalized
         bindings = (await db.execute(select(Workspace).where(
