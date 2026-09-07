@@ -328,7 +328,7 @@ async def test_verify_capped_at_max_verify(monkeypatch, dispatched):
         msg([TU("create_project", "0", {})]),   # R1 建（tool）→ did_mutate
     ]
     for i in range(MAX_VERIFY):   # 每轮核实都"又补一刀"，应被封顶在 MAX_VERIFY
-        script.append(msg([TU("update_todo", f"u{i}", {})]))
+        script.append(msg([TU("update_todo", f"u{i}", {"todo_id": i + 1})]))
     script.append(msg([TX("已完成")]))
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "建项目并补全"}]
@@ -368,7 +368,7 @@ async def test_verify_round_cap_after_tool_round_has_safe_finalization(monkeypat
     """最后一轮仍在执行工具时撞到核实上限，也要正常收尾而不是误报续轮失败。"""
     patch_anthropic(monkeypatch, [
         msg([TU("create_project", "create", {})]),
-        *[msg([TU("update_todo", f"update-{i}", {})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
+        *[msg([TU("update_todo", f"update-{i}", {"todo_id": i + 1})]) for i in range(MAX_VERIFY_LLM_ROUNDS)],
     ])
     messages = [{"role": "user", "content": "连续调整并核实"}]
 
@@ -523,7 +523,7 @@ async def test_max_rounds_exhausted_reports_friendly_error(monkeypatch, dispatch
     # 本用例只验证轮次上限；把独立的工具总量上限临时抬高，避免两个保护条件互相抢先触发。
     monkeypatch.setattr(core, "MAX_TOOL_CALLS", MAX_ROUNDS + 1)
     total_rounds = MAX_ROUNDS + 1
-    script = [msg([TU("get_project", str(i), {})]) for i in range(total_rounds)]
+    script = [msg([TU("get_project", str(i), {"project_id": i + 1})]) for i in range(total_rounds)]
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "反复查一下"}]
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
@@ -606,7 +606,7 @@ async def test_max_rounds_choice_resumes_same_run_after_unlimited_selected(monke
     monkeypatch.setattr("app.services.interactions.create_goal_mode_prompt", fake_create_prompt)
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
     # 先消耗完整的第一段轮次，解除后下一轮返回正常正文。
-    script = [msg([TU("get_project", str(i), {})]) for i in range(MAX_ROUNDS)]
+    script = [msg([TU("get_project", str(i), {"project_id": i + 1})]) for i in range(MAX_ROUNDS)]
     script.append(msg([TX("解除限制后继续完成")]))
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "执行长任务"}]
@@ -676,7 +676,7 @@ async def test_eight_round_limit_emits_continue_prompt(monkeypatch, dispatched):
 
     monkeypatch.setattr("app.services.interactions.create_goal_mode_prompt", fake_create_prompt)
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
-    patch_anthropic(monkeypatch, [msg([TU("get_project", str(i), {})]) for i in range(8)])
+    patch_anthropic(monkeypatch, [msg([TU("get_project", str(i), {"project_id": i + 1})]) for i in range(8)])
     ev, _text, errors = await drain(
         make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "查一下"}], AI, session_id=1)
     )
@@ -687,7 +687,7 @@ async def test_eight_round_limit_emits_continue_prompt(monkeypatch, dispatched):
 
 async def test_tool_calls_exhausted_before_next_real_dispatch(monkeypatch, dispatched):
     """实际工具调用达到 run 上限后，剩余 tool call 只补结果，不再执行真实工具。"""
-    calls = [TU("get_project", str(i), {}) for i in range(MAX_TOOL_CALLS + 1)]
+    calls = [TU("get_project", str(i), {"project_id": i + 1}) for i in range(MAX_TOOL_CALLS + 1)]
     script = [msg(calls[index:index + 2]) for index in range(0, len(calls), 2)]
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "查很多次"}]
@@ -721,7 +721,7 @@ async def test_tool_budget_prompt_resumes_same_run_after_continue(monkeypatch, d
 
     monkeypatch.setattr("app.services.interactions.create_tool_budget_prompt", fake_create_prompt)
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
-    script = [msg([TU("get_project", str(i), {}) for i in range(MAX_TOOL_CALLS + 1)])]
+    script = [msg([TU("get_project", str(i), {"project_id": i + 1}) for i in range(MAX_TOOL_CALLS + 1)])]
     script.append(msg([TX("继续完成")]))
     patch_anthropic(monkeypatch, script)
     ev, text, errors = await drain(
@@ -757,7 +757,7 @@ async def test_tool_budget_prompt_blocks_pending_batch_after_cancel(monkeypatch,
     monkeypatch.setattr("app.services.interactions.create_tool_budget_prompt", fake_create_prompt)
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
     patch_anthropic(monkeypatch, [
-        msg([TU("get_project", str(i), {}) for i in range(MAX_TOOL_CALLS + 1)]),
+        msg([TU("get_project", str(i), {"project_id": i + 1}) for i in range(MAX_TOOL_CALLS + 1)]),
         msg([TX("已根据现有结果整理，剩余请求未执行")]),
     ])
     ev, text, errors = await drain(
@@ -772,7 +772,7 @@ async def test_tool_budget_prompt_blocks_pending_batch_after_cancel(monkeypatch,
 
 async def test_goal_mode_allows_more_than_normal_tool_limit(monkeypatch, dispatched):
     """长任务模式解除工具次数上限，但仍沿用同一条 Runner 控制流。"""
-    script = [msg([TU("get_project", str(i), {})]) for i in range(MAX_TOOL_CALLS + 1)]
+    script = [msg([TU("get_project", str(i), {"project_id": i + 1})]) for i in range(MAX_TOOL_CALLS + 1)]
     from agent.core import _GOAL_DONE_MARKER
     script.append(msg([TX(f"任务完成 { _GOAL_DONE_MARKER }")]))
     patch_anthropic(monkeypatch, script)
@@ -794,3 +794,67 @@ def test_goal_completion_requires_explicit_marker():
     assert not _goal_completed("任务一完成")
     assert _goal_completed(f"全部完成 {_GOAL_DONE_MARKER}")
     assert _strip_goal_marker(f"完成了 {_GOAL_DONE_MARKER}") == "完成了"
+
+
+async def test_identical_consecutive_tool_calls_are_breakered(monkeypatch, dispatched):
+    """同名工具 + 完全相同参数连续调用：前 3 次真实执行，第 4 次起熔断不 dispatch，
+    直接回引导收束的结果（治核实阶段反复重读同一资源的行为死循环）。"""
+    identical = {"canvas_id": 589, "include_nodes": True, "include_relations": True}
+    script = [
+        msg([TX("调整画布节点"), TU("canvas_update_node", "t1", {"canvas_id": 589, "item_id": 3, "x": 1, "y": 2})]),
+        *[msg([TU("canvas_get", f"t{i}", identical)]) for i in range(2, 8)],  # 6 次相同查询
+        msg([TX("画布调整完成")]),
+    ]
+    patch_anthropic(monkeypatch, script)
+    messages = [{"role": "user", "content": "把节点挪到右下角"}]
+
+    skipped_results = []
+    async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI):
+        try:
+            d = json.loads(chunk[len("data: "):])
+        except Exception:
+            continue
+        if d.get("type") == "tool_done" and d.get("status") == "skipped":
+            skipped_results.append(d.get("result", ""))
+
+    assert dispatched == ["canvas_update_node"] + ["canvas_get"] * 3, "只应真实执行 3 次相同查询"
+    assert len(skipped_results) == 3, "第 4 次起应熔断"
+    assert all("完全相同的参数" in r for r in skipped_results)
+    # 熔断结果要写回 provider history，模型才能看到引导
+    assert "完全相同的参数" in json.dumps(messages[-8:], ensure_ascii=False)
+
+
+async def test_identical_breaker_resets_on_different_call(monkeypatch, dispatched):
+    """交替查询不同资源不误伤：相同调用被打断后重新计数。"""
+    a = {"canvas_id": 1}
+    b = {"canvas_id": 2}
+    script = [
+        msg([TU("canvas_get", "1", a)]),
+        msg([TU("canvas_get", "2", a)]),
+        msg([TU("canvas_get", "3", b)]),      # 换参数 → 计数重置
+        msg([TU("canvas_get", "4", a)]),
+        msg([TU("canvas_get", "5", a)]),
+        msg([TU("canvas_get", "6", a)]),
+        msg([TU("canvas_get", "7", a)]),      # a 的第 4 次 → 熔断
+        msg([TX("查询完成")]),
+    ]
+    patch_anthropic(monkeypatch, script)
+    messages = [{"role": "user", "content": "查两个画布"}]
+    async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI):
+        pass
+
+    assert dispatched == ["canvas_get"] * 6, "换参数重置计数，只有 a 的第 4 次被熔断"
+
+
+async def test_ask_user_is_excluded_from_breaker(monkeypatch, dispatched):
+    """用户交互类工具不参与熔断（由用户节奏驱动）。"""
+    script = [
+        *[msg([TU("ask_user", str(i), {"prompt": "选哪个？"})]) for i in range(4)],
+        msg([TX("好的")]),
+    ]
+    patch_anthropic(monkeypatch, script)
+    messages = [{"role": "user", "content": "问我吧"}]
+    async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI):
+        pass
+
+    assert dispatched.count("ask_user") == 4

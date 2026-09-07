@@ -149,6 +149,15 @@ _GOAL_POLICY = (
 )
 # 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
 MAX_TOOL_CALLS = 10
+# 同名工具 + 完全相同参数的连续调用熔断阈值：允许前 3 次真实执行，第 4 次起不再
+# dispatch，直接回一条引导收束的结果。治「核实阶段反复重读同一资源找确认」的行为
+# 死循环（unlimited 模式下轮次上限不生效，这层是唯一的形态级护栏）。
+MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS = 3
+_REPEAT_CALL_STOP_RESULT = (
+    "检测到你已连续多次以完全相同的参数调用同一工具，结果不会再发生变化。"
+    "请不要重复这一调用：基于已经获得的信息执行下一步操作，或直接总结回复用户。"
+)
+_REPEAT_BREAKER_EXCLUDED_TOOLS = frozenset({"ask_user"})  # 用户交互类工具由用户节奏驱动，不参与熔断
 _DEFAULT_BUDGET = object()
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
@@ -693,6 +702,9 @@ class LLMRunner:
         guard_retry_pending = False
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
+        # 连续相同调用熔断状态：signature = (工具名, 归一化参数 JSON)，跨任务轮与核实轮计数
+        repeat_sig: tuple[str, str] | None = None
+        repeat_count = 0
         _request_conversation = getattr(messages, "conversation", messages)
         _request_user_index = last_user_index(_request_conversation)
         _user_req = (
@@ -1299,6 +1311,35 @@ class LLMRunner:
                                            status="skipped", result=_TOOL_BUDGET_EXHAUSTED)
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
+                    # 连续相同调用熔断：同名工具 + 完全相同参数已真实执行满阈值后，
+                    # 不再 dispatch，回一条引导收束的结果（不占工具预算）。
+                    if effective_tool_name not in _REPEAT_BREAKER_EXCLUDED_TOOLS and protocol_error is None and not tc.parse_error:
+                        try:
+                            call_sig = (
+                                effective_tool_name,
+                                json.dumps(tc.input or {}, sort_keys=True, ensure_ascii=False, default=str),
+                            )
+                        except (TypeError, ValueError):
+                            call_sig = None
+                        if call_sig is not None:
+                            if call_sig == repeat_sig:
+                                repeat_count += 1
+                            else:
+                                repeat_sig, repeat_count = call_sig, 1
+                            if repeat_count > MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS:
+                                tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                                _log.warning(
+                                    "[core] 连续相同工具调用熔断：%s x%d（run=%s）",
+                                    effective_tool_name, repeat_count, run_id,
+                                )
+                                yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                                   name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
+                                                   status="skipped")
+                                yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                                   name=effective_tool_name, label=label, verify=verify_mode,
+                                                   status="skipped", result=_REPEAT_CALL_STOP_RESULT)
+                                dispatched.append((tc, _REPEAT_CALL_STOP_RESULT))
+                                continue
                     tool_calls_used += 1
                     if protocol_error is not None:
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
