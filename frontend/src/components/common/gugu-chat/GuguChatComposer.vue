@@ -69,6 +69,7 @@ import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMe
 import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEditor'
+import { chatTextFromDoc } from './chatDocText'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -133,14 +134,6 @@ function chatInlineNodes(text: string, references: ChatReference[]): MindDocNode
     cursor = next + nextRef.token.length
   }
   return nodes
-}
-
-function chatTextFromDoc(doc: MindDocNode | null | undefined): string {
-  return (doc?.content ?? []).map(block => (block.content ?? []).map(node => {
-    if (node.type === 'hardBreak') return '\n'
-    if (node.type === 'mindRef') return `@${node.attrs?.label ?? ''}`
-    return node.text ?? ''
-  }).join('')).join('\n')
 }
 
 function referencesFromDoc(doc: MindDocNode | null | undefined): ChatReference[] {
