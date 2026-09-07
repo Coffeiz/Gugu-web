@@ -1,7 +1,7 @@
 <template>
   <div
     class="fpw-root"
-    :class="{ 'fpw-ready': ready }"
+    :class="{ 'fpw-ready': ready && (!isImg || imageReady || placeholderReady) }"
     :style="maximized
       ? { left: 0, top: 0, width: '100vw', height: '100vh', zIndex: win.zIndex, borderRadius: 0, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }
       : { left: x+'px', top: y+'px', width: w+'px', height: h+'px', zIndex: win.zIndex, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }"
@@ -36,7 +36,7 @@
     <!-- 内容区 -->
     <div class="fpw-body">
       <!-- 真实内容（在下层） -->
-      <ImageViewer v-if="isImg" ref="imageViewerRef" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
+      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
       <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
@@ -57,7 +57,6 @@
           <img
             class="fpw-placeholder-img"
             :src="placeholderSrc ?? undefined"
-            :style="placeholderTransformStyle"
             @load="onPlaceholderLoad"
             alt=""
           />
@@ -221,15 +220,6 @@ const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免�
 const currentCacheKey = ref('')
 let loadSequence = 0
 
-// 占位缩略图套上跟 ImageViewer 当前一致的缩放/平移，切图时才不会先跳回居中/100%
-// 再跳回真图当前的视图——两次跳变叠在一起就是用户看到的"闪一下"。
-const imageViewerRef = ref<InstanceType<typeof ImageViewer> | null>(null)
-const placeholderTransformStyle = computed(() => {
-  const iv = imageViewerRef.value
-  if (!iv) return {}
-  return { transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale})` }
-})
-
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TITLE_H  = 40
 const PAD      = 48
@@ -357,27 +347,6 @@ async function load(f: Partial<FileMeta>, refresh = false) {
     return
   }
 
-  // 占位图：优先从 blob Map 同步命中，未缓存则后台 fetch（与全图下载并行）
-  if (isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {
-    if (f.attach_id) {
-      // 聊天附件：占位图走附件缩略图端点
-      const token = localStorage.getItem('user_token') ?? ''
-      const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-        fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
-        .then(r => r.ok ? r.blob() : null).then(b => {
-          if (sequence === loadSequence && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
-        }).catch(() => {})
-    } else {
-      const cached = refresh ? null : getCachedThumb(f.id!, 'card', f.version)
-      if (cached) {
-        placeholderSrc.value = cached
-      } else {
-        getThumb(f.id!, 'card', f.version).then((url: string | null | undefined) => {
-          if (sequence === loadSequence && url && !imageReady.value) placeholderSrc.value = url
-        })
-      }
-    }
-  }
   // 已知真实尺寸：直接定好窗口，无需等缩略图或下载完成。窗口尺寸只由打开时的第一张图
   // 决定，跟内容解耦——切换到其它图片不再重新定窗口尺寸，图片靠 object-fit:contain
   // 在固定窗口里自适应显示，不然窗口宽高跟着每张图变化，观感很跳。
@@ -459,6 +428,28 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         }
         img.src = cached
         return
+      }
+
+      // 原图已在会话缓存中时直接复用，不能再发起缩略图请求；缩略图只服务于原图首次加载期间的占位。
+      if (isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {
+        if (f.attach_id) {
+          // 聊天附件：占位图走附件缩略图端点
+          const token = localStorage.getItem('user_token') ?? ''
+          const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+          fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
+            .then(r => r.ok ? r.blob() : null).then(b => {
+              if (sequence === loadSequence && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
+            }).catch(() => {})
+        } else {
+          const cachedThumb = refresh ? null : getCachedThumb(f.id!, 'card', f.version)
+          if (cachedThumb) {
+            placeholderSrc.value = cachedThumb
+          } else {
+            getThumb(f.id!, 'card', f.version).then((url: string | null | undefined) => {
+              if (sequence === loadSequence && url && !imageReady.value) placeholderSrc.value = url
+            })
+          }
+        }
       }
       const dlUrl = f.attach_id
         ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
@@ -649,12 +640,13 @@ onUnmounted(() => {
   min-height: 240px;
   user-select: none;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.1s ease;
   will-change: transform;
 }
 .fpw-root.fpw-ready {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 

@@ -11,7 +11,7 @@
       ref="imgRef"
       :src="blobUrl"
       class="iv-img"
-      :class="{ 'iv-grabbing': dragging }"
+      :class="{ 'iv-grabbing': dragging, 'iv-ready': imageReady, 'iv-no-transition': disableTransition }"
       :style="imgStyle"
       draggable="false"
       @load="onLoad"
@@ -54,11 +54,14 @@ const ty      = ref(0)
 const naturalWidth = ref(0)
 const naturalHeight = ref(0)
 const hasUserZoom = ref(false)
+const imageReady = ref(false)
+const disableTransition = ref(false)
 const dragging = ref(false)
 const error    = ref(false)
 
 let dragStart: { x: number; y: number } | null = null
 let resizeObserver: ResizeObserver | null = null
+let transitionRaf: number | null = null
 
 const imgStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
@@ -128,6 +131,13 @@ function reset() {
 
 function fitToView() {
   if (hasUserZoom.value || !wrapRef.value || !naturalWidth.value || !naturalHeight.value) return
+  // 原图加载和浮动窗口尺寸调整不是同一帧完成的：首轮可能先按默认窗口计算，
+  // 随后 ResizeObserver 再按最终窗口重算。所有自动适配都必须瞬时切换，不能
+  // 把这次内部重算表现成“原图从缩略图大小放大到最终大小”的动画。
+  const isAutomaticFit = !hasUserZoom.value
+  if (isAutomaticFit) {
+    disableTransition.value = true
+  }
   const availableWidth = Math.max(1, wrapRef.value.clientWidth - PADDING * 2)
   const availableHeight = Math.max(1, wrapRef.value.clientHeight - PADDING * 2)
   scale.value = Math.min(
@@ -137,6 +147,14 @@ function fitToView() {
   )
   tx.value = 0
   ty.value = 0
+  imageReady.value = true
+  if (isAutomaticFit) {
+    if (transitionRaf !== null) cancelAnimationFrame(transitionRaf)
+    transitionRaf = requestAnimationFrame(() => {
+      transitionRaf = null
+      disableTransition.value = false
+    })
+  }
 }
 
 const emit = defineEmits(['loaded'])
@@ -155,6 +173,8 @@ function onError() { error.value = true }
 watch(() => props.blobUrl, () => {
   // 切换文件时重新执行“打开即适配”；只有用户主动缩放/重置后才保留当前视图。
   hasUserZoom.value = false
+  imageReady.value = false
+  disableTransition.value = false
   naturalWidth.value = 0
   naturalHeight.value = 0
 })
@@ -170,13 +190,10 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', onMouseUp)
+  if (transitionRaf !== null) cancelAnimationFrame(transitionRaf)
   resizeObserver?.disconnect()
   resizeObserver = null
 })
-
-// 供外层占位缩略图（切换图片时短暂覆盖在真图上方）复用同一份缩放/平移状态，
-// 避免占位图停在默认的居中/100%，真图加载完再"跳"回当前视图。
-defineExpose({ scale, tx, ty })
 </script>
 
 <style scoped>
@@ -210,10 +227,14 @@ defineExpose({ scale, tx, ty })
   display: block;
   flex: none;
   transform-origin: center;
-  transition: transform 0.08s ease-out;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.08s ease-out;
   border-radius: 6px;
   box-shadow: 0 4px 24px rgba(20,25,60,0.12);
 }
+
+.iv-img.iv-ready { opacity: 1; }
+.iv-img.iv-no-transition { transition: none; }
 
 .iv-img.iv-grabbing {
   transition: none;
