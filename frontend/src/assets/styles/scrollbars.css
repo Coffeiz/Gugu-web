@@ -99,6 +99,12 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--
   position: absolute;
 }
 
+/* 通知中心的滑块挂在弹窗根节点内，跟随弹窗的进入/退出 transform，且位于内容表面之上。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--notif {
+  position: absolute;
+  z-index: 1;
+}
+
 /* 画布抽屉是独立浮动面板，滑块必须在 shell 内定位，跟随抽屉的宽度/位移动画。 */
 html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--drawer {
   position: absolute;

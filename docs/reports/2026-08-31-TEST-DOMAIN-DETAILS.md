@@ -4,8 +4,8 @@
 
 ## context
 
-- 文件数：43
-- 源码声明数：228
+- 文件数：45
+- 源码声明数：235
 
 ### backend/scripts/diagnostics/test_cache_mode_compare.py
 
@@ -144,27 +144,22 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/context
-- 源码声明数：39；外部依赖；无 skip
+- 源码声明数：33；外部依赖；无 skip
 - 测试内容：
   - test_compaction_prompt_path_dependency_is_available
-  - test_compaction_summary_loads_prompt_before_calling_llm
-  - test_empty
-  - test_system_only
-  - test_messages_only
-  - test_system_plus_messages
-  - test_counts_tool_use_and_result_blocks
-  - test_counts_openai_tool_calls_field
+  - test_compaction_summary_uses_model_output_budget
+  - test_compaction_limits_follow_model_config
+  - test_summary_output_limit_follows_model_config
+  - test_summary_input_limit_follows_model_config
   - test_project
   - test_calendar
   - test_files
   - test_normal
-  - test_summary_candidate_has_explicit_length_and_shape_contract
+  - test_empty
+  - test_summary_candidate_respects_model_budget_and_shape_contract
   - test_invalid_summary_candidate_does_not_change_messages
   - test_small_history_uses_single_branch_summary_request
   - test_oversized_history_uses_rolling_fallback
-  - test_force_compaction_does_not_use_local_token_estimate
-  - test_below_threshold_no_compact
-  - test_compaction_result_exposes_return_reason
   - test_above_threshold_triggers_compact
   - test_preserves_system_injection
   - test_preserves_compact_summary
@@ -206,7 +201,7 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/context
-- 源码声明数：9；外部依赖；无 skip
+- 源码声明数：10；外部依赖；无 skip
 - 测试内容：
   - test_context_branch_assembles_stable_order_and_json
   - test_context_branch_retries_empty_output
@@ -216,6 +211,7 @@
   - test_provider_runner_text_errors_reach_context_branch
   - test_json_branch_inherits_configured_thinking
   - test_text_branch_inherits_configured_thinking
+  - test_max_tokens_none_omits_budget_on_openai_path
   - test_scope_revision_is_audit_only_and_preserves_prefix
 
 ### backend/tests/test_context_budget.py
@@ -290,13 +286,14 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/context
-- 源码声明数：5；外部依赖；无 skip
+- 源码声明数：6；外部依赖；无 skip
 - 测试内容：
   - test_provider_render_keeps_canonical_blocks_in_original_position
   - test_dynamic_tail_is_provider_only_and_always_stays_last
   - test_message_time_with_empty_canonical_projection_stays_provider_only_after_seal
   - test_legacy_persisted_time_context_rows_are_filtered
   - test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
+  - test_replayed_knowledge_context_keeps_standalone_boundary_across_runs
 
 ### backend/tests/test_daily_compaction.py
 
@@ -319,7 +316,7 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/context
-- 源码声明数：10；外部依赖；无 skip
+- 源码声明数：9；外部依赖；无 skip
 - 测试内容：
   - test_keeps_real_tool_rounds
   - test_drops_synthetic_control_user_prompts
@@ -330,7 +327,6 @@
   - test_sanitize_drops_tool_result_without_id_without_raising
   - test_sanitize_preserves_leading_system_snapshot
   - test_sanitize_keeps_user_reminder_boundary
-  - test_sanitize_merges_current_time_with_same_user_message
 
 ### backend/tests/test_im_context_loader.py
 
@@ -386,14 +382,29 @@
   - test_openai_compatible_qwen_uses_active_cache
   - test_openai_mimo_skips_active_cache
 
+### backend/tests/test_longterm_compaction.py
+
+- 类型/层级：pytest / L1
+- owner：backend/context
+- 源码声明数：5；外部依赖；无 skip
+- 测试内容：
+  - test_profile_compaction_accepts_storage_shape_without_ids
+  - test_pattern_compaction_rejects_unknown_or_duplicate_ids
+  - test_compaction_rejects_an_empty_result_for_a_large_snapshot
+  - test_profile_cas_does_not_overwrite_a_newer_snapshot
+  - test_compaction_aborts_when_snapshot_changes_during_llm
+
 ### backend/tests/test_memory_compaction_retrieval.py
 
 - 类型/层级：pytest / L1
 - owner：backend/context
-- 源码声明数：2；无外部依赖；无 skip
+- 源码声明数：5；外部依赖；无 skip
 - 测试内容：
   - test_retrieve_event_references_caps_results_and_uses_owner_memory
   - test_compaction_keeps_working_when_event_recall_fails
+  - test_memory_compaction_retries_provider_without_context_branch
+  - test_memory_compaction_does_not_consume_daily_when_model_has_no_new_entry
+  - test_memory_compaction_appends_multiple_event_entries
 
 ### backend/tests/test_message_compaction_boundary.py
 
@@ -426,10 +437,11 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/context
-- 源码声明数：3；无外部依赖；无 skip
+- 源码声明数：4；无外部依赖；无 skip
 - 测试内容：
   - test_personality_static_prefix_is_identical_across_all_channels
   - test_personality_stays_out_of_dynamic_tail_and_history_wrapping
+  - test_static_prompt_contains_no_runtime_context_sections
   - test_disabled_personality_keeps_default_persona_and_does_not_change_security_prompt
 
 ### backend/tests/test_preferences_context_contract.py
@@ -467,7 +479,7 @@
 - owner：backend/context
 - 源码声明数：1；无外部依赖；无 skip
 - 测试内容：
-  - test_prepare_run_binds_rag_watermark_and_keeps_current_time_provider_only
+  - test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch
 
 ### backend/tests/test_session_execution_gate.py
 
@@ -534,6 +546,16 @@
   - test_session_title_prompt_follows_english_conversation_language
   - test_session_title_prompt_keeps_input_limits
 
+### backend/tests/test_tool_history_request_boundary.py
+
+- 类型/层级：pytest / L1
+- owner：backend/context
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_qq_interaction_ack_does_not_reuse_event_id
+  - test_interaction_resume_tool_result_keeps_anthropic_pair
+  - test_orphan_tool_result_is_removed_before_anthropic_request
+
 ### backend/tests/test_video_cache_snapshots_api.py
 
 - 类型/层级：pytest / L1
@@ -548,8 +570,8 @@
 
 ## agent-provider
 
-- 文件数：34
-- 源码声明数：259
+- 文件数：38
+- 源码声明数：324
 
 ### backend/scripts/diagnostics/test_full_agent_flow.py
 
@@ -602,37 +624,63 @@
   - test_valid_stance_replaces_baseline
   - test_expired_stance_falls_back_to_baseline
 
+### backend/tests/test_byok_user_scope_guard.py
+
+- 类型/层级：pytest / L1
+- owner：backend/agent-provider
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_user_scoped_modules_do_not_read_settings_ai_directly
+  - test_effective_ai_prefers_bound_model_and_warns_on_user_scope_fallback
+  - test_user_scope_and_binding_inherit_into_created_tasks
+
 ### backend/tests/test_capability_injection.py
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：16；无外部依赖；无 skip
+- 源码声明数：29；无外部依赖；无 skip
 - 测试内容：
   - test_catalog_contains_short_descriptions_only
+  - test_catalog_omits_builtin_skill_already_present_in_static_prompt
+  - test_catalog_keeps_user_skill_in_separate_skill_section
+  - test_skill_metadata_context_does_not_take_over_provider_tools
   - test_catalog_derives_compact_field_signature_from_tool_registry
+  - test_catalog_exposes_nested_note_content_shape_without_full_schema
   - test_catalog_routes_user_skill_creation_to_create_skill
+  - test_meta_skill_exposes_user_skill_update_and_delete_tools
   - test_catalog_rejects_long_description_instead_of_truncating
   - test_fixed_adapter_preserves_nested_and_flattened_business_arguments
+  - test_invalid_tool_call_payload_supports_required_arguments
   - test_tool_name_protocol_does_not_stringify_business_objects
   - test_capability_diagnostics_are_redacted_to_metrics
   - test_capability_diagnostics_expose_tool_and_skill_injection_without_schema
+  - test_capability_diagnostics_marks_metadata_only_skill_catalog
+  - test_full_schema_preference_keeps_skill_metadata_context
   - test_llm_runner_accepts_dynamic_capability_context_without_changing_default_api
   - test_loaded_skill_is_detected_from_history_and_can_be_reloaded_after_compaction
   - test_use_skill_result_contains_structured_usage_marker
   - test_skill_trace_metadata_does_not_copy_skill_body
   - test_loopscope_tool_schema_names_fall_back_to_provider_payload
   - test_fixed_adapter_context_only_exposes_stable_provider_tools
+  - test_fixed_adapter_snapshot_can_persist_all_authorized_tool_signatures
   - test_invalid_tool_input_requests_schema_recovery
   - test_scheduled_tasks_skill_documents_channel_array_shape
+  - test_scheduled_tasks_skill_routes_calendar_reminders_to_event
+  - test_scheduled_tasks_skill_marks_removed_context_selection_as_unsupported
+  - test_scheduled_tasks_skill_documents_interval_window_semantics
+  - test_web_search_skill_contains_freshness_verification_protocol
 
 ### backend/tests/test_capability_registry.py
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：5；无外部依赖；无 skip
+- 源码声明数：8；无外部依赖；无 skip
 - 测试内容：
   - test_tool_adapter_preserves_metadata_without_copying_schema
   - test_tool_short_description_is_validated
+  - test_tool_registry_snapshot_does_not_change_until_process_restart
+  - test_user_skill_metadata_snapshot_round_trips_without_skill_body
+  - test_user_skill_metadata_snapshot_skips_live_database_read
   - test_builtin_capability_snapshot_has_separate_tool_and_skill_maps
   - test_builtin_phase1_metadata_is_complete_and_relations_are_registered
   - test_admin_capability_catalog_exposes_metadata_without_schema_or_body
@@ -653,7 +701,7 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：19；无外部依赖；无 skip
+- 源码声明数：23；无外部依赖；无 skip
 - 测试内容：
   - test_router_recognizes_compact_without_starting_agent
   - test_immediate_stream_emits_one_complete_token
@@ -671,6 +719,10 @@
   - test_new_is_parsed_as_a_control_command
   - test_new_without_session_is_deterministic
   - test_workspace_delete_requires_explicit_confirmation
+  - test_workspace_god_requires_confirmation_and_grants_current_session
+  - test_workspace_revoke_restores_read_only_library_policy
+  - test_ask_user_can_request_fixed_filesystem_authorization
+  - test_filesystem_grant_is_isolated_by_user_and_expires
   - test_goal_is_parsed_as_a_control_command
   - test_goal_mode_is_persisted_and_can_be_disabled
   - test_unlimited_mode_does_not_enable_goal_loop
@@ -688,17 +740,19 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：24；外部依赖；无 skip
+- 源码声明数：30；外部依赖；无 skip
 - 测试内容：
   - test_progress_only_round_is_retried_without_leaking_placeholder
   - test_final_reply_runs_provider_usage_compaction_check
   - test_verify_clean_pass
   - test_verify_summary_does_not_add_redundant_finalize_round
   - test_verify_fix_then_reverify
+  - test_tool_round_text_is_buffered_until_final_round
   - test_readonly_no_verify_triggered
   - test_note_get_counts_as_verify_observation
   - test_failed_write_does_not_trigger_verify
   - test_verify_capped_at_max_verify
+  - test_verify_round_cap_after_tool_round_has_safe_finalization
   - test_openai_clean_pass_matches_anthropic
   - test_narration_guard_nudges_once_then_gives_up
   - test_narration_guard_does_not_treat_reported_fact_as_local_mutation
@@ -707,7 +761,11 @@
   - test_decision_dodge_guard_nudges_once
   - test_empty_reply_falls_back_after_one_retry
   - test_max_rounds_exhausted_reports_friendly_error
+  - test_automatic_budget_stops_without_user_interaction
+  - test_automatic_tool_budget_stops_before_dispatch
+  - test_scheduled_runner_policy_does_not_change_default_runner_budget
   - test_max_rounds_choice_resumes_same_run_after_unlimited_selected
+  - test_max_rounds_pauses_tool_batch_before_dispatch
   - test_eight_round_limit_emits_continue_prompt
   - test_tool_calls_exhausted_before_next_real_dispatch
   - test_tool_budget_prompt_resumes_same_run_after_continue
@@ -737,21 +795,25 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：5；外部依赖；无 skip
+- 源码声明数：8；外部依赖；无 skip
 - 测试内容：
   - test_serialize_live_message_accepts_canonical_event_and_notification
   - test_serialize_live_message_rejects_non_business_payloads
+  - test_serialize_live_message_present_payload_allowlist
   - test_event_stream_uses_user_and_broadcast_channels_and_closes_pubsub
   - test_event_stream_stops_after_account_is_suspended
+  - test_event_stream_ends_cleanly_when_redis_disconnects
   - test_publish_uses_resource_revision_not_global_revision
+  - test_publish_notification_without_resource_is_not_dropped
 
 ### backend/tests/test_llm15_preferences_api.py
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：6；无外部依赖；无 skip
+- 源码声明数：7；无外部依赖；无 skip
 - 测试内容：
   - test_tool_injection_mode_response_uses_only_canonical_values
+  - test_tool_injection_mode_defaults_to_full
   - test_update_preferences_persists_personality_and_invalidates_snapshot
   - test_update_preferences_can_disable_personality_and_expire_snapshots
   - test_update_preferences_rejects_personality_when_global_switch_is_off
@@ -783,14 +845,28 @@
   - test_local_runtime_model_defaults_and_override_precedence
   - test_local_without_tool_capability_does_not_send_tool_schemas
 
+### backend/tests/test_loop_driver_usage_semantics.py
+
+- 类型/层级：pytest / L1
+- owner：backend/agent-provider
+- 源码声明数：5；无外部依赖；无 skip
+- 测试内容：
+  - test_openai_prompt_tokens_subtracts_deepseek_cache_hit
+  - test_openai_prompt_tokens_subtracts_details_cached_tokens
+  - test_openai_no_cache_keeps_prompt_tokens
+  - test_anthropic_split_usage_passes_through
+  - test_anthropic_history_sanitizes_before_provider_render
+
 ### backend/tests/test_loop_driver_vision.py
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：10；无外部依赖；无 skip
+- 源码声明数：12；无外部依赖；无 skip
 - 测试内容：
   - test_openai_tool_round_converts_anthropic_image_block
   - test_openai_tool_round_keeps_text_result_shape
+  - test_openai_tool_round_drops_unprocessed_parallel_tool_calls
+  - test_ollama_tool_round_drops_unprocessed_parallel_tool_calls
   - test_openai_tool_round_drops_images_for_text_only_model
   - test_inline_image_stops_cache_checkpoint_before_image
   - test_anthropic_base64_image_is_volatile
@@ -814,8 +890,8 @@
   - test_note_get_hides_other_users_node
   - test_create_note_serializes_supported_blocks_and_references
   - test_create_note_rejects_invalid_color_and_other_users_reference
-  - test_update_note_appends_and_uses_version
-  - test_delete_requires_exact_version_and_restore_returns_note
+  - test_update_note_appends_without_exposing_version
+  - test_delete_reads_current_version_and_restore_returns_note
   - test_undo_last_gugu_note_never_deletes_user_note
 
 ### backend/tests/test_preferences_api_contract.py
@@ -845,7 +921,7 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：37；无外部依赖；无 skip
+- 源码声明数：39；无外部依赖；无 skip
 - 测试内容：
   - test_adapter_for_minimax
   - test_adapter_for_minimax_m2_vs_m3_cache
@@ -865,6 +941,8 @@
   - test_adapter_for_deepseek_by_base_url_fallback
   - test_deepseek_vision_capability_is_limited_to_vision_model
   - test_deepseek_thinking_uses_official_openai_parameter_split
+  - test_minimax_temperature_is_not_sent_at_all
+  - test_anthropic_temperature_is_not_sent_to_sdk_stream
   - test_adapter_for_ollama_local_and_cloud_defaults
   - test_ollama_openai_compatibility_keeps_v1_endpoint
   - test_ollama_native_request_builders
@@ -884,6 +962,14 @@
   - test_diagnostic_request_builder_keeps_protocol_and_auth_provider_local
   - test_diagnostic_request_expands_openai_provider_extra_body
   - test_models_request_builder_uses_provider_protocol_path
+
+### backend/tests/test_reflection_byok.py
+
+- 类型/层级：pytest / L1
+- owner：backend/agent-provider
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - test_independent_reflection_task_binds_user_model
 
 ### backend/tests/test_runner_collect.py
 
@@ -910,9 +996,10 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：3；无外部依赖；无 skip
+- 源码声明数：4；无外部依赖；无 skip
 - 测试内容：
   - test_note_create_validation_ignores_block_field_order
+  - test_note_create_diagnostic_points_to_nested_content_type
   - test_usage_aggregation_records_all_provider_requests_in_a_run
   - test_sequence_metrics_uses_latest_context_and_provider_totals
 
@@ -937,6 +1024,21 @@
   - test_non_minimax_keeps_e_tilde_text_untouched
   - test_normal_reply_start_is_not_delayed_or_changed
 
+### backend/tests/test_streaming_regressions.py
+
+- 类型/层级：pytest / L1
+- owner：backend/agent-provider
+- 源码声明数：8；外部依赖；无 skip
+- 测试内容：
+  - test_qq_stream_sequence_uses_a_cross_process_counter
+  - test_im_preparation_helpers_keep_collect_and_stream_rules_aligned
+  - test_long_lived_stream_routes_do_not_hold_dependency_sessions
+  - test_terminal_websocket_setup_failure_cleans_pty_resources
+  - test_terminal_websocket_cleanup_survives_task_cancellation_and_partial_failure
+  - test_qq_stream_drains_agent_after_transport_failure
+  - test_run_stream_waits_for_baseline_after_final
+  - test_feishu_fallback_drains_agent_after_final
+
 ### backend/tests/test_terminal_streaming.py
 
 - 类型/层级：pytest / L2
@@ -951,7 +1053,7 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：7；无外部依赖；无 skip
+- 源码声明数：9；无外部依赖；无 skip
 - 测试内容：
   - test_tool_progress_placeholder_is_guarded
   - test_normal_sentence_is_not_treated_as_tool_progress
@@ -960,6 +1062,8 @@
   - test_narration_guard_keeps_object_context_for_read_claims
   - test_colon_ended_file_action_is_guarded_in_chinese_and_english
   - test_colon_ended_explanation_is_not_treated_as_action_intent
+  - test_guard_locale_selects_japanese_and_english_rules
+  - test_unknown_guard_locale_falls_back_to_chinese
 
 ### backend/tests/test_tool_isolation.py
 
@@ -1004,15 +1108,24 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/agent-provider
-- 源码声明数：21；外部依赖；无 skip
+- 源码声明数：32；外部依赖；无 skip
 - 测试内容：
+  - test_send_email_normalizes_json_string_arrays_without_widening_schema
   - test_dispatch_rejects_non_object_before_handler
   - test_dispatch_rejects_missing_required_before_handler
+  - test_note_tools_accept_legacy_text_inline_nodes_and_keep_strict_schema
+  - test_note_tools_do_not_guess_missing_reference_type
+  - test_note_date_parser_accepts_common_model_date_formats
+  - test_note_date_parser_uses_noon_anchor_without_model_sort_time
+  - test_all_date_fields_share_canonical_normalization_before_schema_validation
   - test_dispatch_rejects_type_enum_and_numeric_boundaries
   - test_type_error_includes_schema_shape_hint_without_echoing_input
   - test_boolean_type_error_explains_native_json_value
+  - test_note_schema_recovery_explains_flat_block_shape
+  - test_note_block_schema_rejects_unknown_wrapper_fields
+  - test_project_colors_use_semantic_tokens_at_agent_boundary
   - test_schema_normalization_converts_numeric_text_and_omits_optional_empty_values
-  - test_schema_normalization_does_not_guess_required_empty_numbers_or_array_shapes
+  - test_schema_normalization_does_not_guess_required_empty_numbers
   - test_dispatch_applies_schema_normalization_before_handler
   - test_dispatch_keeps_required_empty_number_invalid
   - test_additional_properties_default_allowed
@@ -1027,6 +1140,8 @@
   - test_provider_schema_parity_uses_one_tool_contract
   - test_provider_schema_serialization_does_not_run_compactor
   - test_all_registered_tools_have_cached_validators
+  - test_item_wrapper_arrays_are_unwrapped_before_validation
+  - test_item_wrapper_unwrap_does_not_touch_plain_objects
 
 ### backend/tests/test_user_skills.py
 
@@ -1054,8 +1169,8 @@
 
 ## mind-project
 
-- 文件数：23
-- 源码声明数：201
+- 文件数：27
+- 源码声明数：217
 
 ### backend/scripts/diagnostics/test_reminder_role_cache.py
 
@@ -1065,22 +1180,43 @@
 - 测试内容：
   - 脚本入口或静态检查，无标准测试函数
 
+### backend/tests/test_calendar_reminders.py
+
+- 类型/层级：pytest / L1
+- owner：backend/mind-project
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_duplicate_leads_are_created_once
+  - test_repeated_add_for_same_fire_time_is_idempotent
+  - test_scheduled_task_api_returns_existing_event_reminder
+
 ### backend/tests/test_canvas_layout.py
 
 - 类型/层级：pytest / L1
 - owner：backend/mind-project
-- 源码声明数：4；无外部依赖；无 skip
+- 源码声明数：7；无外部依赖；无 skip
 - 测试内容：
   - test_effective_size_uses_explicit_dimensions_and_type_defaults
+  - test_canvas_note_size_is_clamped_to_safe_bounds
   - test_relation_sides_use_card_centers_not_node_ids
+  - test_relation_sides_use_same_outer_side_for_vertically_stacked_cards
+  - test_relation_sides_keep_opposite_edges_for_non_overlapping_horizontal_cards
   - test_resolve_position_supports_viewport_and_auto_without_database_access
   - test_resolve_position_rejects_unknown_anchor
+
+### backend/tests/test_event_reminder_migration.py
+
+- 类型/层级：pytest / L1
+- owner：backend/mind-project
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - test_event_reminder_migration_merges_duplicates_before_unique_index
 
 ### backend/tests/test_mind_api.py
 
 - 类型/层级：pytest / L1
 - owner：backend/mind-project
-- 源码声明数：32；外部依赖；无 skip
+- 源码声明数：33；外部依赖；无 skip
 - 测试内容：
   - test_plain_text_strips_markdown_syntax
   - test_plain_text_keeps_object_reference_label
@@ -1089,6 +1225,7 @@
   - test_create_note_accepts_backfilled_captured_at
   - test_create_note_rejects_future_captured_at
   - test_timeline_orders_by_captured_at_not_created_at
+  - test_timeline_orders_same_day_by_creation_order
   - test_timeline_hides_soft_deleted_and_other_users_notes
   - test_update_note_bumps_version_and_resets_index
   - test_update_note_with_stale_version_returns_409
@@ -1129,7 +1266,7 @@
   - test_create_canvas_and_canvas_note_use_viewport_anchor
   - test_add_canvas_node_creates_ref_reuses_it_and_rejects_note
   - test_update_and_remove_canvas_item_only_change_view
-  - test_update_canvas_note_uses_version_and_rejects_timeline_note
+  - test_update_canvas_note_reads_current_version_and_rejects_timeline_note
   - test_connect_is_idempotent_and_requires_same_canvas
   - test_removing_canvas_item_detaches_relation_without_deleting_global_relation
   - test_relation_tools_read_and_update_canvas_connection_sides
@@ -1207,16 +1344,20 @@
 - 测试内容：
   - 画布首屏、项目抽屉和相机控制可用
 
-### frontend/src/composables/useMindCanvas.test.ts
+### frontend/src/composables/mind/useMindCanvas.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/mind-project
-- 源码声明数：2；无外部依赖；无 skip
+- 源码声明数：6；无外部依赖；无 skip
 - 测试内容：
+  - uses one outer side for vertically stacked cards
+  - keeps opposite sides for horizontally separated cards
   - reuses the same camera pan math without pointer capture
   - keeps ordinary pan transient until commit while coordinate conversion follows the visual camera
+  - rebases the pan origin after a committed buffer rebase
+  - keeps the grabbed point stable when zooming during a pan
 
-### frontend/src/composables/useMindEditor.test.ts
+### frontend/src/composables/mind/useMindEditor.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/mind-project
@@ -1261,6 +1402,24 @@
   - 捕获 type / id / label
   - 只把首个非空的 Markdown 标题分离出来，并保留对象引用显示名
   - 普通正文不伪造标题
+
+### frontend/src/composables/mind/useMindRefActions.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/mind-project
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - 提示已删除的文件引用，而不是静默忽略点击
+
+### frontend/src/composables/projects/useProjectDraft.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/mind-project
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - 用户未动过的字段采用服务端最新值且不产生脏标记
+  - 用户已编辑的字段保留草稿，保存时用户编辑胜出
+  - 外部同步后用户再撤销自己的编辑，会落到服务端最新值
 
 ### frontend/src/utils/canvasRelationGeometry.test.ts
 
@@ -1418,8 +1577,8 @@
 
 ## security
 
-- 文件数：24
-- 源码声明数：168
+- 文件数：26
+- 源码声明数：177
 
 ### backend/tests/test_account_status.py
 
@@ -1435,7 +1594,7 @@
 - owner：backend/security
 - 源码声明数：2；无外部依赖；无 skip
 - 测试内容：
-  - test_admin_default_credentials_are_admin_and_guguadmin
+  - test_admin_password_has_no_public_default
   - test_admin_credentials_can_be_overridden_by_environment
 
 ### backend/tests/test_admin_risk_users.py
@@ -1569,19 +1728,21 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/security
-- 源码声明数：12；无外部依赖；无 skip
+- 源码声明数：14；无外部依赖；无 skip
 - 测试内容：
   - test_delete_project_requires_confirm
   - test_delete_event_requires_confirm
   - test_delete_client_requires_confirm
   - test_delete_scheduled_task_requires_confirm
   - test_permanent_delete_requires_confirm
-  - test_delete_client_rejects_confirm_without_prior_token
-  - test_delete_client_with_prior_token_executes
-  - test_confirmation_lease_can_use_explicit_ttl
-  - test_batch_delete_client_uses_one_target_bound_confirmation
+  - test_delete_client_rejects_confirm_without_grant
+  - test_delete_client_executes_after_grant_without_credentials
+  - test_confirmation_uses_explicit_ttl
+  - test_batch_delete_grant_is_summary_bound
   - test_dispatch_tripwire_fires_on_gate_bypass
   - test_dispatch_tripwire_silent_when_gated
+  - test_dispatch_tripwire_silent_for_server_authorized_autopilot
+  - test_dispatch_normalizes_wrapped_confirmation_result
   - test_static_confirm_gate_guard_passes
 
 ### backend/tests/test_error_redaction_contract.py
@@ -1666,11 +1827,21 @@
   - test_policy_uses_runtime_security_configuration
   - test_auto_suspend_uses_configured_duration
 
+### backend/tests/test_terminal_confirm_input.py
+
+- 类型/层级：pytest / L1
+- owner：backend/security
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_terminal_input_without_code_executes
+  - test_terminal_input_with_valid_code_executes
+  - test_terminal_input_with_invalid_code_rejected
+
 ### backend/tests/test_tool_schema_security_contract.py
 
 - 类型/层级：pytest / L1
 - owner：backend/security
-- 源码声明数：15；无外部依赖；无 skip
+- 源码声明数：17；无外部依赖；无 skip
 - 测试内容：
   - test_phase1_requires_a_single_source_or_event
   - test_send_file_rejects_multiple_sources_and_orphan_title
@@ -1678,8 +1849,10 @@
   - test_update_todo_action_has_conditional_fields_and_legacy_compatibility
   - test_search_conversations_keeps_recent_without_search_term
   - test_phase2_calendar_and_file_semantics
+  - test_canvas_mutation_schemas_require_explicit_shape_and_types
   - test_phase3_project_requires_explicit_date_range
   - test_phase8_migrated_tools_are_source_canonical_schema
+  - test_note_schemas_keep_structural_metadata_for_model_guidance
   - test_phase8_compactor_keeps_reserved_parameter_names
   - test_phase8_date_and_time_constraints_are_structural
   - test_phase8_workspace_binding_is_structural
@@ -1749,6 +1922,15 @@
   - 文件和文件夹只在重命名态放开名称行裁切
   - rename input 恢复共享 input-focus-shadow，不再有专属降级覆盖
 
+### frontend/src/components/common/profile/ProfileAccountPane.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/security
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - 仅在服务端能力开启时渲染邮箱变更区域
+  - 使用统一认证 API 完成申请、重发和取消
+
 ### frontend/test/accountBoundary.test.ts
 
 - 类型/层级：vitest / L0
@@ -1759,8 +1941,8 @@
 
 ## storage
 
-- 文件数：44
-- 源码声明数：392
+- 文件数：49
+- 源码声明数：413
 
 ### backend/tests/test_agent_file_folder_parity.py
 
@@ -2074,6 +2256,32 @@
   - test_parse_project_path_ignores_year_month_prefix
   - test_path_migration_request_limits_batch_size
 
+### backend/tests/test_phase3_filesystem_policy.py
+
+- 类型/层级：pytest / L1
+- owner：backend/storage
+- 源码声明数：7；无外部依赖；含 skip
+- 测试内容：
+  - test_workspace_policy_allows_only_workspace_folder_subtree
+  - test_full_grant_allows_personal_and_project_file_writes
+  - test_agent_file_create_is_read_only_without_session_grant
+  - test_web_download_checks_write_policy_before_fetching
+  - test_scheduled_task_file_policy_uses_task_subject
+  - test_script_path_rejects_absolute_traversal_and_platform_separators
+  - test_script_file_rejects_symlink_and_hardlink
+
+### backend/tests/test_phase4_filesystem_authorization.py
+
+- 类型/层级：pytest / L1
+- owner：backend/storage
+- 源码声明数：5；无外部依赖；无 skip
+- 测试内容：
+  - test_filesystem_authorization_is_off_by_default
+  - test_disabled_flag_ignores_existing_grant_and_blocks_new_grant
+  - test_disabled_flag_does_not_offer_model_authorization_prompt
+  - test_grant_and_revoke_are_audited_in_same_transaction
+  - test_denied_write_records_only_aggregate_metrics
+
 ### backend/tests/test_send_file_url_streaming.py
 
 - 类型/层级：pytest / L1
@@ -2104,9 +2312,12 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/storage
-- 源码声明数：15；外部依赖；无 skip
+- 源码声明数：18；外部依赖；无 skip
 - 测试内容：
   - test_put_get_roundtrip
+  - test_failed_replace_keeps_previous_file
+  - test_put_preserves_existing_file_metadata
+  - test_put_new_file_uses_shared_mode
   - test_exists
   - test_delete
   - test_rename_file
@@ -2146,6 +2357,15 @@
   - test_user_space_initialization_is_idempotent
   - test_usage_event_is_idempotent_and_rejects_over_quota
   - test_reconcile_records_actual_file_and_shell_usage
+
+### backend/tests/test_storage_root_migration.py
+
+- 类型/层级：pytest / L1
+- owner：backend/storage
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_migrate_tree_copies_nested_compose_data_and_is_idempotent
+  - test_migrate_tree_stops_on_conflict_without_overwriting
 
 ### backend/tests/test_storage_snapshots.py
 
@@ -2239,9 +2459,10 @@
 
 - 类型/层级：playwright / L3
 - owner：frontend/e2e
-- 源码声明数：1；外部依赖；无 skip
+- 源码声明数：2；外部依赖；无 skip
 - 测试内容：
   - 文件库：上传文件出现卡片，删除后卡片消失
+  - 文件库：文本保存后关闭并重开仍显示最新内容
 
 ### frontend/e2e/filesystem-phases.spec.ts
 
@@ -2263,7 +2484,7 @@
 
 - 类型/层级：vitest / L0
 - owner：frontend/storage
-- 源码声明数：20；无外部依赖；无 skip
+- 源码声明数：19；无外部依赖；无 skip
 - 测试内容：
   - 文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度
   - 网格/列表恢复 inset slider 几何并保留真实移动 pill
@@ -2280,11 +2501,28 @@
   - 亮色 Mono 画布卡片 grabbing 复用 Mono 描边，landing 不会被锁死
   - Mono 画布项目卡 landing 使用实色项目卡材质并移除抓取玻璃
   - 画布跨 Surface landing 保留目标内容交叉淡化，不关闭 target morph
-  - 画布 landing 在指针下揭示时只抑制一次 hover，离开后恢复
   - 项目名输入框不再有 project 专属透明底，统一复用共享 input contract
   - 多选 checkbox 无高光阴影，最终主题层不再重复接管 checkbox/folder paint
   - 路径前进回退恢复 0.20.4 icon-first hover 样式
   - 项目 stage 亮色只重映射局部 option token，上传关闭按钮复用通用 control paint
+
+### frontend/src/composables/files/useFileLibrarySelection.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/storage
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - file 与 folder 撞号时范围选择按 type 定位
+
+### frontend/src/composables/useFilesystemAuthorization.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/storage
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - opens a confirmation dialog without granting access on request
+  - confirms and revokes through the task API boundary
+  - does not reopen when the backend says the task is already authorized
 
 ### frontend/src/utils/fileLinks.test.ts
 
@@ -2347,8 +2585,8 @@
   - 按对象类型把混合移动分发给文件夹和文件业务函数
   - 把面包屑目标交给页面解析，并忽略无效落点
   - 忽略浏览区、非法对象和文件夹拖到自身
-  - 文件与文件夹分别获得自己的 optimistic intent，不互相清理 rollback chain
-  - 同一卡片 regrab 后产生更高 revision，第二次 Action 成为最新意图
+  - 不在 Runtime 路由层重复创建 optimistic intent
+  - 同一卡片连续 Action 都直接交给领域 adapter
 
 ### frontend/test/fileSelection.test.ts
 
@@ -2456,10 +2694,206 @@
   - TraceStore 对重复 run 上报保持幂等并可读回 spans
   - TraceStore 保留用户已有的会话标题并按 before 分页
 
+## other
+
+- 文件数：17
+- 源码声明数：72
+
+### backend/tests/test_anthropic_roundtrip.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：4；无外部依赖；无 skip
+- 测试内容：
+  - test_anthropic_tool_round_preserves_all_response_blocks_and_signature
+  - test_anthropic_tool_round_drops_unprocessed_parallel_tool_uses
+  - test_anthropic_structure_probe_contains_only_safe_structure_and_digest
+  - test_anthropic_structure_digest_detects_non_identical_roundtrip
+
+### backend/tests/test_compose_bootstrap.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_validate_required_config_reports_actionable_missing_secret
+  - test_validate_required_config_reports_unwritable_data_dir
+  - test_ensure_admin_password_appends_once_and_preserves_existing_field
+
+### backend/tests/test_email_admin.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：6；外部依赖；无 skip
+- 测试内容：
+  - test_admin_email_preview_uses_shared_template_and_returns_plain_text
+  - test_admin_email_test_recipient_rejects_invalid_address
+  - test_translation_drops_model_added_blocks_and_buttons_when_source_is_empty
+  - test_translation_keeps_source_action_urls_and_discards_extra_items
+  - test_translation_payload_fills_optional_fields_and_source_action_urls
+  - test_translation_payload_falls_back_to_source_for_empty_required_fields
+
+### backend/tests/test_email_capabilities.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_system_email_requires_complete_admin_smtp_configuration
+  - test_system_email_capability_is_available_only_when_admin_smtp_is_enabled
+
+### backend/tests/test_email_change.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_normalize_email_rejects_display_names_and_invalid_addresses
+  - test_email_change_request_does_not_modify_user_and_replaces_old_request
+
+### backend/tests/test_email_templates.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：6；无外部依赖；无 skip
+- 测试内容：
+  - test_notification_renders_standard_html_and_plain_fallback
+  - test_builtin_images_use_cid_inline_resources_for_mail_clients
+  - test_actions_use_email_compatible_standard_button_shell
+  - test_template_escapes_content_and_rejects_unsafe_action_url
+  - test_test_template_is_available
+  - test_phase2_templates_share_the_same_compatible_shell
+
+### backend/tests/test_email_tool.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：16；无外部依赖；无 skip
+- 测试内容：
+  - test_send_email_defaults_to_registered_email_and_requires_confirmation
+  - test_send_email_uses_client_email_after_confirmation
+  - test_send_email_passes_optional_html_version
+  - test_send_email_passes_semantic_template_fields
+  - test_send_email_confirmation_binds_structured_payload
+  - test_send_email_accepts_every_standard_template
+  - test_send_email_passes_owned_custom_smtp
+  - test_send_email_returns_structured_smtp_failure
+  - test_send_email_has_a_total_delivery_timeout
+  - test_scheduled_email_uses_task_authorization_without_confirmation
+  - test_send_email_rejects_other_users_client
+  - test_send_email_rejects_ambiguous_recipient
+  - test_build_msg_creates_plain_text_and_sanitized_html_alternative
+  - test_email_sanitizer_keeps_safe_layout_attributes_and_drops_unsafe_values
+  - test_email_images_allow_only_controlled_cid
+  - test_build_msg_attaches_cid_images_as_inline_related_parts
+
+### backend/tests/test_greeting_cache.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：1；外部依赖；无 skip
+- 测试内容：
+  - test_greeting_reuses_cached_text_for_ten_minutes
+
+### backend/tests/test_line_edit.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：6；无外部依赖；无 skip
+- 测试内容：
+  - test_line_edit_accepts_single_dash_and_bash_comma_ranges
+  - test_line_edit_applies_multiple_ranges_from_bottom
+  - test_line_edit_rejects_invalid_ranges
+  - test_line_edit_rejects_overlapping_ranges
+  - test_line_edit_rejects_missing_or_stale_expected_text
+  - test_numbered_lines_describes_raw_physical_lines
+
+### backend/tests/test_model_reasoning_policy.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_run_policy_comes_from_selected_model
+  - test_missing_model_policy_defaults_to_off
+
+### backend/tests/test_phase2_reasoning_drivers.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_anthropic_state_extract_restore_is_exact_and_provider_only
+  - test_chat_completions_does_not_claim_responses_continuation
+  - test_responses_driver_uses_response_chain_and_function_call_items
+
+### backend/tests/test_public_config.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_site_config_hides_password_reset_without_smtp
+  - test_site_config_exposes_only_password_reset_capability
+
+### backend/tests/test_reasoning_state.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：11；无外部依赖；无 skip
+- 测试内容：
+  - test_policy_has_single_safe_boundary
+  - test_coordinator_diagnostics_distinguish_state_lifecycle
+  - test_envelope_fingerprints_payload_but_metadata_excludes_it
+  - test_commit_load_encrypts_and_isolated_from_canonical_history
+  - test_stale_run_cannot_overwrite_newer_state
+  - test_owner_cannot_read_another_users_session_state
+  - test_expired_and_changed_state_is_invalidated_without_replay
+  - test_off_and_summary_never_replay_provider_payload
+  - test_summary_can_store_only_restricted_metrics
+  - test_expire_and_explicit_delete_contract
+  - test_delete_session_deletes_provider_state
+
+### backend/tests/test_romaji.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：4；无外部依赖；无 skip
+- 测试内容：
+  - test_to_romaji_uses_sudachi_reading_and_normalizes_romkan_output
+  - test_to_romaji_keeps_chinese_pinyin_flow_without_japanese_converter
+  - test_romaji_match_accepts_japanese_reading_for_pure_kanji
+  - test_to_romaji_uses_japanese_dictionary_for_japanese_locale
+
+### backend/tests/test_usage_trends_user_tz.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - test_usage_trends_groups_days_by_user_timezone
+
+### backend/tests/test_usage.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_record_current_usage_uses_user_context
+  - test_record_current_usage_without_context_is_ignored
+
+### backend/tests/test_user_smtp_api.py
+
+- 类型/层级：pytest / L1
+- owner：backend/other
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - test_get_user_smtp_uses_service_query_without_handler_name_collision
+
 ## memory-rag
 
-- 文件数：34
-- 源码声明数：186
+- 文件数：35
+- 源码声明数：196
 
 ### backend/tests/test_compare_index_metrics.py
 
@@ -2473,13 +2907,14 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/memory-rag
-- 源码声明数：7；无外部依赖；无 skip
+- 源码声明数：8；无外部依赖；无 skip
 - 测试内容：
   - test_normalize_event_memory_adds_event_prefix_to_headings
   - test_normalize_legacy_plain_memory_keeps_content_in_event_section
   - test_event_hash_is_stable_for_same_title_and_body
   - test_deduplicate_event_sections_merges_same_event_and_drops_exact_duplicate
   - test_merge_event_memory_keeps_existing_sections_and_deduplicates_increment
+  - test_memory_chunks_keep_event_context_when_long_section_is_split
   - test_memory_vectors_reuse_unchanged_chunks_and_gc_removed_chunks
   - test_bailian_multimodal_embedding_uses_text_content
 
@@ -2556,6 +2991,16 @@
   - test_memory_fallback_respects_hard_budget_without_embedding
   - test_memory_fallback_respects_hard_budget_when_vector_coverage_is_insufficient
 
+### backend/tests/test_memory_maintenance_batches.py
+
+- 类型/层级：pytest / L1
+- owner：backend/memory-rag
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - test_split_batches_keeps_complete_items_and_budget
+  - test_split_batches_marks_oversized_item_without_silent_truncation
+  - test_review_patterns_maps_each_batch_back_to_stable_pattern_id
+
 ### backend/tests/test_memory_migration.py
 
 - 类型/层级：pytest / L1
@@ -2586,18 +3031,21 @@
   - test_migrate_daily_reports_preview_lines
   - test_migrate_profile_events_moves_temporal_profile_to_memory
   - test_migrate_profile_events_dedupes_existing_memory
-  - test_compress_includes_profile_and_pattern_context
+  - test_memory_compaction_uses_daily_batch_and_rag_only
 
 ### backend/tests/test_memory_periodic.py
 
 - 类型/层级：pytest / L1
 - owner：backend/memory-rag
-- 源码声明数：4；无外部依赖；无 skip
+- 源码声明数：7；无外部依赖；无 skip
 - 测试内容：
   - test_below_threshold_does_not_schedule
   - test_threshold_schedules_once_for_active_user
   - test_cooldown_and_growth_gate
-  - test_review_error_does_not_advance_watermark
+  - test_pattern_compaction_failure_does_not_advance_watermark
+  - test_pattern_compaction_records_post_compaction_watermark
+  - test_profile_compaction_records_post_compaction_watermark
+  - test_profile_threshold_schedules_profile_compaction
 
 ### backend/tests/test_rag_daily_freshness.py
 
@@ -2708,13 +3156,14 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/memory-rag
-- 源码声明数：5；无外部依赖；无 skip
+- 源码声明数：6；无外部依赖；无 skip
 - 测试内容：
   - test_wire_document_keeps_business_fields_for_cold_restore
   - test_index_dir_for_owner_uses_hidden_user_storage
   - test_ts_worker_replace_search_and_persist
   - test_ts_worker_patch_updates_only_changed_chunks
   - test_sidecar_reaper_handles_owner_registry_and_shared_rank_client
+  - test_search_returns_request_local_timing_for_shared_client
 
 ### backend/tests/test_rag_vector_cache.py
 
@@ -2756,8 +3205,8 @@
   - test_scenario_global_search_accepts_unified_query_alias
   - test_scenario_explicit_target_does_not_expand_search_scope
   - test_scenario_and_requires_all_terms_in_one_record
-  - test_scenario_history_search_uses_multiple_terms_once
   - test_scenario_note_search_uses_multiple_terms_once
+  - test_scenario_romaji_search_matches_note_content
   - test_scenario_group_search_stays_in_current_group
   - test_scenario_no_target_match_returns_explainable_empty_result
 
@@ -2774,9 +3223,11 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/memory-rag
-- 源码声明数：1；无外部依赖；无 skip
+- 源码声明数：3；无外部依赖；无 skip
 - 测试内容：
   - test_search_conversations_accepts_multiple_keywords
+  - test_conversation_rag_result_exposes_parent_session_id
+  - test_search_conversations_resolves_legacy_message_id_to_session
 
 ### backend/tests/test_searxng_search_status.py
 
@@ -2875,7 +3326,7 @@
   - rank_candidates 在评分前排除已注入的历史内容
   - rank_candidates 返回跨来源 citation 和按来源诊断
 
-### frontend/src/views/Calendar/composables/useCalendarDrag.test.ts
+### frontend/src/composables/calendar/useCalendarDrag.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/memory-rag
@@ -2887,14 +3338,14 @@
 
 ## terminal-runtime
 
-- 文件数：27
-- 源码声明数：176
+- 文件数：28
+- 源码声明数：207
 
 ### backend/tests/test_docker_runtime.py
 
 - 类型/层级：pytest / L2
 - owner：backend/terminal-runtime
-- 源码声明数：40；外部依赖；无 skip
+- 源码声明数：51；外部依赖；无 skip
 - 测试内容：
   - test_probe_reports_missing_docker
   - test_docker_environment_prefers_current_user_rootless_socket
@@ -2907,6 +3358,12 @@
   - test_cleanup_running_sandboxes_only_removes_labeled_containers
   - test_cleanup_running_sandboxes_does_not_fail_without_containers
   - test_sandboxd_request_round_trips_as_json
+  - test_sandboxd_request_round_trips_library_roots
+  - test_sandboxd_request_preserves_library_write_policy
+  - test_pty_spec_defaults_to_read_only_library_mounts
+  - test_docker_library_mounts_follow_filesystem_policy
+  - test_interactive_shell_resolves_unique_project_name_without_storage_id
+  - test_interactive_shell_does_not_guess_duplicate_project_name
   - test_sandboxd_egress_request_requires_future_expiry
   - test_sandboxd_rejects_non_finite_egress_expiry
   - test_docker_execution_uses_unique_container_name_for_cleanup
@@ -2922,14 +3379,19 @@
   - test_admin_executor_readiness_is_independent_of_enabled_switch
   - test_admin_sandbox_status_does_not_echo_invalid_proxy
   - test_docker_executor_builds_fixed_security_argv
+  - test_docker_executor_mounts_read_only_libraries
   - test_docker_executor_uses_only_controlled_egress_network
   - test_docker_executor_builds_fixed_interactive_pty_argv
+  - test_docker_executor_pty_blocks_common_code_runtimes_when_disabled
   - test_docker_executor_uses_one_image_reference_for_command_and_pty
   - test_docker_executor_rejects_unpinned_image
   - test_docker_executor_rejects_egress_with_invalid_network_name
   - test_docker_executor_applies_ephemeral_quota_to_tmpfs
   - test_parse_subordinate_ranges_ignores_other_users
   - test_permission_plan_maps_container_id_and_is_non_destructive
+  - test_prepare_storage_discovers_all_compose_writable_roots
+  - test_prepare_storage_applies_target_daemon_mapping_and_probes
+  - test_compose_sandbox_bootstrap_has_shared_storage_acl_contract
   - test_permission_plan_rejects_root_directory
   - test_discover_shell_roots_only_scans_user_directories
   - test_systemd_templates_pin_rootless_socket
@@ -2959,13 +3421,16 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/terminal-runtime
-- 源码声明数：5；无外部依赖；无 skip
+- 源码声明数：8；无外部依赖；无 skip
 - 测试内容：
+  - test_loopscope_separates_session_snapshot_from_history_display
   - test_context_threshold_uses_cache_tokens_for_anthropic
-  - test_context_threshold_does_not_double_count_openai_cache_tokens
+  - test_context_threshold_adds_openai_cache_tokens_after_usage_normalization
+  - test_context_threshold_adds_anthropic_cache_write_tokens
   - test_usage_lands_before_done_break
   - test_loopscope_wrapper_without_active_run_accepts_session_id
   - test_mid_stream_abort_marks_span_cancelled
+  - test_reasoning_state_diagnostics_are_restricted_and_keep_lifecycle_events
 
 ### backend/tests/test_migrate_qqbot_runtime_keys.py
 
@@ -2984,20 +3449,22 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/terminal-runtime
-- 源码声明数：3；无外部依赖；无 skip
+- 源码声明数：4；无外部依赖；无 skip
 - 测试内容：
   - test_timestamped_stream_prefixes_split_print_line
   - test_timestamped_stream_does_not_double_prefix_existing_timestamp
   - test_timestamped_stream_flushes_partial_line
+  - test_timestamped_stream_mirrors_to_optional_log_file
 
 ### backend/tests/test_run_finalize.py
 
 - 类型/层级：pytest / L1
 - owner：backend/terminal-runtime
-- 源码声明数：2；无外部依赖；无 skip
+- 源码声明数：3；无外部依赖；无 skip
 - 测试内容：
   - test_finalize_run_uses_one_canonical_persistence_contract
-  - test_finalize_run_does_not_record_byok_usage
+  - test_finalize_run_records_byok_usage_without_platform_capping
+  - test_finalize_run_keeps_byok_flag_from_real_pydantic_model
 
 ### backend/tests/test_runtime_state_scope.py
 
@@ -3028,16 +3495,23 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/terminal-runtime
-- 源码声明数：19；外部依赖；无 skip
+- 源码声明数：27；外部依赖；无 skip
 - 测试内容：
   - test_shell_risk_scans_the_whole_command
+  - test_blocked_runtime_detects_direct_and_wrapped_invocations
+  - test_sandbox_code_execution_switch_blocks_runtimes_but_keeps_basic_shell
   - test_shell_schema_does_not_expose_session_identity
   - test_shell_lease_covers_non_destructive_operations
   - test_configured_shell_refuses_when_docker_sandbox_is_disabled
   - test_dangerous_shell_requires_admin_and_user_switches
   - test_dangerous_shell_requires_user_switch_even_when_confirmed
   - test_dangerous_shell_keeps_confirmation_gate
-  - test_shell_autopilot_skips_confirmation_only_with_two_level_permission
+  - test_dynamic_shell_prompt_reports_disabled_dangerous_state
+  - test_dynamic_shell_prompt_reports_confirmation_and_autopilot
+  - test_dynamic_shell_prompt_is_absent_when_shell_is_not_authorized
+  - test_dynamic_shell_prompt_is_absent_when_sandbox_is_disabled
+  - test_shell_autopilot_skips_dangerous_confirmation_with_two_level_permission
+  - test_shell_autopilot_skips_egress_confirmation
   - test_unbound_session_does_not_become_global_shell
   - test_legacy_personal_scope_is_ignored
   - test_unbound_session_uses_system_scope
@@ -3049,6 +3523,16 @@
   - test_shell_user_switch_off_blocks_default_sandbox
   - test_workspace_binding_only_changes_sandbox_mount
   - test_workspace_scope_requires_user_permission
+  - test_run_shell_ignores_model_supplied_confirm
+
+### backend/tests/test_shell_prompt.py
+
+- 类型/层级：pytest / L1
+- owner：backend/terminal-runtime
+- 源码声明数：2；无外部依赖；无 skip
+- 测试内容：
+  - test_shell_prompt_only_appends_for_registered_shell_tool
+  - test_shell_prompt_is_idempotent
 
 ### backend/tests/test_shell_sandbox.py
 
@@ -3077,11 +3561,12 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/terminal-runtime
-- 源码声明数：5；无外部依赖；无 skip
+- 源码声明数：6；无外部依赖；无 skip
 - 测试内容：
-  - test_shell_is_disabled_by_default
+  - test_sandbox_shell_is_enabled_by_default_but_system_shell_is_disabled
   - test_workspace_binding_is_owned_and_can_be_cleared
   - test_oss_storage_keeps_a_local_sandbox_root
+  - test_project_root_is_the_user_project_library_not_bound_workspace
   - test_workspace_can_be_renamed_disabled_and_deleted_without_deleting_project
   - test_bound_workspace_resolves_file_target_and_rejects_other_project
 
@@ -3099,11 +3584,15 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/terminal-runtime
-- 源码声明数：16；外部依赖；无 skip
+- 源码声明数：20；外部依赖；无 skip
 - 测试内容：
   - test_terminal_contract_has_stable_source_and_status_values
   - test_terminal_page_hidden_when_admin_shell_is_disabled
+  - test_terminal_page_hidden_when_sandbox_is_disabled
   - test_terminal_page_can_show_without_workspace_when_shell_is_enabled
+  - test_terminal_policy_can_disable_pty_without_disabling_shell_terminal_page
+  - test_terminal_entry_policy_hides_page_but_does_not_change_shell_executor
+  - test_terminal_policy_is_automatically_off_when_sandbox_is_not_ready
   - test_terminal_operations_reject_foreign_session
   - test_terminal_owner_can_terminate_or_close_after_permission_revoked
   - test_terminal_events_preserve_user_source_and_sequence
@@ -3257,8 +3746,8 @@
 
 ## im
 
-- 文件数：32
-- 源码声明数：310
+- 文件数：35
+- 源码声明数：327
 
 ### backend/tests/test_feedback_email.py
 
@@ -3448,9 +3937,10 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/im
-- 源码声明数：23；外部依赖；无 skip
+- 源码声明数：24；外部依赖；无 skip
 - 测试内容：
   - test_memory_scope_separates_bot_group_and_user
+  - test_admin_im_preview_maps_scope_to_reflection_task_type
   - test_memory_scope_rejects_path_traversal
   - test_platform_user_scope_includes_event_memory_file
   - test_format_im_memory_keeps_member_scope_separate
@@ -3565,9 +4055,11 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/im
-- 源码声明数：14；无外部依赖；无 skip
+- 源码声明数：20；无外部依赖；无 skip
 - 测试内容：
   - test_schema_dict_accepts_legacy_json_string_and_rejects_invalid_values
+  - test_shell_confirmation_error_envelope_reaches_interaction_bridge
+  - test_confirmation_protocol_accepts_direct_and_nested_results
   - test_event_identity_survives_round_trip
   - test_action_tokens_are_stored_as_one_way_hashes
   - test_round_event_name_remains_stable
@@ -3575,10 +4067,14 @@
   - test_qq_ask_user_text_fallback_lists_options_without_exposing_tokens
   - test_ask_user_button_resolves_pending_tool_result
   - test_ask_user_tool_result_creates_waiting_prompt
+  - test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted
+  - test_im_custom_reply_option_then_text_resolves_agent_prompt
+  - test_system_prompt_cannot_enable_custom_reply
   - test_round_limit_prompt_only_resumes_current_run_without_persisting_unlimited
   - test_tool_budget_prompt_enables_unlimited_without_goal_loop
-  - test_confirmation_button_returns_token_for_resumed_destructive_tool
-  - test_ask_user_text_requires_explicit_permission_and_resolves
+  - test_confirmation_button_grants_server_side_authorization
+  - test_confirm_text_fallback_resolves_confirm_prompt
+  - test_agent_text_answer_resolves_agent_prompt
   - test_wait_for_resolution_returns_same_interaction_result
   - test_wait_for_resolution_stops_and_closes_prompt_on_cancel
 
@@ -3618,9 +4114,10 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/im
-- 源码声明数：4；外部依赖；无 skip
+- 源码声明数：5；外部依赖；无 skip
 - 测试内容：
   - test_qq_binding_code_is_hashed_and_consumed_once
+  - test_first_qq_private_message_binds_owner_once
   - test_qq_binding_code_rejects_wrong_sender_guesses
   - test_qq_binding_code_does_not_bind_another_users_bot
   - test_qq_binding_command_is_consumed_before_agent_enqueue
@@ -3794,18 +4291,47 @@
 - 测试内容：
   - 所有 landing 结束后才通知等待中的刷新
 
+### frontend/src/interaction/sync/InteractionSyncReconciler.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/im
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - 切换画布时不复用上一张画布的本地 identity
+  - 服务端认领 optimistic mutation 后不重复保留临时占位项
+  - 取消态 optimistic create 不会被中途刷新重新复活
+
+### frontend/test/interactionSync.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/im
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - 同一 Tab 的事件只作为回声，不触发重复刷新
+  - 服务端落库响应继承 optimistic clientKey，未返回时保留 placeholder
+  - 服务端回写同一实体时保持已有身份，切换画布时不借用上一张画布的身份
+
+### frontend/test/interactionSyncPhase23.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/im
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - execute 统一提供即时 apply、请求确认和失败回滚
+  - 事件队列抑制本端回声，增量成功时不触发刷新，无法合并的事件按资源合并刷新
+  - 不同资源分别保序，并将无法增量合并的事件各自合并刷新
+
 ## schedule
 
-- 文件数：10
-- 源码声明数：73
+- 文件数：12
+- 源码声明数：100
 
 ### backend/tests/test_regressions_datetime_and_version.py
 
 - 类型/层级：pytest / L1
 - owner：backend/schedule
-- 源码声明数：6；外部依赖；无 skip
+- 源码声明数：5；外部依赖；无 skip
 - 测试内容：
-  - test_once_expired_accepts_legacy_naive_and_aware_iso
   - test_list_tasks_does_not_delete_expired_but_failed_once_task
   - test_list_tasks_marks_crashed_once_task_as_failed_instead_of_deleting
   - test_list_tasks_keeps_in_flight_once_task_untouched
@@ -3816,8 +4342,12 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/schedule
-- 源码声明数：23；外部依赖；无 skip
+- 源码声明数：29；外部依赖；无 skip
 - 测试内容：
+  - test_email_delivery_uses_reminder_template_and_is_not_retried
+  - test_email_delivery_failure_is_visible_and_not_success
+  - test_rest_task_update_can_change_authorized_tools_alone
+  - test_agent_task_update_can_change_authorized_tools_alone
   - test_group_delivery_mode_captures_current_qq_group
   - test_group_delivery_mode_rejects_web_context
   - test_group_delivery_mode_requires_confirmation_when_omitted
@@ -3833,6 +4363,8 @@
   - test_trial_does_not_hold_request_db_session_during_agent
   - test_trial_timeout_does_not_cancel_delivery_task
   - test_trial_does_not_update_last_run_at
+  - test_web_delivery_persists_and_publishes_notification
+  - test_web_delivery_reports_saved_when_realtime_publish_fails
   - test_once_task_is_kept_when_execution_or_delivery_fails
   - test_once_task_is_deleted_only_after_successful_delivery
   - test_delivery_reports_gateway_false_as_failed
@@ -3846,7 +4378,7 @@
 
 - 类型/层级：pytest / L1
 - owner：backend/schedule
-- 源码声明数：21；外部依赖；无 skip
+- 源码声明数：22；外部依赖；无 skip
 - 测试内容：
   - test_scheduled_messages_keep_snapshot_context_before_tail
   - test_scheduled_execution_always_uses_full_loop
@@ -3869,6 +4401,41 @@
   - test_auto_title_never_overwrites_manual_rename_concurrent
   - test_rename_session_api_sets_title_locked
   - test_rename_session_rejects_empty_and_overlong
+  - test_scheduled_once_applies_user_byok
+
+### backend/tests/test_scheduled_task_schedule_rules.py
+
+- 类型/层级：pytest / L1
+- owner：backend/schedule
+- 源码声明数：15；无外部依赖；无 skip
+- 测试内容：
+  - test_normalize_cron_supports_independent_window_boundaries
+  - test_normalize_interval_supports_all_window_combinations
+  - test_normalize_rejects_invalid_combinations
+  - test_interval_trigger_is_anchored_and_includes_end_boundary
+  - test_cron_trigger_supports_start_and_end_window
+  - test_schedule_status_distinguishes_ended_from_disabled
+  - test_expired_repeating_tasks_are_destroyed_but_in_flight_task_is_kept
+  - test_normalize_once_requires_a_start_and_has_no_end_window
+  - test_schedule_migration_backfills_cron_interval_once_and_rejects_bad_cron
+  - test_schedule_migration_rolls_back_on_invalid_legacy_task
+  - test_schedule_api_creates_interval_and_explicit_null_clears_start
+  - test_schedule_api_creates_independent_once_task
+  - test_scheduled_task_tool_creates_and_updates_precise_window
+  - test_scheduled_task_tool_creates_independent_once_task
+  - test_scheduled_task_tool_schema_exposes_schedule_contract
+
+### backend/tests/test_scheduled_task_workspace.py
+
+- 类型/层级：pytest / L1
+- owner：backend/schedule
+- 源码声明数：5；无外部依赖；无 skip
+- 测试内容：
+  - test_scheduled_task_contract_uses_workspace_root_without_cwd
+  - test_task_workspace_requires_owned_enabled_workspace
+  - test_task_grant_isolated_from_other_tasks_and_users
+  - test_scheduled_agent_receives_task_filesystem_subject
+  - test_deleting_workspace_disables_bound_scheduled_tasks
 
 ### backend/tests/test_scheduler_shutdown.py
 
@@ -3913,24 +4480,25 @@
 
 - 类型/层级：playwright / L3
 - owner：frontend/e2e
-- 源码声明数：2；外部依赖；无 skip
+- 源码声明数：4；外部依赖；无 skip
 - 测试内容：
   - 定时任务页面：空状态、新建、编辑、启停、试运行和删除
-  - 定时任务页面：自定义日期、间隔和渠道选项可切换
+  - 定时任务页面：时间范围、间隔和渠道选项可切换
+  - 定时任务页面：可以创建自定义单次任务
+  - 定时任务页面：精确窗口提交开始和结束边界
 
 ### frontend/src/views/Schedules/utils/scheduleCron.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/schedule
-- 源码声明数：7；无外部依赖；无 skip
+- 源码声明数：6；无外部依赖；无 skip
 - 测试内容：
   - 生成并解析间隔任务
   - 生成每日、工作日和周末任务
-  - 保留单次任务日期和补零时间
-  - 单次任务没有日期时选择今天或明天
   - 限制间隔分钟并对非法 Cron 使用默认规则
   - 覆盖最小和最大间隔，并保持同一输入结果稳定
   - 对空值、不完整格式和未知日期规则使用稳定默认值
+  - 构造和解析时间范围时按 Asia/Shanghai 与 API UTC 契约转换
 
 ### frontend/test/scheduledTasks.test.ts
 
@@ -3938,14 +4506,14 @@
 - owner：frontend/schedule
 - 源码声明数：3；无外部依赖；无 skip
 - 测试内容：
-  - 加载任务并通过实时刷新回调再次加载
+  - 加载任务
   - 保存时区分创建和更新，并在完成后刷新列表
   - 支持启停、试运行和删除，并把失败转为提示
 
 ## frontend-ui
 
-- 文件数：27
-- 源码声明数：164
+- 文件数：32
+- 源码声明数：197
 
 ### frontend/e2e/calendar.spec.ts
 
@@ -3961,7 +4529,7 @@
 
 - 类型/层级：playwright / L3
 - owner：frontend/e2e
-- 源码声明数：7；外部依赖；无 skip
+- 源码声明数：8；外部依赖；无 skip
 - 测试内容：
   - 发消息收到回复，刷新页面后会话内容还在
   - 展开大窗后会话列表显示当前会话，新建会话清空消息区
@@ -4006,12 +4574,15 @@
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
-- 源码声明数：26；无外部依赖；无 skip
+- 源码声明数：34；无外部依赖；无 skip
 - 测试内容：
   - 字体资源层与字体族 token 保持单一契约
   - 每套配色提供完整的明暗语义色，family 不再重复持有配色变量
   - 面板颜色与视觉材质分层，palette 改色不吞掉 family 效果
+  - 暗色玻璃页面渐变从较亮端向较暗端收束
   - 通知气泡使用统一浮层材质，暗色不继承亮色纯白高光
+  - 通知中心直接消费共享浮层 token，暗色不会漏出亮色实心背景
+  - 新建项目的添加阶段入口使用主题控件 token，暗色不继承亮色黑白硬编码
   - 项目卡不再拥有重复的伪元素内描边
   - 项目卡最终 paint 只由组件负责，主题层不重复接管根卡片
   - todo popup 由通用容器负责 surface，业务组件负责内容主题
@@ -4020,8 +4591,13 @@
   - Mono 导航不再被旧 chrome 边框覆盖，Admin 与前台复用同一组选中 token
   - 组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块
   - 暗色咕咕悬浮球以深色表面为主，避免亮色强调色过曝
+  - 暗色危险确认按钮使用低亮度危险表面，避免浅色实心背景过曝
+  - 咕咕播放波纹挂在球壳下层，不覆盖悬浮球本体
+  - 公共复选框保留盒子与勾选图标 DOM，取消勾选时只淡出图标
+  - Markdown 表格分割线和隔行底色使用明暗主题语义 token
   - 暗色 surface hover 只由主题 refinement 负责
   - DateSpan 区间内部不叠加普通 hover 背景
+  - 日历月份选择器复用浮层 token，暗色选中月份使用反色前景
   - ImageViewer 暗色只重映射 toolbar 局部 token，不复制实体 paint
   - 文件工具栏只有一套尺寸和前景契约
   - 文件多选工具栏只由共享组件负责 paint，并锚定项目卡非滚动容器
@@ -4039,15 +4615,23 @@
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
-- 源码声明数：18；外部依赖；无 skip
+- 源码声明数：26；外部依赖；无 skip
 - 测试内容：
+  - 通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上
+  - 连续通知各自完成气泡打字，避免新通知抢占旧通知的播放 timer
+  - GuguChat 左右栏头部和底部使用同一组高度契约
   - 画布列表使用与项目抽屉一致的 Runtime 布局契约
+  - 定时任务工作区使用公共列表选择弹窗
+  - 定时任务卡片标题在弹性布局中可收缩并使用省略显示
   - Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连
   - Shell 未启用时不显示文件库工作区按钮
+  - 后台未开启 Shell 时隐藏个人设置中的 Shell 区块
   - 项目阶段待办循环不遮蔽 i18n 翻译函数
   - Admin field-input 使用完整实线边框，避免回落到浏览器原生双层描边
   - 日历活动输入框聚焦时保留 hover 光晕，确保 focus 光晕有淡入动画
   - 主题组件覆盖和跨 DOM bridge 保持明确的统一入口
+  - 普通输入统一使用足够的行高，避免字母下伸部被输入框裁切
+  - 定时任务卡片启停状态由最终主题层平滑过渡
   - 非 Runtime 主题层不接管 Runtime 的 motion 属性
   - 轻量弹层统一经过 PopupMenu，业务组件不再持有独立 Teleport 动画
   - 引用补全不脱离输入行布局，避免展开态菜单使用过期 fixed 坐标
@@ -4060,7 +4644,15 @@
   - 项目已完成年组引导线与箭头中心严格对齐，并给月组保留安全间距
   - 内容 disclosure 统一为收起向右、展开向下
 
-### frontend/src/components/common/CardAffordances.test.ts
+### frontend/src/components/common/gugu-chat/composables/useChatActions.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/frontend-ui
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - 咕咕编辑定时任务后 bump scheduled_tasks，当前面板无需手动刷新
+
+### frontend/src/components/common/tests/CardAffordances.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
@@ -4069,27 +4661,41 @@
   - 无 hover 时隐藏附加按钮，hover 后显示并保留连接点状态
   - dragging、landing、revealing 状态隐藏附加交互，防止 landing 期间残留按钮或连接点命中
 
-### frontend/src/components/common/gugu-chat/markdown.test.ts
+### frontend/src/components/common/tests/iconRegistry.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
-- 源码声明数：4；无外部依赖；无 skip
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - 保留首批跨页面通用语义映射
+  - 固定播放器使用实心图标，未固定状态保留线框图标
+  - 未注册语义直接报错，避免静默显示错误图标
+
+### frontend/src/components/common/tests/markdown.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/frontend-ui
+- 源码声明数：8；无外部依赖；无 skip
 - 测试内容：
   - 还原模型转义的表格竖线并渲染为 GFM table
   - 流式渲染也使用相同的表格预处理
   - 标题与表头粘连时仍能识别表格
   - 普通文本中的转义竖线不被全局改写
+  - 把项目、活动、画布、笔记和定时任务链接统一渲染成卡片
+  - 不把普通 gugu 动作链接误判为业务对象卡片
+  - 使用独立的 open-skill 协议渲染为可点击技能卡片
+  - 拒绝不安全的技能 slug
 
-### frontend/src/components/common/iconRegistry.test.ts
+### frontend/src/composables/calendar/useCalendarUpcoming.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
 - 源码声明数：2；无外部依赖；无 skip
 - 测试内容：
-  - 保留首批跨页面通用语义映射
-  - 未注册语义直接报错，避免静默显示错误图标
+  - 按截止窗口、完成状态和优先级生成近期节点
+  - 合并事件时按 id 去重并保持输入不变
 
-### frontend/src/composables/useTheme.test.ts
+### frontend/src/composables/core/useTheme.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
@@ -4103,15 +4709,27 @@
   - 切换配色会持久化并更新根节点属性
   - 非法配色回退为 Mist
 
+### frontend/src/composables/shared/usePreviewBlobCache.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/frontend-ui
+- 源码声明数：3；无外部依赖；无 skip
+- 测试内容：
+  - 按文件 id 区分库文件和聊天附件，并命中后刷新 LRU 顺序
+  - 超过 20 条时只释放最久未使用的 blob，缓存中的 URL 不随组件卸载释放
+  - 强制刷新后用新 blob 替换同一文件的旧缓存
+
 ### frontend/src/i18n/index.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
-- 源码声明数：6；无外部依赖；无 skip
+- 源码声明数：8；无外部依赖；无 skip
 - 测试内容：
   - 语言选择器使用稳定的原生名称
   - 设置页的跟随系统选项不带状态提示括号
   - 所有语言包文案都能被 vue-i18n 正常解析
+  - 模型级推理状态选项在三个语言包中都使用公共 llmExtraUi 文案
+  - Admin 模型图片细节选项在三个语言包中都有文案
   - maps supported browser language families
   - uses the first supported language and falls back to Chinese
   - switches the runtime immediately and persists only when requested
@@ -4124,6 +4742,14 @@
 - 测试内容：
   - keeps every locale on the same key set
 
+### frontend/src/utils/consoleBanner.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/frontend-ui
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - 主题切换不会重复追加横幅日志
+
 ### frontend/src/utils/formatters.test.ts
 
 - 类型/层级：vitest / L0
@@ -4134,14 +4760,15 @@
   - formats shared numeric values and file sizes
   - formats relative time without component-level unit concatenation
 
-### frontend/src/views/Calendar/composables/useCalendarUpcoming.test.ts
+### frontend/src/utils/logLevel.test.ts
 
 - 类型/层级：vitest / L0
 - owner：frontend/frontend-ui
-- 源码声明数：2；无外部依赖；无 skip
+- 源码声明数：3；无外部依赖；无 skip
 - 测试内容：
-  - 按截止窗口、完成状态和优先级生成近期节点
-  - 合并事件时按 id 去重并保持输入不变
+  - 只按独立的 INFO 级别识别
+  - 不会把 error_type 或 exception 字段误判为错误
+  - 保留真正的错误和警告级别
 
 ### frontend/src/views/Calendar/domain/calendarDomain.test.ts
 
@@ -4180,6 +4807,14 @@
 - 测试内容：
   - 间距、字号、圆角各自只保留四个主档位
   - 目录只保存展示元数据，不复制令牌实际值
+
+### frontend/src/views/VerifyEmailChange.test.ts
+
+- 类型/层级：vitest / L0
+- owner：frontend/frontend-ui
+- 源码声明数：1；无外部依赖；无 skip
+- 测试内容：
+  - 是公开路由并且只用短期 token 调用验证接口
 
 ### frontend/test/cardOptimisticRegrab.test.ts
 

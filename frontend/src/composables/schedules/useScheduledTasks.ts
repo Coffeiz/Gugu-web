@@ -29,9 +29,11 @@ export function useScheduledTasks() {
   async function save(taskId: number | null, data: ScheduledTask) {
     busy.value = true
     try {
-      if (taskId != null) await scheduledTasksApi.update(taskId, data)
-      else await scheduledTasksApi.create(data)
+      const saved = taskId != null
+        ? await scheduledTasksApi.update(taskId, data)
+        : await scheduledTasksApi.create(data)
       await load()
+      return saved
     } finally {
       busy.value = false
     }

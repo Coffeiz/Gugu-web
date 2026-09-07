@@ -97,7 +97,6 @@ async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
     await qq._post_keyboard(
         "bot-1", "ou_1", "请选择", "msg-1", group=False,
         prompt={"prompt_id": 17, "options": [{"id": "yes", "label": "确认", "token": "t"}]},
-        message_format="smart",
     )
 
     assert calls[0]["msg_type"] == 2

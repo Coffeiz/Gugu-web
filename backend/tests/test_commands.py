@@ -1,6 +1,7 @@
 """斜杠控制命令测试。"""
 
 import pytest
+from sqlalchemy import select
 
 from agent import commands, router
 from agent.llm.genstream import immediate_stream
@@ -25,6 +26,29 @@ def test_help_lists_all_commands():
     for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace"):
         assert command in result["reply"]
     assert "/unlimited" in result["reply"]
+
+
+def test_help_lists_subcommands_on_separate_lines():
+    result = router.decide("/help workspace", "idle")
+    lines = result["reply"].splitlines()
+    assert "子命令：/workspace show　查看当前绑定" in lines
+    assert "子命令：/workspace status　查看沙箱权限状态" in lines
+    assert "子命令：/workspace delete <ID> confirm　确认删除工作区" in lines
+
+
+def test_goal_help_lists_each_subcommand_on_its_own_line():
+    result = router.decide("/help goal", "idle")
+    lines = result["reply"].splitlines()
+    assert "用法：/goal <目标>　创建目标任务" in lines
+    assert "子命令：/goal pause　暂停目标任务" in lines
+    assert "子命令：/goal resume　恢复目标任务" in lines
+
+
+@pytest.mark.asyncio
+async def test_help_follows_requested_locale():
+    result = await commands.handle("user-1", "/unlimited help", locale="en-US")
+    assert "Subcommand: /unlimited on - Enable" in result
+    assert "子命令" not in result
 
 
 @pytest.mark.parametrize("text", ["/stop help", "/status help", "/help workspace"])
@@ -151,6 +175,100 @@ async def test_workspace_delete_requires_explicit_confirmation(db, user_a):
     assert result["result"]["text"] == "已删除工作区「待删除工作区」（ID %s），项目和文件未受影响。" % workspace.id
     await db.refresh(session)
     assert session.workspace_id is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_god_requires_confirmation_and_grants_current_session(db, user_a, enable_filesystem_authorization):
+    from agent.commands import handle
+    from app.services.filesystem_authorization import resolve_filesystem_policy
+    from app.services.interactions import consume_action
+
+    session = ConversationSession(user_id=user_a.id, title="沙箱授权测试", source="web")
+    db.add(session)
+    await db.commit()
+
+    pending = await handle(user_a.id, "/workspace god", session_id=session.id)
+    assert pending["_command_interaction"] is True
+    assert "完整用户沙箱" in pending["prompt"]["body"]
+    confirm = next(option for option in pending["prompt"]["options"] if option["id"] == "confirm")
+    result = await consume_action(
+        db, user_id=user_a.id, prompt_id=pending["prompt"]["prompt_id"], token=confirm["token"],
+    )
+    assert result["result"]["status"] == "confirmed"
+    policy = await resolve_filesystem_policy(db, user_a.id, subject_id=session.id)
+    assert policy.full_user_sandbox is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_revoke_restores_read_only_library_policy(db, user_a, enable_filesystem_authorization):
+    from app.services.filesystem_authorization import grant_session_filesystem_access, resolve_filesystem_policy
+
+    session = ConversationSession(user_id=user_a.id, title="沙箱撤销测试", source="web")
+    db.add(session)
+    await db.commit()
+    await grant_session_filesystem_access(db, user_a.id, session.id)
+    await db.commit()
+    assert (await resolve_filesystem_policy(db, user_a.id, subject_id=session.id)).full_user_sandbox
+
+    reply = await commands.handle(user_a.id, "/workspace revoke", session_id=session.id)
+    assert "已撤销" in reply
+    assert (await resolve_filesystem_policy(db, user_a.id, subject_id=session.id)).full_user_sandbox is False
+
+
+@pytest.mark.asyncio
+async def test_ask_user_can_request_fixed_filesystem_authorization(db, user_a, enable_filesystem_authorization):
+    from agent.tools.meta import _ask_user
+    from app.services.interactions import create_agent_prompt, consume_action
+    from app.models import FilesystemAuthorizationGrant
+
+    session = ConversationSession(user_id=user_a.id, title="askuser 授权测试", source="web")
+    db.add(session)
+    await db.commit()
+    payload = await _ask_user(None, user_a.id, {"authorization": "user_sandbox"})
+    assert [item["id"] for item in payload["options"]] == ["confirm", "cancel"]
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="tool-1",
+        tool_name="ask_user", payload=payload,
+    )
+    result = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        token=next(item["token"] for item in actions if item["id"] == "confirm"),
+    )
+    assert result["result"]["status"] == "confirmed"
+    grant = await db.scalar(
+        select(FilesystemAuthorizationGrant).where(
+            FilesystemAuthorizationGrant.user_id == user_a.id,
+            FilesystemAuthorizationGrant.subject_id == str(session.id),
+        )
+    )
+    assert grant.granted_by == "askuser"
+
+
+@pytest.mark.asyncio
+async def test_filesystem_grant_is_isolated_by_user_and_expires(db, user_a, user_b, enable_filesystem_authorization):
+    from datetime import timedelta
+    from app.core.tz import now_utc
+    from app.models import FilesystemAuthorizationGrant
+    from app.services.filesystem_authorization import (
+        grant_session_filesystem_access, resolve_filesystem_policy,
+    )
+
+    session = ConversationSession(user_id=user_a.id, title="授权隔离测试", source="web")
+    db.add(session)
+    await db.commit()
+    await grant_session_filesystem_access(db, user_a.id, session.id)
+    await db.commit()
+    assert (await resolve_filesystem_policy(db, user_b.id, subject_id=session.id)).full_user_sandbox is False
+
+    grant = await db.scalar(
+        select(FilesystemAuthorizationGrant).where(
+            FilesystemAuthorizationGrant.user_id == user_a.id,
+            FilesystemAuthorizationGrant.subject_id == str(session.id),
+        )
+    )
+    grant.expires_at = now_utc() - timedelta(seconds=1)
+    await db.commit()
+    assert (await resolve_filesystem_policy(db, user_a.id, subject_id=session.id)).full_user_sandbox is False
 
 
 def test_goal_is_parsed_as_a_control_command():

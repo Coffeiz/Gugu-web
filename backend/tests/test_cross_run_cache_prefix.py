@@ -5,7 +5,11 @@ from agent.context.assembly import NewMessageBatch, PromptMessages, assemble_tur
 from agent.context.canonical_tool_history import render_events_for_provider
 from agent.context.history import build_history_parts
 from agent.context.provider_history import render_anthropic_message_roles
-from agent.context.run_context import _is_legacy_persisted_time_context
+from agent.context.run_context import (
+    _effective_history,
+    _is_legacy_persisted_time_context,
+)
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.security import sanitize
 
 
@@ -145,6 +149,25 @@ def test_legacy_persisted_time_context_rows_are_filtered():
     assert _is_legacy_persisted_time_context(mixed_context) is False
 
 
+def test_current_persisted_user_row_is_not_replayed_before_current_projection():
+    """后台重读 history 后，当前用户正文只能出现一次。
+
+    Web 会先提交用户行再启动后台任务；带图片时 history 中的行是纯文本持久化
+    版本，而 current_user 是完整 provider 投影。若两者都发送，会破坏跨轮缓存。
+    """
+    current = _history_row(
+        row_id=42, role="user", content="看这张图",
+        content_json=[{"type": "text", "text": "看这张图"}],
+    )
+    previous = _history_row(
+        row_id=41, role="user", content="上一条",
+        content_json=[{"type": "text", "text": "上一条"}],
+    )
+    filtered = _effective_history([previous, current], user_message=current)
+
+    assert [message.id for message in filtered] == [41]
+
+
 def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail():
     sent_at = datetime(2026, 8, 27, 17, 8, tzinfo=timezone.utc)
     message_time = reminder("消息时间：2026-08-27 17:08")
@@ -229,6 +252,34 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     next_run_prefix = _provider_wire(restored)
 
     assert next_run_prefix == previous_conversation_wire
+
+
+def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
+    """首轮工作区 reminder 必须跨 run 保持原位置，RAG 不得重复落库。"""
+    runtime_text = "## 当前会话工作区\n当前绑定：QQ；规范落点 space=personal"
+    turn_batch, _ = assemble_turn(
+        current_user={"role": "user", "content": "测试"},
+        conversation_tail=[{
+            "role": "user",
+            "content": [{"type": "knowledge-context", "text": "RAG"}],
+        }],
+        extra_reminder=runtime_text,
+    )
+    messages = PromptMessages()
+    messages.append_batch(turn_batch)
+
+    records = persistable_canonical_batch_records(messages)
+
+    assert len(records) == 1
+    assert records[0]["metadata"] == {"kind": "runtime-context"}
+    assert [
+        block["type"]
+        for message in records[0]["messages"]
+        for block in message["content"]
+    ] == ["runtime-context"]
+    assert records[0]["messages"][0]["content"][0]["text"] == (
+        f"[system-reminder]\n{runtime_text}\n[/system-reminder]"
+    )
 
 
 def test_replayed_knowledge_context_keeps_standalone_boundary_across_runs():

@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 from pathlib import Path
 
 import asyncio
@@ -15,10 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.chat_attach import TEXT_EXTS
 from app.core.ownership import get_owned
 from app.core.security import create_stream_token
+from app.core.tz import now_utc
 from app.models import File
 from app.services.files.selection import move_file_to_trash_by_id, move_files_to_trash
 from app.services.storage import LocalStorageBackend, OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
+from app.services.filesync.protocol import record_canonical_file_change
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,12 @@ async def update_file_content(
     await storage.put(file.storage_key, data, file.mime_type or "text/markdown")
     file.size_bytes = len(data)
     file.size = _fmt_size(len(data))
+    file.version = int(file.version or 1) + 1
+    file.updated_at = now_utc()
+    await record_canonical_file_change(
+        db, user_id=user_id, storage_key=file.storage_key,
+        observed_fingerprint=hashlib.sha256(data).hexdigest(),
+    )
     return file
 
 

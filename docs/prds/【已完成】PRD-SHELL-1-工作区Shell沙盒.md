@@ -179,11 +179,15 @@ make sandbox-acl-plan ROOTLESS_LOGIN=gugu-sandbox
 SANDBOX_ACL=1 make start ROOTLESS_LOGIN=gugu-sandbox
 SANDBOX_ACL=1 make install RUN_USER=gugu-sandbox
 
-# Compose 复用同一宿主机初始化流程，并启用 sandbox profile
+# Compose 启用 sandbox profile；bootstrap 自动初始化 ACL 并验证写入
 SANDBOX_ACL=1 make compose-up ROOTLESS_LOGIN=gugu-sandbox
 ```
 
-未传入 `SANDBOX_ACL=1` 时，`make start`、`make restart`、`make install` 和 `make compose-up` 均跳过 ACL 修改。直接执行 `docker compose up` 也不会自动应用 ACL；`--profile sandbox` 只负责启动 sandboxd。初始化脚本只处理 `Gugu-data/users/*/shell`，不修改业务容器、镜像、数据库或其他用户目录。
+未传入 `SANDBOX_ACL=1` 时，非 Compose 的 `make start`、`make restart`、`make install` 均跳过 ACL 修改；
+`make compose-up SANDBOX_ACL=1` 只负责选择 `sandbox` profile，ACL 由 Compose 的
+`sandbox-bootstrap` 自动处理。直接执行 `docker compose up` 不启动沙盒；执行
+`docker compose --profile sandbox up` 会自动为每个用户的 `shell`、`个人文件`、`项目文件`
+设置 ACL 并用真实沙盒 UID 验证写入。初始化不会修改业务容器、镜像或数据库目录。
 
 #### system 模式边界
 
@@ -233,11 +237,13 @@ Shell 工具
 
 ### 3.4 OSS 模式下的 Shell 配额
 
-当 `storage.backend=oss` 时，OSS 文件库不可直接挂载到 Shell 容器。此时文件库继续使用 OSS 配额，Shell 沙盒使用独立的本地用户空间，只服务于 Shell 执行，不与 OSS 文件库共用容量。
+当 `storage.backend=oss` 时，OSS 文件库不可直接挂载到 Shell 容器，也不支持 workspace 绑定或 `/personal`、`/project` 目录挂载。此时文件库继续使用 OSS 配额，Shell 沙盒使用独立的本地用户空间，只服务于 Shell 执行，不与 OSS 文件库同步或共用容量。
 
 - Shell 持久空间默认配额为 `512 MB`；临时构建/cache 空间默认配额为 `1 GB`。
 - Admin 的用户配额管理页面增加 Shell 沙盒配额配置和已用空间展示。
 - Shell 配额按用户保存；持久文件、下载内容、生成构建产物和临时缓存分别计量。
+- OSS 模式下前端和 Agent 不展示或接受文件库 workspace、个人文件和项目文件 Shell 入口；Shell 只允许独立沙盒根目录。
+- OSS 文件库访问继续通过文件 API、文件工具和预签名上传；Shell 创建的文件不会自动注册为 `File`，也不会自动回传 OSS。
 - 超出对应配额时拒绝写入、下载和生成，不影响用户在 OSS 文件库中的空间。
 - 删除持久文件或回收临时缓存后释放对应配额。
 - `system` Shell 不使用 Shell 沙盒配额，继续使用独立的临时目录、输出大小和执行时长限制；多租户部署默认禁用。
@@ -334,11 +340,11 @@ POST /api/v1/admin/sandbox/users/{user_id}/clear
 - Admin 可以全局开启/关闭 Shell 能力。
 - Admin 关闭时，所有用户禁止使用，用户页面不显示 Shell 设置。
 - 用户可以在个人设置中开启/关闭自己的 Shell 能力，并在允许时选择 `sandbox/system` 模式。
-- 新会话默认使用 `sandbox`，不绑定工作区；绑定工作区后只改变默认目录，不改变 Shell 权限模式。
-- 用户或咕咕可以为当前 session 绑定、切换、解除工作区。
-- 工作区可以来自文件库文件夹或项目。
+- 新会话默认使用 `sandbox`，不绑定工作区；本地存储模式下绑定工作区只改变默认目录，不改变 Shell 权限模式；OSS 模式禁止绑定工作区。
+- 用户或咕咕可以在本地存储模式下为当前 session 绑定、切换、解除工作区。
+- 本地存储模式下工作区可以来自文件库文件夹或项目；OSS 模式不提供文件库工作区。
 - 用户未开启 Shell 或系统总开关关闭时，不向 Agent 暴露 Shell 工具。
-- `sandbox` 仅允许访问用户沙盒根目录及当前工作区挂载目录；`system` 使用独立的系统执行策略。
+- `sandbox` 仅允许访问用户沙盒根目录及本地存储模式下的当前工作区挂载目录；OSS 模式只允许访问用户沙盒根目录；`system` 使用独立的系统执行策略。
 - 本机执行器不提供可信网络隔离；普通用户只能通过容器的 network profile 获得网络边界。
 - 危险命令必须经过确认门。
 - 记录结构化审计信息，不记录密钥、完整用户输入或敏感命令输出。
@@ -838,7 +844,8 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 - [x] 将持久配额和临时配额接入 sandboxd/执行器强制层；超额写入会在执行期间终止命令。跨文件库下载/构建账本的统一配额移入 Phase 6。
 - [x] 完成 OSS 模式用户沙盒目录创建、Rootless ACL 计划和配额记录/审计入口；真实生产 ACL apply 验收移入 Phase 6。
 - [x] 完成 Docker 运行态清理策略；清理限定 sandbox 标签资源，不触碰 Gugu 业务容器。镜像/卷长期保留策略移入 Phase 6。
-- [x] 增加可选 Rootless ACL 初始化入口：`sandbox-acl-plan` 默认 dry-run，`SANDBOX_ACL=1` 才允许 `sandbox-acl-apply`；`start`、`restart`、`install` 和 `compose-up` 共用同一宿主机初始化路径。
+- [x] 增加可选 Rootless ACL 初始化入口：`sandbox-acl-plan` 默认 dry-run，`SANDBOX_ACL=1` 才允许 `sandbox-acl-apply`；非 Compose 的 `start`、`restart`、`install` 共用同一宿主机初始化路径。
+- [x] Compose sandbox profile 改由 `sandbox-bootstrap` 统一初始化所有用户的 Shell/文件库 ACL，并在 sandboxd 启动前执行真实写入探针；`make compose-up` 不再重复执行旧的 Shell-only ACL。
 - [x] 完成多租户部署的 system executor 禁用门禁，并保留本地自托管显式开启能力。
 - [x] 完成绝对路径、软链接、挂载边界、用户切换、容器重建、取消和异常恢复的核心回归测试；旧 scope 不再参与运行时授权。
 - [x] 为每个存活用户创建 `Gugu-data/users/<user-id>/shell` 持久目录，并登记 `file_library`、`shell_persistent`、`shell_ephemeral` 三类账本。
@@ -869,8 +876,8 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 
 - 默认配置下后台 Shell 总开关为开启，但仍需用户开关和 Docker 沙盒运行时就绪后才可调用；system 范围、危险命令和 Autopilot 仍不可用。
 - Admin 关闭开关后，旧请求也会被 dispatch 拒绝。
-- Admin 和用户 Shell 权限满足时，sandbox 工具即可注册并执行；workspace 只决定默认 cwd。
-- sandbox 只能在沙盒根目录或当前 workspace 挂载目录内工作，不会回退到任意宿主机目录。
+- Admin 和用户 Shell 权限满足时，sandbox 工具即可注册并执行；本地存储模式下 workspace 只决定默认 cwd，OSS 模式不提供 workspace。
+- sandbox 只能在沙盒根目录或本地存储模式下的当前 workspace 挂载目录内工作，不会回退到任意宿主机目录。
 - 命令超时、输出超限和后台进程都能被收束。
 - `sudo`、提权命令、系统目录、密钥目录和软链接逃逸被拒绝。
 
@@ -897,8 +904,8 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 
 - Docker/Podman 后端复用本机执行器的权限快照和统一结果模型。
 - 容器不可用时不会静默切换到更高权限的执行路径。
-- 容器具备非 root、workspace 单独挂载、默认断网和资源限制。
-- OSS 模式下每个用户默认拥有 512 MB Shell 持久空间和 1 GB 临时构建空间，Admin 可以分别修改配额，Shell 空间与 OSS 文件库配额互不影响。
+- 容器具备非 root、默认断网和资源限制；本地存储模式下才允许 workspace 单独挂载。
+- OSS 模式下每个用户默认拥有 512 MB Shell 持久空间和 1 GB 临时构建空间，Admin 可以分别修改配额；Shell 空间与 OSS 文件库配额互不影响，且不挂载、不同步 OSS 文件库。
 
 ## 14. 后续平台适配
 

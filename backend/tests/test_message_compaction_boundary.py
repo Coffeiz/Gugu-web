@@ -1,11 +1,15 @@
 import asyncio
 import pytest
+from types import SimpleNamespace
 
 from agent.context.compaction import compact_context
 from agent.context.compress_conv import fixed_context_parts
 from agent.context.assembly import NewMessageBatch, PromptMessages, assemble, assemble_turn
 from agent.context.history import build_history_parts
 from agent.context.canonical_tool_history import render_events_for_provider
+
+
+MODEL_CFG = SimpleNamespace(context_tokens=100, max_tokens=20)
 
 
 def test_assembly_marks_snapshot_prefix():
@@ -68,7 +72,7 @@ def test_rag_tail_is_stable_conversation_after_current_user():
 
 
 def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
-    async def fake_summary(content_list, prev_summary=None):
+    async def fake_summary(content_list, prev_summary=None, **_kwargs):
         return "压缩摘要"
 
     monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
@@ -81,7 +85,9 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
     ]
 
     result = __import__("asyncio").run(
-        compact_context(messages, "", context_tokens=100, fixed_prefix_size=2)
+        compact_context(
+            messages, fixed_prefix_size=2, model_cfg=MODEL_CFG,
+        )
     )
 
     assert result.changed
@@ -182,7 +188,7 @@ def test_canonical_batch_is_fixed_before_seal_and_append_updates_both_projection
 
 def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch):
     """压缩所在 run 与下一 run 从数据库恢复的摘要必须字节一致。"""
-    async def fake_summary(_items, _previous=None):
+    async def fake_summary(_items, _previous=None, **_kwargs):
         return "稳定摘要"
 
     monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
@@ -195,7 +201,9 @@ def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch
     ]
 
     result = asyncio.run(
-        compact_context(messages, "", context_tokens=100, fixed_prefix_size=2)
+        compact_context(
+            messages, fixed_prefix_size=2, model_cfg=MODEL_CFG,
+        )
     )
 
     assert result.changed

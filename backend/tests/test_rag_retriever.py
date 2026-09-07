@@ -14,7 +14,7 @@ from app.models import Project
 @pytest.fixture(autouse=True)
 def _mock_ts_ranker(monkeypatch):
     """服务单测隔离进程边界；完整 TS 选择算法由 Worker protocol 测试覆盖。"""
-    async def rank(_owner, _query, candidates, *, limit, max_chars, max_per_source, max_per_parent):
+    async def rank(_owner, _query, candidates, *, limit, max_chars, max_per_source, max_per_parent, selection_mode="confidence"):
         selected = []
         hashes = set()
         source_counts = {}
@@ -63,6 +63,7 @@ def _mock_ts_ranker(monkeypatch):
             "output_chars": output_chars, "rejected_low_score": 0,
             "rejected_not_preferred": 0, "top_confidence": 0.9,
             "threshold": 0.35, "preferred_threshold": 0.55,
+            "selection_mode": selection_mode,
             "scoring_version": "confidence-v1", "elapsed_ms": 0,
         }
     monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
@@ -88,6 +89,31 @@ class FakeRetriever:
             index_source="memory",
             candidate_count=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_filter(monkeypatch):
+    modes = []
+
+    async def rank(_owner, _query, _candidates, *, limit, max_chars, max_per_source,
+                   max_per_parent, selection_mode="confidence", **_kwargs):
+        modes.append(selection_mode)
+        return [], {
+            "candidate_count": 1, "accepted_count": 0,
+            "rejected_duplicate": 0, "rejected_parent": 0, "rejected_source": 0,
+            "rejected_similarity": 0, "output_chars": 0,
+            "rejected_low_score": 0, "rejected_not_preferred": 0,
+            "top_confidence": 0.1, "threshold": 0.35,
+            "preferred_threshold": 0.55, "selection_mode": selection_mode,
+            "scoring_version": "confidence-v1", "elapsed_ms": 0,
+        }
+
+    monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
+    service = UnifiedRecallService(UnifiedRetriever([FakeRetriever()]))
+    await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="tool")
+    await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="passive")
+
+    assert modes == ["top_k", "confidence"]
 
 
 class SameContentRetriever(FakeRetriever):

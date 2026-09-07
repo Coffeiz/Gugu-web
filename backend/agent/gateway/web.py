@@ -21,101 +21,13 @@ from app.models import ConversationMessage, ConversationSession
 from agent.security import sanitize
 from agent.llm import genstream
 from agent import quota
-from agent.context import builder, loaders, session_snapshot, session_history, run_context
+from agent.context import builder, loaders, session_snapshot, session_history, run_context, session_system
+from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from agent.conversation.lifecycle import generate_title, schedule_summary
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
-
-
-def _canonical_tool_batch_records(messages) -> list[dict]:
-    """只把已封存的工具批次交给统一收尾，避免从 provider wire 反推历史。"""
-    records = getattr(messages, "canonical_batch_records", ())
-    return [record for record in records
-            if isinstance(record, dict)
-            and (record.get("metadata") or {}).get("round_id")]
-
-
-def _build_title_prompt(user_msg: str, ai_reply: str) -> str:
-    """构造新会话标题提示词，标题语言跟随当前对话语言。"""
-    return (
-        "根据下面这段对话，用一句话起一个简短的标题（10字以内，不含引号和标点符号）。"
-        "标题必须使用与用户和咕咕交流相同的语言；如果对话主要使用英文，就用英文输出；"
-        "如果主要使用日文，就用日文输出。不要因为本提示词使用中文而输出中文。"
-        "只输出标题本身，不要任何解释。\n"
-        f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
-    )
-
-
-async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
-    """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
-    prompt = _build_title_prompt(user_msg, ai_reply)
-    from agent import providers
-    from agent.llm.modelctx import effective_ai
-    ai = ai or effective_ai(settings)
-    provider_adapter = providers.adapter_for(ai)
-    try:
-        if use_anthropic:
-            import httpx
-            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
-            # mimo 默认开思考，30 token 会被思考块吃光、content[0] 是 thinking 块取不到 .text → 标题空。
-            # 显式关思考（与正文同口径），并从 content 里挑真正的 text 块，别按下标取。
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model,
-                max_tokens=40,
-                messages=[{"role": "user", "content": prompt}],
-                **extra,
-            )
-            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
-            return (text.strip()[:30]) or user_msg[:20]
-        else:
-            import httpx
-            client = providers.build_openai_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_openai_thinking_kwargs(ai)
-            resp = await client.chat.completions.create(
-                model=ai.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=40,
-                **extra,
-            )
-            return (resp.choices[0].message.content or "").strip()[:30] or user_msg[:20]
-    except Exception:
-        return user_msg[:20]
-
-
-async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
-    """用 LLM 给一段会话起「一句话总结」（这段聊了啥），供跨 session 查找/续接。
-    非流式、快速、失败回空（调用方据空不覆盖原总结）。结构同 _generate_title。"""
-    prompt = (
-        "用一句话（20字以内）概括下面这段对话主要在聊什么 / 在做什么，"
-        "供日后检索和接着聊时一眼认出。只输出那句话，不要引号、不要解释。\n\n"
-        f"{convo[:1500]}"
-    )
-    from agent import providers
-    from agent.llm.modelctx import effective_ai
-    ai = effective_ai(settings)
-    provider_adapter = providers.adapter_for(ai)
-    try:
-        if use_anthropic:
-            import httpx
-            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model, max_tokens=80,
-                messages=[{"role": "user", "content": prompt}], **extra)
-            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
-            return text.strip().strip('"「」')[:120]
-        else:
-            import httpx
-            client = providers.build_openai_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_openai_thinking_kwargs(ai)
-            resp = await client.chat.completions.create(
-                model=ai.model, max_tokens=80,
-                messages=[{"role": "user", "content": prompt}], **extra)
-            return (resp.choices[0].message.content or "").strip().strip('"「」')[:120]
-    except Exception:
-        return ""
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -253,6 +165,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             return
         await db.commit()
         session_id = session.id
+        modelctx.set_usage_context(user_id, session_id)
         # 后台生成任务需要用真实 session id 建立跨 worker gate；新会话在这里才拿到 id。
         req.session_id = session_id
 
@@ -262,7 +175,9 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     from agent import commands as _commands
     command_name, _command_arg = _commands.parse(req.message)
     goal_start, goal_text = _commands.is_goal_start(req.message)
-    cmd_reply = await _commands.handle(user_id, req.message, session_id=session_id)
+    cmd_reply = await _commands.handle(
+        user_id, req.message, session_id=session_id, locale=current_locale,
+    )
     if command_name in {"goal", "unlimited"}:
         async with _sess._SessionLocal() as state_db:
             state_session = await state_db.get(ConversationSession, session_id)
@@ -339,7 +254,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not active_before_start:
         # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
         # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
-        await genstream.begin(session_id)
+        owner_run_id = genstream.new_run_id()
+        await genstream.begin(session_id, owner_run_id=owner_run_id)
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
@@ -347,6 +263,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             session=session, history_stats=history_stats, model_cfg=model_cfg,
             locale=current_locale,
             strip_thinking=strip_thinking,
+            owner_run_id=owner_run_id,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -362,20 +279,46 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
     """续看：浏览器刷新后重连进行中的生成。先把已生成的内容补一次，再订阅后续。
 
     没有进行中的生成（或已完成）→ 立即发 idle done，前端就走正常 DB 加载。
-    （快照→订阅之间有极小窗口可能漏几个 token，刷新瞬间可接受；回复最终以 DB 为准。）
+    订阅在读取快照前建立，避免快照与频道之间出现丢终态事件的窗口；回复最终以 DB 为准。
     """
-    snap = await genstream.snapshot(session_id)
-    if not snap or snap.get("done"):
-        yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
-        return
-    if snap.get("text"):
-        yield f"data: {json.dumps({'type': 'token', 'content': snap['text']}, ensure_ascii=False)}\n\n"
-    for f in (snap.get("files") or []):
-        yield f"data: {json.dumps({'type': 'file', 'file': f}, ensure_ascii=False)}\n\n"
-    if snap.get("tool"):
-        yield f"data: {json.dumps({'type': 'tool_call', 'name': '_preparing', 'label': snap['tool']}, ensure_ascii=False)}\n\n"
-    async for line in genstream.subscribe(session_id):
-        yield line
+    # 必须先订阅再读快照。否则后台可能恰好在 snapshot() 返回后发布 done，
+    # 续看端点既看不到终态，也收不到后续广播。
+    pubsub = await genstream.open_subscription(session_id)
+    try:
+        snap = await genstream.snapshot(session_id)
+        if not snap or snap.get("done"):
+            yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
+            return
+        timeline = snap.get("timeline") or []
+        if timeline:
+            # 快照按实际发布顺序保存，刷新时必须按这个顺序重放。
+            # 不能先恢复累计正文、再恢复工具列表，否则运行中的多 round 会把
+            # 正文气泡全部挪到顶部、工具气泡全部挪到底部，直到 run 结束才恢复。
+            for item in timeline:
+                if not isinstance(item, dict) or not item.get("type"):
+                    continue
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        else:
+            # 兼容升级前已经存在的旧快照（只有 text/tools，没有 timeline）。
+            run_id = snap.get("run_id") or ""
+            round_id = snap.get("round_id") or ""
+            if run_id or round_id:
+                yield f"data: {json.dumps({'type': 'round_start', 'run_id': run_id, 'round_id': round_id}, ensure_ascii=False)}\n\n"
+            if snap.get("text"):
+                yield f"data: {json.dumps({'type': 'token', 'content': snap['text'], 'run_id': run_id, 'round_id': round_id}, ensure_ascii=False)}\n\n"
+            for f in (snap.get("files") or []):
+                yield f"data: {json.dumps({'type': 'file', 'file': f}, ensure_ascii=False)}\n\n"
+            for tool_call in snap.get("tools") or []:
+                if tool_call.get("name"):
+                    yield f"data: {json.dumps({'type': 'tool_call', **tool_call}, ensure_ascii=False)}\n\n"
+                    if tool_call.get("status") not in (None, "running"):
+                        yield f"data: {json.dumps({'type': 'tool_done', **tool_call}, ensure_ascii=False)}\n\n"
+        async for line in genstream.subscribe(session_id, pubsub=pubsub):
+            yield line
+        pubsub = None
+    finally:
+        if pubsub is not None:
+            await genstream.close_subscription(session_id, pubsub)
 
 
 async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
@@ -383,7 +326,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None) -> None:
+                    history_stats=None, model_cfg=None, locale=None,
+                    owner_run_id=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -422,23 +366,49 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # 发送给模型。不要再把同一段文字追加进 system-reminder：两份语义相同的
     # 开场上下文会提高模型复述问候的概率，也会破坏固定前缀的稳定性。
 
-    # Web 后台生成与 IM 共用稳定能力目录：简介模式首轮注入全部已授权工具的
-    # 短描述和字段签名；完整业务 Schema 仍通过 get_tool_schema 按需获取。
-    from agent.runner import _capability_context, _filter_shell_tool
+    # Web 后台生成与 IM 共用能力目录：简介/catalog 模式注入工具短描述和字段签名；
+    # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
+    from agent.runner import (
+        _apply_capability_context, _capability_context, _filter_shell_tool,
+        _pin_session_user_skill_metadata, _session_user_skill_metadata,
+    )
+    user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as db:
         if model_cfg is None:
             run_config = await resolve_run_config_for_user(settings, db, user_id, req)
             model_cfg = run_config.model
             modelctx.set_model_cfg(model_cfg)   # 后台任务经 create_task 继承此绑定
-        tool_names = await _filter_shell_tool(db, user_id, session_id, list(profile.tool_names))
+        tool_names = await _filter_shell_tool(
+            db, user_id, session_id, list(profile.tool_names), session=session,
+        )
+        shell_prompt = None
+        if "shell" in tool_names:
+            from agent.security.shell_policy import build_dynamic_prompt
+            shell_prompt = await build_dynamic_prompt(
+                db, user_id, session_id, session=session,
+            )
+            if shell_prompt is None:
+                tool_names = [name for name in tool_names if name != "shell"]
+    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
+    if shell_prompt:
+        system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
+        user_skill_metadata=user_skill_metadata,
     )
     if capability_context is not None:
-        from agent.capabilities.injector import catalog_block
-        _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.snapshot.tools)}"
+        if _pin_session_user_skill_metadata(session, capability_context):
+            # stream() 已经提交并关闭了原事务；后台生成使用独立事务，首次建立的
+            # 用户 Skill 目录必须显式回写，后续请求才能复用同一个会话 snapshot。
+            async with _sess._SessionLocal() as snapshot_db:
+                stored_session = await snapshot_db.get(ConversationSession, session_id)
+                if stored_session is not None:
+                    stored_session.session_context = dict(session.session_context or {})
+                    await snapshot_db.commit()
+        system_prompt, snapshot_context = _apply_capability_context(
+            system_prompt, snapshot_context, capability_context,
         )
+        _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = run_config.use_anthropic if run_config is not None else use_anthropic_for(model_cfg)
@@ -514,6 +484,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             model_cfg=model_cfg,
             session_id=session_id,
             session=session,
+            reasoning_policy=getattr(run_config, "reasoning_persistence", "off"),
+            state_session_factory=_sess._SessionLocal,
         )
 
         # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，
@@ -620,10 +592,25 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                         break
             if etype == "file" and evt.get("file"):
                 sent_files.append(evt["file"])   # 捕获以便持久化，仍转发给前端
+                # 助手消息带工具时间线时，刷新接口会用 display_timeline 恢复并
+                # 隐藏外层 assistant 消息；文件也必须进入时间线，否则实时可见、
+                # 刷新后就会丢失文件卡片。
+                display_timeline.append({
+                    "kind": "assistant",
+                    "runId": current_run_id or None,
+                    "roundId": current_round_id or None,
+                    "text": "",
+                    "files": [evt["file"]],
+                })
             if etype == "_cancelled":
                 cancelled = True
             elif etype == "error":
                 generation_failed = True
+            # 交互事件必须带会话归属。前端在新会话拿到真实 ID、切换会话和
+            # 恢复流的边界上不能只靠本地 live() 猜测，否则授权卡可能被当成
+            # 旧流事件丢弃。
+            if etype == "interaction_required":
+                evt = {"session_id": session_id, **evt}
             await genstream.publish(session_id, evt)
 
         if cancelled or generation_failed:
@@ -649,11 +636,11 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
                 stance_text=prepared.stance_to_persist,
                 user_message_id=getattr(user_message, "id", None),
-                canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
+                canonical_batches=persistable_canonical_batch_records(anthr_messages if use_anthropic else oa_messages),
                 text=full_reply,
                 display_timeline=[
                     item for item in display_timeline
-                    if item.get("kind") == "tool" or item.get("text")
+                    if item.get("kind") == "tool" or item.get("text") or item.get("files")
                 ],
                 files=sent_files,
                 tokens_in=usage_tokens["input"],
@@ -677,7 +664,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
         if is_new_session and full_reply and not resume_interaction:
-            title = (await _generate_title(req.message, full_reply, settings, use_anthropic, model_cfg) or "").strip()
+            title = (await generate_title(req.message, full_reply, settings, use_anthropic, model_cfg) or "").strip()
             if title:
                 async with _sess._SessionLocal() as db3:
                     s = await db3.get(ConversationSession, session_id)
@@ -688,8 +675,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
         # ── 会话「一句话总结」：新会话出一版、之后每 ~6 条刷新（供 search/续接桥；与 IM 路同一套）──
         if full_reply and not resume_interaction:
-            from agent.runner import _schedule_summary
-            _schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
+            schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
         if profile.memory_enabled and full_reply and not resume_interaction:
@@ -721,7 +707,32 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 diag_log("agent.loopscope.web_finalize", trace_exc)
         from agent.llm.llm_select import release as _release_model
         _release_model(model_cfg)
-        await genstream.end(session_id)
+        await genstream.end(session_id, owner_run_id=owner_run_id)
+
+
+async def _refresh_generation_history(session_id: int, snapshot: dict, model_cfg):
+    """在 Web generation gate 内重新读取会话水位和历史。
+
+    Web 请求会先写入消息并创建后台任务；如果在后台任务取得 gate 前另一轮完成了
+    baseline，任务创建时传入的 session/history 就已经过期。这里必须用新事务重新
+    读取，否则下一轮仍会从旧 baseline=0 组装完整历史并再次触发压缩。
+    """
+    import app.db.session as _sess
+    from agent.context.provider_history import clean_persisted_history, prepare_session
+
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id)
+        if session is None:
+            return None
+        baseline = session_snapshot.history_baseline(session)
+        history = await session_history.load_session_history(db, session_id, baseline)
+        history_stats = session_history.consume_history_stats()
+        _, should_strip_thinking = prepare_session(session, model_cfg)
+        if should_strip_thinking:
+            clean_persisted_history(history)
+        refreshed_snapshot = dict(snapshot)
+        refreshed_snapshot["history_baseline_message_id"] = baseline
+        return session, refreshed_snapshot, history, history_stats, bool(should_strip_thinking)
 
 
 async def _generate(req, session_id, snapshot, history, is_new_session,
@@ -729,18 +740,85 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None) -> None:
-    """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。"""
+                    history_stats=None, model_cfg=None, locale=None,
+                    owner_run_id=None) -> None:
+    """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。
+
+    预处理（刷新历史、能力目录校验等）也在这里执行；这些步骤若异常，不能
+    绕过 ``_generate_unlocked`` 的收口，否则 genstream 会一直停在生成中。
+    """
     from agent.context import compress_conv
 
-    async with compress_conv.session_run_gate(req):
-        await _generate_unlocked(
-            req, session_id, snapshot, history, is_new_session,
-            user_content=user_content, user_images=user_images,
-            attach_cards=attach_cards, user_media=user_media,
-            user_tz=user_tz, sent_at=sent_at, user_message=user_message,
-            resume_interaction=resume_interaction, strip_thinking=strip_thinking,
-            session=session, history_stats=history_stats, model_cfg=model_cfg,
-            locale=locale,
+    owner_run_id = owner_run_id or genstream.new_run_id()
+    try:
+        async with compress_conv.session_run_gate(req, run_id=owner_run_id) as claimed_owner_run_id:
+            refreshed = await _refresh_generation_history(
+                session_id, snapshot, model_cfg,
+            )
+            if refreshed is not None:
+                session, snapshot, history, history_stats, strip_thinking = refreshed
+            await _generate_unlocked(
+                req, session_id, snapshot, history, is_new_session,
+                user_content=user_content, user_images=user_images,
+                attach_cards=attach_cards, user_media=user_media,
+                user_tz=user_tz, sent_at=sent_at, user_message=user_message,
+                resume_interaction=resume_interaction, strip_thinking=strip_thinking,
+                session=session, history_stats=history_stats, model_cfg=model_cfg,
+                locale=locale,
+                owner_run_id=claimed_owner_run_id or owner_run_id,
+            )
+            await compress_conv.wait_for_baseline_update(session_id)
+    except asyncio.CancelledError:
+        # 进程关闭/任务取消时保留取消语义，但清掉 active 快照，避免重启后
+        # 续看端点把已不存在的后台任务误显示成「生成中」。
+        await _finalize_preflight_failure(
+            session_id, model_cfg, cancelled=True, owner_run_id=owner_run_id,
         )
-        await compress_conv.wait_for_baseline_update(session_id)
+        raise
+    except BaseException as exc:
+        await _finalize_preflight_failure(
+            session_id, model_cfg, error=exc, owner_run_id=owner_run_id,
+        )
+
+
+async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
+                                      cancelled: bool = False,
+                                      owner_run_id=None) -> None:
+    """收口生成任务在 ``_generate_unlocked`` 之前抛出的异常。
+
+    正常业务异常由 ``_generate_unlocked`` 自己发布并结束；这里只处理它尚未
+    进入内部 ``try`` 的失败（例如能力注册表短暂不一致），并按快照状态幂等
+    判断，避免重复发布错误或重复释放模型计数。
+    """
+    state = await genstream.snapshot(session_id)
+    is_active = bool(state and not state.get("done"))
+    if not is_active:
+        await genstream.end(session_id, owner_run_id=owner_run_id)
+        return
+
+    if error is not None:
+        logger.error(
+            "Web 后台生成任务异常 session=%s error_type=%s",
+            session_id, type(error).__name__,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        is_network_error = _is_network_error(error)
+        message = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
+                   else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
+        await genstream.publish(session_id, {
+            "type": "error",
+            "message": message,
+            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+        })
+    elif cancelled:
+        await genstream.publish(session_id, {
+            "type": "error",
+            "message": "这次生成已中断，请重试。",
+            "message_key": "chatUi.genericError",
+        })
+
+    try:
+        from agent.llm.llm_select import release as _release_model
+        _release_model(model_cfg)
+    finally:
+        await genstream.end(session_id, owner_run_id=owner_run_id)

@@ -27,19 +27,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import Folder, Project
+from app.models import Folder, Project, WorkspaceDirectory
 
 
 class FolderTree(Protocol):
     async def get(self, user_id, folder_id: int) -> Optional[Folder]: ...
-    async def get_children(self, user_id, *, project_id: Optional[int], parent_id: Optional[int]) -> list[Folder]: ...
+    async def get_children(self, user_id, *, project_id: Optional[int], parent_id: Optional[int], workspace_directory_id: Optional[int] = None) -> list[Folder]: ...
     async def resolve_folder_path(self, user_id, folder_id: int) -> Optional[str]: ...
     async def descendants(self, user_id, folder_id: int) -> list[int]: ...
-    async def create(self, user_id, *, name: str, parent_id: Optional[int], project_id: Optional[int]) -> Folder: ...
+    async def create(self, user_id, *, name: str, parent_id: Optional[int], project_id: Optional[int], workspace_directory_id: Optional[int] = None) -> Folder: ...
     async def rename(self, user_id, folder_id: int, new_name: str, *, client_version: int) -> Folder: ...
     async def move(self, user_id, folder_id: int, new_parent_id: Optional[int], *, client_version: int,
                    target_project_id: Optional[int] = None,
-                   target_project_set: bool = False) -> Folder: ...
+                   target_project_set: bool = False, target_workspace_directory_id: Optional[int] = None,
+                   target_workspace_set: bool = False) -> Folder: ...
     async def soft_delete(self, user_id, folder_id: int) -> tuple[Folder, list[int]]: ...
     async def restore(self, user_id, folder_id: int) -> tuple[Folder, list[int], datetime]: ...
 
@@ -53,13 +54,14 @@ class SqlAlchemyFolderTree:
         folder = await get_owned(self.db, Folder, folder_id, user_id)
         return folder if folder and folder.deleted_at is None else None
 
-    async def get_children(self, user_id, *, project_id: Optional[int], parent_id: Optional[int]) -> list[Folder]:
+    async def get_children(self, user_id, *, project_id: Optional[int], parent_id: Optional[int], workspace_directory_id: Optional[int] = None) -> list[Folder]:
         stmt = (select(Folder)
                 .where(Folder.user_id == user_id, Folder.deleted_at.is_(None))
                 .order_by(Folder.created_at))
         # `== None` 由 SQLAlchemy 渲染成 IS NULL，故 personal 根（project_id/parent_id 皆 None）也对
         stmt = stmt.where(Folder.project_id == project_id) if project_id is not None else stmt.where(Folder.project_id.is_(None))
         stmt = stmt.where(Folder.parent_id == parent_id) if parent_id is not None else stmt.where(Folder.parent_id.is_(None))
+        stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id) if workspace_directory_id is not None else stmt.where(Folder.workspace_directory_id.is_(None))
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def resolve_folder_path(self, user_id, folder_id: int) -> Optional[str]:
@@ -98,7 +100,17 @@ class SqlAlchemyFolderTree:
         return ids
 
     # ── 写（只 flush，不 commit）──────────────────────────────────────────────
-    async def create(self, user_id, *, name: str, parent_id: Optional[int], project_id: Optional[int]) -> Folder:
+    async def create(self, user_id, *, name: str, parent_id: Optional[int], project_id: Optional[int], workspace_directory_id: Optional[int] = None) -> Folder:
+        if workspace_directory_id is not None:
+            directory = await get_owned(self.db, WorkspaceDirectory, workspace_directory_id, user_id)
+            if directory is None or directory.deleted_at is not None:
+                raise NotFound("workspace.not_found", "Workspace 不存在")
+            if project_id is not None:
+                raise Invalid("folder.cross_space", "Workspace 文件夹不能同时属于项目")
+        if parent_id is not None:
+            parent = await self.get(user_id, parent_id)
+            if parent is None or parent.workspace_directory_id != workspace_directory_id or parent.project_id != project_id:
+                raise Invalid("folder.cross_space", "目标文件夹不属于目标空间")
         if project_id is not None:
             proj = await get_owned(self.db, Project, project_id, user_id)
             if not proj:
@@ -107,6 +119,7 @@ class SqlAlchemyFolderTree:
             select(Folder).where(
                 Folder.user_id == user_id,
                 Folder.project_id == project_id,
+                Folder.workspace_directory_id == workspace_directory_id,
                 Folder.parent_id == parent_id,
                 Folder.name == name,
                 Folder.deleted_at.is_(None),   # 重名检测只认存活文件夹——回收站里同名不挡新建
@@ -114,7 +127,7 @@ class SqlAlchemyFolderTree:
         )).scalar_one_or_none()
         if existing:
             raise Conflict("folder.duplicate", "同名文件夹已存在")
-        folder = Folder(user_id=user_id, project_id=project_id, parent_id=parent_id, name=name)
+        folder = Folder(user_id=user_id, project_id=project_id, workspace_directory_id=workspace_directory_id, parent_id=parent_id, name=name)
         self.db.add(folder)
         await self.db.flush()
         return folder
@@ -136,7 +149,8 @@ class SqlAlchemyFolderTree:
 
     async def move(self, user_id, folder_id: int, new_parent_id: Optional[int], *, client_version: int,
                    target_project_id: Optional[int] = None,
-                   target_project_set: bool = False) -> Folder:
+                   target_project_set: bool = False, target_workspace_directory_id: Optional[int] = None,
+                   target_workspace_set: bool = False) -> Folder:
         folder = await self.get(user_id, folder_id)
         if not folder:
             raise NotFound("folder.not_found", "文件夹不存在")
@@ -145,7 +159,8 @@ class SqlAlchemyFolderTree:
             if not target:
                 raise NotFound("folder.target_not_found", "目标文件夹不存在")
             expected_project = target_project_id if target_project_set else folder.project_id
-            if target.project_id != expected_project:
+            expected_workspace = target_workspace_directory_id if target_workspace_set else folder.workspace_directory_id
+            if target.project_id != expected_project or target.workspace_directory_id != expected_workspace:
                 raise Invalid("folder.cross_space", "不能跨个人文件与项目文件移动文件夹")
             cur = new_parent_id                       # 向上走检测循环
             seen: set[int] = set()
@@ -162,6 +177,8 @@ class SqlAlchemyFolderTree:
         values = {"parent_id": new_parent_id, "version": Folder.version + 1, "updated_at": now_utc()}
         if target_project_set:
             values["project_id"] = target_project_id
+        if target_workspace_set:
+            values["workspace_directory_id"] = target_workspace_directory_id
         result = await self.db.execute(
             update(Folder)
             .where(Folder.id == folder_id, Folder.user_id == user_id,

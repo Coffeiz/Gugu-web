@@ -1,6 +1,13 @@
 {
   "items": [
     {
+      "file": "backend/tests/test_phase3_filesystem_policy.py",
+      "owner": "backend/filesystem-security",
+      "reason": "当前平台不支持软链接或硬链接时动态跳过对应边界用例",
+      "replacement": "平台支持时执行完整链接边界；其余工作区文件策略用例始终执行",
+      "expiresOn": "2026-09-30"
+    },
+    {
       "file": "backend/tests/test_shell_sandbox.py",
       "owner": "backend/terminal-runtime",
       "reason": "平台不支持软链接或硬链接时动态跳过",

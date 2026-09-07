@@ -22,6 +22,7 @@ def file_listing_query(
     space: Optional[str] = None,
     project_id: Optional[int] = None,
     folder_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
     mind_map_id: Optional[int] = None,
     ext: Optional[str] = None,
     query: Optional[str] = None,
@@ -35,6 +36,8 @@ def file_listing_query(
     )
     if space:
         stmt = stmt.where(File.space == space)
+    if workspace_directory_id is not None:
+        stmt = stmt.where(File.workspace_directory_id == workspace_directory_id)
     if project_id is not None:
         stmt = stmt.where(File.project_id == project_id)
     if folder_id is not None:
@@ -73,6 +76,7 @@ async def list_file_rows(
     space: Optional[str] = None,
     project_id: Optional[int] = None,
     folder_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
     mind_map_id: Optional[int] = None,
     ext: Optional[str] = None,
     query: Optional[str] = None,
@@ -83,6 +87,7 @@ async def list_file_rows(
         space=space,
         project_id=project_id,
         folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id,
         mind_map_id=mind_map_id,
         ext=ext,
         query=query,
@@ -196,6 +201,7 @@ async def search_user_files(
     space=None,
     project_id=None,
     folder_id=None,
+    workspace_directory_id=None,
     ext=None,
     queries=None,
     mode=None,
@@ -209,6 +215,8 @@ async def search_user_files(
         stmt = stmt.where(File.project_id == project_id)
     if folder_id is not None:
         stmt = stmt.where(File.folder_id == folder_id)
+    if workspace_directory_id is not None:
+        stmt = stmt.where(File.workspace_directory_id == workspace_directory_id)
     if ext:
         stmt = stmt.where(File.ext == ext.lower().lstrip("."))
     normalized = normalize_queries(queries=queries)
@@ -280,6 +288,7 @@ async def list_folder_rows_with_file_counts(
     user_id,
     *,
     project_id=None,
+    workspace_directory_id=None,
     parent_id=None,
     all_folders=False,
 ):
@@ -292,6 +301,8 @@ async def list_folder_rows_with_file_counts(
         stmt = stmt.where(
             Folder.project_id == project_id if project_id is not None
             else Folder.project_id.is_(None),
+            Folder.workspace_directory_id == workspace_directory_id if workspace_directory_id is not None
+            else Folder.workspace_directory_id.is_(None),
             Folder.parent_id == parent_id if parent_id is not None
             else Folder.parent_id.is_(None),
         )

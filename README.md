@@ -15,7 +15,7 @@
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [在线预览](https://www.gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [快速部署](docs/quick-deploy.md) ｜ [在线预览](https://www.gugugu.site)
 
 </div>
 
@@ -168,8 +168,8 @@ cp .env.example .env
 mkdir -p backend && touch backend/.env
 # 编辑根目录 .env，填写 SECRET_KEY、GUGU_DB_PASSWORD 和模型相关变量
 # 模型、管理员账号等应用配置也可以写入 backend/.env；未设置管理员密码时首次启动自动生成
-# 用户数据目录默认在宿主机 /data，启动前必须先创建（bind source 不存在会启动失败）：
-sudo mkdir -p /data && sudo chown "$(id -u):$(id -g)" /data
+# 用户数据目录默认在仓库根目录 Gugu-data，Compose 首次启动会自动创建。
+# 如使用自定义绝对路径，写入 .env：GUGU_DATA_HOST_DIR=/srv/gugu-data
 docker compose up -d
 ```
 
@@ -194,7 +194,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8000` 等容器内部地址写入邮件。
 
-管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/DEPLOY.md)。
+管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/quick-deploy.md)。
 
 默认 Compose 会拉取一个包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像，不挂载源码，也不运行开发服务器；同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务。
 
@@ -239,7 +239,7 @@ README 只保留配置索引，完整变量和运行规则将在 `docs/configura
 | LoopScope | Agent 链路和性能观测 |
 | Sandbox | Shell 执行环境和网络出口 |
 
-部署细节见 [简版部署指南](docs/DEPLOY.md)，复杂的生产排障见 [运维部署文档](docs/ops/DEPLOY.md)。
+部署细节见 [简版部署指南](docs/quick-deploy.md)，复杂的生产排障见 [运维部署文档](docs/ops/deploy.md)。
 
 ## Workspace
 
@@ -458,6 +458,7 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 
 - Shell 默认使用 `sandbox` 范围和 `network=none`；范围在每次调用开始时固定，绑定工作区时只能访问该工作区对应目录。
 - 沙盒执行通过 `sandboxd` 和 Docker 承载，包含目录边界、配额、生命周期和执行超时控制；`sandboxd` 不可用时不会回退到本机执行。
+- 所有用户沙盒共用项目维护的固定运行时镜像，预装 Python、Node/npm、ffmpeg、Git、curl、jq 和 Bash；用户工作区仍按用户独立挂载，不共享文件和进程。
 - `system` 范围是明确开启的宿主机执行能力，不属于默认沙盒；危险命令、宿主机范围和受控 egress 网络都需要额外配置或确认。
 - 受控 egress 只允许沙盒使用配置的 HTTP(S) 代理和隔离 Docker 网络；默认保持断网。
 

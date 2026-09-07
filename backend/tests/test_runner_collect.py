@@ -1,8 +1,22 @@
 import json
 import pytest
 
-from agent.runner import _collect, _scheduled_collect_result
+from agent.runner import _collect
+from agent.scheduled_execution import _scheduled_collect_result
 from agent.im.replies import format_tool_event
+
+
+def test_non_streaming_runner_has_conversation_lifecycle_hooks():
+    """回归：IM 收尾调用的标题/摘要调度必须在 runner 模块可用。
+
+    这两个任务是 fire-and-forget，未导入时会等模型回复已经生成后才在
+    flush 阶段抛 NameError，导致 QQ 只收到前置进度而收不到最终正文。
+    """
+    from agent import runner
+    from agent.conversation.lifecycle import schedule_summary, schedule_title
+
+    assert runner.schedule_summary is schedule_summary
+    assert runner.schedule_title is schedule_title
 
 
 async def _error_stream(field: str):

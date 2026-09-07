@@ -26,7 +26,7 @@ async def test_user_space_initialization_is_idempotent(db, user_a, tmp_path, mon
     second = await quota_ledger.ensure_user_storage_space(db, user_a)
     await db.commit()
 
-    assert (tmp_path / str(user_a.id) / "shell").is_dir()
+    assert (tmp_path / str(user_a.id) / "workspace").is_dir()
     assert {row.category for row in first} == {
         quota_ledger.FILE_LIBRARY,
         quota_ledger.SHELL_PERSISTENT,
@@ -65,7 +65,7 @@ async def test_usage_event_is_idempotent_and_rejects_over_quota(db, user_a, tmp_
 @pytest.mark.asyncio
 async def test_reconcile_records_actual_file_and_shell_usage(db, user_a, tmp_path, monkeypatch):
     monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
-    root = tmp_path / str(user_a.id) / "shell"
+    root = tmp_path / str(user_a.id) / "workspace"
     root.mkdir(parents=True)
     (root / "artifact.bin").write_bytes(b"1234")
     result = await quota_ledger.verify_user_storage_space(db, user_a.id)

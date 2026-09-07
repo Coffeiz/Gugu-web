@@ -4,6 +4,19 @@ from app.api.v1.notifications import latest_bubble
 from app.models import NotificationRead, SiteNotification
 
 
+async def test_admin_history_excludes_scheduled_task_notifications(db):
+    from app.api.v1.notifications_admin import history
+
+    admin = SiteNotification(title="后台广播", content="内容", target="all", created_by="admin")
+    scheduled = SiteNotification(title="用户任务", content="内容", target="user", created_by="scheduled_task")
+    db.add_all([admin, scheduled])
+    await db.commit()
+
+    result = await history(db=db)
+
+    assert [item["title"] for item in result] == ["后台广播"]
+
+
 async def _create_bubble(db, *, title: str) -> SiteNotification:
     notification = SiteNotification(
         title=title,

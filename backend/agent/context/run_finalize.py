@@ -14,6 +14,46 @@ class FinalizeResult:
     tokens_out: int
 
 
+async def _insert_or_get_batch(db, batch_model, values: dict[str, Any]):
+    """原子写入 canonical batch，唯一键竞争时复用已有行。"""
+    from sqlalchemy import select
+
+    session_id = values["session_id"]
+    batch_digest = values["digest"]
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as dialect_insert
+    elif dialect_name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as dialect_insert
+    else:
+        raise RuntimeError(f"canonical batch 不支持数据库方言：{dialect_name}")
+
+    statement = (
+        dialect_insert(batch_model)
+        .values(**values)
+        .on_conflict_do_nothing(
+            index_elements=[batch_model.session_id, batch_model.digest]
+        )
+        .returning(batch_model.id)
+    )
+    result = await db.execute(statement)
+    inserted_id = result.scalar_one_or_none()
+    if inserted_id is not None:
+        row = await db.get(batch_model, inserted_id)
+        if row is not None:
+            return row, True
+
+    existing = (await db.execute(
+        select(batch_model).where(
+            batch_model.session_id == session_id,
+            batch_model.digest == batch_digest,
+        )
+    )).scalars().first()
+    if existing is None:
+        raise RuntimeError("canonical batch 插入后无法读取结果")
+    return existing, False
+
+
 async def finalize_run(
     *,
     session_factory: Callable[[], Any],
@@ -47,9 +87,8 @@ async def finalize_run(
     消息结构、配额封顶及 baseline 入口在这里保持一致。
     ``session_exists_required`` 供 Web 删除竞态使用：会话已删除时跳过消息，但仍保留 usage 记账。
     """
-    from agent import quota
     from agent.context import assembly, compress_conv
-    from app.models import AgentUsage, ConversationMessage, ConversationSession
+    from app.models import ConversationMessage, ConversationSession
     from app.core import chat_attach
     from app.services.conversation_retention import trim_session_messages
 
@@ -109,26 +148,24 @@ async def finalize_run(
                         continue
                     digest = str(record.get("digest") or "")
                     metadata = record.get("metadata") or {}
-                    batch_row = None
-                    if digest:
-                        batch_row = (await db.execute(
-                            select(ConversationBatch).where(
-                                ConversationBatch.session_id == session_id,
-                                ConversationBatch.digest == digest,
-                            )
-                        )).scalars().first()
-                    is_new_batch = batch_row is None
-                    if batch_row is None:
+                    if not digest:
                         from agent.context.canonical_context import digest as canonical_digest
-                        batch_row = ConversationBatch(
-                            session_id=session_id,
-                            version="v1",
-                            run_id=run_id or str(metadata.get("run_id") or "") or None,
-                            round_id=str(metadata.get("round_id") or "") or None,
-                            digest=digest or canonical_digest({"messages": canonical_messages, "metadata": metadata}),
-                        )
-                        db.add(batch_row)
-                        await db.flush()
+
+                        digest = canonical_digest({
+                            "messages": canonical_messages,
+                            "metadata": metadata,
+                        })
+                    batch_row, is_new_batch = await _insert_or_get_batch(
+                        db,
+                        ConversationBatch,
+                        {
+                            "session_id": session_id,
+                            "version": "v1",
+                            "run_id": run_id or str(metadata.get("run_id") or "") or None,
+                            "round_id": str(metadata.get("round_id") or "") or None,
+                            "digest": digest,
+                        },
+                    )
                     if is_new_batch:
                         for message in canonical_messages:
                             db.add(ConversationMessage(
@@ -150,24 +187,20 @@ async def finalize_run(
                     display_timeline=display_timeline or None,
                 ))
 
-        is_byok = bool(getattr(model_cfg, "is_byok", False))
+        from agent.usage import record_usage
         # BYOK 不参与平台配额封顶，但仍记录实际 token，供用户查看自己的模型用量。
-        cap_in, cap_out = await quota.cap_usage(
-            db, user_id, settings, tokens_in, tokens_out,
+        usage_result = await record_usage(
+            user_id,
+            settings,
+            model_cfg,
+            db=db,
+            session_id=session_id if session_alive else None,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            tools_used=tools_used,
         )
-        if cap_in or cap_out:
-            db.add(AgentUsage(
-                user_id=user_id,
-                session_id=session_id if session_alive else None,
-                tokens_in=cap_in,
-                tokens_out=cap_out,
-                cache_read=cache_read,
-                cache_write=cache_write,
-                model=model_cfg.model,
-                provider=model_cfg.provider,
-                is_byok=is_byok,
-                tools_used=tools_used or None,
-            ))
         await db.commit()
 
     await trim_session_messages(session_id)
@@ -179,4 +212,10 @@ async def finalize_run(
         actual_usage_tokens=int(actual_usage_tokens or 0),
         compaction_applied=bool(compaction_applied),
     )
-    return FinalizeResult(tokens_in=cap_in, tokens_out=cap_out)
+    # baseline 只允许由 provider 实际上下文达到 90% 的路径推进。
+    # 这里不能在每个 run 收尾后按固定字符窗口再次压缩，否则下一次 run
+    # 会丢失上一 run 的完整前缀，也会绕过 ContextBudget 的真实 usage 判断。
+    return FinalizeResult(
+        tokens_in=usage_result.tokens_in,
+        tokens_out=usage_result.tokens_out,
+    )

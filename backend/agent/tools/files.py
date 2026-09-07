@@ -1,15 +1,15 @@
-"""文件领域技能：查 / 读 / 改 / 整理 / 生成。
+"""文件领域技能：查 / 读 / 改 / 整理 / 创建。
 
 复用文件服务层的现成 helper（`_build_key`/`_resolve_conflict`/
 `_fmt_size`/`color_value`）、`app.services.storage.trash`（`move_file_to_trash`）与
 存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
-读/改仅限文本类（白名单 ext）且 ≤256KB，避免把二进制当文本、撑爆上下文。
-生成（create_document）：文本格式直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice
-转换（系统已装，零新依赖）。
+读/改/创建仅限 UTF-8 文本且 ≤256KB，已知文本扩展名和文件记录的 text/* MIME 都支持。
+创建（create_file）支持批量文件和自定义后缀，不做格式转换、不执行文件内容。
 """
 from datetime import datetime
 import json
+import re
 
 from app.core.redaction import redact
 from app.core.tz import now_utc
@@ -30,8 +30,18 @@ from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
+from app.services.filesystem_authorization import (
+    FilesystemPolicy,
+    filesystem_location_can_write,
+)
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool, current_dispatch_session
+from agent.tools.filesystem_policy import (
+    current_filesystem_policy,
+    current_workspace_target,
+    file_write_access_error,
+    write_access_error,
+)
 from agent.tools.line_edit import apply_line_edits, numbered_lines
 
 # 可读/可改的文本类扩展名
@@ -43,7 +53,7 @@ TEXT_EXTS = frozenset({
 })
 READ_MAX_BYTES = 256 * 1024
 
-# create_document 支持的格式 → mime
+# 已知扩展名的 MIME 映射。create_file 不再限制格式枚举；未知后缀按 text/plain 保存。
 _DOC_MIME = {
     "md":   "text/markdown",   "markdown": "text/markdown", "txt": "text/plain",
     "json": "application/json", "csv": "text/csv",
@@ -81,49 +91,43 @@ _DOC_EXT_ALIASES: dict[str, set[str]] = {}
 for _fmt, _ext in _DOC_EXT.items():
     _DOC_EXT_ALIASES.setdefault(_ext, set()).add(_fmt)
 
-
-# ── 内部：LibreOffice 转换（复刻 files.py 的 _office_to_pdf 模式，泛化目标格式）──
-# (src_ext, target_ext) -> (convert-to 参数, 可选 infilter)
-# HTML 默认会被当作 Writer/Web 组件载入而无法导出 docx，需用 "HTML (StarWriter)"
-# 强制以 Writer 载入；导出指定具体过滤器名，避免 "no export filter"。
-_CONVERT_SPEC = {
-    ("html", "docx"): ("docx:MS Word 2007 XML", "HTML (StarWriter)"),
-    ("html", "pdf"):  ("pdf:writer_pdf_Export", "HTML (StarWriter)"),
-    ("csv",  "xlsx"): ("xlsx:Calc MS Excel 2007 XML", None),
-}
+_CREATE_NAME_EXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-]{0,19}$")
+_CREATE_SPACES = {"project", "personal", "workspace"}
+_CREATE_BINARY_EXTS = frozenset({
+    "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods",
+    "ppt", "pptx", "odp",
+})
 
 
-async def _libreoffice_convert(data: bytes, src_ext: str, target_ext: str) -> bytes:
-    import asyncio
-    import shutil
-    import tempfile
-    from pathlib import Path
+def _is_text_file_record(file) -> bool:
+    """判断文件是否可按 UTF-8 文本处理。
 
-    convert_to, infilter = _CONVERT_SPEC.get(
-        (src_ext, target_ext), (target_ext, None)
-    )
-    tmp = Path(tempfile.mkdtemp())
-    try:
-        src = tmp / f"input.{src_ext}"
-        src.write_bytes(data)
-        cmd = ["libreoffice", "--headless"]
-        if infilter:
-            cmd += [f"--infilter={infilter}"]
-        cmd += ["--convert-to", convert_to, "--outdir", str(tmp), str(src)]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError("文档转换超时")
-        out = tmp / f"input.{target_ext}"
-        if proc.returncode != 0 or not out.exists():
-            raise RuntimeError("文档转换失败：" + (stderr.decode(errors="replace")[:120]))
-        return out.read_bytes()
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    扩展名白名单只覆盖常见文件；create_file 对自定义扩展名写入 text/plain，
+    因此这里同时信任文本 MIME。上传的未知二进制仍保持不可编辑/不可读。
+    """
+    ext = (getattr(file, "ext", "") or "").lower()
+    mime = (getattr(file, "mime_type", "") or "").lower()
+    return ext in TEXT_EXTS or mime.startswith("text/") or mime in {
+        "application/json", "application/xml", "application/javascript",
+        "application/typescript", "application/sql", "application/x-sh",
+    } or mime.endswith("+json") or mime.endswith("+xml")
+
+
+def _split_create_name(name: str) -> tuple[str | None, str | None, str | None]:
+    """解析 create_file 的完整文件名，返回 display_name、ext、错误。"""
+    value = str(name or "").strip()
+    if not value:
+        return None, None, "缺少必填参数 name（文件名，需包含扩展名）"
+    if len(value) > 300 or any(char in value for char in ("/", "\\", "\x00")):
+        return None, None, "文件名非法：不能包含路径分隔符或超过 300 个字符"
+    dot = value.rfind(".")
+    if dot < 0 or dot == len(value) - 1:
+        return None, None, "文件名必须包含非空扩展名，例如 script.py 或 page.html"
+    display_name = value[:dot]
+    ext = value[dot + 1:].lower()
+    if not _CREATE_NAME_EXT_RE.fullmatch(ext):
+        return None, None, "扩展名非法：仅支持 ASCII 字母、数字、点、加号、下划线和短横线，最长 20 个字符"
+    return display_name, ext, None
 
 
 # ── 内部：按目标解析 storage_key（复刻 update_file/copy_file）──
@@ -257,6 +261,9 @@ def _target_loc(f, target: dict):
 
 async def _bound_workspace_target(db, user_id):
     """返回当前工具调用所属会话的文件库落点；没有绑定工作区则返回 None。"""
+    policy = await current_filesystem_policy(db, user_id)
+    if policy is not None:
+        return await current_workspace_target(db, user_id, policy)
     session = current_dispatch_session()
     workspace_id = getattr(session, "workspace_id", None)
     if workspace_id is None:
@@ -265,13 +272,20 @@ async def _bound_workspace_target(db, user_id):
     return await resolve_workspace_target(db, user_id, workspace_id)
 
 
-def _workspace_location(target: dict) -> tuple[str, int | None, int | None]:
-    return target["space"], target.get("project_id"), target.get("folder_id")
+def _workspace_location(target: dict) -> tuple[str, int | None, int | None, int | None]:
+    return target["space"], target.get("project_id"), target.get("folder_id"), target.get("workspace_directory_id")
 
 
-def _location_matches(space, project_id, folder_id, target: dict) -> bool:
-    wanted = _workspace_location(target)
-    return (space, project_id, folder_id) == wanted
+async def _location_matches(db, user_id, space, project_id, folder_id, target: dict) -> bool:
+    """复用统一 workspace 权限，允许根目录下的子文件夹。"""
+    return await filesystem_location_can_write(
+        db,
+        user_id,
+        FilesystemPolicy(workspace_id=target["workspace_id"]),
+        space=space,
+        project_id=project_id,
+        folder_id=folder_id,
+    )
 
 
 def _workspace_conflict(target: dict) -> str:
@@ -299,19 +313,22 @@ async def _resolve_create_location(db, user_id, args: dict):
                 folder = None
             if folder is not None:
                 inferred_space = "project" if folder.project_id is not None else "personal"
-                if _location_matches(inferred_space, folder.project_id, folder.id, target):
+                if await _location_matches(
+                    db, user_id, inferred_space, folder.project_id, folder.id, target,
+                ):
                     return inferred_space, folder.project_id, folder.id, None
         space, project_id, folder_id, error = _coerce_loc(
             args.get("space") or ("project" if args.get("project_id") else "personal"),
             args.get("project_id"), args.get("folder_id"),
         )
         if error:
-            return None, None, None, error
-        if not _location_matches(space, project_id, folder_id, target):
-            return None, None, None, _workspace_conflict(target)
-        return space, project_id, folder_id, None
+            return None, None, None, None, error
+        if not await _location_matches(db, user_id, space, project_id, folder_id, target):
+            return None, None, None, None, _workspace_conflict(target)
+        return space, project_id, folder_id, None, None
     space = args.get("space", "personal")
-    return _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    space, project_id, folder_id, error = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    return space, project_id, folder_id, None, error
 
 
 # ── handlers ──
@@ -356,6 +373,7 @@ async def _list_files(db, user_id, args: dict):
         space=args.get("space"),
         project_id=args.get("project_id"),
         folder_id=folder_id,
+        workspace_directory_id=workspace_target.get("workspace_directory_id") if workspace_target else None,
         ext=args.get("ext"),
         queries=file_queries,
         mode=args.get("mode"),
@@ -390,9 +408,10 @@ async def _read_file(db, user_id, args: dict):
     if ext in AUDIO_EXTS or ext in VIDEO_EXTS:
         return await read_media(f)
 
-    # 图片：vision 模型 + Anthropic 通道 → 把图喂给模型「看」（结果走 tool_result 图片块）
+    # SVG 保留为源码读取；当前视觉适配器只接受可栅格化的位图，不能把 SVG
+    # 伪装成图片块，否则会既看不了图又读不到源码。
     from app.core import chat_attach
-    if ext in chat_attach.IMAGE_EXTS:
+    if ext in chat_attach.IMAGE_EXTS and ext != "svg":
         if not chat_attach.vision_ready():
             return json.dumps({"error": f"这是图片（{f.ext}），当前模型/通道无法识别图像内容"})
         if ext not in chat_attach.VISION_EXTS:
@@ -410,7 +429,8 @@ async def _read_file(db, user_id, args: dict):
                 "note": f"已打开图片《{f.display_name}.{f.ext}》，见随附图像。"}
 
     is_doc = ext in doctext.EXTRACTABLE      # PDF/docx/xlsx/pptx 等，需工具提取文本
-    if ext not in TEXT_EXTS and not is_doc:
+    is_text = _is_text_file_record(f)
+    if not is_text and not is_doc:
         return json.dumps({"error": f"不支持读取该类型（{f.ext}），支持文本、PDF/Office、图片、音频和视频"})
     cap = doctext.EXTRACT_MAX_BYTES if is_doc else READ_MAX_BYTES
     if (f.size_bytes or 0) > cap:
@@ -432,15 +452,18 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     """对已解析的 File f 应用一次编辑（mode + content/find/replace），各自 commit。返回结果 dict。
     供单个与批量 edit 共用。"""
     nm = f"{f.display_name}.{f.ext}"
-    if f.ext.lower() not in TEXT_EXTS:
+    access_error = await file_write_access_error(db, user_id, f)
+    if access_error:
+        return {"error": access_error, "name": nm}
+    if not _is_text_file_record(f):
         return {"error": f"不支持修改该类型（{f.ext}），仅支持文本类文件", "name": nm}
     if (f.size_bytes or 0) > READ_MAX_BYTES:
         return {"error": "文件过大，超出可改上限 256KB", "name": nm}
     storage = get_storage()
     try:
-        old = (await storage.get(f.storage_key)).decode("utf-8", errors="replace")
+        old = (await storage.get(f.storage_key)).decode("utf-8")
     except Exception as e:
-        return {"error": f"读取失败：{str(e)[:80]}", "name": nm}
+        return {"error": f"读取失败：文件不是有效的 UTF-8 文本或物理文件不可用（{str(e)[:80]}）", "name": nm}
     mode = spec.get("mode")
     # `change`：一句话改动摘要——给模型「反馈用户改了啥」的事实依据（按回执说，别自己编）。
     def _clip(s, n=24):
@@ -450,6 +473,9 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
         add = spec.get("content", "")
         new = old + add
         change = f"末尾追加 {len(add)} 字"
+    elif mode == "replace":
+        new = spec.get("content", "")
+        change = f"整体替换为 {len(new)} 字"
     elif mode == "find_replace":
         find = spec.get("find", "")
         if not find or find not in old:
@@ -467,9 +493,12 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     else:
         return {"error": f"未知 mode: {mode}", "name": nm}
     data = new.encode("utf-8")
+    if len(data) > READ_MAX_BYTES:
+        return {"error": "修改后文件过大，单文件上限 256KB", "name": nm}
     await storage.put(f.storage_key, data, f.mime_type)
     f.size_bytes = len(data)
     f.size = _fmt_size(len(data))
+    f.version = int(f.version or 1) + 1
     f.updated_at = now_utc()
     await db.commit()
     result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
@@ -511,59 +540,107 @@ async def _edit_file(db, user_id, args: dict):
     return await _edit_one(db, user_id, f, args)
 
 
-async def _create_document(db, user_id, args: dict):
-    fmt = (args.get("format") or "md").lower()
-    if fmt not in _DOC_MIME:
-        return json.dumps({"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME)}, ensure_ascii=False)
-    # 落盘 ext 走规范名（md/markdown→md、txt/text→txt、yaml/yml→yaml），跟上传/重命名等其他途径
-    # 创建的 md 一致都是 .md 后缀，避免 markdown 等同族写法落到存储里变成 .markdown（双后缀 bug 根因）。
-    ext = _DOC_EXT.get(fmt, fmt)
-    name = (args.get("name") or "").strip()
-    if not name:
-        return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
-    display_name = _strip_ext(name, ext)
-    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
-    if loc_err:
-        return loc_err
-    content = args.get("content", "")
+async def _create_file(db, user_id, args: dict):
+    """批量创建 UTF-8 文本文件；每项独立校验、写入和提交。"""
+    items = args.get("files")
+    if not isinstance(items, list) or not items:
+        return {"error": "需要 files 数组；每项填写 name（含自定义扩展名）和 content"}
+    if len(items) > 20:
+        return {"error": "一次最多创建 20 个文件"}
+    defaults = args.get("target")
+    if defaults is None:
+        defaults = {}
+    if not isinstance(defaults, dict):
+        return {"error": "target 必须是对象，支持 space/project_id/folder_id"}
 
-    # 生成二进制内容。LibreOffice 路径走 ext（规范名），跟 mime/storage_key 保持同一份事实——
-    # 别在分支判定里用 fmt 又在落盘/DB 用 ext，alias 化后两边可能不一致（比如以后加
-    # fmt="doc"→ext="docx"，这里再写 fmt in ("docx",) 就会漏过 doc 这条路径）。
-    try:
-        if ext in ("docx", "pdf"):
-            data = await _libreoffice_convert(content.encode("utf-8"), "html", ext)
-        elif ext == "xlsx":
-            data = await _libreoffice_convert(content.encode("utf-8"), "csv", "xlsx")
-        else:  # 文本类直写
-            data = content.encode("utf-8")
-    except Exception as e:
-        return json.dumps({"error": f"生成失败：{str(e)[:120]}"})
+    created, failed = [], []
+    service = FileService(db)
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            failed.append({"index": index, "error": "每项必须是对象"})
+            continue
+        name = str(item.get("name") or "").strip()
+        display_name, ext, name_error = _split_create_name(name)
+        if name_error:
+            failed.append({"index": index, "name": name, "error": name_error})
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            failed.append({"index": index, "name": name, "error": "content 必须是字符串"})
+            continue
+        if ext in _CREATE_BINARY_EXTS:
+            failed.append({"index": index, "name": name,
+                           "error": f"create_file 只写 UTF-8 文本，不能直接生成 {ext}；请使用上传文件"})
+            continue
+        data = content.encode("utf-8")
+        if len(data) > READ_MAX_BYTES:
+            failed.append({"index": index, "name": name, "error": "文件过大，单文件上限 256KB"})
+            continue
 
-    try:
-        result = await FileService(db).create_file(
-            user_id,
-            space=space,
-            project_id=project_id if space == "project" else None,
-            folder_id=folder_id,
-            stage_name="",
-            mind_map_id=None,
-            display_name=display_name,
-            ext=ext,
-            mime_type=_DOC_MIME[ext],
-            data=data,
+        location_args = {**defaults, **{
+            key: item[key] for key in ("space", "project_id", "folder_id") if key in item
+        }}
+        space, project_id, folder_id, workspace_directory_id, loc_err = await _resolve_create_location(
+            db, user_id, location_args,
         )
-    except Exception as e:
-        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    await db.commit()
-    db_file = result.file
-    return {"success": True, "file_id": db_file.id,
-            "name": f"{db_file.display_name}.{db_file.ext}", "size": db_file.size,
-            **(await _location_receipt(db, user_id, space, project_id, folder_id))}
+        if loc_err:
+            failed.append({"index": index, "name": name, "error": loc_err})
+            continue
+        if space not in _CREATE_SPACES:
+            failed.append({"index": index, "name": name, "error": "create_file 只支持 personal/project/workspace 空间"})
+            continue
+        access_error = await write_access_error(
+            db, user_id, space=space, project_id=project_id, folder_id=folder_id,
+        )
+        if access_error:
+            failed.append({"index": index, "name": name, "error": access_error})
+            continue
+
+        try:
+            result = await service.create_file(
+                user_id,
+                space=space,
+                project_id=project_id if space == "project" else None,
+                folder_id=folder_id,
+                stage_name="",
+                mind_map_id=None,
+                display_name=display_name,
+                ext=ext,
+                # 未知后缀也按文本落库，保证 read/edit/前端预览使用同一事实。
+                mime_type=("text/plain" if ext == "svg" else _DOC_MIME.get(ext, "text/plain")),
+                data=data,
+                workspace_directory_id=workspace_directory_id,
+            )
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            failed.append({"index": index, "name": name,
+                           "error": redact(f"{type(e).__name__}: {e}")})
+            continue
+        db_file = result.file
+        created.append({
+            "index": index,
+            "file_id": db_file.id,
+            "name": f"{db_file.display_name}.{db_file.ext}",
+            "size": db_file.size,
+            **(await _location_receipt(db, user_id, space, project_id, folder_id)),
+        })
+    return {
+        "success": True,
+        "created_count": len(created),
+        "failed_count": len(failed),
+        "created": created,
+        "failed": failed,
+    }
 
 
-async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id):
+async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id, workspace_directory_id=None):
     """把一个已解析好的暂存附件 meta 落成文件库记录，返回 (ok, item)。供单个/批量 save 共用。"""
+    access_error = await write_access_error(
+        db, user_id, space=space, project_id=project_id, folder_id=folder_id,
+    )
+    if access_error:
+        return False, {"error": access_error}
     from app.core import chat_attach
     ext = meta.get("ext") or "bin"
     display_name = meta.get("name") or "上传文件"
@@ -577,6 +654,7 @@ async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder
             space=space,
             project_id=project_id if space == "project" else None,
             folder_id=folder_id,
+            workspace_directory_id=workspace_directory_id,
             stage_name="",
             mind_map_id=None,
             display_name=display_name,
@@ -608,7 +686,7 @@ async def _save_uploaded_file(db, user_id, args: dict):
     elif source == "attach_ids" and not args.get("attach_ids"):
         return {"error": "source=attach_ids 时必须提供 attach_ids"}
 
-    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
+    space, project_id, folder_id, workspace_directory_id, loc_err = await _resolve_create_location(db, user_id, args)
     if loc_err:
         return loc_err
 
@@ -624,7 +702,8 @@ async def _save_uploaded_file(db, user_id, args: dict):
                                "error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"})
                 continue
             ok, item = await _save_one_attach(db, user_id, meta, space=space,
-                                              project_id=project_id, folder_id=folder_id)
+                                              project_id=project_id, folder_id=folder_id,
+                                              workspace_directory_id=workspace_directory_id)
             (saved if ok else failed).append(item)
         return {"success": True, "saved_count": len(saved), "failed_count": len(failed),
                 "saved": saved, "failed": failed}
@@ -634,7 +713,8 @@ async def _save_uploaded_file(db, user_id, args: dict):
     if not meta:
         return json.dumps({"error": note or "没找到可保存的附件，可能确实过期了（聊天附件只暂存 7 天）。"
                                     "麻烦让用户重新发一下～"}, ensure_ascii=False)
-    ok, item = await _save_one_attach(db, user_id, meta, space=space, project_id=project_id, folder_id=folder_id)
+    ok, item = await _save_one_attach(db, user_id, meta, space=space, project_id=project_id,
+                                      folder_id=folder_id, workspace_directory_id=workspace_directory_id)
     if not ok:
         return json.dumps(item, ensure_ascii=False)
     return {**item, **({"note": note} if note else {})}
@@ -646,10 +726,13 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
     new_fmt 为 None 时沿用 f.ext（旧行为，"改名不改格式"）。传了新 fmt 就用规范 ext，
     用于修双后缀文件：new_name="README" + new_fmt="md" 会把 f.ext="markdown" 的
     README.md.markdown 改成 README.md。文本类互相转也走这条；非文本类（docx/pdf/xlsx）
-    仅当 new_fmt 等于当前 ext 时允许"改名不改内容"，跨文本/二进制的格式转换请走 edit_file
-    + LibreOffice，而不是 rename。
+    仅当 new_fmt 等于当前 ext 时允许"改名不改内容"，跨文本/二进制的格式转换请重新上传，
+    而不是把 rename 当成转换工具。
     """
     old_ext = f.ext
+    access_error = await file_write_access_error(db, user_id, f)
+    if access_error:
+        return {"error": access_error, "name": f"{f.display_name}.{f.ext}"}
     if new_fmt is not None:
         fmt = new_fmt.lower()
         if fmt not in _DOC_MIME:
@@ -783,6 +866,9 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err
+    source_error = await file_write_access_error(db, user_id, f)
+    if source_error:
+        return {"error": source_error, "name": f"{f.display_name}.{f.ext}"}
 
     # 支持按文件夹「名称」移动（agent 通常不知道 folder_id）
     fname = target.get("folder")
@@ -807,6 +893,12 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
         return json.dumps({"error": "未指定有效目标或文件已在该位置，未移动。"
                                     "请用 target.folder 指定目标文件夹名，或先用 list_folders 确认。",
                            "current_folder_id": f.folder_id})
+
+    target_error = await write_access_error(
+        db, user_id, space=space, project_id=new_pid, folder_id=folder_id,
+    )
+    if target_error:
+        return {"error": target_error, "name": f"{f.display_name}.{f.ext}"}
 
     try:
         result = await FileService(db).update_file(
@@ -878,6 +970,17 @@ async def _resolve_target(db, user_id, target: dict):
 async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict:
     """委托 FileService 搬文件夹树，并同步重建所有后代文件的物理路径。"""
     name = folder.name
+    source_error = await write_access_error(
+        db, user_id, space="project" if folder.project_id is not None else "personal",
+        project_id=folder.project_id, folder_id=folder.id,
+    )
+    if source_error:
+        return {"error": source_error, "folder": name}
+    target_error = await write_access_error(
+        db, user_id, space=t_space, project_id=t_pid, folder_id=t_parent_id,
+    )
+    if target_error:
+        return {"error": target_error, "folder": name}
     sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
     try:
         await FileService(db).move_folder(
@@ -904,7 +1007,9 @@ async def _move_items(db, user_id, args: dict):
     t_space, t_pid, t_folder_id, terr = await _resolve_target(db, user_id, target)
     if terr:
         return terr
-    if workspace_target is not None and not _location_matches(t_space, t_pid, t_folder_id, workspace_target):
+    if workspace_target is not None and not await _location_matches(
+        db, user_id, t_space, t_pid, t_folder_id, workspace_target,
+    ):
         return _workspace_conflict(workspace_target)
     file_target = {"space": t_space, "project_id": t_pid, "folder_id": t_folder_id}
 
@@ -969,6 +1074,13 @@ async def _create_folder(db, user_id, args: dict):
             if workspace_target.get("folder_id") is not None and explicit_parent_id != workspace_target["folder_id"]:
                 return _workspace_conflict(workspace_target)
             parent_id = explicit_parent_id
+    access_error = await write_access_error(
+        db, user_id,
+        space="project" if project_id is not None else "personal",
+        project_id=project_id, folder_id=parent_id,
+    )
+    if access_error:
+        return {"error": access_error}
     try:
         fo = await FileService(db).create_folder(
             user_id, name=args["name"], parent_id=parent_id,
@@ -991,6 +1103,9 @@ async def _delete_file(db, user_id, args: dict):
             file, error = await _resolve_file(db, user_id, {"file_id": file_id})
             if error:
                 return error
+            access_error = await file_write_access_error(db, user_id, file)
+            if access_error:
+                return {"error": access_error}
             files.append(file)
         results = []
         for file in files:
@@ -1003,6 +1118,9 @@ async def _delete_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
+    access_error = await file_write_access_error(db, user_id, f)
+    if access_error:
+        return {"error": access_error}
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
     await delete_file_action(db, get_storage(), user_id, f.id, now_utc())
     await db.commit()
@@ -1061,6 +1179,12 @@ async def _rename_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
+    access_error = await write_access_error(
+        db, user_id, space="project" if fo.project_id is not None else "personal",
+        project_id=fo.project_id, folder_id=fo.id,
+    )
+    if access_error:
+        return {"error": access_error}
     try:
         fo = await FileService(db).rename_folder(
             user_id, fo.id, args["new_name"], client_version=fo.version,
@@ -1081,6 +1205,12 @@ async def _delete_folder(db, user_id, args: dict):
             folder = await _find_folder(db, user_id, {"folder_id": folder_id})
             if isinstance(folder, str):
                 return folder
+            access_error = await write_access_error(
+                db, user_id, space="project" if folder.project_id is not None else "personal",
+                project_id=folder.project_id, folder_id=folder.id,
+            )
+            if access_error:
+                return {"error": access_error}
             folders.append(folder)
         results = []
         try:
@@ -1095,6 +1225,12 @@ async def _delete_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
+    access_error = await write_access_error(
+        db, user_id, space="project" if fo.project_id is not None else "personal",
+        project_id=fo.project_id, folder_id=fo.id,
+    )
+    if access_error:
+        return {"error": access_error}
     fid = fo.id
     fname = fo.name
     try:
@@ -1137,8 +1273,15 @@ async def _copy_file(db, user_id, args: dict):
             if fo.project_id is not None:
                 project_id = fo.project_id
                 space = "project"
-    if workspace_target is not None and not _location_matches(space, project_id, folder_id, workspace_target):
+    if workspace_target is not None and not await _location_matches(
+        db, user_id, space, project_id, folder_id, workspace_target,
+    ):
         return _workspace_conflict(workspace_target)
+    target_error = await write_access_error(
+        db, user_id, space=space, project_id=project_id, folder_id=folder_id,
+    )
+    if target_error:
+        return {"error": target_error, "name": f"{f.display_name}.{f.ext}"}
     try:
         result = await FileService(db).copy_file(
             user_id, f.id, folder_id=folder_id,
@@ -1455,12 +1598,13 @@ class FilesSkill(BaseSkill):
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
             },
+            repeat_safe=True,
             handler=_list_files,
         ),
         Tool(
             name="read_file", label="读取文件",
-            description_short='读取文件内容。',
-            description="读取文本、文档、表格、图片、音频或视频；返回与问题相关的内容摘要。",
+            description_short='读取文件内容；图片会交给视觉模型查看。',
+            description="读取文本、文档、表格、图片、音频或视频并返回与问题相关的内容；文件库位图会直接交给视觉模型查看，SVG 按源码文本读取；不要把本地路径或 file:/// URI 传给 inspect_images。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1469,12 +1613,13 @@ class FilesSkill(BaseSkill):
                 },
                 "required": [],
             },
+            repeat_safe=True,
             handler=_read_file,
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description_short='修改文本文件；支持替换、追加和查找替换。',
-            description="修改文本文件；支持按 target_lines 更新/删除指定行、整体替换、追加和查找替换，多个文件用 edits 批量处理。target_lines 支持 8、8-11、8,11，content 为空表示删除；行号以最新 read_file 内容为准，多个范围不能重叠。",
+            description_short='修改 UTF-8 文本文件；支持整体替换、追加和查找替换。',
+            description="修改 UTF-8 文本文件；支持整体替换、追加、查找替换和按 target_lines 更新/删除指定行，多个文件用 edits 批量处理。target_lines 支持 8、8-11、8,11，content 为空表示删除；行号以最新 read_file 内容为准，多个范围不能重叠。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1485,7 +1630,7 @@ class FilesSkill(BaseSkill):
                             "properties": {
                                 "file": {"type": "string"},
                                 "file_id": {"type": "integer"},
-                                "mode": {"type": "string", "enum": ["append", "find_replace", "line_edit"]},
+                                "mode": {"type": "string", "enum": ["replace", "append", "find_replace", "line_edit"]},
                                 "content": {"type": "string"},
                                 "find": {"type": "string"},
                                 "replace": {"type": "string"},
@@ -1493,6 +1638,13 @@ class FilesSkill(BaseSkill):
                             },
                             "required": ["mode"],
                             "allOf": [
+                                {
+                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "replace"}}},
+                                    "then": {
+                                        "required": ["content"],
+                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]},
+                                    },
+                                },
                                 {
                                     "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
                                     "then": {
@@ -1513,13 +1665,14 @@ class FilesSkill(BaseSkill):
                     },
                     "file_id": {"type": "integer"},
                     "file": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["append", "find_replace", "line_edit"]},
+                    "mode": {"type": "string", "enum": ["replace", "append", "find_replace", "line_edit"]},
                     "content": {"type": "string"},
                     "find": {"type": "string"},
                     "replace": {"type": "string"},
                     "line_edits": {"type": "array", "items": {"type": "object", "properties": {"target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"}, "content": {"type": "string"}, "expected": {"type": "string"}}, "required": ["target_lines", "content"], "additionalProperties": False}},
                 },
                 "allOf": [
+                    {"if": {"required": ["mode"], "properties": {"mode": {"const": "replace"}}}, "then": {"required": ["content"], "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]}}},
                     {"if": {"required": ["mode"], "properties": {"mode": {"const": "line_edit"}}}, "then": {"required": ["line_edits"], "not": {"anyOf": [{"required": ["content"]}, {"required": ["find"]}, {"required": ["replace"]}]}}},
                     {
                         "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
@@ -1541,26 +1694,47 @@ class FilesSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="create_document", label="生成文档",
-            description_short='创建文档。',
-            description="创建文件；文本直接写入，docx/pdf 用 HTML，xlsx 用 CSV，返回 file_id。",
+            name="create_file", label="创建文件",
+            description_short='批量创建 UTF-8 文本文件；支持自定义扩展名。',
+            description="批量创建 UTF-8 文本文件；files 必须是数组，name 和 content 写在数组项内，不要放到顶层。每项填写完整文件名（如 script.py、page.html、config.custom）和 content，未知扩展名也按文本保存。可用 target 指定默认 personal/project、project_id、folder_id，单项可覆盖；不做格式转换、不执行内容，同名自动保留副本。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
-                    "format": {"type": "string", "enum": sorted(_DOC_MIME)},
-                    "space": {"type": "string", "enum": ["project", "personal"]},
-                    "project_id": {"type": "integer"},
-                    "folder_id": {"type": "integer"},
-                    "content": {"type": "string"},
+                    "target": {
+                        "type": "object",
+                        "properties": {
+                            "space": {"type": "string", "enum": ["project", "personal"]},
+                            "project_id": {"type": "integer"},
+                            "folder_id": {"type": "integer"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "files": {
+                        "type": "array", "minItems": 1, "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "minLength": 1, "maxLength": 300},
+                                "content": {"type": "string", "maxLength": 262144},
+                                "space": {"type": "string", "enum": ["project", "personal"]},
+                                "project_id": {"type": "integer"},
+                                "folder_id": {"type": "integer"},
+                            },
+                            "required": ["name", "content"],
+                            "additionalProperties": False,
+                            "allOf": [
+                                {
+                                    "if": {"required": ["space"], "properties": {"space": {"const": "project"}}},
+                                    "then": {"required": ["project_id"]},
+                                },
+                            ],
+                        },
+                    },
                 },
-                "required": ["name", "format", "content"],
-                "allOf": [
-                    {"if": {"required": ["space"], "properties": {"space": {"const": "project"}}},
-                     "then": {"required": ["project_id"]}},
-                ],
+                "required": ["files"],
+                "additionalProperties": False,
             },
-            handler=_create_document,
+            handler=_create_file,
             mutates=True,
         ),
         Tool(
@@ -1599,8 +1773,8 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "files":   {"type": "array", "items": {"type": "string"}},
-                    "folders": {"type": "array", "items": {"type": "string"}},
+                    "files":   {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+                    "folders": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
                     "target": {
                         "type": "object",
                         "properties": {
@@ -1692,6 +1866,7 @@ class FilesSkill(BaseSkill):
                     "parent_id": {"type": "integer"},
                 },
             },
+            repeat_safe=True,
             handler=_list_folders,
         ),
         Tool(
@@ -1783,6 +1958,7 @@ class FilesSkill(BaseSkill):
             description_short='查最近暂存的附件；用于找回近期图片或文件',
             description="列出当前仍在暂存区的聊天附件；可用于找回近期图片或文件，再发送或保存。",
             input_schema={"type": "object", "properties": {}},
+            repeat_safe=True,
             handler=_list_recent_attachments,
         ),
         Tool(

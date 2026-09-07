@@ -158,6 +158,10 @@ Round 1 不纳入稳定段结论：MiniMax/GLM 的 Round 1 继承了此前测试
 
 压缩完成后，摘要和新的 baseline 一起成为会话的持久状态；下一轮从新的 baseline 继续组装，而不是把旧摘要和原始历史重复注入。压缩任务需要按 Session 串行，避免后台压缩、手动 `/compact` 和正在运行的 Run 互相覆盖。
 
+请求的 `input usage` 只代表一次 Provider 请求的输入量，不等于会话 baseline。上一轮请求的输入量、输出量或临时 inline compaction 位置，都不能直接作为下一轮 baseline。baseline 只有在摘要完整、校验通过并成功持久化后才推进；压缩失败时下一轮必须继续使用旧 baseline，不得把失败结果或部分摘要混入上下文。
+
+baseline 更新通常在 Run 完成后异步调度，但它与下一轮 context assembly 必须按 Session 串行：下一轮不能在更新尚未完成时无条件读取旧边界，应等待更新完成，或读取带版本校验的最新持久化状态。LoopScope 排查必须同时查看 `baseline_message_id`、历史选择范围、`provider_input`、`fresh_input` 和 `cache_read`，不能仅凭高缓存命中率判断上下文已经变小。
+
 压缩失败时必须保留原 History 和 baseline，返回可诊断的失败状态；不能因为压缩失败直接丢弃本轮，也不能以“已整理”代替真实结果。
 
 ### 6.1 超大历史的分块滚动摘要

@@ -40,3 +40,45 @@ def test_independent_reflection_task_binds_user_model(monkeypatch):
     finally:
         modelctx._model_cfg.reset(token_model)
         modelctx._user_scope.reset(token_scope)
+
+
+def test_reflection_extraction_disables_thinking_for_structured_delta(monkeypatch):
+    from agent.memory import reflection
+
+    captured = {}
+
+    async def fake_run(self, branch_input, policy, settings):
+        captured["thinking"] = policy.thinking
+        captured["max_tokens"] = policy.max_tokens
+        return SimpleNamespace(ok=True, output={"pattern_add": [], "pattern_remove": []})
+
+    monkeypatch.setattr(reflection.ContextBranch, "run", fake_run)
+
+    async def exercise():
+        result = await reflection._extract(
+            "小北", "你好", "你好！", "", "", "", SimpleNamespace(ai=SimpleNamespace(max_tokens=4096)),
+        )
+        assert result["pattern_add"] == []
+
+    asyncio.run(exercise())
+    assert captured == {"thinking": "disabled", "max_tokens": 900}
+
+
+def test_perception_record_uses_bound_byok_model_not_platform_default():
+    from agent.memory import reflection
+
+    model_cfg = SimpleNamespace(
+        model="MiniMax-M3",
+        provider="minimax",
+        is_byok=True,
+    )
+
+    record = reflection._perc_rec(
+        "user-test",
+        {"intent": "闲聊", "ambiguity": 5, "emotion": "无", "emo_strength": 0},
+        model_cfg,
+    )
+
+    assert record["model"] == "MiniMax-M3"
+    assert record["provider"] == "minimax"
+    assert record["is_byok"] is True

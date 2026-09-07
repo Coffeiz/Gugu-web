@@ -29,6 +29,7 @@ from app.core.redaction import diag_log, redact
 from app.core.url_security import resolve_pinned_ip
 from app.services.files.browser import get_user_folder
 from app.services.storage.file_service import FileService
+from agent.tools.filesystem_policy import write_access_error
 
 _log = logging.getLogger("agent.tools.web")
 
@@ -337,6 +338,14 @@ async def _web_download(db, user_id, args: dict):
         space = inferred_space
     else:
         space = space or ("project" if project_id is not None else "personal")
+
+    # 下载会落入文件库，必须在发起公网请求前复用文件工具的统一写权限策略。
+    # 这样未授权的 personal/project 目标不会先下载再在持久化阶段才失败。
+    access_error = await write_access_error(
+        db, user_id, space=space, project_id=project_id, folder_id=folder_id,
+    )
+    if access_error:
+        return {"error": access_error}
 
     normalized_url = url.strip()
     if not normalized_url.startswith(("http://", "https://")):

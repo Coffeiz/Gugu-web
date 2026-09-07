@@ -98,7 +98,7 @@ export type RagRankCandidate = {
   raw_score: number;
   rank: number;
   fusion?: "bm25" | "hybrid-rrf";
-  fused_score?: number;
+  fused_score?: number | null;
   document: RagDocument;
 };
 
@@ -109,6 +109,7 @@ export type RagScoreStats = {
   top_confidence: number;
   threshold: number;
   preferred_threshold: number;
+  selection_mode: "confidence" | "top_k";
   scoring_version: string;
 };
 
@@ -161,7 +162,7 @@ export type RagRequest =
   | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[] }
   | { op: "search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope }
   | { op: "unified_search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; max_chars?: number }
-  | { op: "rank_candidates"; query: string; candidates: RagRankCandidate[]; limit?: number; max_chars?: number; max_per_source?: number; max_per_parent?: number; exclude_content_hashes?: string[] };
+  | { op: "rank_candidates"; query: string; candidates: RagRankCandidate[]; limit?: number; max_chars?: number; max_per_source?: number; max_per_parent?: number; exclude_content_hashes?: string[]; selection_mode?: "confidence" | "top_k" };
 
 export type RagSuccessResponse =
   | { status: "ok"; version: string; revision: string; document_count: number }

@@ -104,8 +104,8 @@ export function useEventEditForm() {
       reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
       reminders.value = tasks.map((t: any) => {
         let leadMin = 0
-        if ((t.cron || '').startsWith('@once:')) {
-          const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.cron.slice(6))) / 60000)
+        if (t.schedule_kind === 'once' && t.start_at) {
+          const raw = Math.round((+new Date(`${ev.date}T${ev.time || '09:00'}`) - +new Date(t.start_at)) / 60000)
           leadMin = LEAD_OPTIONS.reduce((b, o) => Math.abs(o.min - raw) < Math.abs(b - raw) ? o.min : b, 0)
         }
         return { id: t.id, leadMin }
@@ -119,8 +119,13 @@ export function useEventEditForm() {
       for (const id of removedReminderIds.value) await scheduledTasksApi.delete(id)
       removedReminderIds.value = []
       for (const r of reminders.value) {
-        const cron = `@once:${_reminderAtIso(date, time, r.leadMin)}`
-        const data = { name: `${name} 提醒`, payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`, cron, channels: reminderChannels.value }
+        const data = {
+          name: `${name} 提醒`,
+          payload: `提醒：${name}（${date}${time ? ' ' + time : ''}）`,
+          schedule_kind: 'once' as const,
+          start_at: _reminderAtIso(date, time, r.leadMin),
+          channels: reminderChannels.value,
+        }
         if (r.id) await scheduledTasksApi.update(r.id, data)
         else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); r.id = t?.id ?? null }
       }

@@ -104,7 +104,7 @@
             </div>
           </header>
           <div v-if="injectionSpans.length" class="injection-overview">
-            <div class="injection-overview-head"><span class="eyebrow">INJECTION</span><span>本 Run 已注入的工具与 Skill</span></div>
+            <div class="injection-overview-head"><span class="eyebrow">INJECTION</span><span>本 Run 已注入的工具、Skill 与提示词</span></div>
             <div class="injection-list">
               <div v-for="item in injectionSpans" :key="item.id" class="injection-item">
                 <strong>{{ injectionLabel(item) }}</strong>
@@ -130,6 +130,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
+import { formatCompactNumber } from '../utils/formatNumber'
 
 const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
 const emit = defineEmits<{
@@ -153,7 +154,7 @@ watch(
   ([runs, focus]) => {
     if (!runs.length) { selectedId.value = ''; return }
     if (focus && runs.some(r => r.id === focus)) { selectRun(focus); return }
-    if (!runs.some(r => r.id === selectedId.value)) selectRun(runs[runs.length - 1].id)
+    if (!runs.some(r => r.id === selectedId.value)) selectRun(runs[0].id)
   },
   { immediate: true, deep: true },
 )
@@ -192,14 +193,17 @@ const modelLabel = computed(() => {
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
   const source = span.attributes?.context_source
-  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body'
+  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body' || source === 'shell_policy'
 }))
 function injectionLabel(span: any) {
-  const labels: Record<string, string> = { tool_schema: '工具 Schema', tool_schema_error: 'Schema 错误', capability_catalog: '能力目录', skill_index: 'Skill 索引', skill_body: 'Skill 正文' }
+  const labels: Record<string, string> = { tool_schema: '工具 Schema', tool_schema_error: 'Schema 错误', capability_catalog: '能力目录', skill_index: 'Skill 索引', skill_body: 'Skill 正文', shell_policy: 'Shell 提示词' }
   return labels[String(span.attributes?.context_source)] || span.name
 }
 function injectionSummary(span: any) {
   const input = (span.input && typeof span.input === 'object' ? span.input : {}) as Record<string, any>
+  if (span.attributes?.context_source === 'shell_policy') {
+    return span.attributes?.role === 'stable_protocol' ? 'shell.md · 稳定安全协议' : '本轮动态权限状态'
+  }
   if (span.attributes?.context_source === 'tool_schema') {
     const selected = Array.isArray(input.selected_tool_names) ? input.selected_tool_names : []
     const count = selected.length > 0 ? selected.length : Number(input.tool_count ?? 0)
@@ -321,9 +325,7 @@ function fmtMs(v: number | null | undefined) {
   return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`
 }
 function fmtTokens(v: number | null | undefined) {
-  if (v == null) return '—'
-  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)}k`
-  return String(Math.round(v))
+  return formatCompactNumber(v)
 }
 </script>
 

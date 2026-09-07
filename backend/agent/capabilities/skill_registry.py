@@ -22,6 +22,57 @@ def _digest(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
+def serialize_user_skill_metadata(items: tuple[CapabilityMeta, ...] | list[CapabilityMeta]) -> list[dict]:
+    """把会话要冻结的用户 Skill 元数据转成可持久化的 JSON 形状。"""
+    return [
+        {
+            "name": item.name,
+            "kind": item.kind,
+            "description_short": item.description_short,
+            "category": item.category,
+            "permissions": list(item.permissions),
+            "platforms": list(item.platforms),
+            "related_tools": list(item.related_tools),
+            "related_skills": list(item.related_skills),
+            "source": item.source,
+            "enabled": bool(item.enabled),
+            "content_digest": item.content_digest,
+            "owner_fingerprint": item.owner_fingerprint,
+        }
+        for item in items
+        if item.kind == "skill" and item.source == "user"
+    ]
+
+
+def deserialize_user_skill_metadata(value) -> tuple[CapabilityMeta, ...] | None:
+    """读取会话内冻结的用户 Skill 元数据；格式异常时返回 None 触发一次重建。"""
+    if not isinstance(value, list):
+        return None
+    items = []
+    for row in value:
+        if not isinstance(row, dict) or row.get("kind") != "skill" or row.get("source") != "user":
+            return None
+        name = str(row.get("name") or "").strip().lower()
+        description = str(row.get("description_short") or "").strip()
+        if not name or not description:
+            return None
+        items.append(CapabilityMeta(
+            name=name,
+            kind="skill",
+            description_short=description,
+            category=str(row.get("category") or ""),
+            permissions=tuple(str(item) for item in (row.get("permissions") or ()) if str(item)),
+            platforms=tuple(str(item) for item in (row.get("platforms") or ()) if str(item)),
+            related_tools=tuple(str(item) for item in (row.get("related_tools") or ()) if str(item)),
+            related_skills=tuple(str(item) for item in (row.get("related_skills") or ()) if str(item)),
+            source="user",
+            enabled=bool(row.get("enabled", True)),
+            content_digest=str(row.get("content_digest") or ""),
+            owner_fingerprint=str(row.get("owner_fingerprint") or ""),
+        ))
+    return tuple(items)
+
+
 def validate_user_skill(*, slug: str, name: str, description_short: str,
                         description_long: str | None, category: str,
                         related_tools: list[str] | tuple[str, ...], body: str,
@@ -134,7 +185,8 @@ class SkillCapabilityRegistry:
         from agent.tools import registry as tool_registry
 
         values = validate_user_skill(owner_id=owner_id, **payload)
-        missing = [name for name in values["related_tools"] if tool_registry.get(name) is None]
+        tool_snapshot = tool_registry.snapshot()
+        missing = [name for name in values["related_tools"] if tool_snapshot.get(name) is None]
         if missing:
             raise CapabilityRegistrationError(f"Skill 关联了未知工具：{', '.join(missing)}")
         unauthorized = [name for name in values["related_tools"] if name not in set(allowed_tool_names)]
@@ -170,7 +222,8 @@ class SkillCapabilityRegistry:
         }
         normalized = validate_user_skill(owner_id=owner_id, **values)
         from agent.tools import registry as tool_registry
-        missing = [name for name in normalized["related_tools"] if tool_registry.get(name) is None]
+        tool_snapshot = tool_registry.snapshot()
+        missing = [name for name in normalized["related_tools"] if tool_snapshot.get(name) is None]
         if missing:
             raise CapabilityRegistrationError(f"Skill 关联了未知工具：{', '.join(missing)}")
         unauthorized = [name for name in normalized["related_tools"] if name not in set(allowed_tool_names)]

@@ -75,6 +75,11 @@ async def register(body: UserRegister, request: Request, response: Response, db:
     if body.locale:
         await create_user_preferences(db, user.id, {"locale": body.locale})
 
+    # 默认 Workspace 必须在注册事务内创建：GET /workspace-directories 是只读接口，
+    # 不能靠它偷偷 ensure + INSERT（get_db 请求末 rollback 会丢掉返回的 ID，磁盘目录却留下）。
+    from app.services.workspaces import ensure_default_workspace_directory
+    await ensure_default_workspace_directory(db, user.id)
+
     await db.commit()
     await db.refresh(user)
 

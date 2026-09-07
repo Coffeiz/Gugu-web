@@ -103,7 +103,7 @@ def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None)
         if prompt.get("native_keyboard"):
             instruction = "请点击下方按钮；若未显示按钮，可回复选项序号或选项文字。"
         if prompt.get("allow_text_input"):
-            instruction = "请回复选项序号或选项文字。"
+            instruction = "请点击选项；如需其他回答，请点击“自定义回复”后直接发送内容。"
         return f"{title}\n{body}\n{choices}\n{instruction}"
     instruction = (
         "请直接回复你的答案。"

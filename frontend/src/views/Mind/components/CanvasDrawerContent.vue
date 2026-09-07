@@ -176,6 +176,7 @@ defineExpose({ listRef })
 .cd-list { box-sizing: border-box; padding: 0 9px 9px; }
 .canvas-list { width: 190px; }
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.canvas-item + .canvas-item { margin-top: 1px; }
 .ci-select { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--action-outline); border-radius: 4px; background: var(--control-bg); color: var(--content-secondary); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
 .canvas-item.selected .ci-select { border-color: var(--action-primary); background: var(--action-primary); color: var(--content-on-accent); }
 .canvas-item:hover { background: var(--sidebar-item-hover); }

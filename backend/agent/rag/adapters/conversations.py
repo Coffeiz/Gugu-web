@@ -52,6 +52,7 @@ class ConversationAdapter:
                 version=str(message.id),
                 updated_at=message.created_at.isoformat() if message.created_at else None,
                 metadata={
+                    "session_id": session.id,
                     "message_id": message.id,
                     "role": message.role,
                     "session_source": session.source,

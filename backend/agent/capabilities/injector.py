@@ -9,6 +9,14 @@ from .selector import CapabilitySelector
 
 CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
+# Skill 生命周期管理不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
+# 它们不会因此进入 Provider 的首轮工具 Schema。
+ON_DEMAND_TOOL_NAMES = ("create_skill", "update_skill", "delete_skill")
+
+
+def _capability_tool_names(tool_names: list[str]) -> list[str]:
+    """构建能力快照可见工具名；保持 Profile 工具名与 Provider 工具名分离。"""
+    return list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES, *ON_DEMAND_TOOL_NAMES]))
 
 
 def _field_signature_type(schema: dict, *, depth: int = 0) -> str:
@@ -60,7 +68,7 @@ def _tool_field_signature(name: str) -> str:
     try:
         from agent.tools import registry
 
-        tool = registry.get(name)
+        tool = registry.snapshot().get(name)
         schema = getattr(tool, "input_schema", None)
     except Exception:
         schema = None
@@ -83,7 +91,8 @@ class CapabilityToolContext:
     """Run 内的能力上下文。
 
     固定 Adapter 模式只把稳定入口注册给 Provider，业务工具通过 ``get_tool_schema``
-    按需追加 canonical Schema；非固定模式保留 selector 供未来 RAG 候选接入。
+    按需追加 canonical Schema；metadata-only 模式只用于 Skill 目录和诊断，
+    不参与 Provider 工具选择。
     """
 
     def __init__(
@@ -93,6 +102,7 @@ class CapabilityToolContext:
         limit: int = 5,
         *,
         fixed_adapter: bool = False,
+        metadata_only: bool = False,
         owner_id=None,
         search_settings=None,
     ):
@@ -100,6 +110,9 @@ class CapabilityToolContext:
         self.selector = selector
         self.limit = limit
         self.fixed_adapter = fixed_adapter
+        # full-schema 模式也需要保留用户 Skill metadata 供目录与 LoopScope 观测，
+        # 但不能让这份 metadata 上下文接管 Provider 的真实工具 Schema。
+        self.metadata_only = metadata_only
         self.owner_id = owner_id
         self.search_settings = search_settings
         self.recommendation_enabled = bool(getattr(search_settings, "capability_rag_enabled", False))
@@ -132,14 +145,18 @@ class CapabilityToolContext:
 
     def skill_meta(self, name: str):
         value = str(name or "").strip().lower()
-        return self.snapshot.skills.get(value)
+        meta = self.snapshot.skills.get(value)
+        return meta if meta is not None and meta.kind == "skill" else None
 
     def skill_digest(self, name: str) -> str | None:
         meta = self.skill_meta(name)
         return (meta.content_digest or None) if meta is not None else None
 
 
-def _build_fixed_context(index, *, limit: int = 5, names: list[str], owner_id=None, search_settings=None) -> CapabilityToolContext:
+def _build_fixed_context(
+    index, *, limit: int = 5, names: list[str], owner_id=None, search_settings=None,
+    metadata_only: bool = False,
+) -> CapabilityToolContext:
     from .selector import RagCapabilitySelector, RegistryCapabilitySelector
     snapshot = index.snapshot(authorized_names=names)
     selector = (
@@ -149,56 +166,113 @@ def _build_fixed_context(index, *, limit: int = 5, names: list[str], owner_id=No
     )
     return CapabilityToolContext(
         snapshot, selector, limit=int(getattr(search_settings, "capability_rag_limit", limit) or limit),
-        fixed_adapter=True, owner_id=owner_id, search_settings=search_settings,
+        fixed_adapter=not metadata_only, metadata_only=metadata_only,
+        owner_id=owner_id, search_settings=search_settings,
     )
 
 
 def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5, search_settings=None, owner_id=None) -> CapabilityToolContext:
     """Phase 5：业务工具不进入 Provider tools，只保留固定 Adapter 入口。"""
-    names = list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES]))
+    names = _capability_tool_names(tool_names)
     return _build_fixed_context(CapabilityIndex.from_registries(tool_names=names), limit=limit, names=names,
                                 owner_id=owner_id, search_settings=search_settings)
 
 
 async def build_fixed_adapter_context_for_user(
     tool_names: list[str], *, limit: int = 5, db=None, owner_id=None, search_settings=None,
+    user_skill_metadata=None,
 ) -> CapabilityToolContext:
     """构建当前 owner 的能力快照；用户 Skill 只进入 metadata，不加载正文。"""
     if db is None or owner_id is None:
         return build_fixed_adapter_context(tool_names, limit=limit, search_settings=search_settings, owner_id=owner_id)
-    names = list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES]))
-    index = await CapabilityIndex.from_registries_for_user(db, owner_id, tool_names=names)
+    names = _capability_tool_names(tool_names)
+    index = await CapabilityIndex.from_registries_for_user(
+        db, owner_id, tool_names=names, skill_metadata=user_skill_metadata,
+    )
     return _build_fixed_context(index, limit=limit, names=names, owner_id=owner_id, search_settings=search_settings)
 
 
-def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool_order=None) -> str:
+async def build_skill_metadata_context_for_user(
+    tool_names: list[str], *, limit: int = 5, db=None, owner_id=None, search_settings=None,
+    user_skill_metadata=None,
+) -> CapabilityToolContext:
+    """只构建用户 Skill metadata，不改变 full-schema 的 Provider 工具注入。"""
+    if db is None or owner_id is None:
+        index = CapabilityIndex.from_registries(tool_names=_capability_tool_names(tool_names))
+    else:
+        index = await CapabilityIndex.from_registries_for_user(
+            db, owner_id, tool_names=_capability_tool_names(tool_names), skill_metadata=user_skill_metadata,
+        )
+    return _build_fixed_context(
+        index, limit=limit, names=_capability_tool_names(tool_names), owner_id=owner_id,
+        search_settings=search_settings, metadata_only=True,
+    )
+
+
+def catalog_block(
+    snapshot: CapabilitySnapshot,
+    *,
+    kind: str | None = None,
+    tool_order=None,
+    include_builtin_skills: bool = False,
+) -> str:
+    """渲染分章节的能力目录。
+
+    内置 Skill 已经由静态 system prompt 注入；动态 snapshot 默认只补充用户
+    Skill，避免同一份目录重复进入上下文。诊断或独立目录展示可显式打开
+    ``include_builtin_skills``。
+    """
     lines = [
         "## 当前可用能力索引",
         "这里只是稳定的能力名称、用途和紧凑字段签名，不是完整工具 Schema，也不是已经发生的工具调用记录；"
-        "固定 Adapter 模式下使用 `call_tool({name: 工具名, arguments: 业务参数对象})` 调用业务工具；"
-        "禁止只传 name，也不要把目标工具参数省略成空对象。"
-        "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
-        "字段签名只展示类型、简单枚举、必填状态和一层结构，复杂嵌套约束仍必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
-        "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
-        "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
-        "`use_skill` 只用于加载技能正文及其关联工具 Schema。",
-        "用户要求创建、保存或定义一套可复用做法时，使用 `create_skill`；不要把创建技能误当成 `create_project`，"
-        "也不要先调用 `use_skill`。创建用户 Skill 时至少准备 name、description_short、body 和 related_tools，"
-        "无关联工具时 related_tools 使用空数组 []。",
     ]
+    if kind == "skill":
+        lines.extend([
+            "技能只展示名称和用途；命中技能场景时先使用 `use_skill` 加载正文，再按正文执行。",
+            "用户要求创建、修改或删除一套可复用做法时，先用 `get_tool_schema` 获取对应的 Skill 生命周期工具 Schema，"
+            "再通过 `call_tool` 调用 `create_skill`、`update_skill` 或 `delete_skill`；不要把 `create_skill` 误当成 `create_project`。",
+        ])
+    else:
+        lines.extend([
+            "固定 Adapter 模式下使用 `call_tool({name: 工具名, arguments: 业务参数对象})` 调用业务工具；"
+            "禁止只传 name，也不要把目标工具参数省略成空对象。"
+            "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
+            "字段签名只展示类型、简单枚举、必填状态和一层结构，复杂嵌套约束仍必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
+            "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
+            "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
+            "`use_skill` 只用于加载技能正文及其关联工具 Schema。",
+            "用户要求创建、修改或删除一套可复用做法时，先用 `get_tool_schema` 获取对应的 Skill 生命周期工具 Schema，"
+            "再通过 `call_tool` 调用 `create_skill`、`update_skill` 或 `delete_skill`；不要把 `create_skill` 误当成 `create_project`；"
+            "创建时至少准备 name、description_short、body 和 related_tools，"
+            "无关联工具时 related_tools 使用空数组 []。",
+        ])
     ordered_tools = tuple(tool_order or snapshot.tools)
-    catalog = tuple(snapshot.tools[name] for name in ordered_tools if name in snapshot.tools) + tuple(snapshot.skills.values())
-    for item in catalog:
-        if kind is not None and item.kind != kind:
-            continue
-        if item.kind == "tool" and item.name not in snapshot.tools:
-            continue
-        description = " ".join(str(item.description_short or "").split())
-        if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
-            raise ValueError(
-                f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
-            )
-        fields = _tool_field_signature(item.name) if item.kind == "tool" else ""
-        suffix = f"；字段：{fields}" if fields else ""
-        lines.append(f"- {item.name}：{description}{suffix}")
+    tools = tuple(
+        snapshot.tools[name]
+        for name in ordered_tools
+        if name in snapshot.tools and snapshot.tools[name].kind == "tool"
+    )
+    skills = tuple(
+        item for item in snapshot.skills.values()
+        if item.kind == "skill" and (include_builtin_skills or item.source != "builtin")
+    )
+    if kind == "tool":
+        sections = (("工具", tools),)
+    elif kind == "skill":
+        sections = (("Skill", skills),)
+    else:
+        sections = (("工具", tools), ("Skill", skills))
+
+    for title, catalog in sections:
+        if catalog:
+            lines.append(f"\n### {title}")
+        for item in catalog:
+            description = " ".join(str(item.description_short or "").split())
+            if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
+                raise ValueError(
+                    f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
+                )
+            fields = _tool_field_signature(item.name) if item.kind == "tool" else ""
+            suffix = f"；字段：{fields}" if fields else ""
+            lines.append(f"- {item.name}：{description}{suffix}")
     return "\n".join(lines)

@@ -27,7 +27,7 @@ TOOL_STATE = {
     "inspect_images":  SEARCHING,
     "deep_research":   SEARCHING,
     "http_get":        SEARCHING,
-    "create_document": GENERATING,
+    "create_file":     GENERATING,
     "send_file":       GENERATING,
 }
 

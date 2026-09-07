@@ -503,6 +503,7 @@ class ProjectsSkill(BaseSkill):
                     },
                 },
             },
+            repeat_safe=True,
             handler=_list_projects,
         ),
         Tool(
@@ -647,6 +648,7 @@ class ProjectsSkill(BaseSkill):
                 },
                 "required": [],
             },
+            repeat_safe=True,
             handler=_get_project,
         ),
         Tool(

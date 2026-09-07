@@ -1,4 +1,4 @@
-"""跨项目/文件/文件夹/日程/客户/对话/思维便签的站内全局搜索，供咕咕定位「东西在哪」用。
+"""跨项目/文件/文件夹/日程/客户/对话/思维便签/用户 Skill 的站内全局搜索，供咕咕定位「东西在哪」用。
 
 复用 `app/api/v1/search.py`（顶栏全局搜索框同一套查询逻辑，支持多关键词 OR/AND 的 ILIKE 子串匹配，
 天然不分大小写）。网页下拉框每类只给 6 条方便展示；这里给模型用，每类给更多条
@@ -44,8 +44,8 @@ class GlobalSearchSkill(BaseSkill):
     tools = [
         Tool(
             name="global_search", label="站内全局搜索",
-            description_short='跨项目、文件、日程和笔记搜索。',
-            description="跨项目、文件、日程、客户、对话和便签按关键词搜索；明确范围时用专用工具。",
+            description_short='跨项目、文件、日程、笔记和用户 Skill 搜索。',
+            description="跨项目、文件、日程、客户、对话、便签和当前用户 Skill 按关键词搜索；明确范围时用专用工具。Skill 结果只返回名称、slug 和描述，不返回正文或关联权限。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -58,6 +58,7 @@ class GlobalSearchSkill(BaseSkill):
                 # query / queries 至少传一个；具体校验由 handler 统一完成，避免只传 queries 时被 schema 拦截。
                 "required": [],
             },
+            repeat_safe=True,
             handler=_global_search,
         ),
     ]

@@ -56,7 +56,19 @@ async def test_oss_storage_keeps_a_local_sandbox_root(tmp_path, monkeypatch):
         lambda: SimpleNamespace(storage=SimpleNamespace(backend="oss", local_path=str(tmp_path))),
     )
     root = await workspace_service.resolve_sandbox_root(None, "user-oss")
-    assert root == (tmp_path / "user-oss" / "shell").resolve()
+    assert root == (tmp_path / "user-oss" / "workspace").resolve()
+    assert root.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_project_root_is_the_user_project_library_not_bound_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        workspace_service,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(backend="local", local_path=str(tmp_path))),
+    )
+    root = await workspace_service.resolve_project_root(None, "user-project")
+    assert root == (tmp_path / "user-project" / "项目文件").resolve()
     assert root.is_dir()
 
 
@@ -106,11 +118,11 @@ async def test_bound_workspace_resolves_file_target_and_rejects_other_project(db
     token = set_dispatch_session(session.id, session, "test-workspace-target")
     try:
         assert await _resolve_create_location(db, user_a.id, {}) == (
-            "personal", None, personal.id, None,
+            "personal", None, personal.id, None, None,
         )
         conflict = await _resolve_create_location(
             db, user_a.id, {"space": "project", "project_id": project.id},
         )
-        assert "不能写入其它项目或文件夹" in conflict[3]
+        assert "不能写入其它项目或文件夹" in conflict[4]
     finally:
         reset_dispatch_session(token)

@@ -27,6 +27,8 @@ from urllib.parse import urlencode
 
 from app.core.tz import local_day_start_utc
 from app.core.credentials import normalize_ascii_api_key
+from app.services.files.browser import get_user_file
+from app.services.storage import get_storage
 
 import httpx
 from app.core.config import get_settings
@@ -339,16 +341,17 @@ async def _searxng_image_search(db, user_id, args: dict):
 
 
 async def _inspect_images(db, user_id, args: dict):
-    """读取图片搜索结果中由模型挑选的图片，最多 20 张。"""
+    """读取候选图片、聊天附件或文件库图片，最多 20 张。"""
     items = args.get("images")
     if not isinstance(items, list) or not items:
-        return {"error": "需要提供 images 数组，填写搜索结果的 result_id 和 img_src/image_url"}
+        return {"error": "需要提供 images 数组，填写 file_id、attach_id 或 img_src/image_url"}
     if len(items) > 20:
         return {"error": "一次最多读取 20 张图片，请拆成多次调用"}
 
     has_url = any(
         isinstance(item, dict)
         and not str(item.get("attach_id") or "").strip()
+        and not str(item.get("file_id") or "").strip()
         and str(item.get("img_src") or item.get("image_url") or item.get("url") or "").strip()
         for item in items
     )
@@ -366,12 +369,47 @@ async def _inspect_images(db, user_id, args: dict):
             failed.append({"result_id": "", "error": "图片项必须是对象"})
             continue
         result_id = str(item.get("result_id") or "").strip()
+        file_id = item.get("file_id")
+        file_id_text = str(file_id).strip() if file_id is not None else ""
         attach_id = str(item.get("attach_id") or "").strip()
         url = str(item.get("img_src") or item.get("image_url") or item.get("url") or "").strip()
-        if not url and not attach_id:
-            failed.append({"result_id": result_id, "error": "缺少 img_src、image_url 或 attach_id"})
+        if not url and not attach_id and not file_id_text:
+            failed.append({"result_id": result_id, "error": "缺少 file_id、img_src、image_url 或 attach_id"})
             continue
-        if attach_id:
+        if file_id_text:
+            try:
+                normalized_file_id = int(file_id)
+            except (TypeError, ValueError):
+                failed.append({"result_id": result_id, "file_id": file_id, "error": "file_id 必须是整数"})
+                continue
+            if isinstance(file_id, bool):
+                failed.append({"result_id": result_id, "file_id": file_id, "error": "file_id 必须是整数"})
+                continue
+            file = await get_user_file(db, user_id, normalized_file_id)
+            if not file:
+                failed.append({"result_id": result_id, "file_id": normalized_file_id, "error": "文件不存在"})
+                continue
+            ext = str(file.ext or "").lower()
+            if ext not in chat_attach.VISION_EXTS:
+                failed.append({"result_id": result_id, "file_id": normalized_file_id,
+                               "error": f"文件格式 {ext or '未知'} 暂不支持识别"})
+                continue
+            if not chat_attach.vision_ready():
+                failed.append({"result_id": result_id, "file_id": normalized_file_id,
+                               "error": "当前模型/通道无法识别图像内容"})
+                continue
+            if (file.size_bytes or 0) > chat_attach.VISION_READ_MAX:
+                failed.append({"result_id": result_id, "file_id": normalized_file_id,
+                               "error": "图片过大，超出可看上限"})
+                continue
+            try:
+                data = await get_storage().get(file.storage_key)
+                block = chat_attach.vision_block(data, ext)
+                result = {"block": block} if block else {"error": "图片无法解析"}
+            except Exception:
+                result = {"error": "文件库图片读取失败"}
+            source_file_id = normalized_file_id
+        elif attach_id:
             meta = await chat_attach.get_meta(user_id, attach_id)
             if not meta:
                 failed.append({"result_id": result_id, "attach_id": attach_id, "error": "找不到这个历史附件，可能已被清理"})
@@ -387,11 +425,14 @@ async def _inspect_images(db, user_id, args: dict):
                 result = {"error": "历史附件读取失败"}
         else:
             result = await inspect_image_url(url)
+        if not file_id_text:
+            source_file_id = None
         if result.get("block"):
             inspected.append({
                 "result_id": result_id,
+                "file_id": source_file_id,
                 "attach_id": attach_id or None,
-                "title": item.get("title") or result_id or attach_id or "候选图片",
+                "title": item.get("title") or (f"文件 {source_file_id}" if source_file_id else None) or result_id or attach_id or "候选图片",
                 "block": result["block"],
             })
         else:
@@ -659,7 +700,7 @@ class SearchSkill(BaseSkill):
         Tool(
             name="inspect_images", label="读取图片",
             description_short='读取图片并交给视觉模型；最多 20 张',
-            description="读取图片候选或历史附件并交给视觉模型分析；一次最多 20 张。",
+            description="读取图片候选、历史附件或文件库图片并交给视觉模型分析；文件库图片填写 file_id，聊天附件填写 attach_id；一次最多 20 张。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -674,12 +715,14 @@ class SearchSkill(BaseSkill):
                                 "img_src": {"type": "string"},
                                 "image_url": {"type": "string"},
                                 "attach_id": {"type": "string"},
+                                "file_id": {"type": "integer"},
                                 "title": {"type": "string"},
                             },
                             "anyOf": [
                                 {"required": ["img_src"]},
                                 {"required": ["image_url"]},
                                 {"required": ["attach_id"]},
+                                {"required": ["file_id"]},
                             ],
                         },
                     },

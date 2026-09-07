@@ -363,6 +363,10 @@ async def serve():
     except Exception as e:
         print(f"[worker] 定时任务初始化出错: {type(e).__name__}: {e}", flush=True)
     sched_task = asyncio.create_task(_reconcile_loop())
+    from app.services.filesync.watcher import FileSyncWatcherManager
+    filesync_task = asyncio.create_task(
+        FileSyncWatcherManager().run(_stop), name="filesync-watcher"
+    )
     reflection_task = asyncio.create_task(_reflection_loop())
     cleanup_task = asyncio.create_task(_cleanup_loop())
     while not _stop.is_set():
@@ -379,10 +383,11 @@ async def serve():
         await asyncio.gather(*pending, return_exceptions=True)
     hb.cancel()
     sched_task.cancel()
+    filesync_task.cancel()
     reflection_task.cancel()
     cleanup_task.cancel()
     await asyncio.gather(
-        hb, sched_task, reflection_task, cleanup_task,
+        hb, sched_task, filesync_task, reflection_task, cleanup_task,
         return_exceptions=True,
     )
     from agent.rag.injection import shutdown_background_recall_tasks

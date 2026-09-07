@@ -1,10 +1,32 @@
 """PRD-LLM-16 Phase 1：高风险工具的来源、定位和动作约束。"""
 
 import pytest
+import json
 
 from agent.tools import registry
 from agent.tools.base import _compact_schema
 from agent.tools.tool_contract import build_validator, normalize_legacy_input, validate_input
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_nested_file_artifact(monkeypatch):
+    """固定 Adapter 调 send_file 时，文件卡片必须继续进入外层 dispatch。"""
+    from agent.tools import meta, registry
+
+    artifact = {"file_id": 42, "name": "图表", "ext": "png", "size_bytes": 12}
+
+    async def fake_dispatch(_user_id, name, arguments):
+        assert name == "send_file"
+        assert arguments == {"file_id": 42}
+        return json.dumps({"ok": True, "message": "已发送"}, ensure_ascii=False), artifact
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    result = await meta._call_tool(None, "user-1", {
+        "name": "send_file", "arguments": {"file_id": 42},
+    })
+
+    assert result["ok"] is True
+    assert result["_artifact"] == artifact
 
 
 def _issues(name: str, payload: dict) -> list[dict]:
@@ -50,6 +72,11 @@ def test_search_conversations_keeps_recent_without_search_term():
     assert _issues("search_conversations", {}) == []
     assert _issues("search_conversations", {"query": "文件架构"}) == []
     assert _issues("search_conversations", {"query": "文件架构", "keyword": "架构"})
+
+
+def test_search_memory_allows_top_k_up_to_25():
+    assert _issues("search_memory", {"query": "架构", "limit": 25}) == []
+    assert _issues("search_memory", {"query": "架构", "limit": 26})
 
 
 def test_phase2_calendar_and_file_semantics():
@@ -109,9 +136,10 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
         "update_workspace",
         "update_client", "create_workspace", "react", "send_email",
         "canvas_create_note", "canvas_update_note", "canvas_batch",
-        "create_document",
+        "create_file",
         "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "remember",
         "image_search", "inspect_images", "move_items", "archive_project", "use_skill", "call_tool",
+        "run_script",
     ):
         tool = registry.get(name)
         assert tool.input_schema == _compact_schema(tool.input_schema), name
@@ -163,11 +191,11 @@ def test_phase8_workspace_binding_is_structural():
     })
 
 
-def test_phase8_document_project_location_is_structural():
-    base = {"name": "说明", "format": "md", "content": "正文"}
-    assert _issues("create_document", base) == []
-    assert _issues("create_document", {**base, "space": "project"})
-    assert _issues("create_document", {**base, "space": "project", "project_id": 1}) == []
+def test_phase8_file_batch_and_project_location_are_structural():
+    base = {"files": [{"name": "说明.md", "content": "正文"}]}
+    assert _issues("create_file", base) == []
+    assert _issues("create_file", {"files": [{"name": "说明.md", "content": "正文", "space": "project"}]})
+    assert _issues("create_file", {"files": [{"name": "说明.md", "content": "正文", "space": "project", "project_id": 1}]}) == []
 
 
 def test_phase8_edit_modes_are_structural():
@@ -180,6 +208,9 @@ def test_phase8_edit_modes_are_structural():
     }) == []
     assert _issues("edit_file", {
         "file_id": 1, "mode": "find_replace", "find": "旧", "replace": "新",
+    }) == []
+    assert _issues("edit_file", {
+        "file_id": 1, "mode": "replace", "content": "新正文",
     }) == []
     assert _issues("edit_file", {"file_id": 1, "mode": "line_edit"})
     assert _issues("edit_file", {"file_id": 1, "mode": "append", "find": "旧", "replace": "新"})

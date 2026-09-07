@@ -1,4 +1,4 @@
-"""站内全局搜索：一个或多个关键词跨项目/文件/文件夹/日程/客户/对话检索（按 user_id 隔离）。
+"""站内全局搜索：一个或多个关键词跨项目/文件/文件夹/日程/客户/对话/Skill 检索（按 user_id 隔离）。
 
 简单子串匹配（ILIKE %关键词%），对中文也有效、无需建全文索引。各类型各取前 N 条，
 分组返回，供顶栏全局搜索框下拉展示 + 点击跳转。对话同时搜会话标题与消息正文。
@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
-    User, Project, File, Folder, CalendarEvent, Client, MindNode,
+    User, Project, File, Folder, CalendarEvent, Client, MindNode, UserSkill,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
@@ -36,7 +36,7 @@ MSG_PER_TYPE = 8      # 对话消息扫描条数（合并去重后仍受 per_typ
 SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
-ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note"]
+ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "skill"]
 
 # 所有参与全局搜索的文本字段统一在这里登记；新增字段只需补这一张表。
 ROMAJI_FIELDS = {
@@ -48,6 +48,7 @@ ROMAJI_FIELDS = {
     "note": ("title", "content_plain"),
     "conversation": ("title",),
     "message": ("content",),
+    "skill": ("name", "slug", "description_short", "description_long"),
 }
 
 
@@ -248,6 +249,46 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 {"id": c.id, "title": c.name,
                  "subtitle": " · ".join(filter(None, [c.contact, c.email, c.phone]))}
                 for c in rows
+            ]})
+
+    # ── 用户 Skill：稳定标识/名称/描述（不返回正文和关联权限）──
+    if wanted is None or "skill" in wanted:
+        rows = list((await db.execute(
+            select(UserSkill).where(
+                UserSkill.owner_id == uid,
+                keyword_condition([
+                    UserSkill.name, UserSkill.slug,
+                    UserSkill.description_short, UserSkill.description_long,
+                ], search_queries, mode),
+            ).order_by(
+                keyword_score([
+                    UserSkill.name, UserSkill.slug,
+                    UserSkill.description_short, UserSkill.description_long,
+                ], search_queries).desc(),
+                _primary_rank(UserSkill.name, q), UserSkill.updated_at.desc(),
+            ).limit(per_type)
+        )).scalars().all())
+        if use_romaji and len(rows) < per_type:
+            seen = {skill.id for skill in rows}
+            scan = (await db.execute(
+                select(UserSkill).where(UserSkill.owner_id == uid)
+                .order_by(UserSkill.updated_at.desc()).limit(ROMAJI_SCAN)
+            )).scalars().all()
+            for skill in scan:
+                if skill.id not in seen and _romaji_matches_object(skill, "skill", search_queries, language):
+                    rows.append(skill); seen.add(skill.id)
+                    if len(rows) >= per_type:
+                        break
+        if rows:
+            groups.append({"type": "skill", "label": "技能", "items": [
+                {
+                    "id": skill.id,
+                    "title": skill.name,
+                    "subtitle": f"/{skill.slug} · {skill.description_short}".strip(" ·"),
+                    "slug": skill.slug,
+                    "enabled": bool(skill.enabled),
+                }
+                for skill in rows
             ]})
 
     # ── 思维便签：标题 + 正文（便签短，正文可以直接搜，不像文件那样只能搜名）──

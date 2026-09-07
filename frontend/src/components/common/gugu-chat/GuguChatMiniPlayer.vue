@@ -8,7 +8,7 @@
           <button class="mp-btn mp-btn--pin" :class="{ 'mp-btn--pinned': pinned }"
                   @click="$emit('update:pinned', !pinned)" :title="pinned ? t('chatUi.unpin') : t('chatUi.pin')">
             <Icon name="canvas.pin" v-if="pinned" :size="14" />
-            <Icon name="canvas.pin"Slash v-else :size="14" />
+            <Icon name="canvas.pin-off" v-else :size="14" />
           </button>
           <button class="mp-btn mp-btn--close popup-close-btn" @click="onStop" :title="t('common.actions.close')">
             <Icon name="action.close" :size="13" />

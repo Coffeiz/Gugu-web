@@ -1,23 +1,26 @@
 <template>
-  <div ref="wrapRef" class="provider-select">
-    <button type="button" class="provider-trigger" :class="{ open: open }" @click="open = !open">
-      <span>{{ selectedLabel }}</span>
-      <FlipChevron :open="open" :size="11" class="provider-chevron" />
-    </button>
-    <PopupMenu :show="open" :anchor="wrapRef" :popup-class="popupClass ? `provider-popup ${popupClass}` : 'provider-popup'">
+  <SelectPopup
+    ref="selectPopup"
+    class="provider-select"
+    :model-value="modelValue"
+    :selected-label="selectedLabel"
+    :placeholder="placeholder"
+    trigger-class="provider-trigger"
+    :popup-class="popupClass ? `provider-popup ${popupClass}` : 'provider-popup'"
+  >
+    <template #options="{ close }">
       <div v-for="provider in providers" :key="provider.key" class="provider-option-group">
         <button
           type="button"
           class="provider-option"
           :class="{ active: provider.key === activeProvider, expanded: provider.key === expandedProvider }"
-          @mousedown.prevent="selectProvider(provider, $event)"
+          @mousedown.prevent="selectProvider(provider, $event, close)"
         >
           <span>{{ provider.label }}</span>
           <FlipChevron v-if="provider.children?.length" :open="provider.key === expandedProvider" :size="10" />
         </button>
       </div>
-    </PopupMenu>
-    <PopupMenu :show="Boolean(expandedProvider && childAnchor)" :anchor="childAnchor" :popup-class="popupClass ? `provider-child-popup ${popupClass}` : 'provider-child-popup'">
+      <PopupMenu :show="Boolean(expandedProvider && childAnchor)" :anchor="childAnchor" :popup-class="popupClass ? `provider-child-popup ${popupClass}` : 'provider-child-popup'">
       <button
         v-for="child in expandedChildren"
         :key="child.key"
@@ -26,14 +29,16 @@
         :class="{ active: expandedProviderOption && valueFor(expandedProviderOption, child) === modelValue }"
         @mousedown.prevent="selectExpandedChild(child)"
       >{{ child.label }}</button>
-    </PopupMenu>
-  </div>
+      </PopupMenu>
+    </template>
+  </SelectPopup>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, type PropType } from 'vue'
+import { computed, ref, type PropType } from 'vue'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
+import SelectPopup from '@/components/common/controls/SelectPopup.vue'
 import { useI18n } from 'vue-i18n'
 
 interface ChildOption { key: string; label: string }
@@ -47,8 +52,7 @@ const props = defineProps({
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const { t } = useI18n()
-const wrapRef = ref<HTMLElement | null>(null)
-const open = ref(false)
+const selectPopup = ref<InstanceType<typeof SelectPopup> | null>(null)
 const expandedProvider = ref('')
 const childAnchor = ref<HTMLElement | null>(null)
 
@@ -72,7 +76,7 @@ function selectExpandedChild(child: ChildOption) {
   if (provider) selectChild(provider, child)
 }
 
-function selectProvider(provider: ProviderOption, event: MouseEvent) {
+function selectProvider(provider: ProviderOption, event: MouseEvent, close: () => void) {
   if (provider.children?.length) {
     childAnchor.value = event.currentTarget as HTMLElement
     expandedProvider.value = expandedProvider.value === provider.key ? '' : provider.key
@@ -80,28 +84,17 @@ function selectProvider(provider: ProviderOption, event: MouseEvent) {
     return
   }
   emit('update:modelValue', provider.key)
-  open.value = false
+  close()
   expandedProvider.value = ''
   childAnchor.value = null
 }
 
 function selectChild(provider: ProviderOption, child: ChildOption) {
   emit('update:modelValue', valueFor(provider, child))
-  open.value = false
+  selectPopup.value?.close()
   expandedProvider.value = ''
   childAnchor.value = null
 }
-
-function closeOnOutside(event: MouseEvent) {
-  const target = event.target as Element | null
-  if (open.value && !wrapRef.value?.contains(target) && !target?.closest('.provider-popup')) {
-    open.value = false
-    expandedProvider.value = ''
-    childAnchor.value = null
-  }
-}
-onMounted(() => document.addEventListener('mousedown', closeOnOutside))
-onBeforeUnmount(() => document.removeEventListener('mousedown', closeOnOutside))
 </script>
 
 <style scoped>

@@ -87,13 +87,13 @@ MaintenanceBatch(
 
 | 项目 | 默认值 | 说明 |
 |---|---:|---|
-| 维护输入总预算 | 8000 tokens | system prompt、已有记忆和新增数据合计 |
-| 已有记忆预算 | 2500 tokens | 当前 scope 的 summary/profile/pattern/memory 摘要 |
-| 新增数据预算 | 4500 tokens | pattern 条目或 IM 消息 |
-| 维护输出预算 | 2500 tokens | 由 `BranchPolicy.max_tokens` 控制 |
-| 单条超长项预算 | 3500 tokens | 超过后单独处理或安全截断，并标记 `truncated` |
+| 维护输入总预算 | 当前模型 `context_tokens - max_tokens` | system prompt、已有记忆和新增数据共用模型可用输入空间 |
+| 已有记忆预算 | 从当前模型输入空间派生 | 受限视图与新增数据使用同一模型预算，不再单独维护固定值 |
+| 新增数据预算 | 从当前模型输入空间派生 | pattern 条目或 IM 消息按当前模型输入空间切批 |
+| 维护输出预算 | 当前模型 `max_tokens` | 由当前模型配置提供，`BranchPolicy.max_tokens` 只接收该值 |
+| 单条超长项预算 | 当前模型输入空间 | 超过后单独处理并标记 `oversized`，不静默截断 |
 
-实际切分必须优先使用项目已有 tokenizer/模型配置；没有 tokenizer 时才允许使用保守的字符估算，并在批次元数据中标明 `estimated`。
+实际切分使用当前模型配置的 `context_tokens` 和 `max_tokens` 派生输入空间；没有 tokenizer 时继续使用保守的字符估算，并在批次元数据中标明 `estimated`。维护入口不再保留 6000、4500、3500 或 2500 等独立预算常量。
 
 ## 5. 普通记忆维护设计
 

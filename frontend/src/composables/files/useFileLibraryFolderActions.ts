@@ -31,16 +31,19 @@ export function useFileLibraryFolderActions(options: FolderActionsOptions) {
       ? (projectSeg.value?.id ?? seg?.projectId ?? null)
       : null
     const parentId = type === 'folder' ? (seg?.folderId ?? null) : null
+    const workspaceDirectoryId = (type === 'workspace' || seg?.space === 'workspace')
+      ? (seg?.workspaceDirectoryId ?? null)
+      : null
     newFolderLoading.value = true
     const tempId = -Date.now()
-    cacheStore.addFolder({ id: tempId, name, projectId, parentId, fileCount: 0 })
+    cacheStore.addFolder({ id: tempId, name, projectId, parentId, workspaceDirectoryId, fileCount: 0 })
     newFolderName.value = ''
     showNewFolderInput.value = false
     loadContents()
     try {
-      const real = await fileActions.createFolder(projectId, name, parentId)
+      const real = await fileActions.createFolder(projectId, name, parentId, workspaceDirectoryId)
       cacheStore.removeFolder(tempId)
-      cacheStore.addFolder({ id: real.id, name: real.name, projectId: real.projectId ?? null, parentId: real.parentId ?? null, fileCount: 0 })
+      cacheStore.addFolder({ id: real.id, name: real.name, projectId: real.projectId ?? null, parentId: real.parentId ?? null, workspaceDirectoryId: real.workspaceDirectoryId ?? workspaceDirectoryId, fileCount: 0 })
       loadContents()
     } catch (error) {
       cacheStore.removeFolder(tempId)

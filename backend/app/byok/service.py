@@ -55,6 +55,7 @@ def credential_view(row: UserProviderCredential) -> dict:
             "context_tokens": getattr(row, "context_tokens", None),
             "thinking": getattr(row, "thinking", None),
             "reasoning_effort": getattr(row, "reasoning_effort", None),
+            "reasoning_persistence": getattr(row, "reasoning_persistence", "off"),
             "vision_video": row.vision_video, "vision_audio": row.vision_audio,
             "vision_detail": row.vision_detail, "enabled": row.enabled,
             "has_value": bool(row.encrypted_value), "last_verified_at": row.last_verified_at,
@@ -98,6 +99,7 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
             updates["thinking"] = row.thinking
         if getattr(row, "reasoning_effort", None) is not None:
             updates["reasoning_effort"] = row.reasoning_effort
+        updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     return base.model_copy(update=updates) if hasattr(base, "model_copy") else base
 
 

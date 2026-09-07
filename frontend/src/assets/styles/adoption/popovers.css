@@ -1,10 +1,11 @@
 /* Shared popover adoption: context menus, sort/admin menus and date pickers consume the same
-   surface/item/motion contract. Sidebar settings keeps its historical component-owned visual and
-   only consumes theme variables, so it must not participate in these generic final-paint rules. */
+   surface/item/motion contract. The notification center owns its surface on the inner
+   .notif-popup-surface, so the outer positioning host is intentionally excluded to avoid double
+   compositing the translucent background and shadow. Sidebar settings keeps its historical
+   component-owned visual and only consumes theme variables. */
 html[data-theme][data-family] :is(
   .popup-menu,
   .popup-menu-dark,
-  .notif-popup,
   .dp-popup,
   .drp-popup
 ) {
@@ -141,4 +142,11 @@ html[data-theme][data-family] :is(.menu-pop-enter-from, .menu-pop-leave-to, .dp-
 html[data-theme][data-family] :is(.notif-pop-enter-from, .notif-pop-leave-to) {
   opacity: 0;
   transform: translateY(4px) scale(.98);
+}
+
+/* Chrome 在 transform 过渡期间可能暂停子 surface 的 backdrop-filter 合成。动画 active
+   阶段由同一个通知宿主暂时保留 blur，结束后仍由唯一的 notif-popup-surface 负责材质。 */
+html[data-theme][data-family] :is(.notif-pop-enter-active, .notif-pop-leave-active) {
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
 }

@@ -47,6 +47,51 @@ _PROVIDER_TEXT_EVENT_TYPES = frozenset({
 })
 
 
+def persistable_canonical_batch_records(messages: Any) -> list[dict]:
+    """筛选需要跨 run 重放的 canonical batch。
+
+    工具批次带 ``round_id``；首轮组装批次没有 round id，但其中的
+    ``runtime-context``（例如工作区约束）必须落库，否则下一次 run 会把同一
+    reminder 从历史中间移动到输入末尾，打断 provider 的缓存前缀。RAG 等其它
+    首轮附属内容由独立持久化路径负责，这里只保留 runtime-context，避免重复写入。
+    """
+    records = getattr(messages, "canonical_batch_records", ())
+    result: list[dict] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        metadata = record.get("metadata") or {}
+        if metadata.get("round_id"):
+            result.append(record)
+            continue
+
+        runtime_messages = []
+        for message in record.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            runtime_blocks = [
+                block for block in content
+                if isinstance(block, dict) and block.get("type") == "runtime-context"
+            ]
+            if runtime_blocks:
+                runtime_messages.append({
+                    "role": message.get("role", "user"),
+                    "content": runtime_blocks,
+                })
+        if runtime_messages:
+            # 不复用包含 RAG 的原 batch digest；按实际要持久化的 runtime 内容
+            # 重新生成 fallback digest，才能在连续 run 中稳定去重。
+            result.append({
+                "messages": runtime_messages,
+                "digest": "",
+                "metadata": {"kind": "runtime-context"},
+            })
+    return result
+
+
 def _tool_result_is_error(block: dict[str, Any]) -> bool:
     """从 provider-neutral 结果中判断失败，不读取或记录结果正文。"""
     if "is_error" in block:
@@ -165,12 +210,31 @@ def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list
     使用不同 role、字段名和图片包装；如果先拼 wire 再反向归一化，容易把
     Provider 形状误当成历史事实，也会让 batch 包装在跨 provider 时漂移。
     """
+    # 一批并行工具调用可能在某个调用进入确认门时提前中断。此时只把已经
+    # dispatch 的调用写入历史；如果把 result.tool_calls 全量写进去，就会
+    # 产生没有对应 tool_result 的孤儿 tool_call，下一轮 Anthropic/MiniMax
+    # 会直接拒绝整个历史。
+    dispatched_ids = {
+        str(getattr(call, "id", ""))
+        for call, _value in dispatched
+        if getattr(call, "id", None)
+    }
     assistant_blocks: list[dict] = []
     text = str(getattr(result, "text", "") or "")
     if text:
         assistant_blocks.append({"type": "text", "text": text})
+    # OpenAI 兼容 provider（例如 Qwen）要求多轮工具调用原样回传
+    # reasoning_content。它属于 assistant 轮次，必须进入 canonical history；
+    # provider wire 的具体字段由 history adapter 在发送边界恢复。
+    raw_reasoning = str(getattr(getattr(result, "raw", None), "reasoning", "") or "")
+    if raw_reasoning:
+        assistant_blocks.append({"type": "reasoning_content", "text": raw_reasoning})
     for call in getattr(result, "tool_calls", ()) or ():
-        if not getattr(call, "id", None) or not getattr(call, "name", None):
+        if (
+            not getattr(call, "id", None)
+            or str(call.id) not in dispatched_ids
+            or not getattr(call, "name", None)
+        ):
             continue
         assistant_blocks.append(ToolCall(
             id=str(call.id),

@@ -86,9 +86,7 @@ async def consume_text_choice(
     if not text:
         return None
     from app.db import session as db_session
-    from app.models import InteractionPrompt
-    from app.services.interactions import consume_choice_text
-    from sqlalchemy import func, select
+    from app.services.interactions import consume_choice_text, consume_custom_text
 
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
@@ -98,18 +96,17 @@ async def consume_text_choice(
             db, user_id=user_id, session_id=session_id, platform=platform,
             bot_id=bot_id, chat_id=chat_id, platform_user_id=platform_user_id,
         )
-        active_prompt_count = 0
-        if candidate_ids:
-            active_prompt_count = int(await db.scalar(
-                select(func.count()).select_from(InteractionPrompt).where(
-                    InteractionPrompt.user_id == user_id,
-                    InteractionPrompt.session_id.in_(candidate_ids),
-                    InteractionPrompt.kind == "choice",
-                    InteractionPrompt.status == "active",
-                )
-            ) or 0)
         for candidate_id in candidate_ids:
             result = await consume_choice_text(
+                db,
+                session_id=candidate_id,
+                user_id=user_id,
+                text=text,
+                event_id=event_id,
+            )
+            if result is not None:
+                return result
+            result = await consume_custom_text(
                 db,
                 session_id=candidate_id,
                 user_id=user_id,

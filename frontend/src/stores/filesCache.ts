@@ -11,16 +11,22 @@ import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEve
 // 文件对象在各视图里是「带客户端增补的袋子」——已知 wire 字段照常有类型，另留少量历史/客户端字段
 // 与索引签名，容纳消费方现存用法（如聊天附件预览携带 attach_id、旧面板仍读 versions）。
 export type FileMeta = components['schemas']['FileResponse'] & {
+  /** 新增的顶层 Workspace 目录归属；旧 OpenAPI 类型生成前先由前端领域类型承接。 */
+  workspaceDirectoryId?: number | null
   /** 覆盖上传/粘贴覆盖后强制缩略图指令重建节点。 */
   thumbRevision?: number
   versions?: Array<{ size?: string }>   // 历史字段：wire 现已直接给 size，个别面板仍读 versions
   attach_id?: number | string | null    // 聊天附件预览时携带（非库文件）
   file_id?: number | null
 }
-export type FolderMeta = components['schemas']['FolderResponse']
+export type FolderMeta = components['schemas']['FolderResponse'] & {
+  /** 新增的顶层 Workspace 目录边界；旧 OpenAPI 类型生成前先由前端领域类型承接。 */
+  workspaceDirectoryId?: number | null
+}
 
 let _lastVersion: string | number | null = null
 let _visibilityBound = false
+let _pendingLiveRefresh = false
 
 export const useFilesCacheStore = defineStore('filesCache', () => {
   const allFiles   = ref<FileMeta[]>([])
@@ -76,6 +82,12 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
       allFolders.value = folders
       loaded.value     = true
       _lastVersion = ver?.version ?? null
+      // 首次加载和 watcher 事件可能并发：不能因为 cache 尚未 ready 就丢掉 live
+      // 事件，否则请求返回旧快照后必须手动刷新页面才能看到本地文件变化。
+      if (_pendingLiveRefresh) {
+        _pendingLiveRefresh = false
+        void refresh()
+      }
     } catch (e) {
       console.error('[filesCache] 加载失败:', e instanceof Error ? e.message : e)
     } finally {
@@ -102,6 +114,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     loaded.value = false
     loading.value = false
     _lastVersion = null
+    _pendingLiveRefresh = false
   }
 
   async function _checkVersion() {
@@ -147,10 +160,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
   // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
   // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
-  function addFolder(folder: { id: number; name: string; projectId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
+  function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
     allFolders.value = [...allFolders.value, {
       id: folder.id, name: folder.name,
       projectId: folder.projectId ?? null,
+      workspaceDirectoryId: folder.workspaceDirectoryId ?? null,
       parentId:  folder.parentId ?? null,
       fileCount: folder.fileCount ?? 0,
       version:   folder.version ?? 1,
@@ -218,9 +232,13 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const eventQueue = new InteractionSyncEventQueue()
   eventQueue.register('files', applyCanonicalEvent, () => { if (loaded.value) void refresh() })
   watch(() => useLiveStore().resourceEvent, (event) => {
-    if (!event || event.resource !== 'files' || !loaded.value) return
+    if (!event || event.resource !== 'files') return
+    if (!loaded.value) {
+      _pendingLiveRefresh = true
+      return
+    }
     eventQueue.receive(event)
-  })
+  }, { immediate: true })
 
   return {
     allFiles, allFolders, loaded, loading,

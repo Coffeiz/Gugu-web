@@ -4,7 +4,7 @@ import pytest
 from types import SimpleNamespace
 
 from agent.security import shell_policy
-from agent.security.shell_policy import ShellRisk, classify_command
+from agent.security.shell_policy import ShellRisk, blocked_runtime, classify_command
 from agent.tools.shell import ShellSkill, _can_use_shell_lease
 
 
@@ -15,10 +15,38 @@ def test_shell_risk_scans_the_whole_command():
     assert classify_command("python -c 'print(1)' | curl example.test") is ShellRisk.DANGEROUS
 
 
+def test_blocked_runtime_detects_direct_and_wrapped_invocations():
+    assert blocked_runtime("python3 script.py") == "python3"
+    assert blocked_runtime("/usr/bin/node app.mjs") == "node"
+    assert blocked_runtime("env FOO=bar npm run build") == "npm"
+    assert blocked_runtime("bash -c 'python3 script.py'") == "python3"
+    assert blocked_runtime("cat README.md") is None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_code_execution_switch_blocks_runtimes_but_keeps_basic_shell(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.sandbox = SimpleNamespace(enabled=True, code_execution_enabled=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "sandbox_readiness", lambda *_: (True, ""))
+
+    blocked = await shell_policy.evaluate(db, "user-1", 1, "python3 script.py")
+    allowed = await shell_policy.evaluate(db, "user-1", 1, "ls")
+
+    assert not blocked.allowed
+    assert blocked.reason == "管理员未开启代码运行环境，禁止使用 python3 运行时"
+    assert allowed.allowed
+
+
 def test_shell_schema_does_not_expose_session_identity():
     schema = ShellSkill.tools[0].input_schema
     assert "session_id" not in schema["properties"]
+    assert "network" not in schema["properties"]
     assert schema["required"] == ["command"]
+    script_schema = ShellSkill.tools[1].input_schema
+    assert "network" not in script_schema["properties"]
 
 
 def test_shell_lease_covers_non_destructive_operations():
@@ -28,6 +56,29 @@ def test_shell_lease_covers_non_destructive_operations():
     assert _can_use_shell_lease("python build.py > result.txt")
     assert not _can_use_shell_lease("rm -rf build")
     assert not _can_use_shell_lease("git reset --hard HEAD")
+
+
+@pytest.mark.asyncio
+async def test_shell_failure_audit_does_not_mask_original_exception(monkeypatch):
+    import agent.tools.shell as shell_tool
+
+    audit = {}
+
+    async def fail_run(*_args, **_kwargs):
+        raise RuntimeError("执行器不可用")
+
+    def capture_audit(**fields):
+        audit.update(fields)
+
+    monkeypatch.setattr(shell_tool, "_run_shell", fail_run)
+    monkeypatch.setattr(shell_tool, "_audit", capture_audit)
+
+    with pytest.raises(RuntimeError, match="执行器不可用"):
+        await shell_tool._shell(None, "user-1", {"_session_id": 669})
+
+    assert audit["event"] == "failed"
+    assert audit["ok"] is False
+    assert audit["session_id"] == 669
 
 
 @pytest.mark.asyncio
@@ -72,7 +123,7 @@ async def test_dangerous_shell_requires_admin_and_user_switches(monkeypatch):
     decision = await shell_policy.evaluate(db, "user-1", 1, "rm -rf build", confirm=True)
 
     assert not decision.allowed
-    assert decision.reason == "管理员未开启危险 Shell 命令"
+    assert decision.reason == "管理员未开放全部 Shell 命令"
 
 
 @pytest.mark.asyncio
@@ -85,7 +136,7 @@ async def test_dangerous_shell_requires_user_switch_even_when_confirmed(monkeypa
     decision = await shell_policy.evaluate(db, "user-1", 1, "rm -rf build", confirm=True)
 
     assert not decision.allowed
-    assert decision.reason == "用户未开启危险 Shell 命令"
+    assert decision.reason == "用户未开放全部 Shell 命令"
 
 
 @pytest.mark.asyncio
@@ -103,7 +154,62 @@ async def test_dangerous_shell_keeps_confirmation_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shell_autopilot_skips_confirmation_only_with_two_level_permission(monkeypatch):
+async def test_dynamic_shell_prompt_reports_disabled_dangerous_state(monkeypatch):
+    db = _PolicyDB()
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True, dangerous=False))
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _false())
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is not None
+    assert "全部 Shell 命令：未开放" in prompt
+    assert "不要向用户索要确认后继续" in prompt
+    assert "Autopilot：未开启" in prompt
+
+
+@pytest.mark.asyncio
+async def test_dynamic_shell_prompt_reports_confirmation_and_autopilot(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True, dangerous=True)
+    settings.agent.shell_autopilot_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_autopilot_enabled", lambda *_: _true())
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is not None
+    assert "全部 Shell 命令：已开放，但不是预授权" in prompt
+    assert "Autopilot：已开启" in prompt
+    assert "仍受沙盒、范围、配额和审计限制" in prompt
+
+
+@pytest.mark.asyncio
+async def test_dynamic_shell_prompt_is_absent_when_shell_is_not_authorized(monkeypatch):
+    db = _PolicyDB()
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=False))
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is None
+
+
+@pytest.mark.asyncio
+async def test_dynamic_shell_prompt_is_absent_when_sandbox_is_disabled(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.sandbox = SimpleNamespace(enabled=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert prompt is None
+
+
+@pytest.mark.asyncio
+async def test_shell_autopilot_skips_dangerous_confirmation_with_two_level_permission(monkeypatch):
     db = _PolicyDB()
     settings = _settings(shell=True, dangerous=True)
     settings.agent.shell_autopilot_enabled = True
@@ -116,6 +222,157 @@ async def test_shell_autopilot_skips_confirmation_only_with_two_level_permission
 
     assert decision.allowed
     assert not decision.needs_confirmation
+    assert decision.autopilot_enabled
+
+
+@pytest.mark.asyncio
+async def test_shell_uses_admin_egress_policy_without_tool_network_argument(monkeypatch, tmp_path):
+    """后台 egress 策略自动生效，不要求 Agent 传 network 参数。"""
+    from agent.tools import shell as shell_tool
+    from agent.security.shell_policy import ShellDecision, ShellRisk, ShellScope
+
+    settings = SimpleNamespace(
+        sandbox=SimpleNamespace(
+            network_profile="egress",
+            egress_ttl_seconds=600,
+            egress_proxy_url="http://proxy.example:7890",
+            egress_isolation_enabled=True,
+            egress_network_name="gugu-sandbox-egress",
+            sandboxd_socket="/tmp/sandboxd.sock",
+        )
+    )
+    decision = ShellDecision(
+        True, "允许在 sandbox 范围执行", ShellRisk.DANGEROUS,
+        scope=ShellScope.SANDBOX, workspace_id=7, autopilot_enabled=True,
+    )
+
+    async def _execute_stream(_request, on_output=None):
+        return {
+            "ok": True, "exit_code": 0, "stdout": "200", "stderr": "",
+            "timed_out": False, "truncated": False, "cwd": ".",
+            "permission_revoked": False, "quota_exceeded": False,
+        }
+
+    class _Sandboxd:
+        def __init__(self, _socket):
+            self.execute_stream = _execute_stream
+
+    async def _evaluate(*args, **kwargs):
+        return decision
+
+    async def _resolve_shell_root(*args, **kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(shell_tool, "evaluate", _evaluate)
+    monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_tool, "valid_egress_proxy", lambda *_: True)
+    monkeypatch.setattr(shell_tool, "valid_egress_network_name", lambda *_: True)
+    monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_: (True, ""))
+    monkeypatch.setattr(shell_tool, "resolve_shell_root", _resolve_shell_root)
+    monkeypatch.setattr(shell_tool, "SandboxdClient", _Sandboxd)
+    monkeypatch.setattr(
+        shell_tool.confirm, "needs_confirmation",
+        lambda *args, **kwargs: pytest.fail("Autopilot 不应再次请求 egress 确认"),
+    )
+
+    result = await shell_tool._run_shell(
+        None, "user-1", {"command": "curl https://example.com"}
+    )
+
+    assert result["ok"] is True
+    assert result["exit_code"] == 0
+    assert result["network_profile"] == "egress"
+    assert result["network_access"] == "egress"
+    assert result["_confirm_gate_authorized"] == "shell_autopilot"
+
+
+@pytest.mark.asyncio
+async def test_run_script_autopilot_skips_script_confirmation(monkeypatch, tmp_path):
+    """脚本确认也必须接入 Autopilot，但仍通过后续 Shell 执行边界。"""
+    import agent.tools.shell as shell_tool
+
+    script = tmp_path / "check.py"
+    script.write_text("print('ok')", encoding="utf-8")
+    monkeypatch.setattr(
+        shell_tool,
+        "current_filesystem_policy",
+        lambda *_: _async_value(SimpleNamespace(workspace_id=7, cwd=".")),
+    )
+    monkeypatch.setattr(shell_tool, "current_dispatch_filesystem_subject", lambda: {})
+    monkeypatch.setattr(shell_tool, "current_dispatch_session", lambda: None)
+    monkeypatch.setattr(shell_tool, "current_dispatch_session_id", lambda: 1)
+    monkeypatch.setattr(shell_tool, "resolve_shell_root", lambda *_: _async_value(tmp_path))
+    monkeypatch.setattr(
+        shell_tool,
+        "evaluate",
+        lambda *_args, **_kwargs: _async_value(SimpleNamespace(
+            allowed=True, reason="", autopilot_enabled=True,
+        )),
+    )
+    captured = {}
+
+    async def _run_shell(*call_args, **kwargs):
+        captured.update(call_args[-1] if call_args else {})
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(shell_tool, "_run_shell", _run_shell)
+    monkeypatch.setattr(
+        shell_tool.confirm,
+        "needs_confirmation",
+        lambda *_args, **_kwargs: pytest.fail("Autopilot 不应再次要求脚本确认"),
+    )
+
+    result = await shell_tool._run_script(None, "user-1", {
+        "script_path": "/workspace/check.py", "interpreter": "python3",
+    })
+
+    assert result == {"ok": True, "_confirm_gate_authorized": "shell_autopilot"}
+    assert captured["command"] == "python3 /workspace/check.py"
+    assert "network" not in captured
+    assert captured["_environment"] == {
+        "GUGU_SCRIPT_ROOT": "/workspace",
+        "GUGU_SCRIPT_PATH": "check.py",
+        "GUGU_WORKSPACE": "/workspace",
+    }
+
+
+def _async_value(value):
+    async def resolve():
+        return value
+    return resolve()
+
+
+@pytest.mark.asyncio
+async def test_run_shell_returns_structured_failure_when_sandboxd_is_unavailable(monkeypatch, tmp_path):
+    """sandboxd 未配置时应返回失败结果，不能因兜底变量未初始化而抛出内部异常。"""
+    from agent.tools import shell as shell_tool
+    from agent.security.shell_policy import ShellDecision, ShellRisk, ShellScope
+
+    settings = SimpleNamespace(
+        sandbox=SimpleNamespace(sandboxd_socket=""),
+    )
+    decision = ShellDecision(
+        True, "允许在 sandbox 范围执行", ShellRisk.SAFE,
+        scope=ShellScope.SANDBOX, workspace_id=7,
+    )
+
+    async def _evaluate(*args, **kwargs):
+        return decision
+
+    async def _resolve_shell_root(*args, **kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(shell_tool, "evaluate", _evaluate)
+    monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_: (True, ""))
+    monkeypatch.setattr(shell_tool, "resolve_shell_root", _resolve_shell_root)
+
+    result = await shell_tool._run_shell(None, "user-1", {"command": "ls"})
+
+    assert result["ok"] is False
+    assert result["error"] == "sandboxd 未配置，未执行命令"
+    assert result["exit_code"] is None
 
 
 @pytest.mark.asyncio
@@ -221,15 +478,31 @@ async def test_system_permission_does_not_change_default_scope(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workspace_cannot_opt_into_system_scope(monkeypatch):
+async def test_system_scope_ignores_workspace_binding(monkeypatch):
     db = _PolicyDB()
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
 
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
 
-    assert not decision.allowed
+    assert decision.allowed
+    assert decision.scope.value == "system"
+
+
+@pytest.mark.asyncio
+async def test_system_scope_does_not_require_sandbox(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    settings.sandbox = SimpleNamespace(enabled=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
+
+    assert decision.allowed
     assert decision.scope.value == "system"
 
 

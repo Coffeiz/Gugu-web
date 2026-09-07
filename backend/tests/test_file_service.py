@@ -4,6 +4,7 @@ P0.3b：文件写操作（create/update/copy）走 KeyStrategy 抽象，逐字�
 （key/配额/覆盖/冲突改名/跨空间归属/领域异常 status）。
 """
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from sqlalchemy import select
 import app.services.storage.file_service.folders as folders_mod
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.tz import now_utc
-from app.models import File, Folder, Project
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 
@@ -201,11 +202,49 @@ async def test_create_file_overwrite(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     r1 = await _create(svc, user_a.id, "a", "TXT", data=b"old")
     await db.commit()
+    old_version = r1.file.version
     r2 = await _create(svc, user_a.id, "a", "TXT", data=b"newer",
                        on_conflict="overwrite", overwrite_file_id=r1.file.id)
     await db.commit()
     assert r2.was_overwrite and r2.file.id == r1.file.id and r2.file.size_bytes == 5
+    assert r2.file.version == old_version + 1
     assert await svc.storage.get(r2.file.storage_key) == b"newer"
+
+
+@pytest.mark.asyncio
+async def test_create_file_overwrite_records_filesync_canonical_change(
+    db, user_a, tmp_path, monkeypatch,
+):
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+
+    svc = _svc(db, tmp_path)
+    original = await _create(svc, user_a.id, "a", "TXT", data=b"old")
+    await db.commit()
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", status="active",
+        root_path="个人文件", root_fingerprint="a" * 64,
+    )
+    db.add(binding)
+    await db.commit()
+
+    await _create(
+        svc, user_a.id, "a", "TXT", data=b"newer",
+        on_conflict="overwrite", overwrite_file_id=original.file.id,
+    )
+    await db.commit()
+
+    journal = (await db.scalars(select(FileSyncJournal))).one()
+    assert journal.relative_path == "a.txt"
+    assert journal.source == "file_api"
+    assert journal.observed_fingerprint is not None
 
 
 async def test_create_file_overwrite_target_missing(db, user_a, tmp_path):
@@ -213,6 +252,30 @@ async def test_create_file_overwrite_target_missing(db, user_a, tmp_path):
     with pytest.raises(Invalid) as ei:
         await _create(svc, user_a.id, "a", "TXT", on_conflict="overwrite", overwrite_file_id=999)
     assert ei.value.public_message == "要覆盖的文件不存在"
+
+
+@pytest.mark.asyncio
+async def test_copy_overwrite_rejects_cross_workspace_target(db, user_a, tmp_path):
+    """Workspace A 的同名文件不能借 folder/name/ext 相同就覆盖 Workspace B 的文件。"""
+    from app.models import WorkspaceDirectory
+
+    ws_a = WorkspaceDirectory(user_id=user_a.id, name="工作区A", directory_name="workspace-a")
+    ws_b = WorkspaceDirectory(user_id=user_a.id, name="工作区B", directory_name="workspace-b")
+    db.add_all([ws_a, ws_b])
+    await db.commit()
+    svc = _svc(db, tmp_path)
+    in_a = await _create(svc, user_a.id, "a", "TXT", data=b"A", space="workspace",
+                         workspace_directory_id=ws_a.id)
+    in_b = await _create(svc, user_a.id, "a", "TXT", data=b"B", space="workspace",
+                         workspace_directory_id=ws_b.id)
+    await db.commit()
+    with pytest.raises(Invalid) as ei:
+        await svc.copy_file(user_a.id, in_b.file.id, folder_id=None, project_id=None,
+                            workspace_directory_id=ws_b.id,
+                            on_conflict="overwrite", overwrite_file_id=in_a.file.id)
+    assert ei.value.public_message == "覆盖目标不在当前文件夹"
+    assert await svc.storage.get(in_a.file.storage_key) == b"A"      # A 内容原封不动
+    await db.commit()
 
 
 async def test_create_file_quota_full(db, user_a, tmp_path):
@@ -483,3 +546,117 @@ async def test_update_file_rejects_moving_into_deleted_folder(db, user_a, tmp_pa
     with pytest.raises(Invalid):
         await svc.update_file(user_a.id, r.file.id, display_name=None, stage_name=None,
                               folder_id=folder.id, project_id=None, folder_set=True, project_set=False)
+
+
+async def test_upload_overwrite_rejects_cross_location_target(db, user_a, tmp_path):
+    """普通上传 overwrite 目标必须同 space/project/folder/workspace 且同名同类型。
+
+    只比 workspace_directory_id 会把所有非 Workspace 文件并成一桶（None==None），
+    借 overwrite_file_id 覆盖别的项目/个人文件夹里的同名文件；契约与 copy 对齐。
+    """
+    from app.models import Project
+
+    uid = user_a.id
+    proj = Project(user_id=uid, name="项目A", color="#3366ff",
+                   start_date="2026-09-01", status="in_progress")
+    db.add(proj)
+    await db.commit()
+    proj_id = proj.id
+    svc = _svc(db, tmp_path)
+    in_project = await _create(svc, uid, "合同", "PDF", data=b"old",
+                               space="project", project_id=proj_id)
+    in_personal = await _create(svc, uid, "新文件", "PDF", data=b"new")
+    await db.commit()
+    in_project_id, in_personal_id = in_project.file.id, in_personal.file.id
+
+    # personal 上传试图借 id 覆盖项目里的「合同.pdf」：位置不同必须拒绝。
+    with pytest.raises(Invalid):
+        await svc.create_file(uid, space="personal", project_id=None, folder_id=None,
+                              stage_name="", mind_map_id=None, display_name="合同", ext="PDF",
+                              mime_type="application/pdf", data=b"evil",
+                              on_conflict="overwrite", overwrite_file_id=in_project_id)
+    await db.rollback()
+
+    # 已删除行不能作为覆盖目标。
+    target = await _create(svc, uid, "草稿", "TXT", data=b"1")
+    target_id = target.file.id
+    target.file.deleted_at = now_utc()
+    await db.commit()
+    with pytest.raises(Invalid):
+        await svc.create_file(uid, space="personal", project_id=None, folder_id=None,
+                              display_name="草稿", ext="TXT", mime_type="text/plain",
+                              data=b"2", stage_name="", mind_map_id=None,
+                              on_conflict="overwrite", overwrite_file_id=target_id)
+    await db.rollback()
+
+    # 正路：完全同位置同名同类型才允许覆盖，内容确实替换。
+    ok = await svc.create_file(uid, space="personal", project_id=None, folder_id=None,
+                               display_name="新文件", ext="PDF", mime_type="application/pdf",
+                               data=b"updated", stage_name="", mind_map_id=None,
+                               on_conflict="overwrite", overwrite_file_id=in_personal_id)
+    assert ok.was_overwrite and ok.file.id == in_personal_id
+    assert await svc.storage.get(ok.file.storage_key) == b"updated"
+
+@pytest.mark.asyncio
+async def test_update_file_cut_into_workspace_subfolder_keeps_folder(db, user_a, tmp_path):
+    """剪切 personal 文件到 Workspace 子目录再粘贴：folder_id 必须保留。
+
+    回归：update_file 曾在目标为 Workspace 时无条件 new_fid = None，把文件扔到
+    Workspace 根目录，剪切目标里的子路径被丢掉。
+    """
+    from app.models import WorkspaceDirectory
+
+    ws = WorkspaceDirectory(user_id=user_a.id, name="工作区W", directory_name="workspace-w")
+    db.add(ws)
+    await db.commit()
+    svc = _svc(db, tmp_path)
+    sub = await svc.create_folder(user_a.id, name="子目录", parent_id=None,
+                                  project_id=None, workspace_directory_id=ws.id)
+    await db.commit()
+    f = (await _create(svc, user_a.id, "a", "TXT")).file
+    await db.commit()
+
+    res = await svc.update_file(
+        user_a.id, f.id, display_name=None, stage_name=None,
+        folder_id=sub.id, project_id=None, folder_set=True, project_set=False,
+        workspace_directory_id=ws.id, workspace_directory_set=True)
+    await db.commit()
+    assert res.file.space == "workspace"
+    assert res.file.workspace_directory_id == ws.id
+    assert res.file.folder_id == sub.id
+    assert res.file.storage_key == f"{user_a.id}/workspace-w/子目录/a.txt"
+
+
+@pytest.mark.asyncio
+async def test_update_file_cross_workspace_without_folder_lands_at_root(db, user_a, tmp_path):
+    """跨 Workspace 移动且未指定目标文件夹：落根目录，且不能带着源 Workspace 的 folder_id。"""
+    from app.core.errors import Invalid
+    from app.models import WorkspaceDirectory
+
+    ws_a = WorkspaceDirectory(user_id=user_a.id, name="工作区A", directory_name="workspace-a")
+    ws_b = WorkspaceDirectory(user_id=user_a.id, name="工作区B", directory_name="workspace-b")
+    db.add_all([ws_a, ws_b])
+    await db.commit()
+    svc = _svc(db, tmp_path)
+    in_a = await _create(svc, user_a.id, "a", "TXT", space="workspace",
+                         workspace_directory_id=ws_a.id)
+    await db.commit()
+
+    res = await svc.update_file(
+        user_a.id, in_a.file.id, display_name=None, stage_name=None,
+        folder_id=None, project_id=None, folder_set=False, project_set=False,
+        workspace_directory_id=ws_b.id, workspace_directory_set=True)
+    await db.commit()
+    assert res.file.workspace_directory_id == ws_b.id
+    assert res.file.folder_id is None
+    assert res.file.storage_key == f"{user_a.id}/workspace-b/a.txt"
+
+    # 显式指到别的 Workspace 的文件夹 → 归属校验拒绝
+    sub_b = await svc.create_folder(user_a.id, name="B子目录", parent_id=None,
+                                    project_id=None, workspace_directory_id=ws_b.id)
+    await db.commit()
+    with pytest.raises(Invalid):
+        await svc.update_file(
+            user_a.id, res.file.id, display_name=None, stage_name=None,
+            folder_id=sub_b.id, project_id=None, folder_set=True, project_set=False,
+            workspace_directory_id=ws_a.id, workspace_directory_set=True)

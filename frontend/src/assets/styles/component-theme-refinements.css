@@ -18,7 +18,8 @@ html[data-theme][data-family] .cal-chip::after {
 /* ScheduleCard previously animated ::after from a bottom gradient to a flat fill. That made the
    hover look like light travelled vertically through the card. It is now one opacity layer. */
 html[data-theme][data-family] .task-card {
-  transition: var(--card-motion);
+  /* 启停状态动画必须保留在最终 transition 所有者中，避免被组件 scoped 规则覆盖。 */
+  transition: var(--card-motion), opacity var(--hover-motion-control);
 }
 html[data-theme][data-family] .task-card::after {
   background: var(--card-hover-overlay) !important;

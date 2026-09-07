@@ -8,11 +8,12 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access
+from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access, pty_access
 from agent.terminal.contracts import TerminalMode, TerminalShellMode, TerminalSource, TerminalStatus
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import ConversationSession, TerminalEventRecord, TerminalSessionRecord, Workspace
+from app.services.workspaces import workspace_shell_supported
 
 TERMINAL_RETENTION_DAYS = 30
 TERMINAL_OUTPUT_RETENTION_CHARS = 500_000
@@ -23,9 +24,10 @@ def _terminal_id() -> str:
 
 
 def serialize_terminal(row: TerminalSessionRecord) -> dict:
+    workspace_id = row.workspace_id if workspace_shell_supported() else None
     return {
         "id": row.id, "name": row.name, "sessionId": row.session_id, "runId": row.run_id,
-        "workspaceId": row.workspace_id, "source": row.source,
+        "workspaceId": workspace_id, "source": row.source,
         "mode": row.mode or TerminalMode.AGENT_EVENTS.value, "status": row.status,
         "shellMode": row.shell_mode, "networkProfile": row.network_profile,
         "lastSequence": row.last_sequence, "outputChars": row.output_chars,
@@ -61,9 +63,15 @@ async def create_terminal(
     access = await page_access(db, user_id)
     if not access.allowed:
         raise PermissionError(access.reason)
+    if mode == TerminalMode.INTERACTIVE_PTY.value:
+        pty_decision = await pty_access(db, user_id)
+        if not pty_decision.allowed:
+            raise PermissionError(pty_decision.reason)
     if session_id is not None and await get_owned(db, ConversationSession, session_id, user_id) is None:
         raise LookupError("会话不存在")
     if workspace_id is not None:
+        if not workspace_shell_supported():
+            raise ValueError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
         workspace = await get_owned(db, Workspace, workspace_id, user_id)
         if workspace is None or not workspace.enabled:
             raise LookupError("工作区不存在或已停用")
@@ -82,6 +90,8 @@ async def create_terminal(
 
 async def ensure_agent_terminal(db: AsyncSession, user_id, *, session_id: int, workspace_id: int | None,
                                 shell_mode: str, network_profile: str, run_id: str | None = None) -> TerminalSessionRecord:
+    if workspace_id is not None and not workspace_shell_supported():
+        raise ValueError("OSS 存储模式不支持 workspace，请使用独立 Shell 沙盒")
     result = await db.execute(select(TerminalSessionRecord).where(
         TerminalSessionRecord.owner_id == user_id,
         TerminalSessionRecord.session_id == session_id,
@@ -101,6 +111,8 @@ async def ensure_agent_terminal(db: AsyncSession, user_id, *, session_id: int, w
         db.add(row)
         await db.flush()
     else:
+        if not workspace_shell_supported():
+            row.workspace_id = None
         row.status = TerminalStatus.RUNNING.value
         row.run_id = run_id or row.run_id
         row.updated_at = now_utc()

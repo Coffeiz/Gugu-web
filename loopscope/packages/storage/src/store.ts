@@ -233,7 +233,8 @@ export class TraceStore {
       : and(eq(runs.sessionKey, sessionKey), lt(runs.startedAt, options.before))
     const rows = this.connection.db.select().from(runs).where(condition)
       .orderBy(desc(runs.startedAt)).limit(limit).all()
-    return rows.reverse().map(row => this.runApi(row))
+    // Run 列表统一按最新到最旧返回，前端默认展示最新 Run，向上滚动再加载历史。
+    return rows.map(row => this.runApi(row))
   }
 
   getRun(runId: string, includeSpans = true) {

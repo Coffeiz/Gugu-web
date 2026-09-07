@@ -28,7 +28,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 # 数据库备份必须成功，否则不能把备份误报成完整备份。
 # 密码只通过临时 PGPASSFILE 传给 pg_dump，不进入命令参数、日志或备份清单。
-if ! command -v pg_dump >/dev/null 2>&1; then
+PG_DUMP_IMAGE="${PG_DUMP_IMAGE:-}"
+if [ -z "$PG_DUMP_IMAGE" ] && ! command -v pg_dump >/dev/null 2>&1; then
     echo "[ERROR] 未找到 pg_dump，无法生成数据库备份。" >&2
     exit 1
 fi
@@ -51,19 +52,48 @@ if [ "${#DB_FIELDS[@]}" -ne 5 ] || [ -z "${DB_FIELDS[4]}" ]; then
     exit 1
 fi
 PGPASSFILE="${TMP_DIR}/.pgpass"
+: > "$PGPASSFILE"
 chmod 600 "$PGPASSFILE"
 printf '%s:%s:%s:%s:%s\n' "${DB_FIELDS[0]}" "${DB_FIELDS[1]}" "${DB_FIELDS[2]}" "${DB_FIELDS[3]}" "${DB_FIELDS[4]}" > "$PGPASSFILE"
 DB_DUMP="${TMP_DIR}/database.dump"
-if ! PGPASSFILE="$PGPASSFILE" pg_dump \
-    --format=custom --no-owner --no-acl \
-    --host="${DB_FIELDS[0]}" --port="${DB_FIELDS[1]}" \
-    --username="${DB_FIELDS[3]}" --dbname="${DB_FIELDS[2]}" \
-    --file="$DB_DUMP"; then
-    echo "[ERROR] PostgreSQL 备份失败，已停止。" >&2
-    exit 1
+if [ -n "$PG_DUMP_IMAGE" ]; then
+    if ! command -v docker >/dev/null 2>&1 || ! docker image inspect "$PG_DUMP_IMAGE" >/dev/null 2>&1; then
+        echo "[ERROR] 未找到 PostgreSQL 客户端镜像 ${PG_DUMP_IMAGE}，无法生成数据库备份。" >&2
+        exit 1
+    fi
+    if ! docker run --rm --network host \
+        -v "${TMP_DIR}:/backup" \
+        -e PGPASSFILE=/backup/.pgpass \
+        "$PG_DUMP_IMAGE" pg_dump \
+        --format=custom --no-owner --no-acl \
+        --host="${DB_FIELDS[0]}" --port="${DB_FIELDS[1]}" \
+        --username="${DB_FIELDS[3]}" --dbname="${DB_FIELDS[2]}" \
+        --file=/backup/database.dump; then
+        echo "[ERROR] PostgreSQL 备份失败，已停止。" >&2
+        exit 1
+    fi
+    if ! docker run --rm --network host \
+        -v "${TMP_DIR}:/backup" \
+        "$PG_DUMP_IMAGE" pg_restore --list /backup/database.dump >/dev/null 2>&1; then
+        echo "[ERROR] PostgreSQL 备份校验失败，已停止。" >&2
+        exit 1
+    fi
+else
+    if ! PGPASSFILE="$PGPASSFILE" pg_dump \
+        --format=custom --no-owner --no-acl \
+        --host="${DB_FIELDS[0]}" --port="${DB_FIELDS[1]}" \
+        --username="${DB_FIELDS[3]}" --dbname="${DB_FIELDS[2]}" \
+        --file="$DB_DUMP"; then
+        echo "[ERROR] PostgreSQL 备份失败，已停止。" >&2
+        exit 1
+    fi
+    if ! pg_restore --list "$DB_DUMP" >/dev/null 2>&1; then
+        echo "[ERROR] PostgreSQL 备份校验失败，已停止。" >&2
+        exit 1
+    fi
 fi
-if ! pg_restore --list "$DB_DUMP" >/dev/null 2>&1; then
-    echo "[ERROR] PostgreSQL 备份校验失败，已停止。" >&2
+if [ ! -s "$DB_DUMP" ]; then
+    echo "[ERROR] PostgreSQL 备份失败，已停止。" >&2
     exit 1
 fi
 echo "[OK] PostgreSQL dump 已生成并通过结构校验"

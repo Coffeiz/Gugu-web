@@ -38,7 +38,7 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
   const { state, open, close } = useFileContextMenu<ContextType, ContextTarget>()
   const pasteCore = useFilePasteCore({
     clipboardStore: options.clipboardStore,
-    getDestination: () => ({ folderId: currentFolderId(), projectId: options.getProjectId() }),
+    getDestination: () => ({ folderId: currentFolderId(), projectId: options.getProjectId(), workspaceDirectoryId: null }),
     close,
     onCut: async (fileIds, folderIds, destination) => {
       const [, movedFolders] = await Promise.all([

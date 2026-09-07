@@ -24,7 +24,7 @@ def test_event_reminder_migration_merges_duplicates_before_unique_index():
         connection.execute(text(
             "CREATE TABLE scheduled_tasks ("
             "id INTEGER PRIMARY KEY, user_id VARCHAR(36), event_id INTEGER, "
-            "cron VARCHAR(60), channels VARCHAR(40))"
+            "cron VARCHAR(60), channels VARCHAR(40), created_at DATETIME)"
         ))
         connection.execute(text(
             "INSERT INTO scheduled_tasks(id,user_id,event_id,cron,channels) VALUES "

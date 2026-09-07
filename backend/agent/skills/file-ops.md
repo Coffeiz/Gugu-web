@@ -3,7 +3,7 @@ name: 文件操作
 description_long: 移动/改名/编辑/创建/保存文件、列文件或核对文件存在性、引用文件给跳转链接时——拿批量入口用法、核对与防覆盖做法
 description_short: 用户要查找、创建、编辑、移动或引用文件时使用。
 category: files
-related_tools: list_files, read_file, edit_file, create_document, rename_file, move_items, copy_file, create_folder, delete_file, list_folders, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file, web_download
+related_tools: list_files, read_file, edit_file, create_file, rename_file, move_items, copy_file, create_folder, delete_file, list_folders, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file, web_download
 emoji: 📂
 ---
 
@@ -18,9 +18,11 @@ emoji: 📂
 - 修改内容前先读取最新版本，不要用旧正文覆盖用户的新改动。
 - 指定行编辑必须基于最新 `numbered_content` 和对应 `expected` 原文，不能猜行号。
 - 删除、永久清理、覆盖和发送附件必须遵守工具确认要求。
+- 文件库 personal/project 默认只读；写入、移动、改名、删除、恢复和永久清理会按当前 Session/定时任务的统一 filesystem policy 校验。workspace 绑定或完整授权由系统事实决定，不要自行猜测权限。
 - 工具逐项返回成功/失败时，逐项如实汇报，不能笼统声称“全部完成”。
 
 ## 查询与批量入口
+- 文件库位图可以直接用 `read_file(file_id=...)` 查看；该工具会把图片交给视觉模型，不是只能读取文本。SVG 当前按源码文本读取，不伪装成视觉图片。需要一次读取/比较多张位图时，才使用 `inspect_images` 的 `file_id` 数组；聊天历史附件使用 `attach_id`，网络候选使用图片 URL。
 - **查询多个候选文件名时优先一次传 `list_files.queries`**：默认 OR，避免为了不同关键词重复查询；只有用户明确要求同时满足多个词时才使用 `mode: "AND"`。
 - **移动 / 改名 / 编辑多个文件或文件夹 → 用批量入口一次调用，别一个个调**：
   - `move_items`：files + folders 一次搬到同一目标；**移文件夹会连里面的文件和子文件夹递归一起搬**，你不用管里面有几个。
@@ -28,6 +30,7 @@ emoji: 📂
 -  - `edit_file` 的 `edits`：多文件统一查找替换、或各自编辑。
 - 需要修改或删除指定行时，先 `read_file` 获取最新 `numbered_content`，它按原始 Markdown 物理行编号，不是页面渲染行号；再使用 `mode: "line_edit"` 和 `line_edits`，数字目标必须带对应的 `expected` 原文。每项用 `target_lines` 表示 `8`、`8-11` 或 `8,11`，整篇用 `all`，`content: ""` 表示删除。校验失败就重新读取，不能猜行号；多个范围不能重叠，行号变化的多个操作由工具按倒序处理。
 - 后端逐项执行、回报每项成功/失败——**严格按回报如实汇报**（成功几个、哪些失败及原因），不能笼统说"全部完成"。仍是单文件工具（如 `delete_file`）的多次操作，则每个都真调用并确认。
+- `create_file` 用 `files` 批量创建 UTF-8 文本；文件名必须自带后缀，支持 `.py`、`.html`、`.ts` 及任意自定义文本后缀。可用 `target` 指定默认落点，单项可覆盖；同名默认保留副本，不做格式转换或执行。
 - 删除多个文件或文件夹时优先使用 `delete_file.file_ids` / `delete_folder.folder_ids` 一次调用；永久清理回收站时使用 `permanent_delete.file_ids/folder_ids` 或 `all=true`，不要逐项调用制造重复确认。批量结果仍须逐项如实汇报成功与失败。
 
 ## 创建与编辑
@@ -53,7 +56,7 @@ emoji: 📂
 - 移动 / 保存类工具会回报 `project_name`、`folder_id` 等落点，**照回执原样说**（如"已放进 maimai 角色插画 #89"），别自己改写或猜项目。
 
 ## 保存、跳转与发送是三件事
-- `create_document` 等新建文档后，**一句话告诉存到了哪**（照回执的 `project_name` / 文件夹说，如「存到『神椿插画』的素材文件夹了」），方便去找。
+- `create_file` 等新建文件后，**一句话告诉存到了哪**（照回执的 `project_name` / 文件夹说，如「存到『神椿插画』的素材文件夹了」），方便去找。
 - 同一文件在本轮被**连续编辑**时，只在「刚创建」那次报一次位置就够，后面别每次重复念目录。
 - **绝不主动调 `send_file`**：保存好 ≠ 发给用户。`send_file` 在飞书 / QQ 是**真把文件推到对方聊天里**（网页是下载卡片）——**只有用户明确说「发给我 / 给我那个 / 发过来」时才调**。创建 / 改完默认只告知位置。
 
@@ -75,7 +78,7 @@ emoji: 📂
 - 多个目录都合理、或语义拿不准：问用户选哪个。宁可放根目录，也不要硬塞进错误目录。
 
 ## 文件库跳转链接
-- 任何文件库工具本轮返回真实 `file_id` 后，用户询问文件位置、路径、打开或查看时，回复里用 `[文件名.ext](gugu://open-file/{file_id})`；适用于 `read_file`、`create_document`、`web_download`、`save_uploaded_file` 等产出文件的工具。
+- 任何文件库工具本轮返回真实 `file_id` 后，用户询问文件位置、路径、打开或查看时，回复里用 `[文件名.ext](gugu://open-file/{file_id})`；适用于 `read_file`、`create_file`、`web_download`、`save_uploaded_file` 等产出文件的工具。
 - `file_id` 必须来自本轮最近一次工具回执，禁止猜测或复用不确定的 id。示例：`[w3-svg-test.svg](gugu://open-file/2449)`。
 - `gugu://open-file/{file_id}` 是文件库跳转按钮，不是发送附件；不要把它写成普通 HTTP 下载地址。
 - 同一文件在同一条回复里多次提到，**只第一次**加链接，后面直接写文件名。

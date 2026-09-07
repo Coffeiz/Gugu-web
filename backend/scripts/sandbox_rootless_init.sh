@@ -21,6 +21,7 @@ EGRESS_NETWORK="${SANDBOX__EGRESS_NETWORK_NAME:-gugu-sandbox-egress}"
 EGRESS_PROXY_URL="${SANDBOX__EGRESS_PROXY_URL:-http://egress-proxy:3128}"
 PROXY_IMAGE="${GUGU_EGRESS_PROXY_IMAGE:-ubuntu/squid:latest}"
 SQUID_CONF="${SQUID_CONF_PATH:-/config/squid/egress.conf}"
+USERS_ROOT="${GUGU_DATA_DIR:-/data}/users"
 
 if ! $RD info >/dev/null 2>&1; then
     echo "沙盒 docker daemon 不可达：$RD_SOCKET" >&2
@@ -82,5 +83,11 @@ fi
 ref="$SANDBOX_IMAGE"
 [ -n "$SANDBOX_IMAGE_DIGEST" ] && ref="$SANDBOX_IMAGE@$SANDBOX_IMAGE_DIGEST"
 load_image_if_missing "$ref"
+
+# 目标 daemon 启动的沙盒容器使用独立 UID；文件库目录由业务容器创建时通常是
+# 755/660，必须在同一条 Compose bootstrap 链中统一补上映射组 ACL。该步骤幂等，
+# 也会验证真实沙盒 UID 能创建并删除文件，避免“挂载 RW 但首次写入才失败”。
+python /usr/local/bin/prepare_rootless_storage.py "$USERS_ROOT" \
+    --docker-socket "$RD_SOCKET" --image "$ref" --probe
 
 echo "沙盒环境就绪：网络 $EGRESS_NETWORK、代理 $proxy_host、镜像 $ref"

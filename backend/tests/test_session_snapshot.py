@@ -17,6 +17,9 @@ from agent.context.session_snapshot import (
     current_time_text,
     update_baseline_snapshot,
     initialize_snapshot,
+    invalidate_snapshot,
+    workspace_binding_key,
+    workspace_snapshot_block,
 )
 from agent.context.assembly import NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder, newly_appended
 from agent.loop_drivers import _with_history_cache, _with_single_history_cache
@@ -166,6 +169,70 @@ async def test_ensure_snapshot_keeps_hit_when_pending_revision_changes(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_workspace_binding_change_rebuilds_snapshot():
+    calls = 0
+
+    async def load():
+        nonlocal calls
+        calls += 1
+        return {
+            "system_prompt": "system",
+            "snapshot_context": f"workspace-{calls}",
+            "session_info": {},
+        }
+
+    session = _Session()
+    first_target = {"workspace_id": 10, "space": "personal", "folder_id": 601}
+    changed_target = {"workspace_id": 11, "space": "personal", "folder_id": 602}
+
+    await ensure_snapshot(
+        _Db(), session, load_context=load,
+        workspace_binding=workspace_binding_key(first_target),
+    )
+    await ensure_snapshot(
+        _Db(), session, load_context=load,
+        workspace_binding=workspace_binding_key(first_target),
+    )
+    assert calls == 1
+
+    rebuilt = await ensure_snapshot(
+        _Db(), session, load_context=load,
+        workspace_binding=workspace_binding_key(changed_target),
+    )
+    assert calls == 2
+    assert rebuilt["snapshot_context"] == "workspace-2"
+    assert rebuilt["workspace_binding"] == workspace_binding_key(changed_target)
+
+
+def test_workspace_block_is_fixed_and_unbound_is_empty():
+    target = {
+        "workspace_id": 10,
+        "workspace_name": "F1",
+        "space": "personal",
+        "project_id": None,
+        "folder_id": 601,
+    }
+    block = workspace_snapshot_block(target)
+    assert "## 当前会话工作区（文件工具必须遵守）" in block
+    assert "space=personal" in block
+    assert "folder_id=601" in block
+    assert workspace_snapshot_block(None) == ""
+
+
+def test_invalidate_snapshot_expires_without_erasing_context():
+    session = _Session()
+    initialize_snapshot(
+        session, system_prompt="system", snapshot_context="fixed",
+        session_info={}, user_tz="Asia/Shanghai",
+    )
+    epoch = session.context_epoch
+    invalidate_snapshot(session)
+    assert is_expired(session)
+    assert session.context_epoch == epoch + 1
+    assert session.session_context["snapshot_context"] == "fixed"
+
+
+@pytest.mark.asyncio
 async def test_snapshot_serializes_zoneinfo_timezone_for_json():
     from zoneinfo import ZoneInfo
 
@@ -224,6 +291,10 @@ def test_initialize_snapshot_preserves_goal_control_state():
         "goal_status": "active",
         "goal_mode": True,
         "stance_digest": "stable-stance",
+        "user_skill_snapshot": [{
+            "name": "saved-skill", "kind": "skill", "source": "user",
+            "description_short": "已冻结的技能目录",
+        }],
     }
 
     initialize_snapshot(
@@ -238,6 +309,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
     assert session.session_context["goal_status"] == "active"
     assert session.session_context["goal_mode"] is True
     assert session.session_context["stance_digest"] == "stable-stance"
+    assert session.session_context["user_skill_snapshot"][0]["name"] == "saved-skill"
 
 
 def test_history_baseline_never_moves_back_from_session_watermark():
@@ -429,7 +501,7 @@ def test_batch_messages_are_persisted_as_new_history():
     ]
 
 
-def test_single_history_cache_keeps_cross_run_baseline_and_latest_anchor():
+def test_single_history_cache_keeps_only_latest_history_anchor():
     messages = PromptMessages(
         [
             {"role": "system", "content": [{
@@ -449,8 +521,8 @@ def test_single_history_cache_keeps_cross_run_baseline_and_latest_anchor():
 
     assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
-    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[4]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in cached[2]["content"]
     assert "cache_control" not in cached[-1]["content"]
 
 

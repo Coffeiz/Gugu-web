@@ -119,12 +119,19 @@ def _misperc_regex(user_id, user_msg: str) -> dict | None:
     return {"t": "misperc", "u": str(user_id)[:8], "kind": "未判", "via": "regex", "marker": hit, "ts": _now_ts()}
 
 
-def _perc_rec(user_id, perc, model: str) -> dict | None:
-    """本轮观察 → 一条 perc 记录（只结构化字段，不写用户原文）。"""
+def _perc_rec(user_id, perc, model_cfg) -> dict | None:
+    """本轮观察 → 一条 perc 记录（只结构化字段，不写用户原文）。
+
+    model_cfg 必须是本轮实际绑定的配置，不能读取平台默认模型配置：用户 BYOK 会在
+    解析后覆盖平台默认模型，而感知遥测也应与该次反思调用保持一致。
+    """
     if not isinstance(perc, dict):
         return None
     intent = perc.get("intent")
-    return {"t": "perc", "u": str(user_id)[:8], "model": model or "",
+    return {"t": "perc", "u": str(user_id)[:8],
+            "model": str(getattr(model_cfg, "model", "") or ""),
+            "provider": str(getattr(model_cfg, "provider", "") or ""),
+            "is_byok": bool(getattr(model_cfg, "is_byok", False)),
             "intent": intent if intent in _PERC_INTENTS else "其他",
             "ambiguity": perc.get("ambiguity"), "emotion": perc.get("emotion"),
             "emo": perc.get("emo_strength"), "ts": _now_ts()}
@@ -162,7 +169,7 @@ async def _read_last_turn(user_id, session_id=None) -> dict | None:
         return None
 
 
-async def _bind_user_model(user_id, settings):
+async def _bind_user_model(user_id, settings, session_id=None):
     """在独立反思任务内解析并绑定用户模型，避免依赖父任务上下文继承。"""
     from app.db import session as db_session
     from agent.llm import modelctx
@@ -175,6 +182,7 @@ async def _bind_user_model(user_id, settings):
         run_config = await resolve_run_config_for_user(settings, db, user_id, None)
     modelctx.mark_user_scope()
     modelctx.set_model_cfg(run_config.model)
+    modelctx.set_usage_context(user_id, session_id)
     return run_config.model
 
 
@@ -385,6 +393,7 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
                   turns=None) -> bool:
     out = None
+    bound_model = None
     turns = turns or [{
         "user_msg": user_msg,
         "assistant_reply": assistant_reply,
@@ -396,7 +405,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # 反思既可能由主 Runner 派生，也可能由 IM 被动消息/延迟批处理独立创建。
         # 后者不能依赖父任务的 ContextVar 继承；在真正调用分支模型前按用户重新解析
         # 并绑定 BYOK，解析失败则跳过本次反思，不能静默烧平台额度。
-        await _bind_user_model(user_id, settings)
+        bound_model = await _bind_user_model(user_id, settings, session_id)
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
         out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"], existing_summary,
@@ -419,7 +428,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
 
     try:
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
-        await _emit_perc(_perc_rec(user_id, out.get("perception"), getattr(getattr(settings, "ai", None), "model", "")))
+        await _emit_perc(_perc_rec(user_id, out.get("perception"), bound_model))
         # 反馈信号（feedback 枚举,白名单校验）:学习闭环的燃料,只打点（见 proposals/反馈信号系统-设计.md）
         await _emit_perc(_fb_rec(user_id, out.get("feedback")))
         # 行为模块选择：把本轮 stance（= perception.intent）落 per-user，供下一轮 builder 点亮模块（带新鲜度闸）
@@ -557,6 +566,10 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
             output_mode="json",
             max_tokens=min(_cap, 900),
             max_retries=0,
+            # 反思只提取小型结构化增量，不需要推理链。若继承当前模型的 adaptive
+            # thinking，900 token 很容易被思考预算耗尽而没有最终 JSON，导致 pattern
+            # 增量被 ContextBranch 判为 output_empty。
+            thinking="disabled",
         ),
         settings,
     )

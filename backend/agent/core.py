@@ -26,12 +26,35 @@ from app.core.redaction import diag_log
 from app.core.tz import now_utc
 from agent.interactions.stream_events import encode_event
 from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_name
+from agent.context.message_roles import last_user_index, user_text_from_message
 
 _log = logging.getLogger("agent.core")
 
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
 # 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
 _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
+
+
+def _sanitize_anthropic_history(messages) -> tuple[int, int, bool]:
+    """在 canonical 层清洗 Anthropic 历史，并把结果写回消息容器。
+
+    不能等 provider 投影成普通文本后再清洗：``time-context`` 等 canonical
+    边界一旦被渲染成 ``text``，会被误判为可合并的相邻 user 消息，导致每轮
+    都看到一次历史变化并重复记录告警。
+    """
+    from agent.security.sanitize import sanitize_messages
+
+    conversation = list(getattr(messages, "conversation", messages))
+    cleaned = sanitize_messages(conversation)
+    if cleaned == conversation:
+        return len(conversation), len(cleaned), False
+
+    replace = getattr(messages, "replace_conversation", None)
+    if callable(replace):
+        replace(cleaned)
+    else:
+        messages[:] = cleaned
+    return len(conversation), len(cleaned), True
 
 
 def _provider_context_usage(driver: Any, result: Any) -> int:
@@ -126,6 +149,14 @@ _GOAL_POLICY = (
 )
 # 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
 MAX_TOOL_CALLS = 10
+# 同名工具 + 完全相同参数的连续调用熔断阈值：允许前 3 次真实执行，第 4 次起不再
+# dispatch，直接回一条引导收束的结果。治「核实阶段反复重读同一资源找确认」的行为
+# 死循环（unlimited 模式下轮次上限不生效，这层是唯一的形态级护栏）。
+MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS = 3
+_REPEAT_CALL_STOP_RESULT = (
+    "检测到你已连续多次以完全相同的参数调用同一工具，结果不会再发生变化。"
+    "请不要重复这一调用：基于已经获得的信息执行下一步操作，或直接总结回复用户。"
+)
 _DEFAULT_BUDGET = object()
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
@@ -182,7 +213,7 @@ def _strip_goal_marker(text: str) -> str:
 _VERIFY_PROMPT = (
     "【内部核验 · 请执行】你刚才执行了增删改操作。现在用对应的查询工具检查结果是否生效且完整："
     "查询工具一般是 `list_*` / `get_*` / `read_*`（建项目用 `get_project` 看阶段待办、定时任务用 `list_scheduled_tasks` 看 cron/内容……照此类推）。"
-    "**尤其改了文件正文（`edit_file`/`create_document`）：必须用 `read_file` 把内容读回来逐字比对；按行编辑还要确认目标行已更新/删除且其它行未被移动或覆盖——`list_files` 只能看文件在不在，光看那个不算核实。**"
+    "**尤其改了文件正文（`edit_file`/`create_file`）：必须用 `read_file` 把内容读回来逐字比对；按行编辑还要确认目标行已更新/删除且其它行未被移动或覆盖——`list_files` 只能看文件在不在，光看那个不算核实。**"
     "**发现没做成或不完整 → 立刻补做，并简要说明补了什么**。"
     "核验过程属于内部步骤，不要把“核对完成”“复查完成”“已确认”等过程标签当成最终回复。"
     "核实后直接总结这次实际做了什么、哪些成功、哪些没做成及原因；数量、文件名、位置和失败原因只能来自工具回执。"
@@ -216,11 +247,13 @@ _READ_TOOL_NAMES = {"note_get", "note_search"}
 #   _preparing      openai 流式收参数阶段的占位
 #   _verify_prefix  复查轮工具标签前缀，后端拼到 label 前再下发
 #   _thinking       「思考中」状态的文字（默认空＝显示三个点；填了才显示成文字气泡）
+#   _context_compaction 自动整理上下文时的状态文字
 # 任一命名都可填多个（用 | 分隔），显示时随机取一个 —— 见 _pick_label。
 SPECIAL_STATE_LABELS = {
     "_preparing":     "咕咕正在整理…",
     "_verify_prefix": "复查 · ",
     "_thinking":      "",
+    "_context_compaction": "正在整理上下文…",
 }
 
 
@@ -236,18 +269,9 @@ from agent.security.core_guards import (
     _looks_like_narration, _NARRATION_NUDGE,
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
-    _could_be_tool_progress, _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
+    _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
     guard_locale,
 )
-
-
-def _user_text(content) -> str:
-    """从 user 消息 content 取纯文本（content 可能是 str，或带图时的 [{text}, {image}] 列表）。"""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-    return ""
 
 
 # 增删改工具的命名约定：写动词前缀。新功能的工具照此命名（create_/update_/delete_/...），
@@ -268,14 +292,16 @@ def _mutating_tools(tool_names) -> set:
 
 def _is_successful_tool_result(result: str) -> bool:
     """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。"""
+    from agent.interactions.confirmations import confirmation_payload
+
+    if confirmation_payload(result) is not None:
+        return False
     try:
         payload = json.loads(result)
     except (TypeError, json.JSONDecodeError):
         return True
     if not isinstance(payload, dict):
         return True
-    if payload.get("needs_confirm") or payload.get("status") == "waiting_confirmation":
-        return False
     return not payload.get("error") and payload.get("status") != "failed"
 
 
@@ -387,7 +413,7 @@ async def _im_cancelled(session_id: int | None = None) -> bool:
 
 
 async def _im_set_tool_state(tool_name: str) -> None:
-    """据工具名打细粒度状态（web_search→SEARCHING、create_document→GENERATING），
+    """据工具名打细粒度状态（web_search→SEARCHING、create_file→GENERATING），
     让网关「还在吗」答得更准。web 路无 imctx 时 no-op。"""
     from agent.im import imctx
     from agent.runtime import runtime_state as rt
@@ -433,25 +459,38 @@ class LLMRunner:
             use_anthropic: bool, model_cfg=None,
             session_id: int | None = None,
             session=None,
-            on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+            on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+            reasoning_state=None,
+            reasoning_policy="off",
+            state_session_factory=None,
             ) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
+        if reasoning_state is None and state_session_factory is not None:
+            from agent.context.reasoning_runtime import ReasoningStateCoordinator
+            from agent.context.reasoning_state import ReasoningPersistencePolicy
+            reasoning_state = ReasoningStateCoordinator(
+                user_id=user_id, session_id=session_id, model_cfg=ai,
+                policy=ReasoningPersistencePolicy.from_value(reasoning_policy),
+                session_factory=state_session_factory,
+            )
         generation = self._run_provider(
             user_id, system_text, messages, use_anthropic=use_anthropic,
             model_cfg=ai, session_id=session_id, session=session,
-            on_interaction=on_interaction,
+            on_interaction=on_interaction, reasoning_state=reasoning_state,
         )
         return self._recover_interrupted_continuation(
             generation, user_id, system_text, messages,
             use_anthropic=use_anthropic, model_cfg=ai,
-            session_id=session_id, session=session,
+            session_id=session_id, session=session, reasoning_state=reasoning_state,
+            on_interaction=on_interaction,
         )
 
     def _run_provider(
         self, user_id, system_text: str | None, messages: list, *,
         use_anthropic: bool, model_cfg, session_id: int | None, session=None,
         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        reasoning_state=None,
     ) -> AsyncGenerator[str, None]:
         """启动一条未包装的 provider 流，续轮恢复只能调用这里。"""
         ai = model_cfg if model_cfg is not None else self.settings.ai
@@ -460,21 +499,30 @@ class LLMRunner:
             return self._run_ollama(
                 user_id, messages, ai, session_id=session_id,
                 session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
+            )
+        if str(getattr(ai, "api_format", "") or "").lower() in {"responses", "openai_responses"}:
+            return self._run_responses(
+                user_id, system_text, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             )
         if use_anthropic:
             return self._run_anthropic(
                 user_id, system_text, messages, ai, session_id=session_id,
                 session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             )
         return self._run_openai(
             user_id, messages, ai, session_id=session_id,
             session=session, on_interaction=on_interaction,
+            reasoning_state=reasoning_state,
         )
 
     async def _recover_interrupted_continuation(
         self, generation: AsyncGenerator[str, None], user_id, system_text,
         messages: list, *, use_anthropic: bool, model_cfg, session_id: int | None,
-        session=None,
+        session=None, on_interaction=None, reasoning_state=None,
     ) -> AsyncGenerator[str, None]:
         """统一处理工具续轮生成器提前结束。
 
@@ -510,19 +558,23 @@ class LLMRunner:
             generation = self._run_provider(
                 user_id, system_text, messages, use_anthropic=use_anthropic,
                 model_cfg=model_cfg, session_id=session_id, session=session,
+                on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
             )
             continuation_pending = False
 
     async def _run_ollama(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
                           session=None,
-                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
-                          ) -> AsyncGenerator[str, None]:
+                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                          reasoning_state=None
+    ) -> AsyncGenerator[str, None]:
         ai = ai if ai is not None else self.settings.ai
-        async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai,
-                                          system_text=None, session_id=session_id,
-                                          session=session,
-                                          on_interaction=on_interaction):
+        kwargs = {"system_text": None, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
@@ -530,28 +582,48 @@ class LLMRunner:
                              messages: list, ai=None,
                              session_id: int | None = None,
                              session=None,
-                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                             reasoning_state=None
                              ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
-        async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
-                                          system_text=system_text, session_id=session_id,
-                                          session=session,
-                                          on_interaction=on_interaction):
+        kwargs = {"system_text": system_text, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
     async def _run_openai(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
                           session=None,
-                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                          reasoning_state=None
                           ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
-        async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
-                                          system_text=None, session_id=session_id,
-                                          session=session,
-                                          on_interaction=on_interaction):
+        kwargs = {"system_text": None, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai, **kwargs):
+            yield line
+
+    async def _run_responses(self, user_id, system_text: str | None,
+                             messages: list, ai=None,
+                             session_id: int | None = None,
+                             session=None,
+                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                             reasoning_state=None
+                             ) -> AsyncGenerator[str, None]:
+        settings = self.settings
+        ai = ai if ai is not None else settings.ai
+        kwargs = {"system_text": system_text, "session_id": session_id, "session": session,
+                  "on_interaction": on_interaction}
+        if reasoning_state is not None:
+            kwargs["reasoning_state"] = reasoning_state
+        async for line in self._run_loop(loop_drivers.OpenAIResponsesDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────
@@ -559,7 +631,8 @@ class LLMRunner:
                          system_text: str | None,
                          session_id: int | None = None,
                          session=None,
-                         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                         reasoning_state=None
                          ) -> AsyncGenerator[str, None]:
         """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
         OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
@@ -590,10 +663,22 @@ class LLMRunner:
                 system_text = f"{system_text}{_GOAL_POLICY}"
             else:
                 messages.insert(0, {"role": "system", "content": _GOAL_POLICY.strip()})
+        if getattr(driver, "api_format", "") == "anthropic":
+            before_count, after_count, history_changed = _sanitize_anthropic_history(messages)
+            if history_changed:
+                _log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
+                              before_count, after_count)
         initial_tool_names = self.tool_names
-        if self.capability_context is not None:
+        if (
+            self.capability_context is not None
+            and not getattr(self.capability_context, "metadata_only", False)
+        ):
             initial_tool_names = list(self.capability_context.select_for_messages(messages).tool_names)
         client, ctx = driver.prepare(initial_tool_names, ai, messages, system_text)
+        from agent.tools import registry as tool_registry
+        tool_snapshot = tool_registry.snapshot()
+        if reasoning_state is not None:
+            await reasoning_state.prepared(driver, ctx)
         # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
         # 不把目录或用户消息复制进 driver。
         if self.capability_context is not None:
@@ -602,7 +687,12 @@ class LLMRunner:
         # 当前用户消息是本轮 run 的保护边界。压缩时只处理它之前的历史，
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
         _run_conversation = getattr(messages, "conversation", messages)
-        _run_start_message = _run_conversation[-1] if _run_conversation else None
+        _run_start_index = last_user_index(_run_conversation)
+        _run_start_message = (
+            _run_conversation[_run_start_index]
+            if _run_start_index is not None
+            else (_run_conversation[-1] if _run_conversation else None)
+        )
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
@@ -611,8 +701,15 @@ class LLMRunner:
         guard_retry_pending = False
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
+        # 连续相同调用熔断状态：signature = (工具名, 归一化参数 JSON)，跨任务轮与核实轮计数
+        repeat_sig: tuple[str, str] | None = None
+        repeat_count = 0
         _request_conversation = getattr(messages, "conversation", messages)
-        _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
+        _request_user_index = last_user_index(_request_conversation)
+        _user_req = (
+            user_text_from_message(_request_conversation[_request_user_index])
+            if _request_user_index is not None else ""
+        )
         # 初始用户图片只需要首轮完整发送；首轮结束后折叠成稳定文本，避免下一轮和下一次
         # run 在同一历史位置分别出现 base64 与占位文本，导致 provider 从图片处断缓存。
         initial_volatile_indices = loop_drivers._volatile_message_indices(messages)
@@ -643,16 +740,24 @@ class LLMRunner:
                 **payload,
             )
 
-        def drain_round_text() -> list[str]:
-            """取出已确认可展示的普通轮文字，并清空本轮缓冲。"""
-            text = list(_round_text_buf)
-            _round_text_buf.clear()
-            return text
-
         async def compact_after_provider_overflow() -> bool:
             """仅在 provider overflow 后压缩旧 history，并让当前 round 重试。"""
             nonlocal messages, compaction_applied
             from agent.context import compaction
+
+            async def keep_generation_alive() -> None:
+                """压缩等待期间刷新 Web 活跃快照，避免长压缩被误判为中断。"""
+                if not session_id:
+                    return
+                wakeup = asyncio.Event()
+                while True:
+                    await genstream.touch(session_id)
+                    try:
+                        await asyncio.wait_for(wakeup.wait(), timeout=30)
+                    except asyncio.TimeoutError:
+                        continue
+
+            heartbeat = asyncio.create_task(keep_generation_alive())
 
             conversation = getattr(messages, "conversation", messages)
             before_count = len(conversation)
@@ -666,20 +771,25 @@ class LLMRunner:
                 max(0, len(conversation) - 1),
             )
             try:
-                result = await compaction.compact_context(
-                    list(conversation), system_text or "", getattr(ai, "context_tokens", 256000),
-                    session_id=session_id, user_id=user_id,
-                    fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-                    overhead_tokens=0,
-                    protected_from=protected_from,
-                    force=True,
-                )
-            except Exception as exc:
-                # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成
-                # “开小差”并丢掉本轮已有输出。
-                diag_log("agent.context.compaction.provider_overflow", exc)
-                _log.warning("上下文压缩失败，继续使用确定性截断：%s", type(exc).__name__)
-                return False
+                try:
+                    result = await compaction.compact_context(
+                        list(conversation), session_id=session_id,
+                        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                        protected_from=protected_from,
+                        model_cfg=ai,
+                    )
+                except Exception as exc:
+                    # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成
+                    # “开小差”并丢掉本轮已有输出。
+                    diag_log("agent.context.compaction.provider_overflow", exc)
+                    _log.warning("上下文压缩失败，继续使用确定性截断：%s", type(exc).__name__)
+                    return False
+            finally:
+                heartbeat.cancel()
+                try:
+                    await heartbeat
+                except asyncio.CancelledError:
+                    pass
             if hasattr(result, "messages"):
                 compacted_messages, changed = result.messages, result.changed
             else:
@@ -713,42 +823,91 @@ class LLMRunner:
             else:
                 messages = compacted_messages
             compaction_applied = True
-            yield_event = {"type": "_context_compaction", "applied": True,
+            if reasoning_state is not None:
+                await reasoning_state.boundary_changed("baseline_changed")
+            yield_event = {"type": "_context_compaction", "phase": "completed", "applied": True,
                            "reason": getattr(result, "return_reason", "compacted")}
             # 事件由调用方发送，避免 helper 自己消费生成器控制流。
             _context_compaction_event[0] = yield_event
             return True
 
-        async def compact_after_usage_threshold() -> bool:
-            """统一检查 run 级 provider context usage，达到 90% 后压缩旧 history。"""
-            # 90% 观察线只在 provider usage 层维护一份，避免 core 再复制预算语义。
+        def usage_compaction_due() -> bool:
             from agent.context.compress_conv import BASELINE_UPDATE_RATIO
 
             context_tokens = max(1, int(getattr(ai, "context_tokens", 0) or 0))
-            if run_context_usage < int(context_tokens * BASELINE_UPDATE_RATIO) or compaction_applied:
-                return False
-            return await compact_after_provider_overflow()
+            return run_context_usage >= int(context_tokens * BASELINE_UPDATE_RATIO) and not compaction_applied
 
-        async def compact_after_usage_threshold_safely() -> bool:
-            """run 已有最终回复后执行压缩；失败不能覆盖成功回复。"""
-            try:
-                return await compact_after_usage_threshold()
-            except Exception as exc:
-                diag_log("agent.context.compaction.after_response", exc)
-                _log.warning("回复完成后的上下文压缩失败，保留本轮回复：%s", type(exc).__name__)
+        async def compact_after_usage_threshold() -> bool:
+            """统一检查 run 级 provider context usage，达到 90% 后压缩旧 history。"""
+            nonlocal messages, compaction_applied
+            # 90% 观察线只在 provider usage 层维护一份，避免 core 再复制预算语义。
+            context_tokens = max(1, int(getattr(ai, "context_tokens", 0) or 0))
+            if not usage_compaction_due():
                 return False
+            if await compact_after_provider_overflow():
+                return True
+
+            # 90% 路径不能因为摘要 provider 失败而继续带着超大上下文进入下一轮。
+            # 与真实 overflow 使用同一确定性裁切兜底，确保“压缩失败仍可继续”且
+            # 当前 run 的保护窗口不会被裁掉。
+            from agent.context.budget import enforce_provider_overflow_fallback
+            conversation = getattr(messages, "conversation", messages)
+            protected_from = next(
+                (index for index, item in enumerate(conversation)
+                 if item is _run_start_message),
+                max(0, len(conversation) - 1),
+            )
+            hard_result = enforce_provider_overflow_fallback(
+                messages, system_text or "", context_tokens,
+                protected_from=protected_from,
+            )
+            if not hard_result.changed:
+                return False
+            if hasattr(messages, "replace_conversation"):
+                messages.replace_conversation(hard_result.messages)
+            else:
+                messages = hard_result.messages
+            compaction_applied = True
+            if reasoning_state is not None:
+                await reasoning_state.boundary_changed("baseline_changed")
+            _context_compaction_event[0] = {
+                "type": "_context_compaction", "phase": "completed",
+                "applied": True,
+                "reason": "provider_usage_fallback",
+            }
+            _log.warning("[core] provider usage 达到 90% 但摘要失败，执行确定性裁切兜底")
+            return True
 
         _context_compaction_event = [None]
 
+        async def notify_interaction(prompt, options, *, round_id_value=None) -> None:
+            """在进入等待前通知 IM 展示层；Web 仍只消费下方的流事件。"""
+            if on_interaction is None:
+                return
+            await on_interaction({
+                "prompt_id": prompt.id,
+                "kind": prompt.kind,
+                "title": prompt.title,
+                "body": prompt.body,
+                "options": options,
+                "expires_at": prompt.expires_at.isoformat(),
+                "round_id": round_id_value,
+                "force_display": True,
+            })
+
         while True:
-            # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
+            # 普通模式下，核实轮拥有独立预算；无限模式跳过该业务封顶。
             # 最后一轮额外留给模型输出核实后的收束文本。
             if verify_mode:
-                if self.max_verify_rounds is not None and verify_rounds >= self.max_verify_rounds:
+                if (
+                    not unlimited_mode
+                    and self.max_verify_rounds is not None
+                    and verify_rounds >= self.max_verify_rounds
+                ):
                     break
                 verify_rounds += 1
             else:
-                if self.max_rounds is not None and task_rounds >= self.max_rounds:
+                if not unlimited_mode and self.max_rounds is not None and task_rounds >= self.max_rounds:
                     if self.stop_on_budget:
                         _log.warning("[core] 自动任务 LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
                         yield f"data: {json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{self.max_rounds} 轮）'}, ensure_ascii=False)}\n\n"
@@ -772,6 +931,10 @@ class LLMRunner:
                         options=options,
                         expires_at=prompt.expires_at.isoformat(),
                         force_display=True,
+                    )
+                    await notify_interaction(
+                        prompt, options,
+                        round_id_value=round_id if round_number else None,
                     )
                     from app.services.interactions import wait_for_resolution
                     answer = await wait_for_resolution(
@@ -810,15 +973,14 @@ class LLMRunner:
             round_id = f"round-{round_number}"
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
-            _progress_buf: list[str] = []
-            _progress_pending = False
-            # 普通轮在 provider 流结束前无法确定是否包含工具调用。先缓冲文字，
-            # 避免工具轮的计划/自述先进入用户流，随后又被下一轮最终回复覆盖。
-            _round_text_buf: list[str] = []
             try:
                 # 每次 provider 请求前刷新 selected tools。工具调用/结果由驱动构造批次，
                 # 再由核心循环一次性提交到 history；这里仅更新原生 tools 参数。
-                if self.capability_context is not None and not getattr(self.capability_context, "fixed_adapter", False):
+                if (
+                    self.capability_context is not None
+                    and not getattr(self.capability_context, "fixed_adapter", False)
+                    and not getattr(self.capability_context, "metadata_only", False)
+                ):
                     selected = self.capability_context.select_for_messages(messages)
                     driver.update_tools(ctx, list(selected.tool_names))
                 _round_gen = driver.run_round(client, ctx, messages)
@@ -836,22 +998,10 @@ class LLMRunner:
                         # 才说明守卫生效并丢弃这段自我辩解。
                         guard_retry_buf.append(_val)
                     else:
-                        # 对可能是“正在查询”占位话术的前缀暂存到 round 结束；如果后续
-                        # 变成正常句子则原样 flush，只有确认是纯占位且无 tool call 时丢弃。
-                        if _progress_pending:
-                            candidate = "".join(_progress_buf) + _val
-                            if _could_be_tool_progress(candidate, self.locale):
-                                _progress_buf.append(_val)
-                            else:
-                                _round_text_buf.extend(_progress_buf)
-                                _progress_buf.clear()
-                                _progress_pending = False
-                                _round_text_buf.append(_val)
-                        elif _could_be_tool_progress(_val, self.locale):
-                            _progress_pending = True
-                            _progress_buf.append(_val)
-                        else:
-                            _round_text_buf.append(_val)
+                        # 普通 draft 是用户可见的 round 正文，随 provider 流实时发送。
+                        # thinking/reasoning 不会从各 provider driver 作为 token 进入这里；
+                        # 核实和守卫文字仍由上面的专用分支隐藏。
+                        yield stream_event("token", content=_val, round_id=round_id)
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                     # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
@@ -864,9 +1014,12 @@ class LLMRunner:
                         await _round_gen.aclose()
                         return
             except RetryableError as e:
+                if reasoning_state is not None:
+                    await reasoning_state.failed("provider_rejected")
                 from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
                 overflow = is_context_overflow_error(e) or is_context_overflow_error(e.cause) if e.cause else is_context_overflow_error(e)
                 if overflow and hard_budget_retries < 1:
+                    yield stream_event("_context_compaction", phase="started", reason="provider_overflow")
                     if await compact_after_provider_overflow():
                         hard_budget_retries += 1
                         _event = _context_compaction_event[0]
@@ -889,7 +1042,10 @@ class LLMRunner:
                     )
                     if hard_result.changed:
                         compaction_applied = True
-                        yield f"data: {json.dumps({'type': '_context_compaction', 'applied': True, 'reason': 'provider_overflow_fallback'}, ensure_ascii=False)}\n\n"
+                        if reasoning_state is not None:
+                            await reasoning_state.boundary_changed("baseline_changed")
+                        yield stream_event("_context_compaction", phase="completed", applied=True,
+                                           reason="provider_overflow_fallback")
                         hard_budget_retries += 1
                         if verify_mode:
                             verify_rounds -= 1
@@ -897,6 +1053,8 @@ class LLMRunner:
                             task_rounds -= 1
                         _log.warning("[core] provider 返回上下文超量，执行一次确定性截断重试")
                         continue
+                    yield stream_event("_context_compaction", phase="completed", applied=False,
+                                       reason="not_applied")
                 # _stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
                 # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
@@ -905,8 +1063,11 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError' if not busy else 'chatUi.networkError'}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
+                if reasoning_state is not None:
+                    await reasoning_state.failed("provider_rejected")
                 from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
                 if is_context_overflow_error(e) and hard_budget_retries < 1:
+                    yield stream_event("_context_compaction", phase="started", reason="provider_overflow")
                     if await compact_after_provider_overflow():
                         hard_budget_retries += 1
                         _event = _context_compaction_event[0]
@@ -929,7 +1090,10 @@ class LLMRunner:
                     )
                     if hard_result.changed:
                         compaction_applied = True
-                        yield f"data: {json.dumps({'type': '_context_compaction', 'applied': True, 'reason': 'provider_overflow_fallback'}, ensure_ascii=False)}\n\n"
+                        if reasoning_state is not None:
+                            await reasoning_state.boundary_changed("baseline_changed")
+                        yield stream_event("_context_compaction", phase="completed", applied=True,
+                                           reason="provider_overflow_fallback")
                         hard_budget_retries += 1
                         if verify_mode:
                             verify_rounds -= 1
@@ -937,6 +1101,8 @@ class LLMRunner:
                             task_rounds -= 1
                         _log.warning("[core] provider 返回上下文超量，执行一次确定性截断重试")
                         continue
+                    yield stream_event("_context_compaction", phase="completed", applied=False,
+                                       reason="not_applied")
                 # 已吐过 token 中途出错（emitted 就原样抛的路径）或其他未预期异常——按未知处理：
                 # 原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
                 # where 里带上 provider + api_format——2026-07-14 那次 MiniMax AttributeError
@@ -954,6 +1120,8 @@ class LLMRunner:
             total_cache += result.cache_tokens
             total_cache_write += result.cache_write_tokens
             run_context_usage = max(run_context_usage, _provider_context_usage(driver, result))
+            if reasoning_state is not None:
+                await reasoning_state.round_finished(driver, ctx, result, round_id)
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
             # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
             yield stream_event(
@@ -969,6 +1137,10 @@ class LLMRunner:
             _requires_tools = result.requires_tools
             if _requires_tools is None:
                 _requires_tools = bool(result.tool_calls)
+            # 行动意图守卫判断的是当前模型轮次，而不是整个 run 是否曾经调用过工具。
+            # 前面轮次可能已经查过数据，但本轮仍可能只输出“我继续处理：”而没有实际调用；
+            # 这种情况下仍必须触发守卫，不能被 any_tool_called 这个历史状态挡住。
+            round_tool_called = bool(result.tool_calls)
 
             if initial_volatile_indices:
                 loop_drivers._collapse_volatile_messages(messages, initial_volatile_indices)
@@ -978,12 +1150,6 @@ class LLMRunner:
                 if guard_retry_pending:
                     guard_retry_pending = False
                     guard_retry_buf.clear()
-                if _progress_pending:
-                    # 工具轮的所有普通文字都属于模型过程叙述，不能因为看起来像
-                    # “正在查询”就提前泄漏；真正的工具状态通过 tool_call 事件展示。
-                    _progress_buf.clear()
-                    _progress_pending = False
-                _round_text_buf.clear()
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(
@@ -1054,6 +1220,7 @@ class LLMRunner:
                         expires_at=prompt.expires_at.isoformat(),
                         force_display=True,
                     )
+                    await notify_interaction(prompt, options, round_id_value=round_id)
                     from app.services.interactions import wait_for_resolution
                     answer = await wait_for_resolution(
                         user_id=user_id,
@@ -1143,6 +1310,40 @@ class LLMRunner:
                                            status="skipped", result=_TOOL_BUDGET_EXHAUSTED)
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
+                    # 连续相同调用熔断：只对显式声明 repeat_safe 的观察类工具生效
+                    # （写工具每次调用都有真实副作用、联网读取结果可能变化，都不能拦）。
+                    # 任何非 repeat_safe 的调用（含 ask_user）都会打断「连续」语义，
+                    # 重置计数——中间穿插过一次别的调用就不算连续了。
+                    if protocol_error is None and not tc.parse_error:
+                        repeat_tool = registry.get(effective_tool_name)
+                        try:
+                            call_sig = (
+                                effective_tool_name,
+                                json.dumps(tc.input or {}, sort_keys=True, ensure_ascii=False, default=str),
+                            )
+                        except (TypeError, ValueError):
+                            call_sig = None
+                        if repeat_tool is None or not repeat_tool.repeat_safe:
+                            repeat_sig, repeat_count = None, 0
+                        elif call_sig is not None:
+                            if call_sig == repeat_sig:
+                                repeat_count += 1
+                            else:
+                                repeat_sig, repeat_count = call_sig, 1
+                            if repeat_count > MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS:
+                                tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                                _log.warning(
+                                    "[core] 连续相同工具调用熔断：%s x%d（run=%s）",
+                                    effective_tool_name, repeat_count, run_id,
+                                )
+                                yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                                   name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
+                                                   status="skipped")
+                                yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                                   name=effective_tool_name, label=label, verify=verify_mode,
+                                                   status="skipped", result=_REPEAT_CALL_STOP_RESULT)
+                                dispatched.append((tc, _REPEAT_CALL_STOP_RESULT))
+                                continue
                     tool_calls_used += 1
                     if protocol_error is not None:
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
@@ -1192,10 +1393,15 @@ class LLMRunner:
                         if not current_skill_digest:
                             from agent.skills import skill_content_digest
                             current_skill_digest = skill_content_digest(skill_slug)
+                    skill_meta = None
+                    if skill_slug and self.capability_context is not None:
+                        skill_meta = self.capability_context.skill_meta(skill_slug)
+                    is_user_skill = bool(skill_meta and skill_meta.source == "user")
                     if (
                         skill_slug
                         and current_skill_digest
                         and loaded_skill_slugs.get(skill_slug) == current_skill_digest
+                        and not is_user_skill
                     ):
                         res = json.dumps({
                             "skill": skill_slug,
@@ -1207,7 +1413,11 @@ class LLMRunner:
                         dispatch_input = tc.input
                         if adapter_target is not None:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(session_id, session, run_id)
+                            _dispatch_token = set_dispatch_session(
+                                session_id, session, run_id,
+                                tool_snapshot=tool_snapshot,
+                                skill_state=loaded_skill_slugs,
+                            )
                             try:
                                 res, artifact = await registry.dispatch(
                                     user_id, adapter_target, _resolve_adapter_arguments(dispatch_input)
@@ -1216,14 +1426,30 @@ class LLMRunner:
                                 reset_dispatch_session(_dispatch_token)
                         else:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(session_id, session, run_id)
+                            _dispatch_token = set_dispatch_session(
+                                session_id, session, run_id,
+                                tool_snapshot=tool_snapshot,
+                                skill_state=loaded_skill_slugs,
+                            )
                             try:
                                 res, artifact = await registry.dispatch(user_id, tc.name, dispatch_input)
                             finally:
                                 reset_dispatch_session(_dispatch_token)
-                        if skill_slug and _is_successful_tool_result(res) and current_skill_digest:
-                            loaded_skill_slugs[skill_slug] = current_skill_digest
-                    if tc.name == "ask_user":
+                        if skill_slug and _is_successful_tool_result(res):
+                            try:
+                                payload = json.loads(res) if isinstance(res, str) else res
+                            except (TypeError, ValueError):
+                                payload = None
+                            marker = payload.get("_capability_usage") if isinstance(payload, dict) else None
+                            digest = marker.get("content_digest") if isinstance(marker, dict) else None
+                            if isinstance(digest, str) and digest:
+                                loaded_skill_slugs[skill_slug] = digest
+                            elif current_skill_digest:
+                                loaded_skill_slugs[skill_slug] = current_skill_digest
+                    # 兼容固定 Adapter：模型可能以 call_tool(name="ask_user") 调用。
+                    # 此时 tc.name 仍是 call_tool，但实际已解析出的工具名才是
+                    # ask_user；两条调用路径必须进入同一个交互卡创建流程。
+                    if effective_tool_name == "ask_user":
                         # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
                         # provider history，等待回答后由 interaction service 替换 pending
                         # result，再从同一 session 继续，而不是把按钮文案伪装成新用户消息。
@@ -1383,7 +1609,7 @@ class LLMRunner:
                             if valid_names:
                                 add_event(ToolDiscoveryEvent(valid_names))
                                 for name in valid_names:
-                                    tool = registry.get(name)
+                                    tool = tool_snapshot.get(name)
                                     if tool is not None:
                                         add_event(tool_schema_event(tool))
                             continue
@@ -1394,11 +1620,13 @@ class LLMRunner:
                             resolved_skill = resolve_skill_slug(skill_name) or skill_name
                             skill_meta = getattr(self.capability_context, "snapshot", None)
                             skill_meta = getattr(skill_meta, "skills", {}).get(resolved_skill)
+                            if getattr(skill_meta, "kind", None) != "skill":
+                                skill_meta = None
                             related = tuple(getattr(skill_meta, "related_tools", ()) or ())
                             if related:
                                 add_event(SkillSchemaEvent(skill_name, related))
                                 for name in related:
-                                    tool = registry.get(name)
+                                    tool = tool_snapshot.get(name)
                                     if tool is not None:
                                         add_event(tool_schema_event(tool))
                             continue
@@ -1420,7 +1648,7 @@ class LLMRunner:
                                 # 不再让模型继续凭记忆猜参数。
                                 target_name = tc.name
                         if target_name:
-                            tool = registry.get(target_name)
+                            tool = tool_snapshot.get(target_name)
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
@@ -1451,11 +1679,16 @@ class LLMRunner:
                         diag_log("agent.core.interaction_resume", error)
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次确认状态已失效，请重新发起操作。'}, ensure_ascii=False)}\n\n"
                         return
-                    if await compact_after_usage_threshold():
-                        _event = _context_compaction_event[0]
-                        _context_compaction_event[0] = None
-                        if _event:
-                            yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+                    if usage_compaction_due():
+                        yield stream_event("_context_compaction", phase="started", reason="usage_threshold")
+                        if await compact_after_usage_threshold():
+                            _event = _context_compaction_event[0]
+                            _context_compaction_event[0] = None
+                            if _event:
+                                yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+                        else:
+                            yield stream_event("_context_compaction", phase="completed", applied=False,
+                                               reason="not_applied")
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
                 if tool_budget_stop_requested:
@@ -1466,27 +1699,41 @@ class LLMRunner:
                     continue
                 # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
                 # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
-                if did_mutate and (
-                    self.max_verify_cycles is None or verify_count < self.max_verify_cycles
-                ):
+                verify_cycle_allowed = (
+                    unlimited_mode
+                    or self.max_verify_cycles is None
+                    or verify_count < self.max_verify_cycles
+                )
+                if did_mutate and verify_cycle_allowed:
                     verify_count += 1
                     did_mutate = False
                     verify_mode = True
                     verify_queried = False
                     messages.append_batch([{"role": "user", "content": _VERIFY_PROMPT}])
-                if await compact_after_usage_threshold():
-                    _event = _context_compaction_event[0]
-                    _context_compaction_event[0] = None
-                    if _event:
-                        yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+                if usage_compaction_due():
+                    yield stream_event("_context_compaction", phase="started", reason="usage_threshold")
+                    if await compact_after_usage_threshold():
+                        _event = _context_compaction_event[0]
+                        _context_compaction_event[0] = None
+                        if _event:
+                            yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+                    else:
+                        yield stream_event("_context_compaction", phase="completed", applied=False,
+                                           reason="not_applied")
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
             # 自我核实：① 理论上工具结果后会立即注入核实 prompt；这里保留为轮次封顶等
             # 边界状态的兜底；② 已进核实阶段却只嘴上确认、没真调过查询工具（verify_queried=False）→ 强制再追一轮真查。
-            # 都受 MAX_VERIFY 封顶防死循环。补做会再置 did_mutate → 触发下一轮核实。
-            _need_verify = did_mutate and verify_count < MAX_VERIFY
-            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_count < MAX_VERIFY
+            # 普通模式受 MAX_VERIFY 封顶防死循环；无限模式仍保留服务级停止保护。
+            # 补做会再置 did_mutate → 触发下一轮核实。
+            verify_cycle_allowed = (
+                unlimited_mode
+                or self.max_verify_cycles is None
+                or verify_count < self.max_verify_cycles
+            )
+            _need_verify = did_mutate and verify_cycle_allowed
+            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_cycle_allowed
             if _need_verify or _need_force:
                 verify_count += 1
                 did_mutate = False
@@ -1533,18 +1780,10 @@ class LLMRunner:
                 # 守卫回应作为第二条用户可见消息输出。
                 guard_retry_pending = False
                 guard_retry_buf.clear()
+                if reasoning_state is not None:
+                    await reasoning_state.completed()
                 yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                 return
-            # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
-            # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
-            if _progress_pending and not _is_tool_progress_only(_final_text, self.locale):
-                _round_text_buf.extend(_progress_buf)
-                _progress_buf.clear()
-                _progress_pending = False
-            elif _progress_pending:
-                _round_text_buf.clear()
-                _progress_buf.clear()
-                _progress_pending = False
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
             if not _final_text.strip() and not did_mutate and not verify_mode:
                 if empty_retry < 1:
@@ -1563,19 +1802,15 @@ class LLMRunner:
                 narration_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
-                for _text in drain_round_text():
-                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).narration_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
-            if (not any_tool_called and not verify_mode and intent_retry < 1
+            if (not round_tool_called and not verify_mode and intent_retry < 1
                     and _announces_intent(_final_text, self.locale)):
                 intent_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
-                for _text in drain_round_text():
-                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).intent_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1587,8 +1822,6 @@ class LLMRunner:
                 tool_intent_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
-                for _text in drain_round_text():
-                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).tool_required_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1598,8 +1831,6 @@ class LLMRunner:
                 decision_retry += 1
                 guard_retry_pending = True
                 guard_retry_buf.clear()
-                for _text in drain_round_text():
-                    yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
                 messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).decision_nudge))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
@@ -1609,27 +1840,26 @@ class LLMRunner:
                 async for _line in genstream.typed_stream(_final_text):
                     yield _line
 
-            # 普通最终回复也必须经过同一条 90% 检查。此前这里直接结束，导致没有
-            # tool call 的长回复不会触发 baseline 更新；检查发生在最终正文已经确定后，
-            # 不会打断输出，且 compaction_applied 防止本 run 重复压缩。
-            if await compact_after_usage_threshold_safely():
-                _event = _context_compaction_event[0]
-                _context_compaction_event[0] = None
-                if _event:
-                    yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
-
-            for _text in drain_round_text():
-                yield f"data: {json.dumps({'type': 'token', 'content': _text}, ensure_ascii=False)}\n\n"
-
+            # 正文已经确定后立即结束本轮；持久 baseline 由 finalize_run 在提交后
+            # 异步调度，不能让摘要 LLM 阻塞 done/前端队列。只有 provider overflow
+            # 的必要压缩仍在上方同步执行并重试当前 round。
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            if reasoning_state is not None:
+                await reasoning_state.completed()
             return
 
         # 核实预算耗尽时，最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾。
         # 不能让 runner 把这个正常的安全停止误判成“工具结果已返回，但后续回复没有完成”。
         # 核实阶段的过程文字仍然只留在缓冲区，不能在这里泄漏给用户。
-        if verify_rounds >= MAX_VERIFY_LLM_ROUNDS:
+        if (
+            not unlimited_mode
+            and self.max_verify_rounds is not None
+            and verify_rounds >= self.max_verify_rounds
+        ):
             fallback = "已提交前面成功执行的调整；核实轮次已达到上限，未完成的步骤请重新发起。"
             async for _line in genstream.typed_stream(fallback):
                 yield _line
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            if reasoning_state is not None:
+                await reasoning_state.completed()
             return

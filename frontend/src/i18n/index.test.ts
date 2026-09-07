@@ -35,6 +35,25 @@ describe('i18n locale policy', () => {
       }
     }
   })
+  it('模型级推理状态选项在三个语言包中都使用公共 llmExtraUi 文案', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).llmExtraUi
+      expect(scope.thinkingHint).not.toBe('llmExtraUi.thinkingHint')
+      expect(scope.keepUnchanged).not.toBe('llmExtraUi.keepUnchanged')
+      expect(scope.reasoningPersistence).not.toBe('llmExtraUi.reasoningPersistence')
+      expect(scope.reasoningPersistenceHint).not.toBe('llmExtraUi.reasoningPersistenceHint')
+      expect(scope.reasoningOff).not.toBe('llmExtraUi.reasoningOff')
+      expect(scope.reasoningSummary).not.toBe('llmExtraUi.reasoningSummary')
+      expect(scope.reasoningContinuation).not.toBe('llmExtraUi.reasoningContinuation')
+    }
+  })
+  it('Admin 模型图片细节选项在三个语言包中都有文案', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).adminAgentUi
+      expect(scope.auto).not.toBe('adminAgentUi.auto')
+      expect(scope.original).not.toBe('adminAgentUi.original')
+    }
+  })
   it('maps supported browser language families', () => {
     expect(mapBrowserLocale('zh-TW')).toBe('zh-CN')
     expect(mapBrowserLocale('ja-JP')).toBe('ja-JP')

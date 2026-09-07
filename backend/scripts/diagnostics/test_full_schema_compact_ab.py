@@ -37,7 +37,7 @@ CASES = [
     ("web_search", "搜索公开网页‘TypeScript 5.9 release notes’，返回 3 条结果。", {"query": "TypeScript 5.9 release notes", "max_results": 3}),
     ("image_search", "按关键词搜索‘低饱和配色’，找图片候选。", {"query": "低饱和配色"}),
     ("http_get", "读取 https://example.com 的网页内容。", {"url": "https://example.com"}),
-    ("create_document", "创建一个名为‘评审记录.md’的 markdown 文档，内容是‘结论：通过’。", {"name": "评审记录.md", "format": "md", "content": "结论：通过"}),
+    ("create_file", "创建一个名为‘评审记录.md’的 markdown 文件，内容是‘结论：通过’。", {"files": [{"name": "评审记录.md", "content": "结论：通过"}]}),
     ("create_folder", "在个人文件区创建文件夹‘归档’。", {"name": "归档"}),
     ("move_items", "把文件 42 移动到文件夹 7。", {"files": ["42"], "target": {"folder_id": 7}}),
     ("list_events", "查询 2026-09-01 到 2026-09-07 的日历安排。", {"from": "2026-09-01", "to": "2026-09-07"}),
@@ -268,7 +268,7 @@ def sequence_metrics(rows: list[dict[str, Any]], anthropic: bool) -> dict[str, A
 def matches_expected(tool_name: str, actual: Any, expected: dict[str, Any]) -> bool:
     if not isinstance(actual, dict):
         return False
-    if tool_name == "create_document" and actual.get("format") in {"md", "markdown"}:
+    if tool_name == "create_file" and actual.get("files"):
         expected = {**expected, "format": actual["format"]}
     if tool_name == "note_create":
         expected_text = _text_in_blocks(expected.get("blocks"))
@@ -284,7 +284,7 @@ def schema_mismatch(tool_name: str, actual: Any, expected: dict[str, Any]) -> di
     """把失败拆成可读的字段差异，不记录完整用户正文。"""
     if not isinstance(actual, dict):
         return {"kind": "invalid_input", "actual_type": type(actual).__name__}
-    if tool_name == "create_document" and actual.get("format") in {"md", "markdown"}:
+    if tool_name == "create_file" and actual.get("files"):
         expected = {**expected, "format": actual["format"]}
     if tool_name == "add_event_reminder":
         event_ok = actual.get("event_id") == 11 or actual.get("event") == expected.get("event")

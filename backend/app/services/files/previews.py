@@ -85,10 +85,12 @@ def thumb_path(file_id: int, size: str) -> Path:
     return thumb_dir() / f"{file_id}_{size}.webp"
 
 
-def delete_thumb_cache(file_id: int) -> None:
+def delete_thumb_cache(file_id: int, storage_root: Path | None = None) -> None:
+    # 对账时传入实际扫描根对应的 storage root，测试和多实例运行不会误删默认配置目录。
+    directory = (storage_root / ".thumbs") if storage_root is not None else thumb_dir()
     for size in ("tiny", "card"):
         for extension in (".webp", ".jpg"):
-            path = thumb_dir() / f"{file_id}_{size}{extension}"
+            path = directory / f"{file_id}_{size}{extension}"
             try:
                 if path.exists():
                     path.unlink()

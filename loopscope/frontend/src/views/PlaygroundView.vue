@@ -113,6 +113,8 @@ import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '.
 import { getRun, getRunSpans, listRuns } from '../services/api'
 import SessionMonitor from '../components/SessionMonitor.vue'
 import { buildTraceRounds } from '../utils/runExport'
+import { prettyJson } from '../utils/prettyJson'
+import { formatCompactNumber } from '../utils/formatNumber'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
@@ -154,14 +156,14 @@ async function refreshRuns() {
 }
 async function loadOlderRuns() {
   if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
-  const oldest = runs.value[0]
+  const oldest = runs.value[runs.value.length - 1]
   loadingOlderRuns.value = true
   try {
     const source = activeSession.value?.source || 'web'
     const older = await listRuns(activeId.value, source, { limit: 20, before: oldest.started_at })
     const existing = new Set(runs.value.map(run => run.id))
     const unique = older.filter(run => !existing.has(run.id))
-    runs.value = [...unique, ...runs.value]
+    runs.value = [...runs.value, ...unique]
     hasOlderRuns.value = older.length >= 20 && unique.length > 0
   } finally {
     loadingOlderRuns.value = false
@@ -312,7 +314,7 @@ async function openMonitor() {
   conversationScrollTop.value = scrollEl.value?.scrollTop ?? conversationScrollTop.value
   await refreshRuns()
   if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
-    monitorFocusRunId.value = runs.value[runs.value.length - 1]?.id ?? ''
+    monitorFocusRunId.value = runs.value[0]?.id ?? ''
   }
   if (monitorFocusRunId.value) await loadRunDetail(monitorFocusRunId.value)
   sessionView.value = 'monitor'
@@ -404,7 +406,7 @@ async function send() {
       await refreshRuns()
       if (runs.value.length > before) break
     }
-    ai.runId = runs.value[runs.value.length - 1]?.id
+    ai.runId = runs.value[0]?.id
     if (ai.runId) void loadRunDetail(ai.runId)
   } catch (e: any) {
     ai.pending = false
@@ -426,9 +428,9 @@ function runForAssistant(messageIndex: number) {
 }
 function spanCount(run: TraceRun | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }
-function fmtTokens(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(v >= 10000 ? 1 : 2)}k` : String(Math.round(v)) }
+function fmtTokens(v: number | null | undefined) { return formatCompactNumber(v) }
 function preview(v: unknown) {
-  const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+  const s = typeof v === 'string' ? v : prettyJson(v)
   return (s || '').slice(0, 700)
 }
 async function onBootstrap() {

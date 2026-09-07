@@ -5,7 +5,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    HOME=/tmp \
+    HOME=/ \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN sed -i \
@@ -15,13 +15,17 @@ RUN sed -i \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
-       bash ca-certificates curl git jq less nodejs npm python3 python3-pip python3-venv tini \
+       bash ca-certificates curl ffmpeg fontconfig fonts-noto-cjk git jq less libssh2-1 nodejs npm \
+       python-is-python3 python3 python3-matplotlib python3-pil python3-pip python3-venv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && fc-cache -f \
     && groupadd --gid 65532 sandbox \
-    && useradd --uid 65532 --gid 65532 --no-create-home --shell /bin/bash sandbox
+    && useradd --uid 65532 --gid 65532 --no-create-home --home-dir / --shell /bin/bash sandbox
+
+# 根文件系统运行时只读；字体探测产生的用户缓存必须落在执行器提供的 /tmp tmpfs。
+ENV XDG_CACHE_HOME=/tmp/.cache
 
 USER 65532:65532
-WORKDIR /workspace
-ENTRYPOINT ["/usr/bin/tini", "--"]
+WORKDIR /
 CMD ["bash", "--noprofile", "--norc"]

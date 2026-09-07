@@ -156,6 +156,7 @@ async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path
     )
     file = result.file
     await db.commit()
+    old_version = file.version
 
     edited = await agent_files._edit_file(
         db, user_a.id,
@@ -166,6 +167,36 @@ async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path
     assert await storage.get(file.storage_key) == "新内容".encode()
     await db.refresh(file)
     assert file.size_bytes == len("新内容".encode())
+    assert file.version == old_version + 1
+
+
+async def test_agent_create_file_supports_batch_custom_extensions_and_partial_results(db, user_a, tmp_path, monkeypatch):
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+
+    result = await agent_files._create_file(db, user_a.id, {
+        "files": [
+            {"name": "script.py", "content": "print('ok')"},
+            {"name": "panel.custom", "content": "自定义文本"},
+            {"name": "无后缀", "content": "这一项应失败"},
+        ],
+    })
+
+    assert result["success"] is True
+    assert result["created_count"] == 2
+    assert result["failed_count"] == 1
+    created_names = {item["name"] for item in result["created"]}
+    assert created_names == {"script.py", "panel.custom"}
+    assert {item["ext"] for item in await agent_files._list_files(db, user_a.id, {})} >= {"py", "custom"}
+    custom = next(item for item in result["created"] if item["name"] == "panel.custom")
+    custom_file = await agent_files._resolve_file(db, user_a.id, {"file_id": custom["file_id"]})
+    assert await storage.get(custom_file[0].storage_key) == "自定义文本".encode()
+
+    edited = await agent_files._edit_file(db, user_a.id, {
+        "file_id": custom["file_id"], "mode": "replace", "content": "已编辑",
+    })
+    assert edited["success"] is True
+    read_back = await agent_files._read_file(db, user_a.id, {"file_id": custom["file_id"]})
+    assert read_back["content"] == "已编辑"
 
 
 async def test_agent_delete_file_moves_file_to_trash(db, user_a, tmp_path, monkeypatch):

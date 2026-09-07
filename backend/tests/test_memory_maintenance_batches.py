@@ -4,34 +4,33 @@ import pytest
 
 from app.services.storage import LocalStorageBackend
 from agent.memory.maintenance_batches import (
-    MAINTENANCE_MAX_INPUT_TOKENS,
-    estimate_tokens,
-    pattern_batches,
-    split_batches,
+    estimate_tokens, pattern_batches, resolve_maintenance_budget, split_batches,
 )
 
 
 def test_split_batches_keeps_complete_items_and_budget():
     items = [{"id": str(index), "text": "x" * 8000} for index in range(3)]
 
-    batches = pattern_batches(items)
+    model_cfg = type("Model", (), {"context_tokens": 10000, "max_tokens": 4000})()
+    batches = pattern_batches(items, model_cfg=model_cfg)
 
     assert len(batches) == 2
     assert [item["id"] for batch in batches for item in batch.items] == ["0", "1", "2"]
-    assert all(batch.estimated_input_tokens <= MAINTENANCE_MAX_INPUT_TOKENS for batch in batches)
+    assert all(batch.estimated_input_tokens <= resolve_maintenance_budget(model_cfg).max_input_tokens for batch in batches)
     assert all(not batch.has_oversized_item for batch in batches)
 
 
 def test_split_batches_marks_oversized_item_without_silent_truncation():
     item = {"id": "long", "text": "x" * 16000}
 
-    batches = pattern_batches([item])
+    model_cfg = type("Model", (), {"context_tokens": 8000, "max_tokens": 4000})()
+    batches = pattern_batches([item], model_cfg=model_cfg)
 
     assert len(batches) == 1
     assert batches[0].items == (item,)
     assert batches[0].source_ids == ("long",)
     assert batches[0].has_oversized_item is True
-    assert batches[0].estimated_input_tokens > 3500
+    assert batches[0].estimated_input_tokens > resolve_maintenance_budget(model_cfg).max_input_tokens
 
 
 @pytest.fixture
@@ -62,7 +61,9 @@ async def test_review_patterns_maps_each_batch_back_to_stable_pattern_id(isolate
 
     monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     result = await refresh_memory._review_patterns(
-        user_id, settings=object(), dry_run=False, trials=1,
+        user_id,
+        settings=type("Model", (), {"context_tokens": 10000, "max_tokens": 4000})(),
+        dry_run=False, trials=1,
     )
 
     assert result["batch_count"] == 2

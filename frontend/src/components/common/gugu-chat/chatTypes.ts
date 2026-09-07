@@ -1,3 +1,6 @@
+/** Agent ask_user 选择卡的协议保留 ID；系统确认卡不会生成这个选项。 */
+export const CUSTOM_REPLY_OPTION_ID = '__custom_reply__'
+
 // 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
 // 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
 // 不强行收紧成必填。
@@ -41,8 +44,11 @@ export interface ChatMessage {
     title: string
     body: string
     options: Array<{ id: string; label: string; token: string }>
+    allowTextInput?: boolean
+    customInputActive?: boolean
     resolved?: boolean
     selectedOptionId?: string | null
+    responseText?: string | null
     expiresAt?: string
     expired?: boolean
   }
@@ -83,6 +89,8 @@ export interface ChatSession {
   workspaceName?: string | null
   goalActive?: boolean
   goalStatus?: 'active' | 'paused' | null
+  filesystemAuthorized?: boolean
+  filesystemAuthorizationEnabled?: boolean
   // /agent/sessions 已返回这两个 ISO 时间；侧栏用 updatedAt 显示“最后对话时间”。
   updatedAt?: string
   createdAt?: string

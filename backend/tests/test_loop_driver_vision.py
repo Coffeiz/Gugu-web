@@ -2,8 +2,10 @@ from types import SimpleNamespace
 
 from agent.loop_drivers import (
     OpenAIDriver,
+    OllamaDriver,
     RoundResult,
     _OpenAIRaw,
+    _OllamaRaw,
     _collapse_volatile_messages,
     _contains_volatile_image,
     _with_history_cache,
@@ -53,6 +55,44 @@ def test_openai_tool_round_keeps_text_result_shape():
     assert len(messages) == 2
     assert messages[1]["role"] == "tool"
     assert messages[1]["content"] == '{"count": 0}'
+
+
+def test_openai_tool_round_drops_unprocessed_parallel_tool_calls():
+    """确认门中断并行批次时，OpenAI assistant/tool 消息必须严格配对。"""
+    result = RoundResult(
+        text="处理任务",
+        raw=_OpenAIRaw(content="处理任务", reasoning="", tool_calls_payload=[
+            {"id": "call-1", "name": "delete_one", "args": "{}"},
+            {"id": "call-2", "name": "delete_two", "args": "{}"},
+        ]),
+    )
+    dispatched = [(SimpleNamespace(id="call-1"), '{"status":"waiting_input"}')]
+
+    messages = OpenAIDriver().build_tool_round(result, dispatched)
+
+    assert [call["id"] for call in messages[0]["tool_calls"]] == ["call-1"]
+    assert [message["tool_call_id"] for message in messages[1:]] == ["call-1"]
+
+
+def test_ollama_tool_round_drops_unprocessed_parallel_tool_calls():
+    """确认门中断并行批次时，Ollama assistant/tool 消息必须严格配对。"""
+    result = RoundResult(
+        text="处理任务",
+        raw=_OllamaRaw(content="处理任务", thinking="", tool_calls_payload=[
+            {"id": "call-1", "type": "function", "function": {
+                "name": "delete_one", "arguments": {},
+            }},
+            {"id": "call-2", "type": "function", "function": {
+                "name": "delete_two", "arguments": {},
+            }},
+        ]),
+    )
+    dispatched = [(SimpleNamespace(id="call-1", name="delete_one"), '{"status":"waiting_input"}')]
+
+    messages = OllamaDriver().build_tool_round(result, dispatched)
+
+    assert [call["id"] for call in messages[0]["tool_calls"]] == ["call-1"]
+    assert [message["tool_name"] for message in messages[1:]] == ["delete_one"]
 
 
 def test_openai_tool_round_drops_images_for_text_only_model():

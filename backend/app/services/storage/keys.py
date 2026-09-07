@@ -10,6 +10,11 @@ import re
 
 _INVALID_RE = re.compile(r'[\\/:*?"<>|]')
 
+# 用户存储根（<uid>/）下的系统保留顶层目录名——个人文件/项目文件/思维/素材板/默认
+# 工作区/旧 shell 迁移目录。Workspace 物理目录与它们平级，任何情况下不得占用这些
+# 名称；本集合是唯一事实源，新增系统顶层目录时在此登记。
+RESERVED_USER_ROOTS = frozenset({"workspace", "shell", "个人文件", "项目文件", "思维", "素材板"})
+
 
 def _safe_name(name: str) -> str:
     return _INVALID_RE.sub("_", name)
@@ -19,7 +24,8 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
                project_name: str = "", project_id: int = 0,
                project_year: str = "", project_month: str = "",
                folder_name: str = "", folder_path: str = "",
-               mind_map_title: str = "", mind_map_id: int = 0) -> str:
+               mind_map_title: str = "", mind_map_id: int = 0,
+               workspace_directory_name: str = "") -> str:
     """构造存储 key。folder_path 是根到叶的目录链，folder_name 仅为旧调用兼容。"""
     fname = f"{_safe_name(display_name)}.{ext.lower()}"
     # 旧 folder_name 的斜杠一直按非法文件名替换，不能因为新增层级能力悄悄变成真实目录；
@@ -39,6 +45,9 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
         return f"{uid}/思维/{map_dir}/{fname}"
     if space == "asset":
         return f"{uid}/素材板/{fname}"
+    if space == "workspace":
+        base = f"{uid}/{_safe_name(workspace_directory_name)}"
+        return f"{base}/{safe_folder_path}/{fname}" if safe_folder_path else f"{base}/{fname}"
     # personal — 有文件夹时放进子目录
     if safe_folder_path:
         return f"{uid}/个人文件/{safe_folder_path}/{fname}"
@@ -51,6 +60,7 @@ def compose_logical_path(
     project_year: str = "", project_month: str = "",
     folder_name: str = "", folder_path: str = "",
     mind_map_title: str = "", mind_map_id: int = 0,
+    workspace_directory_name: str = "",
 ) -> str:
     """业务命名：把 space/项目/年月/文件夹 组成「可浏览逻辑路径」——**不含 uid 前缀、不含文件名**。
 
@@ -62,6 +72,8 @@ def compose_logical_path(
         if folder_path else _safe_name(folder_name)
     )
     if space == "project":
+        if not project_name and not project_id and not project_year and not project_month and not safe_folder_path:
+            return "项目文件"
         proj_dir = f"{_safe_name(project_name)} #{project_id}"
         date_path = f"{project_year}/{project_month}/" if project_year and project_month else ""
         base = f"项目文件/{date_path}{proj_dir}"
@@ -70,6 +82,9 @@ def compose_logical_path(
         return f"思维/{_safe_name(mind_map_title)} #{mind_map_id}"
     if space == "asset":
         return "素材板"
+    if space == "workspace":
+        base = _safe_name(workspace_directory_name)
+        return f"{base}/{safe_folder_path}" if safe_folder_path else base
     # personal
     return f"个人文件/{safe_folder_path}" if safe_folder_path else "个人文件"
 

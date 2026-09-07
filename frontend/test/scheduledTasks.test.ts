@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
   run: vi.fn(),
-  refresh: null as ((resource?: string) => void) | null,
   showError: vi.fn(),
   showNotice: vi.fn(),
   confirmDialog: vi.fn(),
@@ -28,11 +27,6 @@ vi.mock('@/composables/core/useAppToast', () => ({
   showAppError: mocks.showError,
   showAppNotice: mocks.showNotice,
 }))
-vi.mock('@/composables/core/useLiveRefresh', () => ({
-  useLiveRefresh: (_resource: string, callback: (resource?: string) => void) => {
-    mocks.refresh = callback
-  },
-}))
 vi.mock('@/composables/core/useConfirmDialog', () => ({
   confirmDialog: mocks.confirmDialog,
 }))
@@ -46,7 +40,6 @@ describe('useScheduledTasks', () => {
     setLocale('zh-CN')
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    mocks.refresh = null
     mocks.list.mockResolvedValue({ tasks: [task] })
     mocks.create.mockResolvedValue({ id: 8 })
     mocks.update.mockResolvedValue({})

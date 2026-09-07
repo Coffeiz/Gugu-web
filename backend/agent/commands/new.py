@@ -7,9 +7,9 @@ from agent.commands.help import command_help, is_help_arg
 from app.core.tz import now_utc
 
 
-async def handle(user_id, session_id: int | None, arg: str) -> str:
+async def handle(user_id, session_id: int | None, arg: str, locale: str | None = None) -> str:
     if is_help_arg(arg):
-        return command_help("new")
+        return command_help("new", locale)
     if not session_id:
         return "当前还没有可重置的对话。"
 

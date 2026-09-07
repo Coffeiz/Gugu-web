@@ -5,6 +5,43 @@
       <p class="sa-sub">{{ t('storageAudit.subtitle') }}</p>
     </div>
 
+    <FileSyncAdminPanel />
+
+    <section class="sa-card user-storage-audit">
+      <div class="sa-card-head">
+        <div>
+          <h3 class="sa-card-title">{{ t('storageAuditUi.userTitle') }}</h3>
+          <p class="sa-card-sub">{{ t('storageAuditUi.userHint') }}</p>
+        </div>
+        <div class="sa-card-head-right">
+          <ActionButton variant="secondary" fit :disabled="userScanning" @click="scanUsers">
+            <Icon name="action.search" size="sm" />
+            {{ userScanning ? t('storageAuditUi.userScanning') : t('storageAuditUi.userScan') }}
+          </ActionButton>
+          <ActionButton v-if="userReport?.users.length" fit :disabled="userCleaning" @click="cleanUsers">
+            <Icon name="action.delete" size="sm" />
+            {{ t('storageAuditUi.userClean', { count: userReport.users.length }) }}
+          </ActionButton>
+        </div>
+      </div>
+      <div v-if="userMsg" class="sa-inline-msg" :class="userMsgKind">{{ userMsg }}</div>
+      <div v-if="userReport" class="recon-report">
+        <div class="recon-summary">
+          {{ t('storageAuditUi.userSummary', { total: userReport.user_count, missing: userReport.missing_directory_count, empty: userReport.missing_file_user_count }) }}
+          <span class="recon-meta"> · {{ userReport.location }}</span>
+        </div>
+        <div v-if="!userReport.users.length" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditUi.userHealthy') }}</div>
+        <div v-else class="recon-block">
+          <div class="recon-block-title">{{ t('storageAuditUi.userMissing') }}</div>
+          <div v-for="u in userReport.users" :key="u.user_id" class="recon-row">
+            <span class="recon-name">{{ u.display_name || u.username }}</span>
+            <span class="recon-meta">{{ u.username }} · {{ u.user_id }} · {{ t(u.reason === 'missing_directory' ? 'storageAuditUi.userReasonDirectory' : 'storageAuditUi.userReasonFiles') }} · {{ t('storageAuditUi.userImpact', { files: u.files, physical: u.physical_files, projects: u.projects, tasks: u.scheduled_tasks }) }}</span>
+          </div>
+          <p class="sa-card-sub user-storage-warning">{{ t('storageAuditUi.userWarning') }}</p>
+        </div>
+      </div>
+    </section>
+
     <section class="sa-card">
       <div class="sa-card-head">
         <div>
@@ -12,8 +49,8 @@
           <p class="sa-card-sub">{{ t('storageAuditUi.legacyHint') }}</p>
         </div>
         <div class="sa-card-head-right">
-          <button class="sa-btn" :disabled="trashMigrating" @click="scanTrashMigration">{{ t('storageAudit.scanLegacyTrash') }}</button>
-          <button v-if="trashMigration?.items?.length" class="sa-btn primary" :disabled="trashMigrating" @click="runTrashMigration">{{ t('storageAudit.migrateItems', { count: trashMigration.items.length }) }}</button>
+          <ActionButton variant="secondary" fit :disabled="trashMigrating" @click="scanTrashMigration"><Icon name="action.search" size="sm" />{{ t('storageAudit.scanLegacyTrash') }}</ActionButton>
+          <ActionButton v-if="trashMigration?.items?.length" fit :disabled="trashMigrating" @click="runTrashMigration"><Icon name="action.refresh" size="sm" />{{ t('storageAudit.migrateItems', { count: trashMigration.items.length }) }}</ActionButton>
         </div>
       </div>
       <div v-if="trashMigrationMsg" class="sa-inline-msg" :class="trashMigrationKind">{{ trashMigrationMsg }}</div>
@@ -30,10 +67,10 @@
           <h3 class="sa-card-title">{{ t('storageAudit.fileAudit') }}</h3>
           <p class="sa-card-sub">{{ t('storageAudit.fileAuditHint') }}</p>
         </div>
-        <button class="sa-btn" :disabled="fileScanning" @click="scanFiles">
+          <ActionButton variant="secondary" fit :disabled="fileScanning" @click="scanFiles">
           <Icon name="action.search" size="sm" />
           {{ fileScanning ? t('storageAudit.scanning') : t('storageAudit.scan') }}
-        </button>
+        </ActionButton>
       </div>
 
       <div v-if="fileMsg" class="sa-inline-msg" :class="fileMsgKind">{{ fileMsg }}</div>
@@ -44,10 +81,10 @@
           <div class="recon-summary">
             {{ t('storageAuditExtra.storage') }} <b>{{ fileReport.backend }}</b>（{{ fileReport.location }}） ·
             {{ t('storageAuditExtra.dbFiles') }} <b>{{ fileReport.db_file_rows }}</b> · {{ t('storageAuditExtra.objects') }} <b>{{ fileReport.storage_objects }}</b> ·
-            {{ t('storageAuditExtra.matched') }} <b style="color:#5ab899">{{ fileReport.matched }}</b> ·
-            {{ t('storageAuditExtra.ghosts') }} <b :style="{ color: fileReport.ghost_count ? '#e07676' : 'inherit' }">{{ fileReport.ghost_count }}</b> ·
-            {{ t('storageAuditExtra.orphans') }} <b :style="{ color: fileReport.orphan_count ? '#e0a96a' : 'inherit' }">{{ fileReport.orphan_count }}</b> ·
-            {{ t('storageAuditExtra.misplaced') }} <b :style="{ color: fileReport.misplaced_count ? '#e0a96a' : 'inherit' }">{{ fileReport.misplaced_count || 0 }}</b>
+            {{ t('storageAuditExtra.matched') }} <b class="status-success-text">{{ fileReport.matched }}</b> ·
+            {{ t('storageAuditExtra.ghosts') }} <b :class="{ 'status-danger-text': fileReport.ghost_count }">{{ fileReport.ghost_count }}</b> ·
+            {{ t('storageAuditExtra.orphans') }} <b :class="{ 'status-warning-text': fileReport.orphan_count }">{{ fileReport.orphan_count }}</b> ·
+            {{ t('storageAuditExtra.misplaced') }} <b :class="{ 'status-warning-text': fileReport.misplaced_count }">{{ fileReport.misplaced_count || 0 }}</b>
           </div>
           <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditUi.healthy') }}</div>
           <div v-if="fileReport.ghost_count" class="recon-block">
@@ -61,15 +98,15 @@
             <div class="recon-block-title">
               {{ t('storageAuditExtra.orphanFiles') }}
               <span class="recon-bulk">
-                <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'import')">{{ t('storageAuditExtra.importAll') }}</button>
-                <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'delete')">{{ t('storageAuditExtra.deleteAll') }}</button>
+                <ActionButton class="recon-act" variant="secondary" fit :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'import')"><Icon name="action.upload" size="sm" />{{ t('storageAuditExtra.importAll') }}</ActionButton>
+                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="fileRepairing" @click="repairOrphans(fileReport.orphans, 'delete')"><Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.deleteAll') }}</ActionButton>
               </span>
             </div>
             <div v-for="o in fileReport.orphans" :key="o" class="recon-row">
               <span class="recon-meta">{{ o }}</span>
               <span class="recon-row-acts">
-                <button class="recon-act" :disabled="fileRepairing" @click="repairOrphans([o], 'import')" :title="t('storageAuditExtra.importTitle')">{{ t('storageAuditExtra.import') }}</button>
-                <button class="recon-act recon-act-del" :disabled="fileRepairing" @click="repairOrphans([o], 'delete')" :title="t('storageAuditExtra.deleteTitle')">{{ t('storageAuditExtra.delete') }}</button>
+                <ActionButton class="recon-act" variant="secondary" fit :disabled="fileRepairing" @click="repairOrphans([o], 'import')" :title="t('storageAuditExtra.importTitle')"><Icon name="action.upload" size="sm" />{{ t('storageAuditExtra.import') }}</ActionButton>
+                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="fileRepairing" @click="repairOrphans([o], 'delete')" :title="t('storageAuditExtra.deleteTitle')"><Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.delete') }}</ActionButton>
               </span>
             </div>
           </div>
@@ -77,7 +114,7 @@
             <div class="recon-block-title">
               {{ t('storageAuditExtra.misplacedHint') }}
               <span class="recon-bulk">
-                <button class="recon-act" :disabled="fileRepairing" @click="repairMisplaced">{{ t('storageAuditExtra.moveAll') }}</button>
+                <ActionButton class="recon-act" variant="secondary" fit :disabled="fileRepairing" @click="repairMisplaced"><Icon name="action.refresh" size="sm" />{{ t('storageAuditExtra.moveAll') }}</ActionButton>
               </span>
             </div>
             <div v-for="item in fileReport.misplaced_files" :key="item.file_id" class="recon-row">
@@ -97,10 +134,11 @@
           <p class="sa-card-sub">{{ t('storageAuditUi.pathHint') }}</p>
         </div>
         <div class="sa-card-head-right">
-          <button class="sa-btn" :disabled="pathScanning" @click="scanPathMigration">{{ t('storageAuditUi.scanPath') }}</button>
-          <button v-if="pathReport?.candidates?.length" class="sa-btn primary" :disabled="pathRepairing" @click="repairPathMigration">
+          <ActionButton variant="secondary" fit :disabled="pathScanning" @click="scanPathMigration"><Icon name="action.search" size="sm" />{{ t('storageAuditUi.scanPath') }}</ActionButton>
+          <ActionButton v-if="pathReport?.candidates?.length" fit :disabled="pathRepairing" @click="repairPathMigration">
+            <Icon name="admin.wrench" size="sm" />
             {{ t('storageAuditUi.repairItems', { count: pathReport.candidates.length }) }}
-          </button>
+          </ActionButton>
         </div>
       </div>
       <div v-if="pathMsg" class="sa-inline-msg" :class="pathMsgKind">{{ pathMsg }}</div>
@@ -123,10 +161,10 @@
         </div>
         <div class="sa-card-head-right">
           <input v-model.trim="userId" class="sa-input" :placeholder="t('storageAuditUi.userId')" @keyup.enter="scanDirs()" />
-          <button class="sa-btn" :disabled="dirScanning" @click="scanDirs()">
+          <ActionButton variant="secondary" fit :disabled="dirScanning" @click="scanDirs()">
             <Icon name="action.search" size="sm" />
             {{ dirScanning ? t('storageAuditUi.reconciling') : t('storageAudit.scan') }}
-          </button>
+          </ActionButton>
         </div>
       </div>
 
@@ -205,10 +243,10 @@
         </div>
 
         <div v-if="!dirReport.healthy" class="fd-actions">
-          <button class="sa-btn primary" :disabled="dirFixing" @click="repairDirs()">
+          <ActionButton :disabled="dirFixing" fit @click="repairDirs()">
             <Icon name="admin.wrench" size="sm" />
             {{ dirFixBtnLabel }}
-          </button>
+          </ActionButton>
           <span class="fd-actions-note">{{ t('storageAuditExtra.actionsNote') }}</span>
         </div>
       </template>
@@ -221,10 +259,10 @@
           <h3 class="sa-card-title">{{ t('storageAuditUi.memoryTitle') }}</h3>
           <p class="sa-card-sub">{{ t('storageAuditUi.memoryHint') }}</p>
         </div>
-        <button class="sa-btn" :disabled="memScanning" @click="scanLegacyMemory">
+        <ActionButton variant="secondary" fit :disabled="memScanning" @click="scanLegacyMemory">
           <Icon name="action.search" size="sm" />
           {{ memScanning ? t('storageAuditExtra.scanning') : t('storageAuditExtra.scan') }}
-        </button>
+        </ActionButton>
       </div>
 
       <div v-if="memMsg" class="sa-inline-msg" :class="memMsgKind">{{ memMsg }}</div>
@@ -239,21 +277,21 @@
             <div class="recon-block-title">
               {{ t('storageAuditExtra.legacyList') }}
               <span class="recon-bulk">
-                <button class="recon-act recon-act-del" :disabled="memCleaning || !memReport.safeCount"
+                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="memCleaning || !memReport.safeCount"
                         @click="cleanupLegacy(memReport.files.filter(f => f.safeToDelete).map(f => f.key))">
-                  {{ t('storageAuditExtra.cleanupSafe', { count: memReport.safeCount }) }}
-                </button>
+                  <Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.cleanupSafe', { count: memReport.safeCount }) }}
+                </ActionButton>
               </span>
             </div>
             <div v-for="f in memReport.files" :key="f.key" class="recon-row">
               <span class="recon-name">{{ f.legacyFile }}</span>
               <span class="recon-meta">
                 {{ f.key }} · {{ t('storageAuditExtra.replacedBy', { name: f.replacedBy }) }}
-                <template v-if="!f.safeToDelete"> · <span style="color:#d9a94e">{{ t('storageAuditExtra.unsafe') }}</span></template>
+                <template v-if="!f.safeToDelete"> · <span class="status-warning-text">{{ t('storageAuditExtra.unsafe') }}</span></template>
               </span>
               <span class="recon-row-acts">
-                <button class="recon-act recon-act-del" :disabled="memCleaning || !f.safeToDelete"
-                        @click="cleanupLegacy([f.key])" :title="t('storageAuditExtra.deleteLegacy')">{{ t('storageAuditExtra.delete') }}</button>
+                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="memCleaning || !f.safeToDelete"
+                        @click="cleanupLegacy([f.key])" :title="t('storageAuditExtra.deleteLegacy')"><Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.delete') }}</ActionButton>
               </span>
             </div>
           </div>
@@ -269,7 +307,9 @@ import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { RiCheckFill } from '@remixicon/vue'
+import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
@@ -319,6 +359,66 @@ const fileRepairing = ref(false)
 const fileReport = ref<any | null>(null)
 const fileMsg = ref('')
 const fileMsgKind = ref<'ok' | 'err'>('ok')
+
+interface UserStorageItem {
+  user_id: string
+  username: string
+  display_name: string | null
+  account_status: string
+  created_at: string | null
+  files: number
+  projects: number
+  scheduled_tasks: number
+  physical_files: number
+  reason: 'missing_directory' | 'missing_files'
+}
+interface UserStorageReport { backend: string; location: string; user_count: number; missing_directory_count: number; missing_file_user_count: number; users: UserStorageItem[] }
+const userScanning = ref(false)
+const userCleaning = ref(false)
+const userReport = ref<UserStorageReport | null>(null)
+const userMsg = ref('')
+const userMsgKind = ref<'ok' | 'err'>('ok')
+
+async function scanUsers() {
+  userScanning.value = true
+  userMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-users')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || t('storageAuditUi.userScanFailed'))
+    userReport.value = data
+  } catch (e) {
+    userMsgKind.value = 'err'
+    userMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { userScanning.value = false }
+}
+
+async function cleanUsers() {
+  const users = userReport.value?.users || []
+  if (!users.length || !await confirmDialog({
+    title: t('storageAuditUi.userCleanTitle'),
+    message: t('storageAuditUi.userCleanConfirm', { count: users.length }),
+    tone: 'danger',
+    confirmText: t('storageAuditUi.userCleanConfirmButton'),
+  })) return
+  userCleaning.value = true
+  userMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-users/repair', {
+      method: 'POST',
+      body: JSON.stringify({ user_ids: users.map(user => user.user_id), confirm: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || t('storageAuditUi.userCleanFailed'))
+    userMsgKind.value = data.skipped?.length ? 'err' : 'ok'
+    userMsg.value = t('storageAuditUi.userCleanResult', { done: data.done.length, skipped: data.skipped?.length || 0 })
+    await scanUsers()
+    await scanFiles()
+  } catch (e) {
+    userMsgKind.value = 'err'
+    userMsg.value = e instanceof Error ? e.message : String(e)
+  } finally { userCleaning.value = false }
+}
 
 const pathScanning = ref(false)
 const pathRepairing = ref(false)
@@ -387,7 +487,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/repair', {
       method: 'POST',
-      body: JSON.stringify({ action, keys }),
+      body: JSON.stringify({ action, keys, confirm: true }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.repairFailure', { message: '' }))
@@ -582,11 +682,11 @@ async function cleanupLegacy(keys: string[]) {
 </script>
 
 <style scoped>
-.sa-page { padding: 28px 32px; color: rgba(255,255,255,0.9); }
+.sa-page { padding: 28px 32px; color: var(--content-primary); font-family: var(--font-sans); font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .sa-head { margin-bottom: 20px; }
-.sa-title { font-size: 18px; font-weight: 700; margin: 0; }
-.sa-sub { font-size: 12px; color: rgba(255,255,255,0.4); margin: 4px 0 0; max-width: 720px; }
-.sa-sub b { color: rgba(255,255,255,0.6); font-weight: 600; }
+.sa-title { font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); margin: 0; }
+.sa-sub { font-size: var(--font-size-sm); color: var(--content-secondary); margin: 4px 0 0; max-width: 720px; }
+.sa-sub b { color: var(--content-primary); font-weight: var(--font-weight-semibold); }
 
 .sa-card {
   background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
@@ -594,86 +694,74 @@ async function cleanupLegacy(keys: string[]) {
 }
 .sa-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .sa-card-head:last-child { margin-bottom: 0; }
-.sa-card-title { font-size: 15px; font-weight: 700; margin: 0; }
-.sa-card-sub { font-size: 12px; color: rgba(255,255,255,0.4); margin: 4px 0 0; max-width: 560px; }
+.sa-card-title { font-size: var(--font-size-md); font-weight: var(--font-weight-bold); margin: 0; }
+.sa-card-sub { font-size: var(--font-size-sm); color: var(--content-secondary); margin: 4px 0 0; max-width: 560px; }
 .sa-card-head-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .sa-input {
-  width: 220px; font-size: 13px; padding: 7px 11px; border-radius: 9px;
+  width: 220px; font-size: var(--font-size-sm); padding: 7px 11px; border-radius: 9px;
   outline: none;
 }
 
-.sa-btn {
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-  font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 9px;
-  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.14);
-  color: rgba(255,255,255,0.9); cursor: pointer; transition: all 0.15s;
-}
-.sa-btn:hover:not(:disabled) { background: rgba(255,255,255,0.16); }
-.sa-btn:disabled { opacity: 0.5; cursor: default; }
-.sa-btn.primary { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
-.sa-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
-
-.sa-inline-msg { font-size: 12px; margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; }
-.sa-inline-msg.ok { color: #7fc99a; background: rgba(90,180,120,0.1); border: 1px solid rgba(90,180,120,0.22); }
-.sa-inline-msg.err { color: #e08a8a; background: rgba(210,80,80,0.1); border: 1px solid rgba(210,80,80,0.25); }
+.sa-inline-msg { font-size: var(--font-size-sm); margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; }
+.sa-inline-msg.ok { color: var(--status-success); background: var(--status-success-bg); border: 1px solid color-mix(in srgb, var(--status-success) 22%, transparent); }
+.sa-inline-msg.err { color: var(--status-danger); background: var(--status-danger-bg); border: 1px solid color-mix(in srgb, var(--status-danger) 25%, transparent); }
 
 /* 文件对账报告（沿用 Config 对账样式） */
 .recon-report { margin-top: 4px; padding: 12px 14px; border-radius: 10px;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; }
-.recon-summary { line-height: 1.7; color: rgba(255,255,255,0.88); }
-.recon-summary b { font-weight: 700; }
-.recon-ok { display: flex; align-items: center; gap: 4px; margin-top: 8px; color: #5ab899; font-weight: 600; }
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-size: var(--font-size-sm); }
+.recon-summary { line-height: var(--line-height-body); color: var(--content-primary); }
+.recon-summary b { font-weight: var(--font-weight-bold); }
+.recon-ok { display: flex; align-items: center; gap: 4px; margin-top: 8px; color: var(--status-success); font-weight: var(--font-weight-semibold); }
 .recon-ok__icon { width: 1em; height: 1em; flex: 0 0 auto; }
-.recon-err { color: #e07676; font-weight: 600; }
+.recon-err { color: var(--status-danger); font-weight: var(--font-weight-semibold); }
 .recon-block { margin-top: 10px; }
-.recon-block-title { font-weight: 600; margin-bottom: 4px; color: rgba(255,255,255,0.85); }
+.recon-block-title { font-weight: var(--font-weight-semibold); margin-bottom: 4px; color: var(--content-primary); }
 .recon-row { padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.08); display: flex; gap: 8px; align-items: center; }
-.recon-name { font-weight: 600; color: rgba(255,255,255,0.88); }
-.recon-meta { color: rgba(255,255,255,0.45); word-break: break-all; flex: 1; min-width: 0; }
+.recon-name { font-weight: var(--font-weight-semibold); color: var(--content-primary); }
+.recon-meta { color: var(--content-secondary); word-break: break-all; flex: 1; min-width: 0; }
 .recon-row-acts, .recon-bulk { display: inline-flex; gap: 6px; flex-shrink: 0; margin-left: 8px; }
-.recon-act { padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
-  border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.78); }
-.recon-act:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
-.recon-act:disabled { opacity: 0.5; cursor: default; }
-.recon-act-del { border-color: rgba(224,118,118,0.4); color: #e08a8a; }
-.recon-act-del:hover:not(:disabled) { background: rgba(224,118,118,0.18); color: #fff; }
+.recon-act { font-size: var(--font-size-xs); }
+.app-action-button.recon-act-del { border-color: color-mix(in srgb, var(--status-danger) 40%, transparent); color: var(--status-danger); }
 
 /* 目录对账报告 */
-.fd-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px; margin-bottom: 16px; font-size: 13px; }
-.fd-banner.ok { background: rgba(90,180,120,0.1); border: 1px solid rgba(90,180,120,0.25); color: #7fc99a; }
-.fd-banner.alert { background: rgba(210,150,60,0.1); border: 1px solid rgba(210,150,60,0.3); color: #d9a94e; }
-.fd-banner b { font-weight: 700; }
+.fd-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px; margin-bottom: 16px; font-size: var(--font-size-sm); }
+.fd-banner.ok { background: var(--status-success-bg); border: 1px solid color-mix(in srgb, var(--status-success) 25%, transparent); color: var(--status-success); }
+.fd-banner.alert { background: var(--status-warning-bg); border: 1px solid color-mix(in srgb, var(--status-warning) 30%, transparent); color: var(--status-warning); }
+.fd-banner b { font-weight: var(--font-weight-bold); }
 
 .fd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .fd-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 14px 16px; }
 .fd-card.warnMiss { border-color: rgba(120,150,210,0.4); background: rgba(120,150,210,0.08); }
 .fd-card.warnOrphan { border-color: rgba(210,150,60,0.4); background: rgba(210,150,60,0.08); }
-.fc-label { font-size: 12px; color: rgba(255,255,255,0.45); margin-bottom: 8px; }
-.fc-value { font-size: 24px; font-weight: 700; line-height: 1; }
-.fc-hint { font-size: 11px; color: rgba(255,255,255,0.35); margin-top: 6px; }
+.fc-label { font-size: var(--font-size-sm); color: var(--content-secondary); margin-bottom: 8px; }
+.fc-value { font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); line-height: var(--line-height-tight); }
+.fc-hint { font-size: var(--font-size-xs); color: var(--content-secondary); margin-top: 6px; }
 
-.fd-fix-result { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #7fc99a; margin-bottom: 16px;
+.fd-fix-result { display: flex; align-items: center; gap: 8px; font-size: var(--font-size-sm); color: var(--status-success); margin-bottom: 16px;
   background: rgba(90,180,120,0.08); border: 1px solid rgba(90,180,120,0.2); border-radius: 10px; padding: 10px 14px; }
-.fd-fix-result b { font-weight: 700; }
+.fd-fix-result b { font-weight: var(--font-weight-bold); }
 
 .fd-section { margin-bottom: 18px; }
-.sec-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
-.sec-title.miss { color: #9db4e6; }
-.sec-title.orphan { color: #d9a94e; }
+.sec-title { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); margin-bottom: 10px; }
+.sec-title.miss { color: var(--status-info); }
+.sec-title.orphan { color: var(--status-warning); }
 .dir-list { list-style: none; margin: 0; padding: 8px; max-height: 240px; overflow-y: auto;
   background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; }
-.dir-item { font-family: var(--font-mono, monospace); font-size: 12px; color: rgba(255,255,255,0.75);
+.dir-item { font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--content-primary);
   padding: 4px 8px; border-radius: 6px; word-break: break-all; }
 .dir-item:hover { background: rgba(255,255,255,0.04); }
 .misplaced-item { padding: 6px 8px; }
-.misplaced-name { font-family: var(--font-sans, inherit); font-weight: 600; color: rgba(255,255,255,0.85); margin-bottom: 2px; }
-.misplaced-path { font-size: 11px; }
-.misplaced-path .from { color: #e0a96a; }
-.misplaced-path .to { color: #7fc99a; }
+.misplaced-name { font-family: var(--font-sans); font-weight: var(--font-weight-semibold); color: var(--content-primary); margin-bottom: 2px; }
+.misplaced-path { font-size: var(--font-size-xs); }
+.misplaced-path .from { color: var(--status-warning); }
+.misplaced-path .to { color: var(--status-success); }
 
-.fd-confirm { margin-top: 12px; font-size: 13px; color: rgba(255,255,255,0.6); }
+.fd-confirm { margin-top: 12px; font-size: var(--font-size-sm); color: var(--content-secondary); }
 
 .fd-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; flex-wrap: wrap; }
-.fd-actions-note { font-size: 12px; color: rgba(255,255,255,0.35); }
+.fd-actions-note { font-size: var(--font-size-sm); color: var(--content-secondary); }
+.status-success-text { color: var(--status-success); }
+.status-danger-text { color: var(--status-danger); }
+.status-warning-text { color: var(--status-warning); }
 </style>

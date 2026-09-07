@@ -1,24 +1,30 @@
+from datetime import datetime, timezone
+
 from app.api.v1.agent_admin import (
-    _SPLIT_CACHE_PROVIDERS,
+    _CACHE_USAGE_CUTOFF_SQL,
     _effective_input_sql,
     _effective_input_tokens,
     _usage_timezone_expr,
 )
 
 
-def test_split_cache_provider_list_covers_anthropic_compatible_usage():
-    assert _SPLIT_CACHE_PROVIDERS == ("anthropic", "minimax")
-
-
-def test_effective_input_tokens_uses_full_input_for_split_cache_usage():
+def test_effective_input_tokens_preserves_historical_openai_and_new_full_input():
     assert _effective_input_tokens("anthropic", 100, 700, 20) == 820
     assert _effective_input_tokens("minimax", 100, 700, 20) == 820
-    assert _effective_input_tokens("deepseek", 800, 700, 20) == 800
+    assert _effective_input_tokens(
+        "deepseek", 800, 700, 20,
+        datetime(2026, 9, 2, tzinfo=timezone.utc),
+    ) == 800
+    assert _effective_input_tokens(
+        "deepseek", 800, 700, 20,
+        datetime(2026, 9, 4, tzinfo=timezone.utc),
+    ) == 1520
 
 
-def test_effective_input_sql_uses_the_same_provider_contract():
+def test_effective_input_sql_uses_the_same_full_input_contract():
     assert _effective_input_sql() == (
         "CASE WHEN LOWER(provider) IN ('anthropic', 'minimax') "
+        f"OR created_at >= {_CACHE_USAGE_CUTOFF_SQL} "
         "THEN tokens_in + cache_read + cache_write ELSE tokens_in END"
     )
 

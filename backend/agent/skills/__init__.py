@@ -7,7 +7,8 @@
 与 `agent/tools/`（函数调用工具）的关系：skill 是「带触发条件的剧本」，跑在 tool 之上。
 依赖单向：tools（use_skill）→ skills（本模块）。
 
-不缓存：每次现读目录里的几个 .md（开销极小），改 skill 内容**无需重启**即生效。
+Skill 正文不缓存：`use_skill` 每次按需读取目录里的 `.md`，改 skill 内容**无需重启**即生效；
+会话里已经注入的用户 Skill 目录元数据则保持 snapshot，不会因为用户编辑 Skill 自动改写当前 prompt。
 
 常驻行为规则保留在 `prompts/skills.md`，能力名称和短描述只从本目录注册表生成，不再维护第二份 Skill 目录。
 """

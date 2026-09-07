@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from agent.context.message_roles import last_user_index, user_text_from_message
+
 _TOKENIZER_CACHE: dict[str, Any] = {}
 _TOKENIZER_FAILURES: set[str] = set()
 
@@ -237,14 +239,11 @@ def _usage_payload(result: Any, api_format: str = "") -> dict[str, Any]:
     output = int(getattr(result, "usage_out", 0) or 0)
     cache_read = int(getattr(result, "cache_tokens", 0) or 0)
     cache_write = int(getattr(result, "cache_write_tokens", 0) or 0)
-    # 现有 driver 的语义：OpenAI/DeepSeek prompt_tokens 已包含 cache hit；Anthropic
-    # input_tokens 与 cache_read_input_tokens 分列。0.2 在观测层做归一，不改变 core 的旧 usage。
-    if api_format == "anthropic":
-        input_total = reported_input + cache_read + cache_write
-        fresh_input = reported_input
-    else:
-        input_total = reported_input
-        fresh_input = max(input_total - cache_read, 0)
+    # 所有 driver 的 canonical usage 都已统一为：usage_in 只表示未命中输入，
+    # cache_tokens/cache_write_tokens 单独表示缓存读写量。观测层必须把三者
+    # 合并成真实输入量，否则 OpenAI 兼容链路会出现缓存率大于 100%。
+    input_total = reported_input + cache_read + cache_write
+    fresh_input = reported_input
     return {
         "input": input_total,
         "output": output,
@@ -256,21 +255,8 @@ def _usage_payload(result: Any, api_format: str = "") -> dict[str, Any]:
     }
 
 def _extract_last_user(messages: Any) -> str:
-    if not isinstance(messages, list):
-        return ""
-    for message in reversed(messages):
-        if not isinstance(message, dict) or message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            bits = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    bits.append(str(block.get("text") or ""))
-            return "\n".join(bits)
-    return ""
+    index = last_user_index(messages)
+    return user_text_from_message(messages[index]) if index is not None else ""
 
 def _round_result(result: Any, api_format: str = "") -> dict[str, Any]:
     if result is None:

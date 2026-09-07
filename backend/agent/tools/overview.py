@@ -56,6 +56,7 @@ class OverviewSkill(BaseSkill):
                     "days": {"type": "integer", "minimum": 1, "maximum": 366},
                 },
             },
+            repeat_safe=True,
             handler=_get_upcoming,
         ),
         Tool(
@@ -63,6 +64,7 @@ class OverviewSkill(BaseSkill):
             description_short='汇总项目、事件、文件和客户数量；无需参数',
             description="返回项目（按状态）、近期事件、文件、客户的数量统计。用于回答「我手头有多少项目」这类总览问题。",
             input_schema={"type": "object", "properties": {}},
+            repeat_safe=True,
             handler=_get_dashboard_stats,
         ),
     ]

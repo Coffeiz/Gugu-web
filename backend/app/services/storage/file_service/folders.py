@@ -46,8 +46,9 @@ class FolderOps:
             if dir_key:
                 await self.storage.ensure_folder(dir_key)
 
-    async def create(self, user_id, *, name, parent_id, project_id):
-        folder = await self.folder_tree.create(user_id, name=name, parent_id=parent_id, project_id=project_id)
+    async def create(self, user_id, *, name, parent_id, project_id, workspace_directory_id=None):
+        folder = await self.folder_tree.create(user_id, name=name, parent_id=parent_id, project_id=project_id,
+                                               workspace_directory_id=workspace_directory_id)
         if self._relocates:
             dir_key = await self._dir_key(user_id, folder)
             if dir_key:
@@ -68,18 +69,24 @@ class FolderOps:
         return folder
 
     async def move(self, user_id, folder_id, new_parent_id, *, client_version,
-                   target_project_id=None, target_project_set=False):
+                   target_project_id=None, target_project_set=False,
+                   target_workspace_directory_id=None, target_workspace_set=False):
         old_dir = None
         current = await self.folder_tree.get(user_id, folder_id)
         if current is None:
             # 让 FolderTree 统一抛出标准 NotFound，避免这里制造另一套错误。
             return await self.folder_tree.move(user_id, folder_id, new_parent_id,
                                                client_version=client_version,
-                                               target_project_id=target_project_id,
-                                               target_project_set=target_project_set)
+            target_project_id=target_project_id,
+            target_project_set=target_project_set,
+            target_workspace_directory_id=target_workspace_directory_id,
+            target_workspace_set=target_workspace_set)
         source_project_id = current.project_id
+        source_workspace_id = current.workspace_directory_id
         if not target_project_set:
             target_project_id = source_project_id
+        if not target_workspace_set:
+            target_workspace_directory_id = source_workspace_id
         if target_project_set and target_project_id is not None and target_project_id != source_project_id:
             project = await get_owned(self.db, Project, target_project_id, user_id)
             if project is None:
@@ -89,8 +96,10 @@ class FolderOps:
         folder = await self.folder_tree.move(user_id, folder_id, new_parent_id,
                                              client_version=client_version,
                                              target_project_id=target_project_id,
-                                             target_project_set=target_project_set)  # 改 parent/project + flush
-        if target_project_set and target_project_id != source_project_id:
+                                             target_project_set=target_project_set,
+                                             target_workspace_directory_id=target_workspace_directory_id,
+                                             target_workspace_set=target_workspace_set)  # 改 parent/project + flush
+        if (target_project_set and target_project_id != source_project_id) or (target_workspace_set and target_workspace_directory_id != source_workspace_id):
             subtree_ids = await self.folder_tree.descendants(user_id, folder.id)
             for sid in subtree_ids:
                 if sid == folder.id:
@@ -98,6 +107,7 @@ class FolderOps:
                 sub = await self.folder_tree.get(user_id, sid)
                 if sub is not None:
                     sub.project_id = target_project_id
+                    sub.workspace_directory_id = target_workspace_directory_id
             await self.db.flush()
             # 重新加载整棵子树，确保路径解析不会继续使用跨项目移动前的 identity 缓存。
             for sid in subtree_ids:

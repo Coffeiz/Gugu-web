@@ -142,7 +142,6 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
             channel_id=payload.get("channel_id") or "",
             msg_id=payload.get("message_id"),
             group=payload.get("chat_type") == "group",
-            message_format=payload.get("message_format"),
         ):
             return True
     return await send_text(payload, text)

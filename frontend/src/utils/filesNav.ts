@@ -17,6 +17,7 @@ export interface NavSeg {
   folderId?: number | null
   projectId?: number | null
   space?: string
+  workspaceDirectoryId?: number | null
 }
 
 // 文件夹「卡片视图模型」——loadContents 投影出的 6 种卡（personal/projects/trash/folder/
@@ -30,6 +31,7 @@ export interface FolderCard {
   color?: string | null
   space?: string
   projectId?: number | null
+  workspaceDirectoryId?: number
   status?: string
   year?: string | number
   month?: string
@@ -49,6 +51,9 @@ export function navPathFor(folder: FolderCard, currentPath: NavSeg[]): NavSeg[] 
   }
   if (folder.type === 'trash') {
     return [{ type: 'trash', name: '回收站', color: null }]
+  }
+  if (folder.type === 'workspace') {
+    return [{ type: 'workspace', name: folder.displayName, color: null, space: 'workspace', workspaceDirectoryId: folder.workspaceDirectoryId }]
   }
   if (folder.type === 'status') {
     return [
@@ -89,6 +94,13 @@ export function navPathFor(folder: FolderCard, currentPath: NavSeg[]): NavSeg[] 
   }
   if (folder.type === 'folder') {
     const seg = currentPath[currentPath.length - 1] ?? null
+    if (seg?.space === 'workspace' && seg.workspaceDirectoryId != null) {
+      return [
+        ...currentPath,
+        { type: 'folder', folderId: folder.folderId, name: folder.displayName, color: folder.color,
+          space: 'workspace', workspaceDirectoryId: seg.workspaceDirectoryId },
+      ]
+    }
     if (seg?.type === 'personal') {
       return [
         { type: 'personal', name: '个人文件', color: null },
