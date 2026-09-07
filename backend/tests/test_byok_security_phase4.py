@@ -144,7 +144,9 @@ async def test_credential_view_returns_dimensions_and_patch_preserves_it(db, use
 
     patched = await patch_credential(
         created["id"],
-        CredentialPatch(base_url="https://dashscope.example.com/compatible-mode/v1"),
+        # 目的地绑定：base_url 变更属于新目的地，必须显式重新提供 Key 才允许保存。
+        CredentialPatch(base_url="https://dashscope.example.com/compatible-mode/v1",
+                        value="sk-test-dims"),
         user=user_a, db=db)
     assert patched["dimensions"] == 1024
 

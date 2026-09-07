@@ -196,6 +196,41 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
     row = await get_owned_credential(db, user.id, credential_id)
     if row is None:
         raise HTTPException(status_code=404, detail="凭据不存在")
+    # Key 的目的地绑定裁决必须发生在改动 row 之前：provider/base_url 变更而未重新
+    # 提供 Key 时，旧 Key 是「它保存时那个目的地」的凭据，原样带到新 provider/新
+    # endpoint 会把 A 家 Key 发给 B 家（运行时 resolve 会解密旧 Key 拼进新配置）。
+    # 与 resolve_preview_key 同一规则：provider 一致且 effective origin（经 adapter
+    # 解析，空串落到默认端点）一致才允许「留空保持不变」；解析失败按无法证明同目的
+    # 地拒绝，宁拒勿漏。先全部校验再落字段，失败请求零副作用。
+    old_provider, old_base_url = row.provider, row.base_url
+    target_provider = body.provider if body.provider is not None else old_provider
+    target_base_url = body.base_url if body.base_url is not None else old_base_url
+    # allow_empty / 一致性校验都基于保存后的目标配置（capability 经 PATCH 不可变）。
+    final_allows_empty = _embedding_allows_empty_key(row.capability, target_provider, target_base_url)
+    new_key_material: tuple[bytes, bytes, bytes] | None = None
+    if body.value is None:
+        destination_changed = old_provider != target_provider
+        if not destination_changed:
+            stored_origin = _effective_origin(old_provider, old_base_url)
+            target_origin = _effective_origin(target_provider, target_base_url)
+            destination_changed = stored_origin is None or target_origin is None or stored_origin != target_origin
+        if destination_changed:
+            raise HTTPException(status_code=422, detail=_MISMATCH_MESSAGE)
+        if not final_allows_empty:
+            # 同目的地但目标需要 Key：存量空 Key 会保存出必然运行失败的配置，拒绝。
+            try:
+                stored_empty = decrypt_value(row) == ""
+            except Exception:
+                stored_empty = False
+            if stored_empty:
+                raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，请填写后保存")
+    else:
+        try:
+            new_key_material = encrypt_value(body.value, allow_empty=final_allows_empty)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail="BYOK 加密服务未配置，请先设置 CREDENTIALS_MASTER_KEY") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，不能为空") from exc
     if body.enabled is True:
         siblings = (await db.execute(select(UserProviderCredential).where(
             UserProviderCredential.user_id == user.id,
@@ -208,27 +243,10 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         value = getattr(body, field)
         if value is not None:
             setattr(row, field, value)
-    # allow_empty / 一致性校验都基于保存后的最终配置：切换 provider/base_url 时，
-    # 旧 Key 是否允许为空、新 Provider 是否必须补 Key，都要看目标状态而不是请求前状态。
-    final_allows_empty = _embedding_allows_empty_key(row.capability, row.provider, row.base_url)
-    if body.value is not None:
-        try:
-            encrypted, nonce, wrapped = encrypt_value(body.value, allow_empty=final_allows_empty)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail="BYOK 加密服务未配置，请先设置 CREDENTIALS_MASTER_KEY") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，不能为空") from exc
+    if new_key_material is not None:
+        encrypted, nonce, wrapped = new_key_material
         row.encrypted_value, row.nonce, row.encrypted_data_key = encrypted, nonce, wrapped
         row.key_version = int(os.getenv("CREDENTIALS_MASTER_KEY_VERSION", "1"))
-    elif not final_allows_empty:
-        # 反向一致性：切到需要 Key 的 Provider 但未提供新 Key 时，存量空 Key 会让
-        # 保存出一个必然运行失败的配置（如 OpenAI + 空 Key），直接拒绝。
-        try:
-            stored_empty = decrypt_value(row) == ""
-        except Exception:
-            stored_empty = False
-        if stored_empty:
-            raise HTTPException(status_code=422, detail="该 Provider 需要 API Key，请填写后保存")
     await db.commit()
     await db.refresh(row)
     return credential_view(row)
