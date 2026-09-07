@@ -150,8 +150,11 @@ type VisionResult = { key: string; label: string; text: string; status: 'support
 const items = ref<Item[]>([]); const loading = ref(false); const saving = ref(false); const testing = ref<number | null>(null); const visionTesting = ref<string | null>(null); const visionFeedback = ref(''); const visionFeedbackType = ref<'ok' | 'err'>('ok'); const visionFeedbackTarget = ref<string | null>(null); const needsReconfigure = ref(false); const error = ref(''); const message = ref(''); const messageParts = ref<VisionResult[]>([]); const messageCapability = ref(''); const messageType = ref('ok'); const editor = ref<Editor | null>(null); const editors = ref<Record<number, Editor>>({}); const closingEditors = ref(new Set<number>()); const newEditor = ref<Editor | null>(null); const lastEditorWasExisting = ref(false); const modelLoading = ref(false); const modelError = ref(''); const modelOptions = ref<string[]>([]); const modelMenuOpen = ref(false); const modelPickerRefs = ref<Record<number, HTMLElement | null>>({}); const modelAnchor = ref<HTMLElement | null>(null)
 function setModelPickerRef(id: number, element: Element | null | unknown) { modelPickerRefs.value[id] = element instanceof HTMLElement ? element : null }
 function itemsFor(capability: string) { return items.value.filter(item => item.capability === capability) }
+const embeddingProviders = ['openai', 'qwen', 'glm', 'ollama', 'local']
 function providersFor(capability: string): readonly ProviderOption[] {
-  return capability === 'speech_to_text' ? modelProviders.filter(item => ['openai', 'qwen', 'local'].includes(item.value)) : modelProviders
+  if (capability === 'speech_to_text') return modelProviders.filter(item => ['openai', 'qwen', 'local'].includes(item.value))
+  if (capability === 'embedding') return modelProviders.filter(item => embeddingProviders.includes(item.value))
+  return modelProviders
 }
 function thinkingEffortsFor(draft: Pick<Editor, 'provider' | 'model'>): ThinkingMode[] {
   if (draft.provider === 'qwen' && !/^qwen3/i.test(draft.model || '')) return []
@@ -196,12 +199,17 @@ function childSelectionFor(draft: Pick<Editor, 'provider' | 'base_url' | 'local_
   if (draft.provider === 'ollama') return draft.ollama_mode || ((draft.base_url || '').includes('ollama.com') ? 'cloud' : 'local')
   return ''
 }
+const embeddingModelSeeds: Record<string, string> = {
+  openai: 'text-embedding-3-small', qwen: 'text-embedding-v4', glm: 'embedding-3',
+}
 function applyProvider(draft: Editor, value: string) {
   draft.provider = value
   const provider = modelProviders.find(item => item.value === value)
   if (!provider) return
   draft.base_url = provider.base_url
-  draft.model = provider.model
+  draft.model = draft.capability === 'embedding'
+    ? (embeddingModelSeeds[value] ?? '')
+    : provider.model
   draft.api_format = value === 'mimo' ? 'openai' : value === 'ollama' ? 'native' : ''
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
 }
