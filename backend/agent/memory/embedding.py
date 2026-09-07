@@ -11,9 +11,34 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 from app.core.config import get_settings
 from app.core.credentials import normalize_ascii_api_key
+
+
+def _effective() -> SimpleNamespace:
+    """生效配置：用户 BYOK embedding 覆盖 > 平台 settings.embedding。
+
+    覆盖由 app.byok.service.bind_user_embedding 在用户链路 run 开始时绑定；
+    BYOK 配置在 resolve 阶段已保证完整（model/base_url 齐备），且视为启用——
+    用户自己的 key 不产生平台成本，不受平台 enabled 开关限制。
+    multimodal 是百炼专用平台能力，覆盖配置固定为 False（用户配置只走
+    OpenAI 兼容 /embeddings 文本接口）。
+    """
+    e = get_settings().embedding
+    try:
+        from app.byok.service import effective_embedding_override
+        ov = effective_embedding_override()
+    except Exception:            # BYOK 模块不可用（如极简部署）时直接用平台配置
+        return e
+    if ov is None:
+        return e
+    return SimpleNamespace(
+        enabled=True, multimodal=False,
+        provider=ov["provider"], base_url=ov["base_url"], model=ov["model"],
+        dimensions=ov["dimensions"], api_key=ov["api_key"],
+    )
 
 
 BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -63,7 +88,7 @@ async def embed_multimodal(contents: list[dict | str], *, enable_fusion: bool = 
     """
     if not contents or not is_enabled():
         return None
-    e = get_settings().embedding
+    e = get_settings().embedding   # 百炼多模态是平台专用能力，不走 BYOK 覆盖
     if not e.multimodal:
         return None
     base_url = resolve_base_url(e.provider, e.base_url)
@@ -97,15 +122,20 @@ async def embed_multimodal(contents: list[dict | str], *, enable_fusion: bool = 
 
 
 def is_enabled() -> bool:
-    """向量检索是否可用：enabled 且 model/base_url 配了。**api_key 可空**——自托管 Ollama
-    等无需鉴权，强求 key 反而逼用户填假值。否则全链路退回词法。"""
-    e = get_settings().embedding
+    """向量检索是否可用：生效配置里 enabled 且 model/base_url 配了。**api_key 可空**——
+    自托管 Ollama 等无需鉴权，强求 key 反而逼用户填假值。否则全链路退回词法。"""
+    e = _effective()
     return bool(e.enabled and e.model and resolve_base_url(e.provider, e.base_url))
 
 
 def model_tag() -> str:
-    """当前 embedding 模型的版本戳，写进向量缓存用于换模型时的失配检测。"""
-    e = get_settings().embedding
+    """生效 embedding 模型的版本戳，写进向量缓存用于换模型时的失配检测。
+
+    用户 BYOK 生效时用用户的 provider/model/dimensions：切换凭据（含清空回平台）
+    后 tag 失配，向量缓存按既有机制自动重建；解析结果与平台一致时 tag 相同，
+    已有向量继续复用。
+    """
+    e = _effective()
     return f"{e.provider or '?'}:{e.model}:{e.dimensions or 'default'}"
 
 
@@ -116,7 +146,7 @@ async def embed(text: str) -> list[float] | None:
     text = (text or "").strip()
     if not text:
         return None
-    e = get_settings().embedding
+    e = _effective()
     base_url = resolve_base_url(e.provider, e.base_url)
     # 百炼的多模态模型不支持 OpenAI 兼容的 /embeddings 文本接口；文本内容
     # 仍可通过多模态 endpoint 的 text content 生成同一模型空间的向量。

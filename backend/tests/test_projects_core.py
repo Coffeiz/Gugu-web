@@ -149,3 +149,122 @@ def test_replace_project_stages_preserves_implicit_same_name_todos():
     assert current_stage == "s0"
     assert stages[0]["todos"] == [{"id": "t1", "text": "梳理需求", "done": True}]
     assert find_project_stage(stages, "交付") == stages[1]
+
+
+def _tool_res(result):
+    """handler 可能返回 dict 或 JSON 字符串，统一成 dict。"""
+    import json as _json
+    return _json.loads(result) if isinstance(result, str) else result
+
+
+def _as_stages(raw):
+    """stages_json 列在 refresh 后可能已是 list/dict，统一兜一层。"""
+    import json as _json
+    return raw if isinstance(raw, (list, dict)) else _json.loads(raw)
+
+
+async def _make_staged_project(db, user) -> Project:
+    project = Project(
+        user_id=user.id, name="视频项目", stages_json='[{"key":"s0","label":"准备","todos":[{"id":"t1","text":"写稿","done":false},{"id":"t2","text":"录屏","done":false}]},{"key":"s1","label":"后期","todos":[]}]',
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+
+async def test_update_stage_batch_completes_whole_stage(db, user_a):
+    """一次把某阶段全部待办勾完——旧 update_todo 一条条勾的痛点。"""
+    from agent.tools.projects import _update_stage
+    import json as _json
+
+    project = await _make_staged_project(db, user_a)
+    res = _tool_res(await _update_stage(db, user_a.id, {
+        "project_id": project.id,
+        "todos": [{"text": "写稿", "done": True}, {"text": "录屏", "done": True}],
+        "stage": "s0",
+    }))
+    assert res["success"] is True
+    await db.commit()
+    await db.refresh(project)
+    stages = _as_stages(project.stages_json)
+    assert all(t["done"] for t in stages[0]["todos"])
+
+
+async def test_update_stage_mixed_ops_and_add(db, user_a):
+    from agent.tools.projects import _update_stage
+    import json as _json
+
+    project = await _make_staged_project(db, user_a)
+    res = _tool_res(await _update_stage(db, user_a.id, {
+        "project_id": project.id,
+        "stage": "s0",
+        "add": ["配音"],
+        "todos": [
+            {"text": "录屏", "new_text": "录屏剪辑", "to_stage": "s1"},
+            {"text": "写稿", "done": True},
+        ],
+    }))
+    assert res["success"] is True
+    await db.commit()
+    await db.refresh(project)
+    s0, s1 = _as_stages(project.stages_json)
+    assert [t["text"] for t in s0["todos"]] == ["写稿", "配音"] and s0["todos"][0]["done"] is True
+    assert [t["text"] for t in s1["todos"]] == ["录屏剪辑"]
+
+
+async def test_update_stage_only_stage_switches_pointer(db, user_a):
+    from agent.tools.projects import _update_stage
+    import json as _json
+
+    project = await _make_staged_project(db, user_a)
+    res = _tool_res(await _update_stage(db, user_a.id, {"project_id": project.id, "stage": "s1"}))
+    assert res["success"] is True and res["current_stage"] == "s1"
+    await db.commit()
+    await db.refresh(project)
+    assert project.current_stage == "s1"
+
+
+async def test_update_stage_rejects_noop_and_missing_text(db, user_a):
+    from agent.tools.projects import _update_stage
+    import json as _json
+
+    project = await _make_staged_project(db, user_a)
+    noop = _tool_res(await _update_stage(db, user_a.id, {"project_id": project.id}))
+    assert "error" in noop
+    no_text = _tool_res(await _update_stage(db, user_a.id, {
+        "project_id": project.id, "todos": [{"done": True}],
+    }))
+    assert "error" in no_text
+    missing = _tool_res(await _update_stage(db, user_a.id, {
+        "project_id": project.id, "todos": [{"text": "不存在的待办", "done": True}],
+    }))
+    assert "error" in missing
+
+
+@pytest.mark.asyncio
+async def test_update_stage_failed_item_has_zero_side_effects(db, user_a):
+    """回归：批量里某条 to_stage 不存在时，旧实现会先改内存对象（new_text/done）
+    再校验目标阶段；同批成功项令 changed=True 后整份 stages 照常提交，失败项的
+    改名/勾选也被静默保存。失败项必须零副作用，成功项正常生效。"""
+    from agent.tools.projects import _update_stage
+
+    project = await _make_staged_project(db, user_a)
+    res = _tool_res(await _update_stage(db, user_a.id, {
+        "project_id": project.id,
+        "stage": "s0",
+        "todos": [
+            {"text": "写稿", "new_text": "写稿改", "done": True, "to_stage": "不存在的阶段"},
+            {"text": "录屏", "done": True},
+        ],
+    }))
+    assert res["success"] is True  # 成功项让整批照常提交——这正是旧实现漏数据的场景
+    failed = next(r for r in res["results"] if r.get("todo") == "写稿")
+    assert "目标阶段不存在" in failed["error"]
+    await db.commit()
+    await db.refresh(project)
+    s0, s1 = _as_stages(project.stages_json)
+    assert [t["text"] for t in s0["todos"]] == ["写稿", "录屏"]  # 没被改名、没被移走
+    assert next(t for t in s0["todos"] if t["text"] == "写稿")["done"] is False  # 没被勾选
+    assert next(t for t in s0["todos"] if t["text"] == "录屏")["done"] is True  # 成功项生效
+    assert [t["text"] for t in s1["todos"]] == []  # 失败项没有被移动到目标阶段

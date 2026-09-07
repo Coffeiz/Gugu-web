@@ -67,9 +67,9 @@ html[data-theme='dark'][data-family] {
   --action-secondary-fg: var(--content-secondary);
   --action-secondary-fg-hover: var(--content-primary);
 
-  /* Project cards keep lift/shadow feedback, but no extra sheen flash in dark mode. */
-  --project-card-sheen-hover: transparent;
-  --project-card-highlight-hover: transparent;
+  /* 项目卡 sheen 跟随各主题自身取值：暗色主题定义的是 7.5~8% 白的克制微光
+     （与日历 chip 的 5% 白同惯例），不再整体置 transparent——用户确认暗色
+     也要有 hover 高光，全灭会让明暗两版手感不一致。 */
 
   /* Keep the previous dark calendar grid treatment while light mode restores the original
      purple-grey main-branch lines. Capsule/chip/cell hover brightening is disabled with surfaces. */

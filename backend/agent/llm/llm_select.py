@@ -157,7 +157,7 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
             is_byok=config.is_byok,
             reasoning_persistence=config.reasoning_persistence,
         )
-    from app.byok.service import decrypt_value
+    from app.byok.service import decrypt_value, resolve_user_base_url
     from app.models import UserProviderCredential
     rows = (await db.execute(select(UserProviderCredential).where(
         UserProviderCredential.user_id == user_id,
@@ -172,9 +172,20 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
             is_byok=config.is_byok,
             reasoning_persistence=config.reasoning_persistence,
         )
+    # 目的地绑定（主 LLM）：用户 Key 的 base_url 只来自用户凭据本身，空串按
+    # provider 官方默认端点解析；解析不出（目的地不明）→ 放弃覆盖回落平台配置。
+    # 绝不继承平台 base_url——否则用户 DeepSeek Key 会被拼进平台 DashScope 端点。
+    base_url = resolve_user_base_url(row.provider, row.base_url)
+    if not base_url:
+        return ModelRunConfig(
+            model=config.model, use_anthropic=config.use_anthropic,
+            context_tokens=config.context_tokens,
+            is_byok=config.is_byok,
+            reasoning_persistence=config.reasoning_persistence,
+        )
     base = config.model
     updates = {"provider": row.provider, "api_format": row.api_format,
-               "api_key": decrypt_value(row), "base_url": row.base_url or getattr(base, "base_url", ""),
+               "api_key": decrypt_value(row), "base_url": base_url,
                "model": row.model or getattr(base, "model", ""),
                # is_byok 必须落在模型副本上随 run 走：finalize_run 拿到的是 run_config.model，
                # 只读 ModelRunConfig.is_byok 会在落库时丢失标记（历史 bug：BYOK 用量全记成平台用量）。

@@ -169,7 +169,6 @@
         @save="savePreset"
         @set-provider="setEditProviderSelection"
         @open-model-menu="modelMenuOpen = true"
-        @close-model-menu="closeModelMenuSoon"
         @fetch-model-list="fetchModelList"
         @select-model="selectModel"
         @pick-api-format="pickApiFormat"
@@ -585,7 +584,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useRoute } from 'vue-router'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
@@ -767,8 +766,10 @@ function finishPresetClose() {
   modelMenuOpen.value = false
 }
 
-function closeModelMenuSoon() {
-  window.setTimeout(() => { modelMenuOpen.value = false }, 120)
+// 点外立即关（与 BYOK 面板同一模式）：旧的 focusout + 120ms 延迟会让点空白也要白等一拍。
+// 选项按钮自己 mousedown.prevent 不会转移焦点，不需要延迟保险。
+function closeModelMenuOnOutside(event: MouseEvent) {
+  if (modelMenuOpen.value && (!(event.target instanceof Element) || !event.target.closest('.model-picker'))) modelMenuOpen.value = false
 }
 
 function setCapabilityOverride(key: string, enabled: boolean) {
@@ -1018,6 +1019,7 @@ async function probeVision(id: string | number | undefined, dim?: string) {
 
 // ── 初始化 ────────────────────────────────────────────────────────────────
 onMounted(async () => {
+  document.addEventListener('mousedown', closeModelMenuOnOutside)
   await configStore.fetchConfig()
   const sandboxResponse = await adminStore.authFetch('/api/v1/admin/sandbox/status')
   if (sandboxResponse.ok) {
@@ -1031,6 +1033,7 @@ onMounted(async () => {
   Object.assign(voiceDraft, configStore.cfg.voice)
   fetchPresets()
 })
+onBeforeUnmount(() => { document.removeEventListener('mousedown', closeModelMenuOnOutside) })
 
 async function savePermissions() {
   permissionSaving.value = true
@@ -1198,6 +1201,7 @@ function resetPermissions() {
 .dot-deepseek  { background: #6090d8; }
 .dot-minimax   { background: #9590c4; }
 .dot-mimo      { background: #ff6a00; }
+.dot-glm       { background: #3f6af5; }
 .preset-card-body { flex: 1; min-width: 0; }
 .preset-card-top  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .preset-name { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.88); }

@@ -129,60 +129,109 @@ async def _create_project(db, user_id, args: dict):
 
 
 async def _update_stage(db, user_id, args: dict):
+    """阶段与待办统一入口：只传 stage＝切换当前阶段；add/todos＝批量增删改移待办，一次提交。"""
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
 
     stages = p.stages  # [{key, label, todos:[{id,text,done}]}]
+    stage_arg = str(args.get("stage") or "").strip() or None
+    add_texts = [str(t).strip() for t in (args.get("add") or []) if str(t).strip()]
+    todo_items = [t for t in (args.get("todos") or [])
+                  if isinstance(t, dict) and str(t.get("text") or "").strip()]
+
+    if not stage_arg and not add_texts and not todo_items:
+        return json.dumps({"error": "未指定操作：stage（切换阶段）、add（批量新增）或 todos（批量修改）至少给一个"})
+
+    # 只传 stage = 切换当前阶段；配合 add/todos 时仅作操作范围限定，不切换指针
+    if stage_arg and not add_texts and not todo_items:
+        match = find_project_stage(stages, stage_arg)
+        if not match:
+            return json.dumps({"error": f"阶段不存在: {stage_arg}",
+                               "available": [s.get("label") for s in stages]})
+        error = await _commit_project_intent(db, p, user_id, {"current_stage": match["key"]})
+        if error:
+            return error
+        return {"success": True, "project_id": p.id, "current_stage": p.current_stage}
+
+    def _scope(hint):
+        key = hint or p.current_stage
+        return find_project_stage(stages, str(key)) if key else None
+
+    results: list[dict] = []
     changed = False
 
-    # 切换当前阶段（按 key 或 label 匹配）
-    if args.get("stage"):
-        target = str(args["stage"]).strip()
-        match = next(
-            (s for s in stages if s.get("key") == target or s.get("label") == target),
+    if add_texts:
+        target = _scope(stage_arg)
+        if not target:
+            return json.dumps({"error": f"阶段不存在: {stage_arg or p.current_stage}",
+                               "available": [s.get("label") for s in stages]})
+        base = next_project_todo_number(stages)
+        target.setdefault("todos", [])
+        for i, txt in enumerate(add_texts):
+            target["todos"].append({"id": f"t{base + 1 + i}", "text": txt, "done": False})
+        results.append({"action": "add", "stage": target.get("label"), "added": add_texts})
+        changed = True
+
+    for item in todo_items:
+        target_text = str(item["text"]).strip()
+        entry: dict = {"todo": target_text}
+        results.append(entry)
+        scope = _scope(item.get("stage") or stage_arg)
+        if not scope:
+            entry["error"] = f"阶段不存在: {item.get('stage') or stage_arg or p.current_stage}"
+            continue
+        entry["stage"] = scope.get("label")
+        found = next(
+            (t for t in scope.get("todos", [])
+             if t.get("id") == target_text or target_text in t.get("text", "")),
             None,
         )
-        if not match:
-            return json.dumps({"error": f"阶段不存在: {target}",
-                               "available": [s.get("label") for s in stages]})
-        current_stage = match["key"]
-        changed = True
-    else:
-        current_stage = p.current_stage
+        if not found:
+            entry["error"] = "未找到待办"
+            continue
+        entry["todo"] = found.get("text")
 
-    # 勾选/取消某条待办（按所在阶段 + 文本匹配）
-    td = args.get("todo")
-    if isinstance(td, str):                 # 容错：模型偶尔把 todo 传成字符串而非 {text,...}
-        td = {"text": td} if td.strip() else None
-    if td and td.get("text"):
-        st_key = td.get("stage")
-        done_val = bool(td.get("done", True))
-        hit = False
-        for s in stages:
-            if st_key and s.get("key") != st_key and s.get("label") != st_key:
+        if item.get("remove"):
+            scope["todos"] = [t for t in scope.get("todos", []) if t is not found]
+            entry["action"] = "remove"
+            changed = True
+            continue
+
+        # 先验证目标阶段再动内存对象：失败项必须零副作用，否则同批有成功项令
+        # changed=True 时，这条已做的 rename/done 会被一起提交（静默数据损坏）。
+        dest_stage = scope
+        if item.get("to_stage"):
+            dest_stage = find_project_stage(stages, str(item["to_stage"]))
+            if not dest_stage:
+                entry["error"] = f"目标阶段不存在: {item['to_stage']}"
                 continue
-            for t in s.get("todos", []):
-                if td["text"] in t.get("text", ""):
-                    t["done"] = done_val
-                    hit = True
-                    break
-            if hit:
-                break
-        if not hit:
-            return json.dumps({"error": f"未找到待办: {td['text']}"})
+
+        ops: list[str] = []
+        if item.get("new_text"):
+            found["text"] = str(item["new_text"])
+            ops.append("rename")
+        if "done" in item and item.get("done") is not None:
+            found["done"] = bool(item["done"])
+            ops.append("done")
+        if dest_stage is not scope:
+            scope["todos"] = [t for t in scope.get("todos", []) if t is not found]
+            dest_stage.setdefault("todos", []).append(found)
+            ops.append("move")
+        if not ops:
+            entry["error"] = "未指定操作（done/new_text/to_stage/remove 至少一个）"
+            continue
+        entry["action"] = "+".join(ops)
+        entry["done"] = found.get("done")
         changed = True
 
     if not changed:
-        return json.dumps({"error": "未指定 stage 或 todo，无操作"})
+        return json.dumps({"error": "没有任何待办被修改", "results": results})
 
-    fields = {"current_stage": current_stage}
-    if td and td.get("text"):
-        fields["stages"] = stages
-    error = await _commit_project_intent(db, p, user_id, fields)
+    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
     if error:
         return error
-    return {"success": True, "project_id": p.id, "current_stage": p.current_stage}
+    return {"success": True, "project_id": p.id, "results": results}
 
 
 async def _set_color(db, user_id, args: dict):
@@ -367,48 +416,6 @@ async def _rename_stage(db, user_id, args: dict):
     return {"success": True, "project_id": p.id, "label": args["new_label"]}
 
 
-async def _add_todo(db, user_id, args: dict):
-    p, _err = await _resolve_project(db, user_id, args)
-    if _err:
-        return _err
-    stages = p.stages
-    match = find_project_stage(stages, args["stage"])
-    if not match:
-        return json.dumps({"error": f"阶段不存在: {args['stage']}",
-                           "available": [s.get("label") for s in stages]})
-    texts = args.get("texts") or ([args["text"]] if args.get("text") else [])
-    if not texts:
-        return json.dumps({"error": "未提供待办内容（texts）"})
-    base = next_project_todo_number(stages)
-    match.setdefault("todos", [])
-    for i, txt in enumerate(texts):
-        match["todos"].append({"id": f"t{base + 1 + i}", "text": txt, "done": False})
-    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
-    if error:
-        return error
-    return {"success": True, "project_id": p.id, "stage": match.get("label"), "added": texts}
-
-
-async def _remove_todo(db, user_id, args: dict):
-    p, _err = await _resolve_project(db, user_id, args)
-    if _err:
-        return _err
-    stages = p.stages
-    match = find_project_stage(stages, args["stage"])
-    if not match:
-        return json.dumps({"error": f"阶段不存在: {args['stage']}"})
-    target = str(args["todo"])
-    todos = match.get("todos", [])
-    kept = [t for t in todos if not (target in t.get("text", "") or t.get("id") == target)]
-    if len(kept) == len(todos):
-        return json.dumps({"error": f"未找到待办: {target}"})
-    match["todos"] = kept
-    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
-    if error:
-        return error
-    return {"success": True, "project_id": p.id, "removed": target}
-
-
 async def _set_stages(db, user_id, args: dict):
     """整体替换项目阶段（声明式：给出想要的完整阶段列表，增删改排序一次到位）。
     同名阶段的待办默认保留（本次没给该阶段 todos 时）；给了 todos 则以本次为准。"""
@@ -425,62 +432,6 @@ async def _set_stages(db, user_id, args: dict):
     if error:
         return error
     return {"success": True, "project_id": p.id, "stages": [s["label"] for s in new_stages]}
-
-
-async def _update_todo(db, user_id, args: dict):
-    """改一条待办的文本/完成态，并可选移动到另一阶段。按文本或 id 定位（可用 stage 限定范围）。"""
-    action = args.get("action")
-    if action == "complete":
-        args = {**args, "done": args.get("done")}
-    elif action == "rename":
-        args = {**args, "text": args.get("text")}
-    elif action == "move":
-        args = {**args, "to_stage": args.get("to_stage")}
-    p, _err = await _resolve_project(db, user_id, args)
-    if _err:
-        return _err
-    target = str(args.get("todo") or "").strip()
-    if not target:
-        return json.dumps({"error": "需提供 todo（待办文本或 id）"})
-    stages = p.stages
-    st_hint = args.get("stage")
-    found = found_stage = None
-    for s in stages:
-        if st_hint and s.get("key") != str(st_hint) and s.get("label") != str(st_hint):
-            continue
-        for t in s.get("todos", []):
-            if t.get("id") == target or target in t.get("text", ""):
-                found, found_stage = t, s
-                break
-        if found:
-            break
-    if not found:
-        return json.dumps({"error": f"未找到待办: {target}"})
-
-    if not (args.get("text") or ("done" in args and args["done"] is not None) or args.get("to_stage")):
-        return json.dumps({"error": "没提供要改的内容（text/done/to_stage），未改动。",
-                           "todo": found.get("text")})
-
-    if args.get("text"):
-        found["text"] = str(args["text"])
-    if "done" in args and args["done"] is not None:
-        found["done"] = bool(args["done"])
-    dest = found_stage
-    to = args.get("to_stage")
-    if to:
-        dest = find_project_stage(stages, to)
-        if not dest:
-            return json.dumps({"error": f"目标阶段不存在: {to}",
-                               "available": [s.get("label") for s in stages]})
-        if dest is not found_stage:
-            found_stage["todos"] = [t for t in found_stage.get("todos", []) if t is not found]
-            dest.setdefault("todos", []).append(found)
-
-    error = await _commit_project_intent(db, p, user_id, {"stages": stages})
-    if error:
-        return error
-    return {"success": True, "project_id": p.id, "todo": found.get("text"),
-            "done": found.get("done"), "stage": dest.get("label")}
 
 
 class ProjectsSkill(BaseSkill):
@@ -531,7 +482,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description_short="创建项目；可带 stages/todos，后续用 add_stage/add_todo",
+            description_short="创建项目；可带 stages/todos，后续用 add_stage/update_stage 补充结构",
             description="创建项目，必须填写开始日期和截止日期（日期字符串，系统统一归一为 YYYY-MM-DD），可一次设置颜色、优先级、阶段和待办。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或‘蓝色渐变’等视觉描述。",
             input_schema={
                 "type": "object",
@@ -557,32 +508,6 @@ class ProjectsSkill(BaseSkill):
                 "required": ["name", "start_date", "deadline"],
             },
             handler=_create_project,
-            mutates=True,
-        ),
-        Tool(
-            name="update_stage",
-            label="更新阶段",
-            description_short='切换阶段或待办；省略 done 时默认完成。',
-            description="切换项目当前阶段，或勾选/取消某个阶段下的待办事项。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "integer"},
-                    "project": {"type": "string"},
-                    "stage": {"type": "string"},
-                    "todo": {
-                        "type": "object",
-                        "properties": {
-                            "stage": {"type": "string"},
-                            "text": {"type": "string"},
-                            "done": {"type": "boolean"},
-                        },
-                        "required": ["text"],
-                    },
-                },
-                "required": [],
-            },
-            handler=_update_stage,
             mutates=True,
         ),
         Tool(
@@ -702,37 +627,42 @@ class ProjectsSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="add_todo", label="新增待办",
-            description_short="新增待办。",
-            description="给项目某阶段新增一条或多条待办（用 texts 数组一次加多条，可用于批量建待办模板）。",
+            name="update_stage",
+            label="更新阶段",
+            description_short="阶段与待办统一入口：切换阶段、批量增/删/改/移/勾待办。",
+            description=(
+                "项目阶段与待办的统一入口。只传 stage＝切换当前阶段；"
+                "add＝批量新增待办（字符串数组）；"
+                "todos＝批量修改待办（每项 {text 定位, done 勾/取消, new_text 改名, "
+                "to_stage 移动, remove 删除}，一次可处理多条，比如把整个阶段的待办一次勾完）。"
+                "配合 add/todos 的 stage 只作范围限定，不切换当前阶段。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
                     "stage": {"type": "string"},
-                    "texts": {"type": "array", "items": {"type": "string"}},
+                    "add": {"type": "array", "items": {"type": "string"}},
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "stage": {"type": "string"},
+                                "done": {"type": "boolean"},
+                                "new_text": {"type": "string"},
+                                "to_stage": {"type": "string"},
+                                "remove": {"type": "boolean"},
+                            },
+                            "required": ["text"],
+                        },
+                    },
                 },
-                "required": ["stage", "texts"],
+                "required": [],
             },
-            handler=_add_todo,
-            mutates=True,
-        ),
-        Tool(
-            name="remove_todo", label="删除待办",
-            description_short='删除待办。',
-            description="删除项目某阶段下的一条待办（按文本或 id 匹配）。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "integer"},
-                    "project": {"type": "string"},
-                    "stage": {"type": "string"},
-                    "todo": {"type": "string"},
-                },
-                "required": ["stage", "todo"],
-            },
-            handler=_remove_todo,
+            handler=_update_stage,
             mutates=True,
         ),
         Tool(
@@ -758,39 +688,6 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stages"],
             },
             handler=_set_stages,
-            mutates=True,
-        ),
-        Tool(
-            name="update_todo", label="修改待办",
-            description_short='修改待办；支持完成、重命名和移动。',
-            description="改一条待办的文本或完成状态，并可选移动到另一个阶段（to_stage）。按文本（部分匹配）或 id 定位，可用 stage 限定查找范围。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "integer"},
-                    "project": {"type": "string"},
-                    "todo": {"type": "string"},
-                    "stage": {"type": "string"},
-                    "text": {"type": "string"},
-                    "done": {"type": "boolean"},
-                    "to_stage": {"type": "string"},
-                    "action": {"type": "string", "enum": ["complete", "rename", "move"]},
-                },
-                "required": ["todo"],
-                "anyOf": [
-                    {"required": ["action"], "oneOf": [
-                        {"properties": {"action": {"const": "complete"}}, "required": ["done"], "not": {"anyOf": [{"required": ["text"]}, {"required": ["to_stage"]}]}},
-                        {"properties": {"action": {"const": "rename"}}, "required": ["text"], "not": {"anyOf": [{"required": ["done"]}, {"required": ["to_stage"]}]}},
-                        {"properties": {"action": {"const": "move"}}, "required": ["to_stage"], "not": {"anyOf": [{"required": ["done"]}, {"required": ["text"]}]}},
-                    ]},
-                    {"not": {"required": ["action"]}, "anyOf": [
-                        {"required": ["done"]},
-                        {"required": ["text"]},
-                        {"required": ["to_stage"]},
-                    ]},
-                ],
-            },
-            handler=_update_todo,
             mutates=True,
         ),
     ]

@@ -192,10 +192,17 @@ describe('主题 CSS 回归契约', () => {
     expect(addStageBlock).not.toContain('rgba(0,0,0,0.12)')
   })
 
-  it('项目卡不再拥有重复的伪元素内描边', () => {
+  it('项目卡 sheen 伪元素只由组件负责，且走共享令牌', () => {
+    // 契约变更（2026-09-08）：用户要求恢复 hover 亮色渐变，sheen 层回到组件内，
+    // 但必须消费 --project-card-sheen-rest/-hover 令牌（与设计页示例卡/画布抽屉卡
+    // 同一份契约；暗色由令牌置 transparent，不得再写硬编码 rgba 白纱）。
+    // 主题/全局层仍不得重复接管 .proj-card 伪元素 paint。
     const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
-    expect(projectCardVue).not.toContain('.proj-card::after')
-    expect(projectCardVue).not.toContain('.proj-card::before')
+    expect(projectCardVue).toContain('.proj-card::after')
+    expect(projectCardVue).toContain('.proj-card::before')
+    expect(projectCardVue).toContain('var(--project-card-sheen-rest)')
+    expect(projectCardVue).toContain('var(--project-card-sheen-hover)')
+    expect(projectCardVue).not.toContain('rgba(255,255,255')
     expect(themeAdoptionCss).not.toContain('.proj-card::after')
     expect(themeAdoptionCss).not.toContain('.proj-card::before')
     expect(productCss).not.toContain('.proj-card::after')

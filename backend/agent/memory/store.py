@@ -481,14 +481,20 @@ async def sync_pattern_vecs(
         return 0
 
 
-async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
+async def rebuild_all_vecs(user_ids, on_progress=None, bind_cfgs: dict | None = None) -> dict:
     """给一批用户 force 重算**pattern + 长期记忆(memory.md)** 的向量（换 embedding 模型后调）。
     复用 `sync_pattern_vecs`/`sync_memory_vecs`（均 force=True）。每个用户独立 try（一个失败不拖垮整批）。
+    bind_cfgs: {user_id: BYOK embedding 生效配置}，重建时逐用户绑定（PRD-SEC-2）；缺省用户回落平台配置。
     返回 {done, total, with_patterns}（with_patterns=有 pattern 的用户数；memory 一并重算，不单独计数）。"""
     total, done, with_patterns = len(user_ids), 0, 0
     pattern_vectors = memory_vectors = failed_users = 0
 
     async def rebuild_user(uid) -> dict:
+        from app.byok.service import bind_user_embedding
+        with bind_user_embedding((bind_cfgs or {}).get(uid)):
+            return await _rebuild_user_inner(uid)
+
+    async def _rebuild_user_inner(uid) -> dict:
         try:
             patterns = await read_pattern_list(uid)
             pattern_count = 0

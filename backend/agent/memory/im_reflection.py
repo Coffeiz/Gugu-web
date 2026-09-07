@@ -216,6 +216,8 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             run_config = await resolve_run_config_for_user(settings, db, scope.owner_user_id, None)
             modelctx.set_model_cfg(run_config.model)
             modelctx.set_usage_context(scope.owner_user_id)
+            from app.byok.service import resolve_and_bind_user_embedding
+            await resolve_and_bind_user_embedding(settings, db, scope.owner_user_id)   # 向量化走用户 embedding 凭据（PRD-SEC-2）
             existing_entry = (await db.execute(
                 select(MemoryEntry).where(
                     MemoryEntry.owner_user_id == scope.owner_user_id,

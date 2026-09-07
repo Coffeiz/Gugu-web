@@ -829,8 +829,8 @@ onBeforeUnmount(() => {
   line-height: 1.3;
   color: var(--content-primary, #1a1c24);
 }
-.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.3em; }
-.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid var(--border-hairline); padding-bottom: 0.25em; }
+.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid color-mix(in srgb, var(--content-primary) 20%, transparent); padding-bottom: 0.3em; }
+.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid color-mix(in srgb, var(--content-primary) 20%, transparent); padding-bottom: 0.25em; }
 .tv-md :deep(h3) { font-size: 1.15em; }
 
 .tv-md :deep(p)  { margin: 0.8em 0; }
@@ -1011,8 +1011,9 @@ onBeforeUnmount(() => {
 .tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
+  /* 分割线从正文色派生而不是用 border token：1px 半透明线合成后仍偏淡，换实色次级文字色：绝对可辨且随主题自适应 */
   border: none;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid color-mix(in srgb, var(--content-primary) 20%, transparent);
   margin: 1.5em 0;
 }
 

@@ -200,6 +200,8 @@ async def _run_collect_unlocked(
         run_config = await resolve_run_config_for_user(settings, db, user_id, req)
         model_cfg = run_config.model
         modelctx.set_model_cfg(model_cfg)   # 后台任务（反思/总结/压缩）经 create_task 继承此绑定
+        from app.byok.service import resolve_and_bind_user_embedding
+        await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
@@ -657,6 +659,8 @@ async def _run_stream_unlocked(
         run_config = await resolve_run_config_for_user(settings, db, user_id, req)
         model_cfg = run_config.model
         modelctx.set_model_cfg(model_cfg)   # 后台任务（反思/总结/压缩）经 create_task 继承此绑定
+        from app.byok.service import resolve_and_bind_user_embedding
+        await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id

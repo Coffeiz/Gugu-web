@@ -69,6 +69,7 @@ import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMe
 import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEditor'
+import { chatTextFromDoc } from './chatDocText'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -133,14 +134,6 @@ function chatInlineNodes(text: string, references: ChatReference[]): MindDocNode
     cursor = next + nextRef.token.length
   }
   return nodes
-}
-
-function chatTextFromDoc(doc: MindDocNode | null | undefined): string {
-  return (doc?.content ?? []).map(block => (block.content ?? []).map(node => {
-    if (node.type === 'hardBreak') return '\n'
-    if (node.type === 'mindRef') return `@${node.attrs?.label ?? ''}`
-    return node.text ?? ''
-  }).join('')).join('\n')
 }
 
 function referencesFromDoc(doc: MindDocNode | null | undefined): ChatReference[] {
@@ -285,6 +278,12 @@ function onOutsidePointerdown(event: PointerEvent) {
 const chatEditor = useEditor({
   extensions: mindExtensions(t('chat.placeholder')),
   content: chatDoc(props.modelValue, props.references),
+  // 聊天输入框不做 md 渲染：**加粗**/`代码`/# 标题等保持字面文本发出去，
+  // 由消息气泡端 renderChatMd 统一渲染（产品要求：只气泡渲染，输入框不转）。
+  // @ 引用走自定义联想选择器（syncReferencePicker），不依赖 tiptap 输入规则；
+  // NoteEditor 同配置已验证。粘贴规则一并关掉，外部 md 文本粘贴也保持字面。
+  enableInputRules: false,
+  enablePasteRules: false,
   editorProps: {
     attributes: { class: 'chat-prosemirror' },
     handleKeyDown: (_view, event) => {

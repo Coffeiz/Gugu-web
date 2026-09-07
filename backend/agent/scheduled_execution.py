@@ -107,6 +107,8 @@ async def run_scheduled_once(
             model_cfg = run_config.model
             modelctx.set_model_cfg(model_cfg)
             modelctx.set_usage_context(user_id)
+            from app.byok.service import resolve_and_bind_user_embedding
+            await resolve_and_bind_user_embedding(settings, db, user_id)   # 压缩/记忆向量化走用户 embedding 凭据（PRD-SEC-2）
             user_tz = await loaders.load_user_tz(db, user_id)
             set_ctx_tz(user_tz)
             if minimal_context:

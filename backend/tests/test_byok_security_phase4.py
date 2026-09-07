@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import pytest
+from fastapi import HTTPException
 
 from app.byok import crypto, policy, service
 from app.models import UserProviderCredential
@@ -96,6 +97,59 @@ async def test_decrypt_failure_does_not_fall_back_to_platform_config(db, user_a,
         await service.resolve_capability_settings(db, user_a.id, "llm", base)
 
 
+class _Cfg:
+    """仿 pydantic 配置对象：resolve_capability_settings 走 model_copy 分支。"""
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+    def model_copy(self, update):
+        merged = dict(self.__dict__)
+        merged.update(update)
+        return _Cfg(**merged)
+
+
+@pytest.mark.asyncio
+async def test_capability_settings_never_inherit_platform_base_url(db, user_a, monkeypatch):
+    """运行时目的地绑定（stt）：用户 Key 的 base_url 只来自用户凭据——空串按
+    provider 官方默认端点解析，解析不出（目的地不明）→ 放弃覆盖回落平台配置。
+    绝不继承平台 base_url，否则用户 Key 会被拼到平台 endpoint 发出去。"""
+    def active_credential(row):
+        async def _get(*_args):
+            return row
+        return _get
+    platform = _Cfg(provider="platform", api_key="platform-secret", model="platform-model",
+                    base_url="https://platform-stt.example/v1", api_format="openai",
+                    vision=False, vision_video=False, vision_audio=False, vision_detail="auto")
+
+    # provider 解析不出默认端点 + 用户没填 base_url → 覆盖整体放弃，用户 Key 不启用
+    row = SimpleNamespace(provider="user-provider", api_format="openai", base_url="",
+                          model="user-model", vision=False, vision_video=False,
+                          vision_audio=False, vision_detail="auto")
+    monkeypatch.setattr(service, "get_active_credential", active_credential(row))
+    monkeypatch.setattr(service, "decrypt_value", lambda _row: "user-secret")
+    vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
+    assert vm.api_key == "platform-secret"
+    assert vm.base_url == "https://platform-stt.example/v1"
+
+    # 有官方默认端点的 provider：空 base_url 落到 provider 默认端点，不继承平台 URL
+    row = SimpleNamespace(provider="glm", api_format="openai", base_url="",
+                          model="user-model", vision=False, vision_video=False,
+                          vision_audio=False, vision_detail="auto")
+    monkeypatch.setattr(service, "get_active_credential", active_credential(row))
+    vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
+    assert vm.api_key == "user-secret"
+    assert vm.base_url == "https://open.bigmodel.cn/api/paas/v4"
+
+    # 显式 base_url：原样作为目的地
+    row = SimpleNamespace(provider="user-provider", api_format="openai",
+                          base_url="https://user-stt.example/v1", model="user-model",
+                          vision=False, vision_video=False, vision_audio=False,
+                          vision_detail="auto")
+    monkeypatch.setattr(service, "get_active_credential", active_credential(row))
+    vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
+    assert vm.api_key == "user-secret"
+    assert vm.base_url == "https://user-stt.example/v1"
+
+
 def test_disabled_policy_blocks_all_byok_entry_points(monkeypatch):
     settings = SimpleNamespace(byok=SimpleNamespace(enabled=False), ai=SimpleNamespace(deployment_mode="hosted"))
     monkeypatch.setattr(policy, "get_settings", lambda: settings)
@@ -116,6 +170,122 @@ def test_credential_view_contains_metadata_but_not_encrypted_fields():
     view = service.credential_view(row)
 
     assert view["has_value"] is True
+    assert "dimensions" in view
     assert "encrypted_value" not in view
     assert "nonce" not in view
     assert "encrypted_data_key" not in view
+
+
+@pytest.mark.asyncio
+async def test_credential_view_returns_dimensions_and_patch_preserves_it(db, user_a, monkeypatch):
+    """回归：credential_view 曾漏返 dimensions，编辑器拿到的存量凭据维度是 null，
+    前端保存时固定发 dimensions:0——哪怕只改 Base URL 也会把已存维度清零（静默
+    数据损坏）。create→GET→只 patch base_url 后，维度必须原样保留。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential, get_credentials, patch_credential
+    from app.byok.schemas import CredentialCreate, CredentialPatch
+
+    created = await create_credential(
+        CredentialCreate(provider="qwen", capability="embedding", value="sk-test-dims",
+                         model="text-embedding-v4", dimensions=1024),
+        user=user_a, db=db)
+    assert created["dimensions"] == 1024
+
+    listed = await get_credentials(user=user_a, db=db)
+    assert [item["dimensions"] for item in listed["items"]] == [1024]
+
+    patched = await patch_credential(
+        created["id"],
+        # 目的地绑定：base_url 变更属于新目的地，必须显式重新提供 Key 才允许保存。
+        CredentialPatch(base_url="https://dashscope.example.com/compatible-mode/v1",
+                        value="sk-test-dims"),
+        user=user_a, db=db)
+    assert patched["dimensions"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_keyless_selfhosted_embedding_create_then_resolve_empty_key(db, user_a, monkeypatch):
+    """回归：自托管 Embedding 空 Key 创建曾在 encrypt_envelope 里 ValueError
+    未被捕获而 500。空 Key 必须能信封加密落库（allow_empty 显式语义，不落明文），
+    resolve_embedding_settings 解析出 api_key 为空串；Ollama Cloud 与普通云
+    provider 的空 Key 返回 422 业务错误而不是 500。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential
+    from app.byok.schemas import CredentialCreate
+
+    created = await create_credential(
+        CredentialCreate(provider="ollama", capability="embedding", value="",
+                         base_url="http://127.0.0.1:11434/v1", model="nomic-embed-text"),
+        user=user_a, db=db)
+    assert created["has_value"] is True  # 空串也走信封加密落库
+
+    base = SimpleNamespace(api_key="platform-key", base_url="https://platform.example", model="platform-bge")
+    resolved = await service.resolve_embedding_settings(db, user_a.id, base)
+    assert resolved is not None
+    assert resolved["api_key"] == ""
+    assert resolved["provider"] == "ollama"
+    assert resolved["base_url"] == "http://127.0.0.1:11434/v1"
+
+    for body in (
+        # Ollama Cloud 需要 Key
+        CredentialCreate(provider="ollama", capability="embedding", value="",
+                         base_url="https://ollama.com/v1", model="nomic-embed-text"),
+        # 普通云 provider 需要 Key
+        CredentialCreate(provider="openai", capability="embedding", value="",
+                         model="text-embedding-3-small"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_credential(body, user=user_a, db=db)
+        assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_switch_to_local_clears_old_cloud_key(db, user_a, monkeypatch):
+    """回归：云端 Embedding 切换成本地无鉴权服务时，旧 Key 曾因「编辑不回显 +
+    falsy 不进 PATCH」留在 row 上，embed() 会拿它给新 endpoint 发 Authorization
+    （跨 Provider 凭据泄漏）。显式 PATCH value="" 必须把旧 Key 清掉。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential, patch_credential
+    from app.byok.schemas import CredentialCreate, CredentialPatch
+
+    created = await create_credential(
+        CredentialCreate(provider="openai", capability="embedding", value="sk-openai-secret",
+                         base_url="https://api.openai.com/v1", model="text-embedding-3-small"),
+        user=user_a, db=db)
+    patched = await patch_credential(
+        created["id"],
+        CredentialPatch(provider="local", base_url="http://127.0.0.1:8080/v1", value=""),
+        user=user_a, db=db)
+    assert patched["provider"] == "local"
+
+    base = SimpleNamespace(api_key="platform-key", base_url="https://platform.example", model="platform-bge")
+    resolved = await service.resolve_embedding_settings(db, user_a.id, base)
+    assert resolved is not None
+    assert resolved["api_key"] == ""  # 旧云端 Key 已清掉，不再发给本地 endpoint
+
+
+@pytest.mark.asyncio
+async def test_patch_switch_to_cloud_provider_requires_new_key(db, user_a, monkeypatch):
+    """回归：本地空 Key 切到云端 Provider 且未提供新 Key 时，曾会保存出
+    「云端 Provider + 空 Key」的必然失败配置；后端按最终配置一致性拒绝（422）。"""
+    monkeypatch.setattr("app.api.v1.byok.require_byok_enabled", lambda: None)
+    monkeypatch.setattr(service, "byok_enabled", lambda: True)
+    monkeypatch.setenv("CREDENTIALS_MASTER_KEY", _master("dims"))
+    from app.api.v1.byok import create_credential, patch_credential
+    from app.byok.schemas import CredentialCreate, CredentialPatch
+
+    created = await create_credential(
+        CredentialCreate(provider="local", capability="embedding", value="",
+                         base_url="http://127.0.0.1:8080/v1", model="bge-m3"),
+        user=user_a, db=db)
+    with pytest.raises(HTTPException) as exc_info:
+        await patch_credential(
+            created["id"],
+            CredentialPatch(provider="openai", base_url="https://api.openai.com/v1"),
+            user=user_a, db=db)
+    assert exc_info.value.status_code == 422

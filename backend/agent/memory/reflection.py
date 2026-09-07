@@ -180,6 +180,8 @@ async def _bind_user_model(user_id, settings, session_id=None):
         raise RuntimeError("reflection model binding requires database session")
     async with db_session._SessionLocal() as db:
         run_config = await resolve_run_config_for_user(settings, db, user_id, None)
+        from app.byok.service import resolve_and_bind_user_embedding
+        await resolve_and_bind_user_embedding(settings, db, user_id)   # 压缩/记忆向量化走用户 embedding 凭据（PRD-SEC-2）
     modelctx.mark_user_scope()
     modelctx.set_model_cfg(run_config.model)
     modelctx.set_usage_context(user_id, session_id)

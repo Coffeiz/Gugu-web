@@ -526,6 +526,15 @@ class SkillRegistry:
             _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}:{first_path}", t0)
             return json.dumps(payload, ensure_ascii=False), None
 
+        # 顶层 schema 没有声明 additionalProperties: false，模型按旧参数形状多传的字段会
+        # 静默通过校验、被 handler 无视——调用"成功"但意图没实现，模型还以为参数形状是对的。
+        # 这里记下未知字段，成功回执里显式提醒，让模型一轮自纠。
+        _schema_props = tool.input_schema.get("properties") if isinstance(tool.input_schema, dict) else None
+        unknown_fields = (
+            sorted(k for k in args if k not in _schema_props)
+            if isinstance(_schema_props, dict) else []
+        )
+
         await _maybe_announce_progress(tool, args)
 
         # user_id 归一成 UUID：IM 路（worker）传进来的是字符串，而 ORM 对象的 .user_id 是
@@ -589,6 +598,15 @@ class SkillRegistry:
         # 确认门是跨工具的协议：无论 handler 直接返回 JSON，还是把它包进 error，
         # 从 dispatch 边界出去都统一为顶层载荷，避免下游各自猜包装形状。
         result = normalize_confirmation_result(result)
+
+        # 未知字段警告：只注入成功路径的 dict 回执（错误/确认门载荷各有固定形状，不掺和）。
+        if unknown_fields and isinstance(result, dict) and not result.get("error") \
+                and confirmation_payload(result) is None:
+            result["ignored_fields"] = unknown_fields
+            result["hint"] = (
+                f"以下字段不在 {name} 的当前 schema 中，已被忽略：{', '.join(unknown_fields)}。"
+                "参数形状与预期不符时，先调用 get_tool_schema 确认最新参数再重试。"
+            )
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）
         _pending = confirmation_payload(result) is not None

@@ -724,6 +724,12 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
+/* 咕咕回复的 `---` 分隔线：实色次级文字色，全主题可辨，与预览窗 .tv-md hr 同口径 */
+:deep(.msg-bubble.md-body hr) {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--content-primary) 20%, transparent);
+  margin: 1.25em 0;
+}
 :deep(.msg-bubble.md-body a.chat-object-card) {
   display: inline-flex; align-items: center; vertical-align: middle; gap: 9px;
   min-width: 210px; max-width: min(340px, 100%); margin: 5px 6px 5px 0; padding: 9px 11px;
@@ -788,6 +794,21 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
   border-bottom-right-radius: 4px;
 }
+/* 用户气泡 MD 排版（.user-md）：md-view 默认把标题/加粗/引用映射到深色文字
+   token，紫底上对比不足，重映射到气泡前景。行内代码叠半透明前景，代码块用
+   近实心亮面板——hljs token 色是按浅底调的，透在紫底上会看不清。 */
+:deep(.msg-bubble.user-md h1), :deep(.msg-bubble.user-md h2), :deep(.msg-bubble.user-md h3),
+:deep(.msg-bubble.user-md h4), :deep(.msg-bubble.user-md h5), :deep(.msg-bubble.user-md h6),
+:deep(.msg-bubble.user-md strong), :deep(.msg-bubble.user-md blockquote) { color: inherit; }
+:deep(.msg-bubble.user-md a) { color: inherit; }
+:deep(.msg-bubble.user-md code) {
+  background: color-mix(in srgb, var(--gugu-chat-user-fg) 16%, transparent);
+  color: inherit;
+}
+:deep(.msg-bubble.user-md pre) {
+  background: color-mix(in srgb, var(--gugu-chat-user-fg) 92%, transparent);
+}
+:deep(.msg-bubble.user-md pre code) { color: var(--text-primary); }
 :deep(.msg-speaker) {
   font-size: 11px; color: var(--text-secondary); margin: 0 2px 3px;
   font-weight: 600;

@@ -904,6 +904,59 @@ class LLMRunner:
                     and self.max_verify_rounds is not None
                     and verify_rounds >= self.max_verify_rounds
                 ):
+                    if self.stop_on_budget:
+                        break
+                    # 与任务轮上限同款弹窗：询问是否解除本轮限制继续，
+                    # 而不是直接用兜底文案硬停止。拿不到交互通道（无
+                    # session/DB）时退回循环后的兜底文案。
+                    from app.services.interactions import create_goal_mode_prompt, wait_for_resolution
+
+                    interaction = await create_goal_mode_prompt(
+                        user_id=user_id, session_id=session_id,
+                    )
+                    if interaction is None:
+                        break
+                    prompt, options = interaction
+                    yield stream_event(
+                        "interaction_required",
+                        round_id=round_id if round_number else None,
+                        prompt_id=prompt.id,
+                        kind=prompt.kind,
+                        title=prompt.title,
+                        body=prompt.body,
+                        options=options,
+                        expires_at=prompt.expires_at.isoformat(),
+                        force_display=True,
+                    )
+                    await notify_interaction(
+                        prompt, options,
+                        round_id_value=round_id if round_number else None,
+                    )
+                    answer = await wait_for_resolution(
+                        user_id=user_id,
+                        prompt_id=prompt.id,
+                        heartbeat=lambda: genstream.touch(session_id),
+                        cancel_check=lambda: _im_cancelled(session_id),
+                    )
+                    if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                        return
+                    if answer is None:
+                        # 弹窗过期不另造文案：落到循环后的兜底，把已完成
+                        # 内容和"请重新发起"一并交代清楚。
+                        break
+                    if answer.get("option_id") in {"continue", "goal"}:
+                        # 该按钮的语义是解除本次 run 的轮次限制；核实与任务
+                        # 轮次都清零后回到同一主循环继续执行。
+                        unlimited_mode = True
+                        verify_rounds = 0
+                        task_rounds = 0
+                        yield stream_event(
+                            "_new_round",
+                            round_id=round_id if round_number else "round-0",
+                            next_round=round_number + 1,
+                        )
+                        continue
                     break
                 verify_rounds += 1
             else:
@@ -1848,8 +1901,9 @@ class LLMRunner:
                 await reasoning_state.completed()
             return
 
-        # 核实预算耗尽时，最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾。
-        # 不能让 runner 把这个正常的安全停止误判成“工具结果已返回，但后续回复没有完成”。
+        # 核实预算耗尽的兜底收尾：无交互通道、弹窗过期或用户未选继续时落到这里。
+        # 最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾；不能让 runner
+        # 把这个正常的安全停止误判成“工具结果已返回，但后续回复没有完成”。
         # 核实阶段的过程文字仍然只留在缓冲区，不能在这里泄漏给用户。
         if (
             not unlimited_mode

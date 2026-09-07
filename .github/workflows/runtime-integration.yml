@@ -267,7 +267,16 @@ jobs:
         env:
           ORM_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          base="${ORM_BASE_SHA:-$(git rev-parse HEAD^)}"
+          # PR 事件用 PR base；非 PR 事件（workflow_dispatch / push）以上游 main
+          # 的分叉点为基线，让合并前的 dev 触发能棘轮整个待合并增量。回退到
+          # HEAD^ 会让 push 到 main 的合并提交把整个发版周期的新增行判成违规
+          # （PR #48/#49 合并后 Runtime integration 因此转红）。
+          base="${ORM_BASE_SHA:-}"
+          if [ -z "$base" ]; then
+            base="$(git merge-base HEAD origin/main 2>/dev/null || true)"
+          fi
+          base="${base:-$(git rev-parse HEAD^)}"
+          echo "ORM ratchet base: $base"
           python backend/scripts/check_orm_boundaries.py --diff-base "$base"
 
       - name: Failure classification summary

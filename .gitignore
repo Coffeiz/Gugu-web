@@ -109,3 +109,7 @@ backend.zip
 # macOS SMB AppleDouble 资源叉垃圾（在 SMB 上编辑会生成）
 ._*
 .AppleDouble/
+
+# 运行配置时间戳备份（用户数据，只留本地磁盘）
+backend/config.override.json.bak-*
+backend/.env.bak-*
