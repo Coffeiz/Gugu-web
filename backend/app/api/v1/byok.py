@@ -1,6 +1,7 @@
 """用户 BYOK 凭据管理接口；只返回元数据和掩码状态。"""
 from datetime import datetime
 import os
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -46,6 +47,9 @@ class PreviewKeyReuseDenied(ValueError):
     """草稿试呼无法安全取得 Key（无凭据可回源，或目的地与存量凭据不一致）。"""
 
 
+_MISMATCH_MESSAGE = "Provider 或 Endpoint 已变更，为避免旧 Key 发往其他服务商，请重新填写 API Key"
+
+
 def _url_origin(url: str | None) -> tuple[str, str, int | None]:
     """Endpoint 身份取 scheme + host + port；/v1 等路径差异不构成「换目的地」。"""
     parts = urlsplit(url or "")
@@ -54,15 +58,31 @@ def _url_origin(url: str | None) -> tuple[str, str, int | None]:
     return scheme, (parts.hostname or "").lower(), port
 
 
+def _effective_origin(provider: str, base_url: str) -> tuple[str, str, int | None] | None:
+    """经 provider adapter 解析后的真实请求 origin（与 provider_diagnostics 同口径）。
+
+    空串不等于「无目的地」：adapter 会把它落到 default_base_url（如 glm →
+    open.bigmodel.cn）。返回 None 表示解析失败，由调用方按「无法证明同目的地」拒绝。
+    """
+    from agent.providers import adapter_for
+    cfg = SimpleNamespace(provider=provider, base_url=base_url)
+    try:
+        return _url_origin(adapter_for(cfg).resolve_base_url(cfg))
+    except Exception:
+        return None
+
+
 def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str,
                         target_provider: str, target_base_url: str,
                         allow_keyless: bool = False) -> str:
     """草稿试呼（test-preview / models-preview / vision-probe 共用）的 Key 来源裁决。
 
     已存 Key 只属于它保存时的目的地：显式填写的新 Key 永远优先；目标是无鉴权
-    自托管 Embedding 时直接用空串；否则仅当 provider 与 endpoint origin
-    （scheme+host+port）都和存量一致才解密复用，防止把 A 家 Key 静默发到
-    B 家 endpoint。拒绝时抛 PreviewKeyReuseDenied，调用方按各自响应形态转换。
+    自托管 Embedding 时直接用空串；否则仅当 provider 一致、且经 adapter 解析后的
+    effective origin（scheme+host+port）一致才解密复用——空串 base_url 会落到
+    provider 默认端点，必须按解析结果而非原始字符串比较，防止「清空 Base URL →
+    官方默认端点」绕过校验把 A 家 Key 发到 B 家 endpoint。拒绝时抛
+    PreviewKeyReuseDenied，调用方按各自响应形态转换。
     """
     if supplied_key:
         return supplied_key
@@ -70,10 +90,13 @@ def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str
         return ""
     if row is None:
         raise PreviewKeyReuseDenied("请填写 API Key 后再测试")
-    # 草稿未填 base_url 表示走该 provider 的默认端点，不构成换目的地。
-    if row.provider != target_provider or (
-            target_base_url and _url_origin(row.base_url) != _url_origin(target_base_url)):
-        raise PreviewKeyReuseDenied("Provider 或 Endpoint 已变更，为避免旧 Key 发往其他服务商，请重新填写 API Key")
+    if row.provider != target_provider:
+        raise PreviewKeyReuseDenied(_MISMATCH_MESSAGE)
+    stored_origin = _effective_origin(row.provider, row.base_url)
+    target_origin = _effective_origin(target_provider, target_base_url)
+    # 解析失败按「无法证明同目的地」处理：宁拒勿漏。
+    if stored_origin is None or target_origin is None or stored_origin != target_origin:
+        raise PreviewKeyReuseDenied(_MISMATCH_MESSAGE)
     return decrypt_value(row)
 
 

@@ -1,8 +1,9 @@
 """BYOK 草稿试呼：test-preview / models-preview / vision-probe 的目的地绑定 Key 裁决。
 
-旧 Key 只属于它保存时的目的地：草稿 provider 或 endpoint origin（scheme+host+port）
-与存量凭据不一致时拒绝复用（2026-09-08），显式新 Key 永远优先；无鉴权自托管
-Embedding 直接用空串，不允许把旧云厂商 Key 带到新目的地。
+旧 Key 只属于它保存时的目的地：草稿 provider 或 effective origin（经 provider
+adapter 解析后的 scheme+host+port，空串会落 provider 默认端点）与存量凭据不一致时
+拒绝复用（2026-09-08），显式新 Key 永远优先；无鉴权自托管 Embedding 直接用空串，
+不允许把旧云厂商 Key 带到新目的地。
 """
 from types import SimpleNamespace
 from uuid import uuid4
@@ -133,11 +134,47 @@ async def test_foreign_credential_is_rejected():
 @pytest.mark.asyncio
 async def test_embedding_draft_requires_base_url_and_model(monkeypatch):
     monkeypatch.setattr(byok_api, "decrypt_value", lambda row: "sk-stored")
-    row = SimpleNamespace(user_id="owner", provider="dashscope", base_url="https://embedding.example/v1")
+    # 两边 base_url 都为空 → 同落 provider 默认端点，允许复用后再做必填校验。
+    row = SimpleNamespace(user_id="owner", provider="dashscope", base_url="")
     body = byok_api.CredentialTestPreview(provider="dashscope", capability="embedding", value="", credential_id=3)
     result = await byok_api.test_credential_preview(body, user=SimpleNamespace(id="owner"), db=_db_with(row))
     assert result["ok"] is False
     assert "Base URL" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_empty_draft_base_url_falls_to_provider_default_and_refuses(monkeypatch):
+    """glm + 自定义代理 → 草稿清空 base_url 实际会请求官方默认端点，必须拒绝复用。"""
+    _forbid_decrypt(monkeypatch)
+    row = SimpleNamespace(user_id="owner", provider="glm", base_url="https://my-proxy.example/v1")
+    body = byok_api.CredentialTestPreview(
+        provider="glm", capability="llm", value="",
+        api_format="openai", base_url="", model="glm-5", credential_id=7,
+    )
+    result = await byok_api.test_credential_preview(body, user=SimpleNamespace(id="owner"), db=_db_with(row))
+    assert result["ok"] is False
+    assert "重新填写" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_saved_default_matches_explicit_default_url(monkeypatch):
+    """已存 base_url 为空（走默认端点）与草稿显式填官方默认 URL 是同一目的地，允许复用。"""
+    captured = {}
+
+    async def fake_probe(provider, api_key, base_url, model, api_format):
+        captured.update(api_key=api_key, base_url=base_url)
+        return {"ok": True, "status": 200, "detail": ""}
+
+    monkeypatch.setattr("app.services.provider_diagnostics.test_provider_credential", fake_probe)
+    monkeypatch.setattr(byok_api, "decrypt_value", lambda row: "sk-stored")
+    row = SimpleNamespace(user_id="owner", provider="glm", base_url="")
+    body = byok_api.CredentialTestPreview(
+        provider="glm", capability="llm", value="",
+        api_format="openai", base_url="https://open.bigmodel.cn/api/paas/v4", model="glm-5", credential_id=7,
+    )
+    result = await byok_api.test_credential_preview(body, user=SimpleNamespace(id="owner"), db=_db_with(row))
+    assert result["ok"] is True
+    assert captured["api_key"] == "sk-stored"
 
 
 @pytest.mark.asyncio
