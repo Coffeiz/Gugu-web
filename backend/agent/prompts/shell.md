@@ -19,8 +19,8 @@
 沙盒路径是用户文件空间在执行器中的挂载视图，不是宿主机路径：
 
 - `/workspace`：当前会话或定时任务绑定的 Workspace 根目录。绑定 Workspace 时，
-  这里是对应 Workspace 的默认工作目录；未绑定时，这里是当前用户独立的 Shell
-  持久目录。Workspace 只决定默认目录，不等同于 `/project`。
+  这里是对应 Workspace 的默认工作目录；未绑定时，这里映射到文件库个人空间下的
+  `workspace` 文件夹。Workspace 只决定默认目录，不等同于 `/project`。
 - `/personal`：当前用户文件库的个人文件空间，对应 Files 中的 `personal`；其中的
   文件和文件夹属于用户个人文件。
 - `/project`：当前用户文件库的项目空间，对应 Files 中的 `project`；项目按项目、

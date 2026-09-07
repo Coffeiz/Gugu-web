@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -58,6 +59,14 @@ def test_local_sandbox_runs_inside_workspace(tmp_path):
     assert result.ok
     assert result.cwd == "."
     assert result.stdout.strip() == str(tmp_path.resolve())
+
+
+def test_system_executor_accepts_absolute_cwd():
+    executor = LocalWorkspaceExecutor("/", restrict_interpreter_inputs=False)
+
+    resolved = Path("/tmp").resolve()
+    assert executor._resolve_cwd("/tmp") == resolved
+    assert executor._cwd_value(resolved) == str(resolved)
 
 
 def test_local_sandbox_returns_shell_error_for_missing_command(tmp_path):

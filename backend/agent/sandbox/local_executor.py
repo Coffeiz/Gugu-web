@@ -1,7 +1,8 @@
 """本机工作区 Shell 执行器。
 
 当前版本只在已解析的 workspace 根目录内启动当前系统用户的子进程，不使用
-shell=True，不接受管道、重定向、命令替换或宿主机绝对路径。
+shell=True，不接受管道、重定向或命令替换；只有 system 根目录为 `/` 时才允许
+宿主机绝对路径。
 """
 from __future__ import annotations
 
@@ -62,8 +63,11 @@ class LocalWorkspaceExecutor:
     def _resolve_cwd(self, cwd: str | Path) -> Path:
         value = Path(cwd)
         if value.is_absolute():
-            raise ValueError("cwd 必须是 workspace 内的相对路径")
-        resolved = (self.root / value).resolve(strict=True)
+            if self.root != Path("/"):
+                raise ValueError("cwd 必须是 workspace 内的相对路径")
+            resolved = value.expanduser().resolve(strict=True)
+        else:
+            resolved = (self.root / value).resolve(strict=True)
         try:
             resolved.relative_to(self.root)
         except ValueError as exc:
@@ -71,6 +75,12 @@ class LocalWorkspaceExecutor:
         if not resolved.is_dir():
             raise ValueError("cwd 必须是目录")
         return resolved
+
+    def _cwd_value(self, workdir: Path) -> str:
+        """sandbox 返回相对 cwd，system 返回实际绝对 cwd。"""
+        if self.root == Path("/"):
+            return str(workdir)
+        return str(workdir.relative_to(self.root) or ".")
 
     def _validate_workspace_argv(
         self, argv: list[str], workdir: Path, *, allowed_absolute_paths: tuple[str, ...] = (),
@@ -199,9 +209,9 @@ class LocalWorkspaceExecutor:
                 start_new_session=True,
             )
         except FileNotFoundError:
-            return ShellResult(False, 127, "", f"找不到命令：{argv[0]}", False, str(workdir.relative_to(self.root) or ".") )
+            return ShellResult(False, 127, "", f"找不到命令：{argv[0]}", False, self._cwd_value(workdir))
         except PermissionError:
-            return ShellResult(False, 126, "", f"没有执行权限：{argv[0]}", False, str(workdir.relative_to(self.root) or ".") )
+            return ShellResult(False, 126, "", f"没有执行权限：{argv[0]}", False, self._cwd_value(workdir))
         stdout_task = asyncio.create_task(self._read_limited(process.stdout, output_limit, on_output, "stdout"))
         stderr_task = asyncio.create_task(self._read_limited(process.stderr, output_limit, on_output, "stderr"))
         timed_out = False
@@ -243,7 +253,7 @@ class LocalWorkspaceExecutor:
             stdout=stdout[0],
             stderr=stderr[0],
             timed_out=timed_out,
-            cwd=str(workdir.relative_to(self.root) or "."),
+            cwd=self._cwd_value(workdir),
             truncated=stdout[1] or stderr[1],
             permission_revoked=permission_revoked,
         )

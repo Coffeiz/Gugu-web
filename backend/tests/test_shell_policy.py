@@ -324,7 +324,7 @@ async def test_run_script_autopilot_skips_script_confirmation(monkeypatch, tmp_p
     )
 
     result = await shell_tool._run_script(None, "user-1", {
-        "root": "workspace", "script_path": "check.py", "interpreter": "python3",
+        "script_path": "/workspace/check.py", "interpreter": "python3",
     })
 
     assert result == {"ok": True, "_confirm_gate_authorized": "shell_autopilot"}
@@ -478,15 +478,31 @@ async def test_system_permission_does_not_change_default_scope(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workspace_cannot_opt_into_system_scope(monkeypatch):
+async def test_system_scope_ignores_workspace_binding(monkeypatch):
     db = _PolicyDB()
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
 
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
 
-    assert not decision.allowed
+    assert decision.allowed
+    assert decision.scope.value == "system"
+
+
+@pytest.mark.asyncio
+async def test_system_scope_does_not_require_sandbox(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    settings.sandbox = SimpleNamespace(enabled=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
+
+    assert decision.allowed
     assert decision.scope.value == "system"
 
 

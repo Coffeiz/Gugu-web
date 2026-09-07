@@ -22,6 +22,7 @@ from app.services.workspaces import (
     effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
     workspace_shell_supported,
+    resolve_workspace_target,
 )
 from app.services.filesystem_authorization import (
     SUBJECT_SCHEDULED_TASK,
@@ -53,6 +54,30 @@ class ShellDecision:
     scope: ShellScope = ShellScope.OFF
     autopilot_enabled: bool = False
     full_user_sandbox_write: bool = False
+
+
+async def shell_cwd_mapping(db: AsyncSession, user_id, *, session=None, workspace_id=None) -> str:
+    """返回容器 cwd 对应的用户可读文件库位置，不暴露宿主机路径。"""
+    effective_workspace_id = workspace_id
+    if effective_workspace_id is None and session is not None:
+        effective_workspace_id = getattr(session, "workspace_id", None)
+    if effective_workspace_id is None:
+        return "文件库根目录 / 默认 Workspace"
+    try:
+        target = await resolve_workspace_target(db, user_id, int(effective_workspace_id))
+    except (AttributeError, LookupError, ValueError):
+        # 组装层的轻量测试/探测上下文可能没有完整 ORM session；映射只是说明性
+        # 元数据，不能因此阻断 Shell 权限提示或执行结果。
+        return "当前绑定 Workspace"
+    if not target:
+        return "当前绑定 Workspace（目录暂不可解析）"
+    if target.get("space") == "project":
+        label = f"项目文件 / {target.get('project_name') or target.get('workspace_name') or '当前项目'}"
+    elif target.get("space") == "workspace":
+        label = f"Workspace / {target.get('workspace_name') or '当前工作区'}"
+    else:
+        label = f"个人文件 / {target.get('folder_name') or target.get('workspace_name') or '当前文件夹'}"
+    return label
 
 
 _DANGEROUS = re.compile(
@@ -149,12 +174,13 @@ async def evaluate(
     if not settings.agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
     sandbox = getattr(settings, "sandbox", None)
-    if sandbox is not None and not getattr(sandbox, "enabled", False):
-        return ShellDecision(False, "Shell 沙盒未开启", risk)
-    if scope is ShellScope.SANDBOX and sandbox is not None and not getattr(sandbox, "code_execution_enabled", True):
-        runtime = blocked_runtime(command)
-        if runtime is not None:
-            return ShellDecision(False, f"管理员未开启代码运行环境，禁止使用 {runtime} 运行时", risk, scope=scope)
+    if scope is ShellScope.SANDBOX:
+        if sandbox is not None and not getattr(sandbox, "enabled", False):
+            return ShellDecision(False, "Shell 沙盒未开启", risk)
+        if sandbox is not None and not getattr(sandbox, "code_execution_enabled", True):
+            runtime = blocked_runtime(command)
+            if runtime is not None:
+                return ShellDecision(False, f"管理员未开启代码运行环境，禁止使用 {runtime} 运行时", risk, scope=scope)
     if subject_id is None and subject_type == SUBJECT_SESSION:
         subject_id = session_id
     if session_id and session is None:
@@ -166,9 +192,20 @@ async def evaluate(
     # 防止权限配置或会话状态在连续调用之间把执行器从容器漂移到宿主机。
     workspace = None
     filesystem_policy = None
-    if (session is not None and session.workspace_id is not None or workspace_id is not None) and not workspace_shell_supported():
+    if scope is ShellScope.SYSTEM:
+        if subject_type == SUBJECT_SCHEDULED_TASK:
+            return ShellDecision(False, "定时任务只能在 sandbox 范围执行", risk, scope=scope)
+        if not (
+            getattr(settings.agent, "shell_system_enabled", False)
+            and await effective_shell_system_enabled(db, user_id)
+        ):
+            return ShellDecision(False, "用户未开启 system 范围 Shell", risk, scope=scope)
+    elif (
+        (session is not None and session.workspace_id is not None or workspace_id is not None)
+        and not workspace_shell_supported()
+    ):
         return ShellDecision(False, "OSS 存储模式不支持 workspace，只能使用独立 Shell 沙盒", risk, scope=scope)
-    if subject_type == SUBJECT_SCHEDULED_TASK:
+    elif subject_type == SUBJECT_SCHEDULED_TASK:
         if scope is ShellScope.SYSTEM:
             return ShellDecision(False, "定时任务只能在 sandbox 范围执行", risk, scope=scope)
         if not await effective_shell_enabled(db, user_id):
@@ -207,12 +244,6 @@ async def evaluate(
         workspace = await db.get(Workspace, workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
-    elif scope is ShellScope.SYSTEM:
-        if not (
-            getattr(settings.agent, "shell_system_enabled", False)
-            and await effective_shell_system_enabled(db, user_id)
-        ):
-            return ShellDecision(False, "用户未开启 system 范围 Shell", risk, scope=scope)
     elif not await effective_shell_enabled(db, user_id):
         return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
 
@@ -314,6 +345,10 @@ async def build_dynamic_prompt(
         "以下状态只代表本轮执行器返回的有效权限，下一轮必须重新读取，不能从历史消息推断。",
         "- Shell：已授权；本轮已注册 Shell 工具。",
     ]
+    cwd_mapping = await shell_cwd_mapping(
+        db, user_id, session=session, workspace_id=workspace_id,
+    )
+    lines.append(f"- 当前工作目录映射：/workspace → {cwd_mapping}；/workspace 不是独立的隐藏文件区。")
     if dangerous_enabled:
         lines.append(
             "- 全部 Shell 命令：已开放，但不是预授权；删除、覆盖、移动、提权、服务控制、"

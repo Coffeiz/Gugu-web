@@ -13,6 +13,7 @@ import app.db.session as _db_session
 from agent.security import confirm
 from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import evaluate, session_shell_lock
+from agent.security.shell_policy import shell_cwd_mapping
 from agent.tools.base import (
     current_dispatch_filesystem_subject,
     current_dispatch_run_id,
@@ -382,6 +383,10 @@ async def _run_shell(db, user_id, args: dict):
             else "none"
         ),
         "cwd": result.cwd,
+        "cwd_display": await shell_cwd_mapping(
+            db, user_id, session=current_dispatch_session(),
+            workspace_id=decision.workspace_id,
+        ),
         "permission_revoked": result.permission_revoked,
         "quota_exceeded": getattr(result, "quota_exceeded", False),
         "_terminal_id": terminal_row.id if terminal_row is not None else None,
@@ -406,15 +411,29 @@ _SCRIPT_ROOT_PREFIX = {"workspace": "/workspace", "personal": "/personal", "proj
 _SCRIPT_META = set(";&|<>$`()\n\r")
 
 
-def _normalize_script_path(value: str) -> PurePosixPath:
-    """只接受沙盒挂载根下的相对脚本路径，不跟随软链接或 ``..``。"""
+def _normalize_script_path(
+    value: str,
+    *,
+    root_name: str | None = None,
+) -> tuple[str, PurePosixPath]:
+    """规范化相对路径或沙盒逻辑绝对路径，不接受宿主机路径。"""
     text = str(value or "").strip()
     if not text or "\x00" in text or "\\" in text or any(char in _SCRIPT_META for char in text):
-        raise ValueError("script_path 必须是沙盒内的相对路径")
+        raise ValueError("script_path 必须是沙盒内的相对路径或逻辑绝对路径")
     path = PurePosixPath(text)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-        raise ValueError("script_path 必须是沙盒内的相对路径")
-    return path
+    if path.is_absolute():
+        parts = path.parts
+        logical_root = parts[1] if len(parts) > 1 else ""
+        if logical_root not in _SCRIPT_ROOT_PREFIX or len(parts) < 3:
+            raise ValueError("script_path 只能使用 /workspace、/personal 或 /project 下的文件")
+        if root_name is not None and logical_root != root_name:
+            raise ValueError("逻辑绝对路径的根目录必须与 root 一致")
+        root_name = logical_root
+        path = PurePosixPath(*parts[2:])
+    root_name = root_name or "workspace"
+    if root_name not in _SCRIPT_ROOT_PREFIX or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("script_path 必须是沙盒内的相对路径或逻辑绝对路径")
+    return root_name, path
 
 
 def _validate_script_file(root: Path, relative: PurePosixPath) -> Path:
@@ -444,8 +463,8 @@ async def _run_script(db, user_id, args: dict):
     subject = current_dispatch_filesystem_subject() or {}
     subject_type = str(subject.get("subject_type") or "session")
 
-    root_name = str(args.get("root") or "workspace").strip().lower()
-    if root_name not in _SCRIPT_ROOT_PREFIX:
+    requested_root = str(args.get("root") or "").strip().lower() or None
+    if requested_root is not None and requested_root not in _SCRIPT_ROOT_PREFIX:
         return {"error": "root 只能是 workspace、personal 或 project"}
     interpreter_name = str(args.get("interpreter") or "python3").strip().lower()
     interpreter_spec = _SCRIPT_INTERPRETERS.get(interpreter_name)
@@ -453,7 +472,9 @@ async def _run_script(db, user_id, args: dict):
         return {"error": "仅支持 python3、node 和 bash 脚本"}
     interpreter, extensions = interpreter_spec
     try:
-        relative = _normalize_script_path(args.get("script_path"))
+        root_name, relative = _normalize_script_path(
+            args.get("script_path"), root_name=requested_root,
+        )
     except ValueError as exc:
         return {"error": str(exc)}
     if relative.suffix.lower().lstrip(".") not in extensions:
@@ -578,8 +599,9 @@ class ShellSkill(BaseSkill):
             label="运行沙盒脚本",
             description_short="运行用户明确指定的沙盒内 Python、Node 或 Bash 脚本；可用根目录以本轮权限状态为准。",
             description=(
-                "运行一个已存在且由用户明确指定的沙盒脚本。script_path 必须是相对路径，"
-                "不能经过软链接或硬链接；root 可选 workspace/personal/project，但是否可用以本轮权限状态为准。默认使用 python3，"
+                "运行一个已存在且由用户明确指定的沙盒脚本。script_path 支持沙盒内相对路径，"
+                "也支持 /workspace、/personal、/project 下的逻辑绝对路径；不能经过软链接或硬链接。root 可选 workspace/personal/project，"
+                "省略 root 时从逻辑绝对路径推断，否则必须与路径根目录一致；是否可用以本轮权限状态为准。默认使用 python3，"
                 "脚本仍复用 Shell 的沙盒、workspace/cwd、超时、输出、网络隔离和进程清理边界；"
                 "网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络）；"
                 "不要根据默认配置或脚本错误臆测当前网络状态；"

@@ -41,7 +41,7 @@ emoji: ⏰
 - 错误示例：不要传 `channels="qq"` 或 `channels={"item":"qq"}`。
 - `email` 发送到用户注册邮箱并使用 `reminder` 模板；默认 `web` 站内通知最稳。
 - 定时任务不支持工具组或上下文裁剪配置；不要传 `tool_groups` 或 `context_config`。所有任务统一使用完整工具集和完整业务上下文。需要预先授权的自动工具只通过 `authorized_tools` 设置，目前仅支持 `send_email`。
-- 定时任务需要运行用户脚本时，使用 `run_script` 并传用户明确指定的沙盒相对 `script_path`；不要在 instruction 中拼接任意 Shell 命令。任务绑定 workspace 后可运行 workspace 内脚本；personal/project 脚本需要单独开启完整用户沙箱权限。
+- 定时任务需要运行用户脚本时，使用 `run_script` 并传用户明确指定的沙盒相对或逻辑绝对 `script_path`；逻辑绝对路径只能使用 `/workspace`、`/personal`、`/project`，不要在 instruction 中拼接任意 Shell 命令。任务绑定 workspace 后可运行 workspace 内脚本；personal/project 脚本需要单独开启完整用户沙箱权限。
 - 使用 `feishu` / `qq` / `wechat` 前，先确认对应 IM 已绑定，否则不要创建一个无法投递的任务。
 - QQ 群聊中，只有明确说“发当前群 / 在群里提醒”才使用 `delivery_mode="current_group"`；明确说“私聊提醒我”才使用 `owner_private`。投递位置不明确时先询问。
 - 不要让用户或模型手填 QQ openid；系统会自动解析投递目标。

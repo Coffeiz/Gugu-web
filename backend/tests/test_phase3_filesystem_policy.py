@@ -1,6 +1,7 @@
 """PRD-SHELL-4 Phase 3：文件工具策略复用与显式脚本边界。"""
 
 import pytest
+from pathlib import PurePosixPath
 
 from app.models import ConversationSession, File, Folder, Workspace
 from app.services.filesystem_authorization import (
@@ -143,10 +144,18 @@ async def test_scheduled_task_file_policy_uses_task_subject(db, user_a):
 def test_script_path_rejects_absolute_traversal_and_platform_separators():
     from agent.tools.shell import _normalize_script_path
 
-    assert _normalize_script_path("jobs/run.py").as_posix() == "jobs/run.py"
-    for value in ("/tmp/run.py", "../run.py", "jobs/../run.py", r"jobs\\run.py", ""):
-        with pytest.raises(ValueError, match="沙盒内的相对路径"):
+    assert _normalize_script_path("jobs/run.py") == ("workspace", PurePosixPath("jobs/run.py"))
+    assert _normalize_script_path("/workspace/jobs/run.py") == (
+        "workspace", PurePosixPath("jobs/run.py"),
+    )
+    assert _normalize_script_path("/personal/F1/run.py") == (
+        "personal", PurePosixPath("F1/run.py"),
+    )
+    for value in ("/tmp/run.py", "/Users/user/run.py", "../run.py", "jobs/../run.py", r"jobs\\run.py", ""):
+        with pytest.raises(ValueError):
             _normalize_script_path(value)
+    with pytest.raises(ValueError, match="根目录必须与 root 一致"):
+        _normalize_script_path("/personal/F1/run.py", root_name="workspace")
 
 
 def test_script_file_rejects_symlink_and_hardlink(tmp_path):
@@ -157,7 +166,8 @@ def test_script_file_rejects_symlink_and_hardlink(tmp_path):
     root.mkdir()
     outside.mkdir()
     (root / "run.py").write_text("print('ok')\n", encoding="utf-8")
-    assert _validate_script_file(root, _normalize_script_path("run.py")) == root / "run.py"
+    _, relative = _normalize_script_path("run.py")
+    assert _validate_script_file(root, relative) == root / "run.py"
 
     link = root / "link.py"
     try:
@@ -166,7 +176,8 @@ def test_script_file_rejects_symlink_and_hardlink(tmp_path):
         pytest.skip("当前平台不支持文件软链接")
     (outside / "run.py").write_text("print('outside')\n", encoding="utf-8")
     with pytest.raises(ValueError, match="软链接"):
-        _validate_script_file(root, _normalize_script_path("link.py"))
+        _, relative = _normalize_script_path("link.py")
+        _validate_script_file(root, relative)
 
     hardlink = root / "hard.py"
     try:
@@ -174,4 +185,5 @@ def test_script_file_rejects_symlink_and_hardlink(tmp_path):
     except (NotImplementedError, OSError):
         pytest.skip("当前平台不支持硬链接")
     with pytest.raises(ValueError, match="硬链接"):
-        _validate_script_file(root, _normalize_script_path("hard.py"))
+        _, relative = _normalize_script_path("hard.py")
+        _validate_script_file(root, relative)
