@@ -68,6 +68,30 @@ export function useChatConversation(options: {
   ])
 
   const inputText = ref('')
+
+  // ── 输入草稿按会话保留：切走时存、切回时还原，localStorage 持久化（刷新/重开浏览器都在）。
+  // 只保正文文本；引用（inputReferences）是"引用某条消息"的临时上下文，跨会话还原反而容易误导，
+  // 发送/提交后的清空路径不受影响——空文本会顺手把该会话的草稿删掉。
+  // 挂载 watcher 在下方 sessionId 声明之后（见 _watchSessionDrafts）。
+  const CHAT_DRAFTS_KEY = 'gugu-chat-drafts'
+  const CHAT_DRAFTS_MAX = 30   // 只留最近 30 个会话的草稿，防 localStorage 无限增长
+  function _loadDrafts(): Record<string, string> {
+    try { return JSON.parse(localStorage.getItem(CHAT_DRAFTS_KEY) || '{}') || {} } catch { return {} }
+  }
+  function _saveDraft(sid: number | null, text: string) {
+    if (!sid) return   // 新对话（无 id）不落盘
+    try {
+      const drafts = _loadDrafts()
+      if (text) drafts[sid] = text
+      else delete drafts[sid]
+      const keys = Object.keys(drafts)
+      if (keys.length > CHAT_DRAFTS_MAX) {
+        for (const k of keys.slice(0, keys.length - CHAT_DRAFTS_MAX)) delete drafts[k]
+      }
+      localStorage.setItem(CHAT_DRAFTS_KEY, JSON.stringify(drafts))
+    } catch { /* 存储不可用（隐私模式/超限）时草稿功能静默降级 */ }
+  }
+
   const inputReferences = ref<ChatReference[]>([])
   const thinkingLabels = ref<string[]>([])   // 「思考中」候选文案（后台「状态命名」_thinking，可多个 | 分隔；空=三个点）
   const contextCompactingLabels = ref<string[]>([]) // 自动压缩状态文案（后台「状态命名」_context_compaction）
@@ -194,6 +218,19 @@ export function useChatConversation(options: {
   watch(sessionId, (v) => {
     if (v) { sessionStorage.setItem(SESSION_KEY, String(v)); localStorage.setItem(LAST_SESSION_KEY, String(v)) }
     else sessionStorage.removeItem(SESSION_KEY)   // 新对话只清当前标签；localStorage 留最后一段供重开接续
+  })
+
+  // 会话切换时的草稿存/取（helper 定义在 inputText 旁；这里才拿得到已初始化的 sessionId）
+  watch(sessionId, (nv, ov) => {
+    _saveDraft(ov, inputText.value)
+    inputText.value = nv ? (_loadDrafts()[String(nv)] ?? '') : ''
+  })
+  // 输入即存（防抖）：只靠切换时存会有脏条目——发送/清空后草稿表里还是旧文，
+  // 重开浏览器接续同一会话时会把已发出的内容当草稿复活。
+  let _draftTimer: ReturnType<typeof setTimeout> | null = null
+  watch(inputText, (text) => {
+    if (_draftTimer) clearTimeout(_draftTimer)
+    _draftTimer = setTimeout(() => _saveDraft(sessionId.value, text), 300)
   })
 
   // 会话内定位到某条历史消息（全局搜索跳转用）：先按 dbId 找到下标，用虚拟列表的
