@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 
@@ -131,14 +132,22 @@ async def workspace_directory_payload(db: AsyncSession, user_id, row: WorkspaceD
     }
 
 
+def _validate_workspace_display_name(name: str) -> str:
+    """显示名规范化：非空且不与系统保留根目录同名（create/rename 共用）。"""
+    normalized = name.strip()
+    if not normalized:
+        raise ValueError("Workspace 名称不能为空")
+    # 只拦显示名与系统空间同名造成的认知混淆；物理目录名按 id 生成，结构上不碰撞。
+    if _safe_name(normalized) in RESERVED_USER_ROOTS:
+        raise ValueError("Workspace 名称与系统目录冲突")
+    return normalized
+
+
 async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) -> WorkspaceDirectory:
     if get_settings().storage.backend != "local":
         raise ValueError("当前存储后端不支持本地 Workspace")
     await ensure_default_workspace_directory(db, user_id)
-    normalized = name.strip()
-    if not normalized or _safe_name(normalized) in RESERVED_USER_ROOTS:
-        # 只拦显示名与系统空间同名造成的认知混淆；物理目录名下面按 id 生成，结构上不碰撞。
-        raise ValueError("Workspace 名称与系统目录冲突")
+    normalized = _validate_workspace_display_name(name)
     existing = await db.scalar(select(WorkspaceDirectory).where(
         WorkspaceDirectory.user_id == user_id,
         WorkspaceDirectory.name == normalized,
@@ -148,7 +157,11 @@ async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) ->
         raise ValueError("Workspace 已存在")
     row = WorkspaceDirectory(user_id=user_id, name=normalized, directory_name="")
     db.add(row)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # 并发创建同名时靠 (user_id, name) 部分唯一索引兜底，冲突映射成 409。
+        raise ValueError("Workspace 已存在") from exc
     # 物理目录用不可变 id（workspace-<id>）：File.storage_key 永久引用物理路径，
     # 若按显示名建目录，rename 后所有 key 失效（download/preview 全挂）。
     # id 命名也结构性地排除了与系统保留根目录的碰撞。
@@ -166,9 +179,7 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
         raise LookupError("Workspace 不存在")
     if row.is_system:
         raise ValueError("默认 Workspace 不可重命名")
-    normalized = name.strip()
-    if not normalized:
-        raise ValueError("Workspace 名称不能为空")
+    normalized = _validate_workspace_display_name(name)
     if normalized != row.name:
         if await db.scalar(select(WorkspaceDirectory).where(
             WorkspaceDirectory.user_id == user_id,
@@ -188,7 +199,7 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
     return row
 
 
-async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: int) -> list[str]:
+async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: int) -> tuple[list[str], Path]:
     row = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
     if row is None or row.deleted_at is not None:
         raise LookupError("Workspace 不存在")
@@ -239,13 +250,11 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
         WorkspaceDirectory.id == row.id, WorkspaceDirectory.user_id == user_id,
     ).values(deleted_at=deleted_at, updated_at=deleted_at))
     await db.flush()
-    # 磁盘先原子改名成墓碑，真正的 rmtree 由 API 在 DB commit 成功后执行：
-    # 若顺序相反（先 rmtree 后 commit），commit 失败会让 DB 显示文件健在而磁盘已永久丢失。
-    tombstone: Path | None = None
-    if root.exists():
-        tombstone = root.with_name(f".{root.name}.deleted-{deleted_at.strftime('%Y%m%d%H%M%S')}-{row.id}")
-        root.rename(tombstone)
-    return terminal_ids, tombstone
+    # 磁盘操作（terminate PTY → 原子改名 → rmtree）全部由 API 层在 DB commit
+    # 成功之后执行：commit 失败时磁盘完全未动，回滚后文件仍然可用；commit 成功
+    # 后清理失败只留下可回收的 orphan 目录，不会出现"DB 说文件健在而磁盘已
+    # 消失"的破坏性状态，也不会在重试删除时遗留墓碑。
+    return terminal_ids, root
 
 
 async def scan_legacy_shell_directories(db: AsyncSession, user_id=None) -> list[WorkspaceMigrationReport]:

@@ -546,3 +546,53 @@ async def test_update_file_rejects_moving_into_deleted_folder(db, user_a, tmp_pa
     with pytest.raises(Invalid):
         await svc.update_file(user_a.id, r.file.id, display_name=None, stage_name=None,
                               folder_id=folder.id, project_id=None, folder_set=True, project_set=False)
+
+
+async def test_upload_overwrite_rejects_cross_location_target(db, user_a, tmp_path):
+    """普通上传 overwrite 目标必须同 space/project/folder/workspace 且同名同类型。
+
+    只比 workspace_directory_id 会把所有非 Workspace 文件并成一桶（None==None），
+    借 overwrite_file_id 覆盖别的项目/个人文件夹里的同名文件；契约与 copy 对齐。
+    """
+    from app.models import Project
+
+    uid = user_a.id
+    proj = Project(user_id=uid, name="项目A", color="#3366ff",
+                   start_date="2026-09-01", status="in_progress")
+    db.add(proj)
+    await db.commit()
+    proj_id = proj.id
+    svc = _svc(db, tmp_path)
+    in_project = await _create(svc, uid, "合同", "PDF", data=b"old",
+                               space="project", project_id=proj_id)
+    in_personal = await _create(svc, uid, "新文件", "PDF", data=b"new")
+    await db.commit()
+    in_project_id, in_personal_id = in_project.file.id, in_personal.file.id
+
+    # personal 上传试图借 id 覆盖项目里的「合同.pdf」：位置不同必须拒绝。
+    with pytest.raises(Invalid):
+        await svc.create_file(uid, space="personal", project_id=None, folder_id=None,
+                              stage_name="", mind_map_id=None, display_name="合同", ext="PDF",
+                              mime_type="application/pdf", data=b"evil",
+                              on_conflict="overwrite", overwrite_file_id=in_project_id)
+    await db.rollback()
+
+    # 已删除行不能作为覆盖目标。
+    target = await _create(svc, uid, "草稿", "TXT", data=b"1")
+    target_id = target.file.id
+    target.file.deleted_at = now_utc()
+    await db.commit()
+    with pytest.raises(Invalid):
+        await svc.create_file(uid, space="personal", project_id=None, folder_id=None,
+                              display_name="草稿", ext="TXT", mime_type="text/plain",
+                              data=b"2", stage_name="", mind_map_id=None,
+                              on_conflict="overwrite", overwrite_file_id=target_id)
+    await db.rollback()
+
+    # 正路：完全同位置同名同类型才允许覆盖，内容确实替换。
+    ok = await svc.create_file(uid, space="personal", project_id=None, folder_id=None,
+                               display_name="新文件", ext="PDF", mime_type="application/pdf",
+                               data=b"updated", stage_name="", mind_map_id=None,
+                               on_conflict="overwrite", overwrite_file_id=in_personal_id)
+    assert ok.was_overwrite and ok.file.id == in_personal_id
+    assert await svc.storage.get(ok.file.storage_key) == b"updated"

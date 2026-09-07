@@ -68,14 +68,15 @@ async def test_workspace_directory_crud_is_owned_and_removes_only_its_physical_r
     with pytest.raises(LookupError):
         await update_workspace_directory(db, user_b.id, row.id, name="越权")
 
-    terminal_ids, tombstone = await delete_workspace_directory(db, user_a.id, row.id)
+    terminal_ids, del_root = await delete_workspace_directory(db, user_a.id, row.id)
     await db.commit()
     assert terminal_ids == []
-    # service 只把物理目录改名成墓碑，真正 rmtree 由 API 在 DB commit 之后执行。
-    assert not root.exists()
-    assert tombstone is not None and tombstone.exists()
+    # service 只做 DB 落账，物理目录保持原样；磁盘清理由 API 在 commit、
+    # 断开活 PTY 之后做（改名墓碑 + rmtree），commit 失败时文件完整可用。
+    assert root.is_dir()
+    assert del_root == root
     import shutil
-    shutil.rmtree(tombstone)
+    shutil.rmtree(del_root)
     assert [item.name for item in await list_workspace_directories(db, user_a.id)] == ["默认工作区"]
 
     recreated = await create_workspace_directory(db, user_a.id, name="数据分析")
@@ -222,3 +223,37 @@ async def test_workspace_directory_binding_visible_to_agent_tools(db, user_a, tm
     await delete_workspace_directory(db, user_a.id, row.id)
     await db.commit()
     assert [b for b in await list_workspaces_for_management(db, user_a.id) if b.directory_id == row.id] == []
+
+
+@pytest.mark.asyncio
+async def test_workspace_directory_name_rules_shared_by_create_and_rename(db, user_a, tmp_path, monkeypatch):
+    """保留名/空名检查由 create 与 rename 共用，rename 不留绕过口。"""
+    from app.core.config import get_settings
+    from app.services.workspaces import create_workspace_directory, update_workspace_directory
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+
+    for reserved in ("个人文件", "项目文件", "workspace", "shell", "  "):
+        with pytest.raises(ValueError):
+            await create_workspace_directory(db, user_a.id, name=reserved)
+    row = await create_workspace_directory(db, user_a.id, name="合法名")
+    await db.commit()
+
+    for reserved in ("shell", "个人文件", ""):
+        with pytest.raises(ValueError):
+            await update_workspace_directory(db, user_a.id, row.id, name=reserved)
+    assert row.name == "合法名"
+
+
+@pytest.mark.asyncio
+async def test_workspace_directory_display_name_unique_at_db_level(db, user_a):
+    """directory_name 按 id 生成后，显示名唯一性由部分唯一索引兜底并发创建。"""
+    from sqlalchemy.exc import IntegrityError
+
+    db.add(WorkspaceDirectory(user_id=user_a.id, name="撞名", directory_name="workspace-901"))
+    db.add(WorkspaceDirectory(user_id=user_a.id, name="撞名", directory_name="workspace-902"))
+    with pytest.raises(IntegrityError):
+        await db.flush()
+    await db.rollback()

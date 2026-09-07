@@ -55,6 +55,25 @@ class FileOps:
         await reconcile_user_storage(self.db, user_id)
         return (await get_quota(self.db, user_id, FILE_LIBRARY)).used_bytes
 
+    @staticmethod
+    def _validate_overwrite_target(existing, *, space, project_id, folder_id,
+                                   workspace_directory_id, display_name, ext) -> None:
+        """overwrite 目标必须与本地上传/复制的落点完全同一位置且同名同类型。
+
+        只比 workspace_directory_id 会把所有非 Workspace 文件并成一桶
+        （None == None），跨项目/跨文件夹照样命中；create 与 copy 共用这同一
+        target identity 契约，并额外拒绝已删除行。
+        """
+        if not existing or existing.deleted_at:
+            raise Invalid("file.overwrite_target_not_found", "要覆盖的文件不存在")
+        if (existing.space != space
+                or existing.project_id != project_id
+                or existing.folder_id != folder_id
+                or (existing.workspace_directory_id or None) != (workspace_directory_id or None)
+                or existing.display_name != display_name
+                or existing.ext != ext):
+            raise Invalid("file.overwrite_target_invalid", "覆盖目标不在当前文件夹")
+
     async def _resolve_target(self, user_id, space, project_id, folder_id, workspace_directory_id=None, *,
                               folder_msg, project_msg="项目不存在"):
         """解析目标项目/文件夹 → (project, project_year, project_month, folder_name, folder_path)。
@@ -120,9 +139,11 @@ class FileOps:
             existing = await get_owned(self.db, File, overwrite_file_id, user_id)
             if not existing:
                 raise Invalid("file.overwrite_target_not_found", "要覆盖的文件不存在")
-            if (existing.workspace_directory_id or None) != (workspace_directory.id if workspace_directory else None):
-                # 同名同 ext 也可能属于另一个 Workspace/空间；不带目录比对会跨 Workspace 覆盖。
-                raise Invalid("file.overwrite_target_invalid", "覆盖目标不在当前文件夹")
+            self._validate_overwrite_target(
+                existing, space=space, project_id=project_id, folder_id=folder_id,
+                workspace_directory_id=workspace_directory.id if workspace_directory else None,
+                display_name=display_name, ext=ext,
+            )
             used = await self._sum_used(user_id)
             if storage_limit_bytes is not None:
                 if used - existing.size_bytes + size_bytes > storage_limit_bytes:
@@ -266,11 +287,11 @@ class FileOps:
                 raise Invalid("file.overwrite_target_not_found", "要覆盖的文件不存在")
             if existing.id == f.id:
                 return FileResult(existing, project, folder_name or None, was_overwrite=True)
-            if (existing.project_id != project_id or existing.folder_id != folder_id
-                    or existing.space != new_space
-                    or (existing.workspace_directory_id or None) != (workspace_directory_id or None)
-                    or existing.display_name != f.display_name or existing.ext != f.ext):
-                raise Invalid("file.overwrite_target_invalid", "覆盖目标不在当前文件夹")
+            self._validate_overwrite_target(
+                existing, space=new_space, project_id=project_id, folder_id=folder_id,
+                workspace_directory_id=workspace_directory.id if workspace_directory else None,
+                display_name=f.display_name, ext=f.ext,
+            )
             await self.storage.put(existing.storage_key, data, f.mime_type)
             existing.size = f.size
             existing.size_bytes = f.size_bytes

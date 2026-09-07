@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import ConversationSession, User, Workspace, WorkspaceDirectory
 from app.schemas import (
@@ -98,19 +99,26 @@ async def delete_workspace_directory_view(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
     try:
-        terminal_ids, tombstone = await delete_workspace_directory(db, user.id, directory_id)
+        terminal_ids, root = await delete_workspace_directory(db, user.id, directory_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
-    # DB 已落账才允许物理清理；commit 失败时磁盘墓碑还能改名救回。
-    if tombstone is not None:
-        shutil.rmtree(tombstone, ignore_errors=True)
+    # 顺序：DB 落账 → 断开活 PTY（可能握着挂载点）→ 原子改名 → rmtree。
+    # commit 失败时磁盘完全未动；commit 后清理失败只留下可回收 orphan。
     manager = get_pty_manager()
     for terminal_id in terminal_ids:
         if manager.get(terminal_id) is not None:
             await manager.terminate(terminal_id, force=True)
+    if root.exists():
+        tombstone = root.with_name(
+            f".{root.name}.deleted-{now_utc().strftime('%Y%m%d%H%M%S')}")
+        try:
+            root.rename(tombstone)
+            shutil.rmtree(tombstone, ignore_errors=True)
+        except OSError:
+            pass
     return {"ok": True, "workspaceDirectoryId": directory_id}
 
 

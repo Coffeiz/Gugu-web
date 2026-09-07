@@ -294,6 +294,15 @@ class WorkspaceDirectory(Base):
             postgresql_where=text("deleted_at IS NULL"),
             sqlite_where=text("deleted_at IS NULL"),
         ),
+        # 显示名唯一性也要 DB 兜底：directory_name 现在按 id 生成（workspace-<id>）
+        # 永不冲突，并发创建同名 Workspace 只能靠这条部分唯一索引拦截。
+        Index(
+            "uq_workspace_directory_display_name",
+            "user_id", "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
