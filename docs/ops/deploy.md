@@ -234,8 +234,7 @@ cd backend
 ### 3.8 Admin 初始化
 
 - Admin 后台：`http://localhost:5173/admin/login`
-- 裸机 systemd 部署没有公开默认密码；在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 后重启后端，再登录后台。
-- 一体化镜像（含默认 Compose）不同：镜像默认 `admin` / `guguadmin`（随镜像公开），登录后台后应立即修改；完全留空才会在首启自动生成随机密码。
+- 裸机 systemd 部署与一体化镜像都没有公开默认密码；一体化镜像在完全未设置 `ADMIN_PASSWORD` 时首启自动生成随机密码（写入数据卷 `.env` 并打印日志，重建容器不丢），裸机部署在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 后重启后端，再登录后台。
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
 
 ### 3.9 SearXNG 自建搜索（Compose 默认内置）

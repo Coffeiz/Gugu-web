@@ -27,7 +27,7 @@ SECRET_KEY=请替换为随机长字符串
 GUGU_DB_PASSWORD=请替换为数据库密码
 ```
 
-管理员账号和密码可以写入 `backend/.env`；都没有设置时会使用一体化镜像的默认值 `admin` / `guguadmin`（随镜像公开，**登录后台后请立即修改**）；仅在镜像 ENV 层面完全留空时才走首启自动生成随机密码：
+管理员账号和密码可以写入 `backend/.env`；不设置密码时首次启动自动生成随机密码（写入 `backend/.env` 并打印在容器日志里），镜像不内置任何公开默认密码：
 
 ```dotenv
 ADMIN_USERNAME=admin
@@ -64,7 +64,7 @@ docker run -d --name gugu \
 
 打开 <http://localhost:9595> 即可使用。
 
-**管理员默认账号 `admin`，默认密码 `guguadmin`**——该密码随镜像公开，仅供首次登录使用，**登录后台后请立即修改**；也可在启动时用 `-e ADMIN_USERNAME=... -e ADMIN_PASSWORD=...` 覆盖（留空密码则首次启动自动生成随机密码，见容器日志）。公网/局域网暴露部署务必改掉默认密码。
+**管理员密码不设默认值**：启动时不设置 `ADMIN_PASSWORD`，首次启动会自动生成随机密码写入数据卷内的 `.env`（`/data/.env`）并在容器日志打印一次（`docker logs gugu` 查看），重建容器不丢失；也可以在启动时用 `-e ADMIN_USERNAME=... -e ADMIN_PASSWORD=...` 直接指定。公网部署务必使用自己的强密码。
 
 注意事项：
 
