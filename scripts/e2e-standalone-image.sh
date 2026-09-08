@@ -65,7 +65,12 @@ check "首启自动生成管理员密码并打印日志" bash -c "[[ -n '${ADMIN
 check "生成密码持久化到 /data/.env" docker exec "$NAME" grep -q "ADMIN_PASSWORD=" /data/.env
 # 真实登录覆盖整条链路：.env 加载 → Pydantic 优先级 → Admin auth。
 check "admin + 随机密码可登录后台" admin_login "${ADMIN_PW1}"
-check "错误密码被拒绝（401/403）" bash -c "! admin_login 'wrong-password'"
+# 注意：负向断言不能包进 bash -c（子进程看不到本 shell 的 admin_login 函数，
+# command not found 被取反会假绿），直接查 HTTP 状态码。
+_WRONG_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/api/v1/admin/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"wrong-password"}')"
+check "错误密码被拒绝（401）" [ "${_WRONG_STATUS}" = "401" ]
 check "PostgreSQL 数据目录落卷" docker exec "$NAME" test -s /data/postgres/PG_VERSION
 check "BYOK 主密钥落卷" docker exec "$NAME" test -f /data/byok/.byok-master-key
 
