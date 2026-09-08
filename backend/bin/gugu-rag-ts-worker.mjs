@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
-// ts/workers/rag/src/index.ts
+// src/index.ts
 import { createHash as createHash2 } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-// ts/packages/contracts/src/rag.ts
+// ../../packages/contracts/src/rag.ts
 var RAG_WORKER_VERSION = "0.2.0";
 
-// ts/workers/rag/src/tokenizer.ts
+// src/tokenizer.ts
 import { Jieba } from "@node-rs/jieba";
 import { dict } from "@node-rs/jieba/dict.js";
 var TOKEN_RE = /[A-Za-z0-9_]+|[\u4e00-\u9fff]+/gu;
@@ -31,7 +31,7 @@ function tokenizeRaw(text) {
   return output;
 }
 
-// ts/workers/rag/src/adapters/base.ts
+// src/adapters/base.ts
 function chunkText(text, maxChars = 1400, overlap = 120) {
   const normalized = String(text || "").trim();
   if (!normalized) return [];
@@ -93,7 +93,7 @@ function validScope(scope) {
   return Boolean(scope.scope_type && scope.scope_id);
 }
 
-// ts/workers/rag/src/adapters/canvas.ts
+// src/adapters/canvas.ts
 var canvasAdapter = {
   sourceType: "canvas",
   toDocuments(records) {
@@ -127,7 +127,7 @@ var canvasAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/conversations.ts
+// src/adapters/conversations.ts
 var conversationAdapter = {
   sourceType: "conversation",
   toDocuments(records) {
@@ -156,7 +156,7 @@ var conversationAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/files.ts
+// src/adapters/files.ts
 var fileAdapter = {
   sourceType: "file",
   toDocuments(records) {
@@ -187,7 +187,7 @@ var fileAdapter = {
   }
 };
 
-// ts/workers/rag/src/index-builder.ts
+// src/index-builder.ts
 function buildGenericDocuments(records) {
   return records.flatMap((record) => {
     if (record.id === null || record.id === void 0 || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
@@ -208,7 +208,7 @@ function buildSourceDocuments(batch) {
   ];
 }
 
-// ts/workers/rag/src/service.ts
+// src/service.ts
 import { createHash } from "node:crypto";
 function compact(value) {
   return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();
@@ -456,12 +456,48 @@ function selectUnifiedRecall(candidates, options = {}) {
   };
 }
 
-// ts/workers/rag/src/index.ts
+// src/index.ts
 var VERSION = RAG_WORKER_VERSION;
 var K1 = 1.2;
 var B = 0.75;
 function tokens(value) {
   return tokenizeRaw(value);
+}
+function hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeight, rrfK) {
+  const getVector = (key) => vectors instanceof Map ? vectors.get(key) : vectors[key];
+  const vectorScores = /* @__PURE__ */ new Map();
+  for (const hit of hits) {
+    const key = String(hit.chunk_id);
+    const vector = getVector(key);
+    if (!Array.isArray(vector) || vector.length === 0) continue;
+    if (queryVector.length !== vector.length) {
+      vectorScores.set(key, 0);
+      continue;
+    }
+    let dot = 0, na = 0, nb = 0;
+    for (let index = 0; index < queryVector.length; index += 1) {
+      dot += queryVector[index] * vector[index];
+      na += queryVector[index] * queryVector[index];
+      nb += vector[index] * vector[index];
+    }
+    vectorScores.set(key, na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb)));
+  }
+  const fusedScores = /* @__PURE__ */ new Map();
+  if (vectorScores.size === 0) {
+    return { fusedScores, vectorDocCount: 0 };
+  }
+  const rrf = (rank, weight) => weight * ((rrfK + 1) / (rrfK + Math.max(1, rank)));
+  const lexicalRanks = new Map(hits.map((hit, index) => [String(hit.chunk_id), index + 1]));
+  const vectorRanked = [...vectorScores.keys()].sort((left, right) => vectorScores.get(right) - vectorScores.get(left) || (left < right ? -1 : 1));
+  const vectorRanks = new Map(vectorRanked.map((key, index) => [key, index + 1]));
+  for (const hit of hits) {
+    const key = String(hit.chunk_id);
+    let score = rrf(lexicalRanks.get(key) ?? 1, lexicalWeight);
+    const vectorRank = vectorRanks.get(key);
+    if (vectorRank !== void 0) score += rrf(vectorRank, vectorWeight);
+    fusedScores.set(key, score);
+  }
+  return { fusedScores, vectorDocCount: vectorScores.size };
 }
 function termFrequency(items) {
   const out = /* @__PURE__ */ new Map();
@@ -471,6 +507,9 @@ function termFrequency(items) {
 function makeState(indexDir2) {
   return {
     revision: "",
+    restoreError: null,
+    vectors: /* @__PURE__ */ new Map(),
+    vectorVersion: "",
     documents: [],
     documentsById: /* @__PURE__ */ new Map(),
     postings: /* @__PURE__ */ new Map(),
@@ -483,12 +522,21 @@ function makeState(indexDir2) {
 }
 async function restore(state2) {
   if (!state2.indexDir) return;
+  let raw;
   try {
-    const raw = JSON.parse(await readFile(join(state2.indexDir, "index.json"), "utf8"));
-    if (raw.version !== VERSION) return;
-    replaceInMemory(state2, raw.revision ?? "", raw.documents ?? []);
+    raw = await readFile(join(state2.indexDir, "index.json"), "utf8");
   } catch {
-    state2.revision = "";
+    return;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.version !== VERSION) {
+      state2.restoreError = "version_mismatch";
+      return;
+    }
+    replaceInMemory(state2, parsed.revision ?? "", parsed.documents ?? []);
+  } catch {
+    state2.restoreError = "corrupt";
   }
 }
 function replaceInMemory(state2, revision, documents) {
@@ -635,7 +683,143 @@ function digest2(value) {
 async function handle(state2, transient2, request) {
   if (request.op === "replace_transient") {
     replaceInMemory(transient2, request.revision ?? "", request.documents ?? []);
+    const vectors = request.vectors;
+    transient2.vectors = new Map(Object.entries(vectors ?? {}));
+    transient2.vectorVersion = String(request.vector_version ?? "");
     return { status: "ok", version: VERSION, revision: transient2.revision, document_count: transient2.documents.length };
+  }
+  if (request.op === "unified_query") {
+    const searches = Array.isArray(request.searches) ? request.searches : [];
+    const hasTransient = searches.some((item) => item.corpus === "transient");
+    if (request.revision !== state2.revision) return { status: "error", code: "revision_mismatch", message: "TS \u7EDF\u4E00\u67E5\u8BE2\u7D22\u5F15\u7248\u672C\u4E0D\u4E00\u81F4" };
+    if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient2.revision)) {
+      return { status: "error", code: "revision_mismatch", message: "TS \u7EDF\u4E00\u67E5\u8BE2\u77AC\u6001\u8BED\u6599\u7248\u672C\u4E0D\u4E00\u81F4" };
+    }
+    const terms2 = new Set(tokens(request.query));
+    const persistentScores = scoreTerms(state2, terms2);
+    const transientScores = hasTransient ? scoreTerms(transient2, terms2) : void 0;
+    const candidateLimit = Math.max(1, Math.min(Number(request.candidate_limit ?? 20), 50));
+    const sourceOrder = Array.isArray(request.source_order) ? request.source_order.map(String) : [];
+    const groupOrder = [];
+    const groups = /* @__PURE__ */ new Map();
+    for (const item of searches) {
+      const corpus = item.corpus === "transient" ? transient2 : state2;
+      const preparedScores = item.corpus === "transient" ? transientScores : persistentScores;
+      const found = search(corpus, request.query, candidateLimit, new Set(item.source_types ?? []), item.scope, preparedScores, terms2);
+      for (const hit of found.results) {
+        const source = hit.document.source_type;
+        let group = groups.get(source);
+        if (!group) {
+          group = [];
+          groups.set(source, group);
+          groupOrder.push(source);
+        }
+        if (group.some((existing) => existing.key === hit.id)) continue;
+        group.push({ key: hit.id, score: hit.score, document: hit.document });
+      }
+    }
+    const merged = /* @__PURE__ */ new Map();
+    for (const [source, group] of groups) {
+      const ordered = group.sort((left, right) => right.score - left.score || (left.key < right.key ? -1 : 1)).slice(0, candidateLimit);
+      merged.set(source, ordered);
+    }
+    const beforeMessageId = request.before_message_id;
+    if (beforeMessageId !== void 0 && beforeMessageId !== null) {
+      for (const [source, group] of merged) {
+        if (source !== "conversation") continue;
+        merged.set(source, group.filter(({ document }) => {
+          const metadata = document.metadata ?? {};
+          if (String(metadata.kind ?? "") !== "message") return true;
+          const raw = metadata.message_id;
+          const value = Number(raw);
+          return Number.isFinite(value) && value < beforeMessageId;
+        }));
+      }
+    }
+    const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
+    const memoryGroup = merged.get("memory");
+    let fusion = {
+      fusion: "bm25",
+      vector_doc_count: 0,
+      vector_version: transient2.vectorVersion,
+      fallback: "embedding_cache_unavailable"
+    };
+    if (memoryGroup && memoryGroup.length && queryVector.length && transient2.vectors.size) {
+      const lexicalWeight = Number(request.lexical_weight ?? 0.45);
+      const vectorWeight = Number(request.vector_weight ?? 0.55);
+      const rrfK = Number(request.rrf_k ?? 60);
+      const hits = memoryGroup.map((item) => ({ chunk_id: item.key }));
+      const { fusedScores, vectorDocCount } = hybridFuseScores(
+        hits,
+        queryVector,
+        transient2.vectors,
+        lexicalWeight,
+        vectorWeight,
+        rrfK
+      );
+      if (fusedScores.size) {
+        merged.set("memory", memoryGroup.map((item) => ({
+          ...item,
+          score: fusedScores.get(item.key) ?? item.score
+        })));
+        fusion = { fusion: "hybrid-rrf", vector_doc_count: vectorDocCount, vector_version: transient2.vectorVersion, fallback: null };
+      }
+    } else if (memoryGroup && memoryGroup.length && queryVector.length && !transient2.vectors.size) {
+      fusion = { fusion: "bm25", vector_doc_count: 0, vector_version: transient2.vectorVersion, fallback: "embedding_cache_unavailable" };
+    }
+    const orderedSources = [
+      ...sourceOrder.filter((source) => merged.has(source)),
+      ...groupOrder.filter((source) => !sourceOrder.includes(source))
+    ];
+    const payload = [];
+    const keysByCandidateId = /* @__PURE__ */ new Map();
+    for (const source of orderedSources) {
+      for (const item of merged.get(source)) {
+        const candidateId = `${source}:${item.key}:${payload.length}`;
+        keysByCandidateId.set(candidateId, item.key);
+        payload.push({
+          id: candidateId,
+          source_type: source,
+          raw_score: item.score,
+          fusion: "bm25",
+          fused_score: null,
+          document: { ...item.document, id: candidateId }
+        });
+      }
+    }
+    const rankOptions = request.rank ?? {};
+    const ranked = rankCandidates(request.query, payload, {
+      limit: Number(rankOptions.limit ?? 5),
+      maxChars: Number(rankOptions.max_chars ?? 3e3),
+      maxPerSource: Number(rankOptions.max_per_source ?? 3),
+      maxPerParent: Number(rankOptions.max_per_parent ?? 3),
+      excludeContentHashes: rankOptions.exclude_content_hashes ?? [],
+      selectionMode: rankOptions.selection_mode ?? "confidence"
+    });
+    const document_counts = {};
+    for (const corpus of [state2, transient2]) {
+      for (const document of corpus.documents) {
+        document_counts[document.source_type] = (document_counts[document.source_type] ?? 0) + 1;
+      }
+    }
+    const source_groups = {};
+    for (const [source, group] of merged) {
+      source_groups[source] = { candidate_count: group.length, hit_count: group.length };
+    }
+    return {
+      status: "ok",
+      version: VERSION,
+      revision: state2.revision,
+      selected: ranked.results.map((row) => ({
+        ...row,
+        document_key: keysByCandidateId.get(row.id) ?? "",
+        raw_score: Number(payload.find((candidate) => candidate.id === row.id)?.raw_score ?? 0)
+      })),
+      stats: ranked.diagnostics,
+      fusion,
+      document_counts,
+      source_groups
+    };
   }
   if (request.op === "batch_search") {
     const hasTransient = request.searches.some((item) => item.corpus === "transient");
@@ -695,24 +879,9 @@ async function handle(state2, transient2, request) {
         hits.slice(0, limit).map((hit) => ({ chunk_id: String(hit.chunk_id), score: Number(hit.score || 0) }))
       );
     }
-    const vectorScores = /* @__PURE__ */ new Map();
-    for (const hit of hits) {
-      const vector = vectors[String(hit.chunk_id)];
-      if (!Array.isArray(vector) || vector.length === 0) continue;
-      if (queryVector.length !== vector.length) {
-        vectorScores.set(String(hit.chunk_id), 0);
-        continue;
-      }
-      let dot = 0, na = 0, nb = 0;
-      for (let index = 0; index < queryVector.length; index += 1) {
-        dot += queryVector[index] * vector[index];
-        na += queryVector[index] * queryVector[index];
-        nb += vector[index] * vector[index];
-      }
-      vectorScores.set(String(hit.chunk_id), na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb)));
-    }
     const rrf = (rank, weight) => weight * ((rrfK + 1) / (rrfK + Math.max(1, rank)));
-    if (vectorScores.size === 0) {
+    const { fusedScores, vectorDocCount } = hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeight, rrfK);
+    if (fusedScores.size === 0) {
       const lexicalOnly = hits.map((hit, index) => ({
         chunk_id: String(hit.chunk_id),
         score: rrf(index + 1, lexicalWeight)
@@ -720,19 +889,19 @@ async function handle(state2, transient2, request) {
       lexicalOnly.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
       return passthrough("bm25", 0, "embedding_cache_unavailable", lexicalOnly.slice(0, limit));
     }
-    const vectorRanked = [...vectorScores.keys()].sort((left, right) => vectorScores.get(right) - vectorScores.get(left) || (left < right ? -1 : 1));
-    const vectorRanks = new Map(vectorRanked.map((key, index) => [key, index + 1]));
-    const scored = hits.map((hit, index) => {
-      const key = String(hit.chunk_id);
-      let score = rrf(index + 1, lexicalWeight);
-      const vectorRank = vectorRanks.get(key);
-      if (vectorRank !== void 0) score += rrf(vectorRank, vectorWeight);
-      return { chunk_id: key, score };
-    });
+    const scored = hits.map((hit) => ({ chunk_id: String(hit.chunk_id), score: fusedScores.get(String(hit.chunk_id)) }));
     scored.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
-    return passthrough("hybrid-rrf", vectorScores.size, null, scored.slice(0, limit));
+    return passthrough("hybrid-rrf", vectorDocCount, null, scored.slice(0, limit));
   }
-  if (request.op === "ping") return { status: "ok", version: VERSION, revision: state2.revision, document_count: state2.documents.length };
+  if (request.op === "ping") {
+    return {
+      status: "ok",
+      version: VERSION,
+      revision: state2.revision,
+      document_count: state2.documents.length,
+      restore_error: state2.restoreError
+    };
+  }
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {
     const batchKey = request.source_type === "file" ? "files" : request.source_type === "conversation" ? "conversations" : request.source_type;
@@ -746,6 +915,7 @@ async function handle(state2, transient2, request) {
   }
   if (request.op === "build_and_index") {
     const documents = buildSourceDocuments(request.batch);
+    state2.restoreError = null;
     replaceInMemory(state2, request.revision, documents);
     await persist(state2);
     return {
@@ -758,6 +928,7 @@ async function handle(state2, transient2, request) {
   }
   if (request.op === "replace") {
     replaceInMemory(state2, request.revision ?? "", request.documents ?? []);
+    state2.restoreError = null;
     await persist(state2);
     return { status: "ok", version: VERSION, revision: state2.revision, document_count: state2.documents.length };
   }
