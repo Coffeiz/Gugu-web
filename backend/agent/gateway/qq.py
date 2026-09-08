@@ -1332,10 +1332,24 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                 return False
             # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
             msg_body = {"msg_type": 7, "media": {"file_info": file_info},
-                       "msg_id": msg_id, "msg_seq": await _next_seq(msg_id)}
+                       "msg_seq": await _next_seq(msg_id)}
+            if msg_id:
+                msg_body["msg_id"] = msg_id
             if not is_img:
                 msg_body["content"] = fname
-            await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/messages", json_body=msg_body)
+            message_path = f"/v2/{target}/{openid}/messages"
+            try:
+                await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
+            except Exception as message_error:
+                # 群文件经常在模型生成期间跨过 QQ 的被动回复窗口；上传已经成功，
+                # 只去掉过期的 msg_id 重发同一个 file_info，避免重复上传和丢失附件。
+                if not (group and msg_id and _qq_msg_id_invalid(message_error)):
+                    raise
+                _log.warning("[qq] 群文件被动回复 msg_id 已失效，降级为主动消息")
+                active_body = dict(msg_body)
+                active_body.pop("msg_id", None)
+                active_body["msg_seq"] = await _next_seq(None)
+                await _qq_request(channel_id, "POST", message_path, json_body=active_body)
             return True
         except Exception as e:
             diag_log("agent.gateway.qq.send_file", e)

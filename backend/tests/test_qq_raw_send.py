@@ -277,3 +277,32 @@ async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
     assert calls[0][1]["file_data"] == "aW1hZ2UtYnl0ZXM="
     assert calls[1][0] == "/v2/groups/group-1/messages"
     assert calls[1][1]["media"] == {"file_info": "group-media-token"}
+
+
+async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((path, json_body))
+        if path.endswith("/files"):
+            return {"file_info": "group-media-token"}
+        if json_body.get("msg_id"):
+            raise qq.QQAPIError(
+                "POST", path, 400,
+                {"code": 40034031, "message": "msgid已经过期,不能回复"},
+            )
+        return {}
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    ok = await qq.send_file(
+        "group-1", b"document-bytes", "report", "pdf", "bot-1", "expired-msg", group=True,
+    )
+
+    assert ok is True
+    assert len(calls) == 3
+    assert calls[0][0] == "/v2/groups/group-1/files"
+    assert calls[1][1]["msg_id"] == "expired-msg"
+    assert "msg_id" not in calls[2][1]
+    assert calls[2][1]["media"] == {"file_info": "group-media-token"}
