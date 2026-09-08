@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 from agent.tools import files
+from agent.tools import file_transfer
 
 
 async def test_send_file_accepts_workspace_logical_path(db, user_a, tmp_path, monkeypatch):
@@ -19,7 +20,7 @@ async def test_send_file_accepts_workspace_logical_path(db, user_a, tmp_path, mo
     async def shell_root(*_args):
         return root
 
-    monkeypatch.setattr(files, "current_filesystem_policy", current_policy)
+    monkeypatch.setattr(file_transfer, "current_filesystem_policy", current_policy)
     monkeypatch.setattr("app.services.workspaces.resolve_shell_root", shell_root)
 
     async def fake_stage(user_id, name, ext, mime, data, *, kind=None, **_kwargs):
@@ -56,7 +57,7 @@ async def test_send_file_accepts_gugu_sandbox_prefix(db, user_a, tmp_path, monke
     async def shell_root(*_args):
         return root
 
-    monkeypatch.setattr(files, "current_filesystem_policy", current_policy)
+    monkeypatch.setattr(file_transfer, "current_filesystem_policy", current_policy)
     monkeypatch.setattr("app.services.workspaces.resolve_shell_root", shell_root)
 
     async def fake_stage(*_args, **_kwargs):
@@ -72,7 +73,7 @@ async def test_send_file_rejects_host_path_and_parent_escape(db, user_a, monkeyp
     async def current_policy(*_args):
         return _policy()
 
-    monkeypatch.setattr(files, "current_filesystem_policy", current_policy)
+    monkeypatch.setattr(file_transfer, "current_filesystem_policy", current_policy)
 
     host_path = await files._send_file(db, user_a.id, {"file": "/etc/passwd"})
     parent_path = await files._send_file(db, user_a.id, {"file": "/workspace/../etc/passwd"})
