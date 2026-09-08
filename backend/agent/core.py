@@ -184,7 +184,7 @@ def _goal_mode_enabled(session: Any) -> bool:
 
 
 def _unlimited_mode_enabled(session: Any) -> bool:
-    """读取仅解除单次工具调用上限的会话标记，不进入目标任务循环。"""
+    """读取会话内临时额度窗口；持久化无限开关统一由用户偏好提供。"""
     context = getattr(session, "session_context", None)
     if not isinstance(context, dict):
         return False
@@ -198,8 +198,22 @@ def _unlimited_mode_enabled(session: Any) -> bool:
                 return True
         except ValueError:
             pass
-    # 兼容旧版本把 /unlimited 错写进 goal_mode 的状态，但只在没有目标正文时视为旧无限模式。
-    return bool(context.get("unlimited_mode") or (context.get("goal_mode") and not context.get("goal_text")))
+    # 兼容早期 goal 命令留下的无正文控制状态；正式的 /unlimited 开关不再写入会话。
+    return bool(context.get("goal_mode") and not context.get("goal_text"))
+
+
+async def _user_unlimited_mode_enabled(user_id) -> bool:
+    """读取用户级无限工具调用开关，供 Web 与 IM 共用。"""
+    try:
+        from app.db import session as db_session
+        from app.services.user_preferences import get_user_unlimited_mode
+        if db_session._engine is None:
+            db_session._build_engine()
+        async with db_session._SessionLocal() as db:
+            return await get_user_unlimited_mode(db, user_id)
+    except Exception:
+        # 偏好读取失败不能阻断普通对话；会话临时额度仍由原逻辑处理。
+        return False
 
 
 def _goal_completed(text: str) -> bool:
@@ -657,7 +671,7 @@ class LLMRunner:
         from agent.tools import search as search_tools
         search_tools.reset_image_inspection_budget()
         goal_mode = _goal_mode_enabled(session)
-        unlimited_mode = _unlimited_mode_enabled(session)
+        unlimited_mode = _unlimited_mode_enabled(session) or await _user_unlimited_mode_enabled(user_id)
         if goal_mode:
             if system_text:
                 system_text = f"{system_text}{_GOAL_POLICY}"

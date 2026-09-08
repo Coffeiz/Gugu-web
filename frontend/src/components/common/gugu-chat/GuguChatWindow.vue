@@ -92,6 +92,7 @@
         :pending-att="pendingAtt" :att-uploading="attUploading"
         :recording="recording" :record-secs="recordSecs"
         :expanded="expanded" :streaming="streaming" :vw="vw"
+        :unlimited-mode="unlimitedMode" :on-toggle-unlimited="onToggleUnlimited"
         :on-remove-att="onRemoveAtt"
         :on-start-record="onStartRecord" :on-cancel-record="onCancelRecord" :on-stop-record="onStopRecord"
         :on-file-picked="onFilePicked" :on-paste="onPaste"
@@ -127,6 +128,8 @@ const props = defineProps<{
   expanded: boolean
   resizing: boolean
   streaming: boolean
+  unlimitedMode: boolean
+  onToggleUnlimited: () => void
   isChatDragging: boolean
   currentSessionTitle: string
   currentSessionWorkspaceName: string | null

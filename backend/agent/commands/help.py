@@ -9,7 +9,7 @@ COMMAND_HELP: dict[str, str] = {
     "status": "/status　查看当前任务状态；发送 /status help 查看说明",
     "compact": "/compact　整理当前会话上下文；发送 /compact help 查看说明",
     "goal": "/goal <目标>　创建目标任务；发送 /goal help 查看说明",
-    "unlimited": "/unlimited　开启或关闭当前会话的无限工具调用模式；发送 /unlimited help 查看说明",
+    "unlimited": "/unlimited　开启或关闭用户级无限工具调用模式；发送 /unlimited help 查看说明",
     "new": "/new　清空当前对话上下文并开始新对话；发送 /new help 查看说明",
     "memory": "/memory　查看咕咕记住的内容；发送 /memory help 查看说明",
     "forget": "/forget <text>　忘记匹配的记忆；发送 /forget help 查看说明",
@@ -45,7 +45,7 @@ COMMAND_DETAILS: dict[str, str] = {
     "unlimited": (
         "切换当前会话的无限工具调用模式。开启后不受普通任务的工具调用次数限制，仍保留 /stop、"
         "上下文预算和服务超时保护。\n"
-        "/unlimited　切换无限工具调用\n"
+        "/unlimited　切换用户级无限工具调用\n"
         "/unlimited on　开启无限工具调用\n"
         "/unlimited off　关闭无限工具调用\n"
         "/unlimited status　查看当前状态\n"

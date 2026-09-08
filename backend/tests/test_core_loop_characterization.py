@@ -358,13 +358,16 @@ async def test_unlimited_mode_releases_verification_budget(monkeypatch, dispatch
         msg([TX("无限模式下完成核实")]),
     ]
     patch_anthropic(monkeypatch, script)
+    async def user_unlimited(_user_id):
+        return True
+    monkeypatch.setattr("agent.core._user_unlimited_mode_enabled", user_unlimited)
 
     messages = [{"role": "user", "content": "连续调整并核实"}]
     unlimited_ai = SimpleNamespace(**AI.__dict__, context_tokens=1_000_000)
     ev, text, errors = await drain(
         make_runner(max_verify_rounds=1, max_verify_cycles=1)._run_anthropic(
             "u", "sys", messages, unlimited_ai,
-            session=SimpleNamespace(session_context={"unlimited_mode": True}),
+            session=SimpleNamespace(session_context=None),
         )
     )
 

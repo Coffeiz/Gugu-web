@@ -110,6 +110,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         shellSystemEnabled=bool(data.get("shell_system_enabled", False)),
         shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", False)),
         shellAutopilotEnabled=bool(data.get("shell_autopilot_enabled", False)),
+        unlimitedMode=bool(data.get("unlimited_mode", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
         toolInjectionMode=(
             data.get("tool_injection_mode", "full")
@@ -240,6 +241,8 @@ async def update_preferences(
         data["shell_dangerous_enabled"] = body.shellDangerousEnabled
     if body.shellAutopilotEnabled is not None:
         data["shell_autopilot_enabled"] = body.shellAutopilotEnabled
+    if body.unlimitedMode is not None:
+        data["unlimited_mode"] = body.unlimitedMode
     if body.showToolInteractions is not None:
         data["show_tool_interactions"] = body.showToolInteractions
     if body.toolInjectionMode is not None and body.toolInjectionMode in _TOOL_INJECTION_MODES:

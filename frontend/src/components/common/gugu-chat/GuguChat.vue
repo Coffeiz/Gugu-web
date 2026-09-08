@@ -51,6 +51,7 @@
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
       :streaming="streaming" :is-chat-dragging="isChatDragging"
+      :unlimited-mode="preferencesStore.unlimitedMode" :on-toggle-unlimited="toggleUnlimitedMode"
       :current-session-title="currentSessionTitle"
       :current-session-workspace-name="currentSessionWorkspaceName"
       :current-session-goal-active="currentSessionGoalActive"
@@ -116,6 +117,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
+import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
 import { prefetchGreeting } from '@/composables/shared/useGreeting'
@@ -149,6 +151,7 @@ interface QuotaInfo {
 
 const audioStore    = useAudioStore()
 const uiStore       = useUiStore()
+const preferencesStore = usePreferencesStore()
 const router        = useRouter()
 
 // 顶栏全局搜索点「对话」结果 / 笔记里点「@对话」引用卡片：打开聊天面板并切到该会话。
@@ -314,6 +317,7 @@ async function exitExpanded() {
 }
 
 onMounted(() => {
+  if (!preferencesStore.loaded) void preferencesStore.fetch()
   window.addEventListener('gugu-quota-changed', onQuotaChanged)
   window.addEventListener('beforeunload', saveProgress)
   // 小窗也需要会话权限摘要，避免只有展开聊天窗口后才知道当前 Session 的授权状态。
@@ -344,6 +348,10 @@ onMounted(() => {
     prefetchGreeting()
   }
 })
+function toggleUnlimitedMode() {
+  void preferencesStore.saveUnlimitedMode(!preferencesStore.unlimitedMode)
+}
+
 onUnmounted(() => {
   window.removeEventListener('gugu-quota-changed', onQuotaChanged)
   window.removeEventListener('beforeunload', saveProgress)
@@ -478,8 +486,18 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     if (!res.ok) {
       if (_msg.interaction) {
         _msg.interaction.submitting = false
-        _msg.interaction.resolved = false
-        _msg.interaction.selectedOptionId = null
+        // 409/404 表示服务端已经结束或消费了这次交互；此时不能恢复按钮，
+        // 否则前端会让用户重复点击一个后端已不可再次消费的 token。
+        if (res.status === 409 || res.status === 404) {
+          const body = await res.json().catch(() => ({})) as { detail?: unknown }
+          _msg.interaction.resolved = true
+          _msg.interaction.selectedOptionId = option.id
+          _msg.interaction.responseText = typeof body.detail === 'string'
+            ? body.detail
+            : t('chatUi.interactionSubmitFailed')
+        } else {
+          _chatTip(t('chatUi.interactionSubmitFailed'))
+        }
       }
       return
     }

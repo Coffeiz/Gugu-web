@@ -6020,6 +6020,8 @@ export interface components {
              * @default false
              */
             shellAutopilotEnabled: boolean;
+            /** Unlimitedmode */
+            unlimitedMode: boolean;
             /**
              * Showtoolinteractions
              * @default false
@@ -6089,6 +6091,8 @@ export interface components {
             shellDangerousEnabled?: boolean | null;
             /** Shellautopilotenabled */
             shellAutopilotEnabled?: boolean | null;
+            /** Unlimitedmode */
+            unlimitedMode?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
             /** Toolinjectionmode */
