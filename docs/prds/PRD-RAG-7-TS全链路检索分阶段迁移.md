@@ -231,7 +231,7 @@ source record 分别经 TS worker ``adapt`` op（``TsSidecarClient.adapt_records
 3+0+0+0+0+8 个 chunk 逐字段全等，含空来源边界）；``search.rag_write_shadow=true`` 已常开到
 gugu-backend/gugu-worker systemd drop-in，持续积累影子基线。回归：后端全量 2330 通过、TS 38 通过。
 
-Phase 4 第三步实施记录（2026-09-09，**默认 python 未启用**，待用户确认切换）：新增
+Phase 4 第三步实施记录（2026-09-09，**devserver 已启用 ts，生产仍 python 待决策**）：新增
 ``search.rag_write_mode: Literal["python", "ts"]``（默认 python），``ts`` 模式下
 ``rebuild_source_index``/``rebuild_knowledge_index`` 的写库产物改为 TS ``adapt_records`` 返回的
 wire 文档经 ``wire_document_to_persistent`` 回转 IndexDocument 后落 KnowledgeIndexEntry（分块事实
@@ -242,9 +242,13 @@ wire 文档经 ``wire_document_to_persistent`` 回转 IndexDocument 后落 Knowl
 python 模式行为逐位不变；ts 模式写出的 KnowledgeIndexEntry 行与 python 模式逐字段一致（等价测试
 覆盖 calendar 两活动、含 metadata/scope/content_hash/source_updated_at）；worker 不可用或投影缺陷
 显式失败经事件管线重试，不静默回退 Python；ts 模式下影子比对自动切换基线为「Python 本地投影 vs
-TS 投影」持续守卫方言漂移。回滚 = 配置切回 python，无需数据迁移。启用条件：devserver 影子基线
-观察期 mismatch=0（``rag_write_shadow`` 已常开积累）+ 用户确认。启用后按旧代码清点触发条件重新
-评估 Python 投影与 ``KnowledgeIndexEntry`` 的存留。
+TS 投影」持续守卫方言漂移。回滚 = 配置切回 python，无需数据迁移。**devserver 灰度启用（2026-09-09）**：gugu-backend/
+gugu-worker systemd drop-in ``search__rag_write_mode=ts`` 已生效；真实数据行级验证——同一用户
+六来源 4301 行 KnowledgeIndexEntry 在 python/ts 两模式重建后 sha256 摘要一致（``90a932e10f48d3b0``）。
+生产切换与 ``rag_query_mode=unified`` 灰度仍保留用户决策。最终清点（第二轮）已按触发条件执行：
+Python record 投影管线保留（影子守卫基线 + python 回退 + memory/knowledge/project 来源仍由
+Python 适配器构建）；``KnowledgeIndexEntry`` 保留（两模式下均为跨进程持久 chunk 事实源）；
+legacy 查询交付链保留（「灰度全量切 unified 且观察期通过」触发条件未达成）。
 
 ### Phase 5：统一 TS RAG 查询主链
 

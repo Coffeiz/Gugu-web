@@ -5,7 +5,6 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 
 from sqlalchemy import func, select
 
@@ -62,12 +61,6 @@ class _Entry:
     persistent_loaded: bool = False
 
 
-@dataclass
-class _SnapshotDocuments:
-    documents: list[IndexDocument]
-    last_access: float
-
-
 class KnowledgeIndexCache:
     def __init__(
         self,
@@ -81,8 +74,6 @@ class KnowledgeIndexCache:
         self.global_limit_bytes = global_limit_bytes
         self._entries: OrderedDict[tuple[str, str, str], _Entry] = OrderedDict()
         self._locks: dict[tuple[str, str, str], asyncio.Lock] = {}
-        self._snapshot_documents: dict[tuple[str, str, str], _SnapshotDocuments] = {}
-        self._snapshot_document_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
     async def get(
         self, db, owner_user_id: object, source_type: str, scope: Scope | None = None,
@@ -388,8 +379,6 @@ class KnowledgeIndexCache:
             self._dispose(entry)
         self._entries.clear()
         self._locks.clear()
-        self._snapshot_documents.clear()
-        self._snapshot_document_locks.clear()
 
     def stats(self) -> dict[str, int]:
         self._purge_expired()
@@ -468,42 +457,6 @@ class KnowledgeIndexCache:
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._dispose(entry)
-        document_expired = [
-            key for key, entry in self._snapshot_documents.items()
-            if now - entry.last_access > self.ttl_seconds
-        ]
-        for key in document_expired:
-            self._snapshot_documents.pop(key, None)
-
-    async def get_snapshot_documents(
-        self,
-        owner_user_id: object,
-        source_key: str,
-        loader: Callable[[], Awaitable[list[IndexDocument]]],
-    ) -> list[IndexDocument]:
-        """在同一 snapshot 内复用来源文档，避免索引命中前重复读取主数据。"""
-        from agent.rag.context import get_shared_index_key
-
-        shared_key = get_shared_index_key()
-        if not shared_key:
-            return await loader()
-        key = (str(owner_user_id), shared_key, source_key)
-        self._purge_expired()
-        entry = self._snapshot_documents.get(key)
-        if entry is not None:
-            entry.last_access = time.monotonic()
-            return list(entry.documents)
-        lock = self._snapshot_document_locks.setdefault(key, asyncio.Lock())
-        async with lock:
-            entry = self._snapshot_documents.get(key)
-            if entry is not None:
-                entry.last_access = time.monotonic()
-                return list(entry.documents)
-            documents = list(await loader())
-            self._snapshot_documents[key] = _SnapshotDocuments(
-                documents=documents, last_access=time.monotonic(),
-            )
-            return list(documents)
 
     @staticmethod
     def _dispose(entry: _Entry) -> None:
