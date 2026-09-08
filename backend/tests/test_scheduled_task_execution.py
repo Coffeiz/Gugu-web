@@ -16,7 +16,7 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     assert messages[0] == {"role": "system", "content": "稳定系统"}
     assert "小北的计划" in messages[1]["content"]
     assert messages[2]["role"] == "user"
-    assert "默认相处姿态" in messages[2]["content"]
+    assert "以下是仅供你内部遵循的回应规则" in messages[2]["content"]
     assert messages[3] == {"role": "user", "content": "执行任务"}
     assert sum("小北的计划" in item["content"] for item in messages) == 1
     assert messages[-1]["content"][0]["type"] == "time-context"
