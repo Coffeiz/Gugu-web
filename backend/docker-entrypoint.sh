@@ -45,6 +45,9 @@ host all all 127.0.0.1/32 trust
 host all all ::1/128 trust
 HBA
         printf "\nlisten_addresses = '127.0.0.1'\n" >> "$EMBED_DATA/postgres/postgresql.conf"
+        # 只服务本机回环 + trust 认证，无需 TLS；镜像里也删掉了 snakeoil 示例证书，
+        # 不显式关掉 Debian 默认的 ssl=on 会让 postgres 因证书缺失起不来。
+        printf "\nssl = off\n" >> "$EMBED_DATA/postgres/postgresql.conf"
     fi
     cat > "$EMBED_RUN/supervisord.conf" <<EOF
 [supervisord]
