@@ -175,6 +175,7 @@ export interface ScheduledTaskInput {
   enabled?: boolean
   event_id?: number | null
   authorized_tools?: string[]
+  email_attachment_file_ids?: number[]
   workspace_id?: number | null
 }
 export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedule_kind'> {
@@ -189,6 +190,7 @@ export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedul
   last_run_failed?: boolean
   delivery_targets?: unknown
   authorized_tools: string[]
+  email_attachment_file_ids: number[]
   filesystem_authorized: boolean
 }
 

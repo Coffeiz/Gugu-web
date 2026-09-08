@@ -16,6 +16,7 @@ from email.utils import formataddr
 
 from app.core.config import get_settings
 from .templates import EmailInlineImage, render_email
+from .attachments import EmailAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,8 @@ def _resolve_from(from_field: str, user: str) -> tuple[str, str]:
 
 
 def _build_msg(subject: str, body: str, from_name: str, from_addr: str, to_addr: str,
-               html: str | None = None, inline_images: tuple[EmailInlineImage, ...] = ()) -> EmailMessage:
+               html: str | None = None, inline_images: tuple[EmailInlineImage, ...] = (),
+               attachments: tuple[EmailAttachment, ...] = ()) -> EmailMessage:
     """构建一封邮件。EmailMessage 默认策略会自动把非 ASCII 头编成 =?utf-8?…?=。"""
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -193,6 +195,14 @@ def _build_msg(subject: str, body: str, from_name: str, from_addr: str, to_addr:
                         filename=image.filename,
                         disposition="inline",
                     )
+    for attachment in attachments:
+        maintype, _, subtype = attachment.mime_type.partition("/")
+        msg.add_attachment(
+            attachment.content,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=attachment.filename,
+        )
     return msg
 
 
@@ -216,7 +226,8 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
                            html: str | None = None, smtp_config=None,
                            template: str = "notification", title: str | None = None,
                            preheader: str | None = None, sections=None, actions=None,
-                           theme: str = "light", palette: str = "mist") -> dict:
+                           theme: str = "light", palette: str = "mist",
+                           attachments: tuple[EmailAttachment, ...] = ()) -> dict:
     """发送邮件并返回可交付状态；``sent`` 只表示 SMTP 已接受，不代表最终送达。"""
     started_at = time.monotonic()
     cfg = smtp_config or get_settings().smtp
@@ -241,7 +252,7 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
         except ValueError as exc:
             _record_email("failed", started_at, "email_template_invalid")
             return {"status": "failed", "error_code": "email_template_invalid", "message": str(exc)}
-    msg = _build_msg(subject, body, from_name, from_addr, to, html, inline_images)
+    msg = _build_msg(subject, body, from_name, from_addr, to, html, inline_images, attachments)
     try:
         _deliver(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password,
                  use_ssl=cfg.use_ssl, msg=msg)
@@ -263,12 +274,13 @@ def send_email_with_status(subject: str, body: str, *, to_addr: str | None = Non
 def send_email(subject: str, body: str, *, to_addr: str | None = None, html: str | None = None,
                smtp_config=None, template: str = "notification", title: str | None = None,
                preheader: str | None = None, sections=None, actions=None,
-               theme: str = "light", palette: str = "mist") -> bool:
+               theme: str = "light", palette: str = "mist",
+               attachments: tuple[EmailAttachment, ...] = ()) -> bool:
     """兼容旧调用方：只返回是否已被 SMTP 接受。"""
     return send_email_with_status(
         subject, body, to_addr=to_addr, html=html, smtp_config=smtp_config,
         template=template, title=title, preheader=preheader, sections=sections, actions=actions,
-        theme=theme, palette=palette,
+        theme=theme, palette=palette, attachments=attachments,
     ).get("status") == "sent"
 
 

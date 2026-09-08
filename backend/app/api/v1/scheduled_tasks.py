@@ -24,6 +24,7 @@ from app.db.session import get_db
 from app.models import FilesystemAuthorizationGrant, ScheduledTask, User
 from app.services.calendar import find_event_reminder_by_cron
 from app.services.scheduled_tasks import validate_task_workspace
+from app.services.email.attachments import EmailAttachmentError, validate_email_attachment_file_ids
 from app.core.schedule_rules import (
     ScheduleValidationError,
     is_task_ended,
@@ -98,6 +99,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "last_run_failed": bool(t.last_run_failed),   # 一次性任务触发过但没成功；前端可用来提示重试
         "delivery_targets": t.delivery_targets,
         "authorized_tools": t.authorized_tools or [],
+        "email_attachment_file_ids": t.email_attachment_file_ids or [],
         "script_authorization": t.script_authorization,
     }
 
@@ -116,6 +118,7 @@ class TaskCreate(BaseModel):
     authorized_tools: list[str] = Field(default_factory=list)
     workspace_id: int | None = None
     script_authorization: dict | None = None
+    email_attachment_file_ids: list[int] = Field(default_factory=list, max_length=5)
 
 
 class TaskUpdate(BaseModel):
@@ -131,6 +134,7 @@ class TaskUpdate(BaseModel):
     authorized_tools: list[str] | None = None
     workspace_id: int | None = None
     script_authorization: dict | None = None
+    email_attachment_file_ids: list[int] | None = Field(default=None, max_length=5)
 
 
 @router.get("")
@@ -200,6 +204,12 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
             raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
         if script_authorization["root"] in {"personal", "project"}:
             raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")
+    try:
+        email_attachment_file_ids = await validate_email_attachment_file_ids(
+            db, user.id, body.email_attachment_file_ids,
+        )
+    except EmailAttachmentError as exc:
+        raise HTTPException(400, str(exc)) from exc
     # 绑定事件校验：event_id 必须是本人的事件，防越权/挂错
     if body.event_id is not None:
         from app.models import CalendarEvent
@@ -222,6 +232,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         authorized_tools=_norm_authorized_tools(body.authorized_tools),
         workspace_id=workspace_id,
         script_authorization=script_authorization,
+        email_attachment_file_ids=email_attachment_file_ids,
     )
     from app.scheduled_tasks import owner_private_targets
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
@@ -326,6 +337,13 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
     elif "workspace_id" in body.model_fields_set and previous_workspace_id != t.workspace_id:
         # 工作区变更后原脚本路径的根已不再确定，必须重新显式绑定，不能沿用旧授权。
         t.script_authorization = None
+    if "email_attachment_file_ids" in body.model_fields_set:
+        try:
+            t.email_attachment_file_ids = await validate_email_attachment_file_ids(
+                db, user.id, body.email_attachment_file_ids,
+            )
+        except EmailAttachmentError as exc:
+            raise HTTPException(400, str(exc)) from exc
     await db.commit()
     await db.refresh(t)
     response = _to_resp(t)
