@@ -58,7 +58,8 @@ test("RAG worker 的统一 builder 可构建所有通用 source record", async (
   const result = await readResponse();
   assert.equal(result.status, "ok");
   assert.equal(result.document_count, 2);
-  assert.deepEqual((result.documents as Array<Record<string, unknown>>).map((item) => item.id), ["memory:m1:0", "knowledge:k1:0"]);
+  // 与 Python _worker_document_key 口径一致：id = source_type:document_id:chunk（document_id 已带一次 source_type 前缀）。
+  assert.deepEqual((result.documents as Array<Record<string, unknown>>).map((item) => item.id), ["memory:memory:m1:0", "knowledge:knowledge:k1:0"]);
   child.stdin.end();
   await once(child, "close");
 });

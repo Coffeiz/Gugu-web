@@ -1,8 +1,11 @@
 import type { RagDocument, RagSourceBatch, RagSourceRecord } from "../../../packages/contracts/src/rag.ts";
 import { buildDocuments } from "./adapters/base.ts";
+import { calendarAdapter, type CalendarSourceRecord } from "./adapters/calendar.ts";
 import { canvasAdapter, type CanvasSourceRecord } from "./adapters/canvas.ts";
 import { conversationAdapter, type ConversationSourceRecord } from "./adapters/conversations.ts";
 import { fileAdapter, type FileSourceRecord } from "./adapters/files.ts";
+import { noteAdapter, type NoteSourceRecord } from "./adapters/note.ts";
+import { scheduledTaskAdapter } from "./adapters/scheduled-tasks.ts";
 
 export type { RagSourceBatch } from "../../../packages/contracts/src/rag.ts";
 
@@ -19,10 +22,10 @@ export function buildSourceDocuments(batch: RagSourceBatch): RagDocument[] {
     ...buildGenericDocuments((batch.memory || []) as RagSourceRecord[]),
     ...buildGenericDocuments((batch.project || []) as RagSourceRecord[]),
     ...fileAdapter.toDocuments((batch.files || []) as FileSourceRecord[]),
-    ...buildGenericDocuments((batch.note || []) as RagSourceRecord[]),
+    ...noteAdapter.toDocuments((batch.note || []) as NoteSourceRecord[]),
     ...canvasAdapter.toDocuments((batch.canvas || []) as CanvasSourceRecord[]),
-    ...buildGenericDocuments((batch.calendar || []) as RagSourceRecord[]),
-    ...buildGenericDocuments((batch.scheduled_task || []) as RagSourceRecord[]),
+    ...calendarAdapter.toDocuments((batch.calendar || []) as unknown as Parameters<typeof calendarAdapter.toDocuments>[0]),
+    ...scheduledTaskAdapter.toDocuments((batch.scheduled_task || []) as unknown as Parameters<typeof scheduledTaskAdapter.toDocuments>[0]),
     ...conversationAdapter.toDocuments((batch.conversations || []) as ConversationSourceRecord[]),
     ...buildGenericDocuments((batch.knowledge || []) as RagSourceRecord[]),
   ];

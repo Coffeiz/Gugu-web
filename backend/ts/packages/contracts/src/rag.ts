@@ -49,6 +49,12 @@ export type RagSourceRecord = {
   document_version: string;
   updated_at?: string;
   metadata?: Record<string, string | number | boolean | null>;
+  /**
+   * 稳定版本号的输入字段（与 Python text_version 的 version_parts 对齐）；
+   * 提供时由 worker 计算与 Python text_version 逐位一致的 document_version，
+   * 缺省时直接采用 document_version 字段。
+   */
+  version_parts?: (string | number)[];
   /** 专用来源适配器可携带各自的已授权字段；worker 不把未声明字段写入索引。 */
   [key: string]: unknown;
 };

@@ -170,8 +170,8 @@ worker 融合失败回滚 Python 实现并显式记录 ``ts_hybrid_error``，不
 
 目标：将分块、source batch 投影、索引构建、patch、持久化和 revision 生命周期收口到 TS。
 
-- [ ] Python 只提交带 `source_type`、`Scope`、版本和稳定 ID 的 source batch。
-- [ ] TS 统一处理 source adapter、分块、replace、patch 和持久化索引。
+- [x] Python 只提交带 `source_type`、`Scope`、版本和稳定 ID 的 source batch。（第一步完成：record 管线投影为统一 source record，六来源方言与 TS 逐字段等价，见下方验证记录）
+- [x] TS 统一处理 source adapter、分块、replace、patch 和持久化索引。（第一步完成：适配器消费统一 record 协议，分块/replace/patch/持久化既有能力不变；shadow 投影与生产切换为第二、三步）
 - [x] 保留 Python 的业务数据读取和权限初筛；Worker 不读取数据库。
 - [x] 覆盖文件、画布、项目、Knowledge、Memory 和 Conversation 的增删改同步。
 - [x] 验证 worker 重启、revision mismatch、索引损坏、并发 patch 和冷恢复。
@@ -194,13 +194,27 @@ all@<baseline>`` 钉住 Python 侧条目且失效检查忽略 revision 变化，
 稳定（prompt cache 前提）；snapshot 换代时 worker 存活走 diff patch（不上送未变文档），进程重启走
 磁盘恢复或全量重建；Memory 瞬态语料按快照指纹驻留独立槽，不随 snapshot 复制持久索引。
 
-Phase 4 遗留（如实记录）：「Python 只提交 source batch / TS 统一处理 source adapter 与分块」的写路径
-移交未实施——worker 的统一 builder（``build_documents``/``build_and_index`` op 与九来源适配器）已就绪
-且有协议测试，但其文本组装方言与 Python ``build_source_documents`` 投影不一致（如 file 源头部字段），
-贸然切换会改写已入库 chunk 的文本与版本，破坏既有等价基线；且 KnowledgeIndexEntry 表是跨进程的
-持久 chunk 事实源，分块必须在写库前完成。移交需要「TS 适配器逐字段对齐 Python 方言 → 双实现投影
-等价测试 → shadow 投影」三步，列为后续独立阶段，不阻塞查询主链收敛（Phase 5 查询的是 worker 内
-已构建语料，与写路径方言无关）。
+Phase 4 写路径移交三步走（第一步已完成，如实记录）：「Python 只提交 source batch / TS 统一处理
+source adapter 与分块」按「① TS 适配器逐字段对齐 Python 方言 → ② 双实现投影等价测试 → ③ shadow
+投影与生产切换」推进。第一步（2026-09-09）完成：Python ``build_source_documents`` 重构为 record 纯函数
+管线（``*_record`` / ``record_text`` / ``record_metadata`` / ``record_documents``），输出统一 source record
+（``source_type``/``id``/``title``/``version_parts``/``updated_at`` + 各来源字段）；TS 六来源适配器改为消费
+同一 record 协议（files ``title``、canvas ``id``、conversations ``id``/``session_id``/``kind``），文本组装方言
+（file「文件/类型/空间/阶段」头部、canvas 五行头部、conversation「会话摘要：」前缀等）与 Python 逐字段
+一致；wire 口径对齐 ``_worker_document_key``（id 双重 source_type 前缀、parent_id 单前缀、text 三段拼接）、
+``text_version`` sha256 逐位一致（冻结值测试）与 ``validScope`` 放宽到生产现实（owner scope_id 允许为空）。
+双实现投影等价测试（真 worker ``adapt`` op vs Python ``record_documents``→``_wire_document``）锁定六来源
+在 wire 域逐字段全等（含 3000 字长文分块、空字段行省略、匿名便签回落、群 scope）。已知一次性代价：
+``version_parts`` 中 datetime 统一序列化为 isoformat（``T`` 分隔），与旧 ``str(datetime)``（空格分隔）不同，
+部署后各来源 document_version 变化会触发一轮全量重传，自限且无害。第二步 shadow 投影与第三步生产
+切换仍待实施；KnowledgeIndexEntry 表作为跨进程持久 chunk 事实源，切换前分块仍以 Python 写库为准。
+
+Phase 4 第一步验证记录（2026-09-09）：新增 ``backend/tests/test_rag_source_projection_equivalence.py``
+（5 项）以真实 worker 进程（``--experimental-strip-types`` 跑 TS 源码）执行 ``adapt`` op，与 Python
+``record_documents``→``_wire_document`` 的期望在 wire 域逐字典全等；TS 侧新增
+``test/source-adapter-equivalence.test.ts``（方言冻结：版本 sha256 冻结值、三段 text 拼接、头部组装）。
+回归：后端全量 2324 通过、TS worker 37 通过、typecheck 通过；``backend/bin/gugu-rag-ts-worker.mjs``
+制品重建并冒烟（ping + adapt 输出 wire 口径正确）。
 
 ### Phase 5：统一 TS RAG 查询主链
 

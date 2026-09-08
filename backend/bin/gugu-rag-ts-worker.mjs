@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/index.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -32,6 +32,7 @@ function tokenizeRaw(text) {
 }
 
 // src/adapters/base.ts
+import { createHash } from "node:crypto";
 function chunkText(text, maxChars = 1400, overlap = 120) {
   const normalized = String(text || "").trim();
   if (!normalized) return [];
@@ -68,20 +69,31 @@ ${piece}`.trim() : piece;
   if (buffer) output.push(buffer.trim());
   return output;
 }
+function textVersion(text, ...parts) {
+  const payload = [...parts.map((part) => String(part ?? "")), text].join("");
+  return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);
+}
 function buildDocuments(record, maxChars = 1400) {
-  const chunks = chunkText(record.content, maxChars);
+  const normalized = String(record.content || "").trim();
+  const chunks = chunkText(normalized, maxChars);
+  if (!chunks.length) return [];
   const parentId = `${record.source_type}:${record.id}`;
-  const summary = record.summary || String(record.content || "").trim().slice(0, 240);
+  const summary = record.summary || normalized.slice(0, 240);
+  const parts = record.version_parts;
+  const documentVersion = parts ? textVersion(normalized, ...parts) : record.document_version;
+  const title = record.title || "\u672A\u547D\u540D";
   return chunks.map((text, chunkIndex) => ({
-    id: `${parentId}:${chunkIndex}`,
-    text,
+    id: `${record.source_type}:${parentId}:${chunkIndex}`,
+    text: [title, summary, text].join("\n"),
+    content: text,
     source_type: record.source_type,
-    title: record.title,
+    source_id: String(record.id),
+    title,
     summary,
     ...record.scope,
     scope_type: record.scope.scope_type || "owner",
     scope_id: record.scope.scope_id || "",
-    document_version: record.document_version,
+    document_version: documentVersion,
     parent_id: parentId,
     chunk_index: chunkIndex,
     chunk_count: chunks.length,
@@ -90,36 +102,33 @@ function buildDocuments(record, maxChars = 1400) {
   }));
 }
 function validScope(scope) {
-  return Boolean(scope.scope_type && scope.scope_id);
+  if (!scope.scope_type) return false;
+  if (scope.scope_type === "group" && !scope.scope_id) return false;
+  return true;
 }
 
-// src/adapters/canvas.ts
-var canvasAdapter = {
-  sourceType: "canvas",
+// src/adapters/calendar.ts
+var calendarAdapter = {
+  sourceType: "calendar",
   toDocuments(records) {
     return records.flatMap((record) => {
-      if (record.canvas_id === null || record.canvas_id === void 0 || record.node_id === null || record.node_id === void 0 || !validScope(record.scope)) return [];
+      if (record.id === null || record.id === void 0 || !validScope(record.scope)) return [];
       const text = [
-        `\u753B\u5E03\uFF1A${record.canvas_title || "\u672A\u547D\u540D\u753B\u5E03"}`,
-        `\u8282\u70B9\uFF1A${record.node_title || "\u672A\u547D\u540D\u8282\u70B9"}`,
-        `\u7C7B\u578B\uFF1A${record.node_type}`,
-        record.group_path ? `\u5206\u7EC4\uFF1A${record.group_path}` : "",
-        record.relation_summary || "",
-        record.content || ""
+        `\u6D3B\u52A8\uFF1A${record.title}`,
+        `\u65E5\u671F\uFF1A${record.date}`,
+        `\u65F6\u95F4\uFF1A${record.time || "\u5168\u5929"}`,
+        record.description || ""
       ].filter(Boolean).join("\n");
       return buildDocuments({
-        id: `${record.canvas_id}:${record.node_id}`,
-        source_type: "canvas",
+        id: String(record.id),
+        source_type: "calendar",
         scope: record.scope,
-        title: `${record.canvas_title || "\u672A\u547D\u540D\u753B\u5E03"} \xB7 ${record.node_title || "\u672A\u547D\u540D\u8282\u70B9"}`,
+        title: record.title,
         content: text,
-        document_version: record.document_version,
-        updated_at: record.updated_at,
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
         metadata: {
-          canvas_id: String(record.canvas_id),
-          node_id: String(record.node_id),
-          node_type: record.node_type,
-          group_path: record.group_path || "",
+          event_id: String(record.id),
           project_id: record.project_id == null ? "" : String(record.project_id)
         }
       });
@@ -127,30 +136,74 @@ var canvasAdapter = {
   }
 };
 
+// src/adapters/canvas.ts
+var canvasAdapter = {
+  sourceType: "canvas",
+  toDocuments(records) {
+    return records.flatMap((record) => {
+      if (record.id === null || record.id === void 0 || record.canvas_id === null || record.canvas_id === void 0 || record.node_id === null || record.node_id === void 0 || !validScope(record.scope)) return [];
+      const text = [
+        `\u753B\u5E03\uFF1A${record.canvas_title || "\u672A\u547D\u540D\u753B\u5E03"}`,
+        `\u8282\u70B9\uFF1A${record.node_title || "\u672A\u547D\u540D\u8282\u70B9"}`,
+        `\u7C7B\u578B\uFF1A${record.node_type}`,
+        record.group_path ? `\u5206\u7EC4\uFF1A${record.group_path}` : "",
+        record.relation_summary ? `\u5173\u7CFB\uFF1A${record.relation_summary}` : "",
+        record.content || ""
+      ].filter(Boolean).join("\n");
+      return buildDocuments({
+        id: String(record.id),
+        source_type: "canvas",
+        scope: record.scope,
+        title: `${record.canvas_title || "\u672A\u547D\u540D\u753B\u5E03"} \xB7 ${record.node_title || "\u672A\u547D\u540D\u8282\u70B9"}`,
+        content: text,
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
+        updated_at: record.updated_at,
+        metadata: {
+          canvas_id: String(record.canvas_id),
+          node_id: String(record.node_id),
+          node_type: record.node_type,
+          group_path: record.group_path || "",
+          project_id: record.project_id == null ? "" : String(record.project_id),
+          relation_summary: record.relation_summary || ""
+        }
+      });
+    });
+  }
+};
+
 // src/adapters/conversations.ts
+var buildMetadata = (record) => {
+  const metadata = {
+    session_id: String(record.session_id),
+    kind: record.kind,
+    session_source: record.session_source || "",
+    session_updated_at: record.session_updated_at || ""
+  };
+  if (record.kind === "message") {
+    metadata.message_id = String(record.id);
+    metadata.role = record.role ?? "";
+  }
+  return metadata;
+};
 var conversationAdapter = {
   sourceType: "conversation",
   toDocuments(records) {
     return records.flatMap((record) => {
-      if (record.session_id === null || record.session_id === void 0 || record.message_id === null || record.message_id === void 0 || !record.content || !validScope(record.scope)) return [];
-      const text = `${record.role}\uFF1A${record.content}`;
+      if (record.id === null || record.id === void 0 || !validScope(record.scope)) return [];
+      const body = record.kind === "summary" ? record.summary ?? "" : record.content ?? "";
+      if (!body.trim()) return [];
+      if (record.kind === "message" && !record.role) return [];
       return buildDocuments({
-        id: `${record.session_id}:${record.message_id}`,
+        id: String(record.id),
         source_type: "conversation",
         scope: record.scope,
-        title: record.title || "\u672A\u547D\u540D\u5BF9\u8BDD",
-        summary: record.summary,
-        content: text,
-        document_version: record.document_version,
+        title: record.title || "\u672A\u547D\u540D",
+        content: record.kind === "summary" ? `\u4F1A\u8BDD\u6458\u8981\uFF1A${body}` : `${record.role}\uFF1A${body}`,
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
         updated_at: record.updated_at,
-        metadata: {
-          session_id: String(record.session_id),
-          message_id: String(record.message_id),
-          role: record.role,
-          platform: record.platform || "",
-          message_start: record.message_start || "",
-          message_end: record.message_end || ""
-        }
+        metadata: buildMetadata(record)
       });
     });
   }
@@ -161,26 +214,84 @@ var fileAdapter = {
   sourceType: "file",
   toDocuments(records) {
     return records.flatMap((record) => {
-      if (record.id === null || record.id === void 0 || !record.display_name || !validScope(record.scope)) return [];
+      if (record.id === null || record.id === void 0 || !validScope(record.scope)) return [];
       const text = [
-        `\u6587\u4EF6\uFF1A${record.display_name}`,
+        `\u6587\u4EF6\uFF1A${record.title}`,
         record.ext ? `\u7C7B\u578B\uFF1A${record.ext}` : "",
-        record.relative_path ? `\u76F8\u5BF9\u8DEF\u5F84\uFF1A${record.relative_path}` : "",
+        record.space ? `\u7A7A\u95F4\uFF1A${record.space}` : "",
+        record.stage_name ? `\u9636\u6BB5\uFF1A${record.stage_name}` : "",
         record.content || ""
       ].filter(Boolean).join("\n");
       return buildDocuments({
         id: String(record.id),
         source_type: "file",
         scope: record.scope,
-        title: record.display_name,
-        summary: record.summary,
+        title: record.title,
         content: text,
-        document_version: record.document_version,
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
         updated_at: record.updated_at,
         metadata: {
+          file_id: String(record.id),
           mime_type: record.mime_type || "",
           project_id: record.project_id == null ? "" : String(record.project_id),
-          folder_id: record.folder_id == null ? "" : String(record.folder_id)
+          folder_id: record.folder_id == null ? "" : String(record.folder_id),
+          space: record.space || ""
+        }
+      });
+    });
+  }
+};
+
+// src/adapters/note.ts
+var noteAdapter = {
+  sourceType: "note",
+  toDocuments(records) {
+    return records.flatMap((record) => {
+      if (record.id === null || record.id === void 0 || !validScope(record.scope)) return [];
+      const text = [
+        record.title || "",
+        record.content_plain || record.content_md || ""
+      ].filter(Boolean).join("\n");
+      return buildDocuments({
+        id: String(record.id),
+        source_type: "note",
+        scope: record.scope,
+        title: record.title || "\u4FBF\u7B7E",
+        content: text,
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
+        updated_at: record.updated_at,
+        metadata: {
+          node_id: String(record.id),
+          kind: record.kind
+        }
+      });
+    });
+  }
+};
+
+// src/adapters/scheduled-tasks.ts
+var scheduledTaskAdapter = {
+  sourceType: "scheduled_task",
+  toDocuments(records) {
+    return records.flatMap((record) => {
+      if (record.id === null || record.id === void 0 || !validScope(record.scope)) return [];
+      const text = `\u5B9A\u65F6\u4EFB\u52A1\uFF1A${record.name}
+\u8BA1\u5212\uFF1A${record.cron}
+\u72B6\u6001\uFF1A${record.enabled ? "\u542F\u7528" : "\u505C\u7528"}
+${record.payload || ""}`;
+      return buildDocuments({
+        id: String(record.id),
+        source_type: "scheduled_task",
+        scope: record.scope,
+        title: record.name,
+        content: text,
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
+        metadata: {
+          task_id: String(record.id),
+          enabled: record.enabled
         }
       });
     });
@@ -199,22 +310,22 @@ function buildSourceDocuments(batch) {
     ...buildGenericDocuments(batch.memory || []),
     ...buildGenericDocuments(batch.project || []),
     ...fileAdapter.toDocuments(batch.files || []),
-    ...buildGenericDocuments(batch.note || []),
+    ...noteAdapter.toDocuments(batch.note || []),
     ...canvasAdapter.toDocuments(batch.canvas || []),
-    ...buildGenericDocuments(batch.calendar || []),
-    ...buildGenericDocuments(batch.scheduled_task || []),
+    ...calendarAdapter.toDocuments(batch.calendar || []),
+    ...scheduledTaskAdapter.toDocuments(batch.scheduled_task || []),
     ...conversationAdapter.toDocuments(batch.conversations || []),
     ...buildGenericDocuments(batch.knowledge || [])
   ];
 }
 
 // src/service.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 function compact(value) {
   return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();
 }
 function digest(value) {
-  return createHash("sha256").update(value).digest("hex");
+  return createHash2("sha256").update(value).digest("hex");
 }
 function contentHashes(value) {
   const text = String(value || "").trim();
@@ -678,7 +789,7 @@ function search(state2, query, limit, allowedSources, scope, preparedScores, pre
   };
 }
 function digest2(value) {
-  return createHash2("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+  return createHash3("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
 async function handle(state2, transient2, request) {
   if (request.op === "replace_transient") {
