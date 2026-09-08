@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -159,8 +158,3 @@ class RecallCandidate:
         result["confidence"] = round(self.confidence, 6)
         return result
 
-
-def stable_version(*parts: object) -> str:
-    """从源内容和结构字段生成可重复的版本号。"""
-    payload = json.dumps([str(part or "") for part in parts], ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
