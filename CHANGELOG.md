@@ -5,10 +5,11 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.1.1] - 未发布
+## [1.1.2] - 2026-09-08
 
 ### 改进
 
+- **Docker 一键部署**：未设置 `SECRET_KEY` 时首次启动自动生成并持久化，`/data` 与 `/config` 自动创建或使用 Docker 卷；发布稳定版本时自动同步快速部署文档到 Docker Hub Overview。
 - **纯 Docker 单容器一键部署开箱即完整**：一体化镜像默认携带完整单容器启动契约（Uvicorn/worker/IM gateway/Nginx 全托管、内置 PostgreSQL/Redis、持久化路径收口 `/data` 与 `/config`），按文档 `docker run` 一条命令即是完整站点，删容器重建数据不丢；管理员密码不设公开默认值，首启自动生成随机密码（日志打印一次），也可显式指定。
 - **一体化镜像内置 PostgreSQL/Redis**：单容器一键部署（fnOS、群晖、`docker run`）不再需要外部数据库——镜像内置 PostgreSQL 与 Redis（仅监听容器内 127.0.0.1，supervisord 托管，数据落在 `/data` 卷），首次启动自动初始化；挂载 Docker socket 还会自动拉起内置沙盒服务。Compose 部署不受影响（显式 `GUGU_EMBEDDED_DEPS=0` 走外部服务）。
 - **部署入口端口统一 9595**：一体化镜像内 Nginx 监听端口从 8000 改为 9595（EXPOSE、健康检查跟随），镜像默认映射、Compose 宿主侧默认、`PUBLIC_APP_URL` 默认值三处一致——部署后只有 9595 一个入口，fnOS 等面板的默认映射不再与文档分叉，且避开 8000 这类易冲突端口；已部署用户显式设置过 `GUGU_HTTP_PORT`/`GUGU_PUBLIC_APP_URL` 的不受影响。

@@ -166,7 +166,7 @@ git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
 cp .env.example .env
 mkdir -p backend && touch backend/.env
-# 编辑根目录 .env，填写 SECRET_KEY、GUGU_DB_PASSWORD 和模型相关变量
+# 编辑根目录 .env，填写 GUGU_DB_PASSWORD 和模型相关变量；SECRET_KEY 留空时首次启动自动生成并持久化
 # 模型、管理员账号等应用配置也可以写入 backend/.env；未设置管理员密码时首次启动自动生成
 # 用户数据目录默认在仓库根目录 Gugu-data，Compose 首次启动会自动创建。
 # 如使用自定义绝对路径，写入 .env：GUGU_DATA_HOST_DIR=/srv/gugu-data
@@ -177,7 +177,7 @@ docker compose up -d
 
 ```dotenv
 # 根目录 .env：默认 Compose 配置
-SECRET_KEY=请替换为随机长字符串
+# SECRET_KEY 可省略；首次启动自动生成并保存到 backend/.env
 GUGU_DB_PASSWORD=请替换为数据库密码
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 

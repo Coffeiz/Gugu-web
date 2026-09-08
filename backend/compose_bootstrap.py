@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""默认 Compose 启动前检查与首次管理员账号初始化。"""
+"""默认 Compose 启动前检查与首次配置初始化。"""
 
 from __future__ import annotations
 
@@ -61,10 +61,12 @@ def validate_required_config(*, env_file: Path, data_dir: Path, host_data_dir: s
                 "或执行：export GUGU_DB_PASSWORD=\"$(openssl rand -base64 32)\""
             )
 
-    if not data_dir.is_dir():
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
         raise ComposeConfigError(
-            f"用户数据目录不存在：{data_dir}。请在宿主机执行：{_repair_command_for_data_dir(host_data_dir)}"
-        )
+            f"用户数据目录无法创建：{data_dir}。请在宿主机执行：{_repair_command_for_data_dir(host_data_dir)}"
+        ) from exc
 
     try:
         fd, probe = tempfile.mkstemp(prefix=".gugu-write-check-", dir=data_dir)
@@ -85,6 +87,49 @@ def _has_assignment(path: Path, name: str) -> bool:
         if match and match.group(1) == name:
             return True
     return False
+
+
+def _write_generated_env_value(path: Path, name: str, value: str) -> None:
+    """在锁内写入一次性生成的配置值，保留已有配置和注释。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        content = handle.read()
+        current_values = _read_env_file(path)
+        if str(current_values.get(name, "")).strip():
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return
+
+        lines = content.splitlines(keepends=True)
+        replaced = False
+        for index, line in enumerate(lines):
+            match = _ENV_ASSIGNMENT.match(line)
+            if match and match.group(1) == name:
+                newline = "\n" if line.endswith("\n") else ""
+                lines[index] = f"{name}={value}{newline}"
+                replaced = True
+                break
+
+        if replaced:
+            handle.seek(0)
+            handle.truncate()
+            handle.write("".join(lines))
+        else:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() > 0 and not content.endswith("\n"):
+                handle.write("\n")
+            handle.write(f"{name}={value}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def ensure_secret_key(*, env_file: Path, env_file_values: Mapping[str, str]) -> None:
+    """首次启动生成并持久化 SECRET_KEY；显式配置始终优先。"""
+    if _config_value("SECRET_KEY", env_file_values):
+        return
+    _write_generated_env_value(env_file, "SECRET_KEY", secrets.token_urlsafe(48))
 
 
 def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str]) -> None:
@@ -125,6 +170,8 @@ def main() -> int:
     data_dir = Path(os.environ.get("GUGU_DATA_DIR", "/data"))
     host_data_dir = os.environ.get("GUGU_DATA_HOST_DIR", "/data")
     try:
+        values = _read_env_file(env_file)
+        ensure_secret_key(env_file=env_file, env_file_values=values)
         values = validate_required_config(
             env_file=env_file,
             data_dir=data_dir,
