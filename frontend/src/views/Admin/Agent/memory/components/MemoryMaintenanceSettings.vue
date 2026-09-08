@@ -4,7 +4,6 @@
     <div class="behavior-grid">
       <div class="behavior-item"><div class="behavior-label"><span>{{ t('memorySettingsUi.system') }}</span><span class="behavior-desc">{{ t('memorySettingsUi.systemHint') }}</span></div><ToggleSwitch v-model="agentDraft.memory_enabled" :aria-label="t('memorySettingsUi.toggleSystem')" /></div>
       <div class="behavior-item"><div class="behavior-label"><span>{{ t('memorySettingsUi.reflectionThreshold') }}</span><span class="behavior-desc">{{ t('memorySettingsUi.reflectionHint') }}</span></div><input v-model.number="agentDraft.reflection_threshold" type="number" min="1" max="100" class="behavior-input" /></div>
-      <div class="behavior-item"><div class="behavior-label"><span>{{ t('memorySettingsUi.dailyRetention') }}</span><span class="behavior-desc">{{ t('memorySettingsUi.dailyHint') }}</span></div><input v-model.number="agentDraft.daily_retention_days" type="number" min="1" max="90" class="behavior-input" /></div>
     </div>
     <div class="card-actions"><span class="save-hint" :class="{ error: !!behaviorError }">{{ behaviorSaved ? t('adminAgentMemory.saved') : behaviorError }}</span><button class="btn-ghost" @click="resetBehavior">{{ t('adminAgentMemory.undo') }}</button><button class="btn-primary" :disabled="behaviorSaving" @click="saveBehavior">{{ behaviorSaving ? t('adminAgentMemory.saving') : t('adminAgentMemory.save') }}</button></div>
   </section>

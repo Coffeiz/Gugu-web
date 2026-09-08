@@ -179,7 +179,6 @@ PLACEHOLDERS = [
     {"key": "{profile}",     "desc": "咕咕对用户的稳定画像（profile.json 导出）"},
     {"key": "{preferences}", "desc": "咕咕对用户偏好的理解（preferences.md）"},
     {"key": "{memory}",      "desc": "长期认知积累（memory.md）"},
-    {"key": "{weekly}",      "desc": "本周记忆摘要"},
     {"key": "{daily}",       "desc": "近期每日记录"},
     {"key": "{projects}",    "desc": "用户当前项目列表"},
     {"key": "{calendar}",    "desc": "近期日历事件"},

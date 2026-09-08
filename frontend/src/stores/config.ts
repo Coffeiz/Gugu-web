@@ -108,8 +108,6 @@ export const useConfigStore = defineStore('config', () => {
       worker_concurrency: 16,
       conv_compress_enabled: true,
       im_progress_announce_enabled: true,
-      daily_retention_days: 14,
-      weekly_retention_weeks: 6,
     },
     quota: {
       default_token_limit_6h: null,
