@@ -44,9 +44,9 @@ docker compose up -d
 
 默认 Compose 会拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
 
-打开：<http://localhost:8000>
+打开：<http://localhost:9595>
 
-管理后台：<http://localhost:8000/admin/>
+管理后台：<http://localhost:9595/admin/>
 
 ## Compose 配置
 
@@ -70,10 +70,10 @@ GUGU_REDIS_PORT=6379
 GUGU_REDIS_PASSWORD=
 
 # Web 入口端口
-GUGU_HTTP_PORT=8000
+GUGU_HTTP_PORT=9595
 
 # 用户可访问的公开站点根地址；域名部署时改为 https://你的域名
-GUGU_PUBLIC_APP_URL=http://localhost:8000
+GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 # Shell 沙盒
 # 只有执行 `docker compose --profile sandbox up -d` 时才会启动 sandboxd
@@ -88,7 +88,7 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
 
-`GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:8000` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
+`GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:9595` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
 
 ## 启用 Shell 沙盒
 
@@ -115,7 +115,7 @@ docker compose --profile sandbox up -d
 
 ## 生产启动
 
-正式生产环境使用构建产物和统一的 `8000` 入口：
+正式生产环境使用构建产物和统一的 `9595` 入口：
 
 ```bash
 export GUGU_BACKEND_IMAGE='请填写后端镜像地址:latest'

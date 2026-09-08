@@ -1,5 +1,5 @@
 # 生产 Compose：只消费已经构建好的镜像，不挂载源码，不运行 Vite/Uvicorn reload。
-# 默认入口：http://localhost:8000；默认不启动 Shell 沙盒；使用 --profile sandbox 启用
+# 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用
 # 使用前设置 GUGU_BACKEND_IMAGE、GUGU_FRONTEND_IMAGE、GUGU_DB_PASSWORD。
 
 name: gugu-web-compose
@@ -75,7 +75,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:8000}
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
       DB__NAME: ${GUGU_DB_NAME:-gugu}
@@ -124,7 +124,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:8000}
+      PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       GUGU_LOG_FILE: /app/logs/gugu.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
@@ -350,7 +350,7 @@ services:
     logging: *json-file-logging
     image: nginx:alpine
     ports:
-      - "${GUGU_HTTP_PORT:-8000}:80"
+      - "${GUGU_HTTP_PORT:-9595}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:

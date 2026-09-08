@@ -170,17 +170,17 @@ AI__API_KEY=your-provider-api-key
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-an-admin-password
 # Public site origin used in email verification and password-reset links
-GUGU_PUBLIC_APP_URL=http://localhost:8000
+GUGU_PUBLIC_APP_URL=http://localhost:9595
 ```
 
-When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8000`.
+When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8001`.
 
 The default Compose setup pulls one application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
 
 Open:
 
-- Gugu: <http://localhost:8000>
-- Admin: <http://localhost:8000/admin/>
+- Gugu: <http://localhost:9595>
+- Admin: <http://localhost:9595/admin/>
 
 The first run initializes the database and applies migrations. If `ADMIN_PASSWORD` is omitted, a random password is generated, saved to `backend/.env`, and printed once; there is no public default admin password.
 
@@ -200,7 +200,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 Development endpoints:
 
-- Backend API docs: <http://localhost:8000/docs>
+- Backend API docs: <http://localhost:9595/docs>
 - LoopScope Collector: <http://localhost:4320>
 
 LoopScope must be opened from a logged-in Gugu `/dev` page by selecting the LoopScope entry. Opening the Collector directly will not associate the current account or show its data.
