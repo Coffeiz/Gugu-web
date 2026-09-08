@@ -132,6 +132,12 @@ EXPOSE 9595
 # 数据库。默认值与 docker-compose.yml 注入的值保持一致；SECRET_KEY / DB__PASSWORD
 # 留空，由面板或 backend/.env 填写。入口端口统一 9595：Nginx 在容器内监听 9595，
 # Uvicorn 藏在 127.0.0.1:8001 后面（GUGU_APP_PORT），对外只有 9595 一个入口。
+#
+# 单容器完整启动契约也在这里默认成立（裸 docker run = 完整应用）：
+#   GUGU_SINGLE_CONTAINER=1  入口同时托管 Uvicorn/worker/IM gateway/Nginx；
+#   持久化路径收口 /data 与 /config 两个卷（STORAGE__LOCAL_PATH、BYOK 主密钥、
+#   Admin 配置覆盖文件、sandboxd socket），删容器重建数据不丢。
+# Compose 部署显式注入同名变量（含 GUGU_EMBEDDED_DEPS=0 走外部服务），互不影响。
 ENV DB__HOST=postgres \
     DB__PORT=5432 \
     DB__NAME=gugu \
@@ -142,9 +148,21 @@ ENV DB__HOST=postgres \
     SECRET_KEY="" \
     GUGU_DB_PASSWORD="" \
     ADMIN_USERNAME=admin \
-    # 默认密码面向不懂环境变量的一键部署用户；密码随镜像公开，文档明确要求部署后立即修改，
-    # 公网部署务必显式覆盖。留空则首次启动自动生成随机密码写入 backend/.env。
-    ADMIN_PASSWORD="guguadmin" \
+    # 不写死默认密码：随镜像公开的默认口令会压过用户在 backend/.env 配置的强密码
+    # （process env 优先级高于 dotenv）。留空 = 首次启动自动生成随机密码写入
+    # backend/.env 并打印一次，公网部署用户显式覆盖即可。
+    ADMIN_PASSWORD="" \
+    GUGU_SINGLE_CONTAINER=1 \
+    GUGU_APP_PORT=8001 \
+    GUGU_ENABLE_WORKER=1 \
+    GUGU_ENABLE_GATEWAY=1 \
+    GUGU_DATA_DIR=/data \
+    # 首启自动生成的 SECRET_KEY/ADMIN_PASSWORD 写到这里，随 /data 卷持久化。
+    GUGU_ENV_FILE=/data/.env \
+    STORAGE__LOCAL_PATH=/data/users \
+    CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
+    GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
+    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
 

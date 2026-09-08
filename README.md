@@ -219,7 +219,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 开发环境还可以访问：
 
-- Backend API 文档：<http://localhost:9595/docs>
+- Backend API 文档：<http://localhost:8000/docs>
 - LoopScope Collector：<http://localhost:4320>
 
 LoopScope 需要先登录咕咕，访问咕咕的 `/dev` 页面，再点击页面里的 LoopScope 入口；这样才能带上当前账号上下文，看到自己账号的数据。直接打开 Collector 地址不会正常显示对应数据。

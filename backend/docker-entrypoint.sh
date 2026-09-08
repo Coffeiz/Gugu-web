@@ -26,9 +26,13 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     mkdir -p "$EMBED_DATA/postgres" "$EMBED_DATA/redis" /run/postgresql "$EMBED_RUN"
     chown postgres:postgres /run/postgresql "$EMBED_DATA/postgres"
     chown redis:redis "$EMBED_DATA/redis"
+    # 库名/用户名跟随 DB__NAME / DB__USER（默认 gugu）：面板暴露了这两个变量，
+    # 初始化若硬编码 gugu，用户改了变量反而会把自己配坏。
+    EMBED_DB_USER="${DB__USER:-gugu}"
+    EMBED_DB_NAME="${DB__NAME:-gugu}"
     if [ ! -s "$EMBED_DATA/postgres/PG_VERSION" ]; then
         echo "[entrypoint] 首次启动：初始化内置 PostgreSQL（数据目录 $EMBED_DATA/postgres）..."
-        su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username=gugu --encoding=UTF8"
+        su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username='$EMBED_DB_USER' --encoding=UTF8"
         cat >> "$EMBED_DATA/postgres/pg_hba.conf" <<'HBA'
 host all all 127.0.0.1/32 trust
 host all all ::1/128 trust
@@ -70,19 +74,27 @@ EOF
     echo "[entrypoint] 启动内置 PostgreSQL / Redis（supervisord 托管）..."
     supervisord -c "$EMBED_RUN/supervisord.conf"
     EMBEDDED_SUPERVISORD_PID="$(cat "$EMBED_RUN/supervisord.pid" 2>/dev/null || true)"
-    # 应用改连本机内置实例；用户显式指向外部数据库时不覆盖。
-    case "${DB__HOST:-postgres}" in postgres|127.0.0.1|localhost) export DB__HOST=127.0.0.1 ;; esac
-    case "${REDIS__HOST:-redis}" in redis|127.0.0.1|localhost) export REDIS__HOST=127.0.0.1 ;; esac
-    export DB__PORT="${DB__PORT:-5432}" DB__NAME="${DB__NAME:-gugu}" DB__USER="${DB__USER:-gugu}"
+    # 应用改连本机内置实例；用户显式指向外部数据库时不覆盖。内置 postgres/redis 固定监听
+    # 5432/6379（supervisord 配置不读 DB__PORT/REDIS__PORT），因此一旦解析为内置实例就
+    # 把端口一并钉死，避免面板里改了端口后应用去连一个并不存在的监听。
+    case "${DB__HOST:-postgres}" in
+        postgres|127.0.0.1|localhost)
+            export DB__HOST=127.0.0.1 DB__PORT=5432
+            export DB__NAME="$EMBED_DB_NAME" DB__USER="$EMBED_DB_USER"
+            ;;
+    esac
+    case "${REDIS__HOST:-redis}" in
+        redis|127.0.0.1|localhost) export REDIS__HOST=127.0.0.1 REDIS__PORT=6379 ;;
+    esac
     for _ in $(seq 1 30); do
-        if su -s /bin/bash postgres -c "$PG_BIN/pg_isready -h 127.0.0.1 -p ${DB__PORT}" >/dev/null 2>&1; then
+        if su -s /bin/bash postgres -c "$PG_BIN/pg_isready -h 127.0.0.1 -p 5432" >/dev/null 2>&1; then
             echo "[entrypoint] 内置 PostgreSQL 已就绪"
             break
         fi
         sleep 1
     done
     # 建应用库（幂等：已存在时忽略报错）。
-    su -s /bin/bash postgres -c "\"$PG_BIN/createdb\" -h 127.0.0.1 -U gugu gugu" >/dev/null 2>&1 || true
+    su -s /bin/bash postgres -c "\"$PG_BIN/createdb\" -h 127.0.0.1 -U '$EMBED_DB_USER' '$EMBED_DB_NAME'" >/dev/null 2>&1 || true
 fi
 
 DB_HOST="${DB__HOST:-postgres}"
