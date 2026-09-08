@@ -19,6 +19,22 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
                   scope_details: list[dict[str, object]] | None = None) -> None:
     """记录脱敏召回日志和 LoopScope span。"""
     scope_digest = hashlib.sha256(scope_key.encode()).hexdigest()[:12] if scope_key else ""
+    from agent.rag.observation import current_recall
+    observation = current_recall.get()
+    if observation is not None:
+        if not observation.finished:
+            observation.result = {
+                "candidate_count": candidate_count, "hit_count": hit_count,
+                "elapsed_ms": elapsed_ms, "fallback_reason": fallback_reason,
+                "engine": engine, "cache_hit": cache_hit,
+                "sidecar_reused": sidecar_reused, "cache_entries": cache_entries,
+                "cache_miss_reasons": cache_miss_reasons or [],
+                "quality": quality or {}, "stages": stages or {},
+                "source_diagnostics": source_diagnostics or {},
+                "scope_type": scope_type, "scope_digest": scope_digest,
+                "scope_details": scope_details or [], "index_version": index_version,
+            }
+        return
     # 正常召回的明细只进入 LoopScope，避免每轮把完整阶段耗时和候选统计写入主日志。
     _record_loopscope_recall(
         namespace=namespace,

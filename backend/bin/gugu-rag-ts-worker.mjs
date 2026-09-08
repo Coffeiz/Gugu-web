@@ -575,9 +575,24 @@ function matchesScope(document, scope) {
   }
   return true;
 }
-function search(state2, query, limit, allowedSources, scope) {
+function scoreTerms(state2, terms2) {
+  const scores = /* @__PURE__ */ new Map();
+  for (const term of terms2) {
+    const posting = state2.postings.get(term);
+    if (!posting) continue;
+    const idf = Math.log(1 + (state2.documents.length - posting.ids.length + 0.5) / (posting.ids.length + 0.5));
+    posting.ids.forEach((id, position) => {
+      const tf = posting.frequencies[position];
+      const length = Math.max(1, state2.lengths.get(id) ?? 0);
+      const norm = tf + K1 * (1 - B + B * length / (state2.avgLength || 1));
+      scores.set(id, (scores.get(id) ?? 0) + idf * tf * (K1 + 1) / norm);
+    });
+  }
+  return scores;
+}
+function search(state2, query, limit, allowedSources, scope, preparedScores, preparedTerms) {
   const started = performance.now();
-  const terms2 = new Set(tokens(query));
+  const terms2 = preparedTerms ?? new Set(tokens(query));
   if (!terms2.size) {
     return {
       results: [],
@@ -591,31 +606,16 @@ function search(state2, query, limit, allowedSources, scope) {
       }
     };
   }
-  const total = state2.documents.length;
   const scored = [];
   let eligibleCount = 0;
   state2.documents.forEach((document) => {
     if (allowedSources.size && !allowedSources.has(document.source_type) || !matchesScope(document, scope)) return;
     eligibleCount += 1;
   });
-  const scores = /* @__PURE__ */ new Map();
-  for (const term of terms2) {
-    const posting = state2.postings.get(term);
-    if (!posting) continue;
-    const df = posting.ids.length;
-    const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
-    posting.ids.forEach((id, position) => {
-      const document = state2.documentsById.get(id);
-      if (!document || allowedSources.size && !allowedSources.has(document.source_type) || !matchesScope(document, scope)) return;
-      const tf = posting.frequencies[position];
-      const length = Math.max(1, state2.lengths.get(id) ?? 0);
-      const norm = tf + K1 * (1 - B + B * length / (state2.avgLength || 1));
-      scores.set(id, (scores.get(id) ?? 0) + idf * tf * (K1 + 1) / norm);
-    });
-  }
+  const scores = preparedScores ?? scoreTerms(state2, terms2);
   for (const [id, score] of scores) {
     const document = state2.documentsById.get(id);
-    if (document && score > 0) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
+    if (document && score > 0 && (!allowedSources.size || allowedSources.has(document.source_type)) && matchesScope(document, scope)) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
   }
   return {
     results: scored.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id)).slice(0, Math.max(1, Math.min(limit, 50))),
@@ -632,7 +632,44 @@ function search(state2, query, limit, allowedSources, scope) {
 function digest2(value) {
   return createHash2("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
-async function handle(state2, request) {
+async function handle(state2, transient2, request) {
+  if (request.op === "replace_transient") {
+    replaceInMemory(transient2, request.revision ?? "", request.documents ?? []);
+    return { status: "ok", version: VERSION, revision: transient2.revision, document_count: transient2.documents.length };
+  }
+  if (request.op === "batch_search") {
+    const hasTransient = request.searches.some((item) => item.corpus === "transient");
+    if (request.revision !== state2.revision) return { status: "error", code: "revision_mismatch", message: "TS \u6279\u91CF\u67E5\u8BE2\u7D22\u5F15\u7248\u672C\u4E0D\u4E00\u81F4" };
+    if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient2.revision)) {
+      return { status: "error", code: "revision_mismatch", message: "TS \u6279\u91CF\u67E5\u8BE2\u77AC\u6001\u8BED\u6599\u7248\u672C\u4E0D\u4E00\u81F4" };
+    }
+    if (new Set(request.searches.map((item) => item.id)).size !== request.searches.length) {
+      return { status: "error", code: "duplicate_search_id", message: "\u6279\u91CF\u67E5\u8BE2\u6807\u8BC6\u91CD\u590D" };
+    }
+    const terms2 = new Set(tokens(request.query));
+    const persistentScores = scoreTerms(state2, terms2);
+    const transientScores = hasTransient ? scoreTerms(transient2, terms2) : void 0;
+    const document_counts = {};
+    for (const corpus of [state2, transient2]) {
+      for (const document of corpus.documents) {
+        document_counts[document.source_type] = (document_counts[document.source_type] ?? 0) + 1;
+      }
+    }
+    return {
+      status: "ok",
+      version: VERSION,
+      revision: state2.revision,
+      document_counts,
+      batches: request.searches.map((item) => {
+        const corpus = item.corpus === "transient" ? transient2 : state2;
+        const preparedScores = item.corpus === "transient" ? transientScores : persistentScores;
+        return {
+          id: item.id,
+          ...search(corpus, request.query, item.limit ?? 10, new Set(item.source_types ?? []), item.scope, preparedScores, terms2)
+        };
+      })
+    };
+  }
   if (request.op === "ping") return { status: "ok", version: VERSION, revision: state2.revision, document_count: state2.documents.length };
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {
@@ -720,13 +757,14 @@ if (args.includes("--version")) {
 }
 var indexDir = args[0];
 var state = makeState(indexDir);
+var transient = makeState();
 await restore(state);
 var input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of input) {
   if (!line.trim()) continue;
   let response;
   try {
-    response = await handle(state, JSON.parse(line));
+    response = await handle(state, transient, JSON.parse(line));
   } catch (error) {
     response = { status: "error", code: "worker_failure", message: error instanceof Error ? error.message : "worker failure" };
   }

@@ -51,6 +51,12 @@ def index_dir_for_owner(owner_user_id: object) -> str:
 
 
 SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
+# 索引构建类 op（replace/patch/build_and_index/replace_transient）的等待上限：
+# 全量语料装载远超 500ms 搜索超时，且不在用户等待路径上（ping 预热同理单独放宽）。
+BUILD_TIMEOUT_SECONDS = 30.0
+# 批量查询响应把多来源候选连同原文聚合在一条 JSONL 里，64KB 默认流上限会被
+# readline 以 "chunk is longer than limit" 打断，放宽到 32MB。
+SIDECAR_STREAM_LIMIT_BYTES = 32 * 1024 * 1024
 SIDE_CAR_REAPER_INTERVAL_SECONDS = 60
 
 
@@ -65,6 +71,11 @@ class TsSidecarClient:
         self._lock = asyncio.Lock()
         self._revision: str | None = None
         self._document_count = 0
+        # 瞬态语料（Memory 快照）驻留在 worker 内存里：记录加载时的进程代数与指纹，
+        # worker 重启后代数变化会自动重传，不依赖已失效的进程内状态。
+        self._transient_revision: str | None = None
+        self._transient_generation = -1
+        self._process_generation = 0
         self.last_search_diagnostics: dict[str, Any] = {}
         self._last_used_at = asyncio.get_running_loop().time()
         self._active_requests = 0
@@ -78,11 +89,12 @@ class TsSidecarClient:
         return self._active_requests == 0 and current - self._last_used_at >= SIDE_CAR_IDLE_TTL_SECONDS
 
     async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
+        # 索引构建不是用户等待的搜索路径，全量 replace 可能远超 500ms 搜索超时。
         result = await self._request({
             "op": "replace",
             "revision": revision or "",
             "documents": [_wire_document(document) for document in documents],
-        })
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
@@ -96,7 +108,7 @@ class TsSidecarClient:
         """在 TS worker 内完成 source projection、分块和索引更新，避免回传完整文档。"""
         return (await self._request({
             "op": "build_and_index", "revision": revision, "batch": batch,
-        })).response
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
 
     async def patch(
         self,
@@ -112,10 +124,22 @@ class TsSidecarClient:
             "base_revision": base_revision or "",
             "upserts": [_wire_document(document) for document in upserts],
             "deletes": list(deletes),
-        })
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or 0)
+
+    async def replace_transient(self, documents: list[IndexDocument], revision: str) -> None:
+        """把 Memory 快照语料装入 worker 的瞬态槽；指纹未变且进程未重启时零 IPC。"""
+        generation = self._process_generation
+        if self._transient_revision == revision and self._transient_generation == generation:
+            return
+        result = await self._request({
+            "op": "replace_transient", "revision": revision,
+            "documents": [_wire_document(document) for document in documents],
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        self._transient_revision = str(result.response.get("revision") or revision)
+        self._transient_generation = generation
 
     async def reuse_if_current(self, revision: str | None) -> bool:
         self.touch()
@@ -220,7 +244,7 @@ class TsSidecarClient:
                 process.kill()
                 await process.wait()
 
-    async def _request(self, payload: dict) -> SidecarRequestResult:
+    async def _request(self, payload: dict, *, timeout_seconds: float | None = None) -> SidecarRequestResult:
         queued_at = asyncio.get_running_loop().time()
         async with self._lock:
             request_started = asyncio.get_running_loop().time()
@@ -229,10 +253,10 @@ class TsSidecarClient:
             self._active_requests += 1
             try:
                 await self._ensure_process()
-                response = await self._request_unlocked(payload)
+                response = await self._request_unlocked(payload, timeout_seconds=timeout_seconds)
                 query_ms = int(
                     (asyncio.get_running_loop().time() - request_started) * 1000
-                ) if payload.get("op") == "search" else 0
+                ) if payload.get("op") in {"search", "batch_search"} else 0
                 return SidecarRequestResult(
                     response=response,
                     timing=SidecarRequestTiming(queue_wait_ms=queue_wait_ms, query_ms=query_ms),
@@ -254,7 +278,12 @@ class TsSidecarClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=os.environ.copy(),
+                # 批量查询的 JSONL 响应聚合多来源候选原文，单行远超默认 64KB。
+                limit=SIDECAR_STREAM_LIMIT_BYTES,
             )
+            # 新进程里瞬态语料为空：递增代数让下次 replace_transient 必然重传。
+            self._process_generation += 1
+            self._transient_revision = None
             # 原生 Jieba 首次加载词典可能超过查询超时；启动探活使用独立上限，
             # 避免 worker 已启动但被 500ms 查询超时误判为不可用。
             response = await self._request_unlocked({"op": "ping"}, timeout_seconds=5.0)
@@ -276,7 +305,9 @@ class TsSidecarClient:
                 self._process.stdout.readline(),
                 timeout=timeout_seconds if timeout_seconds is not None else _timeout_seconds(),
             )
-        except (BrokenPipeError, ConnectionError, asyncio.TimeoutError) as error:
+        except (BrokenPipeError, ConnectionError, ValueError, asyncio.TimeoutError) as error:
+            # ValueError 是 readline 的流上限保护：半行残留会让后续响应错位，
+            # 必须整条连接关闭重来，不能当作单次失败吞掉。
             await self.close()
             raise TsSidecarUnavailable("TypeScript RAG worker 请求失败") from error
         if not line:
@@ -304,6 +335,50 @@ class TsLexicalIndex:
     def document_count(self) -> int:
         """返回 TS worker 中的实际文档数；冷恢复时 Python 不必保留全量文档。"""
         return self.client._document_count if not self.documents else len(self.documents)
+
+    async def batch_search(self, query: str, searches: list[dict], extra_documents: dict[str, IndexDocument] | None = None):
+        """一次 IPC 返回逐来源候选，按每项 scope 再次校验。
+
+        searches 项可带 ``corpus: "transient"`` 指向 Memory 快照语料槽；
+        BM25 统计在 worker 内按语料槽独立计算，Memory 的候选分数与独立索引完全一致。
+        """
+        extra_documents = extra_documents or {}
+        requests = []
+        for position, item in enumerate(searches):
+            scope = item.get("scope")
+            requests.append({
+                "id": str(position), "limit": item.get("limit", 20),
+                "source_types": sorted(item.get("source_types", ())),
+                **({"corpus": "transient"} if item.get("corpus") == "transient" else {}),
+                **({"scope": {key: getattr(scope, key) for key in
+                              ("platform", "bot_id", "group_id", "scope_type", "scope_id")}}
+                   if scope is not None else {}),
+            })
+        response = await self.client._request({
+            "op": "batch_search", "revision": self.revision or "", "query": query,
+            **({"transient_revision": self.client._transient_revision or ""}
+               if any(item.get("corpus") == "transient" for item in searches) else {}),
+            "searches": requests,
+        })
+        raw_batches = response.response.get("batches", [])
+        if [batch.get("id") for batch in raw_batches] != [item["id"] for item in requests]:
+            raise TsSidecarUnavailable("TS 批量查询返回的来源标识不匹配")
+        batches = []
+        for spec, batch in zip(searches, raw_batches):
+            results = []
+            for raw in batch.get("results", []):
+                document = self.documents_by_id.get(str(raw.get("id")))
+                if document is None:
+                    document = extra_documents.get(str(raw.get("id")))
+                if document is None and isinstance(raw.get("document"), dict):
+                    document = _from_wire_document(raw["document"], self.client.owner_user_id)
+                if document is None or document.source_type not in spec["source_types"]:
+                    continue
+                if spec.get("scope") is not None and not matches_scope(document, spec["scope"]):
+                    continue
+                results.append(RecallResult(document, float(raw.get("score") or 0)))
+            batches.append((results, batch.get("diagnostics", {})))
+        return batches, response.response.get("document_counts", {}), response.timing
 
     async def search(
         self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
@@ -605,5 +680,7 @@ __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
     "rank_candidates_with_cache",
     "SIDE_CAR_IDLE_TTL_SECONDS",
+    "BUILD_TIMEOUT_SECONDS",
+    "SIDECAR_STREAM_LIMIT_BYTES",
     "get_lexical_client", "close_lexical_clients", "close_rank_clients", "index_dir_for_owner",
 ]

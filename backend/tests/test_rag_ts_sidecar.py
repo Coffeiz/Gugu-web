@@ -122,3 +122,40 @@ async def test_search_returns_request_local_timing_for_shared_client(monkeypatch
 
     assert first[1] == SidecarRequestTiming(queue_wait_ms=11, query_ms=111)
     assert second[1] == SidecarRequestTiming(queue_wait_ms=22, query_ms=222)
+
+
+@pytest.mark.asyncio
+async def test_build_ops_use_build_timeout_and_search_keeps_request_timeout(monkeypatch):
+    """replace/patch/replace_transient 走构建超时；search/batch_search 保持搜索超时。"""
+    from agent.rag import ts_sidecar as ts
+    from agent.rag.models import IndexDocument, Scope
+
+    captured: list[tuple[str, float | None]] = []
+
+    async def fake_request_unlocked(self, payload, *, timeout_seconds=None):
+        captured.append((payload["op"], timeout_seconds))
+        return {"status": "ok", "revision": payload.get("revision") or "r1",
+                "document_count": 1}
+
+    async def _none(self):
+        return None
+
+    monkeypatch.setattr(ts.TsSidecarClient, "_request_unlocked", fake_request_unlocked)
+    monkeypatch.setattr(ts.TsSidecarClient, "_ensure_process", _none)
+    client = ts.TsSidecarClient("test-owner", command="")
+    document = IndexDocument("file:1", "file", "1", Scope("test-owner"), "文件", "", "缓存", "1")
+
+    await client.replace([document], "r1")
+    await client.patch([document], [], "r2", "r1")
+    await client.replace_transient([document], "t1")
+    assert captured == [
+        ("replace", ts.BUILD_TIMEOUT_SECONDS),
+        ("patch", ts.BUILD_TIMEOUT_SECONDS),
+        ("replace_transient", ts.BUILD_TIMEOUT_SECONDS),
+    ]
+
+    captured.clear()
+    result = await client._request({"op": "search", "revision": "r1", "query": "缓存"})
+    assert result.response["status"] == "ok"
+    # 搜索类请求不显式传超时，由 _request_unlocked 内部按配置解析。
+    assert captured == [("search", None)]

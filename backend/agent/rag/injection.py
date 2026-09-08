@@ -15,12 +15,19 @@ MAX_BACKGROUND_RECALL_TASKS = 32
 _background_recall_tasks: set[asyncio.Task] = set()
 
 
+class RecallCapacityExceeded(RuntimeError):
+    """后台召回容量耗尽，与实际查询超时区分。"""
+
+
 def _drain_background_task(task: asyncio.Task) -> None:
     """消费超时后仍在后台收尾的召回任务异常，避免任务被 GC 时泄漏异常。"""
     try:
         task.result()
-    except BaseException:
+    except asyncio.CancelledError:
         pass
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.rag.background_recall", exc)
     finally:
         _background_recall_tasks.discard(task)
 
@@ -57,13 +64,13 @@ async def _search_with_timeout(search_awaitable, timeout: float):
             search_awaitable.close()
         _log.warning("自动知识召回后台任务达到上限，跳过本次查询，pending=%d",
                      len(_background_recall_tasks))
-        raise asyncio.TimeoutError
+        raise RecallCapacityExceeded
     task = asyncio.create_task(search_awaitable)
     _background_recall_tasks.add(task)
     task.add_done_callback(_drain_background_task)
     try:
         return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-    except BaseException:
+    except asyncio.TimeoutError:
         if task.done():
             _log.info("自动知识召回超时边界任务已完成，未产生后台堆积")
         else:
@@ -196,7 +203,7 @@ def _request_scopes(request) -> list[tuple[str, Any]]:
     return []
 
 
-async def build_automatic_rag_context(
+async def _build_automatic_rag_context(
     request, query: str, *, history: Iterable[Any] = (), snapshot_text: str = "",
 ) -> dict[str, Any]:
     """每条用户消息执行一次低成本 lexical 自动召回。
@@ -244,18 +251,23 @@ async def build_automatic_rag_context(
                 )
                 if not isinstance(result, dict):
                     raise TypeError("RAG 返回值不是对象")
+            except RecallCapacityExceeded:
+                return {"tail": [], "blocks": [], "scope_hits": [], "injected": False,
+                        "reason": "capacity_exceeded"}
             except asyncio.TimeoutError:
                 _log.warning("自动知识召回超时，跳过合并 scope")
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
                                    "timeout": True})
-                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
+                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False,
+                        "reason": "timeout"}
             except Exception as exc:
                 # 单一来源（例如项目索引）异常不能让群记忆/其他 scope 全部失效。
                 # 原始异常只进入受限诊断出口，普通日志只保留类型和 scope。
                 diag_log(f"agent.rag.auto_recall.{label}", exc)
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
                                    "error": type(exc).__name__})
-                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
+                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False,
+                        "reason": "internal_error"}
             selected: list[dict[str, Any]] = []
             for item in result.get("results", []):
                 item_hash = str(item.get("content_hash") or content_hash(str(item.get("text") or "")))
@@ -286,7 +298,30 @@ async def build_automatic_rag_context(
                 "injected": bool(tail)}
     except Exception as exc:
         _log.warning("自动知识召回跳过：%s", type(exc).__name__)
-        return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
+        return {"tail": [], "blocks": [], "scope_hits": [], "injected": False,
+                "reason": "internal_error"}
+
+
+async def build_automatic_rag_context(request, query: str, *, history=(), snapshot_text=""):
+    """在等待边界完成观测，保留可取消性与后台资源收尾。"""
+    from agent.rag.observation import begin_recall, current_recall
+
+    observation, token = begin_recall()
+    try:
+        result = await _build_automatic_rag_context(
+            request, query, history=history, snapshot_text=snapshot_text,
+        )
+        observation.result["scope_hits"] = result.get("scope_hits", [])
+        reason = result.get("reason", "disabled" if result.get("disabled") else "completed")
+        observation.finish(reason, injected=result["injected"],
+                           timeout_ms=AUTO_RECALL_TIMEOUT_SECONDS * 1000,
+                           pending=len(_background_recall_tasks))
+        return result
+    except BaseException as exc:
+        observation.finish("cancelled" if isinstance(exc, asyncio.CancelledError) else "internal_error")
+        raise
+    finally:
+        current_recall.reset(token)
 __all__ = [
     "build_history_message",
     "build_passive_history_message",

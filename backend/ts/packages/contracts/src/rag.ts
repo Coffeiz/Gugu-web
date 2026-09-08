@@ -153,6 +153,8 @@ export type RagRankResult = {
 };
 
 export type RagRequest =
+  | { op: "batch_search"; revision: string; query: string; transient_revision?: string; searches: Array<{ id: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; corpus?: "persistent" | "transient" }> }
+  | { op: "replace_transient"; revision: string; documents: RagDocument[] }
   | { op: "ping" }
   | { op: "tokenize"; text: string }
   | { op: "adapt"; source_type: RagSourceType | string; records: Record<string, unknown>[] }
@@ -165,6 +167,7 @@ export type RagRequest =
   | { op: "rank_candidates"; query: string; candidates: RagRankCandidate[]; limit?: number; max_chars?: number; max_per_source?: number; max_per_parent?: number; exclude_content_hashes?: string[]; selection_mode?: "confidence" | "top_k" };
 
 export type RagSuccessResponse =
+  | { status: "ok"; version: string; revision: string; batches: Array<{ id: string; results: RagSearchResult[]; diagnostics: RagSearchDiagnostics }>; document_counts: Record<string, number> }
   | { status: "ok"; version: string; revision: string; document_count: number }
   | { status: "ok"; version: string; tokens: string[] }
   | { status: "ok"; version: string; documents: RagDocument[]; document_count: number }

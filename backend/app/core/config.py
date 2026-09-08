@@ -276,6 +276,10 @@ class SearchSettings(BaseModel):
         le=365 * 24 * 3600,
         description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
     )
+    rag_query_mode: Literal["legacy", "batch", "batch_shadow"] = Field(
+        "legacy",
+        description="RAG 词法查询迁移模式：legacy 生产路径；batch 一次批量词法查询；batch_shadow 交付 legacy 结果并记录批量候选差异",
+    )
     ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
     similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
     similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")

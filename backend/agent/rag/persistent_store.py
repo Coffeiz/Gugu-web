@@ -167,6 +167,9 @@ async def search_persistent_index(
     cache_miss_reasons: set[str] = set()
     engines: set[str] = set()
     index_diagnostics: dict[str, object] = {}
+    from agent.rag.observation import progress
+    for name in types:
+        progress(name, "index_lookup")
     lookup_started = time.monotonic()
     index = await get_index_cache().get(
         db, owner_user_id, "all", scope, diagnostics=index_diagnostics,
@@ -181,6 +184,8 @@ async def search_persistent_index(
     if reason:
         cache_miss_reasons.add(str(reason))
     scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
+    for name in types:
+        progress(name, "sidecar_search", index_lookup_ms=index_lookup_ms)
     started = time.monotonic()
     timings = []
     for query_scope in scopes:
@@ -201,7 +206,10 @@ async def search_persistent_index(
         deduplicated[result.document.chunk_id] = result
     results = list(deduplicated.values())
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
+    sidecar_search_ms = int((time.monotonic() - started) * 1000)
     if diagnostics is not None:
+        for name in types:
+            progress(name, "document_count", sidecar_search_ms=sidecar_search_ms)
         counts = await count_index_entries(db, owner_user_id)
         diagnostics["document_count"] = sum(counts.get(source_type, 0) for source_type in types)
         diagnostics["engine"] = next(iter(engines)) if len(engines) == 1 else "mixed"
@@ -211,7 +219,6 @@ async def search_persistent_index(
             diagnostics["shared_index"] = True
         diagnostics["cache_miss_reasons"] = ",".join(sorted(cache_miss_reasons))
         diagnostics["cache_miss_reason"] = ",".join(sorted(cache_miss_reasons))
-        sidecar_search_ms = int((time.monotonic() - started) * 1000)
         diagnostics["index_lookup_ms"] = index_lookup_ms
         diagnostics["sidecar_search_ms"] = sidecar_search_ms
         diagnostics["sidecar_queue_wait_ms"] = sum(

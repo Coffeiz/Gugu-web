@@ -292,3 +292,84 @@ test("rank_candidates 返回跨来源 citation 和按来源诊断", () => {
   assert.equal(output.diagnostics.source_diagnostics?.file.candidate_count, 1);
   assert.equal(output.diagnostics.source_diagnostics?.canvas.accepted_count, 0);
 });
+
+function spawnWorker(t: import("node:test").TestContext) {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  t.after(() => child.kill());
+  const lines = createInterface({ input: child.stdout });
+  const pending: Array<(value: string) => void> = [];
+  const received: string[] = [];
+  lines.on("line", (line) => {
+    const waiter = pending.shift();
+    if (waiter) waiter(line); else received.push(line);
+  });
+  const request = (payload: unknown) => child.stdin.write(JSON.stringify(payload) + "\n");
+  const readResponse = async (): Promise<Record<string, unknown>> => {
+    const line = received.shift() ?? await new Promise<string>((resolveLine) => pending.push(resolveLine));
+    return JSON.parse(line) as Record<string, unknown>;
+  };
+  return { child, request, readResponse, closed: once(child, "close") };
+}
+
+test("RAG worker 的 replace_transient 与持久化索引共存且不落盘", async (t) => {
+  const { child, request, readResponse, closed } = spawnWorker(t);
+  const files = Array.from({ length: 10 }, (_, index) => ({
+    id: `f${index}`, text: "文件缓存正文", source_type: "file",
+    scope_type: "owner", scope_id: "o1", document_version: "1",
+  }));
+  request({ op: "replace", revision: "r1", documents: files });
+  assert.equal((await readResponse()).revision, "r1");
+  request({ op: "replace_transient", revision: "t1", documents: [
+    { id: "m1", text: "记忆快照正文", source_type: "memory",
+      scope_type: "owner", scope_id: "o1", document_version: "v1" },
+  ] });
+  const transient = await readResponse();
+  assert.equal(transient.status, "ok");
+  assert.equal(transient.revision, "t1");
+  assert.equal(transient.document_count, 1);
+  // ping 只报持久化索引：瞬态语料不合并、不污染持久化 revision。
+  request({ op: "ping" });
+  const ping = await readResponse();
+  assert.equal(ping.revision, "r1");
+  assert.equal(ping.document_count, 10);
+  child.stdin.end();
+  await closed;
+});
+
+test("RAG worker 的 batch_search 按语料槽独立检索并拒绝空瞬态指纹", async (t) => {
+  const { child, request, readResponse, closed } = spawnWorker(t);
+  request({ op: "replace", revision: "r1", documents: [
+    { id: "f1", text: "缓存文件正文", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
+  ] });
+  assert.equal((await readResponse()).revision, "r1");
+  request({ op: "replace_transient", revision: "t1", documents: [
+    { id: "m1", text: "缓存记忆正文", source_type: "memory", scope_type: "owner", scope_id: "o1", document_version: "v1" },
+  ] });
+  assert.equal((await readResponse()).revision, "t1");
+  // 空瞬态指纹视为语料未装载，必须拒绝。
+  request({ op: "batch_search", revision: "r1", query: "缓存", searches: [
+    { id: "m", source_types: ["memory"], corpus: "transient", limit: 5 },
+  ] });
+  const rejected = await readResponse();
+  assert.equal(rejected.status, "error");
+  assert.equal(rejected.code, "revision_mismatch");
+  // 带上指纹后一次批量查询同时取回持久化与瞬态命中。
+  request({ op: "batch_search", revision: "r1", transient_revision: "t1", query: "缓存", searches: [
+    { id: "f", source_types: ["file"], limit: 5 },
+    { id: "m", source_types: ["memory"], corpus: "transient", limit: 5 },
+  ] });
+  const result = await readResponse();
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.document_counts, { file: 1, memory: 1 });
+  const batches = result.batches as Array<Record<string, unknown>>;
+  assert.deepEqual(batches.map((item) => item.id), ["f", "m"]);
+  assert.deepEqual((batches[0].results as Array<Record<string, unknown>>).map((item) => item.id), ["f1"]);
+  assert.deepEqual((batches[1].results as Array<Record<string, unknown>>).map((item) => item.id), ["m1"]);
+  // 瞬态指纹不一致同样拒绝。
+  request({ op: "batch_search", revision: "r1", transient_revision: "t2", query: "缓存", searches: [
+    { id: "m", source_types: ["memory"], corpus: "transient", limit: 5 },
+  ] });
+  assert.equal((await readResponse()).code, "revision_mismatch");
+  child.stdin.end();
+  await closed;
+});

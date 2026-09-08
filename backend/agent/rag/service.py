@@ -97,6 +97,67 @@ async def _load_memory_documents(user_id, query_scope):
     return await MemoryAdapter(user_id).build_cached_owner_documents(scope=query_scope)
 
 
+async def _memory_recall_documents(user_id, scope, source_filter) -> tuple[list, str, int]:
+    """加载并过滤 Memory 候选文档；legacy 与 batch 共用同一语料口径。
+
+    返回 (documents, index_source, document_load_ms)：已按来源过滤、scope 过滤
+    和 snapshot 去重收口，直接可作为 worker 瞬态语料的输入。
+    """
+    import asyncio
+
+    query_scopes = normalize_memory_scopes(user_id, scope)
+    document_load_started = time.monotonic()
+    loaded = await asyncio.gather(*[
+        _load_memory_documents(user_id, query_scope)
+        for query_scope in query_scopes
+    ])
+    document_load_ms = int((time.monotonic() - document_load_started) * 1000)
+    documents = [document for docs, _ in loaded for document in docs]
+    index_source = ",".join(sorted({source for _, source in loaded}))
+    allowed_sources = {"profile", "pattern", "daily", "memory"}
+    if source_filter != "all":
+        allowed_sources &= {source_filter}
+    documents = [
+        doc for doc in documents
+        if doc.source_id in allowed_sources
+        and matches_any_scope(doc, query_scopes)
+    ]
+    snapshot_text = get_snapshot_context()
+    if snapshot_text:
+        documents = [
+            doc for doc in documents
+            if not _snapshot_covers_document(doc.content, snapshot_text)
+        ]
+    return documents, index_source, document_load_ms
+
+
+async def _memory_finalize(
+    user_id, documents, lexical, query, *, strategy, candidate_limit, search_metadata,
+):
+    """Memory 词法命中之上的 embedding/hybrid 收尾；返回 (final, fusion, fallback_reason)。"""
+    if strategy not in {"auto", "bm25", "embedding"}:
+        raise ValueError("strategy 只能是 auto、bm25 或 embedding")
+    final: list = lexical
+    fusion = "bm25"
+    fallback_reason = "embedding_disabled"
+    if not lexical:
+        fallback_reason = "lexical_empty"
+    if strategy in {"auto", "embedding"}:
+        from agent.memory import embedding
+
+        if embedding.is_enabled():
+            query_vector = await embedding.embed(query)
+            vector_map = await _load_cached_vectors(user_id, documents)
+            final, fallback_reason = hybrid_results(
+                lexical, documents, query_vector, vector_map, limit=candidate_limit
+            )
+            if fallback_reason is None:
+                fusion = "hybrid-rrf"
+        elif strategy == "embedding":
+            fallback_reason = "embedding_disabled"
+    return final, fusion, fallback_reason
+
+
 class MemoryRetriever:
     """Memory 来源的候选召回器；最终结果预算由 UnifiedRecallService 负责。"""
 
@@ -114,31 +175,9 @@ class MemoryRetriever:
         strategy: str,
         candidate_limit: int,
     ) -> RetrievalBatch:
-        query_scopes = normalize_memory_scopes(self.user_id, scope)
-        import asyncio
-        document_load_started = time.monotonic()
-        loaded = await asyncio.gather(*[
-            _load_memory_documents(self.user_id, query_scope)
-            for query_scope in query_scopes
-        ])
-        document_load_ms = int((time.monotonic() - document_load_started) * 1000)
-        documents = [document for docs, _ in loaded for document in docs]
-        index_source = ",".join(sorted({source for _, source in loaded}))
-        allowed_sources = {"profile", "pattern", "daily", "memory"}
-        if self.source_filter != "all":
-            allowed_sources &= {self.source_filter}
-        documents = [
-            doc for doc in documents
-            if doc.source_id in allowed_sources
-            and matches_any_scope(doc, query_scopes)
-        ]
-        snapshot_text = get_snapshot_context()
-        if snapshot_text:
-            documents = [
-                doc for doc in documents
-                if not _snapshot_covers_document(doc.content, snapshot_text)
-            ]
-
+        documents, index_source, document_load_ms = await _memory_recall_documents(
+            self.user_id, scope, self.source_filter,
+        )
         search_metadata: dict[str, object] = {}
         try:
             lexical = await search_documents_with_cache(
@@ -150,26 +189,11 @@ class MemoryRetriever:
             lexical = []
             search_metadata.update({"engine": "unavailable", "cache_hit": False,
                                     "fallback": "lexical_worker_unavailable"})
-        final: list[RecallResult] = lexical
-        fusion = "bm25"
-        fallback_reason = "embedding_disabled"
-        if not lexical:
-            fallback_reason = "lexical_empty"
-        if strategy in {"auto", "embedding"}:
-            from agent.memory import embedding
-
-            if embedding.is_enabled():
-                query_vector = await embedding.embed(query)
-                vector_map = await _load_cached_vectors(self.user_id, documents)
-                final, fallback_reason = hybrid_results(
-                    lexical, documents, query_vector, vector_map, limit=candidate_limit
-                )
-                if fallback_reason is None:
-                    fusion = "hybrid-rrf"
-            elif strategy == "embedding":
-                fallback_reason = "embedding_disabled"
-        if strategy not in {"auto", "bm25", "embedding"}:
-            raise ValueError("strategy 只能是 auto、bm25 或 embedding")
+        final, fusion, fallback_reason = await _memory_finalize(
+            self.user_id, documents, lexical, query,
+            strategy=strategy, candidate_limit=candidate_limit,
+            search_metadata=search_metadata,
+        )
         return RetrievalBatch(
             source_type=self.source_type,
             results=tuple(final),
@@ -561,7 +585,13 @@ async def search_knowledge(
         from app.core.config import get_settings
         enabled = set(get_settings().search.rag_auto_sources)
         retrievers = [item for item in retrievers if item.source_type in enabled]
-    service = UnifiedRecallService(UnifiedRetriever(retrievers))
+    from app.core.config import get_settings
+    from agent.rag.batch_retriever import BatchUnifiedRetriever, ShadowUnifiedRetriever
+    retriever_class = {
+        "batch": BatchUnifiedRetriever,
+        "batch_shadow": ShadowUnifiedRetriever,
+    }.get(get_settings().search.rag_query_mode, UnifiedRetriever)
+    service = UnifiedRecallService(retriever_class(retrievers))
     result = await service.search(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
         exclude_content_hashes=exclude_content_hashes,
@@ -583,6 +613,7 @@ async def search_knowledge(
         cache_miss_reasons=result.get("cache_miss_reasons"),
         stages=result.get("stage_ms"),
         sidecar_reused=result.get("sidecar_reused"),
+        source_diagnostics=result.get("source_diagnostics"),
         scope_details=result.get("scope_diagnostics"),
         quality={
             key: result.get(key)

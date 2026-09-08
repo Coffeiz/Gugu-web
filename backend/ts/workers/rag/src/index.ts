@@ -153,15 +153,33 @@ function matchesScope(document: Document, scope?: RagSearchScope): boolean {
   return true;
 }
 
+function scoreTerms(state: State, terms: Set<string>): Map<string, number> {
+  const scores = new Map<string, number>();
+  for (const term of terms) {
+    const posting = state.postings.get(term);
+    if (!posting) continue;
+    const idf = Math.log(1 + (state.documents.length - posting.ids.length + 0.5) / (posting.ids.length + 0.5));
+    posting.ids.forEach((id, position) => {
+      const tf = posting.frequencies[position];
+      const length = Math.max(1, state.lengths.get(id) ?? 0);
+      const norm = tf + K1 * (1 - B + B * length / (state.avgLength || 1));
+      scores.set(id, (scores.get(id) ?? 0) + idf * tf * (K1 + 1) / norm);
+    });
+  }
+  return scores;
+}
+
 function search(
   state: State,
   query: string,
   limit: number,
   allowedSources: Set<string>,
   scope?: RagSearchScope,
+  preparedScores?: Map<string, number>,
+  preparedTerms?: Set<string>,
 ): { results: RagSearchResult[]; diagnostics: RagSearchDiagnostics } {
   const started = performance.now();
-  const terms = new Set(tokens(query));
+  const terms = preparedTerms ?? new Set(tokens(query));
   if (!terms.size) {
     return {
       results: [],
@@ -175,31 +193,16 @@ function search(
       },
     };
   }
-  const total = state.documents.length;
   const scored: RagSearchResult[] = [];
   let eligibleCount = 0;
   state.documents.forEach((document) => {
     if ((allowedSources.size && !allowedSources.has(document.source_type)) || !matchesScope(document, scope)) return;
     eligibleCount += 1;
   });
-  const scores = new Map<string, number>();
-  for (const term of terms) {
-    const posting = state.postings.get(term);
-    if (!posting) continue;
-    const df = posting.ids.length;
-    const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
-    posting.ids.forEach((id, position) => {
-      const document = state.documentsById.get(id);
-      if (!document || (allowedSources.size && !allowedSources.has(document.source_type)) || !matchesScope(document, scope)) return;
-      const tf = posting.frequencies[position];
-      const length = Math.max(1, state.lengths.get(id) ?? 0);
-      const norm = tf + K1 * (1 - B + B * length / (state.avgLength || 1));
-      scores.set(id, (scores.get(id) ?? 0) + idf * tf * (K1 + 1) / norm);
-    });
-  }
+  const scores = preparedScores ?? scoreTerms(state, terms);
   for (const [id, score] of scores) {
     const document = state.documentsById.get(id);
-    if (document && score > 0) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
+    if (document && score > 0 && (!allowedSources.size || allowedSources.has(document.source_type)) && matchesScope(document, scope)) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
   }
   return {
     results: scored
@@ -218,7 +221,44 @@ function search(
 
 function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16); }
 
-async function handle(state: State, request: RagRequest): Promise<RagResponse> {
+async function handle(state: State, transient: State, request: RagRequest): Promise<RagResponse> {
+  if (request.op === "replace_transient") {
+    // Memory 快照语料：与持久化索引共存于同一 worker，各自保留 BM25 统计边界；
+    // 只驻内存不落盘，worker 重启后由 Python 按快照指纹重传。
+    replaceInMemory(transient, request.revision ?? "", request.documents ?? []);
+    return { status: "ok", version: VERSION, revision: transient.revision, document_count: transient.documents.length };
+  }
+  if (request.op === "batch_search") {
+    // 每个语料槽各自校验 revision：瞬态语料由 Python 在请求里带上快照指纹；
+    // 空指纹视为瞬态语料未装载（worker 重启后 Python 必须先重传再查询）。
+    const hasTransient = request.searches.some((item) => item.corpus === "transient");
+    if (request.revision !== state.revision) return { status: "error", code: "revision_mismatch", message: "TS 批量查询索引版本不一致" };
+    if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient.revision)) {
+      return { status: "error", code: "revision_mismatch", message: "TS 批量查询瞬态语料版本不一致" };
+    }
+    if (new Set(request.searches.map((item) => item.id)).size !== request.searches.length) {
+      return { status: "error", code: "duplicate_search_id", message: "批量查询标识重复" };
+    }
+    // 全语料只分词一次；BM25 统计按语料槽各自计算一次，不合并语料。
+    const terms = new Set(tokens(request.query));
+    const persistentScores = scoreTerms(state, terms);
+    const transientScores = hasTransient ? scoreTerms(transient, terms) : undefined;
+    const document_counts: Record<string, number> = {};
+    for (const corpus of [state, transient]) {
+      for (const document of corpus.documents) {
+        document_counts[document.source_type] = (document_counts[document.source_type] ?? 0) + 1;
+      }
+    }
+    return {
+      status: "ok", version: VERSION, revision: state.revision, document_counts,
+      batches: request.searches.map((item) => {
+        const corpus = item.corpus === "transient" ? transient : state;
+        const preparedScores = item.corpus === "transient" ? transientScores : persistentScores;
+        return { id: item.id,
+          ...search(corpus, request.query, item.limit ?? 10, new Set(item.source_types ?? []), item.scope, preparedScores, terms) };
+      }),
+    };
+  }
   if (request.op === "ping") return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {
@@ -305,12 +345,13 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) { console.log(`gugu-rag-ts-worker ${VERSION}`); process.exit(0); }
 const indexDir = args[0];
 const state = makeState(indexDir);
+const transient = makeState();
 await restore(state);
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of input) {
   if (!line.trim()) continue;
   let response: RagResponse;
-  try { response = await handle(state, JSON.parse(line)); }
+  try { response = await handle(state, transient, JSON.parse(line)); }
   catch (error) { response = { status: "error", code: "worker_failure", message: error instanceof Error ? error.message : "worker failure" }; }
   process.stdout.write(`${JSON.stringify(response)}\n`);
 }

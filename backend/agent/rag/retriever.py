@@ -78,9 +78,18 @@ class UnifiedRetriever:
             selected = [retriever] if retriever is not None else []
         async def run_one(retriever: SourceRetriever) -> RetrievalBatch:
             started = time.monotonic()
-            batch = await retriever.retrieve(
-                query, scope=scope, strategy=strategy, candidate_limit=candidate_limit,
-            )
+            from agent.rag.observation import progress
+            progress(retriever.source_type, "retrieving")
+            try:
+                batch = await retriever.retrieve(
+                    query, scope=scope, strategy=strategy, candidate_limit=candidate_limit,
+                )
+            except BaseException as exc:
+                progress(retriever.source_type, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
+                         error_type=type(exc).__name__)
+                raise
+            progress(retriever.source_type, "completed", metadata=dict(batch.metadata),
+                     retrieve_ms=int((time.monotonic() - started) * 1000))
             metadata = dict(batch.metadata)
             metadata["retrieve_ms"] = str(int((time.monotonic() - started) * 1000))
             return RetrievalBatch(

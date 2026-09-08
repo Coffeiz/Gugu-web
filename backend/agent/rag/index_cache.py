@@ -59,6 +59,7 @@ class _Entry:
     revision: str | None
     backend: str
     last_access: float
+    persistent_loaded: bool = False
 
 
 @dataclass
@@ -107,7 +108,7 @@ class KnowledgeIndexCache:
         )
         key = (owner_key, backend, cache_scope)
         entry = self._entries.get(key)
-        if shared_key and entry is not None and self._valid_snapshot_entry(entry, backend):
+        if shared_key and entry is not None and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend):
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
@@ -133,8 +134,14 @@ class KnowledgeIndexCache:
 
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
-            revision = baseline_revision or await self._revision(db, owner_user_id)
             entry = self._entries.get(key)
+            if shared_key and entry is not None and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend):
+                self._touch(key, entry)
+                if diagnostics is not None:
+                    diagnostics.update(cache_hit=True, shared_index=True, snapshot_reused=True,
+                                       cache_miss_reason="", document_count=_index_document_count(entry.index))
+                return entry.index
+            revision = baseline_revision or await self._revision(db, owner_user_id)
             if entry is not None and self._valid(entry, revision, backend) and not shared_key:
                 self._touch(key, entry)
                 if diagnostics is not None:
@@ -175,6 +182,7 @@ class KnowledgeIndexCache:
                 previous.update({_document_key(document): document for document in documents})
                 index_documents = list(previous.values())
                 if _documents_match(getattr(entry.index, "documents", ()), index_documents):
+                    entry.persistent_loaded = True
                     self._touch(key, entry)
                     if diagnostics is not None:
                         diagnostics["cache_hit"] = True
@@ -191,7 +199,7 @@ class KnowledgeIndexCache:
                 diagnostics["document_count"] = _index_document_count(index)
             size = estimate_index_bytes(index_documents, index)
             if size <= self.owner_limit_bytes:
-                self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
+                self._store(key, _Entry(index, size, revision, backend, time.monotonic(), persistent_loaded=True))
             else:
                 self._entries.pop(key, None)
                 self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
@@ -275,7 +283,8 @@ class KnowledgeIndexCache:
                 diagnostics["document_count"] = _index_document_count(index)
             size = estimate_index_bytes(index_documents, index)
             if size <= self.owner_limit_bytes:
-                self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
+                self._store(key, _Entry(index, size, revision, backend, time.monotonic(),
+                                        persistent_loaded=bool(entry and entry.persistent_loaded)))
             else:
                 self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
             return index
