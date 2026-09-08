@@ -862,7 +862,17 @@ async def dispatch_im_message(payload: dict):
     )
     if cmd_reply is not None and not goal_start:
         if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
-            await _send_interaction_prompts(payload, [cmd_reply.get("prompt") or {}])
+            prompt = cmd_reply.get("prompt") or {}
+            sent = await _send_interaction_prompts(payload, [prompt])
+            if not sent:
+                from app.core.redaction import diag_log_raw
+                diag_log_raw(
+                    "agent.im.command_interaction_display",
+                    f"send_failed platform={platform} chat_type={payload.get('chat_type')} "
+                    f"prompt_id={prompt.get('prompt_id')}",
+                )
+                trace.finish_run("error", "命令交互提示发送失败")
+                return None
             trace.finish_run("success", "已发送命令确认交互")
             return None
         await send_text(payload, cmd_reply)
@@ -959,11 +969,21 @@ async def dispatch_im_message(payload: dict):
         # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
         await stop_im_typing(activity)
         try:
-            await _send_interaction_prompts(payload, [interaction])
+            sent = await _send_interaction_prompts(payload, [interaction])
         except Exception as exc:
             # 平台展示失败不能取消当前 Run；网页仍可从 active prompt 恢复交互。
             from app.core.redaction import diag_log
             diag_log("agent.im.interaction_display", exc)
+            return
+        if not sent:
+            # 交互发送失败时不能记为已展示，否则 run 会继续等待一个用户根本看不到的提示，
+            # 且收尾阶段也不会再次尝试发送。
+            from app.core.redaction import diag_log_raw
+            diag_log_raw(
+                "agent.im.interaction_display",
+                f"send_failed platform={payload.get('platform')} "
+                f"chat_type={payload.get('chat_type')} prompt_id={interaction.get('prompt_id')}",
+            )
             return
         prompt_id = interaction.get("prompt_id")
         if prompt_id is not None:
@@ -1088,7 +1108,14 @@ async def dispatch_im_message(payload: dict):
             if item.get("prompt_id") not in shown_interaction_ids
         ]
         if pending_interactions:
-            await _send_interaction_prompts(payload, pending_interactions)
+            sent = await _send_interaction_prompts(payload, pending_interactions)
+            if not sent:
+                from app.core.redaction import diag_log_raw
+                diag_log_raw(
+                    "agent.im.interaction_display.final_retry",
+                    f"send_failed platform={platform} chat_type={payload.get('chat_type')} "
+                    f"count={len(pending_interactions)}",
+                )
 
     if platform in {"feishu", "qq"} and stream_sent:
         # CardKit 已经发送正文；附件仍由统一附件出口发送，避免文本重复。
@@ -1140,9 +1167,11 @@ async def _should_show_tool_interactions(user_id) -> bool:
     return await show_tool_interactions(user_id)
 
 
-async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> None:
+async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> bool:
     """发送平台可理解的交互摘要；未接入原生按钮的平台使用文本摘要。"""
     from agent.im.replies import send_interaction
 
+    sent = True
     for item in interactions:
-        await send_interaction(payload, item)
+        sent = bool(await send_interaction(payload, item)) and sent
+    return sent

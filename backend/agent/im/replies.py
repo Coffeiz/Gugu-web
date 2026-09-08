@@ -122,6 +122,10 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
     if platform != "qq":
         return await send_text(payload, format_text_fallback(prompt, platform=platform))
 
+    # 交互提示可能在多轮工具调用后才产生，此时 QQ 的被动回复窗口或次数经常已经
+    # 用尽。交互本身不需要绑定原消息，改发主动消息，避免 40034128/40034031
+    # 让 Web 有提示但群聊看不到，也避免模型 run 长时间等待不可见的选择。
+    interaction_payload = {**payload, "message_id": None}
     text = format_text_fallback(prompt)
     if prompt.get("options"):
         from agent.gateway import qq
@@ -140,11 +144,11 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
             format_text_fallback(keyboard_prompt),
             keyboard_prompt,
             channel_id=payload.get("channel_id") or "",
-            msg_id=payload.get("message_id"),
+            msg_id=None,
             group=payload.get("chat_type") == "group",
         ):
             return True
-    return await send_text(payload, text)
+    return await send_text(interaction_payload, text)
 
 
 def _tool_result_summary(result: object, limit: int = 320) -> str:
