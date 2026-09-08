@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 一体化镜像单容器端到端验收：按 quick-deploy.md 的裸 docker run 方式启动，
-# 验证 /health、首启自动生成管理员密码、持久化契约（DB/用户文件/BYOK 主密钥/
-# Admin 配置），随后删除容器、用同一 /data + /config 重建，确认数据仍在。
+# 验证 /health、首启自动生成管理员密码并真实可用于 Admin 登录、持久化契约
+# （DB/用户文件/BYOK 主密钥/Admin 配置卷），随后删除容器、用同一 /data + /config
+# 重建，确认数据与凭据仍在。
 # 用法：./scripts/e2e-standalone-image.sh [镜像tag]（默认 gugu-web:e2e，需先构建）
 set -euo pipefail
 
@@ -38,6 +39,12 @@ wait_health() {
     return 1
 }
 
+admin_login() { # admin_login <密码>：Admin 登录接口返回 200 视为通过
+    curl -sf -o /dev/null -X POST "${BASE}/api/v1/admin/auth/login" \
+        -H 'Content-Type: application/json' \
+        -d "{\"username\":\"admin\",\"password\":\"$1\"}"
+}
+
 mkdir -p "$DATA" "$CONFIG"
 
 echo "== 第一次启动（按文档裸 docker run）=="
@@ -54,12 +61,15 @@ check "应用进程齐全（nginx CMD 托管 uvicorn/worker/gateway）" bash -c 
 ADMIN_PW1="$(docker logs "$NAME" 2>&1 | grep -oP '(?<=密码：)\S+' | tail -1 || true)"
 check "首启自动生成管理员密码并打印日志" bash -c "[[ -n '${ADMIN_PW1}' ]]"
 check "生成密码持久化到 /data/.env" docker exec "$NAME" grep -q "ADMIN_PASSWORD=" /data/.env
+# 真实登录覆盖整条链路：.env 加载 → Pydantic 优先级 → Admin auth。
+check "admin + 随机密码可登录后台" admin_login "${ADMIN_PW1}"
+check "错误密码被拒绝（401/403）" bash -c "! admin_login 'wrong-password'"
 check "PostgreSQL 数据目录落卷" docker exec "$NAME" test -s /data/postgres/PG_VERSION
 check "BYOK 主密钥落卷" docker exec "$NAME" test -f /data/byok/.byok-master-key
-check "Admin 配置覆盖文件落 /config" bash -c "docker exec '$NAME' sh -c 'test -f /config/config.override.json || true'"
 
 echo "== 写入标记数据 =="
 docker exec "$NAME" sh -c "echo e2e-marker > /data/users/e2e-marker.txt"
+echo e2e-config-marker > "$CONFIG/e2e-marker.txt"
 check "标记文件写入成功" docker exec "$NAME" grep -q e2e-marker /data/users/e2e-marker.txt
 
 echo "== 删除容器，用同一 /data + /config 重建 =="
@@ -74,8 +84,10 @@ echo "-- 等待二次启动 /health --"
 if wait_health; then echo "  ✓ /health 200"; PASS=$((PASS + 1)); else echo "  ✗ /health 超时"; FAIL=$((FAIL + 1)); docker logs "$NAME" | tail -40; fi
 
 check "用户文件在重建后仍在" docker exec "$NAME" grep -q e2e-marker /data/users/e2e-marker.txt
+check "/config 卷内容在重建后仍在" docker exec "$NAME" grep -q e2e-config-marker /config/e2e-marker.txt
 check "PostgreSQL 数据复用（不重新 initdb）" bash -c "docker logs '$NAME' 2>&1 | ! grep -q '首次启动：初始化内置 PostgreSQL'"
 check "管理员密码不随重建轮换（未重新生成）" bash -c "! docker logs '$NAME' 2>&1 | grep -q '密码：'"
+check "同一随机密码重建后仍可登录" admin_login "${ADMIN_PW1}"
 
 echo
 echo "通过 ${PASS} 项，失败 ${FAIL} 项"

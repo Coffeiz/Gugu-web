@@ -8,6 +8,13 @@ set -euo pipefail
 # 默认 Compose 单容器模式在等待数据库和 Alembic 之前给出可操作的中文配置提示；
 # 常规 backend/frontend 分离部署不启用这段逻辑。
 if [ "${GUGU_SINGLE_CONTAINER:-0}" = "1" ]; then
+    # 镜像 ENV 里 ADMIN_PASSWORD="" 只是占位声明，但 Pydantic Settings 默认把空
+    # 环境变量当真实值、且 process env 优先于 .env——不清掉它，首启生成的随机密码
+    # 和用户在 .env 里配置的强密码都会被这个空串压掉（admin 登录 503）。
+    # 用户显式 -e ADMIN_PASSWORD=xxx 时非空，保留生效。
+    if [ -z "${ADMIN_PASSWORD:-}" ]; then
+        unset ADMIN_PASSWORD
+    fi
     python compose_bootstrap.py
 fi
 
