@@ -62,6 +62,22 @@ RUN chmod 755 /usr/local/bin/prepare_rootless_storage.py
 # 行为不一致，尤其是 macOS/Windows Docker Desktop）。本镜像仅用于本地开发，不担心这层。
 EXPOSE 8000
 
+# 一键部署面板（fnOS / 群晖 / Portainer 等）从镜像 ENV 枚举「可填变量」——业务默认值
+# 必须在这里声明，否则面板只露出 Python 自带的 PATH/PYTHON_*，用户根本不知道要填
+# 数据库，裸跑时应用会静默回落 config.py 的 localhost/gugu_web 默认值，最后以一段
+# asyncpg pg_hba 报错收场。默认值与 docker-compose.yml 注入的值保持一致；
+# SECRET_KEY / DB__PASSWORD 留空，由面板或 .env 填写。
+ENV DB__HOST=postgres \
+    DB__PORT=5432 \
+    DB__NAME=gugu \
+    DB__USER=gugu \
+    DB__PASSWORD="" \
+    REDIS__HOST=redis \
+    REDIS__PORT=6379 \
+    SECRET_KEY="" \
+    GUGU_DB_PASSWORD="" \
+    ADMIN_USERNAME=admin
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -sf http://127.0.0.1:8000/health || exit 1
 
