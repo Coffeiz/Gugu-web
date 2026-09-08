@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.rag.hybrid import hybrid_results
 from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 from agent.rag.scope import matches_scope
 
@@ -140,6 +141,60 @@ class TsSidecarClient:
         }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         self._transient_revision = str(result.response.get("revision") or revision)
         self._transient_generation = generation
+
+    async def hybrid_fuse(
+        self,
+        hits: list[RecallResult],
+        *,
+        query_vector: list[float] | None,
+        vector_map: dict[str, list[float]],
+        limit: int,
+        lexical_weight: float,
+        vector_weight: float,
+        rrf_k: int,
+        vector_version: str,
+    ) -> tuple[list[RecallResult], str | None, dict]:
+        """Phase 3：把 BM25 与 embedding 的 RRF 融合交给 TS worker 执行。
+
+        hits 即词法候选（顺序即词法名次）；只回传候选命中的向量。返回
+        (结果, fallback_reason, 诊断)；语义与 Python ``hybrid_results`` 逐位一致。
+        """
+        if not query_vector or not vector_map or not any(
+                vector_map.get(item.document.chunk_id) for item in hits):
+            # 退化输入：无查询向量/空缓存 → 透传；缓存存在但命中均无可用向量 →
+            # 纯词法 RRF 重打分。与 Python hybrid_results 逐位一致，也避免
+            # 把整份向量表搬进 IPC（此时 vector_scores 必为空，documents 无关）。
+            final, fallback = hybrid_results(hits, [], query_vector, vector_map, limit=limit)
+            return final, fallback, {
+                "fusion": "bm25", "vector_doc_count": 0, "vector_version": vector_version,
+            }
+        payload_vectors = {
+            item.document.chunk_id: vector_map[item.document.chunk_id]
+            for item in hits
+            if vector_map.get(item.document.chunk_id)
+        }
+        response = (await self._request({
+            "op": "hybrid_fuse",
+            "hits": [{"chunk_id": item.document.chunk_id, "score": item.score} for item in hits],
+            "query_vector": list(query_vector or []),
+            "vectors": payload_vectors,
+            "limit": max(1, int(limit)),
+            "lexical_weight": lexical_weight,
+            "vector_weight": vector_weight,
+            "rrf_k": rrf_k,
+            "vector_version": vector_version,
+        }, timeout_seconds=_timeout_seconds())).response
+        results_by_key = {item.document.chunk_id: item for item in hits}
+        ordered = []
+        for row in response.get("results") or []:
+            item = results_by_key.get(str(row.get("chunk_id") or ""))
+            if item is not None:
+                ordered.append(RecallResult(item.document, float(row.get("score") or 0.0)))
+        return ordered, response.get("fallback"), {
+            "fusion": str(response.get("fusion") or ""),
+            "vector_doc_count": str(int(response.get("vector_doc_count") or 0)),
+            "vector_version": str(response.get("vector_version") or ""),
+        }
 
     async def reuse_if_current(self, revision: str | None) -> bool:
         self.touch()
@@ -533,7 +588,6 @@ async def rank_candidates_with_cache(
             "id": candidate_id,
             "source_type": candidate.source_type,
             "raw_score": candidate.raw_score,
-            "rank": candidate.rank,
             "fusion": "hybrid-rrf" if candidate.fused_score else "bm25",
             "fused_score": candidate.fused_score if candidate.fused_score else None,
             "document": {
@@ -561,6 +615,12 @@ async def rank_candidates_with_cache(
         exclude_content_hashes=exclude_content_hashes,
         selection_mode=selection_mode,
     )
+    # 冻结契约：评分实现必须是唯一的 confidence-v1；版本漂移说明出现了
+    # 第二套评分或新旧实现混跑，显式失败而不是静默接受结果差异。
+    version = str(stats.get("scoring_version") or "")
+    if version != RANK_SCORING_VERSION:
+        raise TsSidecarUnavailable(
+            f"TS 评分器版本与 Python 契约不一致：{version or '缺失'} ≠ {RANK_SCORING_VERSION}")
     output = []
     for item in selected:
         candidate = by_id.get(str(item.get("id") or ""))
@@ -669,6 +729,11 @@ def active_index_dirs() -> set[Path]:
     return active
 
 
+# 冻结的统一评分契约版本（见 docs/prds/PRD-RAG-7 Phase 2）；与
+# ts/workers/rag/src/service.ts 的 scoring_version 必须同步演进。
+RANK_SCORING_VERSION = "confidence-v1"
+
+
 def _timeout_seconds() -> float:
     from app.core.config import get_settings
 
@@ -679,6 +744,7 @@ def _timeout_seconds() -> float:
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
     "rank_candidates_with_cache",
+    "RANK_SCORING_VERSION",
     "SIDE_CAR_IDLE_TTL_SECONDS",
     "BUILD_TIMEOUT_SECONDS",
     "SIDECAR_STREAM_LIMIT_BYTES",

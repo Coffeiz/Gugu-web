@@ -373,3 +373,112 @@ test("RAG worker 的 batch_search 按语料槽独立检索并拒绝空瞬态指�
   child.stdin.end();
   await closed;
 });
+
+function rankDocument(id: string, sourceType: string, text: string, updatedAt = "") {
+  return {
+    id, text, source_type: sourceType, scope_type: "owner", scope_id: "o1",
+    document_version: "1", parent_id: id, updated_at: updatedAt,
+  };
+}
+
+test("冻结契约：来源优先级决定入选，最终输出同分按 id 升序（confidence-v1）", () => {
+  // fused 分数相同（各来源单候选，组内归一化同为 0.5），文本互不相同避免同文去重。
+  const candidates = ["conversation", "canvas", "file", "project", "memory"].map((sourceType) => ({
+    id: `c-${sourceType}`,
+    source_type: sourceType,
+    raw_score: 1,
+    rank: 1,
+    document: rankDocument(`c-${sourceType}`, sourceType, `共同内容-${sourceType}`),
+  }));
+  // 冻结行为：SOURCE_PRIORITY 只决定 confidence 入选顺序（memory 最先入选），
+  // 最终输出由预算阶段按 fused 降序 + id 升序重排。
+  const output = rankCandidates("共同", candidates, { limit: 2, maxChars: 1000 });
+  assert.deepEqual(output.results.map((item) => item.id), ["c-memory", "c-project"]);
+  const full = rankCandidates("共同", candidates, { limit: 5, maxChars: 1000 });
+  assert.deepEqual(
+    full.results.map((item) => item.id),
+    ["c-canvas", "c-conversation", "c-file", "c-memory", "c-project"],
+  );
+
+  // 同来源内 fused 与 updated_at 全同 → 按 id 升序。
+  const sameSource = ["b", "a"].map((suffix) => ({
+    id: `c-${suffix}`,
+    source_type: "file",
+    raw_score: 1,
+    document: rankDocument(`c-${suffix}`, "file", `同源内容-${suffix}`),
+  }));
+  const sameOutput = rankCandidates("同源", sameSource, { limit: 5, maxChars: 1000 });
+  assert.deepEqual(sameOutput.results.map((item) => item.id), ["c-a", "c-b"]);
+});
+
+test("冻结契约：confidence 阈值与 scoring_version 保持 confidence-v1", () => {
+  const low = {
+    id: "low", source_type: "file", raw_score: 1,
+    document: rankDocument("low", "file", "毫不相关的-random-tokens"),
+  };
+  const output = rankCandidates("缓存", [low], { limit: 5, maxChars: 1000 });
+  // match=0 的候选 confidence 被压到 0.35 以下，confidence 模式下全部被拒。
+  assert.equal(output.results.length, 0);
+  assert.equal(output.diagnostics.scoring_version, "confidence-v1");
+  assert.equal(output.diagnostics.threshold, 0.35);
+  assert.equal(output.diagnostics.preferred_threshold, 0.55);
+  assert.equal(output.diagnostics.selection_mode, "confidence");
+  assert.ok(output.diagnostics.rejected_low_score >= 1);
+});
+
+test("冻结契约：hybrid_fuse 与 Python hybrid_results 的 RRF 逐位一致", async (t) => {
+  const { request, readResponse, closed, child } = spawnWorker(t);
+  // 词法名次 a1 b2 c3 d4 e5；向量：a/c 与查询同向（c 同向但模长不同），
+  // b 正交（0.0）、d 维度不匹配（0.0 但保留向量名次）、e 零向量（0.0）。
+  request({
+    op: "hybrid_fuse",
+    hits: [
+      { chunk_id: "a", score: 10 }, { chunk_id: "b", score: 9 },
+      { chunk_id: "c", score: 8 }, { chunk_id: "d", score: 7 },
+      { chunk_id: "e", score: 6 },
+    ],
+    query_vector: [1, 0],
+    vectors: { a: [1, 0], b: [0, 1], c: [2, 0], d: [1, 0, 0], e: [0, 0] },
+    limit: 5, lexical_weight: 0.45, vector_weight: 0.55, rrf_k: 60,
+    vector_version: "test-provider:test-model:2",
+  });
+  const response = await readResponse();
+  assert.equal(response.status, "ok");
+  assert.equal(response.fusion, "hybrid-rrf");
+  assert.equal(response.fallback, null);
+  assert.equal(response.vector_doc_count, 5);
+  assert.equal(response.vector_version, "test-provider:test-model:2");
+  // normalized_rrf(rank) = 61/(60+rank)；score = 0.45*词法 + 0.55*向量。
+  assert.deepEqual(
+    (response.results as Array<{ chunk_id: string }>).map((row) => row.chunk_id),
+    ["a", "c", "b", "d", "e"],
+  );
+  const expected: Record<string, number> = {
+    a: 1,
+    b: 0.9752816180235535,
+    c: 0.9768433179723502,
+    d: 0.953125,
+    e: 0.9384615384615385,
+  };
+  for (const row of response.results as Array<{ chunk_id: string; score: number }>) {
+    assert.ok(Math.abs(row.score - expected[row.chunk_id]) < 1e-12, `score(${row.chunk_id})=${row.score}`);
+  }
+  child.stdin.end();
+  await closed;
+});
+
+test("冻结契约：hybrid_fuse 无向量或全零命中时透传词法结果", async (t) => {
+  const { request, readResponse, closed, child } = spawnWorker(t);
+  const hits = [
+    { chunk_id: "x", score: 3.5 }, { chunk_id: "y", score: 1.25 },
+  ];
+  request({ op: "hybrid_fuse", hits, query_vector: [], vectors: {}, limit: 1 });
+  const passthrough = await readResponse();
+  assert.equal(passthrough.status, "ok");
+  assert.equal(passthrough.fusion, "bm25");
+  assert.equal(passthrough.fallback, "embedding_cache_unavailable");
+  assert.equal(passthrough.vector_doc_count, 0);
+  assert.deepEqual(passthrough.results, [{ chunk_id: "x", score: 3.5 }]);
+  child.stdin.end();
+  await closed;
+});

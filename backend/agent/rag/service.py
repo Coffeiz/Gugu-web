@@ -133,8 +133,13 @@ async def _memory_recall_documents(user_id, scope, source_filter) -> tuple[list,
 
 async def _memory_finalize(
     user_id, documents, lexical, query, *, strategy, candidate_limit, search_metadata,
+    fuse=None,
 ):
-    """Memory 词法命中之上的 embedding/hybrid 收尾；返回 (final, fusion, fallback_reason)。"""
+    """Memory 词法命中之上的 embedding/hybrid 收尾；返回 (final, fusion, fallback_reason)。
+
+    ``fuse(lexical, query_vector, vector_map) -> (final, fallback_reason)``：Phase 3 起
+    batch 主链注入 TS hybrid_fuse；为 None 时走 Python ``hybrid_results``（回滚路径）。
+    """
     if strategy not in {"auto", "bm25", "embedding"}:
         raise ValueError("strategy 只能是 auto、bm25 或 embedding")
     final: list = lexical
@@ -148,9 +153,12 @@ async def _memory_finalize(
         if embedding.is_enabled():
             query_vector = await embedding.embed(query)
             vector_map = await _load_cached_vectors(user_id, documents)
-            final, fallback_reason = hybrid_results(
-                lexical, documents, query_vector, vector_map, limit=candidate_limit
-            )
+            if fuse is not None:
+                final, fallback_reason = await fuse(lexical, query_vector, vector_map)
+            else:
+                final, fallback_reason = hybrid_results(
+                    lexical, documents, query_vector, vector_map, limit=candidate_limit
+                )
             if fallback_reason is None:
                 fusion = "hybrid-rrf"
         elif strategy == "embedding":

@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from agent.rag.models import IndexDocument, Scope
+from agent.rag.models import IndexDocument, RecallResult, Scope
 from agent.rag.ts_sidecar import TsLexicalIndex, TsSidecarClient
 
 
@@ -174,5 +174,68 @@ async def test_transient_corpus_reuploads_after_worker_restart(tmp_path, monkeyp
         assert batches[0][0] and counts.get("memory") == 1
         persistent_hits = await index.search("缓存", source_types={"file"}, limit=5)
         assert persistent_hits
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_ts_hybrid_fuse_matches_python_hybrid_results(tmp_path, monkeypatch):
+    """Phase 3：TS hybrid_fuse 与 Python hybrid_results 同输入逐位一致（9 位小数）。"""
+    from agent.rag.fusion import BM25_WEIGHT, RRF_K, VECTOR_WEIGHT
+    from agent.rag.hybrid import hybrid_results
+
+    monkeypatch.setattr("agent.rag.ts_sidecar._timeout_seconds", lambda: 15.0)
+    worker = Path(__file__).parents[1] / "ts/workers/rag/src/index.ts"
+    client = TsSidecarClient("synthetic-owner", command=f"node --experimental-strip-types {worker}",
+                             index_dir=str(tmp_path / "index"))
+    documents = [
+        IndexDocument(f"m{number}", "memory", f"m{number}", Scope("synthetic-owner"),
+                      f"记忆{number}", "", f"记忆正文{number}", "v1")
+        for number in range(1, 6)
+    ]
+    hits = [RecallResult(doc, 5.5 - number) for number, doc in enumerate(documents)]
+    query_vector = [1.0, 2.0, -0.5]
+    # 向量表键必须与生产一致用组合 chunk_id（id:version:chunk_index）。
+    id_to_chunk = {doc.document_id: doc.chunk_id for doc in documents}
+    raw_vectors = {
+        "m1": [1.0, 0.0, 0.0],
+        "m2": [0.0, 2.0, 0.0],
+        "m3": [1.0, 2.0, -0.5],
+        "m4": [0.5, -1.0, 2.0],
+        "m5": [-2.0, 1.0, 1.0],
+    }
+    base_vectors = {id_to_chunk[key]: value for key, value in raw_vectors.items()}
+    variants = {
+        "全量向量": base_vectors,
+        "部分缺向量": {id_to_chunk[key]: value for key, value in raw_vectors.items() if key in {"m2", "m4"}},
+        "脏向量维度不匹配与零向量": {**base_vectors,
+                                     id_to_chunk["m1"]: [1.0, 0.0],
+                                     id_to_chunk["m3"]: [0.0, 0.0, 0.0]},
+        "命中均无向量": {"other": [1.0, 2.0, -0.5]},
+        "空缓存": {},
+    }
+    try:
+        for label, vector_map in variants.items():
+            py_final, py_fallback = hybrid_results(hits, documents, query_vector, vector_map, limit=4)
+            if label == "全量向量":
+                # 硬断言真融合路径确实被打到，防止键口径漂移让全部用例静默退化成词法。
+                assert py_fallback is None, (label, py_fallback)
+            ts_final, ts_fallback, diag = await client.hybrid_fuse(
+                hits, query_vector=query_vector, vector_map=vector_map, limit=4,
+                lexical_weight=BM25_WEIGHT, vector_weight=VECTOR_WEIGHT, rrf_k=RRF_K,
+                vector_version="synthetic:tag:3")
+            assert ts_fallback == py_fallback, label
+            assert diag["fusion"] == ("hybrid-rrf" if py_fallback is None else "bm25"), label
+            assert [item.document.chunk_id for item in ts_final] == \
+                [item.document.chunk_id for item in py_final], label
+            for left, right in zip(ts_final, py_final):
+                assert round(left.score, 9) == round(right.score, 9), (label, left.score, right.score)
+        # 无查询向量：透传原始词法分与词法顺序。
+        ts_final, ts_fallback, _ = await client.hybrid_fuse(
+            hits, query_vector=None, vector_map={}, limit=3,
+            lexical_weight=BM25_WEIGHT, vector_weight=VECTOR_WEIGHT, rrf_k=RRF_K,
+            vector_version="synthetic:tag:3")
+        assert ts_fallback == "embedding_cache_unavailable"
+        assert [item.score for item in ts_final] == [5.5, 4.5, 3.5]
     finally:
         await client.close()

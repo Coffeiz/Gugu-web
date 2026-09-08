@@ -159,3 +159,23 @@ async def test_build_ops_use_build_timeout_and_search_keeps_request_timeout(monk
     assert result.response["status"] == "ok"
     # 搜索类请求不显式传超时，由 _request_unlocked 内部按配置解析。
     assert captured == [("search", None)]
+
+
+@pytest.mark.asyncio
+async def test_rank_guard_rejects_unknown_scoring_version(monkeypatch):
+    """冻结契约：TS 评分版本漂移必须显式失败，不能静默接受差异。"""
+    from agent.rag import ts_sidecar as ts
+    from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
+
+    async def fake_rank(self, query, candidates, **kwargs):
+        return [], {"scoring_version": "confidence-v2", "accepted_count": 0}
+
+    monkeypatch.setattr(ts.TsSidecarClient, "rank_candidates", fake_rank)
+    monkeypatch.setattr(ts, "_ensure_sidecar_reaper", lambda loop: None)
+    monkeypatch.setattr(ts, "_rank_clients", {})
+    doc = IndexDocument("file:1", "file", "1", Scope("test-owner"), "文件", "", "缓存", "1")
+    candidate = RecallCandidate.from_result(RecallResult(doc, 1.0), rank=1)
+    with pytest.raises(ts.TsSidecarUnavailable, match="评分器版本"):
+        await ts.rank_candidates_with_cache("test-owner", "缓存", [candidate],
+                                            limit=5, max_chars=1000,
+                                            max_per_source=3, max_per_parent=3)

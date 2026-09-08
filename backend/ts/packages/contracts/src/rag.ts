@@ -96,7 +96,8 @@ export type RagRankCandidate = {
   id: string;
   source_type: string;
   raw_score: number;
-  rank: number;
+  /** 来源内名次仅保留诊断意义；评分器不消费该字段（Phase 2 契约审计收敛）。 */
+  rank?: number;
   fusion?: "bm25" | "hybrid-rrf";
   fused_score?: number | null;
   document: RagDocument;
@@ -154,6 +155,20 @@ export type RagRankResult = {
 
 export type RagRequest =
   | { op: "batch_search"; revision: string; query: string; transient_revision?: string; searches: Array<{ id: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; corpus?: "persistent" | "transient" }> }
+  | {
+      op: "hybrid_fuse";
+      /** 词法候选按名次排列；rank 取 1-based 位置，score 为词法原始分（透传时原样返回）。 */
+      hits: Array<{ chunk_id: string; score: number }>;
+      query_vector: number[];
+      /** 只需携带词法候选命中的向量；未命中的向量不影响 RRF 名次。 */
+      vectors: Record<string, number[]>;
+      limit?: number;
+      lexical_weight?: number;
+      vector_weight?: number;
+      rrf_k?: number;
+      /** 生效 embedding 模型版本戳（provider:model:dimensions），仅回显与诊断。 */
+      vector_version?: string;
+    }
   | { op: "replace_transient"; revision: string; documents: RagDocument[] }
   | { op: "ping" }
   | { op: "tokenize"; text: string }
@@ -166,6 +181,8 @@ export type RagRequest =
   | { op: "unified_search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; max_chars?: number }
   | { op: "rank_candidates"; query: string; candidates: RagRankCandidate[]; limit?: number; max_chars?: number; max_per_source?: number; max_per_parent?: number; exclude_content_hashes?: string[]; selection_mode?: "confidence" | "top_k" };
 
+export type RagHybridFuseResult = { chunk_id: string; score: number };
+
 export type RagSuccessResponse =
   | { status: "ok"; version: string; revision: string; batches: Array<{ id: string; results: RagSearchResult[]; diagnostics: RagSearchDiagnostics }>; document_counts: Record<string, number> }
   | { status: "ok"; version: string; revision: string; document_count: number }
@@ -173,7 +190,17 @@ export type RagSuccessResponse =
   | { status: "ok"; version: string; documents: RagDocument[]; document_count: number }
   | { status: "ok"; version: string; selected: RagRankResult[]; stats: RagRankDiagnostics; input_digest: string }
   | { status: "ok"; version: string; revision: string; results: RagSearchResult[]; diagnostics: RagSearchDiagnostics }
-  | { status: "ok"; version: string; revision: string; results: RagDocument[]; has_more: boolean; diagnostics: RagUnifiedDiagnostics };
+  | { status: "ok"; version: string; revision: string; results: RagDocument[]; has_more: boolean; diagnostics: RagUnifiedDiagnostics }
+  | {
+      status: "ok";
+      version: string;
+      fusion: "hybrid-rrf" | "bm25";
+      /** 融合生效时的向量候选数；0 表示纯词法透传。 */
+      vector_doc_count: number;
+      vector_version: string;
+      fallback: string | null;
+      results: RagHybridFuseResult[];
+    };
 
 export type RagErrorResponse = {
   status: "error";

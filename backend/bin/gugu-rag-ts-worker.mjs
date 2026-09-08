@@ -670,6 +670,68 @@ async function handle(state2, transient2, request) {
       })
     };
   }
+  if (request.op === "hybrid_fuse") {
+    const hits = Array.isArray(request.hits) ? request.hits : [];
+    const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
+    const vectors = request.vectors ?? {};
+    const limit = Math.max(1, Math.min(Number(request.limit ?? 20), 200));
+    const lexicalWeight = Number(request.lexical_weight ?? 0.45);
+    const vectorWeight = Number(request.vector_weight ?? 0.55);
+    const rrfK = Number(request.rrf_k ?? 60);
+    const passthrough = (fusion, count, fallback, rows) => ({
+      status: "ok",
+      version: VERSION,
+      fusion,
+      vector_doc_count: count,
+      vector_version: String(request.vector_version ?? ""),
+      fallback,
+      results: rows
+    });
+    if (!queryVector.length || Object.keys(vectors).length === 0) {
+      return passthrough(
+        "bm25",
+        0,
+        "embedding_cache_unavailable",
+        hits.slice(0, limit).map((hit) => ({ chunk_id: String(hit.chunk_id), score: Number(hit.score || 0) }))
+      );
+    }
+    const vectorScores = /* @__PURE__ */ new Map();
+    for (const hit of hits) {
+      const vector = vectors[String(hit.chunk_id)];
+      if (!Array.isArray(vector) || vector.length === 0) continue;
+      if (queryVector.length !== vector.length) {
+        vectorScores.set(String(hit.chunk_id), 0);
+        continue;
+      }
+      let dot = 0, na = 0, nb = 0;
+      for (let index = 0; index < queryVector.length; index += 1) {
+        dot += queryVector[index] * vector[index];
+        na += queryVector[index] * queryVector[index];
+        nb += vector[index] * vector[index];
+      }
+      vectorScores.set(String(hit.chunk_id), na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb)));
+    }
+    const rrf = (rank, weight) => weight * ((rrfK + 1) / (rrfK + Math.max(1, rank)));
+    if (vectorScores.size === 0) {
+      const lexicalOnly = hits.map((hit, index) => ({
+        chunk_id: String(hit.chunk_id),
+        score: rrf(index + 1, lexicalWeight)
+      }));
+      lexicalOnly.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
+      return passthrough("bm25", 0, "embedding_cache_unavailable", lexicalOnly.slice(0, limit));
+    }
+    const vectorRanked = [...vectorScores.keys()].sort((left, right) => vectorScores.get(right) - vectorScores.get(left) || (left < right ? -1 : 1));
+    const vectorRanks = new Map(vectorRanked.map((key, index) => [key, index + 1]));
+    const scored = hits.map((hit, index) => {
+      const key = String(hit.chunk_id);
+      let score = rrf(index + 1, lexicalWeight);
+      const vectorRank = vectorRanks.get(key);
+      if (vectorRank !== void 0) score += rrf(vectorRank, vectorWeight);
+      return { chunk_id: key, score };
+    });
+    scored.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
+    return passthrough("hybrid-rrf", vectorScores.size, null, scored.slice(0, limit));
+  }
   if (request.op === "ping") return { status: "ok", version: VERSION, revision: state2.revision, document_count: state2.documents.length };
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {

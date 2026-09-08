@@ -27,7 +27,7 @@ async def test_persistent_sources_prepare_once_and_keep_watermark(monkeypatch):
         return [([RecallResult(file, 1)], {}), ([RecallResult(message, 1)], {})], {"file": 1, "conversation": 1}, SidecarRequestTiming()
     async def get(*args, **kwargs):
         calls.append("prepare")
-        return SimpleNamespace(batch_search=batch)
+        return SimpleNamespace(batch_search=batch, client=SimpleNamespace())
     monkeypatch.setattr(IndexedSourceRetriever, "session_scope", session)
     monkeypatch.setattr("agent.rag.batch_retriever.get_index_cache", lambda: SimpleNamespace(get=get))
     token = set_conversation_before_message_id(12)
@@ -197,3 +197,92 @@ async def test_shadow_mode_reports_equality_when_candidates_match():
     batches = await retriever.retrieve("缓存", scope=scope)
     assert batches[0].metadata["shadow_equal"] == "True"
     assert batches[0].metadata["shadow_first_diff_index"] == ""
+
+
+class _FuseClient:
+    """可编程 hybrid_fuse 桩：验证 batch 主链注入 TS 融合与失败回滚。"""
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls: list[dict] = []
+
+    async def hybrid_fuse(self, hits, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            from agent.rag.ts_sidecar import TsSidecarUnavailable
+            raise TsSidecarUnavailable("worker 融合失败")
+        from agent.rag.models import RecallResult
+        return ([RecallResult(item.document, round(item.score + 1000, 6)) for item in hits],
+                None,
+                {"fusion": "hybrid-rrf", "vector_doc_count": 2, "vector_version": "stub:tag:2"})
+
+
+@pytest.mark.asyncio
+async def test_memory_batch_delivers_ts_fuse_result(monkeypatch):
+    """Phase 3：batch 主链 Memory 收尾走注入的 TS 融合，交付 worker 结果与诊断。"""
+    from types import SimpleNamespace
+
+    from agent.rag.batch_retriever import BatchUnifiedRetriever
+    from agent.rag.ts_sidecar import SidecarRequestTiming
+
+    async def fake_embed(text):
+        return [1.0, 0.0]
+
+    async def fake_vectors(user_id, documents):
+        return {documents[0].chunk_id: [1.0, 0.0]}
+
+    monkeypatch.setattr("agent.memory.embedding.is_enabled", lambda: True)
+    monkeypatch.setattr("agent.memory.embedding.embed", fake_embed)
+    monkeypatch.setattr("agent.rag.service._load_cached_vectors", fake_vectors)
+    scope = Scope("synthetic-owner")
+    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
+    hits = [RecallResult(memory_doc, 2.0)]
+    client = _FuseClient()
+    retriever = BatchUnifiedRetriever([])
+    out = await retriever._memory_batch(
+        SimpleNamespace(user_id="synthetic-owner"), [memory_doc], "memory-db", {}, hits,
+        {"memory": 1}, SidecarRequestTiming(), 5,
+        query="缓存", candidate_limit=20, ts_client=client,
+    )
+    assert len(client.calls) == 1
+    assert client.calls[0]["vector_map"] == {memory_doc.chunk_id: [1.0, 0.0]}
+    # TS 融合结果直接交付（分数带 +1000 标记），fallback=None → fusion=hybrid-rrf。
+    assert [item.score for item in out.results] == [1002.0]
+    assert out.fallback_reason is None
+    assert out.metadata["fusion"] == "hybrid-rrf"
+    assert out.metadata["ts_fusion_fusion"] == "hybrid-rrf"
+    assert out.metadata["ts_fusion_vector_doc_count"] == "2"
+    assert out.metadata["ts_fusion_vector_version"] == "stub:tag:2"
+    assert "ts_hybrid_error" not in out.metadata
+
+
+@pytest.mark.asyncio
+async def test_memory_batch_rolls_back_to_python_fuse_on_worker_failure(monkeypatch):
+    """worker 融合失败回滚 Python hybrid_results 并显式记录 ts_hybrid_error，不静默。"""
+    from types import SimpleNamespace
+
+    from agent.rag.batch_retriever import BatchUnifiedRetriever
+    from agent.rag.ts_sidecar import SidecarRequestTiming
+
+    async def fake_embed(text):
+        return [1.0, 0.0]
+
+    async def fake_vectors(user_id, documents):
+        return {documents[0].chunk_id: [1.0, 0.0]}
+
+    monkeypatch.setattr("agent.memory.embedding.is_enabled", lambda: True)
+    monkeypatch.setattr("agent.memory.embedding.embed", fake_embed)
+    monkeypatch.setattr("agent.rag.service._load_cached_vectors", fake_vectors)
+    scope = Scope("synthetic-owner")
+    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
+    hits = [RecallResult(memory_doc, 2.0)]
+    retriever = BatchUnifiedRetriever([])
+    out = await retriever._memory_batch(
+        SimpleNamespace(user_id="synthetic-owner"), [memory_doc], "memory-db", {}, hits,
+        {"memory": 1}, SidecarRequestTiming(), 5,
+        query="缓存", candidate_limit=20, ts_client=_FuseClient(fail=True),
+    )
+    # 回滚结果 = 纯 Python hybrid（同向向量 → 该文档仍第一，分数是 RRF 融合值而非 +1000 标记）。
+    assert [item.score for item in out.results] == [1.0]
+    assert out.metadata["ts_hybrid_error"] == "TsSidecarUnavailable"
+    assert out.metadata["fusion"] == "hybrid-rrf"

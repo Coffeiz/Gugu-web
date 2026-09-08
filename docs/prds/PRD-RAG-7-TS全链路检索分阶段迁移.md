@@ -132,26 +132,39 @@ Python 保留 embedding/hybrid、TS rank 调度、权限复核和上下文注入
 
 目标：复用已有 TS 评分器，校准批量候选接入后的归一化、来源质量、去重、父节点限制、来源上限和字符预算契约。
 
-- [ ] 审计已有 `rank_candidates_with_cache()` 与 TS 协议映射，补齐缺失契约，不新增第二套评分实现。
-- [ ] 固定 scoring version、来源质量、置信度阈值和 tie-break 规则。
-- [ ] 支持 `exclude_content_hashes`、`max_per_source`、`max_per_parent` 和 `max_chars`。
-- [ ] 保留 Python 结果回填和最终 scope 复核。
-- [ ] 通过 shadow 对比记录结果差异，不允许直接以“分数接近”代替候选语义验证。
-- [ ] 差异超过冻结阈值时停止推进，优先修正契约或算法，不新增隐式 fallback。
+- [x] 审计已有 `rank_candidates_with_cache()` 与 TS 协议映射，补齐缺失契约，不新增第二套评分实现。
+- [x] 固定 scoring version、来源质量、置信度阈值和 tie-break 规则。
+- [x] 支持 `exclude_content_hashes`、`max_per_source`、`max_per_parent` 和 `max_chars`。
+- [x] 保留 Python 结果回填和最终 scope 复核。
+- [x] 通过 shadow 对比记录结果差异，不允许直接以“分数接近”代替候选语义验证。
+- [x] 差异超过冻结阈值时停止推进，优先修正契约或算法，不新增隐式 fallback。
 
 验收：TS 输出的候选身份、排序、来源上限、去重和字符预算达到冻结阈值；Python 不再执行正常路径的重复评分。
+
+验证记录（2026-09-09）：契约审计确认 TS 评分器（confidence-v1）是唯一评分实现，Python 只做候选映射与回填；`RagRankCandidate.rank` 为未消费字段，契约转可选并从 Python payload 移除；Python 侧新增 `RANK_SCORING_VERSION` 守卫，评分版本漂移显式失败。TS 测试冻结 tie-break 链（fused 降序 → 入选按来源优先级 → 输出按 id 升序）、confidence 阈值 0.35/0.55 与 scoring_version。`batch_shadow` 扩展排序影子：对两侧候选各跑一次冻结参数排序并记录 `rank_equal`/`rank_first_diff_index`（独立计数，不计入热路径）；devserver 采样排序差异与 Memory 候选差异完全相关（legacy replace-churn），持久化来源排序零差异。
 
 ### Phase 3：TS 接管 hybrid 融合
 
 目标：让 TS 统一处理 BM25 与 embedding 分数融合，Python 仍负责生成向量。
 
-- [ ] 定义向量输入协议和向量版本字段。
-- [ ] TS 实现与当前 Python 等价的 RRF/hybrid 计算。
-- [ ] 明确 embedding 缺失、超时和禁用时的行为，不把异常伪装成零分。
-- [ ] 保留 Python 侧 embedding provider、密钥和用户配置边界。
-- [ ] 对 BM25-only、embedding-only、hybrid、空向量和部分向量失败补齐回归。
+- [x] 定义向量输入协议和向量版本字段。
+- [x] TS 实现与当前 Python 等价的 RRF/hybrid 计算。
+- [x] 明确 embedding 缺失、超时和禁用时的行为，不把异常伪装成零分。
+- [x] 保留 Python 侧 embedding provider、密钥和用户配置边界。
+- [x] 对 BM25-only、embedding-only、hybrid、空向量和部分向量失败补齐回归。
 
 验收：三种策略下候选身份和排序达到冻结阈值；embedding 失败不会导致越权或无提示改变检索策略。
+
+Phase 3 验证记录（2026-09-09）：新增 worker op ``hybrid_fuse``（contracts/rag.ts 冻结请求/响应变体，
+携带 ``vector_version`` 回显），语义与 Python ``hybrid_results`` 逐位对齐：RRF 保持调用点浮点顺序
+``weight * ((K+1)/(K+rank))``；cosine 含 sqrt；维度不匹配/零向量记 0.0 但保留向量名次；
+vector_map 非空而命中均无可用向量时按纯词法 RRF 重打分（不透传原始分）；无查询向量或空缓存才透传。
+Python 侧 ``TsSidecarClient.hybrid_fuse`` 对退化输入本地走 ``hybrid_results``（等价且省 IPC），
+batch 主链经 ``_memory_finalize(fuse=...)`` 注入 TS 融合，legacy 路径保持 Python 融合作为回滚；
+worker 融合失败回滚 Python 实现并显式记录 ``ts_hybrid_error``，不做静默兜底。向量仍由 Python 生成与
+加载（provider/密钥/配置边界不变），跨 IPC 只传候选子集浮点。回归：TS 冻结数值测试（手工 RRF 值，
+1e-12）+ Python 真 worker 等价测试（全量/部分缺失/脏向量/命中均无向量/空缓存/无查询向量六种情形，
+9 位小数对齐候选身份、排序与 fallback）；后端全量 2308 通过、TS 43 通过。
 
 ### Phase 4：TS 接管索引构建与更新
 

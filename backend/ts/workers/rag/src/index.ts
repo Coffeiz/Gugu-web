@@ -259,6 +259,67 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       }),
     };
   }
+  if (request.op === "hybrid_fuse") {
+    // 与 Python hybrid_results 逐位等价：余弦累加顺序、RRF 乘法顺序、
+    // 排序 tie-break 和透传语义完全一致（Phase 3 契约冻结）。
+    const hits = Array.isArray(request.hits) ? request.hits : [];
+    const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
+    const vectors = request.vectors ?? {};
+    const limit = Math.max(1, Math.min(Number(request.limit ?? 20), 200));
+    const lexicalWeight = Number(request.lexical_weight ?? 0.45);
+    const vectorWeight = Number(request.vector_weight ?? 0.55);
+    const rrfK = Number(request.rrf_k ?? 60);
+    const passthrough = (fusion: "hybrid-rrf" | "bm25", count: number, fallback: string | null,
+      rows: Array<{ chunk_id: string; score: number }>) => ({
+      status: "ok" as const, version: VERSION, fusion,
+      vector_doc_count: count, vector_version: String(request.vector_version ?? ""),
+      fallback, results: rows,
+    });
+    if (!queryVector.length || Object.keys(vectors).length === 0) {
+      return passthrough("bm25", 0, "embedding_cache_unavailable",
+        hits.slice(0, limit).map((hit) => ({ chunk_id: String(hit.chunk_id), score: Number(hit.score || 0) })));
+    }
+    const vectorScores = new Map<string, number>();
+    for (const hit of hits) {
+      const vector = vectors[String(hit.chunk_id)];
+      // Python 只把 vector_map 里有非空向量的候选算进 vector_scores；
+      // 维度不匹配（换过模型的脏数据）或零向量 → 0.0，但保留向量名次。
+      if (!Array.isArray(vector) || vector.length === 0) continue;
+      if (queryVector.length !== vector.length) {
+        vectorScores.set(String(hit.chunk_id), 0);
+        continue;
+      }
+      let dot = 0, na = 0, nb = 0;
+      for (let index = 0; index < queryVector.length; index += 1) {
+        dot += queryVector[index] * vector[index];
+        na += queryVector[index] * queryVector[index];
+        nb += vector[index] * vector[index];
+      }
+      vectorScores.set(String(hit.chunk_id), na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb)));
+    }
+    const rrf = (rank: number, weight: number) => weight * ((rrfK + 1) / (rrfK + Math.max(1, rank)));
+    if (vectorScores.size === 0) {
+      // Python 在 vector_map 非空但命中都没有可用向量时，仍按纯词法 RRF 重打分
+      // 再按 (-score, chunk_id) 排序，不是透传原始分。
+      const lexicalOnly = hits.map((hit, index) => ({
+        chunk_id: String(hit.chunk_id), score: rrf(index + 1, lexicalWeight),
+      }));
+      lexicalOnly.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
+      return passthrough("bm25", 0, "embedding_cache_unavailable", lexicalOnly.slice(0, limit));
+    }
+    const vectorRanked = [...vectorScores.keys()].sort((left, right) =>
+      vectorScores.get(right)! - vectorScores.get(left)! || (left < right ? -1 : 1));
+    const vectorRanks = new Map(vectorRanked.map((key, index) => [key, index + 1]));
+    const scored = hits.map((hit, index) => {
+      const key = String(hit.chunk_id);
+      let score = rrf(index + 1, lexicalWeight);
+      const vectorRank = vectorRanks.get(key);
+      if (vectorRank !== undefined) score += rrf(vectorRank, vectorWeight);
+      return { chunk_id: key, score };
+    });
+    scored.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
+    return passthrough("hybrid-rrf", vectorScores.size, null, scored.slice(0, limit));
+  }
   if (request.op === "ping") return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {
