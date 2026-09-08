@@ -9,7 +9,9 @@
 """
 from datetime import datetime
 import json
+import mimetypes
 import re
+from pathlib import Path, PurePosixPath
 
 from app.core.redaction import redact
 from app.core.tz import now_utc
@@ -97,6 +99,11 @@ _CREATE_BINARY_EXTS = frozenset({
     "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods",
     "ppt", "pptx", "odp",
 })
+
+# send_file 允许读取的逻辑沙盒根。这里刻意不接受宿主机绝对路径，避免模型
+# 把执行器日志里的本机路径当成可发送路径，越过用户沙箱边界。
+_SEND_PATH_ROOTS = frozenset({"personal", "project", "workspace"})
+_SEND_PATH_MAX_BYTES = 10 * 1024 * 1024
 
 
 def _is_text_file_record(file) -> bool:
@@ -833,6 +840,107 @@ async def _resolve_file(db, user_id, args):
     return None, json.dumps({"error": "需提供 file_id 或文件名 file"})
 
 
+def _normalize_send_path(value: str) -> tuple[str | None, PurePosixPath | None, str | None]:
+    """解析 send_file 的逻辑路径，不把它解释成宿主机路径。"""
+    text = str(value or "").strip()
+    # Shell 提示符可能带上 sandbox 名称，允许去掉这一层展示前缀。
+    if text.startswith("gugu-sandbox:"):
+        text = text[len("gugu-sandbox:"):]
+    if not text.startswith("/"):
+        return None, None, None
+    if "\\" in text or "\x00" in text:
+        return None, None, "路径格式不受支持，只能使用 /workspace、/personal 或 /project 下的路径"
+    path = PurePosixPath(text)
+    parts = path.parts
+    if len(parts) < 3 or parts[0] != "/" or parts[1] not in _SEND_PATH_ROOTS:
+        return None, None, "只允许发送 /workspace、/personal 或 /project 下的文件"
+    relative = PurePosixPath(*parts[2:])
+    if any(part in {"", ".", ".."} for part in relative.parts):
+        return None, None, "路径不能包含 . 或 .."
+    return parts[1], relative, None
+
+
+async def _stage_send_path(db, user_id, value: str):
+    """把受控 Shell 逻辑路径转换成 send_file 可复用的附件 artifact。
+
+    返回 ``None`` 表示 ``value`` 不是绝对逻辑路径，交给旧的文件库名称解析；
+    返回 JSON 字符串表示路径错误；成功时返回 artifact。
+    """
+    root_name, relative, path_error = _normalize_send_path(value)
+    if root_name is None:
+        return json.dumps({"error": path_error}, ensure_ascii=False) if path_error else None
+
+    policy = await current_filesystem_policy(db, user_id)
+    if policy is None:
+        return json.dumps({"error": "当前会话没有可用的沙盒文件路径上下文"}, ensure_ascii=False)
+    if root_name in {"personal", "project"} and not policy.full_user_sandbox:
+        return json.dumps({"error": f"发送 /{root_name} 文件前需要完整用户沙箱授权"}, ensure_ascii=False)
+
+    from app.services.workspaces import (
+        resolve_project_root,
+        resolve_shell_root,
+        resolve_user_personal_root,
+    )
+    if root_name == "workspace":
+        root = await resolve_shell_root(db, user_id, "sandbox", policy.workspace_id)
+    elif root_name == "personal":
+        root = await resolve_user_personal_root(db, user_id)
+    else:
+        root = await resolve_project_root(db, user_id)
+    if root is None:
+        return json.dumps({"error": f"/{root_name} 当前不支持本地文件发送"}, ensure_ascii=False)
+
+    root = Path(root).resolve()
+    candidate = root.joinpath(*relative.parts)
+    try:
+        # 逐级拒绝 symlink，防止沙盒内的链接把路径带出逻辑根。
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return json.dumps({"error": "不能发送符号链接文件"}, ensure_ascii=False)
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (FileNotFoundError, RuntimeError):
+        return json.dumps({"error": f"未找到文件「/{root_name}/{relative.as_posix()}」"}, ensure_ascii=False)
+    except ValueError:
+        return json.dumps({"error": "文件路径超出当前沙盒根目录"}, ensure_ascii=False)
+    if not resolved.is_file():
+        return json.dumps({"error": "只能发送文件，不能发送目录"}, ensure_ascii=False)
+
+    try:
+        size = resolved.stat().st_size
+    except OSError:
+        return json.dumps({"error": "无法读取文件信息"}, ensure_ascii=False)
+    if size > _SEND_PATH_MAX_BYTES:
+        return json.dumps({"error": f"文件过大（超过 {_SEND_PATH_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
+    try:
+        data = resolved.read_bytes()
+    except OSError:
+        return json.dumps({"error": "无法读取文件内容"}, ensure_ascii=False)
+
+    from app.core import chat_attach
+    ext = resolved.suffix.lstrip(".").lower()[:10]
+    name = resolved.stem or resolved.name
+    if ext in chat_attach.IMAGE_EXTS:
+        kind = "image"
+    elif ext in chat_attach.TEXT_EXTS:
+        kind = "text"
+    else:
+        kind = "binary"
+    mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+    meta = await chat_attach.stage(user_id, name, ext, mime, data, kind=kind)
+    return {
+        "attach_id": meta["attach_id"],
+        "name": name,
+        "ext": ext,
+        "size_bytes": len(data),
+        "kind": meta.get("kind", kind),
+        "img_width": meta.get("img_width"),
+        "img_height": meta.get("img_height"),
+    }
+
+
 async def _folder_by_name(db, user_id, name, space=None, project_id=None):
     """按名称定位文件夹，返回 (Folder|None, 错误JSON字符串|None)。
 
@@ -1535,6 +1643,20 @@ async def _send_file(db, user_id, args: dict):
             },
         }
 
+    # Shell 生成的文件可能尚未登记到文件库；先处理逻辑绝对路径，避免把它
+    # 当成 display_name 查询。成功后复用聊天附件发送链路，网页、QQ、飞书等
+    # 出口都能拿到同一份受控 artifact。
+    path_artifact = await _stage_send_path(db, user_id, args.get("file")) if args.get("file") else None
+    if isinstance(path_artifact, str):
+        return path_artifact
+    if path_artifact:
+        path_name = path_artifact["name"]
+        return {
+            "ok": True,
+            "message": f"已把《{path_name}.{path_artifact['ext']}》发到对话窗口，用户可直接下载。",
+            "_artifact": path_artifact,
+        }
+
     f, err = await _resolve_file(db, user_id, args)
     if err:
         return err
@@ -1905,12 +2027,12 @@ class FilesSkill(BaseSkill):
         Tool(
             name="send_file", label="发送文件",
             description_short='发送文件或图片。',
-            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用，查位置请用文件链接。",
+            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用。文件库文件优先使用 list_files 返回的 file_id；也支持 Shell 逻辑路径 /workspace/...、/personal/...、/project/...，不要把路径填到 file_id。查位置请用文件链接。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string"},
-                    "file_id": {"type": "integer"},
+                    "file": {"type": "string", "description": "文件库名称，或受控 Shell 逻辑路径 /workspace/...、/personal/...、/project/..."},
+                    "file_id": {"type": "integer", "description": "list_files 返回的文件 ID；不要填文件路径"},
                     "url": {"type": "string"},
                     "title": {"type": "string"},
                     "attach_id": {"type": "string"},
