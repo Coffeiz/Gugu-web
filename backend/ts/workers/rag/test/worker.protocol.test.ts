@@ -573,3 +573,94 @@ test("Phase 4：并发 patch/replace/search 串行原子生效，检索不出现
   child.stdin.end();
   await closed;
 });
+
+test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐位一致", async (t) => {
+  const { request, readResponse, closed, child } = spawnWorker(t);
+  const docs = [
+    { id: "file:1:0", text: "缓存文件的部署结论", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
+    { id: "file:2:0", text: "缓存文件的架构说明", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
+    { id: "conv:4:0", text: "会话里的缓存方案", source_type: "conversation", scope_type: "owner", scope_id: "o1", document_version: "m4", metadata: { kind: "message", message_id: 4 } },
+    { id: "conv:5:0", text: "水位之后的缓存方案", source_type: "conversation", scope_type: "owner", scope_id: "o1", document_version: "m5", metadata: { kind: "message", message_id: 5 } },
+  ];
+  // 瞬态文档单列，保证参考管线与统一查询引用同一份 document 对象。
+  const memoryDocs = [
+    { id: "memory:m1:0", text: "缓存记忆与部署相关", source_type: "memory", scope_type: "owner", scope_id: "o1", document_version: "v1" },
+    { id: "memory:m2:0", text: "另一条缓存记忆", source_type: "memory", scope_type: "owner", scope_id: "o1", document_version: "v1" },
+  ];
+  request({ op: "replace", revision: "r1", documents: docs });
+  assert.equal((await readResponse()).revision, "r1");
+  request({ op: "replace_transient", revision: "t1", documents: memoryDocs, vectors: { "memory:m1:0": [1, 0], "memory:m2:0": [0, 1] }, vector_version: "prov:model:2" });
+  assert.equal((await readResponse()).revision, "t1");
+
+  // ── 三段参考管线：batch_search + hybrid_fuse + rank_candidates ──
+  request({ op: "batch_search", revision: "r1", transient_revision: "t1", query: "缓存", searches: [
+    { id: "0", source_types: ["file"], limit: 20 },
+    { id: "1", source_types: ["conversation"], limit: 20 },
+    { id: "2", source_types: ["memory"], corpus: "transient", limit: 20 },
+  ] });
+  const batched = await readResponse();
+  const bySource: Record<string, Array<{ id: string; score: number }>> = {};
+  const specSources = ["file", "conversation", "memory"];
+  (batched.batches as Array<{ results: Array<{ id: string; score: number }> }>).forEach((part, index) => {
+    bySource[specSources[index]] = part.results;
+  });
+  const memoryHits = bySource.memory;
+  // hybrid_fuse 协议按 chunk_id 查向量：瞬态文档的 chunk_id 即其 worker key。
+  request({ op: "hybrid_fuse", hits: memoryHits.map((hit) => ({ chunk_id: hit.id })), query_vector: [1, 0],
+    vectors: { "memory:m1:0": [1, 0], "memory:m2:0": [0, 1] }, limit: 20 });
+  const fused = await readResponse();
+  // 防退化：参考侧融合必须真生效，否则两边都纯词法时等价断言会虚过。
+  assert.equal(fused.fusion, "hybrid-rrf");
+  assert.equal((fused as Record<string, unknown>).vector_doc_count, 2);
+  assert.equal((fused as Record<string, unknown>).fallback, null);
+  const fusedScores = new Map((fused.results as Array<{ chunk_id: string; score: number }>).map((row) => [row.chunk_id, row.score]));
+  const keyById = new Map<string, string>();
+  const candidates = [
+    ...bySource.file.map((hit) => {
+      keyById.set(hit.id, hit.id);
+      return { id: hit.id, source_type: "file", raw_score: hit.score, fusion: "bm25", fused_score: null as number | null, document: docs.find((doc) => doc.id === hit.id) };
+    }),
+    // 水位在排序前生效：conv:5:0 不进入参考候选（与统一查询同口径）。
+    ...bySource.conversation.filter((hit) => hit.id !== "conv:5:0").map((hit) => {
+      keyById.set(hit.id, hit.id);
+      return { id: hit.id, source_type: "conversation", raw_score: hit.score, fusion: "bm25", fused_score: null as number | null, document: docs.find((doc) => doc.id === hit.id) };
+    }),
+    ...memoryHits.map((hit) => {
+      const candidateId = `memory:${hit.id}:0`;
+      keyById.set(candidateId, hit.id);
+      return { id: candidateId, source_type: "memory", raw_score: fusedScores.get(hit.id)!, fusion: "bm25", fused_score: null as number | null, document: { ...memoryDocs.find((doc) => doc.id === hit.id)!, id: candidateId } };
+    }),
+  ];
+  request({ op: "rank_candidates", query: "缓存", candidates, limit: 5, max_chars: 3000, max_per_source: 3, max_per_parent: 3, selection_mode: "confidence" });
+  const reference = await readResponse();
+
+  // ── 统一查询：同语料同参数一次完成 ──
+  request({ op: "unified_query", revision: "r1", transient_revision: "t1", query: "缓存",
+    query_vector: [1, 0], before_message_id: 5, source_order: ["memory", "knowledge", "project", "file", "canvas", "note", "conversation"],
+    searches: [
+      { id: "0", source_types: ["file"], limit: 20 },
+      { id: "1", source_types: ["conversation"], limit: 20 },
+      { id: "2", source_types: ["memory"], corpus: "transient", limit: 20 },
+    ], candidate_limit: 20,
+    rank: { limit: 5, max_chars: 3000, max_per_source: 3, max_per_parent: 3, selection_mode: "confidence" } });
+  const unified = await readResponse() as Record<string, any>;
+  assert.equal(unified.status, "ok");
+  assert.equal(unified.fusion.fusion, "hybrid-rrf");
+  assert.equal(unified.fusion.vector_doc_count, 2);
+  assert.equal(unified.fusion.vector_version, "prov:model:2");
+  assert.equal(unified.fusion.fallback, null);
+  assert.equal(unified.stats.scoring_version, "confidence-v1");
+  // 水位：message_id=5 的会话文档不参与。
+  const unifiedRows = unified.selected as Array<{ document_key: string; confidence: number }>;
+  const unifiedKeys = unifiedRows.map((row) => row.document_key);
+  assert.ok(!unifiedKeys.includes("conv:5:0"));
+  // 与参考管线（同水位口径）选中序列与 confidence 全等。
+  const referenceRows = reference.selected as Array<{ id: string; confidence: number }>;
+  assert.deepEqual(unifiedKeys, referenceRows.map((row) => keyById.get(row.id)));
+  for (let index = 0; index < referenceRows.length; index += 1) {
+    assert.ok(Math.abs(referenceRows[index].confidence - unifiedRows[index].confidence) < 1e-12,
+      `confidence[${index}] ${referenceRows[index].confidence} vs ${unifiedRows[index].confidence}`);
+  }
+  child.stdin.end();
+  await closed;
+});

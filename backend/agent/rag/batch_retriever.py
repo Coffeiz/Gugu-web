@@ -231,6 +231,195 @@ class BatchUnifiedRetriever(UnifiedRetriever):
         )
 
 
+class UnifiedQueryRetriever(BatchUnifiedRetriever):
+    """Phase 5 统一查询主链：一次索引准备 + 一次 ``unified_query`` IPC。
+
+    召回、来源聚合、conversation 水位、Memory 融合与 confidence 排序全部在
+    TS worker 内完成；Python 保留业务数据装载、权限事实、向量生成和注入组装。
+    向量随瞬态语料驻留 worker（指纹耦合 embedding 模型版本戳），不随查询重复传输。
+    """
+
+    SOURCE_ORDER = ("memory", "knowledge", "project", "file", "canvas", "note", "conversation")
+
+    async def retrieve(self, query, *, source="all", scope="auto", strategy="auto", candidate_limit=20,
+                       rank_options: dict | None = None):
+        from agent.memory import embedding
+        from agent.rag.context import get_conversation_before_message_id
+        from agent.rag.index_cache import _documents_fingerprint, get_index_cache
+
+        rank_options = rank_options or {}
+        embedding_enabled = embedding.is_enabled() and strategy in {"auto", "embedding"}
+        if strategy not in {"auto", "bm25", "embedding"}:
+            raise ValueError("策略只能是 auto、bm25 或 embedding")
+        selected = [item for item in self._retrievers.values()
+                    if source == "all" or item.source_type == source]
+        memory = next((item for item in selected if item.source_type == "memory"), None)
+        persistent = [item for item in selected if item.source_type != "memory"]
+        if memory is not None and not persistent:
+            # 只有 Memory 的显式查询退回 legacy 瞬态索引路径（与 batch 模式同口径）。
+            return list(await UnifiedRetriever([memory]).retrieve(
+                query, source="all", scope=scope, strategy=strategy,
+                candidate_limit=candidate_limit,
+            ))
+        started = time.monotonic()
+        memory_documents: list | None = None
+        memory_index_source = ""
+        memory_meta: dict = {}
+        if memory is not None:
+            progress("memory", "index_prepare")
+            memory_documents, memory_index_source, memory_meta = await self._load_memory(memory, scope)
+        scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
+        specs, allowed = self._persistent_specs(persistent, scopes, limit=candidate_limit)
+        if memory_documents is not None:
+            specs.append({"source_types": {"memory"}, "scope": None,
+                          "limit": candidate_limit, "corpus": "transient"})
+        if not specs:
+            for item in selected:
+                progress(item.source_type, "completed", reason="scope_rejected")
+            return [RetrievalBatch(item.source_type, fallback_reason="scope_rejected") for item in selected]
+
+        session_owner, owner = self._session_owner(persistent)
+        metadata: dict = {}
+        ts_index = None
+        try:
+            async with session_owner.session_scope() as db:
+                index = await get_index_cache().get(
+                    db, owner, "all", scope, diagnostics=metadata,
+                    baseline_revision=get_snapshot_revision() or None,
+                )
+                prepare_ms = int((time.monotonic() - started) * 1000)
+                for item in persistent:
+                    progress(item.source_type, "sidecar_search", index_prepare_ms=prepare_ms)
+                if memory_documents is not None:
+                    # 指纹耦合 embedding 模型版本戳：换模型必然重传语料与向量。
+                    vectors: dict[str, list[float]] | None = None
+                    vector_version = ""
+                    if embedding_enabled and memory_documents:
+                        vectors = await self._memory_vectors(owner, memory_documents)
+                        vector_version = embedding.model_tag()
+                    revision = f"{_documents_fingerprint(memory_documents)}:{vector_version}"
+                    await index.client.replace_transient(
+                        memory_documents, revision, vectors=vectors, vector_version=vector_version)
+                ts_index = index
+                query_vector = list(await embedding.embed(query) or []) if embedding_enabled else []
+                response = await index.unified_query(
+                    query,
+                    searches=specs,
+                    query_vector=query_vector,
+                    source_order=[name for name in self.SOURCE_ORDER
+                                  if name in {item.source_type for item in selected}],
+                    candidate_limit=candidate_limit,
+                    rank_options={
+                        "limit": int(rank_options.get("limit") or 5),
+                        "max_chars": int(rank_options.get("max_chars") or 3000),
+                        "max_per_source": int(rank_options.get("max_per_source") or 3),
+                        "max_per_parent": int(rank_options.get("max_per_parent") or 3),
+                        "selection_mode": rank_options.get("selection_mode") or "confidence",
+                        "exclude_content_hashes": rank_options.get("exclude_content_hashes") or (),
+                    },
+                    before_message_id=get_conversation_before_message_id(),
+                )
+        except BaseException as exc:
+            for item in selected:
+                progress(item.source_type, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
+                         error_type=type(exc).__name__)
+            raise
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        fusion = response.get("fusion") or {}
+        # fallback 标签按 Python 侧事实判定：embedding 关闭/未配置 → embedding_disabled；
+        # 开启但无可用向量 → worker 回报 embedding_cache_unavailable；融合成功 → None。
+        fallback = None if embedding_enabled else "embedding_disabled"
+        if embedding_enabled:
+            fallback = fusion.get("fallback")
+        details = {
+            **metadata,
+            "document_count": sum((response.get("document_counts") or {}).values()),
+            "retrieve_ms": elapsed_ms,
+            "engine": "typescript", "cache_hit": "True",
+            "batch_search": "True", "unified_query": "True",
+            "fusion": str(fusion.get("fusion") or "bm25"),
+        }
+        progress("unified", "completed", **details)
+        stats = dict(response.get("stats") or {})
+        return [RetrievalBatch(
+            source_type="unified", results=(), index_source=memory_index_source or "persistent-ts",
+            fallback_reason=fallback,
+            candidate_count=sum(int(group.get("hit_count") or 0)
+                                for group in (response.get("source_groups") or {}).values()),
+            metadata={key: str(value) for key, value in details.items()},
+            rank_rows=self._resolve_rank_rows(ts_index, response, memory_documents),
+            rank_stats=stats,
+        )]
+
+    def _resolve_rank_rows(self, ts_index, response, memory_documents):
+        """把 worker 选中行回连 Python 文档，输出 (candidate, text, row) 三元组。"""
+        from agent.rag.index_cache import _worker_document_key
+        from agent.rag.models import RecallCandidate, RecallResult
+
+        documents_by_key = dict(ts_index.documents_by_id)
+        for document in memory_documents or ():
+            documents_by_key[_worker_document_key(document)] = document
+        triples = []
+        for row in response.get("selected") or []:
+            document = documents_by_key.get(str(row.get("document_key") or ""))
+            if document is None:
+                continue
+            candidate = RecallCandidate.from_result(
+                RecallResult(document, float(row.get("raw_score") or 0.0)),
+                rank=len(triples) + 1,
+            )
+            triples.append((candidate, str(row.get("text") or ""), row))
+        return tuple(triples)
+
+    async def _memory_vectors(self, owner, memory_documents) -> dict[str, list[float]]:
+        """从 Python 向量缓存读取 Memory 语料向量，按 worker 文档键交付。"""
+        from agent.rag.index_cache import _worker_document_key
+        from agent.rag.service import _load_cached_vectors
+
+        vector_map = await _load_cached_vectors(owner, memory_documents)
+        by_key = {_worker_document_key(document): document for document in memory_documents}
+        return {
+            key: vector_map[document.chunk_id]
+            for key, document in by_key.items()
+            if document.chunk_id in vector_map
+        }
+
+
+class UnifiedShadowRetriever(UnifiedRetriever):
+    """``unified_shadow`` 灰度模式：交付 legacy 结果，统一查询只在影子侧运行。
+
+    影子结果永不交付；与 legacy 最终排序的差异由 UnifiedRecallService 写入诊断
+    （``unified_equal`` / ``unified_first_diff_index``），影子失败只记错误类别。
+    """
+
+    def __init__(self, retrievers):
+        super().__init__(retrievers)
+        self._unified = UnifiedQueryRetriever(retrievers)
+
+    async def retrieve(self, query, *, source="all", scope="auto", strategy="auto",
+                       candidate_limit=20, rank_options=None):
+        batches = list(await super().retrieve(
+            query, source=source, scope=scope, strategy=strategy,
+            candidate_limit=candidate_limit,
+        ))
+        try:
+            shadow = await self._unified.retrieve(
+                query, source=source, scope=scope, strategy=strategy,
+                candidate_limit=candidate_limit, rank_options=rank_options,
+            )
+            if len(shadow) == 1 and shadow[0].source_type == "unified":
+                batches.append(shadow[0])
+        except Exception as exc:  # noqa: BLE001 - 影子失败只记录类别，绝不影响交付
+            from agent.rag.observation import progress
+
+            progress("unified", "error", error_type=type(exc).__name__)
+            batches.append(RetrievalBatch(
+                source_type="unified-shadow",
+                metadata={"unified_shadow_error": type(exc).__name__},
+            ))
+        return batches
+
+
 class ShadowUnifiedRetriever(UnifiedRetriever):
     """``batch_shadow`` 灰度模式：交付 legacy 结果，额外运行 batch 并记录候选差异。
 

@@ -19,6 +19,10 @@ class RetrievalBatch:
     fallback_reason: str | None = None
     candidate_count: int = 0
     metadata: dict[str, str] = field(default_factory=dict)
+    # Phase 5 统一查询：worker 内已完成融合+排序时，(candidate, text, row) 三元组
+    # 随批次上送，上层 UnifiedRecallService 跳过独立的 rank_candidates 步骤。
+    rank_rows: tuple = field(default_factory=tuple)
+    rank_stats: dict | None = None
 
     def candidates(self) -> tuple[RecallCandidate, ...]:
         """把来源结果转换为统一 Phase 1 候选，保留来源内 rank。"""

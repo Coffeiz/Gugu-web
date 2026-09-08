@@ -296,6 +296,104 @@ class UnifiedRecallService:
     def __init__(self, retriever: UnifiedRetriever):
         self.retriever = retriever
 
+    def _assemble_pre_ranked(self, query, batches, pre_ranked, scope, mode) -> dict:
+        """Phase 5 统一查询组装：worker 已完成融合与排序，Python 只做权限复核与装配。
+
+        与正常路径的顺序差异（如实记录）：权限复核在排序之后执行——search 阶段的
+        逐 spec scope 过滤仍是第一道边界，这里保留统一校验作为第二道防线；被拒
+        候选从交付行中剔除并计数，不再回补预算。
+        """
+        candidates: list[tuple[int, RecallCandidate]] = []
+        for order, (candidate, _text, _row) in enumerate(pre_ranked.rank_rows):
+            candidates.append((order, candidate))
+        permission_rejected = 0
+        if isinstance(scope, Scope) or isinstance(scope, (list, tuple)):
+            query_scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
+            authorized = []
+            for order, candidate in candidates:
+                if matches_any_scope(candidate.document, query_scopes):
+                    authorized.append((order, candidate))
+                else:
+                    permission_rejected += 1
+            candidates = authorized
+        ranked_candidates = [
+            (candidate, str(text), dict(row))
+            for (_order, candidate), (_c, text, row) in zip(candidates, pre_ranked.rank_rows)
+        ]
+        rank_stats = dict(pre_ranked.rank_stats or {})
+        selected: list[dict] = []
+        for candidate, selected_text, rank_item in ranked_candidates:
+            public_item = candidate.as_public()
+            public_item.update({
+                "text": selected_text,
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "source_quality": round(float(rank_item.get("source_quality") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+            })
+            public_item["citation"] = rank_item.get("citation") or public_item["citation"]
+            public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
+            selected.append(public_item)
+        fallback_reasons = [batch.fallback_reason for batch in batches if batch.fallback_reason]
+        engines = {batch.metadata.get("engine") for batch in batches if batch.metadata.get("engine")}
+        cache_values = [batch.metadata.get("cache_hit") == "True" for batch in batches
+                        if "cache_hit" in batch.metadata]
+        # 统一主链 strategy 按融合事实判定：worker 完成了向量融合就是 hybrid。
+        strategy = "hybrid" if any(batch.metadata.get("fusion") == "hybrid-rrf"
+                                   for batch in batches) else "bm25"
+        stage_ms: dict[str, int] = {}
+        for batch in batches:
+            for key, value in batch.metadata.items():
+                if key.endswith("_ms"):
+                    try:
+                        stage_ms[f"{batch.source_type}.{key}"] = int(float(value))
+                    except (TypeError, ValueError):
+                        continue
+        ranked_source_diagnostics = rank_stats.get("source_diagnostics") or {}
+        source_diagnostics = {}
+        for batch in batches:
+            source_diagnostics[batch.source_type] = {
+                **(ranked_source_diagnostics.get(batch.source_type) or {}),
+                "candidate_count": batch.candidate_count,
+                "hit_count": len(batch.results),
+                **batch.metadata,
+            }
+        return {
+            "query": query,
+            "results": selected,
+            "has_more": int(rank_stats.get("candidate_count", len(ranked_candidates)) or 0) > len(selected),
+            "strategy": strategy,
+            "fallback_reason": fallback_reasons[0] if fallback_reasons else None,
+            "index_source": ",".join(sorted({batch.index_source for batch in batches})),
+            "sources": sorted({batch.source_type for batch in batches}),
+            "candidate_count": sum(batch.candidate_count for batch in batches),
+            "permission_rejected": permission_rejected,
+            "rejected_low_score": rank_stats.get("rejected_low_score", 0),
+            "rejected_not_preferred": rank_stats.get("rejected_not_preferred", 0),
+            "rejected_duplicate": rank_stats.get("rejected_duplicate", 0),
+            "rejected_parent": rank_stats.get("rejected_parent", 0),
+            "rejected_source": rank_stats.get("rejected_source", 0),
+            "rejected_diversity": rank_stats.get("rejected_similarity", 0),
+            "accepted_count": len(selected),
+            "top_confidence": rank_stats.get("top_confidence", 0),
+            "confidence_threshold": rank_stats.get("threshold", 0.35),
+            "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
+            "selection_mode": rank_stats.get("selection_mode", "confidence"),
+            "scoring_version": rank_stats.get("scoring_version", "confidence-v1"),
+            "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
+            "cache_hit": bool(cache_values) and all(cache_values),
+            "cache_entries": 1,
+            "cache_miss_reasons": [],
+            "sidecar_reused": None,
+            "index_sync": None,
+            "upsert_count": 0,
+            "delete_count": 0,
+            "rank_candidates_ms": int(rank_stats.get("elapsed_ms", 0) or 0),
+            "stage_ms": stage_ms,
+            "source_diagnostics": source_diagnostics,
+            "scope_diagnostics": [],
+        }
+
     async def search(
         self,
         query: str,
@@ -317,16 +415,33 @@ class UnifiedRecallService:
         shared_key = f"snapshot:{snapshot_revision}" if snapshot_revision != "" else ""
         shared_token = set_shared_index_key(shared_key) if shared_key else None
         try:
-            batches = await self.retriever.retrieve(
-                query,
-                source=source,
-                scope=scope,
-                strategy=strategy,
-                candidate_limit=20,
-            )
+            retrieve_kwargs = dict(source=source, scope=scope, strategy=strategy, candidate_limit=20)
+            from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+            if isinstance(self.retriever, UnifiedQueryRetriever):
+                # 统一查询主链：排序参数必须在 IPC 前下传，召回+融合+排序一次完成。
+                retrieve_kwargs["rank_options"] = {
+                    "limit": requested_limit,
+                    "max_chars": MAX_OUTPUT_CHARS,
+                    "max_per_source": MAX_PER_SOURCE,
+                    "max_per_parent": 3,
+                    "selection_mode": "top_k" if mode == "tool" else "confidence",
+                    "exclude_content_hashes": sorted(exclude_content_hashes or set()),
+                }
+            batches = await self.retriever.retrieve(query, **retrieve_kwargs)
         finally:
             if shared_token is not None:
                 reset_shared_index_key(shared_token)
+        pre_ranked = next((batch for batch in batches if batch.source_type == "unified"
+                           and batch.rank_stats is not None), None)
+        if pre_ranked is not None and len(batches) == 1:
+            return self._assemble_pre_ranked(query, batches, pre_ranked, scope, mode)
+        # 影子批成功时 source_type 也是 "unified"（失败才落 "unified-shadow"）；
+        # 走到这里说明 len(batches) > 1，带 rank_stats 的 unified 批就是影子。
+        shadow_ranked = next((batch for batch in batches if batch.source_type == "unified"
+                              and batch.rank_stats is not None), None)
+        shadow_error = next((batch.metadata.get("unified_shadow_error") for batch in batches
+                             if batch.metadata.get("unified_shadow_error")), None)
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
@@ -441,11 +556,28 @@ class UnifiedRecallService:
         ranked_source_diagnostics = rank_stats.get("source_diagnostics") or {}
         source_diagnostics = {}
         for batch in batches:
+            if batch.source_type == "unified-shadow":
+                continue
             source_diagnostics[batch.source_type] = {
                 **(ranked_source_diagnostics.get(batch.source_type) or {}),
                 "candidate_count": batch.candidate_count,
                 "hit_count": len(batch.results),
                 **batch.metadata,
+            }
+        if shadow_error:
+            source_diagnostics["unified"] = {"unified_shadow_error": shadow_error}
+        elif shadow_ranked is not None:
+            # unified_shadow：只比最终交付序列，影子结果永不交付。
+            legacy_keys = [str(item.get("citation", {}).get("chunk_id") or "") for item in selected]
+            shadow_keys = [candidate.document.chunk_id for candidate, _text, _row in shadow_ranked.rank_rows]
+            first_diff = next((index for index, (left, right) in enumerate(zip(legacy_keys, shadow_keys))
+                               if left != right), None)
+            if first_diff is None and len(legacy_keys) != len(shadow_keys):
+                first_diff = min(len(legacy_keys), len(shadow_keys))
+            source_diagnostics["unified"] = {
+                "unified_equal": legacy_keys == shadow_keys,
+                "unified_first_diff_index": first_diff,
+                "unified_selected_count": len(shadow_keys),
             }
         return {
             "query": query,
@@ -594,10 +726,17 @@ async def search_knowledge(
         enabled = set(get_settings().search.rag_auto_sources)
         retrievers = [item for item in retrievers if item.source_type in enabled]
     from app.core.config import get_settings
-    from agent.rag.batch_retriever import BatchUnifiedRetriever, ShadowUnifiedRetriever
+    from agent.rag.batch_retriever import (
+        BatchUnifiedRetriever,
+        ShadowUnifiedRetriever,
+        UnifiedQueryRetriever,
+        UnifiedShadowRetriever,
+    )
     retriever_class = {
         "batch": BatchUnifiedRetriever,
         "batch_shadow": ShadowUnifiedRetriever,
+        "unified": UnifiedQueryRetriever,
+        "unified_shadow": UnifiedShadowRetriever,
     }.get(get_settings().search.rag_query_mode, UnifiedRetriever)
     service = UnifiedRecallService(retriever_class(retrievers))
     result = await service.search(

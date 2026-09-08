@@ -171,6 +171,27 @@ export type RagRequest =
     }
   | { op: "replace_transient"; revision: string; documents: RagDocument[] }
   | { op: "ping" }
+  | {
+      op: "unified_query";
+      revision: string;
+      transient_revision?: string;
+      query: string;
+      /** Memory 融合用查询向量；空数组表示本轮 embedding 不可用（纯词法）。 */
+      query_vector?: number[];
+      lexical_weight?: number;
+      vector_weight?: number;
+      rrf_k?: number;
+      /** conversation 消息水位；仅对 metadata.kind === "message" 的文档生效。 */
+      before_message_id?: number | null;
+      /** 候选打包的来源顺序（镜像 Python 检索器注册序），worker 按此序拼平候选。 */
+      source_order: string[];
+      searches: Array<{ id: string; source_types: string[]; corpus?: "transient"; scope?: RagSearchScope; limit?: number }>;
+      candidate_limit: number;
+      rank: {
+        limit: number; max_chars: number; max_per_source: number; max_per_parent: number;
+        selection_mode?: "confidence" | "top_k"; exclude_content_hashes?: string[];
+      };
+    }
   | { op: "tokenize"; text: string }
   | { op: "adapt"; source_type: RagSourceType | string; records: Record<string, unknown>[] }
   | { op: "build_documents"; batch: RagSourceBatch }
@@ -200,6 +221,16 @@ export type RagSuccessResponse =
       vector_version: string;
       fallback: string | null;
       results: RagHybridFuseResult[];
+    }
+  | {
+      status: "ok";
+      version: string;
+      revision: string;
+      selected: RagUnifiedQueryResult[];
+      stats: RagRankDiagnostics;
+      fusion: { fusion: "hybrid-rrf" | "bm25"; vector_doc_count: number; vector_version: string; fallback: string | null };
+      document_counts: Record<string, number>;
+      source_groups: Record<string, { candidate_count: number; hit_count: number }>;
     };
 
 export type RagErrorResponse = {
@@ -207,5 +238,7 @@ export type RagErrorResponse = {
   code: "revision_mismatch" | "unknown_operation" | "worker_failure" | string;
   message: string;
 };
+
+export type RagUnifiedQueryResult = RagRankResult & { document_key: string; raw_score: number };
 
 export type RagResponse = RagSuccessResponse | RagErrorResponse;

@@ -214,13 +214,30 @@ TS：召回、融合、排序、过滤、引用和结构化诊断
 Python：最终授权复核、上下文注入和工具交付
 ```
 
-- [ ] 将 `UnifiedRecallService` 的正常路径切换到统一 TS query。
-- [ ] 保留 Python 最终权限复核和 conversation watermark 检查。
-- [ ] 统一引用结构、来源标签、版本和内容指纹。
-- [ ] 移除已被 TS 替代且没有诊断/回退价值的 Python 重复逻辑。
-- [ ] 保留显式运维开关用于回退，不允许运行时静默切换实现。
+- [x] 将 `UnifiedRecallService` 的正常路径切换到统一 TS query（经 ``rag_query_mode`` 显式切换，默认仍 legacy）。
+- [x] 保留 Python 最终权限复核和 conversation watermark 检查。
+- [x] 统一引用结构、来源标签、版本和内容指纹。
+- [ ] 移除已被 TS 替代且没有诊断/回退价值的 Python 重复逻辑（清点已完成；物理删除受 §9 灰度门约束，待灰度完成后执行，见清理清单）。
+- [x] 保留显式运维开关用于回退，不允许运行时静默切换实现。
 
 验收：所有来源通过同一 TS 查询协议完成检索；结果、权限、引用和上下文预算通过完整回归；warm path P95 达到目标。
+
+Phase 5 验证记录（2026-09-09）：新增 worker op ``unified_query``，一次 IPC 完成 BM25 召回（逐 spec
+scope/来源过滤）、来源内聚合去重、conversation 消息水位（仅 ``kind=message`` 文档参与水位）、Memory
+混合融合（向量随瞬态语料驻留，指纹 = 语料指纹 + embedding 模型版本戳，换模型必然重传）与 confidence
+排序（confidence-v1 全量契约）。TS golden 测试断言其与「batch_search + hybrid_fuse + rank_candidates」
+三段参考管线逐位一致（选中序列与 confidence 1e-12 全等，含防退化断言：参考侧融合必须真生效）。Python
+侧 ``UnifiedQueryRetriever`` 只保留业务装载、权限事实、向量生成与注入组装；``rank_rows`` 三元组把
+worker 选中行回连 Python 文档（worker 无版本键 ↔ 带版本 chunk），引用结构直接采纳 worker 行并与 rank
+路径同形；``UnifiedRecallService`` 检测预排序批次后跳过二次排序，仅做装配。如实记录的实现偏差：权限
+复核在排序之后执行（worker 只见 Python 已按 scope 初筛的授权 spec 召回结果，Python 复核为第二道防线，
+越权行从交付剔除并计数、不回补预算）；``fallback`` 标签按 Python 侧事实判定（embedding 关闭 =
+``embedding_disabled``，开启则采纳 worker 回报，融合成功 = None）。灰度：``rag_query_mode`` 五档
+（legacy | batch | batch_shadow | unified_shadow | unified），默认 legacy，配置静态读取，影子批永不
+交付且对比写诊断（``unified_equal`` / ``unified_first_diff_index`` / ``unified_selected_count`` /
+``unified_shadow_error``）。回归：TS worker 20 用例、Python Phase 5 单测 7 项（单 IPC 事实、指纹耦合
+模型戳、watermark 下传、fallback 三态、service 预排序装配、越权剔除、影子隔离与参数透传）、后端全量
+2318 通过、typecheck 通过；live P95 与灰度阶梯切换在 devserver 验证阶段执行后补记于 devlog。
 
 ## 7. 诊断指标
 

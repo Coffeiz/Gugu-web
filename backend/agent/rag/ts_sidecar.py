@@ -140,15 +140,30 @@ class TsSidecarClient:
         self._document_count = int(response.get("document_count") or 0)
         self._restore_error = None
 
-    async def replace_transient(self, documents: list[IndexDocument], revision: str) -> None:
-        """把 Memory 快照语料装入 worker 的瞬态槽；指纹未变且进程未重启时零 IPC。"""
+    async def replace_transient(
+        self,
+        documents: list[IndexDocument],
+        revision: str,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
+    ) -> None:
+        """把 Memory 快照语料装入 worker 的瞬态槽；指纹未变且进程未重启时零 IPC。
+
+        vectors 按 worker 文档键驻留瞬态槽（随语料上传，不随查询重复传输）；
+        revision 必须耦合 embedding 模型版本戳，换模型时必然重传。
+        """
         generation = self._process_generation
         if self._transient_revision == revision and self._transient_generation == generation:
             return
-        result = await self._request({
+        payload: dict[str, Any] = {
             "op": "replace_transient", "revision": revision,
             "documents": [_wire_document(document) for document in documents],
-        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         self._transient_revision = str(result.response.get("revision") or revision)
         self._transient_generation = generation
 
@@ -445,6 +460,54 @@ class TsLexicalIndex:
                 results.append(RecallResult(document, float(raw.get("score") or 0)))
             batches.append((results, batch.get("diagnostics", {})))
         return batches, response.response.get("document_counts", {}), response.timing
+
+    async def unified_query(
+        self,
+        query: str,
+        *,
+        searches: list[dict],
+        query_vector: list[float] | None,
+        source_order: list[str],
+        candidate_limit: int,
+        rank_options: dict,
+        before_message_id: int | None = None,
+    ) -> dict:
+        """Phase 5 统一查询：一次 IPC 完成召回、聚合、水位、Memory 融合与排序。
+
+        返回 worker 响应（selected/stats/fusion/document_counts/source_groups）；
+        权限复核与注入组装仍由 Python 收口。
+        """
+        requests = []
+        for position, item in enumerate(searches):
+            scope = item.get("scope")
+            requests.append({
+                "id": str(position), "limit": candidate_limit,
+                "source_types": sorted(item.get("source_types", ())),
+                **({"corpus": "transient"} if item.get("corpus") == "transient" else {}),
+                **({"scope": {key: getattr(scope, key) for key in
+                              ("platform", "bot_id", "group_id", "scope_type", "scope_id")}}
+                   if scope is not None else {}),
+            })
+        payload: dict[str, Any] = {
+            "op": "unified_query", "revision": self.revision or "", "query": query,
+            "query_vector": list(query_vector or []),
+            "before_message_id": before_message_id,
+            "source_order": list(source_order),
+            "searches": requests,
+            "candidate_limit": max(1, int(candidate_limit)),
+            "rank": {
+                "limit": int(rank_options["limit"]),
+                "max_chars": int(rank_options["max_chars"]),
+                "max_per_source": int(rank_options["max_per_source"]),
+                "max_per_parent": int(rank_options["max_per_parent"]),
+                "selection_mode": rank_options.get("selection_mode", "confidence"),
+                "exclude_content_hashes": sorted(rank_options.get("exclude_content_hashes") or ()),
+            },
+        }
+        if any(item.get("corpus") == "transient" for item in searches):
+            payload["transient_revision"] = self.client._transient_revision or ""
+        response = await self.client._request(payload)
+        return dict(response.response)
 
     async def search(
         self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
