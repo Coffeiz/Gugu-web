@@ -67,7 +67,8 @@ RUN sed -i \
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    GUGU_EMBEDDED_DEPS=0
 
 # 业务 ENV 默认值与 docker-compose.prod.yml 注入的值保持一致：分离部署虽然总由
 # compose 显式注入，但声明默认值后面板（fnOS 等）枚举镜像变量时有据可依，

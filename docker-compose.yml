@@ -19,6 +19,8 @@ x-gugu-data-mount: &gugu-data-mount
 x-app-environment: &app-environment
   GUGU_SINGLE_CONTAINER: "1"
   GUGU_APP_PORT: "8001"
+  # Compose 部署用外部 postgres/redis 服务，显式关闭镜像内置依赖。
+  GUGU_EMBEDDED_DEPS: "0"
   GUGU_ENABLE_WORKER: "1"
   GUGU_ENABLE_GATEWAY: "1"
   GUGU_ENV_FILE: /app/.env

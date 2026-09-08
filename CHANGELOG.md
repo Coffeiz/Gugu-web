@@ -9,6 +9,7 @@
 
 ### 改进
 
+- **一体化镜像内置 PostgreSQL/Redis**：单容器一键部署（fnOS、群晖、`docker run`）不再需要外部数据库——镜像内置 PostgreSQL 与 Redis（仅监听容器内 127.0.0.1，supervisord 托管，数据落在 `/data` 卷），首次启动自动初始化；挂载 Docker socket 还会自动拉起内置沙盒服务。Compose 部署不受影响（显式 `GUGU_EMBEDDED_DEPS=0` 走外部服务）。
 - **部署入口端口统一 9595**：一体化镜像内 Nginx 监听端口从 8000 改为 9595（EXPOSE、健康检查跟随），镜像默认映射、Compose 宿主侧默认、`PUBLIC_APP_URL` 默认值三处一致——部署后只有 9595 一个入口，fnOS 等面板的默认映射不再与文档分叉，且避开 8000 这类易冲突端口；已部署用户显式设置过 `GUGU_HTTP_PORT`/`GUGU_PUBLIC_APP_URL` 的不受影响。
 - **一键部署镜像**：一体化镜像与后端分离镜像均声明数据库/Redis 等业务环境变量默认值，fnOS 等面板部署时可直接看到并填写，不再只露出 Python 自带变量；数据库等待超时改为明确报错并给出排查提示，不再静默继续后抛一长串连接栈。
 
