@@ -534,8 +534,17 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         await _ack_qq_interaction(channel_id, interaction_id, code=3)
         # 交互回调的 event_id 不是 QQ 消息 msg_id，不能用于消息回复，否则会触发
         # 40034024（msg_id 无效或越权）。交互状态已经由上面的协议 ACK 确认，
-        # 这里发送独立的 C2C 提示，不绑定原消息。
-        await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", None)
+        # 这里发送独立的提示；如果按钮来自群聊，必须回到原群，不能误发到私聊。
+        error_chat_type = str(event.get("chat_type") or "c2c")
+        error_target_id = (
+            event.get("chat_id")
+            if error_chat_type == "group" and event.get("chat_id")
+            else event["platform_user_id"]
+        )
+        await _qq_ack(
+            channel_id, error_chat_type, error_target_id,
+            "这个操作已过期或已经处理过了。", None,
+        )
         return
     except Exception as exc:
         await _ack_qq_interaction(channel_id, interaction_id, code=1)

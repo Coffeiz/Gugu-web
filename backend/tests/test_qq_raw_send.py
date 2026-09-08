@@ -33,6 +33,53 @@ async def test_ack_qq_interaction_without_id_is_noop(monkeypatch):
     assert await qq._ack_qq_interaction("bot-1", "") is False
 
 
+async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeypatch):
+    """Web 端先消费后，群里残留按钮再次点击不能把过期提示发到私聊。"""
+    import app.db.session as db_session
+    from app.services import interactions
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _SessionFactory:
+        def __call__(self):
+            return _SessionContext()
+
+    async def stale_action(*_args, **_kwargs):
+        raise ValueError("动作无效或已使用")
+
+    protocol_acks = []
+    user_replies = []
+
+    async def fake_protocol_ack(channel_id, interaction_id, *, code=0):
+        protocol_acks.append((channel_id, interaction_id, code))
+        return True
+
+    async def fake_qq_ack(channel_id, chat_type, target_id, text, msg_id):
+        user_replies.append((channel_id, chat_type, target_id, text, msg_id))
+
+    monkeypatch.setattr(db_session, "_SessionLocal", _SessionFactory())
+    monkeypatch.setattr(interactions, "consume_action", stale_action)
+    monkeypatch.setattr(qq, "_ack_qq_interaction", fake_protocol_ack)
+    monkeypatch.setattr(qq, "_qq_ack", fake_qq_ack)
+
+    await qq._handle_qq_interaction({
+        "id": "interaction-1",
+        "user_openid": "user-1",
+        "group_openid": "group-1",
+        "data": {"action_data": "17:opaque-token"},
+    }, "bot-1", "019eec39-4f5e-73cf-817d-60c0e0b640a8")
+
+    assert protocol_acks == [("bot-1", "interaction-1", 3)]
+    assert user_replies == [(
+        "bot-1", "group", "group-1", "这个操作已过期或已经处理过了。", None,
+    )]
+
+
 async def _fake_next_seq(msg_id):
     return 1
 
