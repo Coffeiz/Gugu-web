@@ -234,7 +234,7 @@ cd backend
 ### 3.8 Admin 初始化
 
 - Admin 后台：`http://localhost:5173/admin/login`
-- Admin 没有公开默认密码；在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 后重启后端，再登录后台。
+- 裸机 systemd 部署与一体化镜像都没有公开默认密码；一体化镜像在完全未设置 `ADMIN_PASSWORD` 时首启自动生成随机密码（写入数据卷 `.env` 并打印日志，重建容器不丢），裸机部署在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 后重启后端，再登录后台。
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
 
 ### 3.9 SearXNG 自建搜索（Compose 默认内置）
@@ -311,7 +311,7 @@ Web/Worker 不会挂载 Docker Socket，只通过共享的 `sandboxd.sock` 请�
 daemon、固定镜像或 Socket 不满足要求，Shell 会拒绝执行，不会回退到宿主机命令。开发机若使用
 rootful Docker，必须明确设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=false`，不建议用于生产。
 
-### 3.10 生产构建物 Compose（默认端口 9595）
+### 3.10 生产构建物 Compose（默认端口 8000）
 
 生产环境不要使用前面的开发 Compose。生产 Compose 只消费已经构建好的
 `GUGU_BACKEND_IMAGE` 和 `GUGU_FRONTEND_IMAGE`，不挂载源码，也不启动 Vite 或 Uvicorn
@@ -359,7 +359,7 @@ docker push docker.io/coffeiz/gugu-web-frontend:版本号
 ```
 
 访问地址为 `http://服务器地址:9595`。如需改端口，设置 `GUGU_HTTP_PORT`。
-同时在项目根目录 `.env` 设置 `GUGU_PUBLIC_APP_URL` 为用户实际访问的完整地址；域名部署示例为 `https://www.gugugu.site`。该值会注入后端，用于生成邮箱验证、密码重置等外部链接，不能填写 `localhost:8000` 或 Compose 服务名。
+同时在项目根目录 `.env` 设置 `GUGU_PUBLIC_APP_URL` 为用户实际访问的完整地址；域名部署示例为 `https://www.gugugu.site`。该值会注入后端，用于生成邮箱验证、密码重置等外部链接，不能填写 `localhost:9595` 或 Compose 服务名。
 生产 Compose 会自动执行数据库迁移，并持久化 PostgreSQL、用户文件、记忆、工作区和
 Admin 的 `config.override.json`；不要删除 `pgdata`、`Gugu-data`、`legacy_gugu_data` 或 `gugu_config`，确认迁移完成前尤其不要删除旧数据源卷。
 
