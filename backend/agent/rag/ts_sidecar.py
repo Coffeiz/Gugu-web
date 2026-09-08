@@ -114,6 +114,13 @@ class TsSidecarClient:
         response = (await self._request({"op": "build_documents", "batch": batch})).response
         return list(response.get("documents") or [])
 
+    async def adapt_records(self, source_type: str, records: list[dict]) -> list[dict]:
+        """TS 来源适配器投影：统一 source record → wire 文档；只做投影，不触碰索引。"""
+        result = await self._request({
+            "op": "adapt", "source_type": source_type, "records": records,
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        return list(result.response.get("documents") or [])
+
     async def build_and_index(self, batch: dict[str, list[dict]], revision: str) -> dict:
         """在 TS worker 内完成 source projection、分块和索引更新，避免回传完整文档。"""
         return (await self._request({

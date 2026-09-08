@@ -38,36 +38,35 @@ function chunkText(text, maxChars = 1400, overlap = 120) {
   if (!normalized) return [];
   const paragraphs = normalized.split(/\n\s*\n/gu).map((part) => part.trim()).filter(Boolean);
   const output = [];
-  let buffer = "";
+  let buffer = [];
   for (const paragraph of paragraphs) {
     const pieces = paragraph.split(/(?<=[。！？!?；;\n])/u).map((part) => part.trim()).filter(Boolean);
     for (const piece of pieces) {
-      if (piece.length > maxChars) {
-        if (buffer) {
-          output.push(buffer.trim());
-          buffer = "";
+      const chars = Array.from(piece);
+      if (chars.length > maxChars) {
+        if (buffer.length) {
+          output.push(buffer.join("").trim());
+          buffer = [];
         }
         const step = Math.max(1, maxChars - overlap);
-        for (let start = 0; start < piece.length; start += step) {
-          const chunk = piece.slice(start, start + maxChars).trim();
+        for (let start = 0; start < chars.length; start += step) {
+          const chunk = chars.slice(start, start + maxChars).join("").trim();
           if (chunk) output.push(chunk);
         }
         continue;
       }
-      const candidate = buffer ? `${buffer}
-${piece}`.trim() : piece;
-      if (buffer && candidate.length > maxChars) {
-        output.push(buffer.trim());
-        const tail = buffer.slice(-overlap).trim();
-        buffer = tail ? `${tail}
-${piece}`.trim() : piece;
+      const candidate = buffer.length ? [...buffer, "\n", ...chars] : chars;
+      if (buffer.length && candidate.length > maxChars) {
+        output.push(buffer.join("").trim());
+        const tail = buffer.slice(-overlap).join("").trim();
+        buffer = tail ? [...Array.from(tail), "\n", ...chars] : chars;
       } else {
         buffer = candidate;
       }
     }
   }
-  if (buffer) output.push(buffer.trim());
-  return output;
+  if (buffer.length) output.push(buffer.join("").trim());
+  return output.filter(Boolean);
 }
 function textVersion(text, ...parts) {
   const payload = [...parts.map((part) => String(part ?? "")), text].join("");
@@ -78,7 +77,7 @@ function buildDocuments(record, maxChars = 1400) {
   const chunks = chunkText(normalized, maxChars);
   if (!chunks.length) return [];
   const parentId = `${record.source_type}:${record.id}`;
-  const summary = record.summary || normalized.slice(0, 240);
+  const summary = record.summary || Array.from(normalized).slice(0, 240).join("");
   const parts = record.version_parts;
   const documentVersion = parts ? textVersion(normalized, ...parts) : record.document_version;
   const title = record.title || "\u672A\u547D\u540D";

@@ -255,15 +255,9 @@ def record_documents(owner_user_id, record: dict, scope: Scope) -> list[IndexDoc
     ) for index, piece in enumerate(pieces)]
 
 
-async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
-    """构建一个来源，查询仅限 owner；不在日志中输出正文。"""
+async def build_source_records(db, owner_user_id: object, source_type: str) -> list[tuple[dict, Scope]] | None:
+    """构建一个来源的统一 source record（各记录携带自己的 Scope）；无 record 管线的来源返回 None。"""
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
-    if source_type == "memory":
-        return await MemoryAdapter(owner_user_id).build_documents(scope=owner_scope)
-    if source_type == "knowledge":
-        return await KnowledgeAdapter(owner_user_id).build_index_documents()
-    if source_type == "project":
-        return await ProjectAdapter(owner_user_id, db=db).build_documents(scope=owner_scope)
     if source_type == "file":
         rows = (await db.execute(select(File).where(
             File.user_id == owner_user_id, File.deleted_at.is_(None),
@@ -272,20 +266,14 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
         bodies = await asyncio.gather(*(
             _extract_file_text_bounded(row, semaphore) for row in rows
         ))
-        documents = []
-        for row, body in zip(rows, bodies, strict=True):
-            documents.extend(record_documents(owner_user_id, file_record(row, body), owner_scope))
-        return documents
+        return [(file_record(row, body), owner_scope) for row, body in zip(rows, bodies, strict=True)]
     if source_type == "note":
         rows = (await db.execute(select(MindNode).where(
             MindNode.user_id == owner_user_id,
             MindNode.deleted_at.is_(None),
             MindNode.kind.in_(["note", "suggestion"]),
         ).order_by(MindNode.updated_at.desc(), MindNode.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            documents.extend(record_documents(owner_user_id, note_record(row), owner_scope))
-        return documents
+        return [(note_record(row), owner_scope) for row in rows]
     if source_type == "canvas":
         rows = (await db.execute(
             select(MindCanvasItem, MindMap, MindNode)
@@ -314,7 +302,7 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
             if left and right:
                 relation_by_node.setdefault(relation.src_node_id, []).append(f"{left} → {right}")
                 relation_by_node.setdefault(relation.dst_node_id, []).append(f"{left} ← {right}")
-        documents = []
+        records = []
         for item, canvas, node in rows:
             relation_summary = "；".join(relation_by_node.get(node.id, [])[:8])
             group_path = ""
@@ -324,26 +312,20 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
                 group_path = str(view.get("group_path") or view.get("groupPath") or "")
             except (TypeError, ValueError):
                 group_path = ""
-            documents.extend(record_documents(owner_user_id, canvas_record(
+            records.append((canvas_record(
                 item, canvas, node, relation_summary=relation_summary, group_path=group_path,
             ), owner_scope))
-        return documents
+        return records
     if source_type == "calendar":
         rows = (await db.execute(select(CalendarEvent).where(
             CalendarEvent.user_id == owner_user_id,
         ).order_by(CalendarEvent.created_at.desc(), CalendarEvent.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            documents.extend(record_documents(owner_user_id, calendar_record(row), owner_scope))
-        return documents
+        return [(calendar_record(row), owner_scope) for row in rows]
     if source_type == "scheduled_task":
         rows = (await db.execute(select(ScheduledTask).where(
             ScheduledTask.user_id == owner_user_id,
         ).order_by(ScheduledTask.updated_at.desc(), ScheduledTask.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            documents.extend(record_documents(owner_user_id, scheduled_task_record(row), owner_scope))
-        return documents
+        return [(scheduled_task_record(row), owner_scope) for row in rows]
     if source_type == "conversation":
         sessions = (await db.execute(select(ConversationSession).where(
             ConversationSession.user_id == owner_user_id,
@@ -358,21 +340,44 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
             )).scalars().all()
             for row in message_rows:
                 messages_by_session[row.session_id].append(row)
-        documents = []
+        records = []
         for session in sessions:
             session_scope = _scope(owner_user_id, session)
             if (session.summary or "").strip():
-                documents.extend(record_documents(
-                    owner_user_id, conversation_summary_record(session), session_scope))
+                records.append((conversation_summary_record(session), session_scope))
             for row in messages_by_session.get(session.id, ()):
                 if row.id <= (session.baseline_message_id or 0):
                     continue
                 if row.role not in {"user", "assistant"} or not (row.content or "").strip():
                     continue
-                documents.extend(record_documents(
-                    owner_user_id, conversation_message_record(session, row), session_scope))
-        return documents
+                records.append((conversation_message_record(session, row), session_scope))
+        return records
+    if source_type in {"memory", "knowledge", "project"}:
+        return None
     raise ValueError(f"不支持的知识索引来源：{source_type}")
+
+
+def documents_from_records(owner_user_id: object, records: list[tuple[dict, Scope]]) -> list[IndexDocument]:
+    """record 管线 → 索引 chunk；与 TS ``adapt`` op 输出逐字段等价（有等价测试锁定）。"""
+    documents: list[IndexDocument] = []
+    for record, scope in records:
+        documents.extend(record_documents(owner_user_id, record, scope))
+    return documents
+
+
+async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
+    """构建一个来源，查询仅限 owner；不在日志中输出正文。"""
+    owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
+    if source_type == "memory":
+        return await MemoryAdapter(owner_user_id).build_documents(scope=owner_scope)
+    if source_type == "knowledge":
+        return await KnowledgeAdapter(owner_user_id).build_index_documents()
+    if source_type == "project":
+        return await ProjectAdapter(owner_user_id, db=db).build_documents(scope=owner_scope)
+    records = await build_source_records(db, owner_user_id, source_type)
+    if records is None:
+        raise ValueError(f"不支持的知识索引来源：{source_type}")
+    return documents_from_records(owner_user_id, records)
 
 
 INDEX_SOURCE_TYPES = (
@@ -381,14 +386,28 @@ INDEX_SOURCE_TYPES = (
 
 
 async def rebuild_knowledge_index(db, owner_user_id: object, source_types=None) -> dict[str, int]:
-    """重建 owner 的统一索引，返回各来源 chunk 数量。"""
+    """重建 owner 的统一索引，返回各来源 chunk 数量；影子比对开启时记录投影诊断。"""
     selected = tuple(source_types or INDEX_SOURCE_TYPES)
     counts: dict[str, int] = {}
     for source_type in selected:
-        documents = await build_source_documents(db, owner_user_id, source_type)
+        records = await build_source_records(db, owner_user_id, source_type)
+        if records is None:
+            documents = await build_source_documents(db, owner_user_id, source_type)
+        else:
+            documents = documents_from_records(owner_user_id, records)
         counts[source_type] = await replace_source_documents(db, owner_user_id, source_type, documents)
+        if records is not None:
+            from agent.rag.write_shadow import shadow_compare_build
+
+            await shadow_compare_build(owner_user_id, source_type, records, documents)
     await db.commit()
     return counts
 
 
-__all__ = ["INDEX_SOURCE_TYPES", "build_source_documents", "rebuild_knowledge_index"]
+__all__ = [
+    "INDEX_SOURCE_TYPES",
+    "build_source_documents",
+    "build_source_records",
+    "documents_from_records",
+    "rebuild_knowledge_index",
+]

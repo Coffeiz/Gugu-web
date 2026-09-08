@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.diagnostics import record_index_update
-from agent.rag.index_builder import build_source_documents
+from agent.rag.index_builder import build_source_documents, build_source_records, documents_from_records
 from agent.rag.scope import normalize_memory_scope
 from agent.rag.persistent_store import replace_source_documents
 from agent.rag.storage import PersistentMemoryIndex
@@ -81,13 +81,22 @@ async def rebuild_source_index(user_id: object, source_type: str, *, operation: 
         if str(engine.url).startswith("sqlite") and engine.url.database is None:
             return 0
         async with db_session._SessionLocal() as db:
-            documents = await build_source_documents(db, user_id, source_type)
+            records = await build_source_records(db, user_id, source_type)
+            if records is None:
+                documents = await build_source_documents(db, user_id, source_type)
+            else:
+                documents = documents_from_records(user_id, records)
             count = await replace_source_documents(db, user_id, source_type, documents)
             await db.commit()
         if source_type == "knowledge":
             from agent.rag.vector_cache import sync_knowledge_index_vectors
 
             await sync_knowledge_index_vectors(user_id, documents)
+        if records is not None:
+            # 影子比对在写库与向量同步之后：观测缺失绝不影响写路径。
+            from agent.rag.write_shadow import shadow_compare_build
+
+            await shadow_compare_build(user_id, source_type, records, documents)
         return count
 
 

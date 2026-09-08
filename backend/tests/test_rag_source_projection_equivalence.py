@@ -97,7 +97,21 @@ async def test_file_projection_equivalent(tmp_path):
         project_id=None, folder_id=None, space="", stage_name="",
         version="v1", updated_at=_dt(2026, 9, 1),
     ), "字" * 3000)
-    await _assert_equivalent({"file": [(full, False), (minimal, False), (long, False)]}, tmp_path)
+    # 非 BMP 字符（emoji）按码点计数：单块不误切、切块窗口逐位对齐。
+    emoji_single = file_record(SimpleNamespaceRow(
+        id=10, display_name="表情.md", ext="md", mime_type="text/markdown",
+        project_id=None, folder_id=None, space="", stage_name="",
+        version="v1", updated_at=None,
+    ), "a" * 1300 + "\U0001f600" * 60)
+    emoji_split = file_record(SimpleNamespaceRow(
+        id=11, display_name="长表情.md", ext="md", mime_type="text/markdown",
+        project_id=None, folder_id=None, space="", stage_name="",
+        version="v1", updated_at=None,
+    ), "字" * 1380 + "\U0001f600" * 40)
+    await _assert_equivalent({"file": [
+        (full, False), (minimal, False), (long, False),
+        (emoji_single, False), (emoji_split, False),
+    ]}, tmp_path)
 
 
 @pytest.mark.asyncio

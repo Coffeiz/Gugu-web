@@ -42,6 +42,26 @@ test("file 适配器输出「文件/类型/空间/阶段」头部与五字段元
   assert.equal(minimal.metadata.space, "");
 });
 
+test("分块长度按码点计数：非 BMP 字符不误切、切块窗口逐位对齐", () => {
+  // 1360 码点 / 1420 UTF-16 码元：Python 语义不切分，UTF-16 口径会误切。
+  const single = "a".repeat(1300) + "\u{1F600}".repeat(60);
+  const [singleDoc] = fileAdapter.toDocuments([{
+    id: 31, title: "表情.md", content: single, version_parts: ["31"], scope: ownerScope,
+  }]);
+  assert.equal(singleDoc.chunk_count, 1);
+  assert.equal(singleDoc.content, `文件：表情.md\n${single}`);
+  // 1420 码点正文：头部行先独立成块，正文走长文切步且窗口按码点对齐。
+  const long = "\u5b57".repeat(1380) + "\u{1F600}".repeat(40);
+  const documents = fileAdapter.toDocuments([{
+    id: 32, title: "长表情.md", content: long, version_parts: ["32"], scope: ownerScope,
+  }]);
+  assert.equal(documents.length, 3);
+  assert.equal(documents[0].content, "文件：长表情.md");
+  assert.equal(documents[1].content, Array.from(long).slice(0, 1400).join(""));
+  assert.equal(documents[2].content, Array.from(long).slice(1280).join(""));
+  assert.ok(documents.every((document) => document.chunk_count === 3));
+});
+
 test("note 适配器空标题回落「便签」，content_plain 优先", () => {
   const [document] = noteAdapter.toDocuments([{
     id: 3, title: "", content_plain: "纯文本", content_md: "**md**", kind: "note",

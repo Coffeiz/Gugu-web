@@ -11,31 +11,34 @@ export function chunkText(text: string, maxChars = 1400, overlap = 120): string[
   if (!normalized) return [];
   const paragraphs = normalized.split(/\n\s*\n/gu).map((part) => part.trim()).filter(Boolean);
   const output: string[] = [];
-  let buffer = "";
+  // Python len/slice 按 Unicode 码点计数，JS string 按 UTF-16 码元：含非 BMP 字符
+  // （emoji、扩展汉字）时边界会漂移，因此 buffer 一律以码点数组持有与测量。
+  let buffer: string[] = [];
   for (const paragraph of paragraphs) {
     const pieces = paragraph.split(/(?<=[。！？!?；;\n])/u).map((part) => part.trim()).filter(Boolean);
     for (const piece of pieces) {
-      if (piece.length > maxChars) {
-        if (buffer) { output.push(buffer.trim()); buffer = ""; }
+      const chars = Array.from(piece);
+      if (chars.length > maxChars) {
+        if (buffer.length) { output.push(buffer.join("").trim()); buffer = []; }
         const step = Math.max(1, maxChars - overlap);
-        for (let start = 0; start < piece.length; start += step) {
-          const chunk = piece.slice(start, start + maxChars).trim();
+        for (let start = 0; start < chars.length; start += step) {
+          const chunk = chars.slice(start, start + maxChars).join("").trim();
           if (chunk) output.push(chunk);
         }
         continue;
       }
-      const candidate = buffer ? `${buffer}\n${piece}`.trim() : piece;
-      if (buffer && candidate.length > maxChars) {
-        output.push(buffer.trim());
-        const tail = buffer.slice(-overlap).trim();
-        buffer = tail ? `${tail}\n${piece}`.trim() : piece;
+      const candidate = buffer.length ? [...buffer, "\n", ...chars] : chars;
+      if (buffer.length && candidate.length > maxChars) {
+        output.push(buffer.join("").trim());
+        const tail = buffer.slice(-overlap).join("").trim();
+        buffer = tail ? [...Array.from(tail), "\n", ...chars] : chars;
       } else {
         buffer = candidate;
       }
     }
   }
-  if (buffer) output.push(buffer.trim());
-  return output;
+  if (buffer.length) output.push(buffer.join("").trim());
+  return output.filter(Boolean);
 }
 
 /** 与 Python text_version 逐位一致：sha256("\x1f".join([*parts, text]))[:16]。 */
@@ -55,7 +58,8 @@ export function buildDocuments(
   // parent_id = document_id = "{source_type}:{source_id}"；
   // wire id = _worker_document_key = "{source_type}:{document_id}:{chunkIndex}"（id 双重前缀是现网口径）。
   const parentId = `${record.source_type}:${record.id}`;
-  const summary = record.summary || normalized.slice(0, 240);
+  // 摘要截断与 Python text[:240] 同为码点口径。
+  const summary = record.summary || Array.from(normalized).slice(0, 240).join("");
   const parts = record.version_parts;
   const documentVersion = parts
     ? textVersion(normalized, ...parts)

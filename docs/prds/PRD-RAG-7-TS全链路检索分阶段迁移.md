@@ -194,7 +194,7 @@ all@<baseline>`` 钉住 Python 侧条目且失效检查忽略 revision 变化，
 稳定（prompt cache 前提）；snapshot 换代时 worker 存活走 diff patch（不上送未变文档），进程重启走
 磁盘恢复或全量重建；Memory 瞬态语料按快照指纹驻留独立槽，不随 snapshot 复制持久索引。
 
-Phase 4 写路径移交三步走（第一步已完成，如实记录）：「Python 只提交 source batch / TS 统一处理
+Phase 4 写路径移交三步走（第①②步已完成，如实记录）：「Python 只提交 source batch / TS 统一处理
 source adapter 与分块」按「① TS 适配器逐字段对齐 Python 方言 → ② 双实现投影等价测试 → ③ shadow
 投影与生产切换」推进。第一步（2026-09-09）完成：Python ``build_source_documents`` 重构为 record 纯函数
 管线（``*_record`` / ``record_text`` / ``record_metadata`` / ``record_documents``），输出统一 source record
@@ -206,8 +206,9 @@ source adapter 与分块」按「① TS 适配器逐字段对齐 Python 方言 �
 双实现投影等价测试（真 worker ``adapt`` op vs Python ``record_documents``→``_wire_document``）锁定六来源
 在 wire 域逐字段全等（含 3000 字长文分块、空字段行省略、匿名便签回落、群 scope）。已知一次性代价：
 ``version_parts`` 中 datetime 统一序列化为 isoformat（``T`` 分隔），与旧 ``str(datetime)``（空格分隔）不同，
-部署后各来源 document_version 变化会触发一轮全量重传，自限且无害。第二步 shadow 投影与第三步生产
-切换仍待实施；KnowledgeIndexEntry 表作为跨进程持久 chunk 事实源，切换前分块仍以 Python 写库为准。
+部署后各来源 document_version 变化会触发一轮全量重传，自限且无害。第二步 shadow 投影已于同日完成
+（见下），第三步生产切换待影子基线观察期结束后按规划实施；KnowledgeIndexEntry 表作为跨进程持久
+chunk 事实源，切换前分块仍以 Python 写库为准。
 
 Phase 4 第一步验证记录（2026-09-09）：新增 ``backend/tests/test_rag_source_projection_equivalence.py``
 （5 项）以真实 worker 进程（``--experimental-strip-types`` 跑 TS 源码）执行 ``adapt`` op，与 Python
@@ -215,6 +216,29 @@ Phase 4 第一步验证记录（2026-09-09）：新增 ``backend/tests/test_rag_
 ``test/source-adapter-equivalence.test.ts``（方言冻结：版本 sha256 冻结值、三段 text 拼接、头部组装）。
 回归：后端全量 2324 通过、TS worker 37 通过、typecheck 通过；``backend/bin/gugu-rag-ts-worker.mjs``
 制品重建并冒烟（ping + adapt 输出 wire 口径正确）。
+
+Phase 4 第二步验证记录（2026-09-09，shadow 投影）：新增 ``agent/rag/write_shadow.py``——同一批
+source record 分别经 TS worker ``adapt`` op（``TsSidecarClient.adapt_records``）与 Python 写库产物
+（``_wire_document`` 逐文档）在 wire 域 chunk 级比对（id/text/document_version/metadata 全字段），
+只记录脱敏诊断（chunk 数、首个差异 chunk 标识、差异字段名、两侧 content 长度），影子失败绝不抛出、
+绝不改写写路径。挂点：``pipeline.rebuild_source_index``（增量事件）与 ``rebuild_knowledge_index``
+（全量重建）六来源；开关 ``search.rag_write_shadow``（默认关）。新增
+``tests/test_rag_write_shadow.py`` 6 项（一致/篡改漂移/关闭跳过/无管线跳过/worker 故障隔离/重建集成）。
+**devserver 真实数据影子比对抓到并修复一处真实方言缺陷**：TS ``chunkText``/摘要截断按 UTF-16 码元
+计长，Python ``split_text``/``text[:240]`` 按 Unicode 码点——含非 BMP 字符（emoji）的文本在 1400
+边界处切分错位（file:1904 首块左 1398/右 1384 码点）。修复为码点口径（码点数组测量与切片），并补
+双侧非 BMP 回归用例。修复后 devserver 两用户六来源全部一致（382+62+44+19+7+2859 与
+3+0+0+0+0+8 个 chunk 逐字段全等，含空来源边界）；``search.rag_write_shadow=true`` 已常开到
+gugu-backend/gugu-worker systemd drop-in，持续积累影子基线。回归：后端全量 2330 通过、TS 38 通过。
+
+Phase 4 第三步规划（生产切换，未实施）：影子基线观察数日、增量事件与全量重建两路径均 mismatch=0
+且用户确认后启动——新增 ``search.rag_write_mode: Literal["python", "ts"]``（默认 python），
+``ts`` 模式下 ``rebuild_source_index``/``rebuild_knowledge_index`` 的写库产物改为 TS ``adapt_records``
+返回的 wire 文档经 ``_from_wire_document`` 回转 IndexDocument 后落 KnowledgeIndexEntry（分块事实来自
+TS，Python 仍是持久 chunk 事实源），worker 索引沿用既有 replace/patch 通道；回滚 = 配置切回
+python，无需数据迁移（两侧 chunk 逐字段一致由影子基线保证）；TS 投影失败显式失败重试，不静默
+回退 Python 投影。第③步完成后按旧代码清点触发条件重新评估 Python 投影与 ``KnowledgeIndexEntry``
+的存留。
 
 ### Phase 5：统一 TS RAG 查询主链
 

@@ -280,6 +280,10 @@ class SearchSettings(BaseModel):
         "legacy",
         description="RAG 查询迁移模式：legacy 生产路径；batch 一次批量词法查询；batch_shadow 交付 legacy 并记录差异；unified TS 统一查询主链；unified_shadow 交付 legacy 并记录统一查询差异",
     )
+    rag_write_shadow: bool = Field(
+        False,
+        description="RAG 写路径影子比对：同一批 source record 分别经 TS worker adapt 投影与 Python 投影，chunk 级逐字段比对并只记录脱敏诊断，不改变写路径",
+    )
     ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
     similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
     similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
