@@ -170,8 +170,8 @@ worker 融合失败回滚 Python 实现并显式记录 ``ts_hybrid_error``，不
 
 目标：将分块、source batch 投影、索引构建、patch、持久化和 revision 生命周期收口到 TS。
 
-- [x] Python 只提交带 `source_type`、`Scope`、版本和稳定 ID 的 source batch。（第一步完成：record 管线投影为统一 source record，六来源方言与 TS 逐字段等价，见下方验证记录）
-- [x] TS 统一处理 source adapter、分块、replace、patch 和持久化索引。（第一步完成：适配器消费统一 record 协议，分块/replace/patch/持久化既有能力不变；shadow 投影与生产切换为第二、三步）
+- [x] Python 只提交带 `source_type`、`Scope`、版本和稳定 ID 的 source batch。（①②③步完成：record 管线投影统一 source record；``rag_write_mode=ts`` 时 Python 只提交 record，分块事实来自 TS）
+- [x] TS 统一处理 source adapter、分块、replace、patch 和持久化索引。（①②③步完成：适配器消费统一 record 协议；``rag_write_mode=ts`` 经 adapt 投影回转落库，默认 python 待确认切换）
 - [x] 保留 Python 的业务数据读取和权限初筛；Worker 不读取数据库。
 - [x] 覆盖文件、画布、项目、Knowledge、Memory 和 Conversation 的增删改同步。
 - [x] 验证 worker 重启、revision mismatch、索引损坏、并发 patch 和冷恢复。
@@ -194,7 +194,7 @@ all@<baseline>`` 钉住 Python 侧条目且失效检查忽略 revision 变化，
 稳定（prompt cache 前提）；snapshot 换代时 worker 存活走 diff patch（不上送未变文档），进程重启走
 磁盘恢复或全量重建；Memory 瞬态语料按快照指纹驻留独立槽，不随 snapshot 复制持久索引。
 
-Phase 4 写路径移交三步走（第①②步已完成，如实记录）：「Python 只提交 source batch / TS 统一处理
+Phase 4 写路径移交三步走（第①②③步均已实施，第③步默认 python 不改现网行为、待确认启用）：「Python 只提交 source batch / TS 统一处理
 source adapter 与分块」按「① TS 适配器逐字段对齐 Python 方言 → ② 双实现投影等价测试 → ③ shadow
 投影与生产切换」推进。第一步（2026-09-09）完成：Python ``build_source_documents`` 重构为 record 纯函数
 管线（``*_record`` / ``record_text`` / ``record_metadata`` / ``record_documents``），输出统一 source record
@@ -231,14 +231,20 @@ source record 分别经 TS worker ``adapt`` op（``TsSidecarClient.adapt_records
 3+0+0+0+0+8 个 chunk 逐字段全等，含空来源边界）；``search.rag_write_shadow=true`` 已常开到
 gugu-backend/gugu-worker systemd drop-in，持续积累影子基线。回归：后端全量 2330 通过、TS 38 通过。
 
-Phase 4 第三步规划（生产切换，未实施）：影子基线观察数日、增量事件与全量重建两路径均 mismatch=0
-且用户确认后启动——新增 ``search.rag_write_mode: Literal["python", "ts"]``（默认 python），
-``ts`` 模式下 ``rebuild_source_index``/``rebuild_knowledge_index`` 的写库产物改为 TS ``adapt_records``
-返回的 wire 文档经 ``_from_wire_document`` 回转 IndexDocument 后落 KnowledgeIndexEntry（分块事实来自
-TS，Python 仍是持久 chunk 事实源），worker 索引沿用既有 replace/patch 通道；回滚 = 配置切回
-python，无需数据迁移（两侧 chunk 逐字段一致由影子基线保证）；TS 投影失败显式失败重试，不静默
-回退 Python 投影。第③步完成后按旧代码清点触发条件重新评估 Python 投影与 ``KnowledgeIndexEntry``
-的存留。
+Phase 4 第三步实施记录（2026-09-09，**默认 python 未启用**，待用户确认切换）：新增
+``search.rag_write_mode: Literal["python", "ts"]``（默认 python），``ts`` 模式下
+``rebuild_source_index``/``rebuild_knowledge_index`` 的写库产物改为 TS ``adapt_records`` 返回的
+wire 文档经 ``wire_document_to_persistent`` 回转 IndexDocument 后落 KnowledgeIndexEntry（分块事实
+来自 TS，Python 仍是持久 chunk 事实源），worker 索引沿用既有 replace/patch 通道。**偏离说明**：
+未直接用 ``_from_wire_document``——它面向查询命中恢复（document_id 取 wire id 即双重前缀 worker
+键），写库通道需要单前缀持久身份，故新增严格版 ``wire_document_to_persistent``（document_id 取
+``parent_id``，结构缺陷显式抛错不静默丢 chunk），wire→持久→wire 往返恒等有测试锁定。安全属性：
+python 模式行为逐位不变；ts 模式写出的 KnowledgeIndexEntry 行与 python 模式逐字段一致（等价测试
+覆盖 calendar 两活动、含 metadata/scope/content_hash/source_updated_at）；worker 不可用或投影缺陷
+显式失败经事件管线重试，不静默回退 Python；ts 模式下影子比对自动切换基线为「Python 本地投影 vs
+TS 投影」持续守卫方言漂移。回滚 = 配置切回 python，无需数据迁移。启用条件：devserver 影子基线
+观察期 mismatch=0（``rag_write_shadow`` 已常开积累）+ 用户确认。启用后按旧代码清点触发条件重新
+评估 Python 投影与 ``KnowledgeIndexEntry`` 的存留。
 
 ### Phase 5：统一 TS RAG 查询主链
 

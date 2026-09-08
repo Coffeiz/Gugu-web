@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.diagnostics import record_index_update
-from agent.rag.index_builder import build_source_documents, build_source_records, documents_from_records
+from agent.rag.index_builder import build_source_documents, build_source_records, records_to_write_documents
 from agent.rag.scope import normalize_memory_scope
 from agent.rag.persistent_store import replace_source_documents
 from agent.rag.storage import PersistentMemoryIndex
@@ -85,7 +85,7 @@ async def rebuild_source_index(user_id: object, source_type: str, *, operation: 
             if records is None:
                 documents = await build_source_documents(db, user_id, source_type)
             else:
-                documents = documents_from_records(user_id, records)
+                documents = await records_to_write_documents(user_id, source_type, records)
             count = await replace_source_documents(db, user_id, source_type, documents)
             await db.commit()
         if source_type == "knowledge":

@@ -11,19 +11,11 @@ import logging
 import time
 
 from agent.rag.models import IndexDocument, Scope
+from agent.rag.ts_sidecar import scope_to_wire
 
 logger = logging.getLogger("agent.rag.write_shadow")
 
-
-def scope_to_wire(scope: Scope) -> dict:
-    """Scope → TS 适配器消费的 wire scope（空值统一为空串，与现网口径一致）。"""
-    return {
-        "scope_type": scope.scope_type or "owner",
-        "scope_id": scope.scope_id or "",
-        "platform": scope.platform or "",
-        "bot_id": scope.bot_id or "",
-        "group_id": scope.group_id or "",
-    }
+__all__ = ["shadow_compare_build", "scope_to_wire"]
 
 
 def _normalize(wire_documents: list[dict]) -> list[dict]:
@@ -54,6 +46,8 @@ async def shadow_compare_build(
 ) -> dict | None:
     """影子比对一次来源构建；返回脱敏诊断，关闭/无 record 管线时返回 None。
 
+    python 写库模式比对「写库产物 vs TS adapt 投影」；ts 写库模式写库产物本身就是
+    adapt 输出，改比「Python 本地投影 vs adapt」，守卫两侧方言漂移。
     任何异常都收敛进诊断并记日志，绝不向写路径抛出——影子失败只代表观测缺失，
     不代表索引错误。
     """
@@ -78,7 +72,14 @@ async def shadow_compare_build(
         )
         payload = [{**record, "scope": scope_to_wire(scope)} for record, scope in records]
         ts_documents = _normalize(await client.adapt_records(source_type, payload))
-        expected = _written_wire_documents(documents)
+        diagnostic["write_mode"] = getattr(settings.search, "rag_write_mode", "python")
+        if diagnostic["write_mode"] == "ts":
+            from agent.rag.index_builder import documents_from_records
+
+            baseline = documents_from_records(owner_user_id, records)
+        else:
+            baseline = documents
+        expected = _written_wire_documents(baseline)
         diagnostic["python_chunks"] = len(expected)
         diagnostic["ts_chunks"] = len(ts_documents)
         if len(expected) != len(ts_documents):
@@ -124,6 +125,3 @@ async def shadow_compare_build(
             diagnostic,
         )
     return diagnostic
-
-
-__all__ = ["shadow_compare_build", "scope_to_wire"]

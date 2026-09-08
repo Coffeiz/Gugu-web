@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 
 from sqlalchemy import select
@@ -365,6 +366,46 @@ def documents_from_records(owner_user_id: object, records: list[tuple[dict, Scop
     return documents
 
 
+async def records_to_write_documents(
+    owner_user_id: object,
+    source_type: str,
+    records: list[tuple[dict, Scope]],
+    *,
+    settings=None,
+) -> list[IndexDocument]:
+    """写库产物投影：``rag_write_mode`` 选择引擎（写路径移交第③步）。
+
+    ``python``（生产默认）走本地 record 管线，行为与移交前逐位一致；``ts`` 经
+    worker ``adapt`` op 投影后经 ``wire_document_to_persistent`` 回转持久文档，
+    worker 不可用或投影结构缺陷时显式失败（由事件管线重试），不静默回退 Python。
+    """
+    from app.core.config import get_settings
+
+    settings = settings or get_settings()
+    python_documents = documents_from_records(owner_user_id, records)
+    if settings.search.rag_write_mode != "ts":
+        return python_documents
+    import time
+
+    from agent.rag.index_cache import index_dir_for_owner
+    from agent.rag.ts_sidecar import get_lexical_client, scope_to_wire, wire_document_to_persistent
+
+    started = time.monotonic()
+    client = await get_lexical_client(
+        owner_user_id,
+        command=settings.search.ts_sidecar_command,
+        index_dir=index_dir_for_owner(owner_user_id),
+    )
+    payload = [{**record, "scope": scope_to_wire(scope)} for record, scope in records]
+    wire_documents = await client.adapt_records(source_type, payload)
+    documents = [wire_document_to_persistent(raw, owner_user_id) for raw in wire_documents]
+    logging.getLogger("agent.rag.index_builder").info(
+        "RAG 写库投影 engine=ts source=%s records=%s chunks=%s elapsed_ms=%s",
+        source_type, len(records), len(documents), int((time.monotonic() - started) * 1000),
+    )
+    return documents
+
+
 async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
     """构建一个来源，查询仅限 owner；不在日志中输出正文。"""
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
@@ -394,7 +435,7 @@ async def rebuild_knowledge_index(db, owner_user_id: object, source_types=None) 
         if records is None:
             documents = await build_source_documents(db, owner_user_id, source_type)
         else:
-            documents = documents_from_records(owner_user_id, records)
+            documents = await records_to_write_documents(owner_user_id, source_type, records)
         counts[source_type] = await replace_source_documents(db, owner_user_id, source_type, documents)
         if records is not None:
             from agent.rag.write_shadow import shadow_compare_build
@@ -409,5 +450,6 @@ __all__ = [
     "build_source_documents",
     "build_source_records",
     "documents_from_records",
+    "records_to_write_documents",
     "rebuild_knowledge_index",
 ]

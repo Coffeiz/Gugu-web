@@ -598,6 +598,56 @@ def _worker_document_key(document: IndexDocument) -> str:
     return f"{document.source_type}:{parent}:{document.chunk_index}"
 
 
+def scope_to_wire(scope: Scope) -> dict:
+    """Scope → TS 适配器消费的 wire scope（空值统一为空串，与现网口径一致）。"""
+    return {
+        "scope_type": scope.scope_type or "owner",
+        "scope_id": scope.scope_id or "",
+        "platform": scope.platform or "",
+        "bot_id": scope.bot_id or "",
+        "group_id": scope.group_id or "",
+    }
+
+
+def wire_document_to_persistent(raw: dict[str, Any], owner_user_id: object) -> IndexDocument:
+    """TS ``adapt`` wire 文档 → 持久 IndexDocument（写库通道，第③步）。
+
+    与 ``_from_wire_document``（查询命中恢复，宽松）不同：写库通道对结构缺陷
+    显式失败，不静默丢弃 chunk。document_id 取 ``parent_id``（单前缀持久口径），
+    wire id（``_worker_document_key``）由 parent_id + chunk_index 可完整重建，
+    模式切换不改变持久行身份。
+    """
+    parent = str(raw.get("parent_id") or "")
+    if not parent:
+        raise ValueError(f"TS 投影 wire 文档缺少 parent_id：{raw.get('id')}")
+    content = raw.get("content")
+    if content is None:
+        raise ValueError(f"TS 投影 wire 文档缺少 content：{raw.get('id')}")
+    metadata = raw.get("metadata")
+    return IndexDocument(
+        document_id=parent,
+        source_type=str(raw.get("source_type") or ""),
+        source_id=str(raw.get("source_id") or ""),
+        scope=Scope(
+            owner_user_id=str(owner_user_id),
+            platform=str(raw.get("platform") or ""),
+            bot_id=str(raw.get("bot_id") or ""),
+            group_id=str(raw.get("group_id") or ""),
+            scope_type=str(raw.get("scope_type") or "owner"),
+            scope_id=str(raw.get("scope_id") or ""),
+        ),
+        title=str(raw.get("title") or ""),
+        summary=str(raw.get("summary") or ""),
+        content=str(content),
+        version=str(raw.get("document_version") or ""),
+        chunk_index=int(raw.get("chunk_index") or 0),
+        chunk_count=int(raw.get("chunk_count") or 1),
+        parent_document_id=parent,
+        updated_at=str(raw.get("updated_at")) if raw.get("updated_at") is not None else None,
+        metadata=dict(metadata) if isinstance(metadata, dict) else {},
+    )
+
+
 _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, TsSidecarClient]] = weakref.WeakKeyDictionary()
 
 
