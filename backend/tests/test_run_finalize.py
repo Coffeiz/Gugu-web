@@ -69,6 +69,7 @@ async def test_insert_or_get_batch_reuses_existing_unique_row(db, user_a):
 async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch):
     db = _Db()
     trim_calls = []
+    baseline_calls = []
 
     async def cap_usage(*args):
         return 12, 3
@@ -76,9 +77,13 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     async def trim(session_id):
         trim_calls.append(session_id)
 
+    async def persist_baseline(*args, **kwargs):
+        baseline_calls.append((args, kwargs))
+        return True
+
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
-    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", persist_baseline)
     monkeypatch.setattr(
         "agent.context.assembly.newly_appended",
         lambda messages, initial_len: messages[initial_len:],
@@ -106,12 +111,14 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         cache_read=4,
         cache_write=5,
         tools_used=["test_tool"],
+        compaction_applied=True,
     )
 
     assert result.tokens_in == 12
     assert result.tokens_out == 3
     assert len(db.items) == 4  # RAG、tool turn、assistant、usage
     assert trim_calls == [7]
+    assert baseline_calls == [((7, "user-test", settings), {"force": False})]
 
 
 @pytest.mark.asyncio
@@ -126,7 +133,6 @@ async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypa
         return None
 
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
-    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
 
     settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
     model = SimpleNamespace(model="user-model", provider="user-provider", is_byok=True, context_tokens=80000)
@@ -173,8 +179,6 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
 
     monkeypatch.setattr(
         "app.services.conversation_retention.trim_session_messages", _trim)
-    monkeypatch.setattr(
-        "agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
     # 模拟 resolve_run_config_for_user：model_copy(update=...) 注入 is_byok（llm_select.py）
     base = AIPresetItem(model="MiniMax-M3", provider="minimax", context_tokens=80000)
     model = base.model_copy(update={"api_key": "sk-test", "is_byok": True})
@@ -228,10 +232,6 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
     monkeypatch.setattr(
         "app.services.conversation_retention.trim_session_messages",
         lambda *_args, **_kwargs: _async_none(),
-    )
-    monkeypatch.setattr(
-        "agent.context.compress_conv.schedule_baseline_update",
-        lambda *_args, **_kwargs: None,
     )
 
     import app.db.session as db_session

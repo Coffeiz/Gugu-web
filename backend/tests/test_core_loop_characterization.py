@@ -114,8 +114,8 @@ async def test_progress_only_round_is_retried_but_draft_remains_visible(monkeypa
     assert errors == []
 
 
-async def test_final_reply_returns_before_background_compaction(monkeypatch):
-    """无工具的最终回复不应等待 baseline 压缩，避免阻塞 done 和后续消息。"""
+async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
+    """无工具的最终回复达到 90% 时，也必须在结束前走同一压缩路径。"""
     calls = []
 
     async def fake_compact(messages, *args, **kwargs):
@@ -135,8 +135,8 @@ async def test_final_reply_returns_before_background_compaction(monkeypatch):
 
     assert text == "最终回复"
     assert errors == []
-    assert calls == []
-    assert ev["_context_compaction"] == 0
+    assert len(calls) == 1
+    assert ev["_context_compaction"] == 2
 
 
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────

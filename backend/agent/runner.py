@@ -14,7 +14,7 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system
+from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system, compress_conv
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
@@ -524,8 +524,6 @@ async def _run_collect_unlocked(
             tokens_out=tout,
             cache_read=cache_read,
             cache_write=cache_write,
-            context_tokens=run_config.context_tokens,
-            actual_usage_tokens=int(meta.get("context_input", tin) or 0),
             compaction_applied=bool(meta.get("compaction_applied", False)),
         )
 
@@ -588,19 +586,11 @@ async def run_collect(
     req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
 ) -> AgentResponse:
     """同一 session 串行生成；不同 session 仍可并行。"""
-    from agent.context import compress_conv
-
     async with compress_conv.session_run_gate(req):
-        try:
-            response = await _run_collect_unlocked(
-                req, on_interaction=on_interaction, on_tool_event=on_tool_event,
-                on_round=on_round,
-            )
-            return response
-        finally:
-            # QQ/IM 默认走 collect；baseline 由 finalize_run 异步调度，必须在
-            # 释放 session gate 前等待完成，避免下一条消息再次读取旧水位。
-            await compress_conv.wait_for_baseline_update(req.session_id)
+        return await _run_collect_unlocked(
+            req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+            on_round=on_round,
+        )
 
 
 async def _notify_tool_event(callback, event: dict) -> None:
@@ -1034,8 +1024,6 @@ async def _run_stream_unlocked(
             tokens_out=tout,
             cache_read=cache_read,
             cache_write=cache_write,
-            context_tokens=run_config.context_tokens,
-            actual_usage_tokens=int(context_input or tin),
             compaction_applied=compaction_applied,
         )
 
@@ -1081,18 +1069,11 @@ async def run_stream(
     on_tool_event=None,
 ) -> AsyncIterator[tuple[str, object]]:
     """流式生成也复用同一 session gate，避免和普通生成并行。"""
-    from agent.context import compress_conv
-
     async with compress_conv.session_run_gate(req):
-        try:
-            async for item in _run_stream_unlocked(
-                req, on_interaction=on_interaction, on_tool_event=on_tool_event,
-            ):
-                yield item
-        finally:
-            # 与 collect 保持同一收口语义；即使流式生成异常，也不能让后台
-            # baseline 更新在 gate 释放后继续占用旧水位。
-            await compress_conv.wait_for_baseline_update(req.session_id)
+        async for item in _run_stream_unlocked(
+            req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+        ):
+            yield item
 
 
 async def _collect(

@@ -226,17 +226,13 @@ async def test_run_stream_releases_session_gate_after_final(monkeypatch):
         yield ("final", AgentResponse(text="done", session_id=11))
         events.append("generator-finished")
 
-    async def fake_wait(session_id):
-        events.append(f"baseline:{session_id}")
-
     monkeypatch.setattr(compress_conv, "session_run_gate", lambda _req: _Gate())
-    monkeypatch.setattr(compress_conv, "wait_for_baseline_update", fake_wait)
     monkeypatch.setattr(runner, "_run_stream_unlocked", fake_unlocked)
 
     items = [item async for item in runner.run_stream(SimpleNamespace(session_id=None))]
 
     assert items[0][0] == "final"
-    assert events == ["enter", "generator-finished", "baseline:None", "exit"]
+    assert events == ["enter", "generator-finished", "exit"]
 
 
 @pytest.mark.asyncio
@@ -257,17 +253,13 @@ async def test_run_collect_waits_for_baseline_before_releasing_session_gate(monk
         events.append("generation-finished")
         return AgentResponse(text="done", session_id=12)
 
-    async def fake_wait(session_id):
-        events.append(f"baseline:{session_id}")
-
     monkeypatch.setattr(compress_conv, "session_run_gate", lambda _req: _Gate())
-    monkeypatch.setattr(compress_conv, "wait_for_baseline_update", fake_wait)
     monkeypatch.setattr(runner, "_run_collect_unlocked", fake_unlocked)
 
     response = await runner.run_collect(SimpleNamespace(session_id=12))
 
     assert response.text == "done"
-    assert events == ["enter", "generation-finished", "baseline:12", "exit"]
+    assert events == ["enter", "generation-finished", "exit"]
 
 
 @pytest.mark.asyncio

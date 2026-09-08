@@ -652,17 +652,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 cache_read=usage_tokens["cache_read"],
                 cache_write=usage_tokens["cache_write"],
                 tools_used=used_tools,
-                context_tokens=getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
-                actual_usage_tokens=int(usage_tokens.get("context_input", 0) or 0),
                 compaction_applied=compaction_applied,
                 session_exists_required=True,
             )
         except IntegrityError:
             logger.warning("会话 %s 在生成期间被删除，跳过本次持久化", session_id)
 
-        # 回复正文已经持久化后，聊天流就应当结束。标题、总结、反思和压缩都是后台收尾，
-        # 不能让前端在文本已经完整显示后继续保持“终止生成”状态；session gate 会在
-        # baseline 提交完成后才允许同一会话进入下一轮。
+        # 回复正文已经持久化后，聊天流就应当结束。标题、总结和反思仍是后台收尾；
+        # 上下文压缩已经在 provider round 达到 90% 时完成。
         await genstream.publish(session_id, {"type": "done"})
         run_completed = True
 
@@ -771,7 +768,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 locale=locale,
                 owner_run_id=claimed_owner_run_id or owner_run_id,
             )
-            await compress_conv.wait_for_baseline_update(session_id)
     except asyncio.CancelledError:
         # 进程关闭/任务取消时保留取消语义，但清掉 active 快照，避免重启后
         # 续看端点把已不存在的后台任务误显示成「生成中」。

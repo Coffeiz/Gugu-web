@@ -72,8 +72,6 @@ async def finalize_run(
     cache_read: int = 0,
     cache_write: int = 0,
     tools_used: list[str] | None = None,
-    context_tokens: int | None = None,
-    actual_usage_tokens: int = 0,
     compaction_applied: bool = False,
     session_exists_required: bool = False,
     stance_text: str | None = None,
@@ -81,7 +79,7 @@ async def finalize_run(
     run_id: str | None = None,
     canonical_batches: list[dict] | tuple[dict, ...] | None = None,
 ) -> FinalizeResult:
-    """用一个契约完成 canonical turn、展示时间线、trim 与 baseline 调度。
+    """用一个契约完成 canonical turn、展示时间线、trim 与压缩边界持久化。
 
     Web/IM 只负责渠道事件和输出清洗；canonical history 与展示时间线分开保存，
     消息结构、配额封顶及 baseline 入口在这里保持一致。
@@ -204,17 +202,12 @@ async def finalize_run(
         await db.commit()
 
     await trim_session_messages(session_id)
-    compress_conv.schedule_baseline_update(
-        session_id,
-        user_id,
-        settings,
-        int(context_tokens or getattr(model_cfg, "context_tokens", settings.ai.context_tokens)),
-        actual_usage_tokens=int(actual_usage_tokens or 0),
-        compaction_applied=bool(compaction_applied),
-    )
-    # baseline 只允许由 provider 实际上下文达到 90% 的路径推进。
-    # 这里不能在每个 run 收尾后按固定字符窗口再次压缩，否则下一次 run
-    # 会丢失上一 run 的完整前缀，也会绕过 ContextBudget 的真实 usage 判断。
+    # 只有当前 run 已经在 provider round 边界执行过 >=90% 压缩，才同步推进
+    # 持久 baseline。这里不再独立判断 token，也不再创建结束后的后台压缩任务。
+    if compaction_applied:
+        await compress_conv.compress_if_needed(
+            session_id, user_id, settings, force=False,
+        )
     return FinalizeResult(
         tokens_in=usage_result.tokens_in,
         tokens_out=usage_result.tokens_out,
