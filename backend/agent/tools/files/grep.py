@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
-
 from app.core.ownership import get_owned
-from app.models import File, Project, WorkspaceDirectory
+from app.models import Project, WorkspaceDirectory
+from app.services.files.corpus import list_grep_candidates
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 
@@ -132,13 +131,7 @@ async def _grep_files(db, user_id, args: dict):
             workspace_directory_id=workspace_target.get("workspace_directory_id"),
         )
 
-    rows = (await db.execute(
-        select(File).where(
-            File.user_id == user_id,
-            File.deleted_at.is_(None),
-            File.space.in_(_SEARCH_SPACES),
-        ).order_by(File.updated_at.desc())
-    )).scalars().all()
+    rows = await list_grep_candidates(db, user_id=user_id, spaces=_SEARCH_SPACES)
 
     needle = query if case_sensitive else query.casefold()
     storage = get_storage()
