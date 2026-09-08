@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from agent.tools import files
-from agent.tools import file_transfer
+from agent.tools.files import transfer as file_transfer
 
 
 async def test_send_file_accepts_workspace_logical_path(db, user_a, tmp_path, monkeypatch):

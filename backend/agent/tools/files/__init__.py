@@ -1294,7 +1294,7 @@ async def _copy_file(db, user_id, args: dict):
 
 
 # ── 网络图片下载（send_file 的 url 分支用）：SSRF 防护 ─────────────────────────
-from agent.tools.file_transfer import (
+from .transfer import (
     _normalize_send_path,
     _stage_send_path,
     _send_file_from_url,
@@ -1311,7 +1311,7 @@ from agent.tools.file_transfer import (
 
 async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True):
     """兼容旧导入，并保留测试/调用方替换 files._build_pinned_request 的行为。"""
-    from agent.tools import file_transfer
+    from . import transfer as file_transfer
     file_transfer._build_pinned_request = _build_pinned_request
     return await file_transfer._send_file_from_url(user_id, url, title, stage=stage)
 
