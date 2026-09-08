@@ -304,6 +304,9 @@ class KnowledgeIndexCache:
                 reused = await client.reuse_if_current(revision)
                 if diagnostics is not None:
                     diagnostics["sidecar_reused"] = bool(reused)
+                    if client.restore_error:
+                        # 磁盘索引损坏或版本不匹配：显式报告，本次必然走全量重建。
+                        diagnostics["index_restore_error"] = client.restore_error
                 if documents is None:
                     if reused:
                         if diagnostics is not None:

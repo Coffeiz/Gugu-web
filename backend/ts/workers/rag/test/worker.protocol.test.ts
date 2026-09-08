@@ -482,3 +482,94 @@ test("冻结契约：hybrid_fuse 无向量或全零命中时透传词法结果",
   child.stdin.end();
   await closed;
 });
+
+test("Phase 4：索引损坏与版本不匹配显式报告，重建后清除", async (t) => {
+  const { rm, mkdir, writeFile, readFile, mkdtemp } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const os = await import("node:os");
+  const dir = await mkdtemp(join(os.tmpdir(), "rag-corrupt-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const spawnWith = async (indexDir: string) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts", indexDir],
+      { cwd: workerDir });
+    t.after(() => child.kill());
+    return child;
+  };
+  const talk = async (child: import("node:child_process").ChildProcess) => {
+    const lines = createInterface({ input: child.stdout });
+    const pending: Array<(value: string) => void> = [];
+    const received: string[] = [];
+    lines.on("line", (line) => {
+      const waiter = pending.shift();
+      if (waiter) waiter(line); else received.push(line);
+    });
+    return {
+      request: (payload: unknown) => child.stdin.write(JSON.stringify(payload) + "\n"),
+      read: async () => JSON.parse(received.shift() ?? await new Promise<string>((r) => pending.push(r))) as Record<string, unknown>,
+    };
+  };
+
+  // 1) 损坏的 index.json → restore_error=corrupt，且不得伪装成有数据。
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "index.json"), "{不是 JSON");
+  const corrupted = await spawnWith(dir);
+  const a = await talk(corrupted);
+  a.request({ op: "ping" });
+  const ping1 = await a.read();
+  assert.equal(ping1.restore_error, "corrupt");
+  assert.equal(ping1.revision, "");
+  // 2) 全量重建后恢复健康：错误清除，revision 生效并落盘。
+  a.request({ op: "replace", revision: "r1", documents: [
+    { id: "d1", text: "重建后的正文", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
+  ] });
+  const rep = await a.read();
+  assert.equal(rep.revision, "r1");
+  a.request({ op: "ping" });
+  const ping2 = await a.read();
+  assert.equal(ping2.restore_error, null);
+  assert.equal(ping2.document_count, 1);
+  corrupted.stdin.end();
+  await once(corrupted, "close");
+
+  // 3) 版本不匹配 → version_mismatch；旧制品不能假装可用。
+  const stored = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
+  stored.version = "ancient-version";
+  await writeFile(join(dir, "index.json"), JSON.stringify(stored));
+  const stale = await spawnWith(dir);
+  const b = await talk(stale);
+  b.request({ op: "ping" });
+  const ping3 = await b.read();
+  assert.equal(ping3.restore_error, "version_mismatch");
+  stale.stdin.end();
+  await once(stale, "close");
+});
+
+test("Phase 4：并发 patch/replace/search 串行原子生效，检索不出现撕裂状态", async (t) => {
+  const { request, readResponse, closed, child } = spawnWorker(t);
+  request({ op: "replace", revision: "r0", documents: Array.from({ length: 5 }, (_, index) => ({
+    id: `d${index}`, text: `初始缓存正文${index}`, source_type: "file",
+    scope_type: "owner", scope_id: "o1", document_version: "1",
+  })) });
+  assert.equal((await readResponse()).revision, "r0");
+  // 不等待响应地连续写入：patch(r1) → search → patch(r2) → search，验证顺序处理。
+  request({ op: "patch", revision: "r1", base_revision: "r0",
+    upserts: [{ id: "d9", text: "新增缓存正文", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" }],
+    deletes: ["d0"] });
+  request({ op: "search", revision: "r1", query: "缓存正文", limit: 10 });
+  request({ op: "patch", revision: "r2", base_revision: "r1",
+    upserts: [], deletes: ["d1", "d2"] });
+  request({ op: "search", revision: "r2", query: "缓存正文", limit: 10 });
+  const patch1 = await readResponse();
+  assert.equal(patch1.status, "ok");
+  const search1 = await readResponse();
+  const patch2 = await readResponse();
+  assert.equal(patch2.status, "ok");
+  const search2 = await readResponse();
+  assert.equal(search1.revision, "r1");
+  assert.equal(search2.revision, "r2");
+  // 每个搜索响应都与其声明的 revision 严格一致：不重不漏、无撕裂。
+  assert.equal((search1.results as unknown[]).length, 5);
+  assert.equal((search2.results as unknown[]).length, 3);
+  child.stdin.end();
+  await closed;
+});

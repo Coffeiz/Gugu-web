@@ -185,7 +185,7 @@ export type RagHybridFuseResult = { chunk_id: string; score: number };
 
 export type RagSuccessResponse =
   | { status: "ok"; version: string; revision: string; batches: Array<{ id: string; results: RagSearchResult[]; diagnostics: RagSearchDiagnostics }>; document_counts: Record<string, number> }
-  | { status: "ok"; version: string; revision: string; document_count: number }
+  | { status: "ok"; version: string; revision: string; document_count: number; restore_error?: string | null }
   | { status: "ok"; version: string; tokens: string[] }
   | { status: "ok"; version: string; documents: RagDocument[]; document_count: number }
   | { status: "ok"; version: string; selected: RagRankResult[]; stats: RagRankDiagnostics; input_digest: string }

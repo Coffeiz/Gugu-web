@@ -25,6 +25,7 @@ type Document = RagDocument;
 type Posting = { ids: string[]; frequencies: number[] };
 type State = {
   revision: string;
+  restoreError: string | null;
   documents: Document[];
   documentsById: Map<string, Document>;
   postings: Map<string, Posting>;
@@ -47,20 +48,30 @@ function termFrequency(items: string[]): Map<string, number> {
 
 function makeState(indexDir?: string): State {
   return {
-    revision: "", documents: [], documentsById: new Map(), postings: new Map(),
+    revision: "", restoreError: null, documents: [], documentsById: new Map(), postings: new Map(),
     lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0, indexDir,
   };
 }
 
 async function restore(state: State): Promise<void> {
   if (!state.indexDir) return;
+  let raw: string;
   try {
-    const raw = JSON.parse(await readFile(join(state.indexDir, "index.json"), "utf8"));
-    if (raw.version !== VERSION) return;
-    replaceInMemory(state, raw.revision ?? "", raw.documents ?? []);
+    raw = await readFile(join(state.indexDir, "index.json"), "utf8");
   } catch {
-    // 空目录或旧版本索引由上层 replace；不能把恢复失败伪装成有数据。
-    state.revision = "";
+    // 首次冷启动没有索引文件，不属于损坏。
+    return;
+  }
+  // 恢复失败由上层 replace 重建；结局必须显式可观测，不能伪装成有数据或无声跳过。
+  try {
+    const parsed = JSON.parse(raw) as { version?: string; revision?: string; documents?: Document[] };
+    if (parsed.version !== VERSION) {
+      state.restoreError = "version_mismatch";
+      return;
+    }
+    replaceInMemory(state, parsed.revision ?? "", parsed.documents ?? []);
+  } catch {
+    state.restoreError = "corrupt";
   }
 }
 
@@ -320,7 +331,12 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     scored.sort((left, right) => right.score - left.score || (left.chunk_id < right.chunk_id ? -1 : 1));
     return passthrough("hybrid-rrf", vectorScores.size, null, scored.slice(0, limit));
   }
-  if (request.op === "ping") return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
+  if (request.op === "ping") {
+    return {
+      status: "ok", version: VERSION, revision: state.revision,
+      document_count: state.documents.length, restore_error: state.restoreError,
+    };
+  }
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {
     const batchKey = request.source_type === "file"
@@ -338,6 +354,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
   }
   if (request.op === "build_and_index") {
     const documents = buildSourceDocuments(request.batch as unknown as RagSourceBatch);
+    state.restoreError = null;
     replaceInMemory(state, request.revision, documents);
     await persist(state);
     return {
@@ -347,6 +364,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
   }
   if (request.op === "replace") {
     replaceInMemory(state, request.revision ?? "", request.documents ?? []);
+    state.restoreError = null;
     await persist(state);
     return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
   }

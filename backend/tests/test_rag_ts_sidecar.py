@@ -179,3 +179,25 @@ async def test_rank_guard_rejects_unknown_scoring_version(monkeypatch):
         await ts.rank_candidates_with_cache("test-owner", "缓存", [candidate],
                                             limit=5, max_chars=1000,
                                             max_per_source=3, max_per_parent=3)
+
+
+@pytest.mark.asyncio
+async def test_corrupt_index_reported_and_rebuilt(tmp_path):
+    """Phase 4：磁盘索引损坏必须显式报告（restore_error），全量重建后恢复健康。"""
+    import hashlib
+
+    owner_hash = hashlib.sha256("test-owner".encode("utf-8")).hexdigest()[:32]
+    index_dir = tmp_path / "index" / owner_hash
+    index_dir.mkdir(parents=True)
+    (index_dir / "index.json").write_text("{损坏的索引", encoding="utf-8")
+    client = TsSidecarClient("test-owner", command=_worker_command(), index_dir=str(tmp_path / "index"))
+    document = IndexDocument("project:1", "project", "1", Scope("test-owner"), "重建计划", "", "重建内容", "v1")
+    try:
+        # 启动探活即上报告损类别；复用检查不能把损坏索引当有效数据。
+        assert await client.reuse_if_current("revision-1") is False
+        assert client.restore_error == "corrupt"
+        await client.replace([document], "revision-1")
+        assert client.restore_error is None
+        assert await client.reuse_if_current("revision-1") is True
+    finally:
+        await client.close()

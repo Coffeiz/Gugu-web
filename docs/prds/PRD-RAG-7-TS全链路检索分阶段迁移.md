@@ -172,13 +172,35 @@ worker 融合失败回滚 Python 实现并显式记录 ``ts_hybrid_error``，不
 
 - [ ] Python 只提交带 `source_type`、`Scope`、版本和稳定 ID 的 source batch。
 - [ ] TS 统一处理 source adapter、分块、replace、patch 和持久化索引。
-- [ ] 保留 Python 的业务数据读取和权限初筛；Worker 不读取数据库。
-- [ ] 覆盖文件、画布、项目、Knowledge、Memory 和 Conversation 的增删改同步。
-- [ ] 验证 worker 重启、revision mismatch、索引损坏、并发 patch 和冷恢复。
-- [ ] 区分用户索引 revision 与会话 snapshot；保留已注入 canonical 上下文的稳定性，避免为每个 snapshot 复制完整检索索引。跨版本查询一致性必须有明确契约。
-- [ ] 查询阶段只访问已构建索引；缺失或损坏的索引显式报告并调度重建，更新事件具备失败重试和可观测状态。
+- [x] 保留 Python 的业务数据读取和权限初筛；Worker 不读取数据库。
+- [x] 覆盖文件、画布、项目、Knowledge、Memory 和 Conversation 的增删改同步。
+- [x] 验证 worker 重启、revision mismatch、索引损坏、并发 patch 和冷恢复。
+- [x] 区分用户索引 revision 与会话 snapshot；保留已注入 canonical 上下文的稳定性，避免为每个 snapshot 复制完整检索索引。跨版本查询一致性必须有明确契约。
+- [x] 查询阶段只访问已构建索引；缺失或损坏的索引显式报告并调度重建，更新事件具备失败重试和可观测状态。
 
 验收：相同 source batch 产生稳定 revision 和可重建索引；增量更新不丢文档、不跨用户复用索引。
+
+Phase 4 验证记录（2026-09-09）：索引生命周期（replace/patch/持久化/恢复/revision 原子推进）由 TS worker
+全权承担，Python 只提交已按权限初筛的授权文档并计算 revision；worker 始终不读数据库。新增磁盘索引
+损坏显式报告：worker 恢复区分「无索引文件（首次冷启）/version_mismatch/corrupt」并经 ping 返回
+``restore_error``，Python 侧透传进查询诊断（``index_restore_error``），全量重建成功后双侧清空——
+损坏索引不再无声跳过。验证覆盖：worker 重启后瞬态语料按进程代数自动重传、持久化索引从磁盘恢复
+（既有测试）；revision mismatch 显式拒绝（既有测试）；损坏报告与重建恢复（新增，TS+Python 双侧）；
+并发 patch/replace/search 管线化请求下 revision 单调推进、每次检索与其声明的 revision 严格一致
+（新增）。增删改同步：patch 只上送变化 chunk（upsert+delete），来源失效经 ``invalidate_index_cache``
++ indexed_at revision 传播，Memory 索引构建具备三次重试。revision/snapshot 契约：用户索引 revision
+（tokenizer 版本 + 逐来源 max(indexed_at)）决定 worker 语料代际；会话 snapshot 通过 ``cache_scope
+all@<baseline>`` 钉住 Python 侧条目且失效检查忽略 revision 变化，保证同一 snapshot 内注入上下文
+稳定（prompt cache 前提）；snapshot 换代时 worker 存活走 diff patch（不上送未变文档），进程重启走
+磁盘恢复或全量重建；Memory 瞬态语料按快照指纹驻留独立槽，不随 snapshot 复制持久索引。
+
+Phase 4 遗留（如实记录）：「Python 只提交 source batch / TS 统一处理 source adapter 与分块」的写路径
+移交未实施——worker 的统一 builder（``build_documents``/``build_and_index`` op 与九来源适配器）已就绪
+且有协议测试，但其文本组装方言与 Python ``build_source_documents`` 投影不一致（如 file 源头部字段），
+贸然切换会改写已入库 chunk 的文本与版本，破坏既有等价基线；且 KnowledgeIndexEntry 表是跨进程的
+持久 chunk 事实源，分块必须在写库前完成。移交需要「TS 适配器逐字段对齐 Python 方言 → 双实现投影
+等价测试 → shadow 投影」三步，列为后续独立阶段，不阻塞查询主链收敛（Phase 5 查询的是 worker 内
+已构建语料，与写路径方言无关）。
 
 ### Phase 5：统一 TS RAG 查询主链
 

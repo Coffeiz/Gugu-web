@@ -77,9 +77,17 @@ class TsSidecarClient:
         self._transient_revision: str | None = None
         self._transient_generation = -1
         self._process_generation = 0
+        # worker 进程启动时从磁盘恢复索引的结局（version_mismatch/corrupt）；
+        # None 表示恢复健康或尚无索引文件。重建成功后双向清空。
+        self._restore_error: str | None = None
         self.last_search_diagnostics: dict[str, Any] = {}
         self._last_used_at = asyncio.get_running_loop().time()
         self._active_requests = 0
+
+    @property
+    def restore_error(self) -> str | None:
+        """启动恢复失败类别；供查询诊断显式报告损坏索引并调度重建。"""
+        return self._restore_error
 
     def touch(self) -> None:
         """刷新 worker 空闲 TTL；TTL 不会打断正在执行的请求。"""
@@ -99,6 +107,7 @@ class TsSidecarClient:
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
+        self._restore_error = None
 
     async def build_documents(self, batch: dict[str, list[dict]]) -> list[dict]:
         """让 TS builder 从统一 source batch 生成 canonical 文档；不读取业务数据库。"""
@@ -129,6 +138,7 @@ class TsSidecarClient:
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or 0)
+        self._restore_error = None
 
     async def replace_transient(self, documents: list[IndexDocument], revision: str) -> None:
         """把 Memory 快照语料装入 worker 的瞬态槽；指纹未变且进程未重启时零 IPC。"""
@@ -344,6 +354,7 @@ class TsSidecarClient:
             response = await self._request_unlocked({"op": "ping"}, timeout_seconds=5.0)
             self._revision = response.get("revision") or self._revision
             self._document_count = int(response.get("document_count") or 0)
+            self._restore_error = response.get("restore_error") or None
         except (OSError, asyncio.TimeoutError, TsSidecarUnavailable) as error:
             await self.close()
             if isinstance(error, TsSidecarUnavailable):
