@@ -18,6 +18,8 @@ FAIL=0
 
 cleanup() {
     docker rm -f "$NAME" >/dev/null 2>&1 || true
+    # /data 里是 postgres/redis 用户写的文件，宿主普通用户删不掉，借容器清理。
+    docker run --rm -v "$WORK:/work" --entrypoint sh "$IMAGE" -c "rm -rf /work/data /work/config" >/dev/null 2>&1 || true
     rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -85,7 +87,7 @@ if wait_health; then echo "  ✓ /health 200"; PASS=$((PASS + 1)); else echo "  
 
 check "用户文件在重建后仍在" docker exec "$NAME" grep -q e2e-marker /data/users/e2e-marker.txt
 check "/config 卷内容在重建后仍在" docker exec "$NAME" grep -q e2e-config-marker /config/e2e-marker.txt
-check "PostgreSQL 数据复用（不重新 initdb）" bash -c "docker logs '$NAME' 2>&1 | ! grep -q '首次启动：初始化内置 PostgreSQL'"
+check "PostgreSQL 数据复用（不重新 initdb）" bash -c "! docker logs '$NAME' 2>&1 | grep -q '首次启动：初始化内置 PostgreSQL'"
 check "管理员密码不随重建轮换（未重新生成）" bash -c "! docker logs '$NAME' 2>&1 | grep -q '密码：'"
 check "同一随机密码重建后仍可登录" admin_login "${ADMIN_PW1}"
 
