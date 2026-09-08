@@ -311,17 +311,6 @@ jobs:
             --tag "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}:latest" \
             "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
-      - name: 同步 Docker Hub Overview
-        if: steps.version.outputs.is_stable == 'true'
-        uses: peter-evans/dockerhub-description@v5
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: coffeiz/gugu-web
-          short-description: Gugu Agent UI：项目、文件、日历与 Agent 沙盒。
-          readme-filepath: ./docs/quick-deploy.md
-          enable-url-completion: true
-
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
 
@@ -340,6 +329,17 @@ jobs:
           cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
           cosign sign --yes "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
           cosign sign --yes "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
+
+      - name: 同步 Docker Hub Overview
+        if: steps.version.outputs.is_stable == 'true'
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: coffeiz/gugu-web
+          short-description: Gugu Agent UI：项目、文件、日历与 Agent 沙盒。
+          readme-filepath: ./docs/quick-deploy.md
+          enable-url-completion: true
 
       # 安全门已前移到 docker-build job（扫本地加载镜像的真实文件系统）。
       # 此处不扫 registry 引用：trivy 会优先消费 registry 侧可关联的第三方 SBOM
