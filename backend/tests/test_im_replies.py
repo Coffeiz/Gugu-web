@@ -152,6 +152,40 @@ async def test_send_agent_response_replays_only_unsent_round_indices(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_send_agent_response_sends_error_after_sent_rounds(monkeypatch):
+    """模型续轮失败时，错误提示不能被已发送 round 的去重逻辑吞掉。"""
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(
+            text="模型调用失败，请重试。",
+            round_texts=["前面已经发出的正文"],
+            errored=True,
+        ),
+        already_sent_rounds={0},
+    )
+
+    assert sent == ["模型调用失败，请重试。"]
+    assert result == "模型调用失败，请重试。"
+
+
+@pytest.mark.asyncio
 async def test_attachment_failure_is_not_hidden_by_sent_round_index(monkeypatch):
     from agent.im import replies
     from agent.models import AgentResponse

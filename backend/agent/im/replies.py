@@ -436,12 +436,12 @@ async def send_agent_response(
             for text in (response.round_texts or [])
             if str(text or "").strip()
         ]
-        if not texts:
-            fallback = _fix_loose_bold(response.text or "")
-            texts = [fallback] if fallback.strip() else (["给你～"] if response.files else ["嗯~在的，你说～"])
+        response_text = _fix_loose_bold(response.text or "").strip()
+        if not texts and not response.errored:
+            texts = [response_text] if response_text else (["给你～"] if response.files else ["嗯~在的，你说～"])
 
     # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
-    last_text = texts[-1]
+    last_text = texts[-1] if texts else ""
     if isinstance(already_sent_rounds, int):
         sent_indices = set(range(max(0, already_sent_rounds)))
     else:
@@ -451,4 +451,14 @@ async def send_agent_response(
             continue
         if not await send_text(payload, text):
             return None
+
+    # 生成失败时，response.text 是新的错误提示，而 round_texts 只是失败前已经
+    # 生成的正文。它们属于两个不同的出站消息域：即使所有正文 round 都已发送，
+    # 也必须单独把错误提示发出去，不能被 round 去重吞掉。
+    if response.errored:
+        if response_text and response_text != last_text:
+            if not await send_text(payload, response_text):
+                return None
+            return response_text
+        return response_text or last_text or None
     return last_text

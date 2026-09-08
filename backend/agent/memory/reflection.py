@@ -75,8 +75,9 @@ _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin
 _PERC_CAP = 20000
 _MISREAD_KEY = "perc:misread_cases"   # 错读需求案例收集（带脱敏 miss 诊断，便于翻「具体原因」）
 _MISREAD_CAP = 500
-GROUP_OWNER_BATCH_SIZE = 5
 GROUP_OWNER_IDLE_SECONDS = 15 * 60
+_OWNER_REFLECTION_BUFFER_PREFIX = "memory:owner-reflection:"
+_OWNER_REFLECTION_LOCK_PREFIX = "memory:owner-reflection-lock:"
 _GROUP_OWNER_BUFFER_PREFIX = "memory:owner-group-reflection:"
 _GROUP_OWNER_IDLE_KEY = "memory:owner-group-reflection-idle"
 
@@ -295,6 +296,79 @@ def _owner_group_buffer_key(user_id) -> str:
     return f"{_GROUP_OWNER_BUFFER_PREFIX}{user_id}"
 
 
+def _owner_reflection_threshold(settings) -> int:
+    """读取 owner 反思阈值；不影响群成员/群级反思游标。"""
+    try:
+        return max(1, int(settings.agent.reflection_threshold))
+    except (AttributeError, TypeError, ValueError):
+        return 10
+
+
+def _owner_reflection_buffer_key(user_id) -> str:
+    return f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}"
+
+
+async def _drain_owner_reflection_buffer(user_id, settings) -> None:
+    """原子取走 owner 反思缓冲；失败时放回，避免丢失待反思回合。"""
+    from app.core import redis as R
+
+    redis = R.get_redis()
+    key = _owner_reflection_buffer_key(user_id)
+    lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
+    if not await lock.acquire(blocking=False):
+        return
+    rows = []
+    try:
+        raw_rows = await redis.lrange(key, 0, -1)
+        if not raw_rows:
+            return
+        rows = [json.loads(raw) for raw in raw_rows]
+        await redis.delete(key)
+        ok = await reflect(
+            user_id,
+            rows[-1].get("user_name", ""),
+            "\n".join(row.get("user_msg", "") for row in rows),
+            "\n".join(row.get("assistant_reply", "") for row in rows),
+            settings,
+            session_id=rows[-1].get("session_id"),
+            turns=rows,
+        )
+        if not ok:
+            raise RuntimeError("owner_reflection_failed")
+    except Exception:
+        if rows:
+            await redis.rpush(key, *[json.dumps(row, ensure_ascii=False) for row in rows])
+    finally:
+        try:
+            await lock.release()
+        except Exception:
+            pass
+
+
+async def _queue_owner_reflection(
+    user_id, user_name, user_msg, assistant_reply, settings, used_tools, session_id,
+) -> None:
+    """按 owner 阈值累计回合；工具回合可立即冲刷缓冲。"""
+    from app.core import redis as R
+
+    redis = R.get_redis()
+    key = _owner_reflection_buffer_key(user_id)
+    lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
+    await lock.acquire()
+    try:
+        await redis.rpush(key, json.dumps({
+            "user_name": user_name,
+            "user_msg": user_msg,
+            "assistant_reply": assistant_reply,
+            "session_id": session_id,
+        }, ensure_ascii=False))
+        count = await redis.llen(key)
+    finally:
+        await lock.release()
+    if used_tools or count >= _owner_reflection_threshold(settings):
+        await _drain_owner_reflection_buffer(user_id, settings)
+
+
 async def _drain_group_owner_buffer(user_id, settings) -> None:
     """原子取走一批 owner 群聊反思，失败时把消息放回 Redis。"""
     from app.core import redis as R
@@ -352,10 +426,13 @@ async def flush_due_group_owner_reflections(settings, *, now: float | None = Non
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
              group_mode: bool = False) -> None:
-    """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
+    """非阻塞累计 owner 反思回合。达到配置阈值后批量反思；工具回合立即冲刷。
+
+    琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
     但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
     以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
-    session_id 供 feedback 判「是否延续同一对话」（换会话不跨比，见 _read_last_turn）。"""
+    session_id 供 feedback 判「是否延续同一对话」（换会话不跨比，见 _read_last_turn）。
+    group_mode 只代表群主 owner 反思；群成员/群级反思走 reflection_jobs，不受此阈值影响。"""
     if not group_mode and not _worth_reflecting(user_msg) and not used_tools:
         return
     if group_mode:
@@ -366,9 +443,10 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
         return
-    task = asyncio.create_task(
-        reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=session_id)
-    )
+    task = asyncio.create_task(_queue_owner_reflection(
+        user_id, user_name, user_msg, assistant_reply, settings,
+        bool(used_tools), session_id,
+    ))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
 
@@ -385,10 +463,15 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
         "assistant_reply": assistant_reply,
         "session_id": session_id,
     }
-    await redis.rpush(key, json.dumps(row, ensure_ascii=False))
-    await redis.zadd(_GROUP_OWNER_IDLE_KEY, {str(user_id): time.time()})
-    count = await redis.llen(key)
-    if used_tools or count >= GROUP_OWNER_BATCH_SIZE:
+    lock = redis.lock(f"{_GROUP_OWNER_BUFFER_PREFIX}lock:{user_id}", timeout=180)
+    await lock.acquire()
+    try:
+        await redis.rpush(key, json.dumps(row, ensure_ascii=False))
+        await redis.zadd(_GROUP_OWNER_IDLE_KEY, {str(user_id): time.time()})
+        count = await redis.llen(key)
+    finally:
+        await lock.release()
+    if used_tools or count >= _owner_reflection_threshold(settings):
         await _drain_group_owner_buffer(user_id, settings)
 
 

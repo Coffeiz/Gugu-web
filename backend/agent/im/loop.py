@@ -1144,6 +1144,18 @@ async def dispatch_im_message(payload: dict):
         )
         return resp
 
+    if resp.errored:
+        # 错误提示已经实际送达，但本轮生成仍然失败；不能把平台送达误记成
+        # Agent 成功，否则 LoopScope 会显示 success，掩盖模型失败原因。
+        trace.finish_run("error", reply_text)
+        await finalize_im_response(platform, puid, False, reply_text)
+        print(
+            f"[im-loop] {platform} 已发送失败提示(session={resp.session_id} trace={trace_id}) "
+            f"len={len(reply_text)} fp={logsafe.fingerprint(reply_text)}",
+            flush=True,
+        )
+        return resp
+
     # IM 展示层按 round 分开发送，但 LoopScope 记录的是整个 run 的输出。
     # 不能只传最后一个 reply_text，否则多工具轮次的前置回复会从 trace 中消失，
     # 造成「Web 能看到、LoopScope 看不到」的观测差异。

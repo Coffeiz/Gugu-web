@@ -240,6 +240,37 @@ async def test_run_stream_releases_session_gate_after_final(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_collect_waits_for_baseline_before_releasing_session_gate(monkeypatch):
+    import agent.context.compress_conv as compress_conv
+    from agent import runner
+
+    events: list[str] = []
+
+    class _Gate:
+        async def __aenter__(self):
+            events.append("enter")
+
+        async def __aexit__(self, *_args):
+            events.append("exit")
+
+    async def fake_unlocked(*_args, **_kwargs):
+        events.append("generation-finished")
+        return AgentResponse(text="done", session_id=12)
+
+    async def fake_wait(session_id):
+        events.append(f"baseline:{session_id}")
+
+    monkeypatch.setattr(compress_conv, "session_run_gate", lambda _req: _Gate())
+    monkeypatch.setattr(compress_conv, "wait_for_baseline_update", fake_wait)
+    monkeypatch.setattr(runner, "_run_collect_unlocked", fake_unlocked)
+
+    response = await runner.run_collect(SimpleNamespace(session_id=12))
+
+    assert response.text == "done"
+    assert events == ["enter", "generation-finished", "baseline:12", "exit"]
+
+
+@pytest.mark.asyncio
 async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monkeypatch):
     from agent.gateway import web
     from agent.context import compress_conv

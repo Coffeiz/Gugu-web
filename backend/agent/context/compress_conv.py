@@ -192,7 +192,11 @@ async def session_run_gate(request, run_id: str | None = None):
             async with _sess._SessionLocal() as db:
                 session = await db.get(ConversationSession, session_id, with_for_update=True)
                 if session is not None and session.active_run_id == run_id:
-                    session.execution_state = "idle"
+                    # baseline 更新任务可能已经把状态切到 updating；
+                    # 清理生成认领时不能覆盖这个状态，否则下一 run 会
+                    # 绕过等待直接读取旧 baseline。
+                    if session.execution_state != "baseline_updating":
+                        session.execution_state = "idle"
                     session.active_run_id = None
                     await db.commit()
         if lock_acquired:
@@ -257,7 +261,10 @@ async def session_run_gate(request, run_id: str | None = None):
                 async with _sess._SessionLocal() as db:
                     session = await db.get(ConversationSession, session_id, with_for_update=True)
                     if session is not None and session.active_run_id == run_id:
-                        session.execution_state = "idle"
+                        # 生成结束与 baseline 更新是两个生命周期；不能把后台
+                        # baseline_updating 覆盖成 idle，避免竞态放行下一 run。
+                        if session.execution_state != "baseline_updating":
+                            session.execution_state = "idle"
                         session.active_run_id = None
                         await db.commit()
         if lock_acquired and not session_lock_lost:

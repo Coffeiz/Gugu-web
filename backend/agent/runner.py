@@ -578,7 +578,7 @@ async def _run_collect_unlocked(
 
     return AgentResponse(text=text, round_texts=list(meta.get("round_texts") or []), session_id=session_id, tokens_in=tin, tokens_out=tout,
                          cache_read=cache_read, cache_write=cache_write,
-                         files=sent_files, used_tools=im_used_tools,
+                         files=sent_files, errored=errored, used_tools=im_used_tools,
                          interactions=meta.get("interactions", []),
                          tool_events=meta.get("tool_events", []),
                          compaction_applied=bool(meta.get("compaction_applied", False)))
@@ -591,11 +591,16 @@ async def run_collect(
     from agent.context import compress_conv
 
     async with compress_conv.session_run_gate(req):
-        response = await _run_collect_unlocked(
-            req, on_interaction=on_interaction, on_tool_event=on_tool_event,
-            on_round=on_round,
-        )
-        return response
+        try:
+            response = await _run_collect_unlocked(
+                req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+                on_round=on_round,
+            )
+            return response
+        finally:
+            # QQ/IM 默认走 collect；baseline 由 finalize_run 异步调度，必须在
+            # 释放 session gate 前等待完成，避免下一条消息再次读取旧水位。
+            await compress_conv.wait_for_baseline_update(req.session_id)
 
 
 async def _notify_tool_event(callback, event: dict) -> None:
@@ -1064,7 +1069,7 @@ async def _run_stream_unlocked(
 
     yield ("final", AgentResponse(text=text, round_texts=[r.strip() for r in rounds if r.strip()],
                                   session_id=session_id, tokens_in=tin,
-                                  tokens_out=tout, files=files, cancelled=False,
+                                  tokens_out=tout, files=files, cancelled=False, errored=errored,
                                   used_tools=im_used_tools, interactions=interactions,
                                   tool_events=tool_events))
 
@@ -1079,11 +1084,15 @@ async def run_stream(
     from agent.context import compress_conv
 
     async with compress_conv.session_run_gate(req):
-        async for item in _run_stream_unlocked(
-            req, on_interaction=on_interaction, on_tool_event=on_tool_event,
-        ):
-            yield item
-        await compress_conv.wait_for_baseline_update(req.session_id)
+        try:
+            async for item in _run_stream_unlocked(
+                req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+            ):
+                yield item
+        finally:
+            # 与 collect 保持同一收口语义；即使流式生成异常，也不能让后台
+            # baseline 更新在 gate 释放后继续占用旧水位。
+            await compress_conv.wait_for_baseline_update(req.session_id)
 
 
 async def _collect(
