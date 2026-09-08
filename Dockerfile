@@ -79,6 +79,10 @@ RUN apt-get update \
         # postgres/redis。仅监听 127.0.0.1，数据在 /data/postgres、/data/redis。
         postgresql redis-server supervisor \
         $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
+    # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
+    # 会被 trivy secrets 扫描判为私钥泄漏；内嵌 PostgreSQL 只监听 127.0.0.1 且 ssl=off
+    # （见 docker-entrypoint.sh），用不到它，直接删。
+    && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
