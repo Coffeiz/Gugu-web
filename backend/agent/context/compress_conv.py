@@ -67,6 +67,36 @@ async def _read_execution_state(session_id: int) -> str | None:
         return str(session.execution_state) if session is not None else None
 
 
+async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
+    """回收进程退出后遗留的 ``running`` 会话状态。
+
+    生成任务正常结束会在 genstream 和会话行上分别收口；worker 被杀死或重启
+    时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。只有在
+    Redis 明确可用且生成快照、owner、lease 全部消失时才允许修复，Redis 故障
+    或 baseline 压缩状态都不会被误判。
+    """
+    from agent.llm import genstream
+    from app.models import ConversationSession
+    import app.db.session as _sess
+
+    status = await genstream.probe(session_id)
+    if not status.get("redis_ok") or status.get("active"):
+        return False
+
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id, with_for_update=True)
+        if session is None or session.execution_state != "running":
+            return False
+        if user_id is not None and session.user_id != user_id:
+            return False
+        session.execution_state = "idle"
+        session.active_run_id = None
+        await db.commit()
+
+    logger.warning("[compress_conv] session=%s 回收进程退出遗留的生成状态", session_id)
+    return True
+
+
 async def _wait_for_baseline_idle(session_id: int) -> None:
     """等待持久化 baseline 更新结束，而不是只看当前进程的 Task。"""
     loop = asyncio.get_running_loop()

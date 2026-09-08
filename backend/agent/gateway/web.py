@@ -250,6 +250,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     #    顺序很关键：pub/sub 发完即弃，若先起生成、后订阅，生成的头几个 token（短回复时是全部）
     #    会在订阅建好之前被 publish 掉 → 首条消息空气泡。先 attach 订阅，消息就进连接缓冲不丢。
     #    （生成脱离本请求：浏览器刷新/断开只停转发，后台任务继续到完成、自己持久化。）
+    # worker 在后台任务 finally 之前退出时，数据库可能仍保留 running，但
+    # Redis 的生成快照已经消失。新请求先回收这个明确可判定的孤儿状态，
+    # 否则后续消息会一直排在一个实际上不存在的 run 后面。
+    from agent.context import compress_conv
+    await compress_conv.recover_orphaned_session(session_id, user_id=user_id)
     pubsub = await genstream.open_subscription(session_id)
     active_before_start = await genstream.is_active(session_id)
     if not active_before_start:

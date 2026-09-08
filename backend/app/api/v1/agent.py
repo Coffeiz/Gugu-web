@@ -359,6 +359,8 @@ async def resume_stream(
         session = await get_owned(db, ConversationSession, session_id, user_id)
     if not session:
         raise HTTPException(404, "对话不存在")
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=user_id)
     return StreamingResponse(
         web_adapter.resume(session_id),
         media_type="text/event-stream",
@@ -376,6 +378,8 @@ async def cancel_stream(
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
         raise HTTPException(404, "会话不存在")
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=current_user.id)
     active = await genstream.is_active(session_id)
     if active:
         await genstream.request_cancel(session_id)
@@ -625,6 +629,10 @@ async def get_session_messages(
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
+    # 刷新/重新进入会话时顺便收口 worker 重启留下的 running 状态，避免
+    # 前端后续发送继续被旧 run 的持久化状态阻塞。
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=current_user.id)
     limit = min(max(limit, 1), 200)
     base_filters = (
         ConversationMessage.session_id == session_id,
