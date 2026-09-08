@@ -240,12 +240,14 @@ async def get_user_folder(db: AsyncSession, user_id, folder_id):
 
 async def find_user_files_by_name(
     db: AsyncSession, user_id, base_name: str, *,
-    space=None, project_id=None, folder_id=None, root=False,
+    space=None, project_id=None, folder_id=None, workspace_directory_id=None, root=False,
 ):
     """按文件名查找当前用户存活文件，精确结果优先。"""
     base_stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
     if space:
         base_stmt = base_stmt.where(File.space == space)
+    if workspace_directory_id is not None:
+        base_stmt = base_stmt.where(File.workspace_directory_id == workspace_directory_id)
     if project_id is not None:
         base_stmt = base_stmt.where(File.project_id == project_id)
     if folder_id is not None:
@@ -260,17 +262,25 @@ async def find_user_files_by_name(
     return rows
 
 
-async def find_user_folders_by_name(db: AsyncSession, user_id, name: str, *, space=None, project_id=None):
+async def find_user_folders_by_name(
+    db: AsyncSession, user_id, name: str, *, space=None, project_id=None,
+    workspace_directory_id=None,
+):
     """按名称查找当前用户文件夹；调用方负责处理重名提示。"""
     stmt = select(Folder).where(Folder.user_id == user_id, Folder.name == name)
     if space == "project" and project_id:
         stmt = stmt.where(Folder.project_id == project_id)
+    elif space == "workspace" and workspace_directory_id is not None:
+        stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
     elif space and space != "project":
         stmt = stmt.where(Folder.project_id.is_(None))
     return (await db.execute(stmt)).scalars().all()
 
 
-async def list_user_folders(db: AsyncSession, user_id, *, project_id=None, parent_id=None):
+async def list_user_folders(
+    db: AsyncSession, user_id, *, project_id=None, parent_id=None,
+    workspace_directory_id=None,
+):
     """查询当前用户存活文件夹。"""
     stmt = select(Folder).where(
         Folder.user_id == user_id,
@@ -278,6 +288,8 @@ async def list_user_folders(db: AsyncSession, user_id, *, project_id=None, paren
     )
     if project_id is not None:
         stmt = stmt.where(Folder.project_id == project_id)
+    if workspace_directory_id is not None:
+        stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
     if parent_id is not None:
         stmt = stmt.where(Folder.parent_id == parent_id)
     return (await db.execute(stmt)).scalars().all()

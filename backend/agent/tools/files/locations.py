@@ -128,16 +128,25 @@ def _target_loc(f, target: dict):
 
 
 async def _bound_workspace_target(db, user_id):
-    """返回当前工具调用所属会话的文件库落点；没有绑定工作区则返回 None。"""
+    """返回当前工具调用所属会话的文件库落点。
+
+    未绑定的真实 Agent 会话使用用户默认 Workspace；没有 dispatch 上下文的
+    直接 handler 调用仍返回 None，保持内部服务和单元测试的原有语义。
+    """
     policy = await current_filesystem_policy(db, user_id)
     if policy is not None:
-        return await current_workspace_target(db, user_id, policy)
-    session = current_dispatch_session()
-    workspace_id = getattr(session, "workspace_id", None)
-    if workspace_id is None:
+        # 完整用户沙箱已经明确放开 /personal 和 /project，不能被默认
+        # Workspace 语义替代；显式绑定则失效时 fail closed。
+        if policy.full_user_sandbox:
+            return None
+        if policy.workspace_id is not None:
+            return await current_workspace_target(db, user_id, policy)
+        from app.services.workspaces import resolve_default_workspace_target
+        return await resolve_default_workspace_target(db, user_id)
+    if current_dispatch_session() is None:
         return None
-    from app.services.workspaces import resolve_workspace_target
-    return await resolve_workspace_target(db, user_id, workspace_id)
+    from app.services.workspaces import resolve_default_workspace_target
+    return await resolve_default_workspace_target(db, user_id)
 
 
 def _workspace_location(target: dict) -> tuple[str, int | None, int | None, int | None]:
@@ -219,6 +228,7 @@ async def _resolve_file(db, user_id, args):
                 "space": workspace_target["space"],
                 "project_id": workspace_target.get("project_id"),
                 "folder_id": workspace_target.get("folder_id"),
+                "workspace_directory_id": workspace_target.get("workspace_directory_id"),
                 "root": workspace_target.get("kind") == "project",
             } if workspace_target else {}),
         )
@@ -230,14 +240,18 @@ async def _resolve_file(db, user_id, args):
                                                      "space": f.space, "folder_id": f.folder_id} for f in rows[:10]]})
         return rows[0], None
     return None, json.dumps({"error": "需提供 file_id 或文件名 file"})
-async def _folder_by_name(db, user_id, name, space=None, project_id=None):
+async def _folder_by_name(
+    db, user_id, name, space=None, project_id=None, workspace_directory_id=None,
+):
     """按名称定位文件夹，返回 (Folder|None, 错误JSON字符串|None)。
 
     重名时优先顶层（parent_id 为空）；仍有歧义则返回候选让调用方/模型用 folder_id 指定。
     """
     name = str(name).strip()
     rows = await find_user_folders_by_name(
-        db, user_id, name, space=space, project_id=project_id)
+        db, user_id, name, space=space, project_id=project_id,
+        workspace_directory_id=workspace_directory_id,
+    )
     if not rows:
         # 报错时只列出同项目/同空间的文件夹名，避免跨项目泄露
         available = await list_user_folders(

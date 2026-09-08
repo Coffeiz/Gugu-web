@@ -77,21 +77,36 @@ async def test_full_grant_allows_personal_and_project_file_writes(db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_agent_file_create_is_read_only_without_session_grant(db, user_a):
+async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_grant(db, user_a):
     from agent.tools import files as agent_files
     from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    from app.services.workspaces import ensure_default_workspace_directory
 
+    default_directory = await ensure_default_workspace_directory(db, user_a.id)
     session = await _persist(db, ConversationSession(user_id=user_a.id, title="Phase3 测试"))
     token = set_dispatch_session(session.id, session, "phase3-test")
     try:
         result = await agent_files._create_file(
-            db, user_a.id, {"files": [{"name": "禁止写入.md", "content": "正文"}]},
+            db, user_a.id, {"files": [{"name": "默认工作区.md", "content": "正文"}]},
         )
+        assert result["created_count"] == 1
+        assert result["failed_count"] == 0
+        assert result["created"][0]["space"] == "workspace"
+        assert result["created"][0]["file_id"]
+        created = await db.get(File, result["created"][0]["file_id"])
+        assert created.workspace_directory_id == default_directory.id
+
+        folder_result = await agent_files._create_folder(
+            db, user_a.id, {"name": "默认目录"},
+        )
+        assert folder_result["success"] is True
+        folder = await db.get(Folder, folder_result["folder_id"])
+        assert folder.workspace_directory_id == default_directory.id
+
+        listed = await agent_files._list_folders(db, user_a.id, {})
+        assert any(item["id"] == folder.id for item in listed)
     finally:
         reset_dispatch_session(token)
-
-    assert result["failed_count"] == 1
-    assert result["failed"][0]["error"].startswith("当前文件系统权限只允许读取")
 
 
 @pytest.mark.asyncio

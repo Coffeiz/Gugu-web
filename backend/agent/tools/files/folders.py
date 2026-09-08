@@ -217,6 +217,7 @@ async def _create_folder(db, user_id, args: dict):
     workspace_target = await _bound_workspace_target(db, user_id)
     project_id = args.get("project_id")
     parent_id = args.get("parent_id")
+    workspace_directory_id = None
     if workspace_target is not None:
         try:
             explicit_project_id = int(project_id) if project_id not in (None, "") else None
@@ -226,18 +227,24 @@ async def _create_folder(db, user_id, args: dict):
         if explicit_project_id is not None and explicit_project_id != workspace_target.get("project_id"):
             return _workspace_conflict(workspace_target)
         project_id = workspace_target.get("project_id")
+        workspace_directory_id = workspace_target.get("workspace_directory_id")
         if explicit_parent_id is None:
             parent_id = workspace_target.get("folder_id")
         else:
             parent = await get_user_folder(db, user_id, explicit_parent_id)
-            if not parent or parent.project_id != workspace_target.get("project_id"):
+            if (
+                not parent
+                or parent.project_id != workspace_target.get("project_id")
+                or parent.workspace_directory_id != workspace_target.get("workspace_directory_id")
+            ):
                 return _workspace_conflict(workspace_target)
             if workspace_target.get("folder_id") is not None and explicit_parent_id != workspace_target["folder_id"]:
                 return _workspace_conflict(workspace_target)
             parent_id = explicit_parent_id
     access_error = await write_access_error(
         db, user_id,
-        space="project" if project_id is not None else "personal",
+        space=(workspace_target.get("space") if workspace_target
+               else ("project" if project_id is not None else "personal")),
         project_id=project_id, folder_id=parent_id,
     )
     if access_error:
@@ -245,7 +252,7 @@ async def _create_folder(db, user_id, args: dict):
     try:
         fo = await FileService(db).create_folder(
             user_id, name=args["name"], parent_id=parent_id,
-            project_id=project_id,
+            project_id=project_id, workspace_directory_id=workspace_directory_id,
         )
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
@@ -255,14 +262,29 @@ async def _create_folder(db, user_id, args: dict):
 
 
 async def _list_folders(db, user_id, args: dict):
+    workspace_target = await _bound_workspace_target(db, user_id)
+    if workspace_target is not None and not any(
+        args.get(key) not in (None, "")
+        for key in ("space", "project_id", "folder_id", "parent_id")
+    ):
+        args = {**args, **{
+            "space": workspace_target["space"],
+            "project_id": workspace_target.get("project_id"),
+            "parent_id": workspace_target.get("folder_id"),
+            "workspace_directory_id": workspace_target.get("workspace_directory_id"),
+        }}
     rows = await list_user_folders(
         db, user_id,
         project_id=args.get("project_id"),
         parent_id=args.get("parent_id"),
+        workspace_directory_id=args.get("workspace_directory_id"),
     )
     out = []
     for folder in rows:
-        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
+        resolved = await resolve_folder_path(
+            db, user_id, folder.id, folder.project_id,
+            folder.workspace_directory_id,
+        )
         if not resolved:
             continue
         _, path = resolved
@@ -295,7 +317,15 @@ async def _find_folder(db, user_id, args: dict):
         except (ValueError, TypeError):
             pid = None
         space = "project" if pid else args.get("space")
-        fo, err = await _folder_by_name(db, user_id, name, space, pid)
+        workspace_target = await _bound_workspace_target(db, user_id)
+        workspace_directory_id = None
+        if workspace_target is not None and space is None and pid is None:
+            space = workspace_target.get("space")
+            pid = workspace_target.get("project_id")
+            workspace_directory_id = workspace_target.get("workspace_directory_id")
+        fo, err = await _folder_by_name(
+            db, user_id, name, space, pid, workspace_directory_id,
+        )
         return err if err else fo
     return json.dumps({"error": "需提供 folder_id 或文件夹名 name"})
 
