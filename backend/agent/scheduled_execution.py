@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from app.core.tz import set_ctx_tz
 from agent.context import assembly, builder, loaders, session_snapshot, session_system
+from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.llm.llm_select import resolve_run_config_for_user, release as _release_model
-from agent.profiles import DefaultProfile
 from agent.runner import (
     _apply_capability_context,
     _capability_context,
@@ -78,7 +78,6 @@ async def run_scheduled_once(
     user_id,
     user_name: str,
     prompt: str,
-    profile,
     settings,
     *,
     include_meta: bool = False,
@@ -118,11 +117,11 @@ async def run_scheduled_once(
                 projects = await loaders.load_projects(db, user_id)
                 events = await loaders.load_events(db, user_id, tz=user_tz)
                 files_overview = await loaders.load_files_overview(db, user_id)
-                memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+                memory = await loaders.load_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
                 im_channels = await loaders.load_im_channels(user_id)
                 style_prefs = await loaders.load_style_prefs(db, user_id)
 
-        prompt_name = profile.prompt_file.removesuffix(".md")
+        prompt_name = DEFAULT_PROMPT_NAME
         static_prompt, snapshot_context, now_str = builder.build_split(
             prompt_name,
             user_name,
@@ -130,7 +129,6 @@ async def run_scheduled_once(
             events,
             memory,
             files_overview,
-            skills=profile.skills,
             style_prefs=style_prefs,
             im_channels=im_channels,
             non_streaming=True,
@@ -143,10 +141,8 @@ async def run_scheduled_once(
         system_prompt = static_prompt
 
         use_anthropic = run_config.use_anthropic
-        tool_names = tool_names_override if tool_names_override is not None else profile.tool_names
-        # 定时任务默认不暴露 Shell；只有任务明确绑定 workspace 或持有完整沙箱
-        # 授权时，才沿用 DefaultProfile 中的 shell 工具，并在 dispatch 边界再次
-        # 按 filesystem_subject 校验，不能仅靠工具列表作为权限边界。
+        tool_names = tool_names_override if tool_names_override is not None else all_system_tool_names()
+        # 定时任务的 Shell 暴露仍由任务授权和 dispatch 边界共同校验，不能仅靠工具列表作为权限边界。
         if not allow_shell:
             tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         subject = filesystem_subject or {}
@@ -300,7 +296,6 @@ async def run_scheduled_execution(
         user_id,
         user_name,
         prompt,
-        DefaultProfile(),
         get_settings(),
         include_meta=True,
         allowed_tools=allowed_tools,

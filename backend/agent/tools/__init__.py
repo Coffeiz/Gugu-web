@@ -1,6 +1,6 @@
 """工具层（函数调用工具）。
 
-各领域工具集在导入时自注册到全局 registry，Profile 按需组合。
+各领域工具集在导入时自注册到全局 registry，运行时按权限与执行策略裁剪。
 （注：prompt skills 在隔壁 `agent/skills/`，是带触发条件的「剧本」，跑在这些工具之上。）
 """
 from agent.tools.base import BaseSkill, registry

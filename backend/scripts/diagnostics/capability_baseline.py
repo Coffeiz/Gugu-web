@@ -15,7 +15,7 @@ from pathlib import Path
 from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.injector import FIXED_ADAPTER_TOOL_NAMES, catalog_block
 from agent.tools import registry
-from agent.profiles import DefaultProfile
+from agent.capabilities.defaults import all_system_tool_names
 
 
 def _p95(values: list[float]) -> float:
@@ -48,8 +48,7 @@ def _trace_metrics(path: Path) -> dict[str, object]:
 
 
 def build_report(trace_paths: list[Path] | None = None) -> dict[str, object]:
-    profile = DefaultProfile()
-    names = list(profile.tool_names)
+    names = all_system_tool_names()
     index = CapabilityIndex.from_registries(tool_names=names)
     snapshot = index.snapshot(authorized_names=names)
     full_openai = len(json.dumps(registry.openai_schemas(names), ensure_ascii=False, separators=(",", ":")))

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from agent.llm.llm_select import pick_model, release, use_anthropic_for
-from agent.profiles import DefaultProfile
+from agent.capabilities.defaults import all_system_tool_names
 from agent.tools.base import Tool
 from agent.tools import registry
 
@@ -91,7 +91,7 @@ async def main_async(args: argparse.Namespace) -> int:
         for label, openai_schema, anthropic_schema in variants:
             Tool.to_openai = openai_schema
             Tool.to_anthropic = anthropic_schema
-            tool_names = list(DefaultProfile().tool_names)
+            tool_names = all_system_tool_names()
             metrics = schema_metrics(
                 registry, tool_names, anthropic, getattr(model_cfg, "model", ""),
                 description_mode=label == "description", settings=settings,

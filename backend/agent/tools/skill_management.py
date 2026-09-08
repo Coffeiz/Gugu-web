@@ -15,7 +15,7 @@ async def _create_skill(db, user_id, args: dict):
     """通过统一注册服务创建用户 Prompt Skill，不开放任何可执行代码。"""
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
     from agent.im import imctx
-    from agent.profiles.default import DefaultProfile
+    from agent.capabilities.defaults import all_system_tool_names
     from agent.tools import registry
 
     name = str(args.get("name") or "").strip()
@@ -24,7 +24,7 @@ async def _create_skill(db, user_id, args: dict):
         slug = f"user-skill-{hashlib.sha256(name.encode('utf-8')).hexdigest()[:10]}"
     current_im = imctx.get_im()
     allowed = current_im.get("allowed_tool_names") if current_im else None
-    allowed = list(allowed) if allowed is not None else DefaultProfile().tool_names
+    allowed = list(allowed) if allowed is not None else all_system_tool_names()
     related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
     tool_snapshot = registry.snapshot()
     missing = [item for item in related if tool_snapshot.get(item) is None]
@@ -74,7 +74,7 @@ async def _update_skill(db, user_id, args: dict):
     """更新当前用户的 Prompt Skill；slug 是稳定标识，不允许通过更新改名。"""
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
     from agent.im import imctx
-    from agent.profiles.default import DefaultProfile
+    from agent.capabilities.defaults import all_system_tool_names
 
     slug = str(args.get("slug") or "").strip().lower()
     if not slug:
@@ -91,7 +91,7 @@ async def _update_skill(db, user_id, args: dict):
         return {"error": "至少提供一个要更新的字段"}
     current_im = imctx.get_im()
     allowed = current_im.get("allowed_tool_names") if current_im else None
-    allowed = list(allowed) if allowed is not None else DefaultProfile().tool_names
+    allowed = list(allowed) if allowed is not None else all_system_tool_names()
     try:
         row = await SkillCapabilityRegistry().update_user_skill(
             db, user_id, slug, allowed_tool_names=allowed, **fields,
@@ -230,7 +230,7 @@ class SkillManagementSkill(BaseSkill):
     """Skill 生命周期工具的注册组。
 
     该组只负责让固定 Adapter 能在用户需要时发现并 dispatch 工具；不加入默认
-    Profile，因此 create/update/delete_skill 不会作为常驻 Provider Schema 发送。
+    默认工具集合，因此 create/update/delete_skill 不会作为常驻 Provider Schema 发送。
     """
 
     name = "skill-management"

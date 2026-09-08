@@ -370,7 +370,7 @@ class ToolRegistrySnapshot:
         return [self._tools[name].to_openai() for name in names if name in self._tools]
 
     def tools_of(self, skill_names: list[str]) -> list[str]:
-        """按冻结的工具组展开 Profile，避免组成员在进程内漂移。"""
+        """按冻结的工具组展开，避免组成员在进程内漂移。"""
         out: list[str] = []
         seen: set[str] = set()
         for skill_name in skill_names:
@@ -382,6 +382,10 @@ class ToolRegistrySnapshot:
 
     def known_skill_names(self) -> set[str]:
         return set(self._skills)
+
+    def all_tool_names(self) -> list[str]:
+        """返回快照中的全部系统工具名，保持注册顺序。"""
+        return list(self._tools)
 
 
 class BaseSkill:
@@ -440,11 +444,11 @@ class SkillRegistry:
         self._tools[tool.name] = tool
 
     def add_skill(self, name: str, tool_names: list[str]) -> None:
-        """记录一个 skill 包含的工具（按声明顺序），供 profile 按 skill 组合。"""
+        """记录一个 skill 包含的工具（按声明顺序），供注册表查询。"""
         self._skills[name] = list(tool_names)
 
     def tools_of(self, skill_names: list[str]) -> list[str]:
-        """把若干 skill 展开为有序、去重的工具名列表（profile.tool_names 据此派生）。"""
+        """把若干 skill 展开为有序、去重的工具名列表。"""
         return self.snapshot().tools_of(skill_names)
 
     def get(self, name: str) -> Tool | None:
@@ -453,6 +457,10 @@ class SkillRegistry:
     def known_skill_names(self) -> set[str]:
         """返回已注册的 skill 组名，供能力目录和注册数据校验使用。"""
         return self.snapshot().known_skill_names()
+
+    def all_tool_names(self) -> list[str]:
+        """返回全部已注册的系统工具名，保持注册顺序。"""
+        return self.snapshot().all_tool_names()
 
     def labels(self) -> dict[str, str]:
         return self.snapshot().labels()

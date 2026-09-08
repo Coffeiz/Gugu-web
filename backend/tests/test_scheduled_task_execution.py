@@ -560,7 +560,6 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     import app.db.session as db_session
     import agent.scheduled_execution as runner
     from agent.llm.llm_select import ModelRunConfig
-    from agent.profiles import DefaultProfile
     from app.core.config import AIPresetItem
 
     class _DbContext:
@@ -606,7 +605,7 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     monkeypatch.setattr("agent.scheduled.ScheduledLLMRunner", _FakeRunner)
 
     text, errored, meta = await runner.run_scheduled_once(
-        "user-byok", "小北", "执行任务", DefaultProfile(), SimpleNamespace(),
+        "user-byok", "小北", "执行任务", SimpleNamespace(),
         include_meta=True, minimal_context=True,
     )
 

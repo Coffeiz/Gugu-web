@@ -178,6 +178,17 @@ def test_knowledge_reflection_limits_candidates_and_validates_operations():
     assert candidate_request({"knowledge_candidate": {"should_reflect": "true", "query": "规则"}}) == (False, "")
 
 
+def test_knowledge_reflection_prompt_covers_tool_and_person_knowledge():
+    from agent.knowledge.reflection import load_prompt
+
+    prompt = load_prompt()
+    assert "工具使用与效率经验" in prompt
+    assert "人物与关系知识" in prompt
+    assert "工具调用失败本身不值得保存" in prompt
+    assert "不同人物使用能区分主体的 `topic`" in prompt
+    assert "高风险个人信息" in prompt
+
+
 def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
     from agent.knowledge.capture import normalize_capture
 

@@ -27,9 +27,7 @@ def _language_block(style_prefs: dict | None) -> str:
 
 
 def _skills_index_block(skill_names: list[str] | None) -> str:
-    """注入可用技能索引；技能正文仍由 use_skill 按需加载。"""
-    if not skill_names:
-        return ""
+    """注入内置技能索引；传空列表才显式关闭，正文仍按需加载。"""
     from agent import skills as _sk
     idx = _sk.skills_index(skill_names)
     if not idx:
@@ -87,23 +85,23 @@ def append_shell_prompt(system_prompt: str, *, enabled: bool) -> str:
     return "\n\n---\n\n".join(part for part in (system_prompt, shell_prompt) if part)
 
 
-def build_static_prompt(profile: str, user_name: str, *,
+def build_static_prompt(prompt_name: str, user_name: str, *,
                         skills: list[str] | None = None,
                         style_prefs: dict | None = None,
                         current_date: str | None = None) -> str:
     """组装稳定提示词；不包含项目、日历、文件等动态业务上下文。"""
     style_prefs = style_prefs or {}
     try:
-        profile_text = (_PROMPTS_DIR / f"{profile}.md").read_text(encoding="utf-8").strip()
+        prompt_text = (_PROMPTS_DIR / f"{prompt_name}.md").read_text(encoding="utf-8").strip()
     except FileNotFoundError:
-        profile_text = ""
-    if "{today}" in profile_text:
+        prompt_text = ""
+    if "{today}" in prompt_text:
         if current_date is None:
             from agent.context.session_snapshot import current_date_text
             current_date = current_date_text()
-        profile_text = profile_text.replace("{today}", current_date)
-    profile_policy = profile_text.split("\n---", 1)[0].strip()
-    parts = [profile_policy] if profile_policy else []
+        prompt_text = prompt_text.replace("{today}", current_date)
+    prompt_policy = prompt_text.split("\n---", 1)[0].strip()
+    parts = [prompt_policy] if prompt_policy else []
     parts.append(_language_block(style_prefs))
     persona = _personality_block(style_prefs)
     if not persona:

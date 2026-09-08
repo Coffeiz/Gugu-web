@@ -38,8 +38,9 @@ _SYS_FALLBACK = (
     "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回；"
     "涉及具体时间点一律换算成绝对日期（如「7/6 晚」而非「今晚」），照 user 消息开头给的当前日期换算。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
-    "knowledge_candidate 只在本轮出现有明确主题、可长期复用的事实或规则时给，格式为 {should_reflect:boolean,query:string}；"
-    "普通闲聊、一次性进展、用户画像/习惯、纯工具操作时 should_reflect 必须为 false。"
+    "knowledge_candidate 只在本轮出现明确、可长期复用的事实、规则、已验证的工具效率经验，"
+    "或 owner 明确提供/确认的非敏感人物关系与人物资料时给，格式为 {should_reflect:boolean,query:string}；"
+    "普通闲聊、一次性进展、owner 自身画像/习惯、单次工具调用、猜测、转述和敏感个人信息时 should_reflect 必须为 false。"
     "correction 唯一判 true 的条件：错的主体是**你（咕咕）本人这次的回答/理解**（用户说「你错了/不是这个/我说的是…」）。"
     "错的若是**别人**一律 false：用户认自己错/确认你是对的（是我错了/你是对的/哦原来如此）、说第三方或外部信息错"
     "（他记错了/这数据源不对/官网写错了）、单纯聊「某事是错的」——都 false（句里有「错」字也不算）。"
@@ -638,7 +639,7 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
         f"——没变动就都给空数组、别重列旧内容"
         f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
         f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
-        f"+ knowledge_candidate（仅明确、可复用的事实/规则才标 true，并给一个用于 Knowledge RAG 的短查询）。"
+        f"+ knowledge_candidate（明确、可复用的事实/规则、已验证的工具效率经验，或 owner 明确提供/确认的非敏感人物关系与人物资料才标 true，并给一个用于 Knowledge RAG 的短查询；单次工具调用、owner 画像/习惯、猜测、转述和敏感个人信息标 false）。"
     )
     # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
     # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。

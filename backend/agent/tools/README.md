@@ -29,7 +29,7 @@ skill_management.py ───┼─> SkillCapabilityRegistry
                         └─> agent.tools.base registry / confirm
 ```
 
-`SkillManagementSkill` 将生命周期工具注册到全局 registry，但不加入默认 Profile；因此
+`SkillManagementSkill` 将生命周期工具注册到全局 registry，但不加入常驻 Provider Schema；因此
 `create_skill`、`update_skill`、`delete_skill` 不会常驻 Provider Schema。模型需要管理用户
 Skill 时，先通过常驻的 `get_tool_schema` 获取对应 Schema，再通过 `call_tool` 调用，仍然只走
 同一套 registry、权限校验、参数校验和确认门。

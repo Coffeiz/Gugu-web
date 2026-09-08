@@ -26,7 +26,7 @@ from agent.context.canonical_tool_history import persistable_canonical_batch_rec
 from agent.conversation.lifecycle import generate_title, schedule_summary
 from agent.core import LLMRunner
 from agent.models import AgentRequest
-from agent.profiles import DefaultProfile
+from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
 
 
@@ -42,7 +42,6 @@ def _is_network_error(e: BaseException) -> bool:
 
 async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     user_id = req.user_id
-    profile = DefaultProfile()
     settings = get_settings()
     from agent.llm import modelctx
     modelctx.mark_user_scope()
@@ -99,18 +98,18 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             events = await loaders.load_events(db, user_id, tz=user_tz)
             notes = await loaders.load_recent_notes(db, user_id)
             files_overview = await loaders.load_files_overview(db, user_id)
-            memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
+            memory = await loaders.load_memory(user_id, req.message) if SYSTEM_MEMORY_ENABLED else {}
             im_channels = await loaders.load_im_channels(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(
-                profile.prompt_file.removesuffix(".md"), req.user_name,
+                DEFAULT_PROMPT_NAME, req.user_name,
                 projects, events, memory, files_overview,
                 notes=notes,
-                skills=profile.skills, style_prefs=style_prefs, source="web",
+                style_prefs=style_prefs, source="web",
                 im_channels=im_channels, user_msg=req.message, user_tz=user_tz,
             )
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": "web",
-                                      "profile": profile.prompt_file},
+                                      "prompt": f"{DEFAULT_PROMPT_NAME}.md"},
                     "user_tz": user_tz, "im_channels": im_channels, "im_memory": {},
                     "memory_summary_hash": session_snapshot.memory_summary_hash(memory),
                     "locale": current_locale,
@@ -118,8 +117,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
         async def _load_system_prompt(current_user_tz):
             return builder.build_static_prompt(
-                profile.prompt_file.removesuffix(".md"), req.user_name,
-                skills=profile.skills, style_prefs=style_prefs,
+                DEFAULT_PROMPT_NAME, req.user_name,
+                style_prefs=style_prefs,
                 current_date=session_snapshot.current_date_text(current_user_tz),
             )
 
@@ -347,13 +346,12 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req) if model_cfg is None else None
     model_cfg = model_cfg or run_config.model
-    profile = DefaultProfile()
     import app.db.session as _sess
 
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
     stance_text = builder.stance_block(
-        await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
+        await loaders.load_dynamic_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
     )
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
@@ -383,7 +381,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             from app.byok.service import resolve_and_bind_user_embedding
             await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
         tool_names = await _filter_shell_tool(
-            db, user_id, session_id, list(profile.tool_names), session=session,
+            db, user_id, session_id, all_system_tool_names(), session=session,
         )
         shell_prompt = None
         if "shell" in tool_names:
@@ -679,7 +677,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
-        if profile.memory_enabled and full_reply and not resume_interaction:
+        if SYSTEM_MEMORY_ENABLED and full_reply and not resume_interaction:
             from agent.memory import reflection
             reflection.schedule(user_id, req.user_name, req.message, full_reply, settings,
                                 used_tools=used_tools, session_id=session_id)
