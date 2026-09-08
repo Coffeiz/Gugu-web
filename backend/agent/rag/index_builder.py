@@ -1,11 +1,15 @@
 """把业务主数据投影为统一知识索引 chunk。"""
 from __future__ import annotations
 
+import asyncio
+from collections import defaultdict
+
 from sqlalchemy import select
 
 from app.core.chat_attach import TEXT_EXTS
 from app.services.storage import get_storage
 from agent.rag.adapters.memory import MemoryAdapter
+from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.adapters.projects import ProjectAdapter
 from agent.rag.chunking import split_text, text_version
 from agent.rag.models import IndexDocument, Scope
@@ -24,6 +28,7 @@ from app.models import (
 
 
 FILE_TEXT_MAX_BYTES = 1 * 1024 * 1024
+FILE_DOCUMENT_LOAD_CONCURRENCY = 8
 
 
 async def _extract_file_text(row: File) -> str:
@@ -40,6 +45,11 @@ async def _extract_file_text(row: File) -> str:
         return raw.decode("utf-8", errors="replace").strip()
     except Exception:
         return ""
+
+
+async def _extract_file_text_bounded(row: File, semaphore: asyncio.Semaphore) -> str:
+    async with semaphore:
+        return await _extract_file_text(row)
 
 
 def _scope(owner_user_id: object, session=None) -> Scope:
@@ -96,15 +106,20 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
     if source_type == "memory":
         return await MemoryAdapter(owner_user_id).build_documents(scope=owner_scope)
+    if source_type == "knowledge":
+        return await KnowledgeAdapter(owner_user_id).build_index_documents()
     if source_type == "project":
         return await ProjectAdapter(owner_user_id, db=db).build_documents(scope=owner_scope)
     if source_type == "file":
         rows = (await db.execute(select(File).where(
             File.user_id == owner_user_id, File.deleted_at.is_(None),
         ).order_by(File.updated_at.desc(), File.id.desc()))).scalars().all()
+        semaphore = asyncio.Semaphore(FILE_DOCUMENT_LOAD_CONCURRENCY)
+        bodies = await asyncio.gather(*(
+            _extract_file_text_bounded(row, semaphore) for row in rows
+        ))
         documents = []
-        for row in rows:
-            body = await _extract_file_text(row)
+        for row, body in zip(rows, bodies, strict=True):
             text = "\n".join(filter(None, [
                 f"文件：{row.display_name}",
                 f"类型：{row.ext}" if row.ext else "",
@@ -241,6 +256,16 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
         sessions = (await db.execute(select(ConversationSession).where(
             ConversationSession.user_id == owner_user_id,
         ).order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc()))).scalars().all()
+        messages_by_session: defaultdict[int, list[ConversationMessage]] = defaultdict(list)
+        if sessions:
+            session_ids = [session.id for session in sessions]
+            message_rows = (await db.execute(
+                select(ConversationMessage)
+                .where(ConversationMessage.session_id.in_(session_ids))
+                .order_by(ConversationMessage.session_id.asc(), ConversationMessage.id.asc())
+            )).scalars().all()
+            for row in message_rows:
+                messages_by_session[row.session_id].append(row)
         documents = []
         for session in sessions:
             session_scope = _scope(owner_user_id, session)
@@ -257,11 +282,9 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
                         "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
                     },
                 ))
-            messages = (await db.execute(select(ConversationMessage).where(
-                ConversationMessage.session_id == session.id,
-                ConversationMessage.id > (session.baseline_message_id or 0),
-            ).order_by(ConversationMessage.id.asc()))).scalars().all()
-            for row in messages:
+            for row in messages_by_session.get(session.id, ()):
+                if row.id <= (session.baseline_message_id or 0):
+                    continue
                 if row.role not in {"user", "assistant"} or not (row.content or "").strip():
                     continue
                 text = f"{row.role}：{row.content}"
@@ -271,7 +294,8 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
                     scope=session_scope, version_parts=(row.id, row.created_at, row.content),
                     updated_at=(row.sent_at or row.created_at).isoformat(),
                     metadata={
-                        "session_id": str(session.id), "role": row.role, "kind": "message",
+                        "session_id": str(session.id), "message_id": row.id,
+                        "role": row.role, "kind": "message",
                         "session_source": session.source or "",
                         "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
                     },
@@ -281,7 +305,7 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
 
 
 INDEX_SOURCE_TYPES = (
-    "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
 
 

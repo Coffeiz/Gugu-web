@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import re
 import uuid
 from typing import Iterable
@@ -20,6 +21,7 @@ _MAX_SOURCE_LABEL = 120
 _MAX_SOURCE_REF = 300
 _MAX_HISTORY = 5
 _MAX_TOTAL_BYTES = 32 * 1024 * 1024
+KNOWLEDGE_DOCUMENT_LOAD_CONCURRENCY = 8
 
 
 def _prefix(user_id: object) -> str:
@@ -130,19 +132,27 @@ class KnowledgeStore:
             keys = await storage.list_keys()
         except Exception:
             return []
-        entries: list[KnowledgeEntry] = []
-        for key in keys:
+        semaphore = asyncio.Semaphore(KNOWLEDGE_DOCUMENT_LOAD_CONCURRENCY)
+
+        async def load_one(key: str) -> KnowledgeEntry | None:
             if not key.startswith(_prefix(self.user_id)) or not key.endswith(".md"):
-                continue
-            try:
-                entry = _parse(await storage.get(key))
-            except (KeyError, TypeError, ValueError, OSError):
-                continue
+                return None
+            async with semaphore:
+                try:
+                    entry = _parse(await storage.get(key))
+                except (KeyError, TypeError, ValueError, OSError):
+                    return None
             if active_only and not entry.active:
-                continue
+                return None
             if scope is not None and not self.matches_scope(entry.scope, scope):
-                continue
-            entries.append(entry)
+                return None
+            return entry
+
+        loaded = await asyncio.gather(*(load_one(key) for key in keys))
+        entries: list[KnowledgeEntry] = []
+        for entry in loaded:
+            if entry is not None:
+                entries.append(entry)
         return sorted(entries, key=lambda item: (item.updated_at, item.id), reverse=True)
 
     async def save(self, entry: KnowledgeEntry) -> KnowledgeEntry:

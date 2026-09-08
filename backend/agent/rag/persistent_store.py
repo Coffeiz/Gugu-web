@@ -150,14 +150,14 @@ async def search_persistent_index(
     query: str,
     *,
     source_types: set[str] | None = None,
-    scope: Scope | None = None,
+    scope: Scope | list[Scope] | tuple[Scope, ...] | None = None,
     limit: int = 10,
     diagnostics: dict[str, object] | None = None,
 ) -> list[RecallResult]:
     """在统一 lexical index 上查询持久化 chunk；权限先由 owner 收窄。"""
     requested_limit = max(1, min(int(limit), 50))
     types = sorted(source_types or {
-        "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+        "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
     })
     from agent.rag.index_cache import get_index_cache
     from agent.rag.context import get_snapshot_revision
@@ -180,31 +180,46 @@ async def search_persistent_index(
     reason = index_diagnostics.get("cache_miss_reason")
     if reason:
         cache_miss_reasons.add(str(reason))
+    scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
     started = time.monotonic()
-    if hasattr(index, "search_with_timing"):
-        searched, timing = await index.search_with_timing(
-            query, limit=requested_limit, source_types=set(types), scope=scope,
-        )
-    else:
-        searched = await index.search(
-            query, limit=requested_limit, source_types=set(types), scope=scope,
-        )
-        timing = None
-    results.extend(searched)
+    timings = []
+    for query_scope in scopes:
+        if hasattr(index, "search_with_timing"):
+            searched, timing = await index.search_with_timing(
+                query, limit=requested_limit, source_types=set(types), scope=query_scope,
+            )
+        else:
+            searched = await index.search(
+                query, limit=requested_limit, source_types=set(types), scope=query_scope,
+            )
+            timing = None
+        results.extend(searched)
+        if timing is not None:
+            timings.append(timing)
+    deduplicated = {}
+    for result in results:
+        deduplicated[result.document.chunk_id] = result
+    results = list(deduplicated.values())
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
     if diagnostics is not None:
-        diagnostics["document_count"] = getattr(index, "document_count", len(getattr(index, "documents", ()) or ()))
+        counts = await count_index_entries(db, owner_user_id)
+        diagnostics["document_count"] = sum(counts.get(source_type, 0) for source_type in types)
         diagnostics["engine"] = next(iter(engines)) if len(engines) == 1 else "mixed"
         diagnostics["cache_hit"] = bool(cache_hits) and all(cache_hits)
         diagnostics["cache_entries"] = len(cache_hits)
         if index_diagnostics.get("shared_index"):
             diagnostics["shared_index"] = True
         diagnostics["cache_miss_reasons"] = ",".join(sorted(cache_miss_reasons))
+        diagnostics["cache_miss_reason"] = ",".join(sorted(cache_miss_reasons))
         sidecar_search_ms = int((time.monotonic() - started) * 1000)
         diagnostics["index_lookup_ms"] = index_lookup_ms
         diagnostics["sidecar_search_ms"] = sidecar_search_ms
-        diagnostics["sidecar_queue_wait_ms"] = int(getattr(timing, "queue_wait_ms", 0) or 0)
-        diagnostics["sidecar_query_ms"] = int(getattr(timing, "query_ms", 0) or 0)
+        diagnostics["sidecar_queue_wait_ms"] = sum(
+            int(getattr(timing, "queue_wait_ms", 0) or 0) for timing in timings
+        )
+        diagnostics["sidecar_query_ms"] = sum(
+            int(getattr(timing, "query_ms", 0) or 0) for timing in timings
+        )
         diagnostics["search_ms"] = sidecar_search_ms
         for key in ("index_build_ms", "sidecar_reused", "index_sync", "upsert_count", "delete_count"):
             if key in index_diagnostics:

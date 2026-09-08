@@ -5,15 +5,12 @@ adapter，词法检索交给 TS lexical index，避免为每个来源重复维�
 """
 from __future__ import annotations
 
-import time
 from collections.abc import Iterable
 from contextlib import asynccontextmanager
 
-from agent.rag.index_builder import build_source_documents
-from agent.rag.index_cache import get_index_cache, search_documents_with_cache
 from agent.rag.models import Scope
+from agent.rag.persistent_store import search_persistent_index
 from agent.rag.retriever import RetrievalBatch
-from agent.rag.scope import matches_scope
 from agent.rag.ts_sidecar import TsSidecarUnavailable
 
 
@@ -35,7 +32,7 @@ class IndexedSourceRetriever:
     """把文件、画布、笔记和对话来源接入统一的 TS lexical index。"""
 
     def __init__(self, user_id: object, *, db=None, db_factory=None, source_type: str):
-        if source_type not in {"file", "canvas", "note", "conversation"}:
+        if source_type not in {"file", "canvas", "note", "conversation", "knowledge"}:
             raise ValueError(f"不支持的统一来源：{source_type}")
         self.user_id = user_id
         self.db = db
@@ -90,50 +87,31 @@ class IndexedSourceRetriever:
             conversation_before_message_id = get_conversation_before_message_id()
 
         async with self.session_scope() as db:
-            started = time.monotonic()
-            cache = get_index_cache()
-            source_key = f"{self.source_type}:all"
-            documents = await cache.get_snapshot_documents(
-                self.user_id,
-                source_key,
-                lambda: build_source_documents(db, self.user_id, self.source_type),
-            )
-            scoped_documents = [
-                document for document in documents
-                if any(matches_scope(document, item) for item in valid_scopes)
-            ]
-            if self.source_type == "conversation":
-                scoped_documents = [
-                    document for document in scoped_documents
-                    if _conversation_document_visible(
-                        document, conversation_before_message_id,
-                    )
-                ]
-            metadata: dict[str, object] = {
-                "document_load_ms": int((time.monotonic() - started) * 1000),
-                "source_adapter": self.source_type,
-            }
+            metadata: dict[str, object] = {"source_adapter": self.source_type}
             if conversation_before_message_id is not None:
                 metadata["conversation_before_message_id"] = conversation_before_message_id
             try:
-                results = await search_documents_with_cache(
-                    self.user_id,
-                    scoped_documents,
-                    query,
-                    limit=candidate_limit,
-                    source_types={self.source_type},
-                    scope=None,
-                    diagnostics=metadata,
+                results = await search_persistent_index(
+                    db, self.user_id, query,
+                    source_types={self.source_type}, scope=valid_scopes,
+                    limit=candidate_limit, diagnostics=metadata,
                 )
             except TsSidecarUnavailable:
                 results = []
                 metadata.update({"engine": "unavailable", "fallback": "lexical_worker_unavailable"})
+            if self.source_type == "conversation":
+                results = [
+                    result for result in results
+                    if _conversation_document_visible(
+                        result.document, conversation_before_message_id,
+                    )
+                ]
         return RetrievalBatch(
             source_type=self.source_type,
             results=tuple(results),
             index_source=f"{self.source_type}-db",
             fallback_reason="embedding_not_indexed",
-            candidate_count=len(scoped_documents),
+            candidate_count=int(metadata.get("document_count", 0) or 0),
             metadata={key: str(value) for key, value in metadata.items()},
         )
 

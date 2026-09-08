@@ -3,19 +3,17 @@ from __future__ import annotations
 
 import re
 import time
-import uuid
 import hashlib
 from dataclasses import replace
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.projects import ProjectAdapter
-from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
 from agent.rag.context import get_snapshot_context
 from agent.rag.diagnostics import record_recall
 from agent.rag.hybrid import hybrid_results
 from agent.rag.models import RecallCandidate, RecallResult, Scope
-from agent.rag.persistent_store import load_index_documents, replace_source_documents, search_persistent_index
+from agent.rag.persistent_store import search_persistent_index
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 from agent.rag.index_cache import search_documents_with_cache
 from agent.rag.ts_sidecar import (
@@ -216,90 +214,37 @@ class ProjectRetriever:
             )
         if strategy not in {"auto", "bm25", "embedding"}:
             raise ValueError("strategy 只能是 auto、bm25 或 embedding")
+        search_metadata: dict[str, object] = {}
         if self.adapter._db is not None:
-            search_metadata: dict[str, object] = {}
             results = await self._search_db(
                 self.adapter._db, query, query_scope, candidate_limit,
                 diagnostics=search_metadata,
             )
-            candidate_count = int(search_metadata.get("document_count", 0) or 0)
-            return RetrievalBatch(
-                source_type=self.source_type,
-                results=tuple(results),
-                index_source="knowledge-index-db",
-                fallback_reason="embedding_disabled",
-                candidate_count=candidate_count,
-                metadata={
-                    **{key: str(value) for key, value in search_metadata.items()},
-                    "fusion": "bm25",
-                },
-            )
-        from agent.rag.index_cache import get_index_cache
-        load_started = time.monotonic()
-        documents = await get_index_cache().get_snapshot_documents(
-            self.adapter.user_id,
-            f"project:{query_scope.key()}",
-            lambda: self.adapter.build_documents(scope=query_scope),
-        )
-        document_load_ms = int((time.monotonic() - load_started) * 1000)
-        search_metadata = {}
-        try:
-            results = await search_documents_with_cache(
-                self.adapter.user_id, documents, query, limit=candidate_limit,
-                source_types={"project"}, scope=query_scope,
-                diagnostics=search_metadata,
-            )
-        except TsSidecarUnavailable:
-            results = []
-            search_metadata.update({"engine": "unavailable", "cache_hit": False,
-                                    "fallback": "lexical_worker_unavailable"})
+        else:
+            import app.db.session as db_session
+
+            db_session.ensure_engine()
+            factory = self.adapter._db_factory or db_session._SessionLocal
+            async with factory() as db:
+                results = await self._search_db(
+                    db, query, query_scope, candidate_limit,
+                    diagnostics=search_metadata,
+                )
+        candidate_count = int(search_metadata.get("document_count", 0) or 0)
         return RetrievalBatch(
             source_type=self.source_type,
             results=tuple(results),
-            index_source="projects-db",
+            index_source="knowledge-index-db",
             fallback_reason="embedding_disabled",
-            candidate_count=len(documents),
+            candidate_count=candidate_count,
             metadata={
                 **{key: str(value) for key, value in search_metadata.items()},
-                "document_load_ms": str(document_load_ms),
                 "fusion": "bm25",
             },
         )
 
     async def _search_db(self, db, query: str, scope, limit: int,
                          diagnostics: dict[str, object] | None = None):
-        from agent.rag.context import get_snapshot_revision
-
-        # snapshot-bound index 已经固定了文档集合；不要每轮再次读取整张索引表。
-        # 只有首次发现索引为空时，才走一次原有的构建路径。
-        if get_snapshot_revision():
-            results = await search_persistent_index(
-                db, self.adapter.user_id, query,
-                source_types={self.source_type}, scope=scope, limit=limit,
-                diagnostics=diagnostics,
-            )
-            if int((diagnostics or {}).get("document_count", 0) or 0) > 0:
-                return results
-            documents = await self.adapter.build_documents(scope=scope)
-            if documents:
-                await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
-                await db.commit()
-                return await search_persistent_index(
-                    db, self.adapter.user_id, query,
-                    source_types={self.source_type}, scope=scope, limit=limit,
-                    diagnostics=diagnostics,
-                )
-            return results
-
-        documents = await load_index_documents(
-            db, self.adapter.user_id, source_types={self.source_type},
-        )
-        if diagnostics is not None:
-            diagnostics["document_count"] = len(documents)
-        if not documents:
-            documents = await self.adapter.build_documents(scope=scope)
-            await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
-            await db.commit()
         try:
             return await search_persistent_index(
                 db, self.adapter.user_id, query,
@@ -335,11 +280,10 @@ class UnifiedRecallService:
             get_snapshot_revision, reset_shared_index_key, set_shared_index_key,
         )
         snapshot_revision = get_snapshot_revision()
-        shared_key = (
-            f"snapshot:{snapshot_revision}"
-            if snapshot_revision != "" else f"request:{uuid.uuid4().hex}"
-        )
-        shared_token = set_shared_index_key(shared_key)
+        # 没有 snapshot 时保持普通 owner/revision 缓存路径。随机 request key 会让
+        # 每次召回都绕过 revision cache，导致 persistent sidecar 也无法稳定复用。
+        shared_key = f"snapshot:{snapshot_revision}" if snapshot_revision != "" else ""
+        shared_token = set_shared_index_key(shared_key) if shared_key else None
         try:
             batches = await self.retriever.retrieve(
                 query,
@@ -349,7 +293,8 @@ class UnifiedRecallService:
                 candidate_limit=20,
             )
         finally:
-            reset_shared_index_key(shared_token)
+            if shared_token is not None:
+                reset_shared_index_key(shared_token)
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
@@ -458,14 +403,18 @@ class UnifiedRecallService:
                     except (TypeError, ValueError):
                         continue
         stage_ms["rank_candidates_ms"] = int(rank_stats.get("elapsed_ms", 0) or 0)
-        source_diagnostics = rank_stats.get("source_diagnostics") or {
-            batch.source_type: {
+        # TS ranker 的 source_diagnostics 只描述候选选择，不一定带来源索引的
+        # cache/document 元数据。以来源批次为基准合并，避免诊断字段在有排序统计时
+        # 被整块覆盖。
+        ranked_source_diagnostics = rank_stats.get("source_diagnostics") or {}
+        source_diagnostics = {}
+        for batch in batches:
+            source_diagnostics[batch.source_type] = {
+                **(ranked_source_diagnostics.get(batch.source_type) or {}),
                 "candidate_count": batch.candidate_count,
                 "hit_count": len(batch.results),
                 **batch.metadata,
             }
-            for batch in batches
-        }
         return {
             "query": query,
             "results": selected,
@@ -524,7 +473,8 @@ async def search_memory(
     if source in {"all", "profile", "pattern", "daily", "memory"}:
         retrievers.append(MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all"))
     if source in {"all", "knowledge"}:
-        retrievers.append(KnowledgeAdapter(user_id))
+        if db is not None:
+            retrievers.append(IndexedSourceRetriever(user_id, db=db, source_type="knowledge"))
     service = UnifiedRecallService(UnifiedRetriever(retrievers))
     result = await service.search(
         query, source="all" if source == "all" else source,
@@ -600,7 +550,7 @@ async def search_knowledge(
         db_factory = session_factory
     retrievers = [
         MemoryRetriever(user_id),
-        KnowledgeAdapter(user_id),
+        IndexedSourceRetriever(user_id, db=db, source_type="knowledge"),
         ProjectRetriever(user_id, db=db, db_factory=db_factory),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="file"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),

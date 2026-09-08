@@ -27,7 +27,7 @@ INDEX_CACHE_TTL_SECONDS = 30 * 60
 PER_OWNER_CACHE_BYTES = 32 * 1024 * 1024
 GLOBAL_CACHE_BYTES = 512 * 1024 * 1024
 DEFAULT_SOURCE_TYPES = (
-    "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
 
 
@@ -120,6 +120,8 @@ class KnowledgeIndexCache:
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
+                diagnostics["cache_miss_reason"] = ""
+                diagnostics["document_count"] = _index_document_count(entry.index)
             return entry.index
 
         if diagnostics is not None:
@@ -137,6 +139,8 @@ class KnowledgeIndexCache:
                 self._touch(key, entry)
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
+                    diagnostics["cache_miss_reason"] = ""
+                    diagnostics["document_count"] = _index_document_count(entry.index)
                 return entry.index
             # 冷启动优先让 TS worker 从持久化索引恢复。只有索引不存在、版本不匹配或
             # revision 变化时才读取完整 DB 文档并重建，避免每次进程重启都拉全量正文。
@@ -148,6 +152,8 @@ class KnowledgeIndexCache:
                     if diagnostics is not None:
                         diagnostics["cache_hit"] = True
                         diagnostics["cache_hit_layer"] = "persistent_sidecar"
+                        diagnostics["cache_miss_reason"] = "persistent_sidecar_restore"
+                        diagnostics["document_count"] = _index_document_count(restored)
                     self._store(key, _Entry(
                         restored, 1, revision, backend, time.monotonic(),
                     ))
@@ -182,6 +188,7 @@ class KnowledgeIndexCache:
             if diagnostics is not None:
                 diagnostics["cache_hit"] = False
                 diagnostics["shared_index"] = bool(shared_key)
+                diagnostics["document_count"] = _index_document_count(index)
             size = estimate_index_bytes(index_documents, index)
             if size <= self.owner_limit_bytes:
                 self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
@@ -217,6 +224,8 @@ class KnowledgeIndexCache:
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
+                diagnostics["cache_miss_reason"] = ""
+                diagnostics["document_count"] = _index_document_count(entry.index)
             return entry.index
         if diagnostics is not None:
             diagnostics["cache_miss_reason"] = (
@@ -231,6 +240,8 @@ class KnowledgeIndexCache:
                 self._touch(key, entry)
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
+                    diagnostics["cache_miss_reason"] = ""
+                    diagnostics["document_count"] = _index_document_count(entry.index)
                 return entry.index
             index_documents = list(documents)
             base_entry = entry or self._latest_snapshot_entry(owner_key, backend, key)
@@ -261,6 +272,7 @@ class KnowledgeIndexCache:
             if diagnostics is not None:
                 diagnostics["cache_hit"] = False
                 diagnostics["shared_index"] = bool(shared_key)
+                diagnostics["document_count"] = _index_document_count(index)
             size = estimate_index_bytes(index_documents, index)
             if size <= self.owner_limit_bytes:
                 self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
@@ -542,6 +554,11 @@ def _documents_fingerprint(documents: list[IndexDocument]) -> str:
         "|".join(map(str, document.identity())) for document in documents
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _index_document_count(index) -> int:
+    """返回当前索引可诊断的文档数；磁盘恢复索引由 sidecar 提供数量。"""
+    return int(getattr(index, "document_count", len(getattr(index, "documents", ()) or ())) or 0)
 
 
 def _documents_match(left, right) -> bool:

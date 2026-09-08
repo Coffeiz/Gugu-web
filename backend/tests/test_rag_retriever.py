@@ -131,6 +131,25 @@ async def test_unified_retriever_dispatches_registered_source():
 
 
 @pytest.mark.asyncio
+async def test_recall_without_snapshot_uses_normal_revision_cache(monkeypatch):
+    from agent.rag import context as rag_context
+
+    observed_keys = []
+
+    class CacheProbeRetriever(FakeRetriever):
+        async def retrieve(self, query, *, scope, strategy, candidate_limit):
+            observed_keys.append(rag_context.get_shared_index_key())
+            return await super().retrieve(
+                query, scope=scope, strategy=strategy, candidate_limit=candidate_limit,
+            )
+
+    service = UnifiedRecallService(UnifiedRetriever([CacheProbeRetriever()]))
+    await service.search("缓存", source="fake", scope=owner_scope("user-a"), strategy="bm25")
+
+    assert observed_keys == [""]
+
+
+@pytest.mark.asyncio
 async def test_database_retrievers_use_independent_sessions_for_parallel_recall():
     """并行来源不能共享 AsyncSession，否则超时收尾会触发 SQLAlchemy 状态竞争。"""
     from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
@@ -392,27 +411,24 @@ async def test_conversation_watermark_reaches_ts_search_input(monkeypatch):
     ]
     search_input = {}
 
-    class Cache:
-        async def get_snapshot_documents(self, _owner, _source, _loader):
-            return documents
-
-    async def fake_search(_owner, candidates, _query, **_kwargs):
-        search_input["documents"] = candidates
-        return []
+    async def fake_search(_db, _owner, _query, **kwargs):
+        search_input["documents"] = list(documents)
+        from agent.rag.models import RecallResult
+        return [RecallResult(item, 1.0) for item in documents]
 
     @asynccontextmanager
     async def session_factory():
         yield object()
 
-    monkeypatch.setattr(indexed_sources, "get_index_cache", lambda: Cache())
-    monkeypatch.setattr(indexed_sources, "search_documents_with_cache", fake_search)
+    monkeypatch.setattr(indexed_sources, "search_persistent_index", fake_search)
     token = rag_context.set_conversation_before_message_id(11)
     try:
-        await indexed_sources.IndexedSourceRetriever(
+        batch = await indexed_sources.IndexedSourceRetriever(
             "user-a", db_factory=session_factory, source_type="conversation",
         ).retrieve("同一段文本", scope=owner_scope("user-a"), strategy="bm25", candidate_limit=20)
     finally:
         rag_context.reset_conversation_before_message_id(token)
 
-    assert [item.source_id for item in search_input["documents"]] == ["10"]
+    assert [item.source_id for item in search_input["documents"]] == ["10", "11"]
+    assert [item.document.source_id for item in batch.results] == ["10"]
     assert rag_context.get_conversation_before_message_id() is None

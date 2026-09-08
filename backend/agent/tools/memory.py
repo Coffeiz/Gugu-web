@@ -88,21 +88,10 @@ async def _save_knowledge(db, user_id, args: dict):
         saved = await save_capture(user_id, values)
     except ValueError as exc:
         return {"error": str(exc)}
-    try:
-        from agent.rag.adapters.knowledge import KnowledgeAdapter
-        from agent.memory import embedding
-        from agent.rag.models import Scope
-        from agent.rag.vector_cache import sync_knowledge_index_vectors
-
-        if embedding.is_enabled():
-            vector_scope = Scope(
-                owner_user_id=str(user_id), scope_type="owner",
-            )
-            documents = await KnowledgeAdapter(user_id).build_documents(scope=vector_scope)
-            await sync_knowledge_index_vectors(user_id, documents)
-    except Exception:
-        # 向量是可重建缓存，保存主数据成功后不因缓存不可用而失败。
-        pass
+    from agent.events import bus, types
+    bus.publish(types.RagIndexUpdated(
+        user_id=user_id, source_type="knowledge", source_id=saved.id, operation="upsert",
+    ))
     return {
         "success": True, "id": saved.id, "title": saved.title,
         "source_type": saved.source.type,
@@ -130,20 +119,10 @@ async def _delete_knowledge(db, user_id, args: dict):
         return blocked
     deleted = await store.delete(entry_id)
     if deleted:
-        try:
-            from agent.knowledge.vector_cache import sync_vectors
-            from agent.rag.adapters.knowledge import KnowledgeAdapter
-            from agent.rag.models import Scope
-
-            documents = await KnowledgeAdapter(user_id).build_documents(
-                scope=Scope(owner_user_id=str(user_id), scope_type="owner"),
-            )
-            await sync_vectors(user_id, documents)
-        except Exception:
-            # 向量是可重建缓存，删除主数据成功后不因缓存 GC 失败而回滚。
-            pass
-        from agent.rag.index_cache import get_index_cache
-        get_index_cache().invalidate(user_id, "knowledge")
+        from agent.events import bus, types
+        bus.publish(types.RagIndexUpdated(
+            user_id=user_id, source_type="knowledge", source_id=entry_id, operation="delete",
+        ))
     return {"success": deleted, "knowledge_id": entry_id}
 
 

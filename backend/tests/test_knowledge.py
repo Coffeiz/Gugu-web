@@ -103,14 +103,8 @@ async def test_knowledge_adapter_exposes_source_and_confidence(knowledge_storage
 
 
 @pytest.mark.asyncio
-async def test_search_memory_accepts_knowledge_source(monkeypatch, knowledge_storage):
+async def test_search_memory_accepts_knowledge_source(knowledge_storage):
     from agent.rag import service
-
-    async def fake_search(*args, **kwargs):
-        from agent.rag.retriever import RetrievalBatch
-        return RetrievalBatch(source_type="knowledge")
-
-    monkeypatch.setattr(service.KnowledgeAdapter, "retrieve", fake_search)
     result = await service.search_memory("user-a", "项目协议", source="knowledge")
     assert result["results"] == []
 

@@ -62,6 +62,9 @@ async def _log_rag_index_updated(e: RagIndexUpdated) -> None:
         MemoryAdapter.invalidate_scope_cache(e.user_id)
         from agent.rag.pipeline import handle_memory_index_event
         await handle_memory_index_event(e)
+    else:
+        from agent.rag.pipeline import handle_rag_index_event
+        await handle_rag_index_event(e)
     _log.info("rag.index.%s user=%s source=%s", e.operation, str(e.user_id)[:8], e.source_type)
 
 
