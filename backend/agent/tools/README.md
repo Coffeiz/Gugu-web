@@ -11,9 +11,9 @@
 | `base.py` | `Tool`、`BaseSkill`、registry、Schema 校验、统一 dispatch | 具体业务和资源查询 |
 | `meta.py` | 固定 Adapter（`call_tool`、`get_tool_schema`）、Skill 正文加载（`use_skill`）和元能力组合 | 用户 Skill 的创建、更新、删除实现 |
 | `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；以独立的按需工具组注册，复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
-| `line_edit.py` | 正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
+| `text_edit.py` | 通用正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
 | `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |
-| `files.py` / `trash.py` | 文件库与回收站领域工具；写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
+| `files/` / `trash.py` | 文件库与回收站领域工具；按 `documents.py`、`folders.py`、`locations.py`、`transfer.py` 分职责组织，写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
 | `shell.py` | 受控 Shell 与显式 `run_script` 执行入口 | 绕过 sandbox 或提供任意脚本命令 |
 | 其他领域文件 | 项目、文件、日历、记忆、画布等各自资源的工具 | 跨领域的通用 Adapter |
 
@@ -97,7 +97,7 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 
 ## 正文编辑统一约定
 
-所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/line_edit.py`，不得重新引入独立的整篇覆盖模式。
+所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/text_edit.py`，不得重新引入独立的整篇覆盖模式。
 
 ```json
 {
@@ -111,7 +111,7 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 
 `target_lines` 使用 1-based 原始 Markdown 物理行号，支持单行（`8`）、范围（`8-11`）、Bash/`sed` 风格范围（`8,11`）和整篇（`all`）。数字目标必须同时提供读取结果中的 `expected` 原文，范围编辑时用换行连接；原文不匹配会拒绝修改，避免把渲染后的页面行号误当成 Markdown 行号。`content` 为空表示删除目标行；多个范围不得重叠，由工具从后往前应用。调用前必须先读取最新正文，修改后必须重新读取核对；整篇编辑只能使用 `target_lines: "all"`，不再使用 `replace_all`。笔记的追加仍使用 `append_blocks`，不应通过追加“作废说明”替代删除原内容。
 
-新增正文编辑工具时必须遵守同一套边界：读取接口返回原始正文和稳定的物理行号，编辑接口复用 `backend/agent/tools/line_edit.py`，不得依据 UI/HTML/Markdown 渲染后的可见行号；数字目标没有 `expected` 或校验失败时必须拒绝执行，不能猜测或静默改动。编辑成功后必须重新读取同一资源核对，测试至少覆盖行号偏移、过期正文、删除范围、`all` 整篇替换和多范围倒序应用；批量入口也必须逐项沿用这些规则。
+新增正文编辑工具时必须遵守同一套边界：读取接口返回原始正文和稳定的物理行号，`read_file.target_lines` 可按同一语法截取读取范围；`grep` 只负责在当前权限内定位文本并返回行号/上下文，不替代精确读取。编辑接口复用 `backend/agent/tools/text_edit.py`，不得依据 UI/HTML/Markdown 渲染后的可见行号；数字目标没有 `expected` 或校验失败时必须拒绝执行，不能猜测或静默改动。编辑成功后必须重新读取同一资源核对，测试至少覆盖行号偏移、过期正文、删除范围、`all` 整篇替换和多范围倒序应用；批量入口也必须逐项沿用这些规则。
 
 ## 工具 Schema 防错约定
 
