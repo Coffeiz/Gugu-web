@@ -189,10 +189,10 @@ AI__API_KEY=请填写模型服务商密钥
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=请替换为管理员密码
 # 用户可访问的公开站点根地址，用于邮箱验证和密码重置链接
-GUGU_PUBLIC_APP_URL=http://localhost:8000
+GUGU_PUBLIC_APP_URL=http://localhost:9595
 ```
 
-如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8000` 等容器内部地址写入邮件。
+如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8001` 等容器内部地址写入邮件。
 
 管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/quick-deploy.md)。
 
@@ -200,8 +200,8 @@ GUGU_PUBLIC_APP_URL=http://localhost:8000
 
 启动后访问：
 
-- 咕咕：<http://localhost:8000>
-- Admin：<http://localhost:8000/admin/>
+- 咕咕：<http://localhost:9595>
+- Admin：<http://localhost:9595/admin/>
 
 首次运行会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时会生成随机密码并保存到 `backend/.env`，终端只打印一次；不会使用公开默认密码。
 
@@ -219,7 +219,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 开发环境还可以访问：
 
-- Backend API 文档：<http://localhost:8000/docs>
+- Backend API 文档：<http://localhost:9595/docs>
 - LoopScope Collector：<http://localhost:4320>
 
 LoopScope 需要先登录咕咕，访问咕咕的 `/dev` 页面，再点击页面里的 LoopScope 入口；这样才能带上当前账号上下文，看到自己账号的数据。直接打开 Collector 地址不会正常显示对应数据。

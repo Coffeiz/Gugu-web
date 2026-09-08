@@ -122,10 +122,26 @@ RUN mkdir -p logs \
     && ! command -v git \
     && ! command -v hg
 
-EXPOSE 8000
+EXPOSE 9595
+
+# 一键部署面板（fnOS / 群晖 / Portainer 等）从镜像 ENV 枚举「可填变量」——业务默认值
+# 必须在这里声明，否则面板只露出 Python 自带的 PATH/PYTHON_*，用户根本不知道要填
+# 数据库。默认值与 docker-compose.yml 注入的值保持一致；SECRET_KEY / DB__PASSWORD
+# 留空，由面板或 backend/.env 填写。入口端口统一 9595：Nginx 在容器内监听 9595，
+# Uvicorn 藏在 127.0.0.1:8001 后面（GUGU_APP_PORT），对外只有 9595 一个入口。
+ENV DB__HOST=postgres \
+    DB__PORT=5432 \
+    DB__NAME=gugu \
+    DB__USER=gugu \
+    DB__PASSWORD="" \
+    REDIS__HOST=redis \
+    REDIS__PORT=6379 \
+    SECRET_KEY="" \
+    GUGU_DB_PASSWORD="" \
+    ADMIN_USERNAME=admin
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -sf http://127.0.0.1:8000/health || exit 1
+    CMD curl -sf http://127.0.0.1:9595/health || exit 1
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
 # 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway；sandboxd
