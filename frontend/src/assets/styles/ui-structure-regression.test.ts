@@ -110,6 +110,19 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
   })
 
+  it('交互消费失败时进入终态，避免重复提交已消费 token', () => {
+    const handlerStart = guguChat.indexOf('async function onInteractionSelect')
+    const endpointStart = guguChat.indexOf('const endpoint =', handlerStart)
+    const failureStart = guguChat.indexOf('if (!res.ok) {', endpointStart)
+    const failureEnd = guguChat.indexOf('  } catch {', failureStart)
+    const failureBranch = guguChat.slice(failureStart, failureEnd)
+
+    expect(failureBranch).toContain('res.status === 409 || res.status === 404')
+    expect(failureBranch).toContain('_msg.interaction.resolved = true')
+    expect(failureBranch).toContain('_msg.interaction.responseText')
+    expect(failureBranch).not.toContain('_msg.interaction.resolved = false')
+  })
+
   it('画布列表使用与项目抽屉一致的 Runtime 布局契约', () => {
     expect(canvasDrawerContent).toContain('data-layout-collection="mind:drawer:canvases"')
     expect(canvasDrawerContent).toContain('data-layout-role="card"')
