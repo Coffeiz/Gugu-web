@@ -399,8 +399,11 @@ class TsSidecarClient:
                 self._process.stdout.readline(),
                 timeout=timeout_seconds if timeout_seconds is not None else _timeout_seconds(),
             )
-        except (BrokenPipeError, ConnectionError, ValueError, asyncio.TimeoutError) as error:
-            # ValueError 是 readline 的流上限保护：半行残留会让后续响应错位，
+        except (BrokenPipeError, ConnectionError, ValueError, asyncio.TimeoutError,
+                RuntimeError) as error:
+            # ValueError 是 readline 的流上限保护：半行残留会让后续响应错位。
+            # RuntimeError 是 wait_for 取消 readline 后流读取者残留的竞态
+            # （readuntil already waiting）。两者都意味着这条连接的响应流已不可信，
             # 必须整条连接关闭重来，不能当作单次失败吞掉。
             await self.close()
             raise TsSidecarUnavailable("TypeScript RAG worker 请求失败") from error

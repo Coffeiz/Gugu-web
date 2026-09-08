@@ -234,3 +234,36 @@ async def test_replace_transient_reuploads_after_worker_death(monkeypatch):
     client._process = SimpleNamespace(returncode=None)
     await client.replace_transient([], "fresh-revision")
     assert sent == []
+
+@pytest.mark.asyncio
+async def test_stream_reader_race_closes_connection_and_raises_unavailable(monkeypatch):
+    """wait_for 取消 readline 的竞态会抛 RuntimeError（readuntil already waiting）：
+    必须按致命错误关闭连接并抛 TsSidecarUnavailable，让下一次请求重生 worker，
+    而不是裸抛 RuntimeError 让客户端带着中毒的流永久不可用。"""
+    from types import SimpleNamespace
+
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    class _FakeStdin:
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            return None
+
+    class _PoisonedStdout:
+        async def readline(self):
+            raise RuntimeError(
+                "readuntil() called while another coroutine is already waiting for incoming data")
+
+    async def _noop(self):
+        return None
+
+    monkeypatch.setattr(TsSidecarClient, "_ensure_process", _noop)
+    client = TsSidecarClient("test-owner", command="")
+    client._process = SimpleNamespace(
+        stdin=_FakeStdin(), stdout=_PoisonedStdout(), returncode=0)
+
+    with pytest.raises(TsSidecarUnavailable, match="请求失败"):
+        await client._request({"op": "search", "revision": "r1", "query": "查询"})
+    assert client._process is None
