@@ -142,8 +142,9 @@ ENV DB__HOST=postgres \
     SECRET_KEY="" \
     GUGU_DB_PASSWORD="" \
     ADMIN_USERNAME=admin \
-    # 留空时首次启动自动生成随机密码并写入 backend/.env（见容器日志），不用默认弱密码。
-    ADMIN_PASSWORD="" \
+    # 默认密码面向不懂环境变量的一键部署用户；密码随镜像公开，文档明确要求部署后立即修改，
+    # 公网部署务必显式覆盖。留空则首次启动自动生成随机密码写入 backend/.env。
+    ADMIN_PASSWORD="guguadmin" \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
 
