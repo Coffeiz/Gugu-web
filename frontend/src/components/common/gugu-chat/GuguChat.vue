@@ -879,8 +879,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   object-fit: cover; display: block;
 }
 :deep(.msg-file-info) { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-:deep(.msg-file-name) { font-size: 15px; font-weight: 500; color: var(--gugu-chat-file-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:deep(.msg-file-meta) { font-size: 12px; color: var(--gugu-chat-file-meta); }
+:deep(.msg-file-name) { display: block; font-size: 15px; font-weight: 500; line-height: var(--line-height-ui); color: var(--gugu-chat-file-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:deep(.msg-file-meta) { font-size: 12px; line-height: var(--line-height-ui); color: var(--gugu-chat-file-meta); }
 :deep(.msg-file-dl) {
   flex-shrink: 0; color: var(--action-primary); cursor: pointer; border-radius: 4px; padding: 3px;
   margin: -3px; box-sizing: content-box; transition: background 0.12s, color 0.12s;
