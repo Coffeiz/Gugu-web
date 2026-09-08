@@ -109,6 +109,65 @@ async def test_scheduled_email_includes_generated_file_artifacts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generated_artifacts_apply_aggregate_size_limit(monkeypatch):
+    from app.core import chat_attach
+
+    size = 10 * 1024 * 1024
+    attach_ids = [f"attach-{index}" for index in range(1, 4)]
+    monkeypatch.setattr(
+        chat_attach,
+        "get_meta_many",
+        AsyncMock(return_value={
+            attach_id: {
+                "storage_key": attach_id, "size": size, "name": attach_id,
+                "ext": "bin", "mime": "application/octet-stream",
+            }
+            for attach_id in attach_ids
+        }),
+    )
+    monkeypatch.setattr(
+        "app.services.email.attachments.get_storage",
+        lambda: _Storage({attach_id: b"x" * size for attach_id in attach_ids}),
+    )
+
+    with pytest.raises(EmailAttachmentError, match="总大小"):
+        await resolve_email_attachments(
+            None, "user-1",
+            artifacts=[{"attach_id": attach_id} for attach_id in attach_ids],
+        )
+
+
+@pytest.mark.asyncio
+async def test_generated_artifacts_use_actual_size_for_aggregate_limit(monkeypatch):
+    from app.core import chat_attach
+
+    declared_size = 1 * 1024 * 1024
+    actual_size = 9 * 1024 * 1024
+    attach_ids = ["attach-one", "attach-two", "attach-three"]
+    monkeypatch.setattr(
+        chat_attach,
+        "get_meta_many",
+        AsyncMock(return_value={
+            attach_id: {
+                "storage_key": attach_id, "size": declared_size, "name": attach_id,
+                "ext": "bin", "mime": "application/octet-stream",
+            }
+            for attach_id in attach_ids
+        }),
+    )
+    monkeypatch.setattr(
+        "app.services.email.attachments.get_storage",
+        lambda: _Storage({attach_id: b"x" * actual_size for attach_id in attach_ids}),
+    )
+
+    with pytest.raises(EmailAttachmentError, match="总大小"):
+        await resolve_email_attachments(
+            None, "user-1",
+            artifacts=[{"attach_id": attach_id} for attach_id in attach_ids],
+        )
+
+
+@pytest.mark.asyncio
 async def test_scheduled_task_persists_owned_email_file_ids(db, user_a):
     from agent.tools.scheduled_tasks import _create_scheduled_task
 

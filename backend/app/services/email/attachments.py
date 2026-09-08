@@ -140,6 +140,7 @@ async def resolve_email_attachments(db, user_id, *, file_ids=None, artifacts=Non
                 raise EmailAttachmentError("本轮生成的附件已过期，无法添加到邮件")
             declared_size = int(meta.get("size") or 0)
             _check_size(total, declared_size)
+            total += declared_size
             try:
                 content = await storage.get(meta["storage_key"])
             except Exception as exc:
