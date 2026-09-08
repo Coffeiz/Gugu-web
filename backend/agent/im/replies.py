@@ -25,6 +25,20 @@ _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
+_QQ_PASSIVE_REPLY_USED = "_qq_passive_reply_used"
+
+
+def _qq_reply_message_id(payload: dict, reply: PlatformReply) -> str | None:
+    """按一次入站消息的出站预算决定是否继续使用 QQ 被动回复。"""
+    if payload.get("platform") != "qq" or payload.get(_QQ_PASSIVE_REPLY_USED):
+        return None
+    return reply.reply_to_message_id
+
+
+def _mark_qq_passive_reply_used(payload: dict, message_id: str | None) -> None:
+    """记录本次入站消息已经消费过唯一的 QQ 被动回复机会。"""
+    if payload.get("platform") == "qq" and message_id:
+        payload[_QQ_PASSIVE_REPLY_USED] = True
 
 
 async def _close_async_iterator(iterator) -> None:
@@ -220,7 +234,13 @@ async def send_tool_event(payload: dict, event: dict) -> bool:
     text = format_tool_event(event, markdown=not is_qq_plain)
     if not text:
         return True
-    return await send_text(payload, sanitize_outbound(text))
+    # 工具状态是过程消息，不应消耗入站消息唯一的 QQ 被动回复机会。
+    event_payload = (
+        {**payload, "message_id": None}
+        if payload.get("platform") == "qq"
+        else payload
+    )
+    return await send_text(event_payload, sanitize_outbound(text))
 
 
 async def send_reply(payload: dict, reply: PlatformReply) -> bool:
@@ -243,25 +263,31 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         return result is not False
     elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
+        reply_message_id = _qq_reply_message_id(payload, reply)
         if reply.target.type == "group":
             mention_user_id = payload.get("platform_user_id")
             args = (
                 reply.target.id,
                 text,
-                reply.reply_to_message_id,
+                reply_message_id,
                 payload.get("channel_id"),
                 payload.get("message_format"),
             )
             if mention_user_id:
-                return await qq.send_group(*args, mention_user_id)
-            return await qq.send_group(*args)
-        return await qq.send_c2c(
-            reply.target.id,
-            text,
-            reply.reply_to_message_id,
-            payload.get("channel_id"),
-            payload.get("message_format"),
-        )
+                result = await qq.send_group(*args, mention_user_id)
+            else:
+                result = await qq.send_group(*args)
+        else:
+            result = await qq.send_c2c(
+                reply.target.id,
+                text,
+                reply_message_id,
+                payload.get("channel_id"),
+                payload.get("message_format"),
+            )
+        if result:
+            _mark_qq_passive_reply_used(payload, reply_message_id)
+        return result
     elif platform == "wechat" and reply.target.id:
         from agent.gateway import wechat
         result = await wechat.send_text(
@@ -366,10 +392,13 @@ async def _send_file_qq(
     data = await storage.get(storage_key)
     if len(data) > _QQ_FILE_MAX:
         return False
+    file_message_id = None if payload.get(_QQ_PASSIVE_REPLY_USED) else payload.get("message_id")
     ok = await qq.send_file(
         openid, data, display_name, ext, payload.get("channel_id"),
-        payload.get("message_id"), group=is_group,
+        file_message_id, group=is_group,
     )
+    if ok:
+        _mark_qq_passive_reply_used(payload, file_message_id)
     return ok
 
 

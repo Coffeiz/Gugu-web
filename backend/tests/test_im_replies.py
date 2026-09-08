@@ -263,6 +263,52 @@ async def test_qq_group_interaction_text_fallback_is_also_active(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qq_passive_reply_is_consumed_once_per_inbound_message(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_text
+
+    message_ids = []
+
+    async def fake_group(_target, _text, msg_id, *_args):
+        message_ids.append(msg_id)
+        return True
+
+    monkeypatch.setattr(qq, "send_group", fake_group)
+    payload = {
+        "platform": "qq", "chat_type": "group", "chat_id": "group-1",
+        "platform_user_id": "member-1", "channel_id": "bot-1", "message_id": "msg-1",
+    }
+
+    assert await send_text(payload, "第一段") is True
+    assert await send_text(payload, "第二段") is True
+    assert message_ids == ["msg-1", None]
+
+
+@pytest.mark.asyncio
+async def test_qq_tool_status_does_not_consume_passive_reply(monkeypatch):
+    from agent.im import replies
+
+    payloads = []
+
+    async def fake_text(payload, _text):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    payload = {
+        "platform": "qq", "chat_type": "group", "chat_id": "group-1",
+        "platform_user_id": "member-1", "message_id": "msg-1",
+        "message_format": "compat",
+    }
+    assert await replies.send_tool_event(
+        payload, {"type": "tool_done", "label": "读取文件", "status": "success"}
+    ) is True
+
+    assert len(payloads) == 1
+    assert payloads[0]["message_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_interaction_prompt_send_result_is_propagated(monkeypatch):
     from agent.im import loop
     from agent.im import replies
