@@ -33,7 +33,7 @@ x-app-environment: &app-environment
   REDIS__HOST: redis
   REDIS__PORT: 6379
   REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
-  PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
+  PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:8000}
   STORAGE__LOCAL_PATH: /data/users
   CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
   GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
@@ -112,7 +112,7 @@ services:
     image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
     logging: *json-file-logging
     ports:
-      - "${GUGU_HTTP_PORT:-9595}:8000"
+      - "${GUGU_HTTP_PORT:-8000}:8000"
     environment: *app-environment
     # 首次使用前创建宿主配置文件：mkdir -p backend && touch backend/.env
     # 该文件只保存随机管理员密码；应用镜像本身不携带用户配置。

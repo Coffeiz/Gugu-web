@@ -44,9 +44,9 @@ docker compose up -d
 
 默认 Compose 会拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
 
-打开：<http://localhost:9595>
+打开：<http://localhost:8000>
 
-管理后台：<http://localhost:9595/admin/>
+管理后台：<http://localhost:8000/admin/>
 
 ## Compose 配置
 
@@ -70,10 +70,10 @@ GUGU_REDIS_PORT=6379
 GUGU_REDIS_PASSWORD=
 
 # Web 入口端口
-GUGU_HTTP_PORT=9595
+GUGU_HTTP_PORT=8000
 
 # 用户可访问的公开站点根地址；域名部署时改为 https://你的域名
-GUGU_PUBLIC_APP_URL=http://localhost:9595
+GUGU_PUBLIC_APP_URL=http://localhost:8000
 
 # Shell 沙盒
 # 只有执行 `docker compose --profile sandbox up -d` 时才会启动 sandboxd
@@ -115,7 +115,7 @@ docker compose --profile sandbox up -d
 
 ## 生产启动
 
-正式生产环境使用构建产物和统一的 `9595` 入口：
+正式生产环境使用构建产物和统一的 `8000` 入口：
 
 ```bash
 export GUGU_BACKEND_IMAGE='请填写后端镜像地址:latest'
