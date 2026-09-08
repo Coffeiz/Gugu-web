@@ -154,6 +154,12 @@ class TsSidecarClient:
         revision 必须耦合 embedding 模型版本戳，换模型时必然重传。
         """
         generation = self._process_generation
+        if self._process is None or self._process.returncode is not None:
+            # 进程已死亡：_ensure_process 重启时会递增代数并清空瞬态状态。
+            # 短路判断必须先按新代数失效，否则残留的旧 revision 会误判「已加载」
+            # 跳过重传，worker 新进程瞬态槽为空，下一次查询报版本不一致。
+            self._transient_revision = None
+            generation += 1
         if self._transient_revision == revision and self._transient_generation == generation:
             return
         payload: dict[str, Any] = {

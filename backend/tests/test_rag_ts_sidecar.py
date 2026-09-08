@@ -201,3 +201,36 @@ async def test_corrupt_index_reported_and_rebuilt(tmp_path):
         assert await client.reuse_if_current("revision-1") is True
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_transient_reuploads_after_worker_death(monkeypatch):
+    """worker 死亡后瞬态语料必须重传：短路判断不得使用死亡进程的旧代数。"""
+    from types import SimpleNamespace
+
+    from agent.rag.ts_sidecar import TsSidecarClient
+
+    client = TsSidecarClient("owner-restart", command="true", index_dir="")
+    client._process = SimpleNamespace(returncode=1)
+    client._process_generation = 3
+    client._transient_generation = 3
+    client._transient_revision = "stale-revision"
+    sent: list[str] = []
+
+    async def fake_request(payload, *, timeout_seconds=None):
+        sent.append(payload["op"])
+        # 模拟 _ensure_process：重启后新进程健康且代数已递增。
+        client._process = SimpleNamespace(returncode=None)
+        client._process_generation += 1
+        return SimpleNamespace(response={"revision": payload.get("revision", "")})
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    await client.replace_transient([], "fresh-revision")
+    assert sent == ["replace_transient"]
+    assert client._transient_revision == "fresh-revision"
+
+    # 进程健康且指纹未变时保持幂等短路，不重复占用 IPC。
+    sent.clear()
+    client._process = SimpleNamespace(returncode=None)
+    await client.replace_transient([], "fresh-revision")
+    assert sent == []
