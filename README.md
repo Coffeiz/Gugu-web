@@ -189,7 +189,7 @@ AI__API_KEY=请填写模型服务商密钥
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=请替换为管理员密码
 # 用户可访问的公开站点根地址，用于邮箱验证和密码重置链接
-GUGU_PUBLIC_APP_URL=http://localhost:9595
+GUGU_PUBLIC_APP_URL=http://localhost:8000
 ```
 
 如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8000` 等容器内部地址写入邮件。
@@ -200,8 +200,8 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 启动后访问：
 
-- 咕咕：<http://localhost:9595>
-- Admin：<http://localhost:9595/admin/>
+- 咕咕：<http://localhost:8000>
+- Admin：<http://localhost:8000/admin/>
 
 首次运行会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时会生成随机密码并保存到 `backend/.env`，终端只打印一次；不会使用公开默认密码。
 
