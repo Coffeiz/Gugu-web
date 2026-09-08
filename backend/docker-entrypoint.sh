@@ -15,13 +15,26 @@ DB_HOST="${DB__HOST:-postgres}"
 DB_PORT="${DB__PORT:-5432}"
 
 echo "[entrypoint] 等待数据库 ${DB_HOST}:${DB_PORT} 就绪..."
+DB_READY=0
 for _ in $(seq 1 30); do
     if python -c "import socket; socket.create_connection(('${DB_HOST}', ${DB_PORT}), timeout=1)" 2>/dev/null; then
         echo "[entrypoint] 数据库已就绪"
+        DB_READY=1
         break
     fi
     sleep 1
 done
+if [ "$DB_READY" != 1 ]; then
+    # 之前这里超时后静默继续，环境变量没注入时会一路跑到建表检查才以一段
+    # asyncpg pg_hba 裸栈收场，用户无从知道根因（fnOS 裸跑镜像实测）。
+    echo "[entrypoint] 等待数据库 ${DB_HOST}:${DB_PORT} 超时，放弃启动。" >&2
+    echo "  常见原因：" >&2
+    echo "  ① 直接运行了镜像而没用仓库的 docker-compose.yml：postgres/redis 等服务没起，" >&2
+    echo "     DB__HOST/DB__NAME 等环境变量也没注入，应用会回落 localhost 默认值。请用 compose 一键部署；" >&2
+    echo "  ② 外接数据库时 DB__HOST/DB__PORT 未指向正确地址，或数据库未监听该地址；" >&2
+    echo "  ③ postgres 容器还在初始化（首次建库），可稍后重试。" >&2
+    exit 1
+fi
 
 echo "[entrypoint] 检查是否为全新数据库..."
 # alembic 迁移历史最早一条（20260616135619）假设 calendar_events 已存在——本仓库的表结构
