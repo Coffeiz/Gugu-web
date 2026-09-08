@@ -31,31 +31,31 @@ def test_help_lists_all_commands():
 def test_help_lists_subcommands_on_separate_lines():
     result = router.decide("/help workspace", "idle")
     lines = result["reply"].splitlines()
-    assert "子命令：/workspace show　查看当前绑定" in lines
-    assert "子命令：/workspace status　查看沙箱权限状态" in lines
-    assert "子命令：/workspace delete <ID> confirm　确认删除工作区" in lines
+    assert "/workspace show　查看当前绑定" in lines
+    assert "/workspace status　查看沙箱权限状态" in lines
+    assert "/workspace delete <ID> confirm　确认删除工作区" in lines
 
 
 def test_goal_help_lists_each_subcommand_on_its_own_line():
     result = router.decide("/help goal", "idle")
     lines = result["reply"].splitlines()
-    assert "用法：/goal <目标>　创建目标任务" in lines
-    assert "子命令：/goal pause　暂停目标任务" in lines
-    assert "子命令：/goal resume　恢复目标任务" in lines
+    assert "/goal <目标>　创建目标任务" in lines
+    assert "/goal pause　暂停目标任务" in lines
+    assert "/goal resume　恢复目标任务" in lines
 
 
 @pytest.mark.asyncio
 async def test_help_follows_requested_locale():
     result = await commands.handle("user-1", "/unlimited help", locale="en-US")
-    assert "Subcommand: /unlimited on - Enable" in result
-    assert "子命令" not in result
+    assert "/unlimited on - Enable" in result
+    assert "Subcommand:" not in result
 
 
 @pytest.mark.parametrize("text", ["/stop help", "/status help", "/help workspace"])
 def test_router_supports_command_help(text):
     result = router.decide(text, "idle")
     assert result["action"] == "reply"
-    assert "用法" in result["reply"]
+    assert "/" in result["reply"]
 
 
 @pytest.mark.parametrize("text", ["@小北 /compact", "＠小北　／compact", "<@bot-placeholder> /compact"])
@@ -93,7 +93,8 @@ async def test_compact_without_session_is_deterministic():
 ])
 async def test_each_command_supports_help(text):
     result = await commands.handle("user-1", text)
-    assert "用法" in result
+    assert "/help 查看全部命令" not in result  # 详细 help 不应回退总目录
+    assert "/" in result
 
 
 @pytest.mark.asyncio

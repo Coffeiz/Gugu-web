@@ -362,7 +362,10 @@ class EmbeddingSettings(BaseModel):
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # 跟随 GUGU_ENV_FILE：compose 部署指向 /app/.env；一体化镜像裸跑时默认
+        # /data/.env，让首启自动生成的 SECRET_KEY/ADMIN_PASSWORD 落在数据卷里，
+        # 删容器重建不丢。环境变量优先级始终高于该文件。
+        env_file=os.environ.get("GUGU_ENV_FILE", ".env"),
         env_prefix="",
         env_nested_delimiter="__",
         extra="ignore",

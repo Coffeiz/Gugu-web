@@ -67,7 +67,20 @@ RUN sed -i \
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    GUGU_EMBEDDED_DEPS=0
+
+# 业务 ENV 默认值与 docker-compose.prod.yml 注入的值保持一致：分离部署虽然总由
+# compose 显式注入，但声明默认值后面板（fnOS 等）枚举镜像变量时有据可依，
+# 裸跑时也不会静默回落 config.py 的 localhost/gugu_web 开发默认。
+# SECRET_KEY / DB__PASSWORD 留空，由 .env 或环境变量填写。
+ENV DB__HOST=postgres \
+    DB__PORT=5432 \
+    DB__NAME=gugu \
+    DB__USER=gugu \
+    DB__PASSWORD="" \
+    REDIS__HOST=redis \
+    REDIS__PORT=6379
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv

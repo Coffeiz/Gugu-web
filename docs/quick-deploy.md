@@ -27,7 +27,7 @@ SECRET_KEY=请替换为随机长字符串
 GUGU_DB_PASSWORD=请替换为数据库密码
 ```
 
-管理员账号和密码可以写入 `backend/.env`；不设置密码时首次启动自动生成：
+管理员账号和密码可以写入 `backend/.env`；不设置密码时首次启动自动生成随机密码（写入 `backend/.env` 并打印在容器日志里），镜像不内置任何公开默认密码：
 
 ```dotenv
 ADMIN_USERNAME=admin
@@ -47,6 +47,31 @@ docker compose up -d
 打开：<http://localhost:9595>
 
 管理后台：<http://localhost:9595/admin/>
+
+## 纯 Docker 一键部署（单容器全内置）
+
+不想用 Compose 的用户（fnOS、群晖等面板只有单容器部署入口）可以直接拉一体化镜像：镜像内置 PostgreSQL 与 Redis（默认 `GUGU_EMBEDDED_DEPS=1`，只监听容器内 127.0.0.1），数据全部落在挂载的数据卷里，一条命令即可启动完整站点：
+
+```bash
+docker run -d --name gugu \
+  -p 9595:9595 \
+  -v /你的数据目录:/data \
+  -v /你的配置目录:/config \
+  -e SECRET_KEY=请替换为随机长字符串 \
+  -e GUGU_DB_PASSWORD=请替换为数据库密码 \
+  coffeiz/gugu-web:latest
+```
+
+打开 <http://localhost:9595> 即可使用。
+
+**管理员密码不设默认值**：启动时不设置 `ADMIN_PASSWORD`，首次启动会自动生成随机密码写入数据卷内的 `.env`（`/data/.env`）并在容器日志打印一次（`docker logs gugu` 查看），重建容器不丢失；也可以在启动时用 `-e ADMIN_USERNAME=... -e ADMIN_PASSWORD=...` 直接指定。公网部署务必使用自己的强密码。
+
+注意事项：
+
+- `/data` 卷保存数据库、用户文件与记忆，升级镜像时保留该卷数据不丢；`/config` 保存 Admin 配置。
+- **联网搜索不内置**：SearXNG 依赖较多、内置会显著增大镜像体积并带来依赖冲突风险，单容器模式下搜索相关工具不可用；需要搜索请改用下面的 Compose 方式。
+- **Shell 沙盒可选**：把宿主机 `/var/run/docker.sock` 一并挂进容器（`-v /var/run/docker.sock:/var/run/docker.sock`），入口检测到 socket 会自动拉起内置 sandboxd；不挂载则沙盒工具保持不可用，其余功能不受影响。
+- 默认 Compose（上一节）会显式设置 `GUGU_EMBEDDED_DEPS=0` 走各自的 postgres/redis 容器，两种方式互不影响。
 
 ## Compose 配置
 
@@ -88,7 +113,7 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
 
-`GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:8000` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
+`GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:9595` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
 
 ## 启用 Shell 沙盒
 

@@ -61,6 +61,8 @@ RUN chmod 755 /usr/local/bin/prepare_rootless_storage.py
 # 反而可能在宿主机 UID 对不上时写不进 logs（各操作系统 Docker 的 UID 映射
 # 行为不一致，尤其是 macOS/Windows Docker Desktop）。本镜像仅用于本地开发，不担心这层。
 EXPOSE 8000
+# 业务 ENV 默认值（DB__* 等）声明在根目录 Dockerfile（一体化部署镜像）——
+# 面板可枚举变量只对用户实际拉取的那个镜像有意义；本文件是本地开发镜像。
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -sf http://127.0.0.1:8000/health || exit 1

@@ -53,10 +53,13 @@ def validate_required_config(*, env_file: Path, data_dir: Path, host_data_dir: s
         )
 
     if not (_config_value("GUGU_DB_PASSWORD", values) or _config_value("DB__PASSWORD", values)):
-        raise ComposeConfigError(
-            "GUGU_DB_PASSWORD 未设置，无法连接 PostgreSQL。请在根目录 .env 中设置，"
-            "或执行：export GUGU_DB_PASSWORD=\"$(openssl rand -base64 32)\""
-        )
+        if os.environ.get("GUGU_EMBEDDED_DEPS", "").strip() != "1":
+            # 内置依赖模式（单容器全内置镜像）的数据库只监听 127.0.0.1 且走 trust，
+            # 没有也不需要外部口令；分离/Compose 部署仍强制设置。
+            raise ComposeConfigError(
+                "GUGU_DB_PASSWORD 未设置，无法连接 PostgreSQL。请在根目录 .env 中设置，"
+                "或执行：export GUGU_DB_PASSWORD=\"$(openssl rand -base64 32)\""
+            )
 
     if not data_dir.is_dir():
         raise ComposeConfigError(
