@@ -741,6 +741,7 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
                 ),
                 "token": token,
             })
+        tool_call_id = str((schema.get("context") or {}).get("tool_call_id") or "") or None
         result.append({
             "id": prompt.id,
             "session_id": prompt.session_id,
@@ -749,7 +750,8 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             "body": prompt.body,
             # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
             # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
-            "tool_call_id": str((schema.get("context") or {}).get("tool_call_id") or "") or None,
+            "tool_call_id": tool_call_id,
+            "task_paused": bool(prompt.kind == "confirm" and tool_call_id),
             "options": options,
             "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
             "custom_input_active": bool(schema.get("custom_input_active")),
@@ -793,6 +795,7 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
                 action.token_hash = _hash_token(token)
                 changed = True
                 options.append({"id": action.option_id, "label": label, "token": token})
+        tool_call_id = str((schema.get("context") or {}).get("tool_call_id") or "") or None
         result.append({
             "id": prompt.id,
             "session_id": prompt.session_id,
@@ -801,7 +804,8 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "body": prompt.body,
             # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
             # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
-            "tool_call_id": str((schema.get("context") or {}).get("tool_call_id") or "") or None,
+            "tool_call_id": tool_call_id,
+            "task_paused": bool(prompt.kind == "confirm" and tool_call_id),
             "options": options,
             "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
             "custom_input_active": bool(schema.get("custom_input_active")),
@@ -851,15 +855,17 @@ async def create_tool_confirmation(
         "tool_name": tool_name,
         "tool_call_id": tool_call_id,
         "confirm_code": confirm_code if isinstance(confirm_code, str) else None,
+        "task_paused": True,
     }
+    tool_label = str(tool.label or tool_name)
     async with db_session._SessionLocal() as db:
         prompt, actions = await create_prompt(
             db,
             user_id=user_id,
             session_id=session_id,
             kind="confirm",
-            title=f"确认：{tool_name}",
-            body=summary,
+            title=f"任务已暂停 · {tool_label}",
+            body=f"{summary}\n\n确认后将继续执行当前任务。",
             options=[
                 {"id": "confirm", "label": "确认", "action_type": "confirm"},
                 {"id": "cancel", "label": "取消", "action_type": "cancel"},
@@ -873,5 +879,6 @@ async def create_tool_confirmation(
             "title": prompt.title,
             "body": prompt.body,
             "options": actions,
+            "task_paused": True,
             "expires_at": prompt.expires_at.isoformat(),
         }

@@ -216,3 +216,11 @@ def test_tool_event_plain_qq_only_keeps_result_status():
     }, markdown=False)
     assert call == ""
     assert done == "✅ 联网搜索完成"
+
+
+def test_tool_event_waiting_explains_that_the_task_is_paused():
+    text = format_tool_event({
+        "type": "tool_done", "label": "发送邮件", "status": "waiting",
+    }, markdown=False)
+
+    assert text == "⏸️ 发送邮件：任务已暂停，等待确认"

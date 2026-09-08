@@ -568,7 +568,7 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         chat_type,
         target_id,
         (
-            "已确认，继续处理。" if option_id == "confirm"
+            "已确认，任务继续执行。" if option_id == "confirm"
             else "已取消。" if option_id == "cancel"
             else f"已选择：{selected_text}，继续处理。"
         ),

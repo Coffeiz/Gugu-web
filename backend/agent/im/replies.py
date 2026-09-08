@@ -206,7 +206,7 @@ def format_tool_event(event: dict, *, markdown: bool = True) -> str:
         if status in {"success", "ok"}:
             return f"✅ {label}完成"
         if status == "waiting":
-            return f"⏳ {label}等待确认"
+            return f"⏸️ {label}：任务已暂停，等待确认"
         return f"⚠️ {label}未完成"
 
     title = f"### 🔧 {label}"
@@ -216,7 +216,7 @@ def format_tool_event(event: dict, *, markdown: bool = True) -> str:
             body.extend(("**输入**", _tool_code_block(event.get("input"))))
         return "\n\n".join(body)
     if status == "waiting":
-        return f"{title}\n\n**状态**：等待确认"
+        return f"{title}\n\n**状态**：任务已暂停，等待确认"
     status_text = "已完成" if status in {"success", "ok"} else "未完成"
     body = [title, f"**状态**：{status_text}"]
     if event.get("result") is not None:

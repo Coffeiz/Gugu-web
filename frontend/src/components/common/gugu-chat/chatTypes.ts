@@ -46,6 +46,8 @@ export interface ChatMessage {
     options: Array<{ id: string; label: string; token: string }>
     allowTextInput?: boolean
     customInputActive?: boolean
+    taskPaused?: boolean
+    submitting?: boolean
     resolved?: boolean
     selectedOptionId?: string | null
     responseText?: string | null

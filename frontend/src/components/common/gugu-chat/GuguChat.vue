@@ -444,15 +444,18 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
         body: JSON.stringify({ token: option.token }),
       })
       if (!res.ok) {
+        if (_msg.interaction) _msg.interaction.submitting = false
         _chatTip(t('chatUi.interactionSubmitFailed'))
         return
       }
       pendingCustomPromptId.value = promptId
       _msg.interaction.customInputActive = true
+      _msg.interaction.submitting = false
       inputText.value = ''
       await nextTick()
       composerRef.value?.focus?.()
     } catch {
+      if (_msg.interaction) _msg.interaction.submitting = false
       _chatTip(t('chatUi.interactionSubmitFailed'))
     }
     return
@@ -460,8 +463,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
   pendingCustomPromptId.value = null
   if (_msg.interaction) {
     _msg.interaction.customInputActive = false
-    _msg.interaction.resolved = true
-    _msg.interaction.selectedOptionId = option.id
+    _msg.interaction.submitting = true
   }
   try {
     const token = getToken()
@@ -475,6 +477,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     })
     if (!res.ok) {
       if (_msg.interaction) {
+        _msg.interaction.submitting = false
         _msg.interaction.resolved = false
         _msg.interaction.selectedOptionId = null
       }
@@ -482,9 +485,16 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     }
   } catch {
     if (_msg.interaction) {
+      _msg.interaction.submitting = false
       _msg.interaction.resolved = false
       _msg.interaction.selectedOptionId = null
     }
+    return
+  }
+  if (_msg.interaction) {
+    _msg.interaction.submitting = false
+    _msg.interaction.resolved = true
+    _msg.interaction.selectedOptionId = option.id
   }
 }
 

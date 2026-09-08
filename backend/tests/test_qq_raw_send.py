@@ -80,6 +80,24 @@ async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeyp
     )]
 
 
+def test_confirmation_fallback_announces_paused_task():
+    from agent.interactions.qq import format_text_fallback
+
+    text = format_text_fallback({
+        "title": "任务已暂停 · 发送邮件",
+        "body": "将发送邮件至 c****t@example.com。\n\n确认后将继续执行当前任务。",
+        "task_paused": True,
+        "options": [
+            {"id": "confirm", "label": "确认", "token": "opaque-token"},
+            {"id": "cancel", "label": "取消", "token": "opaque-token-2"},
+        ],
+    })
+
+    assert text.startswith("⏸️ 任务已暂停，等待确认。")
+    assert "确认后将继续执行当前任务" in text
+    assert "opaque-token" not in text
+
+
 async def _fake_next_seq(msg_id):
     return 1
 

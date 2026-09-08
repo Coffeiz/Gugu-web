@@ -292,6 +292,7 @@ export function useChatStream(options: {
                 existing.interaction.expiresAt = evt.expires_at ? String(evt.expires_at) : existing.interaction.expiresAt
                 existing.interaction.allowTextInput = Boolean(evt.allow_text_input ?? existing.interaction.allowTextInput)
                 existing.interaction.customInputActive = Boolean(evt.custom_input_active ?? existing.interaction.customInputActive)
+                existing.interaction.taskPaused = Boolean(evt.task_paused ?? existing.interaction.taskPaused)
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
                 messages.value.push({
@@ -305,12 +306,18 @@ export function useChatStream(options: {
                     options: evt.options,
                     allowTextInput: Boolean(evt.allow_text_input),
                     customInputActive: Boolean(evt.custom_input_active),
+                    taskPaused: Boolean(evt.task_paused),
                     expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
                   },
                 })
                 sortLiveTimeline()
               }
-              options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.waitingConfirmation') })
+              options.setStatus({
+                kind: 'text',
+                label: evt.task_paused
+                  ? i18n.global.t('chatUi.taskPausedWaiting')
+                  : i18n.global.t('chatUi.waitingConfirmation'),
+              })
               await options.scrollBottom()
             }
           } else if (evt.type === '_context_compaction') {

@@ -149,7 +149,7 @@ async def resume_interaction(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """消费 ask_user 回答，唤醒仍在等待中的原 Agent Run。"""
+    """消费工具确认或 ask_user 选择，唤醒仍在等待中的原 Agent Run。"""
     try:
         result = await interactions.consume_action(
             db,
@@ -164,7 +164,15 @@ async def resume_interaction(
         raise HTTPException(409, str(exc))
     if not result.get("context", {}).get("tool_call_id"):
         raise HTTPException(409, "该交互不支持恢复原任务")
-    return {"ok": True, "session_id": result["session_id"]}
+    resolved = result.get("result") if isinstance(result.get("result"), dict) else {}
+    if resolved.get("status") == "error":
+        raise HTTPException(409, str(resolved.get("text") or "确认未生效，请重新发起操作。"))
+    return {
+        "ok": True,
+        "session_id": result["session_id"],
+        "status": resolved.get("status"),
+        "option_id": result.get("option_id"),
+    }
 
 
 @router.post("/interactions/{prompt_id}/resume-text")

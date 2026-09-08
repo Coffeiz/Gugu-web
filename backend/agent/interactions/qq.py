@@ -91,6 +91,7 @@ def parse_interaction_event(payload: dict[str, Any]) -> dict[str, Any] | None:
 def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None) -> str:
     title = str(prompt.get("title") or "需要确认")
     body = str(prompt.get("body") or "")
+    paused = bool(prompt.get("task_paused"))
     options = [
         str(item.get("label") or item.get("id") or "选项")
         for item in prompt.get("options") or []
@@ -104,13 +105,15 @@ def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None)
             instruction = "请点击下方按钮；若未显示按钮，可回复选项序号或选项文字。"
         if prompt.get("allow_text_input"):
             instruction = "请点击选项；如需其他回答，请点击“自定义回复”后直接发送内容。"
-        return f"{title}\n{body}\n{choices}\n{instruction}"
+        prefix = "⏸️ 任务已暂停，等待确认。\n" if paused else ""
+        return f"{prefix}{title}\n{body}\n{choices}\n{instruction}"
     instruction = (
         "请直接回复你的答案。"
         if platform in {"wechat", "feishu"}
         else "请在网页中填写后提交。"
     )
-    return f"{title}\n{body}\n{instruction}"
+    prefix = "⏸️ 任务已暂停，等待确认。\n" if paused else ""
+    return f"{prefix}{title}\n{body}\n{instruction}"
 
 
 __all__ = ["build_keyboard_payload", "decode_action_data", "encode_action_data", "format_text_fallback", "parse_interaction_event"]
