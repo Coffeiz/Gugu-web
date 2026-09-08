@@ -57,6 +57,18 @@ html[data-theme][data-family] .file-browser-toolbar :is(
     border-color var(--motion-hover-control) var(--motion-ease-standard),
     box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
+/* Slot 里的 ActionButton（如 Files 页「新建 Workspace」）跟随工具栏紧凑规格；
+ * 只收尺寸不动配色，主色实底样式仍由 ActionButton 自身契约负责。 */
+html[data-theme][data-family] .file-browser-toolbar .app-action-button {
+  box-sizing: border-box;
+  min-height: var(--file-toolbar-control-height);
+  height: var(--file-toolbar-control-height);
+  border-radius: var(--file-toolbar-radius);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--file-toolbar-font-weight);
+  line-height: 1;
+}
+
 html[data-theme][data-family] .file-browser-toolbar :is(
   .file-paste-button,
   .new-folder-btn,
