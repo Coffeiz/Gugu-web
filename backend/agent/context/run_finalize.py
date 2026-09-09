@@ -97,12 +97,20 @@ async def finalize_run(
             session_alive = await db.get(ConversationSession, session_id) is not None
         if session_alive:
             stance_persisted = False
+            user_message = (
+                await db.get(ConversationMessage, user_message_id)
+                if user_message_id else None
+            )
+            rag_blocks = [
+                block for block in (rag_context or {}).get("blocks", [])
+                if isinstance(block, dict)
+            ]
             if stance_text and user_message_id:
-                user_message = await db.get(ConversationMessage, user_message_id)
                 if user_message is not None:
                     # 当前用户消息已在生成前写入；把姿态事件排在它之前，保持
                     # provider 首轮的「姿态 → 用户消息」顺序。每次变化都追加，
                     # 不按正文去重；下一轮从 canonical history 稳定恢复。
+                    stance_offset = len(rag_blocks) + 1
                     db.add(ConversationMessage(
                         session_id=session_id,
                         role="user",
@@ -112,7 +120,7 @@ async def finalize_run(
                             "digest": assembly.stance_digest(stance_text),
                             "text": f"[system-reminder]\n{stance_text}\n[/system-reminder]",
                         }],
-                        created_at=user_message.created_at - timedelta(microseconds=1),
+                        created_at=user_message.created_at - timedelta(microseconds=stance_offset),
                     ))
                     stance_persisted = True
             if stance_persisted:
@@ -121,8 +129,21 @@ async def finalize_run(
                     context = dict(session_row.session_context or {})
                     context["stance_digest"] = assembly.stance_digest(stance_text)
                     session_row.session_context = context
-            for block in (rag_context or {}).get("blocks", []):
-                db.add(ConversationMessage(session_id=session_id, role="user", content="", content_json=[block]))
+            # 当前用户行在生成前已经落库。RAG 需要在 provider 首轮和下一轮 history
+            # 中都出现在它前面；因此用用户行的时间作为锚点，不能让数据库默认的
+            # now_utc() 把 RAG 排到用户消息后面。多个块按原顺序占用连续微秒。
+            for index, block in enumerate(rag_blocks):
+                values = {
+                    "session_id": session_id,
+                    "role": "user",
+                    "content": "",
+                    "content_json": [block],
+                }
+                if user_message is not None:
+                    values["created_at"] = user_message.created_at - timedelta(
+                        microseconds=len(rag_blocks) - index,
+                    )
+                db.add(ConversationMessage(**values))
             if canonical_batches is None:
                 # 旧调用方/旧 worker 的过渡路径。新 runner 必须传入已封存的
                 # canonical batch，不能在这里从 provider wire 二次推导。

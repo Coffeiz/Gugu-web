@@ -427,8 +427,18 @@ def ensure_hooks() -> None:
         async def traced_round(client, ctx, round_messages):
             nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages
             round_index += 1
-            round_visible_messages = _trace_conversation_messages(round_messages, system_location)
-            round_snapshot = _trace_snapshot(round_messages)
+            # LoopScope 的 round input、cache digest 和上一轮对比都必须基于
+            # provider 实际收到的 projection；内部 canonical event 只用于
+            # canonical_events 统计，不能混入跨 run 前缀比较。
+            adapter = getattr(ctx, "adapter", None) or getattr(ctx, "_adapter", None)
+            round_wire_messages = (
+                adapter.render_history(round_messages)
+                if adapter is not None else round_messages
+            )
+            round_visible_messages = _trace_conversation_messages(
+                round_wire_messages, system_location,
+            )
+            round_snapshot = _trace_snapshot(round_wire_messages)
             round_system = effective_system
             model_name = str(getattr(ai, "model", "") or "")
             round_prompt_est = (
@@ -444,7 +454,7 @@ def ensure_hooks() -> None:
                 round_messages,
                 system_text=round_system,
                 tools=list(getattr(ctx, "tools", None) or ()),
-                adapter=getattr(ctx, "adapter", None) or getattr(ctx, "_adapter", None),
+                adapter=adapter,
                 model=model_name,
                 api_format=str(getattr(driver, "api_format", "unknown") or "unknown"),
                 previous_messages=previous_round_messages,
@@ -548,7 +558,9 @@ def ensure_hooks() -> None:
                 model=getattr(ai, "model", ""),
             ) if run else None
             previous_prompt_estimate = round_prompt_est
-            previous_round_messages = list(round_messages)
+            # 下一轮诊断的 previous_messages 必须保存同一 provider projection，
+            # 不能保存未渲染的 canonical PromptMessages。
+            previous_round_messages = list(round_wire_messages)
             final = None
             try:
                 async for kind, value in original_round(client, ctx, round_messages):

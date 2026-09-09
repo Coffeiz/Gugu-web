@@ -351,6 +351,21 @@ def event_text(block: dict) -> str:
     return ""
 
 
+def _drop_null_block_fields(block: Any) -> Any:
+    """删除 provider 响应块中的无语义空字段。
+
+    Anthropic/MiniMax 的模型对象会把 ``citations``、``parsed_output``、
+    ``caller`` 等可选字段以 ``null`` 序列化。它们不属于 canonical history，
+    但如果直接留在 live history，就会让本轮 provider 输入和下一轮从 DB
+    回放的输入产生字节差异，缓存前缀会从该块开始失配。
+    这里只处理 block 顶层字段；工具结果正文里的 null 可能是业务数据，不能
+    递归清理。
+    """
+    if not isinstance(block, dict):
+        return block
+    return {key: value for key, value in block.items() if value is not None}
+
+
 def render_events_for_provider(messages: list[dict]) -> list[dict]:
     """复制并原位渲染 canonical blocks，同时保留 PromptMessages 的边界元数据。
 
@@ -369,6 +384,7 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
         if isinstance(content, list):
             rendered_content: list[Any] = []
             for block in content:
+                block = _drop_null_block_fields(block)
                 if isinstance(block, dict) and block.get("type") in _PROVIDER_TEXT_EVENT_TYPES:
                     text = event_text(block)
                     if text:
