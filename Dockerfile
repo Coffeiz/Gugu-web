@@ -90,6 +90,8 @@ RUN apt-get update \
 # 依赖，基础镜像携带旧版；直接从 security pool 拉修复版 .deb 安装，不依赖镜像源
 # 索引新鲜度。基础镜像自带版本 >= 修复版后即可删除本段。
 ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
+# TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串
+ARG TARGETARCH
 RUN curl -fsSL -o /tmp/gst-base.deb \
         "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
