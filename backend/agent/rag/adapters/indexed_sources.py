@@ -1,35 +1,16 @@
 """文件、画布、笔记和对话的统一业务来源桥接。
 
-这里只负责数据库/存储读取和业务 scope 校验；文档转换交给 TS Worker 的 source
-adapter，词法检索交给 TS lexical index，避免为每个来源重复维护搜索算法。
+统一查询主链下，本模块只提供来源容器的 DB 会话托管；文档转换、检索和
+conversation 水位过滤全部由 TS Worker 完成（``unified_query`` 的
+``before_message_id`` 参数）。
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
 from contextlib import asynccontextmanager
-
-from agent.rag.models import Scope
-from agent.rag.persistent_store import search_persistent_index
-from agent.rag.retriever import RetrievalBatch
-from agent.rag.ts_sidecar import TsSidecarUnavailable
-
-
-def _conversation_document_visible(document, before_message_id: int | None) -> bool:
-    """按当前 run 的消息水位过滤 conversation 文档。"""
-    if before_message_id is None:
-        return True
-    metadata = getattr(document, "metadata", None) or {}
-    if metadata.get("kind") != "message":
-        return True
-    raw_id = metadata.get("message_id") or getattr(document, "source_id", None)
-    try:
-        return int(raw_id) < int(before_message_id)
-    except (TypeError, ValueError):
-        return False
 
 
 class IndexedSourceRetriever:
-    """把文件、画布、笔记和对话来源接入统一的 TS lexical index。"""
+    """把文件、画布、笔记、Knowledge 和对话来源接入统一查询链。"""
 
     def __init__(self, user_id: object, *, db=None, db_factory=None, source_type: str):
         if source_type not in {"file", "canvas", "note", "conversation", "knowledge"}:
@@ -54,66 +35,6 @@ class IndexedSourceRetriever:
         db_session.ensure_engine()
         async with db_session._SessionLocal() as db:
             yield db
-
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        scope: Scope | Iterable[Scope] | str,
-        strategy: str,
-        candidate_limit: int,
-    ) -> RetrievalBatch:
-        if strategy not in {"auto", "bm25", "embedding"}:
-            raise ValueError("策略只能是 auto、bm25 或 embedding")
-        scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
-        valid_scopes = [item for item in scopes if isinstance(item, Scope)]
-        if self.source_type == "file":
-            valid_scopes = [item for item in valid_scopes if item.scope_type in {"owner", "project", "folder"}]
-        elif self.source_type == "canvas":
-            valid_scopes = [item for item in valid_scopes if item.scope_type in {"owner", "project"}]
-        elif self.source_type == "note":
-            valid_scopes = [item for item in valid_scopes if item.scope_type == "owner"]
-        if not valid_scopes:
-            return RetrievalBatch(
-                source_type=self.source_type,
-                index_source=f"{self.source_type}-db",
-                fallback_reason="scope_rejected",
-            )
-
-        conversation_before_message_id = None
-        if self.source_type == "conversation":
-            from agent.rag.context import get_conversation_before_message_id
-
-            conversation_before_message_id = get_conversation_before_message_id()
-
-        async with self.session_scope() as db:
-            metadata: dict[str, object] = {"source_adapter": self.source_type}
-            if conversation_before_message_id is not None:
-                metadata["conversation_before_message_id"] = conversation_before_message_id
-            try:
-                results = await search_persistent_index(
-                    db, self.user_id, query,
-                    source_types={self.source_type}, scope=valid_scopes,
-                    limit=candidate_limit, diagnostics=metadata,
-                )
-            except TsSidecarUnavailable:
-                results = []
-                metadata.update({"engine": "unavailable", "fallback": "lexical_worker_unavailable"})
-            if self.source_type == "conversation":
-                results = [
-                    result for result in results
-                    if _conversation_document_visible(
-                        result.document, conversation_before_message_id,
-                    )
-                ]
-        return RetrievalBatch(
-            source_type=self.source_type,
-            results=tuple(results),
-            index_source=f"{self.source_type}-db",
-            fallback_reason="embedding_not_indexed",
-            candidate_count=int(metadata.get("document_count", 0) or 0),
-            metadata={key: str(value) for key, value in metadata.items()},
-        )
 
 
 __all__ = ["IndexedSourceRetriever"]

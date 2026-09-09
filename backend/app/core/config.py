@@ -276,9 +276,9 @@ class SearchSettings(BaseModel):
         le=365 * 24 * 3600,
         description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
     )
-    rag_query_mode: Literal["legacy", "batch", "batch_shadow", "unified", "unified_shadow"] = Field(
-        "legacy",
-        description="RAG 查询迁移模式：legacy 生产路径；batch 一次批量词法查询；batch_shadow 交付 legacy 并记录差异；unified TS 统一查询主链；unified_shadow 交付 legacy 并记录统一查询差异",
+    rag_query_mode: Literal["unified"] = Field(
+        "unified",
+        description="RAG 查询交付链：unified 为 TS worker 统一查询主链（唯一保留档；legacy/batch/shadow 灰度档已随旧 Python 查询链删除，显式配置旧值会在启动时报校验错误）",
     )
     rag_write_shadow: bool = Field(
         False,

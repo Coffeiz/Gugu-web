@@ -1,132 +1,28 @@
+"""统一查询主链的检索器层单元契约：scope 收口矩阵与 Memory-only 瞬态规格。
+
+旧的 batch/unified_shadow 影子模式测试已随 legacy 查询链删除（2026-09-09）。
+"""
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 
 from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
-from agent.rag.batch_retriever import BatchUnifiedRetriever
-from agent.rag.models import IndexDocument, RecallResult, Scope
-from agent.rag.ts_sidecar import SidecarRequestTiming
-
-
-@pytest.mark.asyncio
-async def test_persistent_sources_prepare_once_and_keep_watermark(monkeypatch):
-    """多个持久化来源只准备一次索引，批量后仍按当前消息水位过滤。"""
-    from agent.rag.context import set_conversation_before_message_id, reset_conversation_before_message_id
-    calls = []
-    scope = Scope("synthetic-owner")
-    file = IndexDocument("file:1", "file", "1", scope, "文件", "", "缓存", "1")
-    message = IndexDocument("conversation:12", "conversation", "12", scope, "会话", "", "缓存", "1",
-                            metadata={"kind": "message", "message_id": 12})
-    @asynccontextmanager
-    async def session(self):
-        yield object()
-    async def batch(query, specs, extra_documents=None):
-        calls.append("batch")
-        assert len(specs) == 2
-        return [([RecallResult(file, 1)], {}), ([RecallResult(message, 1)], {})], {"file": 1, "conversation": 1}, SidecarRequestTiming()
-    async def get(*args, **kwargs):
-        calls.append("prepare")
-        return SimpleNamespace(batch_search=batch, client=SimpleNamespace())
-    monkeypatch.setattr(IndexedSourceRetriever, "session_scope", session)
-    monkeypatch.setattr("agent.rag.batch_retriever.get_index_cache", lambda: SimpleNamespace(get=get))
-    token = set_conversation_before_message_id(12)
-    try:
-        retriever = BatchUnifiedRetriever([IndexedSourceRetriever("synthetic-owner", source_type=source)
-                                           for source in ("file", "conversation")])
-        batches = await retriever.retrieve("缓存", scope=scope)
-        assert calls == ["prepare", "batch"]
-        assert batches[0].results[0].document == file
-        assert not batches[1].results
-    finally:
-        reset_conversation_before_message_id(token)
+from agent.rag.batch_retriever import UnifiedQueryRetriever
+from agent.rag.models import Scope
 
 
 class _StubRetriever:
-    """带可编程结果的来源桩；只满足 SourceRetriever 协议与批量路径的属性访问。"""
+    """满足统一链检索调度所需的最小来源桩。"""
 
-    def __init__(self, user_id, source_type, results=()):
+    def __init__(self, user_id, source_type):
         self.user_id = user_id
         self.source_type = source_type
         self.source_filter = None
-        self.results = tuple(results)
 
     @asynccontextmanager
     async def session_scope(self):
         yield object()
-
-    async def retrieve(self, query, *, scope, strategy, candidate_limit):
-        from agent.rag.retriever import RetrievalBatch
-        return RetrievalBatch(source_type=self.source_type, results=self.results,
-                              candidate_count=len(self.results))
-
-
-@pytest.mark.asyncio
-async def test_memory_joins_single_batch_ipc_with_transient_corpus(monkeypatch):
-    """Memory 装入瞬态语料槽并与持久化来源共用一次索引准备和一次批量查询。"""
-    from agent.rag import batch_retriever as br
-    from agent.rag import service as rag_service
-
-    calls = []
-    scope = Scope("synthetic-owner")
-    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
-    file_doc = IndexDocument("file:1", "file", "1", scope, "文件", "", "缓存文件", "1")
-
-    async def fake_recall_documents(user_id, scope, source_filter):
-        return [memory_doc], "daily", {"document_load_ms": 1}
-
-    async def fake_replace_transient(documents, revision):
-        calls.append(("transient", revision))
-
-    async def batch(query, specs, extra_documents=None):
-        assert any(spec.get("corpus") == "transient" for spec in specs)
-        assert extra_documents
-        calls.append(("batch", [sorted(spec["source_types"]) for spec in specs],
-                      [spec.get("corpus") for spec in specs]))
-        hits = []
-        for spec in specs:
-            source = next(iter(spec["source_types"]))
-            doc = file_doc if source == "file" else memory_doc
-            hits.append(([RecallResult(doc, 1.0)], {}))
-        return hits, {"file": 1, "memory": 1}, SidecarRequestTiming()
-
-    async def get(*args, **kwargs):
-        calls.append("prepare")
-        return SimpleNamespace(batch_search=batch,
-                               client=SimpleNamespace(replace_transient=fake_replace_transient))
-
-    monkeypatch.setattr(rag_service, "_memory_recall_documents", fake_recall_documents)
-    monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
-    retriever = BatchUnifiedRetriever([
-        _StubRetriever("synthetic-owner", "file"), _StubRetriever("synthetic-owner", "memory"),
-    ])
-    batches = await retriever.retrieve("缓存", scope=scope)
-    kinds = [call[0] if isinstance(call, tuple) else call for call in calls]
-    assert kinds == ["prepare", "transient", "batch"]
-    batch_call = calls[-1]
-    assert batch_call[1] == [["file"], ["memory"]]
-    assert batch_call[2] == [None, "transient"]
-    memory_batch = next(item for item in batches if item.source_type == "memory")
-    file_batch = next(item for item in batches if item.source_type == "file")
-    assert memory_batch.results[0].document.source_id == "daily"
-    assert memory_batch.metadata["corpus"] == "transient"
-    assert memory_batch.metadata["batch_search"] == "True"
-    assert file_batch.results[0].document.source_id == "1"
-    assert file_batch.metadata["batch_search"] == "True"
-
-
-@pytest.mark.asyncio
-async def test_memory_only_query_falls_back_to_legacy(monkeypatch):
-    """只有 Memory 来源的显式查询退回 legacy 瞬态索引路径，不触碰批量索引。"""
-    from agent.rag import batch_retriever as br
-
-    def _forbidden(*args, **kwargs):
-        raise AssertionError("memory-only 查询不应准备批量索引")
-
-    monkeypatch.setattr(br, "get_index_cache", _forbidden)
-    retriever = BatchUnifiedRetriever([_StubRetriever("synthetic-owner", "memory")])
-    batches = await retriever.retrieve("缓存", scope=Scope("synthetic-owner"))
-    assert [item.source_type for item in batches] == ["memory"]
 
 
 def test_persistent_specs_scope_matrix():
@@ -137,7 +33,7 @@ def test_persistent_specs_scope_matrix():
     group = Scope("synthetic-owner", scope_type="group", scope_id="g1")
     stubs = [_StubRetriever("synthetic-owner", name)
              for name in ("file", "canvas", "note", "conversation")]
-    specs, allowed = BatchUnifiedRetriever([])._persistent_specs(
+    specs, allowed = UnifiedQueryRetriever([])._persistent_specs(
         stubs, [owner, project, folder, group], limit=5)
     by_source = {}
     for spec in specs:
@@ -151,138 +47,59 @@ def test_persistent_specs_scope_matrix():
 
 
 @pytest.mark.asyncio
-async def test_shadow_mode_delivers_legacy_and_records_diff():
-    """batch_shadow 交付 legacy 结果，候选差异统计写入批次元数据。"""
-    from agent.rag.batch_retriever import ShadowUnifiedRetriever
-    from agent.rag.retriever import RetrievalBatch
+async def test_memory_only_query_runs_transient_spec_without_persistent_sources(monkeypatch):
+    """只有 Memory 的显式查询：持久化索引仅作 IPC 宿主，searches 只含瞬态规格。"""
+    from agent.rag import batch_retriever as br
+    from agent.rag.models import IndexDocument
 
-    scope = Scope("synthetic-owner")
-    legacy_doc = IndexDocument("file:1", "file", "1", scope, "文件", "", "缓存", "1")
-    batch_doc = IndexDocument("file:2", "file", "2", scope, "文件", "", "缓存", "1")
-    retriever = ShadowUnifiedRetriever(
-        [_StubRetriever("synthetic-owner", "file", [RecallResult(legacy_doc, 1.0)])])
-
-    class _ShadowStub:
-        async def retrieve(self, query, **kwargs):
-            return [RetrievalBatch(source_type="file",
-                                   results=(RecallResult(batch_doc, 0.5),), candidate_count=1)]
-
-    retriever._batch = _ShadowStub()
-    batches = await retriever.retrieve("缓存", scope=scope)
-    assert batches[0].results[0].document.chunk_id == legacy_doc.chunk_id
-    assert batches[0].metadata["shadow_mode"] == "batch"
-    assert batches[0].metadata["shadow_equal"] == "False"
-    assert batches[0].metadata["shadow_first_diff_index"] == "0"
-    assert batches[0].metadata["shadow_batch_count"] == "1"
-    assert int(batches[0].metadata["shadow_total_ms"]) >= 0
-
-
-@pytest.mark.asyncio
-async def test_shadow_mode_reports_equality_when_candidates_match():
-    """批量与 legacy 候选完全一致时 shadow_equal=True，不报差异位置。"""
-    from agent.rag.batch_retriever import ShadowUnifiedRetriever
-    from agent.rag.retriever import RetrievalBatch
-
-    scope = Scope("synthetic-owner")
-    doc = IndexDocument("file:1", "file", "1", scope, "文件", "", "缓存", "1")
-    retriever = ShadowUnifiedRetriever(
-        [_StubRetriever("synthetic-owner", "file", [RecallResult(doc, 1.0)])])
-
-    class _ShadowStub:
-        async def retrieve(self, query, **kwargs):
-            return [RetrievalBatch(source_type="file", results=(RecallResult(doc, 1.0),),
-                                   candidate_count=1)]
-
-    retriever._batch = _ShadowStub()
-    batches = await retriever.retrieve("缓存", scope=scope)
-    assert batches[0].metadata["shadow_equal"] == "True"
-    assert batches[0].metadata["shadow_first_diff_index"] == ""
-
-
-class _FuseClient:
-    """可编程 hybrid_fuse 桩：验证 batch 主链注入 TS 融合与失败回滚。"""
-
-    def __init__(self, fail: bool = False):
-        self.fail = fail
-        self.calls: list[dict] = []
-
-    async def hybrid_fuse(self, hits, **kwargs):
-        self.calls.append(kwargs)
-        if self.fail:
-            from agent.rag.ts_sidecar import TsSidecarUnavailable
-            raise TsSidecarUnavailable("worker 融合失败")
-        from agent.rag.models import RecallResult
-        return ([RecallResult(item.document, round(item.score + 1000, 6)) for item in hits],
-                None,
-                {"fusion": "hybrid-rrf", "vector_doc_count": 2, "vector_version": "stub:tag:2"})
-
-
-@pytest.mark.asyncio
-async def test_memory_batch_delivers_ts_fuse_result(monkeypatch):
-    """Phase 3：batch 主链 Memory 收尾走注入的 TS 融合，交付 worker 结果与诊断。"""
-    from types import SimpleNamespace
-
-    from agent.rag.batch_retriever import BatchUnifiedRetriever
-    from agent.rag.ts_sidecar import SidecarRequestTiming
-
-    async def fake_embed(text):
-        return [1.0, 0.0]
-
-    async def fake_vectors(user_id, documents):
-        return {documents[0].chunk_id: [1.0, 0.0]}
-
-    monkeypatch.setattr("agent.memory.embedding.is_enabled", lambda: True)
-    monkeypatch.setattr("agent.memory.embedding.embed", fake_embed)
-    monkeypatch.setattr("agent.rag.service._load_cached_vectors", fake_vectors)
+    calls = {}
     scope = Scope("synthetic-owner")
     memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
-    hits = [RecallResult(memory_doc, 2.0)]
-    client = _FuseClient()
-    retriever = BatchUnifiedRetriever([])
-    out = await retriever._memory_batch(
-        SimpleNamespace(user_id="synthetic-owner"), [memory_doc], "memory-db", {}, hits,
-        {"memory": 1}, SidecarRequestTiming(), 5,
-        query="缓存", candidate_limit=20, ts_client=client,
+
+    async def fake_load_memory(self, memory, inner_scope):
+        return [memory_doc], "daily", {"document_load_ms": 1}
+
+    async def replace_transient(documents, revision, *, vectors=None, vector_version=""):
+        calls["transient"] = list(documents)
+
+    async def unified_query(query, *, searches, query_vector, source_order,
+                            candidate_limit, rank_options, before_message_id=None):
+        calls["searches"] = searches
+        calls["source_order"] = source_order
+        return {
+            "selected": [], "stats": {}, "fusion": {"fusion": "bm25"},
+            "document_counts": {"memory": 1},
+            "source_groups": {"memory": {"candidate_count": 1, "hit_count": 1}},
+        }
+
+    index = SimpleNamespace(
+        client=SimpleNamespace(replace_transient=replace_transient),
+        unified_query=unified_query, documents_by_id={},
     )
-    assert len(client.calls) == 1
-    assert client.calls[0]["vector_map"] == {memory_doc.chunk_id: [1.0, 0.0]}
-    # TS 融合结果直接交付（分数带 +1000 标记），fallback=None → fusion=hybrid-rrf。
-    assert [item.score for item in out.results] == [1002.0]
-    assert out.fallback_reason is None
-    assert out.metadata["fusion"] == "hybrid-rrf"
-    assert out.metadata["ts_fusion_fusion"] == "hybrid-rrf"
-    assert out.metadata["ts_fusion_vector_doc_count"] == "2"
-    assert out.metadata["ts_fusion_vector_version"] == "stub:tag:2"
-    assert "ts_hybrid_error" not in out.metadata
+
+    @asynccontextmanager
+    async def session_scope(self):
+        yield object()
+
+    async def get(*args, **kwargs):
+        calls["prepare"] = True
+        return index
+
+    monkeypatch.setattr(UnifiedQueryRetriever, "_load_memory", fake_load_memory)
+    monkeypatch.setattr(IndexedSourceRetriever, "session_scope", session_scope)
+    monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
+
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
+    batches = await retriever.retrieve("缓存", scope=scope, strategy="bm25")
+    assert calls["prepare"]
+    assert [spec.get("corpus") for spec in calls["searches"]] == ["transient"]
+    assert calls["source_order"] == ["memory"]
+    assert len(batches) == 1 and batches[0].source_type == "unified"
+    assert batches[0].metadata["engine"] == "typescript"
 
 
 @pytest.mark.asyncio
-async def test_memory_batch_rolls_back_to_python_fuse_on_worker_failure(monkeypatch):
-    """worker 融合失败回滚 Python hybrid_results 并显式记录 ts_hybrid_error，不静默。"""
-    from types import SimpleNamespace
-
-    from agent.rag.batch_retriever import BatchUnifiedRetriever
-    from agent.rag.ts_sidecar import SidecarRequestTiming
-
-    async def fake_embed(text):
-        return [1.0, 0.0]
-
-    async def fake_vectors(user_id, documents):
-        return {documents[0].chunk_id: [1.0, 0.0]}
-
-    monkeypatch.setattr("agent.memory.embedding.is_enabled", lambda: True)
-    monkeypatch.setattr("agent.memory.embedding.embed", fake_embed)
-    monkeypatch.setattr("agent.rag.service._load_cached_vectors", fake_vectors)
-    scope = Scope("synthetic-owner")
-    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
-    hits = [RecallResult(memory_doc, 2.0)]
-    retriever = BatchUnifiedRetriever([])
-    out = await retriever._memory_batch(
-        SimpleNamespace(user_id="synthetic-owner"), [memory_doc], "memory-db", {}, hits,
-        {"memory": 1}, SidecarRequestTiming(), 5,
-        query="缓存", candidate_limit=20, ts_client=_FuseClient(fail=True),
-    )
-    # 回滚结果 = 纯 Python hybrid（同向向量 → 该文档仍第一，分数是 RRF 融合值而非 +1000 标记）。
-    assert [item.score for item in out.results] == [1.0]
-    assert out.metadata["ts_hybrid_error"] == "TsSidecarUnavailable"
-    assert out.metadata["fusion"] == "hybrid-rrf"
+async def test_unknown_source_returns_empty_batches():
+    """未知 source 值与旧交付路径同口径：返回空结果，不报错。"""
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
+    assert await retriever.retrieve("缓存", source="daily") == []

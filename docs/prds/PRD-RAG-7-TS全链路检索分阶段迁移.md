@@ -52,7 +52,7 @@ Python 侧通过 `asyncio.gather()` 并发发起查询，但同一用户复用�
 - 不在第一阶段迁移 embedding 服务、API Key 或向量存储。
 - 不绕过 Python 的 owner、workspace、project、folder、canvas、group/member 权限校验。
 - 不改变 `read_file`、`canvas_get`、`read_conversation` 等精确工具的权限和行为。
-- 不删除 Python 回退路径，直到对应阶段的 shadow/对比测试和生产灰度完成。
+- 不删除 Python 回退路径，直到对应阶段的 shadow/对比测试和生产灰度完成。（2026-09-09 更新：查询链 shadow 对比已完成且 devserver 经用户拍板直切 unified，legacy 查询交付链已按触发条件删除；写路径 python 回退保留）
 - 不把用户正文、附件名、查询原文、密钥或内部路径写入诊断日志。
 
 ## 5. 目标架构
@@ -245,10 +245,11 @@ python 模式行为逐位不变；ts 模式写出的 KnowledgeIndexEntry 行与 
 TS 投影」持续守卫方言漂移。回滚 = 配置切回 python，无需数据迁移。**devserver 灰度启用（2026-09-09）**：gugu-backend/
 gugu-worker systemd drop-in ``search__rag_write_mode=ts`` 已生效；真实数据行级验证——同一用户
 六来源 4301 行 KnowledgeIndexEntry 在 python/ts 两模式重建后 sha256 摘要一致（``90a932e10f48d3b0``）。
-生产切换与 ``rag_query_mode=unified`` 灰度仍保留用户决策。最终清点（第二轮）已按触发条件执行：
+生产切换与 ``rag_query_mode=unified`` 生产启用仍保留用户决策。最终清点（第二轮）已按触发条件执行：
 Python record 投影管线保留（影子守卫基线 + python 回退 + memory/knowledge/project 来源仍由
 Python 适配器构建）；``KnowledgeIndexEntry`` 保留（两模式下均为跨进程持久 chunk 事实源）；
-legacy 查询交付链保留（「灰度全量切 unified 且观察期通过」触发条件未达成）。
+legacy 查询交付链已于 2026-09-09 随 devserver 查询直切 unified 物理删除（用户拍板；生产自
+v1.1.2 起交付链仅 unified，回滚 = 重部署 v1.1.1 镜像而非配置切回，见 Phase 5 清理记录）。
 
 ### Phase 5：统一 TS RAG 查询主链
 
@@ -265,7 +266,7 @@ Python：最终授权复核、上下文注入和工具交付
 - [x] 将 `UnifiedRecallService` 的正常路径切换到统一 TS query（经 ``rag_query_mode`` 显式切换，默认仍 legacy）。
 - [x] 保留 Python 最终权限复核和 conversation watermark 检查。
 - [x] 统一引用结构、来源标签、版本和内容指纹。
-- [ ] 移除已被 TS 替代且没有诊断/回退价值的 Python 重复逻辑（清点已完成并写入 devlog 2026-09-09：唯一真死代码 ``stable_version`` 已删，其余被替代逻辑均为 rag_query_mode 回退链与 Phase 4 遗留写路径的活跃依赖；物理删除受 §9 灰度门约束，待灰度完成后按 devlog 列出的触发条件执行）。
+- [x] 移除已被 TS 替代且没有诊断/回退价值的 Python 重复逻辑（2026-09-09 完成：devserver 查询链经用户拍板直切 unified 后，legacy 查询交付链物理删除——``UnifiedRetriever`` 旧多请求调度、``MemoryRetriever``/``ProjectRetriever`` 旧交付方法、batch/batch_shadow/unified_shadow 灰度档、``_memory_finalize``/``_ts_fuse`` Python 融合回退、``IndexedSourceRetriever.retrieve`` 与水位 Python 过滤；``rag_query_mode`` 收窄为 ``unified`` 单档。保留：Python record 投影管线、``KnowledgeIndexEntry`` 表、``hybrid.py``/``fusion.py`` 契约参照及 ``client.hybrid_fuse`` 协议测试、``rank_candidates_with_cache``、``search_documents_with_cache``（recommendation 在用）、``persistent_store``（/api/v1/search 与会话工具在用）。详见 devlog 2026-09-09 清理记录）。
 - [x] 保留显式运维开关用于回退，不允许运行时静默切换实现。
 
 验收：所有来源通过同一 TS 查询协议完成检索；结果、权限、引用和上下文预算通过完整回归；warm path P95 达到目标。
@@ -286,6 +287,19 @@ worker 选中行回连 Python 文档（worker 无版本键 ↔ 带版本 chunk�
 ``unified_shadow_error``）。回归：TS worker 20 用例、Python Phase 5 单测 7 项（单 IPC 事实、指纹耦合
 模型戳、watermark 下传、fallback 三态、service 预排序装配、越权剔除、影子隔离与参数透传）、后端全量
 2318 通过、typecheck 通过；live P95 与灰度阶梯切换在 devserver 验证阶段执行后补记于 devlog。
+
+Phase 5 清理记录（2026-09-09，devserver 查询直切 unified 后执行）：删除 ``UnifiedRetriever.retrieve``
+旧多请求调度（类保留为统一链注册容器）、``MemoryRetriever``/``ProjectRetriever`` 旧交付方法（保留为
+统一链来源载体）、``BatchUnifiedRetriever``/``UnifiedShadowRetriever``/``ShadowUnifiedRetriever``
+（batch/shadow 灰度档）、``_memory_finalize`` 与 ``_ts_fuse`` 的 Python 融合回退、
+``IndexedSourceRetriever.retrieve`` 单来源交付与 ``_conversation_document_visible`` Python 水位过滤
+（worker ``before_message_id`` 接管）、迁移期基准脚本 ``bench_rag_recall_modes.py``；
+``rag_query_mode`` 收窄为单档 ``unified``（默认即 unified，显式配置旧值启动即报校验错误）。
+行为变化：Memory-only 显式查询（记忆工具 ``source=memory`` 与压缩引用）改走统一链瞬态规格，不再回退
+legacy；``search_memory`` 细分 source（profile/pattern/daily）在 legacy 下本就返回空，统一链保持同口径
+（已知遗留怪癖，不属本次范围）。回归：RAG 测试子集 34 项通过；后端全量在共享工作树实跑 2295 通过、
+34 失败均为另一并行会话未提交的文件域在改代码（干净基线 ``git archive`` 复核 35 项文件域测试全过，
+与本清理无关）。生产影响：v1.1.2 镜像起无 legacy 查询回退，生产异常时回滚 = 重部署 v1.1.1 镜像。
 
 ## 7. 诊断指标
 

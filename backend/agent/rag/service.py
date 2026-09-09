@@ -4,18 +4,13 @@ from __future__ import annotations
 import re
 import time
 import hashlib
-from dataclasses import replace
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.projects import ProjectAdapter
 from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
 from agent.rag.context import get_snapshot_context
 from agent.rag.diagnostics import record_recall
-from agent.rag.hybrid import hybrid_results
 from agent.rag.models import RecallCandidate, RecallResult, Scope
-from agent.rag.persistent_store import search_persistent_index
-from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
-from agent.rag.index_cache import search_documents_with_cache
 from agent.rag.ts_sidecar import (
     TsSidecarUnavailable,
     rank_candidates_with_cache,
@@ -131,43 +126,8 @@ async def _memory_recall_documents(user_id, scope, source_filter) -> tuple[list,
     return documents, index_source, document_load_ms
 
 
-async def _memory_finalize(
-    user_id, documents, lexical, query, *, strategy, candidate_limit, search_metadata,
-    fuse=None,
-):
-    """Memory 词法命中之上的 embedding/hybrid 收尾；返回 (final, fusion, fallback_reason)。
-
-    ``fuse(lexical, query_vector, vector_map) -> (final, fallback_reason)``：Phase 3 起
-    batch 主链注入 TS hybrid_fuse；为 None 时走 Python ``hybrid_results``（回滚路径）。
-    """
-    if strategy not in {"auto", "bm25", "embedding"}:
-        raise ValueError("strategy 只能是 auto、bm25 或 embedding")
-    final: list = lexical
-    fusion = "bm25"
-    fallback_reason = "embedding_disabled"
-    if not lexical:
-        fallback_reason = "lexical_empty"
-    if strategy in {"auto", "embedding"}:
-        from agent.memory import embedding
-
-        if embedding.is_enabled():
-            query_vector = await embedding.embed(query)
-            vector_map = await _load_cached_vectors(user_id, documents)
-            if fuse is not None:
-                final, fallback_reason = await fuse(lexical, query_vector, vector_map)
-            else:
-                final, fallback_reason = hybrid_results(
-                    lexical, documents, query_vector, vector_map, limit=candidate_limit
-                )
-            if fallback_reason is None:
-                fusion = "hybrid-rrf"
-        elif strategy == "embedding":
-            fallback_reason = "embedding_disabled"
-    return final, fusion, fallback_reason
-
-
 class MemoryRetriever:
-    """Memory 来源的候选召回器；最终结果预算由 UnifiedRecallService 负责。"""
+    """Memory 来源载体：统一查询链按 source_filter 装载瞬态语料，交付由 TS worker 完成。"""
 
     source_type = "memory"
 
@@ -175,125 +135,22 @@ class MemoryRetriever:
         self.user_id = user_id
         self.source_filter = source_filter
 
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        scope,
-        strategy: str,
-        candidate_limit: int,
-    ) -> RetrievalBatch:
-        documents, index_source, document_load_ms = await _memory_recall_documents(
-            self.user_id, scope, self.source_filter,
-        )
-        search_metadata: dict[str, object] = {}
-        try:
-            lexical = await search_documents_with_cache(
-                self.user_id, documents, query, limit=candidate_limit,
-                source_types={"memory"},
-                diagnostics=search_metadata,
-            )
-        except TsSidecarUnavailable:
-            lexical = []
-            search_metadata.update({"engine": "unavailable", "cache_hit": False,
-                                    "fallback": "lexical_worker_unavailable"})
-        final, fusion, fallback_reason = await _memory_finalize(
-            self.user_id, documents, lexical, query,
-            strategy=strategy, candidate_limit=candidate_limit,
-            search_metadata=search_metadata,
-        )
-        return RetrievalBatch(
-            source_type=self.source_type,
-            results=tuple(final),
-            index_source=index_source,
-            fallback_reason=fallback_reason,
-            candidate_count=len(documents),
-            metadata={
-                **{key: str(value) for key, value in search_metadata.items()},
-                "document_load_ms": str(document_load_ms),
-                "fusion": fusion,
-            },
-        )
-
 
 class ProjectRetriever:
-    """Project 来源候选召回器；词法检索由 TypeScript worker 执行。"""
+    """Project 来源载体：持有 adapter 的会话工厂，交付由 TS worker 统一查询完成。"""
 
     source_type = "project"
 
     def __init__(self, user_id, *, db=None, db_factory=None):
         self.adapter = ProjectAdapter(user_id, db=db, db_factory=db_factory)
 
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        scope,
-        strategy: str,
-        candidate_limit: int,
-    ) -> RetrievalBatch:
-        query_scopes = normalize_memory_scopes(self.adapter.user_id, scope)
-        query_scope = next(
-            (item for item in query_scopes if item.scope_type == "owner"),
-            None,
-        )
-        if query_scope is None:
-            return RetrievalBatch(
-                source_type=self.source_type,
-                index_source="projects-db" if self.adapter._db is not None else "projects-store",
-                fallback_reason="scope_not_supported",
-                candidate_count=0,
-            )
-        if strategy not in {"auto", "bm25", "embedding"}:
-            raise ValueError("strategy 只能是 auto、bm25 或 embedding")
-        search_metadata: dict[str, object] = {}
-        if self.adapter._db is not None:
-            results = await self._search_db(
-                self.adapter._db, query, query_scope, candidate_limit,
-                diagnostics=search_metadata,
-            )
-        else:
-            import app.db.session as db_session
-
-            db_session.ensure_engine()
-            factory = self.adapter._db_factory or db_session._SessionLocal
-            async with factory() as db:
-                results = await self._search_db(
-                    db, query, query_scope, candidate_limit,
-                    diagnostics=search_metadata,
-                )
-        candidate_count = int(search_metadata.get("document_count", 0) or 0)
-        return RetrievalBatch(
-            source_type=self.source_type,
-            results=tuple(results),
-            index_source="knowledge-index-db",
-            fallback_reason="embedding_disabled",
-            candidate_count=candidate_count,
-            metadata={
-                **{key: str(value) for key, value in search_metadata.items()},
-                "fusion": "bm25",
-            },
-        )
-
-    async def _search_db(self, db, query: str, scope, limit: int,
-                         diagnostics: dict[str, object] | None = None):
-        try:
-            return await search_persistent_index(
-                db, self.adapter.user_id, query,
-                source_types={self.source_type}, scope=scope, limit=limit,
-                diagnostics=diagnostics,
-            )
-        except TsSidecarUnavailable:
-            if diagnostics is not None:
-                diagnostics.update({"engine": "unavailable", "cache_hit": False,
-                                    "fallback": "lexical_worker_unavailable"})
-            return []
-
 
 class UnifiedRecallService:
     """跨来源召回编排：scope-first、去重、引用和最终上下文预算只做一份。"""
 
-    def __init__(self, retriever: UnifiedRetriever):
+    def __init__(self, retriever):
+        # retriever：UnifiedQueryRetriever（统一查询主链）或单来源 adapter
+        # （ConversationAdapter，历史会话工具专用语义）。
         self.retriever = retriever
 
     def _assemble_pre_ranked(self, query, batches, pre_ranked, scope, mode) -> dict:
@@ -415,20 +272,26 @@ class UnifiedRecallService:
         shared_key = f"snapshot:{snapshot_revision}" if snapshot_revision != "" else ""
         shared_token = set_shared_index_key(shared_key) if shared_key else None
         try:
-            retrieve_kwargs = dict(source=source, scope=scope, strategy=strategy, candidate_limit=20)
-            from agent.rag.batch_retriever import UnifiedQueryRetriever
+            if getattr(self.retriever, "source_type", None):
+                # 单来源 adapter（如 ConversationAdapter）：自带检索语义，直接取回唯一批次。
+                batches = [await self.retriever.retrieve(
+                    query, scope=scope, strategy=strategy, candidate_limit=20,
+                )]
+            else:
+                retrieve_kwargs = dict(source=source, scope=scope, strategy=strategy, candidate_limit=20)
+                from agent.rag.batch_retriever import UnifiedQueryRetriever
 
-            if isinstance(self.retriever, UnifiedQueryRetriever):
-                # 统一查询主链：排序参数必须在 IPC 前下传，召回+融合+排序一次完成。
-                retrieve_kwargs["rank_options"] = {
-                    "limit": requested_limit,
-                    "max_chars": MAX_OUTPUT_CHARS,
-                    "max_per_source": MAX_PER_SOURCE,
-                    "max_per_parent": 3,
-                    "selection_mode": "top_k" if mode == "tool" else "confidence",
-                    "exclude_content_hashes": sorted(exclude_content_hashes or set()),
-                }
-            batches = await self.retriever.retrieve(query, **retrieve_kwargs)
+                if isinstance(self.retriever, UnifiedQueryRetriever):
+                    # 统一查询主链：排序参数必须在 IPC 前下传，召回+融合+排序一次完成。
+                    retrieve_kwargs["rank_options"] = {
+                        "limit": requested_limit,
+                        "max_chars": MAX_OUTPUT_CHARS,
+                        "max_per_source": MAX_PER_SOURCE,
+                        "max_per_parent": 3,
+                        "selection_mode": "top_k" if mode == "tool" else "confidence",
+                        "exclude_content_hashes": sorted(exclude_content_hashes or set()),
+                    }
+                batches = await self.retriever.retrieve(query, **retrieve_kwargs)
         finally:
             if shared_token is not None:
                 reset_shared_index_key(shared_token)
@@ -436,12 +299,6 @@ class UnifiedRecallService:
                            and batch.rank_stats is not None), None)
         if pre_ranked is not None and len(batches) == 1:
             return self._assemble_pre_ranked(query, batches, pre_ranked, scope, mode)
-        # 影子批成功时 source_type 也是 "unified"（失败才落 "unified-shadow"）；
-        # 走到这里说明 len(batches) > 1，带 rank_stats 的 unified 批就是影子。
-        shadow_ranked = next((batch for batch in batches if batch.source_type == "unified"
-                              and batch.rank_stats is not None), None)
-        shadow_error = next((batch.metadata.get("unified_shadow_error") for batch in batches
-                             if batch.metadata.get("unified_shadow_error")), None)
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
@@ -556,28 +413,11 @@ class UnifiedRecallService:
         ranked_source_diagnostics = rank_stats.get("source_diagnostics") or {}
         source_diagnostics = {}
         for batch in batches:
-            if batch.source_type == "unified-shadow":
-                continue
             source_diagnostics[batch.source_type] = {
                 **(ranked_source_diagnostics.get(batch.source_type) or {}),
                 "candidate_count": batch.candidate_count,
                 "hit_count": len(batch.results),
                 **batch.metadata,
-            }
-        if shadow_error:
-            source_diagnostics["unified"] = {"unified_shadow_error": shadow_error}
-        elif shadow_ranked is not None:
-            # unified_shadow：只比最终交付序列，影子结果永不交付。
-            legacy_keys = [str(item.get("citation", {}).get("chunk_id") or "") for item in selected]
-            shadow_keys = [candidate.document.chunk_id for candidate, _text, _row in shadow_ranked.rank_rows]
-            first_diff = next((index for index, (left, right) in enumerate(zip(legacy_keys, shadow_keys))
-                               if left != right), None)
-            if first_diff is None and len(legacy_keys) != len(shadow_keys):
-                first_diff = min(len(legacy_keys), len(shadow_keys))
-            source_diagnostics["unified"] = {
-                "unified_equal": legacy_keys == shadow_keys,
-                "unified_first_diff_index": first_diff,
-                "unified_selected_count": len(shadow_keys),
             }
         return {
             "query": query,
@@ -633,13 +473,23 @@ async def search_memory(
     query_scopes = await resolve_memory_query_scopes(
         user_id, scope, im_context=im_context, db=db,
     )
-    retrievers = []
-    if source in {"all", "profile", "pattern", "daily", "memory"}:
-        retrievers.append(MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all"))
-    if source in {"all", "knowledge"}:
-        if db is not None:
-            retrievers.append(IndexedSourceRetriever(user_id, db=db, source_type="knowledge"))
-    service = UnifiedRecallService(UnifiedRetriever(retrievers))
+    # 统一查询链需要 DB 会话托管索引缓存；没有显式 db 时现场取全局工厂。
+    session_factory = None
+    if db is None:
+        import app.db.session as db_session
+
+        db_session.ensure_engine()
+        session_factory = db_session._SessionLocal
+        if session_factory is None:
+            raise RuntimeError("RAG 数据库会话工厂未初始化")
+    retrievers = [MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all")]
+    if source in {"all", "knowledge"} and db is not None:
+        retrievers.append(IndexedSourceRetriever(user_id, db=db, source_type="knowledge"))
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    service = UnifiedRecallService(UnifiedQueryRetriever(
+        retrievers, session=db, session_factory=session_factory,
+    ))
     result = await service.search(
         query, source="all" if source == "all" else source,
         scope=query_scopes,
@@ -725,20 +575,13 @@ async def search_knowledge(
         from app.core.config import get_settings
         enabled = set(get_settings().search.rag_auto_sources)
         retrievers = [item for item in retrievers if item.source_type in enabled]
-    from app.core.config import get_settings
-    from agent.rag.batch_retriever import (
-        BatchUnifiedRetriever,
-        ShadowUnifiedRetriever,
-        UnifiedQueryRetriever,
-        UnifiedShadowRetriever,
-    )
-    retriever_class = {
-        "batch": BatchUnifiedRetriever,
-        "batch_shadow": ShadowUnifiedRetriever,
-        "unified": UnifiedQueryRetriever,
-        "unified_shadow": UnifiedShadowRetriever,
-    }.get(get_settings().search.rag_query_mode, UnifiedRetriever)
-    service = UnifiedRecallService(retriever_class(retrievers))
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    # 旧 rag_query_mode 灰度档（legacy/batch/batch_shadow/unified_shadow）已随
+    # legacy 查询链删除；统一 TS 查询是唯一交付链（2026-09-09 清理）。
+    service = UnifiedRecallService(UnifiedQueryRetriever(
+        retrievers, session=db, session_factory=db_factory,
+    ))
     result = await service.search(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
         exclude_content_hashes=exclude_content_hashes,
@@ -785,9 +628,9 @@ async def search_conversations(
     from agent.rag.scope import owner_scope
     from agent.rag.adapters.conversations import ConversationAdapter
 
-    service = UnifiedRecallService(UnifiedRetriever([
+    service = UnifiedRecallService(
         ConversationAdapter(user_id, db=db, queries=queries, mode=match_mode),
-    ]))
+    )
     result = await service.search(
         query,
         source="conversation",

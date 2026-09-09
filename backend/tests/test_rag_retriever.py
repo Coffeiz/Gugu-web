@@ -91,6 +91,25 @@ class FakeRetriever:
         )
 
 
+class _StubMultiRetriever:
+    """把多个来源批次原样返回的最小检索器桩；供通用装配路径单测使用。
+
+    生产代码的多来源调度已统一走 TS worker（UnifiedQueryRetriever）；
+    这里只复刻「返回一批次列表」的接口形状。
+    """
+
+    def __init__(self, *retrievers):
+        self.retrievers = list(retrievers)
+
+    async def retrieve(self, query, *, source="all", scope="auto", strategy="auto",
+                       candidate_limit=20, rank_options=None):
+        selected = [item for item in self.retrievers
+                    if source == "all" or item.source_type == source]
+        return [await item.retrieve(query, scope=scope, strategy=strategy,
+                                    candidate_limit=candidate_limit)
+                for item in selected]
+
+
 @pytest.mark.asyncio
 async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_filter(monkeypatch):
     modes = []
@@ -109,7 +128,7 @@ async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_fi
         }
 
     monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
-    service = UnifiedRecallService(UnifiedRetriever([FakeRetriever()]))
+    service = UnifiedRecallService(_StubMultiRetriever(FakeRetriever()))
     await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="tool")
     await service.search("缓存", source="fake", scope=owner_scope("user-a"), mode="passive")
 
@@ -118,16 +137,6 @@ async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_fi
 
 class SameContentRetriever(FakeRetriever):
     source_type = "fake-duplicate"
-
-
-@pytest.mark.asyncio
-async def test_unified_retriever_dispatches_registered_source():
-    retriever = UnifiedRetriever([FakeRetriever()])
-
-    batches = await retriever.retrieve("缓存", source="fake", scope="owner", strategy="bm25", candidate_limit=20)
-
-    assert retriever.sources() == ("fake",)
-    assert batches[0].results[0].document.content == "缓存"
 
 
 @pytest.mark.asyncio
@@ -143,7 +152,7 @@ async def test_recall_without_snapshot_uses_normal_revision_cache(monkeypatch):
                 query, scope=scope, strategy=strategy, candidate_limit=candidate_limit,
             )
 
-    service = UnifiedRecallService(UnifiedRetriever([CacheProbeRetriever()]))
+    service = UnifiedRecallService(_StubMultiRetriever(CacheProbeRetriever()))
     await service.search("缓存", source="fake", scope=owner_scope("user-a"), strategy="bm25")
 
     assert observed_keys == [""]
@@ -186,7 +195,7 @@ def test_unified_retriever_rejects_duplicate_source():
 
 @pytest.mark.asyncio
 async def test_recall_service_merges_same_content_citations():
-    service = UnifiedRecallService(UnifiedRetriever([FakeRetriever(), SameContentRetriever()]))
+    service = UnifiedRecallService(_StubMultiRetriever(FakeRetriever(), SameContentRetriever()))
 
     result = await service.search("缓存", source="all", strategy="bm25", limit=10)
 
@@ -217,7 +226,7 @@ class _MixedScopeRetriever:
 @pytest.mark.asyncio
 async def test_recall_service_applies_scope_filter_before_selection():
     result = await UnifiedRecallService(
-        UnifiedRetriever([_MixedScopeRetriever()])
+        _StubMultiRetriever(_MixedScopeRetriever())
     ).search("内容", scope=owner_scope("user-a"), strategy="bm25", limit=10)
 
     assert [item["source_id"] for item in result["results"]] == ["user-a"]
@@ -285,7 +294,7 @@ class _ManyProjects:
 @pytest.mark.asyncio
 async def test_recall_service_limits_by_source_type_not_source_id():
     result = await UnifiedRecallService(
-        UnifiedRetriever([_ManyProjects()])
+        _StubMultiRetriever(_ManyProjects())
     ).search("项目", strategy="bm25", limit=10)
 
     assert len(result["results"]) == 3
@@ -376,59 +385,3 @@ def test_recall_scope_details_split_group_and_member_candidates():
 
     assert [(item["scope_type"], item["candidate_count"], item["selected_count"])
             for item in details] == [("group", 1, 0), ("member", 1, 0)]
-
-
-def test_conversation_rag_excludes_current_message_watermark():
-    from types import SimpleNamespace
-    from agent.rag.adapters.indexed_sources import _conversation_document_visible
-
-    old = SimpleNamespace(metadata={"kind": "message", "message_id": 10})
-    current = SimpleNamespace(metadata={"kind": "message", "message_id": 11})
-    summary = SimpleNamespace(metadata={"kind": "summary"})
-
-    assert _conversation_document_visible(old, 11) is True
-    assert _conversation_document_visible(current, 11) is False
-    assert _conversation_document_visible(summary, 11) is True
-
-
-@pytest.mark.asyncio
-async def test_conversation_watermark_reaches_ts_search_input(monkeypatch):
-    """验证当前消息水位经过 ContextVar 后，在 TS 词法检索前过滤。"""
-    from contextlib import asynccontextmanager
-
-    from agent.rag import context as rag_context
-    from agent.rag.adapters import indexed_sources
-
-    documents = [
-        IndexDocument(
-            "conversation:10", "conversation", "10", owner_scope("user-a"),
-            "旧消息", "", "同一段文本", "v1", metadata={"kind": "message", "message_id": 10},
-        ),
-        IndexDocument(
-            "conversation:11", "conversation", "11", owner_scope("user-a"),
-            "当前消息", "", "同一段文本", "v1", metadata={"kind": "message", "message_id": 11},
-        ),
-    ]
-    search_input = {}
-
-    async def fake_search(_db, _owner, _query, **kwargs):
-        search_input["documents"] = list(documents)
-        from agent.rag.models import RecallResult
-        return [RecallResult(item, 1.0) for item in documents]
-
-    @asynccontextmanager
-    async def session_factory():
-        yield object()
-
-    monkeypatch.setattr(indexed_sources, "search_persistent_index", fake_search)
-    token = rag_context.set_conversation_before_message_id(11)
-    try:
-        batch = await indexed_sources.IndexedSourceRetriever(
-            "user-a", db_factory=session_factory, source_type="conversation",
-        ).retrieve("同一段文本", scope=owner_scope("user-a"), strategy="bm25", candidate_limit=20)
-    finally:
-        rag_context.reset_conversation_before_message_id(token)
-
-    assert [item.source_id for item in search_input["documents"]] == ["10", "11"]
-    assert [item.document.source_id for item in batch.results] == ["10"]
-    assert rag_context.get_conversation_before_message_id() is None

@@ -62,7 +62,7 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
                            memory_documents=None, embedding_enabled=True):
     """打桩索引准备、瞬态语料上传、embedding 与统一查询 IPC，捕获调用事实。"""
     import agent.memory.embedding as embedding_mod
-    import agent.rag.index_cache as index_cache_mod
+    from agent.rag import batch_retriever as br
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
     calls = {}
@@ -90,7 +90,7 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
         calls["prepare"] = True
         return index
 
-    monkeypatch.setattr(index_cache_mod, "get_index_cache", lambda: SimpleNamespace(get=get))
+    monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
     monkeypatch.setattr(embedding_mod, "is_enabled", lambda: embedding_enabled)
     monkeypatch.setattr(embedding_mod, "model_tag", lambda: model_tag)
 
@@ -262,91 +262,3 @@ async def test_service_pre_ranked_permission_recheck_drops_foreign_scope():
     assert response["permission_rejected"] == 1
     assert [item["text"] for item in response["results"]] == [owned.content]
     assert response["has_more"] is True
-
-
-def _legacy_selected_keys(documents):
-    from agent.rag.models import content_hash
-
-    keys = []
-    for document in documents:
-        parent = document.parent_document_id or document.document_id
-        keys.append(f"{parent}:{document.version}:{document.chunk_index}")
-    return keys
-
-
-@pytest.mark.asyncio
-async def test_unified_shadow_compares_delivery_and_records_diff(monkeypatch):
-    """unified_shadow：交付 legacy，影子只进诊断；对比按最终交付序列逐位进行。"""
-    from agent.rag.service import UnifiedRecallService
-
-    file_doc = _file_doc()
-    legacy = RetrievalBatch(source_type="file",
-                            results=(RecallResult(file_doc, 1.0),), candidate_count=1)
-    shadow = _pre_ranked_batch([_triple(file_doc)])
-
-    async def retrieve(query, **kwargs):
-        return [legacy, shadow]
-
-    response = await UnifiedRecallService(SimpleNamespace(retrieve=retrieve)).search(
-        "缓存", scope=SCOPE)
-    diagnostics = response["source_diagnostics"]["unified"]
-    assert diagnostics["unified_equal"] is True
-    assert diagnostics["unified_first_diff_index"] is None
-    assert diagnostics["unified_selected_count"] == 1
-    # 影子结果永不交付：交付行只来自 legacy 批。
-    assert all(item["citation"]["chunk_id"] == file_doc.chunk_id
-               for item in response["results"])
-
-
-@pytest.mark.asyncio
-async def test_unified_shadow_retriever_isolates_shadow_failure(monkeypatch):
-    """影子统一查询失败只记错误类别，legacy 交付不受影响。"""
-    from agent.rag.batch_retriever import UnifiedShadowRetriever
-
-    file_doc = _file_doc()
-    legacy = RetrievalBatch(source_type="file",
-                            results=(RecallResult(file_doc, 1.0),), candidate_count=1)
-
-    async def legacy_retrieve(self, query, *, source, scope, strategy, candidate_limit,
-                              rank_options=None):
-        return [legacy]
-
-    monkeypatch.setattr(UnifiedRetriever, "retrieve", legacy_retrieve)
-
-    async def broken(query, **kwargs):
-        raise RuntimeError("worker down")
-
-    retriever = UnifiedShadowRetriever([_StubRetriever("synthetic-owner", "file")])
-    retriever._unified = SimpleNamespace(retrieve=broken)
-    batches = await retriever.retrieve("缓存", scope=SCOPE)
-    assert [batch.source_type for batch in batches] == ["file", "unified-shadow"]
-    assert batches[-1].metadata["unified_shadow_error"] == "RuntimeError"
-    assert batches[0].results[0].document is file_doc
-
-
-@pytest.mark.asyncio
-async def test_unified_shadow_retriever_passes_rank_options_to_shadow(monkeypatch):
-    """影子侧拿到与交付侧相同的排序参数，成功影子批以 unified 类型追加。"""
-    from agent.rag.batch_retriever import UnifiedShadowRetriever
-
-    file_doc = _file_doc()
-    legacy = RetrievalBatch(source_type="file",
-                            results=(RecallResult(file_doc, 1.0),), candidate_count=1)
-
-    async def legacy_retrieve(self, query, *, source, scope, strategy, candidate_limit,
-                              rank_options=None):
-        return [legacy]
-
-    monkeypatch.setattr(UnifiedRetriever, "retrieve", legacy_retrieve)
-    captured = {}
-
-    async def shadow_retrieve(query, *, source, scope, strategy, candidate_limit,
-                              rank_options=None):
-        captured["rank_options"] = rank_options
-        return [_pre_ranked_batch([_triple(file_doc)])]
-
-    retriever = UnifiedShadowRetriever([_StubRetriever("synthetic-owner", "file")])
-    retriever._unified = SimpleNamespace(retrieve=shadow_retrieve)
-    batches = await retriever.retrieve("缓存", scope=SCOPE, rank_options={"limit": 4})
-    assert [batch.source_type for batch in batches] == ["file", "unified"]
-    assert captured["rank_options"] == {"limit": 4}
