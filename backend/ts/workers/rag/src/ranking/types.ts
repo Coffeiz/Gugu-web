@@ -1,5 +1,7 @@
 import type { RagDocument } from "../../../../packages/contracts/src/rag.ts";
 
+export type Posting = { ids: string[]; frequencies: number[] };
+
 export type UnifiedRecallOptions = {
   limit?: number;
   maxChars?: number;
@@ -7,6 +9,23 @@ export type UnifiedRecallOptions = {
   maxPerParent?: number;
   excludeContentHashes?: string[];
   selectionMode?: "confidence" | "top_k";
+  /** 完整索引统计；生产排序禁止从当前候选池估算 IDF。 */
+  corpusStatistics?: CorpusStatistics;
+};
+
+export type ScoringCorpus = {
+  documents: RagDocument[];
+  postings: Map<string, Posting>;
+  lengths: Map<string, number>;
+  docFreq: Map<string, number>;
+  avgLength: number;
+};
+
+export type CorpusStatistics = {
+  documentCount: number;
+  averageLength: number;
+  documentFrequency: ReadonlyMap<string, number>;
+  source: "full_ts_index" | "combined_ts_index";
 };
 
 export type UnifiedRecallDiagnostics = {

@@ -10,9 +10,22 @@ export function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function contentHashes(value: string): string[] {
-  const text = String(value || "").trim();
-  return [digest(text), digest(text.replace(/\s+/gu, ""))];
+export function contentHashes(value: RagDocument | string): string[] {
+  // 跨轮排除使用 Python IndexDocument.content_hash，口径是正文 content；
+  // text 仍保留作为旧调用方/旧候选的兼容 hash。统一入口的 production
+  // document 同时携带两者，因此不能只对 title + summary + content 的 text
+  // 计算 hash，否则历史注入的正文 hash 永远无法命中。
+  const values = typeof value === "string"
+    ? [value]
+    : [value.content, value.text];
+  const hashes = new Set<string>();
+  for (const raw of values) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    hashes.add(digest(text));
+    hashes.add(digest(text.replace(/\s+/gu, "")));
+  }
+  return [...hashes];
 }
 
 export function contentKey(value: string): string {

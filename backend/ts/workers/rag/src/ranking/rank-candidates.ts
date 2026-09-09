@@ -1,5 +1,6 @@
 import type { RagCitation, RagRankCandidate, RagRankDiagnostics, RagRankResult } from "../../../../packages/contracts/src/rag.ts";
 import { confidence } from "./confidence.ts";
+import { rescoreDocument } from "./idf-rescore.ts";
 import { normalizeBySource } from "./normalize.ts";
 import { citation, contentHashes, contentKey } from "./helpers.ts";
 import { selectUnifiedRecall } from "./select-recall.ts";
@@ -25,7 +26,7 @@ export function rankCandidates(
   const started = performance.now();
   const excluded = new Set(options.excludeContentHashes ?? []);
   const eligible = candidates.filter((candidate) =>
-    !contentHashes(candidate.document.text).some((hash) => excluded.has(hash))
+    !contentHashes(candidate.document).some((hash) => excluded.has(hash))
   );
   const normalized = normalizeBySource(eligible);
   const scored = eligible.map((candidate) => {
@@ -36,10 +37,19 @@ export function rankCandidates(
         ? Number(candidate.raw_score || 0)
         : normalizedScore;
     const quality = confidence(candidate, fused, query);
-    return { candidate, normalizedScore, fused, ...quality };
+    const rescore = rescoreDocument(query, candidate.document, options.corpusStatistics);
+    return {
+      candidate,
+      normalizedScore,
+      fused,
+      rankScore: rescore?.rankScore ?? fused,
+      rescore,
+      ...quality,
+    };
   });
   const orderedScored = [...scored].sort((left, right) =>
-    right.fused - left.fused
+    right.rankScore - left.rankScore
+    || right.fused - left.fused
     || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100)
     || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? ""))
     || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version))
@@ -55,7 +65,7 @@ export function rankCandidates(
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
   const unified = selectUnifiedRecall(
-    ordered.map((item) => ({ result: { id: item.candidate.id, score: item.fused, source_type: item.candidate.source_type, document_version: item.candidate.document.document_version }, document: { ...item.candidate.document, id: item.candidate.id, text: item.candidate.document.text } })),
+    ordered.map((item) => ({ result: { id: item.candidate.id, score: item.rankScore, source_type: item.candidate.source_type, document_version: item.candidate.document.document_version }, document: { ...item.candidate.document, id: item.candidate.id, text: item.candidate.document.text } })),
     options,
   );
   const byId = new Map(ordered.map((item) => [item.candidate.id, item]));
@@ -73,11 +83,23 @@ export function rankCandidates(
     const citations = citationsByContent.get(contentKey(document.text)) ?? [itemCitation];
     return {
       id: document.id,
-      text: document.text,
+      text: document.context_text || document.text,
       confidence: item?.value ?? 0,
       source_quality: item?.sourceQuality ?? 0,
+      query_match: item?.match ?? 0,
       normalized_score: item?.normalizedScore ?? 0,
       fused_score: item?.fused ?? 0,
+      rank_score: item?.rankScore ?? item?.fused ?? 0,
+      query_idf_baseline: item?.rescore?.queryIdfBaseline,
+      query_idf_terms: item?.rescore?.queryIdfTerms,
+      rank_contributions: item?.rescore?.contributions.map((contribution) => ({
+        term: contribution.term,
+        idf: contribution.idf,
+        query_weight: contribution.queryWeight,
+        term_frequency: contribution.termFrequency,
+        weighted: contribution.weighted,
+        nonlinear: contribution.nonlinear,
+      })),
       citation: itemCitation,
       citations,
     };
@@ -107,6 +129,9 @@ export function rankCandidates(
     preferred_threshold: 0.55,
     selection_mode: selectionMode,
     scoring_version: "confidence-v1",
+    rescore_version: options.corpusStatistics ? "idf-nonlinear-v1" : "disabled",
+    idf_source: options.corpusStatistics?.source ?? "none",
+    contribution_exponent: options.corpusStatistics ? 2 : null,
     source_diagnostics: sourceDiagnostics,
     elapsed_ms: Math.round(performance.now() - started),
   } satisfies RagRankDiagnostics;

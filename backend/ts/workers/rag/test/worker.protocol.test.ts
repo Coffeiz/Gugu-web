@@ -6,6 +6,8 @@ import test from "node:test";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { rankCandidates } from "../src/service.ts";
+import { queryMatch } from "../src/ranking/confidence.ts";
+import { rescoreDocument } from "../src/ranking/idf-rescore.ts";
 
 const workerDir = resolve(import.meta.dirname, "..");
 
@@ -189,6 +191,8 @@ test("RAG worker unified_search 执行正文去重、来源上限和字符预算
   assert.equal((result.results as Array<Record<string, unknown>>).length, 2);
   assert.equal((result.diagnostics as Record<string, unknown>).rejected_duplicate, 1);
   assert.equal((result.diagnostics as Record<string, unknown>).output_chars, 18);
+  assert.equal((result.diagnostics as Record<string, unknown>).rescore_version, "idf-nonlinear-v1");
+  assert.equal((result.diagnostics as Record<string, unknown>).idf_source, "full_ts_index");
   child.stdin.end();
   await once(child, "close");
 });
@@ -275,6 +279,34 @@ test("rank_candidates 在评分前排除已注入的历史内容", () => {
   assert.deepEqual(output.results.map((item) => item.id), ["fresh"]);
 });
 
+test("rank_candidates 按 canonical content hash 排除带标题摘要的历史内容", () => {
+  const historicalContent = "壮志凌云独行侠的正文内容";
+  const output = rankCandidates("壮志凌云", [
+    {
+      id: "history", source_type: "file", raw_score: 10, rank: 1,
+      document: {
+        id: "history",
+        text: `壮志凌云独行侠\n影视摘要\n${historicalContent}`,
+        content: historicalContent,
+        title: "壮志凌云独行侠",
+        summary: "影视摘要",
+        source_type: "file", scope_type: "owner", scope_id: "owner-1", document_version: "1",
+      },
+    },
+    {
+      id: "fresh", source_type: "file", raw_score: 5, rank: 2,
+      document: { id: "fresh", text: "另一部电影正文", content: "另一部电影正文", source_type: "file", scope_type: "owner", scope_id: "owner-1", document_version: "1" },
+    },
+  ], {
+    limit: 5,
+    maxChars: 1000,
+    selectionMode: "top_k",
+    excludeContentHashes: [createHash("sha256").update(historicalContent).digest("hex")],
+  });
+
+  assert.deepEqual(output.results.map((item) => item.id), ["fresh"]);
+});
+
 test("rank_candidates 返回跨来源 citation 和按来源诊断", () => {
   const output = rankCandidates("共同", [
     {
@@ -292,6 +324,82 @@ test("rank_candidates 返回跨来源 citation 和按来源诊断", () => {
   assert.deepEqual(output.results[0].citations.map((item) => item.source_id), ["file-1", "canvas-1"]);
   assert.equal(output.diagnostics.source_diagnostics?.file.candidate_count, 1);
   assert.equal(output.diagnostics.source_diagnostics?.canvas.accepted_count, 0);
+});
+
+test("Phase 1：生产排序使用完整 TS 索引 IDF 的非线性 token 贡献", () => {
+  const statistics = {
+    documentCount: 100,
+    averageLength: 6,
+    documentFrequency: new Map([
+      ["蒙", 10], ["扎", 10], ["的", 90], ["t6", 1], ["叫", 20], ["什么", 60],
+    ]),
+    source: "full_ts_index" as const,
+  };
+  const document = (id: string, text: string, source_type: string) => ({
+    id, text, source_type, scope_type: "owner", scope_id: "o1", document_version: "1",
+  });
+  const output = rankCandidates("蒙扎的T6叫什么", [
+    {
+      id: "conversation:curva", source_type: "conversation", raw_score: 1,
+      fusion: "bm25", fused_score: 0,
+      document: document("conversation:curva", "蒙 扎 叫 什么", "conversation"),
+    },
+    {
+      id: "knowledge:monza", source_type: "knowledge", raw_score: 1,
+      fusion: "bm25", fused_score: 0,
+      document: document("knowledge:monza", "蒙 扎 t6", "knowledge"),
+    },
+  ], { limit: 2, selectionMode: "top_k", corpusStatistics: statistics });
+
+  assert.equal(output.results[0].id, "knowledge:monza");
+  assert.ok((output.results[0].rank_score ?? 0) > (output.results[1].rank_score ?? 0));
+  assert.equal(output.diagnostics.rescore_version, "idf-nonlinear-v1");
+  assert.equal(output.diagnostics.idf_source, "full_ts_index");
+  assert.equal(output.diagnostics.contribution_exponent, 2);
+  // 原始 fused/confidence 仍保留，重排只改变排序分。
+  assert.equal(output.results[0].fused_score, 0);
+  assert.ok((output.results[0].query_idf_baseline ?? 0) > 0);
+  assert.equal(output.results[0].rank_contributions?.[0]?.term, "t6");
+  assert.ok((output.results[0].rank_contributions?.[0]?.nonlinear ?? 0) > 0);
+});
+
+test("conversation 自动标题不参与 query-match 与 IDF 重排", () => {
+  const titleOnly = {
+    id: "conversation:title-only",
+    text: "今天天气\nuser：看看有什么笔记",
+    ranking_text: "user：看看有什么笔记",
+    title: "今天天气",
+    source_type: "conversation",
+    scope_type: "owner",
+    scope_id: "o1",
+    document_version: "1",
+  } as const;
+  const bodyMatch = {
+    id: "conversation:body-match",
+    text: "聊天开场\nuser：今天天气怎么样",
+    ranking_text: "user：今天天气怎么样",
+    title: "聊天开场",
+    source_type: "conversation",
+    scope_type: "owner",
+    scope_id: "o1",
+    document_version: "1",
+  } as const;
+
+  assert.equal(queryMatch("天气", titleOnly), 0);
+  assert.equal(queryMatch("天气", bodyMatch), 1);
+  const titleOnlyRescore = rescoreDocument("天气", titleOnly, {
+    documentCount: 2,
+    averageLength: 3,
+    documentFrequency: new Map([["天气", 1], ["看看", 1]]),
+    source: "full_ts_index",
+  });
+  assert.equal(titleOnlyRescore?.matchedTerms.includes("天气"), false);
+
+  const output = rankCandidates("天气", [
+    { id: titleOnly.id, source_type: "conversation", raw_score: 1, fused_score: 1, rank: 1, document: titleOnly },
+    { id: bodyMatch.id, source_type: "conversation", raw_score: 1, fused_score: 1, rank: 2, document: bodyMatch },
+  ], { limit: 2 });
+  assert.deepEqual(output.results.map((item) => item.id), [bodyMatch.id]);
 });
 
 function spawnWorker(t: import("node:test").TestContext) {
@@ -425,6 +533,23 @@ test("冻结契约：confidence 阈值与 scoring_version 保持 confidence-v1",
   assert.equal(output.diagnostics.preferred_threshold, 0.55);
   assert.equal(output.diagnostics.selection_mode, "confidence");
   assert.ok(output.diagnostics.rejected_low_score >= 1);
+});
+
+test("对话消息排序只看当前消息，最终结果带有限相邻上下文", () => {
+  const candidate = {
+    id: "conversation-12", source_type: "conversation", raw_score: 1,
+    document: {
+      ...rankDocument("conversation-12", "conversation", "user：当前问题"),
+      context_text: "user：上一句\nuser：当前问题\nassistant：下一句",
+    },
+  };
+  const output = rankCandidates("当前问题", [candidate], {
+    selectionMode: "top_k", limit: 1, maxChars: 1000,
+  });
+  assert.equal(output.results.length, 1);
+  assert.equal(output.results[0].text,
+    "user：上一句\nuser：当前问题\nassistant：下一句");
+  assert.equal(output.diagnostics.selection_mode, "top_k");
 });
 
 test("冻结契约：hybrid_fuse 与 Python hybrid_results 的 RRF 逐位一致", async (t) => {
@@ -651,6 +776,8 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   assert.equal(unified.fusion.vector_version, "prov:model:2");
   assert.equal(unified.fusion.fallback, null);
   assert.equal(unified.stats.scoring_version, "confidence-v1");
+  assert.equal(unified.stats.rescore_version, "idf-nonlinear-v1");
+  assert.equal(unified.stats.idf_source, "combined_ts_index");
   // 水位：message_id=5 的会话文档不参与。
   const unifiedRows = unified.selected as Array<{ document_key: string; confidence: number }>;
   const unifiedKeys = unifiedRows.map((row) => row.document_key);
@@ -662,6 +789,33 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
     assert.ok(Math.abs(referenceRows[index].confidence - unifiedRows[index].confidence) < 1e-12,
       `confidence[${index}] ${referenceRows[index].confidence} vs ${unifiedRows[index].confidence}`);
   }
+  child.stdin.end();
+  await closed;
+});
+
+test("unified_query 将跨轮 content hash 排除参数传到统一排序器", async (t) => {
+  const { request, readResponse, closed, child } = spawnWorker(t);
+  const content = "壮志凌云独行侠的正文内容";
+  request({ op: "replace", revision: "r1", documents: [{
+    id: "file:movie:0",
+    text: `壮志凌云独行侠\n影视摘要\n${content}`,
+    content,
+    title: "壮志凌云独行侠",
+    summary: "影视摘要",
+    source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1",
+  }] });
+  assert.equal((await readResponse()).revision, "r1");
+
+  request({ op: "unified_query", revision: "r1", query: "壮志凌云", source_order: ["file"],
+    searches: [{ id: "0", source_types: ["file"], limit: 20 }], candidate_limit: 20,
+    rank: {
+      limit: 5, max_chars: 3000, max_per_source: 3, max_per_parent: 3,
+      selection_mode: "top_k",
+      exclude_content_hashes: [createHash("sha256").update(content).digest("hex")],
+    } });
+  const result = await readResponse() as Record<string, any>;
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.selected, []);
   child.stdin.end();
   await closed;
 });

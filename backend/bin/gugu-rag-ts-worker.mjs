@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
-// src/index.ts
+// ts/workers/rag/src/index.ts
 import { createHash as createHash3 } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-// ../../packages/contracts/src/rag.ts
-var RAG_WORKER_VERSION = "0.2.0";
+// ts/packages/contracts/src/rag.ts
+var RAG_WORKER_VERSION = "0.3.3";
 
-// src/tokenizer.ts
+// ts/workers/rag/src/tokenizer.ts
 import { Jieba } from "@node-rs/jieba";
 import { dict } from "@node-rs/jieba/dict.js";
 var TOKEN_RE = /[A-Za-z0-9_]+|[\u4e00-\u9fff]+/gu;
@@ -31,9 +31,9 @@ function tokenizeRaw(text) {
   return output;
 }
 
-// src/adapters/base.ts
+// ts/workers/rag/src/adapters/base.ts
 import { createHash } from "node:crypto";
-function chunkText(text, maxChars = 1400, overlap = 120) {
+function chunkText(text, maxChars = 1e3, overlap = 150) {
   const normalized = String(text || "").trim();
   if (!normalized) return [];
   const paragraphs = normalized.split(/\n\s*\n/gu).map((part) => part.trim()).filter(Boolean);
@@ -72,21 +72,24 @@ function textVersion(text, ...parts) {
   const payload = [...parts.map((part) => String(part ?? "")), text].join("");
   return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);
 }
-function buildDocuments(record, maxChars = 1400) {
+function buildDocuments(record, maxChars = 1e3, overlap = 150) {
   const normalized = String(record.content || "").trim();
-  const chunks = chunkText(normalized, maxChars);
+  const chunks = chunkText(normalized, maxChars, overlap);
   if (!chunks.length) return [];
-  const parentId = `${record.source_type}:${record.id}`;
-  const summary = record.summary || Array.from(normalized).slice(0, 240).join("");
+  const parentId = String(record.parent_id ?? `${record.source_type}:${record.id}`);
+  const sourceId = String(record.source_id ?? record.id);
+  const summary = record.summary ?? Array.from(normalized).slice(0, 240).join("");
   const parts = record.version_parts;
   const documentVersion = parts ? textVersion(normalized, ...parts) : record.document_version;
   const title = record.title || "\u672A\u547D\u540D";
   return chunks.map((text, chunkIndex) => ({
     id: `${record.source_type}:${parentId}:${chunkIndex}`,
-    text: [title, summary, text].join("\n"),
+    text: [title, ...summary ? [summary] : [], text].join("\n"),
+    ...typeof record.context_text === "string" && record.context_text.trim() ? { context_text: record.context_text.trim() } : {},
+    ...typeof record.ranking_text === "string" && record.ranking_text.trim() ? { ranking_text: record.ranking_text.trim() } : {},
     content: text,
     source_type: record.source_type,
-    source_id: String(record.id),
+    source_id: sourceId,
     title,
     summary,
     ...record.scope,
@@ -106,7 +109,7 @@ function validScope(scope) {
   return true;
 }
 
-// src/adapters/calendar.ts
+// ts/workers/rag/src/adapters/calendar.ts
 var calendarAdapter = {
   sourceType: "calendar",
   toDocuments(records) {
@@ -135,7 +138,7 @@ var calendarAdapter = {
   }
 };
 
-// src/adapters/canvas.ts
+// ts/workers/rag/src/adapters/canvas.ts
 var canvasAdapter = {
   sourceType: "canvas",
   toDocuments(records) {
@@ -171,7 +174,7 @@ var canvasAdapter = {
   }
 };
 
-// src/adapters/conversations.ts
+// ts/workers/rag/src/adapters/conversations.ts
 var buildMetadata = (record) => {
   const metadata = {
     session_id: String(record.session_id),
@@ -182,6 +185,9 @@ var buildMetadata = (record) => {
   if (record.kind === "message") {
     metadata.message_id = String(record.id);
     metadata.role = record.role ?? "";
+    metadata.context_before = record.context_before ?? "";
+    metadata.context_after = record.context_after ?? "";
+    metadata.context_current = `${record.role ?? ""}\uFF1A${record.content ?? ""}`;
   }
   return metadata;
 };
@@ -193,12 +199,18 @@ var conversationAdapter = {
       const body = record.kind === "summary" ? record.summary ?? "" : record.content ?? "";
       if (!body.trim()) return [];
       if (record.kind === "message" && !record.role) return [];
+      const currentContent = record.kind === "summary" ? `\u4F1A\u8BDD\u6458\u8981\uFF1A${body}` : `${record.role}\uFF1A${body}`;
+      const contextText = record.kind === "message" ? [record.context_before, currentContent, record.context_after].filter((part) => String(part || "").trim()).join("\n") : "";
       return buildDocuments({
         id: String(record.id),
         source_type: "conversation",
         scope: record.scope,
         title: record.title || "\u672A\u547D\u540D",
-        content: record.kind === "summary" ? `\u4F1A\u8BDD\u6458\u8981\uFF1A${body}` : `${record.role}\uFF1A${body}`,
+        summary: record.kind === "message" ? "" : void 0,
+        content: currentContent,
+        // 会话标题是展示元数据，不参与 conversation 的词法召回与重排。
+        ranking_text: currentContent,
+        ...contextText ? { context_text: contextText } : {},
         document_version: record.document_version ?? "",
         version_parts: record.version_parts,
         updated_at: record.updated_at,
@@ -208,7 +220,7 @@ var conversationAdapter = {
   }
 };
 
-// src/adapters/files.ts
+// ts/workers/rag/src/adapters/files.ts
 var fileAdapter = {
   sourceType: "file",
   toDocuments(records) {
@@ -242,7 +254,7 @@ var fileAdapter = {
   }
 };
 
-// src/adapters/note.ts
+// ts/workers/rag/src/adapters/note.ts
 var noteAdapter = {
   sourceType: "note",
   toDocuments(records) {
@@ -270,7 +282,7 @@ var noteAdapter = {
   }
 };
 
-// src/adapters/scheduled-tasks.ts
+// ts/workers/rag/src/adapters/scheduled-tasks.ts
 var scheduledTaskAdapter = {
   sourceType: "scheduled_task",
   toDocuments(records) {
@@ -297,10 +309,10 @@ ${record.payload || ""}`;
   }
 };
 
-// src/index-builder.ts
+// ts/workers/rag/src/index-builder.ts
 function buildGenericDocuments(records) {
   return records.flatMap((record) => {
-    if (record.id === null || record.id === void 0 || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
+    if (record.id === null || record.id === void 0 || !record.source_type || !record.title || !validScope(record.scope)) return [];
     return buildDocuments(record);
   });
 }
@@ -318,47 +330,65 @@ function buildSourceDocuments(batch) {
   ];
 }
 
-// src/service.ts
-import { createHash as createHash2 } from "node:crypto";
-function compact(value) {
-  return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();
-}
-function digest(value) {
-  return createHash2("sha256").update(value).digest("hex");
-}
-function contentHashes(value) {
-  const text = String(value || "").trim();
-  return [digest(text), digest(text.replace(/\s+/gu, ""))];
-}
-function contentKey(value) {
-  return digest(compact(value));
-}
-function citation(document) {
-  const metadata = document.metadata ?? {};
-  const sourceId = String(metadata.source_id ?? document.parent_id ?? document.id);
-  const chunkId = `${document.parent_id ?? document.id}:${document.document_version}:${document.chunk_index ?? 0}`;
-  return {
-    source_type: document.source_type,
-    source_id: sourceId,
-    title: String(document.title ?? "\u672A\u547D\u540D\u6765\u6E90"),
-    chunk_id: chunkId,
-    version: document.document_version,
-    ...document.updated_at ? { updated_at: document.updated_at } : {}
-  };
-}
-function tokenSet(document) {
-  return new Set(terms(document.text));
-}
-function terms(value) {
+// ts/workers/rag/src/ranking/bm25.ts
+var K1 = 1.2;
+var B = 0.75;
+function tokenize(value) {
   return tokenizeRaw(value);
 }
-function similarity(left, right) {
-  if (!left.size || !right.size) return 0;
-  let intersection = 0;
-  for (const value of left) if (right.has(value)) intersection += 1;
-  const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
-  return union ? intersection / union : 0;
+function termFrequency(items) {
+  const out = /* @__PURE__ */ new Map();
+  for (const item of items) out.set(item, (out.get(item) ?? 0) + 1);
+  return out;
 }
+function corpusStatistics(corpus, source = "full_ts_index") {
+  return {
+    documentCount: corpus.documents.length,
+    averageLength: corpus.avgLength,
+    documentFrequency: corpus.docFreq,
+    source
+  };
+}
+function mergeCorpusStatistics(corpora) {
+  const documentFrequency = /* @__PURE__ */ new Map();
+  let documentCount = 0;
+  let totalLength = 0;
+  for (const corpus of corpora) {
+    documentCount += corpus.documents.length;
+    totalLength += corpus.avgLength * corpus.documents.length;
+    for (const [term, frequency] of corpus.docFreq) {
+      documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + frequency);
+    }
+  }
+  return {
+    documentCount,
+    averageLength: documentCount ? totalLength / documentCount : 0,
+    documentFrequency,
+    source: "combined_ts_index"
+  };
+}
+function scoreTerms(corpus, terms) {
+  const scores = /* @__PURE__ */ new Map();
+  for (const term of terms) {
+    const posting = corpus.postings.get(term);
+    if (!posting) continue;
+    const idf2 = Math.log(1 + (corpus.documents.length - posting.ids.length + 0.5) / (posting.ids.length + 0.5));
+    posting.ids.forEach((id, position) => {
+      const tf = posting.frequencies[position];
+      const length = Math.max(1, corpus.lengths.get(id) ?? 0);
+      const norm = tf + K1 * (1 - B + B * length / (corpus.avgLength || 1));
+      scores.set(id, (scores.get(id) ?? 0) + idf2 * tf * (K1 + 1) / norm);
+    });
+  }
+  return scores;
+}
+
+// ts/workers/rag/src/ranking/document-text.ts
+function rankingText(document) {
+  return String(document.ranking_text ?? document.text ?? "");
+}
+
+// ts/workers/rag/src/ranking/confidence.ts
 var SOURCE_QUALITY = {
   memory: 0.8,
   project: 0.9,
@@ -368,14 +398,89 @@ var SOURCE_QUALITY = {
   journal: 0.7,
   knowledge: 0.8
 };
-var SOURCE_PRIORITY = {
-  memory: 0,
-  project: 10,
-  file: 20,
-  journal: 30,
-  canvas: 40,
-  conversation: 50
-};
+function queryMatch(query, document) {
+  const meaningful = new Set(tokenize(query).filter((token) => !/^[\d\p{P}\p{S}_]+$/u.test(token)));
+  if (!meaningful.size) return 0;
+  const text = rankingText(document);
+  const compactQuery = String(query || "").replace(/\s+/gu, "").toLocaleLowerCase();
+  const compactText = text.replace(/\s+/gu, "").toLocaleLowerCase();
+  if (compactQuery.length >= 2 && compactText.includes(compactQuery)) return 1;
+  const documentTerms = new Set(tokenize(text));
+  let matched = 0;
+  for (const token of meaningful) if (documentTerms.has(token)) matched += 1;
+  return matched / meaningful.size;
+}
+function confidence(candidate, fused, query) {
+  let sourceQuality = SOURCE_QUALITY[candidate.source_type] ?? 0.7;
+  if (candidate.source_type === "knowledge") {
+    const weight = { confirmed: 1, probable: 0.85, unverified: 0.65, conflict: 0.35 }[String(candidate.document.metadata?.confidence ?? "")] ?? 0.65;
+    sourceQuality *= weight;
+  }
+  const match = Math.min(1, queryMatch(query, candidate.document));
+  let value = 0.55 * fused + 0.25 * match + 0.2 * sourceQuality;
+  if (match <= 0) value = Math.min(value, 0.35 - 0.01);
+  return { value: Math.min(1, Math.max(0, value)), sourceQuality, match };
+}
+
+// ts/workers/rag/src/ranking/idf-rescore.ts
+var IDF_EXPONENT = 1;
+var CONTRIBUTION_EXPONENT = 2;
+var MIN_QUERY_WEIGHT = 0.25;
+var MAX_QUERY_WEIGHT = 4;
+function idf(term, statistics) {
+  const documentFrequency = statistics.documentFrequency.get(term);
+  if (!statistics.documentCount || documentFrequency === void 0) return null;
+  return Math.log(1 + (statistics.documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5));
+}
+function clamp(value, low, high) {
+  return Math.min(high, Math.max(low, value));
+}
+function rescoreDocument(query, document, statistics) {
+  if (!statistics || statistics.documentCount <= 0) return null;
+  const queryTerms = [...new Set(tokenize(query))];
+  const indexedIdfs = queryTerms.map((term) => idf(term, statistics)).filter((value) => value !== null);
+  if (!indexedIdfs.length) return null;
+  const baseline = indexedIdfs.reduce((sum, value) => sum + value, 0) / indexedIdfs.length;
+  if (!(baseline > 0)) return null;
+  const queryIdfTerms = queryTerms.flatMap((term) => {
+    const termIdf = idf(term, statistics);
+    return termIdf === null ? [] : [{ term, idf: termIdf }];
+  });
+  const frequencies = termFrequency(tokenize(rankingText(document)));
+  const length = Math.max(1, [...frequencies.values()].reduce((sum, value) => sum + value, 0));
+  const contributions = [];
+  for (const term of queryTerms) {
+    const termIdf = idf(term, statistics);
+    const termFrequencyValue = frequencies.get(term) ?? 0;
+    if (termIdf === null || !termFrequencyValue) continue;
+    const queryWeight = clamp(
+      Math.pow(termIdf / baseline, IDF_EXPONENT),
+      MIN_QUERY_WEIGHT,
+      MAX_QUERY_WEIGHT
+    );
+    const norm = termFrequencyValue + K1 * (1 - B + B * length / (statistics.averageLength || 1));
+    const bm25Term = termIdf * termFrequencyValue * (K1 + 1) / norm;
+    const weighted = bm25Term * queryWeight;
+    contributions.push({
+      term,
+      idf: termIdf,
+      queryWeight,
+      termFrequency: termFrequencyValue,
+      weighted,
+      nonlinear: Math.pow(weighted, CONTRIBUTION_EXPONENT)
+    });
+  }
+  contributions.sort((left, right) => right.nonlinear - left.nonlinear || left.term.localeCompare(right.term));
+  return {
+    rankScore: contributions.reduce((sum, item) => sum + item.nonlinear, 0),
+    matchedTerms: contributions.map((item) => item.term),
+    contributions,
+    queryIdfBaseline: baseline,
+    queryIdfTerms
+  };
+}
+
+// ts/workers/rag/src/ranking/normalize.ts
 function normalizeBySource(candidates) {
   const grouped = /* @__PURE__ */ new Map();
   for (const candidate of candidates) {
@@ -395,46 +500,157 @@ function normalizeBySource(candidates) {
   }
   return normalized;
 }
-function queryMatch(query, document) {
-  const meaningful = new Set(terms(query).filter((token) => !/^[\d\p{P}\p{S}_]+$/u.test(token)));
-  if (!meaningful.size) return 0;
-  const text = `${document.title ?? ""}
-${document.summary ?? ""}
-${document.text ?? ""}`;
-  const compactQuery = String(query || "").replace(/\s+/gu, "").toLocaleLowerCase();
-  const compactText = text.replace(/\s+/gu, "").toLocaleLowerCase();
-  if (compactQuery.length >= 2 && compactText.includes(compactQuery)) return 1;
-  const documentTerms = new Set(terms(text));
-  let matched = 0;
-  for (const token of meaningful) if (documentTerms.has(token)) matched += 1;
-  return matched / meaningful.size;
+
+// ts/workers/rag/src/ranking/helpers.ts
+import { createHash as createHash2 } from "node:crypto";
+function compact(value) {
+  return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();
 }
-function confidence(candidate, fused, query) {
-  let sourceQuality = SOURCE_QUALITY[candidate.source_type] ?? 0.7;
-  if (candidate.source_type === "knowledge") {
-    const weight = { confirmed: 1, probable: 0.85, unverified: 0.65, conflict: 0.35 }[String(candidate.document.metadata?.confidence ?? "")] ?? 0.65;
-    sourceQuality *= weight;
+function digest(value) {
+  return createHash2("sha256").update(value).digest("hex");
+}
+function contentHashes(value) {
+  const values = typeof value === "string" ? [value] : [value.content, value.text];
+  const hashes = /* @__PURE__ */ new Set();
+  for (const raw of values) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    hashes.add(digest(text));
+    hashes.add(digest(text.replace(/\s+/gu, "")));
   }
-  const match = Math.min(1, queryMatch(query, candidate.document));
-  let value = 0.55 * fused + 0.25 * match + 0.2 * sourceQuality;
-  if (match <= 0) value = Math.min(value, 0.35 - 0.01);
-  return { value: Math.min(1, Math.max(0, value)), sourceQuality };
+  return [...hashes];
 }
+function contentKey(value) {
+  return digest(compact(value));
+}
+function citation(document) {
+  const metadata = document.metadata ?? {};
+  const sourceId = String(metadata.source_id ?? document.parent_id ?? document.id);
+  const chunkId = `${document.parent_id ?? document.id}:${document.document_version}:${document.chunk_index ?? 0}`;
+  return {
+    source_type: document.source_type,
+    source_id: sourceId,
+    title: String(document.title ?? "\u672A\u547D\u540D\u6765\u6E90"),
+    chunk_id: chunkId,
+    version: document.document_version,
+    ...document.updated_at ? { updated_at: document.updated_at } : {}
+  };
+}
+function tokenSet(document) {
+  return new Set(tokenize(document.text));
+}
+function similarity(left, right) {
+  if (!left.size || !right.size) return 0;
+  let intersection = 0;
+  for (const value of left) if (right.has(value)) intersection += 1;
+  const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
+  return union ? intersection / union : 0;
+}
+
+// ts/workers/rag/src/ranking/select-recall.ts
+function selectUnifiedRecall(candidates, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit ?? 5), 50));
+  const maxChars = Math.max(1, Number(options.maxChars ?? 3e3));
+  const maxPerSource = Math.max(1, Number(options.maxPerSource ?? 3));
+  const maxPerParent = Math.max(1, Number(options.maxPerParent ?? 3));
+  const selected = [];
+  const hashes = /* @__PURE__ */ new Set();
+  const parentCounts = /* @__PURE__ */ new Map();
+  const sourceCounts = /* @__PURE__ */ new Map();
+  const selectedTokens = [];
+  let outputChars = 0;
+  let rejectedDuplicate = 0;
+  let rejectedParent = 0;
+  let rejectedSource = 0;
+  let rejectedSimilarity = 0;
+  const diversityLimited = options.selectionMode !== "top_k";
+  const ordered = [...candidates].sort(
+    (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id)
+  );
+  for (const { document } of ordered) {
+    const text = String(document.context_text || document.text || "").trim();
+    const primaryText = String(document.text || "").trim();
+    if (!text) continue;
+    const hash = digest(compact(primaryText));
+    if (hashes.has(hash)) {
+      rejectedDuplicate += 1;
+      continue;
+    }
+    const parent = document.parent_id || document.id;
+    if (diversityLimited && (parentCounts.get(parent) ?? 0) >= maxPerParent) {
+      rejectedParent += 1;
+      continue;
+    }
+    if (diversityLimited && (sourceCounts.get(document.source_type) ?? 0) >= maxPerSource) {
+      rejectedSource += 1;
+      continue;
+    }
+    const tokens = tokenSet(document);
+    if (diversityLimited && selectedTokens.some((previous) => similarity(tokens, previous) >= 0.85)) {
+      rejectedSimilarity += 1;
+      continue;
+    }
+    const remaining = maxChars - outputChars;
+    if (remaining <= 0) break;
+    const next = text.length > remaining ? { ...document, context_text: text.slice(0, remaining).trimEnd() } : document;
+    if (!next.text) continue;
+    selected.push(next);
+    hashes.add(hash);
+    selectedTokens.push(tokens);
+    parentCounts.set(parent, (parentCounts.get(parent) ?? 0) + 1);
+    sourceCounts.set(document.source_type, (sourceCounts.get(document.source_type) ?? 0) + 1);
+    outputChars += String(next.context_text || next.text || "").length;
+    if (selected.length >= limit) break;
+  }
+  return {
+    results: selected,
+    has_more: ordered.length > selected.length,
+    diagnostics: {
+      candidate_count: ordered.length,
+      accepted_count: selected.length,
+      rejected_duplicate: rejectedDuplicate,
+      rejected_parent: rejectedParent,
+      rejected_source: rejectedSource,
+      rejected_similarity: rejectedSimilarity,
+      output_chars: outputChars
+    }
+  };
+}
+
+// ts/workers/rag/src/ranking/rank-candidates.ts
+var SOURCE_PRIORITY = {
+  memory: 0,
+  project: 10,
+  file: 20,
+  calendar: 30,
+  scheduled_task: 35,
+  journal: 30,
+  canvas: 40,
+  conversation: 50
+};
 function rankCandidates(query, candidates, options = {}) {
   const started = performance.now();
   const excluded = new Set(options.excludeContentHashes ?? []);
   const eligible = candidates.filter(
-    (candidate) => !contentHashes(candidate.document.text).some((hash) => excluded.has(hash))
+    (candidate) => !contentHashes(candidate.document).some((hash) => excluded.has(hash))
   );
   const normalized = normalizeBySource(eligible);
   const scored = eligible.map((candidate) => {
     const normalizedScore = normalized.get(candidate.id) ?? 0;
     const fused = candidate.fused_score !== void 0 && candidate.fused_score !== null ? Number(candidate.fused_score) : candidate.fusion === "hybrid-rrf" ? Number(candidate.raw_score || 0) : normalizedScore;
     const quality = confidence(candidate, fused, query);
-    return { candidate, normalizedScore, fused, ...quality };
+    const rescore = rescoreDocument(query, candidate.document, options.corpusStatistics);
+    return {
+      candidate,
+      normalizedScore,
+      fused,
+      rankScore: rescore?.rankScore ?? fused,
+      rescore,
+      ...quality
+    };
   });
   const orderedScored = [...scored].sort(
-    (left, right) => right.fused - left.fused || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100) || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? "")) || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version)) || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
+    (left, right) => right.rankScore - left.rankScore || right.fused - left.fused || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100) || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? "")) || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version)) || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
   );
   const selectionMode = options.selectionMode ?? "confidence";
   const preferred = orderedScored.filter((item) => item.value >= 0.55);
@@ -443,7 +659,7 @@ function rankCandidates(query, candidates, options = {}) {
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
   const unified = selectUnifiedRecall(
-    ordered.map((item) => ({ result: { id: item.candidate.id, score: item.fused, source_type: item.candidate.source_type, document_version: item.candidate.document.document_version }, document: { ...item.candidate.document, id: item.candidate.id, text: item.candidate.document.text } })),
+    ordered.map((item) => ({ result: { id: item.candidate.id, score: item.rankScore, source_type: item.candidate.source_type, document_version: item.candidate.document.document_version }, document: { ...item.candidate.document, id: item.candidate.id, text: item.candidate.document.text } })),
     options
   );
   const byId = new Map(ordered.map((item) => [item.candidate.id, item]));
@@ -461,11 +677,23 @@ function rankCandidates(query, candidates, options = {}) {
     const citations = citationsByContent.get(contentKey(document.text)) ?? [itemCitation];
     return {
       id: document.id,
-      text: document.text,
+      text: document.context_text || document.text,
       confidence: item?.value ?? 0,
       source_quality: item?.sourceQuality ?? 0,
+      query_match: item?.match ?? 0,
       normalized_score: item?.normalizedScore ?? 0,
       fused_score: item?.fused ?? 0,
+      rank_score: item?.rankScore ?? item?.fused ?? 0,
+      query_idf_baseline: item?.rescore?.queryIdfBaseline,
+      query_idf_terms: item?.rescore?.queryIdfTerms,
+      rank_contributions: item?.rescore?.contributions.map((contribution) => ({
+        term: contribution.term,
+        idf: contribution.idf,
+        query_weight: contribution.queryWeight,
+        term_frequency: contribution.termFrequency,
+        weighted: contribution.weighted,
+        nonlinear: contribution.nonlinear
+      })),
       citation: itemCitation,
       citations
     };
@@ -493,86 +721,17 @@ function rankCandidates(query, candidates, options = {}) {
     preferred_threshold: 0.55,
     selection_mode: selectionMode,
     scoring_version: "confidence-v1",
+    rescore_version: options.corpusStatistics ? "idf-nonlinear-v1" : "disabled",
+    idf_source: options.corpusStatistics?.source ?? "none",
+    contribution_exponent: options.corpusStatistics ? 2 : null,
     source_diagnostics: sourceDiagnostics,
     elapsed_ms: Math.round(performance.now() - started)
   };
   return { results, diagnostics: stats };
 }
-function selectUnifiedRecall(candidates, options = {}) {
-  const limit = Math.max(1, Math.min(Number(options.limit ?? 5), 50));
-  const maxChars = Math.max(1, Number(options.maxChars ?? 3e3));
-  const maxPerSource = Math.max(1, Number(options.maxPerSource ?? 3));
-  const maxPerParent = Math.max(1, Number(options.maxPerParent ?? 3));
-  const selected = [];
-  const hashes = /* @__PURE__ */ new Set();
-  const parentCounts = /* @__PURE__ */ new Map();
-  const sourceCounts = /* @__PURE__ */ new Map();
-  const selectedTokens = [];
-  let outputChars = 0;
-  let rejectedDuplicate = 0;
-  let rejectedParent = 0;
-  let rejectedSource = 0;
-  let rejectedSimilarity = 0;
-  const diversityLimited = options.selectionMode !== "top_k";
-  const ordered = [...candidates].sort(
-    (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id)
-  );
-  for (const { document } of ordered) {
-    const text = String(document.text || "").trim();
-    if (!text) continue;
-    const hash = digest(compact(text));
-    if (hashes.has(hash)) {
-      rejectedDuplicate += 1;
-      continue;
-    }
-    const parent = document.parent_id || document.id;
-    if (diversityLimited && (parentCounts.get(parent) ?? 0) >= maxPerParent) {
-      rejectedParent += 1;
-      continue;
-    }
-    if (diversityLimited && (sourceCounts.get(document.source_type) ?? 0) >= maxPerSource) {
-      rejectedSource += 1;
-      continue;
-    }
-    const tokens2 = tokenSet(document);
-    if (diversityLimited && selectedTokens.some((previous) => similarity(tokens2, previous) >= 0.85)) {
-      rejectedSimilarity += 1;
-      continue;
-    }
-    const remaining = maxChars - outputChars;
-    if (remaining <= 0) break;
-    const next = text.length > remaining ? { ...document, text: text.slice(0, remaining).trimEnd() } : document;
-    if (!next.text) continue;
-    selected.push(next);
-    hashes.add(hash);
-    selectedTokens.push(tokens2);
-    parentCounts.set(parent, (parentCounts.get(parent) ?? 0) + 1);
-    sourceCounts.set(document.source_type, (sourceCounts.get(document.source_type) ?? 0) + 1);
-    outputChars += next.text.length;
-    if (selected.length >= limit) break;
-  }
-  return {
-    results: selected,
-    has_more: ordered.length > selected.length,
-    diagnostics: {
-      candidate_count: ordered.length,
-      accepted_count: selected.length,
-      rejected_duplicate: rejectedDuplicate,
-      rejected_parent: rejectedParent,
-      rejected_source: rejectedSource,
-      rejected_similarity: rejectedSimilarity,
-      output_chars: outputChars
-    }
-  };
-}
 
-// src/index.ts
+// ts/workers/rag/src/index.ts
 var VERSION = RAG_WORKER_VERSION;
-var K1 = 1.2;
-var B = 0.75;
-function tokens(value) {
-  return tokenizeRaw(value);
-}
 function hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeight, rrfK) {
   const getVector = (key) => vectors instanceof Map ? vectors.get(key) : vectors[key];
   const vectorScores = /* @__PURE__ */ new Map();
@@ -608,11 +767,6 @@ function hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeigh
     fusedScores.set(key, score);
   }
   return { fusedScores, vectorDocCount: vectorScores.size };
-}
-function termFrequency(items) {
-  const out = /* @__PURE__ */ new Map();
-  for (const item of items) out.set(item, (out.get(item) ?? 0) + 1);
-  return out;
 }
 function makeState(indexDir2) {
   return {
@@ -663,7 +817,7 @@ function replaceInMemory(state2, revision, documents) {
 function addDocument(state2, document) {
   state2.documents.push(document);
   state2.documentsById.set(document.id, document);
-  const frequency = termFrequency(tokens(document.text));
+  const frequency = termFrequency(tokenize(rankingText(document)));
   const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
   state2.lengths.set(document.id, length);
   state2.totalLength += length;
@@ -678,7 +832,7 @@ function addDocument(state2, document) {
 function removeDocument(state2, id) {
   const document = state2.documentsById.get(id);
   if (!document) return;
-  const frequency = termFrequency(tokens(document.text));
+  const frequency = termFrequency(tokenize(rankingText(document)));
   const length = state2.lengths.get(id) ?? 0;
   state2.totalLength -= length;
   for (const term of frequency.keys()) {
@@ -733,25 +887,10 @@ function matchesScope(document, scope) {
   }
   return true;
 }
-function scoreTerms(state2, terms2) {
-  const scores = /* @__PURE__ */ new Map();
-  for (const term of terms2) {
-    const posting = state2.postings.get(term);
-    if (!posting) continue;
-    const idf = Math.log(1 + (state2.documents.length - posting.ids.length + 0.5) / (posting.ids.length + 0.5));
-    posting.ids.forEach((id, position) => {
-      const tf = posting.frequencies[position];
-      const length = Math.max(1, state2.lengths.get(id) ?? 0);
-      const norm = tf + K1 * (1 - B + B * length / (state2.avgLength || 1));
-      scores.set(id, (scores.get(id) ?? 0) + idf * tf * (K1 + 1) / norm);
-    });
-  }
-  return scores;
-}
 function search(state2, query, limit, allowedSources, scope, preparedScores, preparedTerms) {
   const started = performance.now();
-  const terms2 = preparedTerms ?? new Set(tokens(query));
-  if (!terms2.size) {
+  const terms = preparedTerms ?? new Set(tokenize(query));
+  if (!terms.size) {
     return {
       results: [],
       diagnostics: {
@@ -770,7 +909,7 @@ function search(state2, query, limit, allowedSources, scope, preparedScores, pre
     if (allowedSources.size && !allowedSources.has(document.source_type) || !matchesScope(document, scope)) return;
     eligibleCount += 1;
   });
-  const scores = preparedScores ?? scoreTerms(state2, terms2);
+  const scores = preparedScores ?? scoreTerms(state2, terms);
   for (const [id, score] of scores) {
     const document = state2.documentsById.get(id);
     if (document && score > 0 && (!allowedSources.size || allowedSources.has(document.source_type)) && matchesScope(document, scope)) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
@@ -805,9 +944,9 @@ async function handle(state2, transient2, request) {
     if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient2.revision)) {
       return { status: "error", code: "revision_mismatch", message: "TS \u7EDF\u4E00\u67E5\u8BE2\u77AC\u6001\u8BED\u6599\u7248\u672C\u4E0D\u4E00\u81F4" };
     }
-    const terms2 = new Set(tokens(request.query));
-    const persistentScores = scoreTerms(state2, terms2);
-    const transientScores = hasTransient ? scoreTerms(transient2, terms2) : void 0;
+    const terms = new Set(tokenize(request.query));
+    const persistentScores = scoreTerms(state2, terms);
+    const transientScores = hasTransient ? scoreTerms(transient2, terms) : void 0;
     const candidateLimit = Math.max(1, Math.min(Number(request.candidate_limit ?? 20), 50));
     const sourceOrder = Array.isArray(request.source_order) ? request.source_order.map(String) : [];
     const groupOrder = [];
@@ -815,7 +954,7 @@ async function handle(state2, transient2, request) {
     for (const item of searches) {
       const corpus = item.corpus === "transient" ? transient2 : state2;
       const preparedScores = item.corpus === "transient" ? transientScores : persistentScores;
-      const found = search(corpus, request.query, candidateLimit, new Set(item.source_types ?? []), item.scope, preparedScores, terms2);
+      const found = search(corpus, request.query, candidateLimit, new Set(item.source_types ?? []), item.scope, preparedScores, terms);
       for (const hit of found.results) {
         const source = hit.document.source_type;
         let group = groups.get(source);
@@ -898,13 +1037,15 @@ async function handle(state2, transient2, request) {
       }
     }
     const rankOptions = request.rank ?? {};
+    const rankingStatistics = hasTransient ? mergeCorpusStatistics([state2, transient2]) : corpusStatistics(state2);
     const ranked = rankCandidates(request.query, payload, {
       limit: Number(rankOptions.limit ?? 5),
       maxChars: Number(rankOptions.max_chars ?? 3e3),
       maxPerSource: Number(rankOptions.max_per_source ?? 3),
       maxPerParent: Number(rankOptions.max_per_parent ?? 3),
       excludeContentHashes: rankOptions.exclude_content_hashes ?? [],
-      selectionMode: rankOptions.selection_mode ?? "confidence"
+      selectionMode: rankOptions.selection_mode ?? "confidence",
+      corpusStatistics: rankingStatistics
     });
     const document_counts = {};
     for (const corpus of [state2, transient2]) {
@@ -940,9 +1081,9 @@ async function handle(state2, transient2, request) {
     if (new Set(request.searches.map((item) => item.id)).size !== request.searches.length) {
       return { status: "error", code: "duplicate_search_id", message: "\u6279\u91CF\u67E5\u8BE2\u6807\u8BC6\u91CD\u590D" };
     }
-    const terms2 = new Set(tokens(request.query));
-    const persistentScores = scoreTerms(state2, terms2);
-    const transientScores = hasTransient ? scoreTerms(transient2, terms2) : void 0;
+    const terms = new Set(tokenize(request.query));
+    const persistentScores = scoreTerms(state2, terms);
+    const transientScores = hasTransient ? scoreTerms(transient2, terms) : void 0;
     const document_counts = {};
     for (const corpus of [state2, transient2]) {
       for (const document of corpus.documents) {
@@ -959,7 +1100,7 @@ async function handle(state2, transient2, request) {
         const preparedScores = item.corpus === "transient" ? transientScores : persistentScores;
         return {
           id: item.id,
-          ...search(corpus, request.query, item.limit ?? 10, new Set(item.source_types ?? []), item.scope, preparedScores, terms2)
+          ...search(corpus, request.query, item.limit ?? 10, new Set(item.source_types ?? []), item.scope, preparedScores, terms)
         };
       })
     };
@@ -1061,16 +1202,34 @@ async function handle(state2, transient2, request) {
     const allowedSources = new Set(request.source_types ?? []);
     const searched = search(state2, request.query ?? "", 50, allowedSources, request.scope);
     const documentsById = new Map(state2.documents.map((document) => [document.id, document]));
-    const output = selectUnifiedRecall(
-      searched.results.flatMap((result) => {
-        const document = documentsById.get(result.id);
-        return document ? [{ result, document }] : [];
-      }),
-      { limit: request.limit ?? 5, maxChars: request.max_chars ?? 3e3 }
-    );
-    return { status: "ok", version: VERSION, revision: state2.revision, ...output };
+    const candidates = searched.results.flatMap((result) => {
+      const document = documentsById.get(result.id);
+      return document ? [{
+        id: result.id,
+        source_type: document.source_type,
+        raw_score: result.score,
+        fusion: "bm25",
+        fused_score: null,
+        document
+      }] : [];
+    });
+    const ranked = rankCandidates(request.query ?? "", candidates, {
+      limit: request.limit ?? 5,
+      maxChars: request.max_chars ?? 3e3,
+      selectionMode: "top_k",
+      corpusStatistics: corpusStatistics(state2)
+    });
+    const results = ranked.results.flatMap((result) => {
+      const document = documentsById.get(result.id);
+      return document ? [{ ...document, text: result.text }] : [];
+    });
+    return { status: "ok", version: VERSION, revision: state2.revision, results, has_more: candidates.length > results.length, diagnostics: ranked.diagnostics };
   }
   if (request.op === "rank_candidates") {
+    const diagnosticCorpus = Array.isArray(request.corpus_documents) ? makeState() : null;
+    if (diagnosticCorpus) {
+      replaceInMemory(diagnosticCorpus, "diagnostic", request.corpus_documents ?? []);
+    }
     const output = rankCandidates(
       request.query ?? "",
       request.candidates ?? [],
@@ -1080,7 +1239,8 @@ async function handle(state2, transient2, request) {
         maxPerSource: request.max_per_source ?? 3,
         maxPerParent: request.max_per_parent ?? 3,
         excludeContentHashes: request.exclude_content_hashes ?? [],
-        selectionMode: request.selection_mode ?? "confidence"
+        selectionMode: request.selection_mode ?? "confidence",
+        corpusStatistics: diagnosticCorpus ? corpusStatistics(diagnosticCorpus) : corpusStatistics(state2)
       }
     );
     return {

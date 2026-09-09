@@ -2,7 +2,7 @@
 
 ## 1. 状态
 
-**状态：实施中（2026-09-09）。Phase 0 已补召回生命周期观测；Phase 1 已实现持久化来源批量查询实验路径，尚未完成全部来源及端到端验收，不能标记阶段完成。**
+**状态：Phase 0–6 已完成（2026-09-09）。写路径已统一走 TS canonical projection，旧 Python 投影、shadow/mode 开关和对应迁移测试已清理；待 devserver 执行一次全量重建以刷新既有索引。**
 
 本次实施记录见 [Phase 0/1 实施进度与验证](../devlog/2026-09-09-RAG批量召回实施进度.md)。Phase 0/1 已完成并通过 devserver 验收：`search.rag_query_mode` 默认仍为 `legacy`，可选 `batch`（一次批量词法查询，Memory 装入 worker 瞬态语料槽）与 `batch_shadow`（交付 legacy 结果并记录候选差异）。是否切换默认模式留待产品决策，切换前建议先在生产开启 `batch_shadow` 观察一段 shadow_equal 统计。
 
@@ -52,7 +52,7 @@ Python 侧通过 `asyncio.gather()` 并发发起查询，但同一用户复用�
 - 不在第一阶段迁移 embedding 服务、API Key 或向量存储。
 - 不绕过 Python 的 owner、workspace、project、folder、canvas、group/member 权限校验。
 - 不改变 `read_file`、`canvas_get`、`read_conversation` 等精确工具的权限和行为。
-- 不删除 Python 回退路径，直到对应阶段的 shadow/对比测试和生产灰度完成。（2026-09-09 更新：查询链 shadow 对比已完成且 devserver 经用户拍板直切 unified，legacy 查询交付链已按触发条件删除；写路径 python 回退保留）
+- 不在 TS worker 内复制业务权限和主数据读取；写路径投影完成切换后不保留 Python 分块回退，故障由索引事件重试和显式诊断处理。
 - 不把用户正文、附件名、查询原文、密钥或内部路径写入诊断日志。
 
 ## 5. 目标架构
@@ -60,7 +60,7 @@ Python 侧通过 `asyncio.gather()` 并发发起查询，但同一用户复用�
 ```text
 Python
   ├─ 读取业务数据
-  ├─ 构造 IndexDocument
+  ├─ 构造授权 source record
   ├─ owner/scope 权限初筛
   ├─ embedding 生成
   └─ Agent 上下文注入
@@ -300,6 +300,35 @@ legacy；``search_memory`` 细分 source（profile/pattern/daily）在 legacy �
 （已知遗留怪癖，不属本次范围）。回归：RAG 测试子集 34 项通过；后端全量在共享工作树实跑 2295 通过、
 34 失败均为另一并行会话未提交的文件域在改代码（干净基线 ``git archive`` 复核 35 项文件域测试全过，
 与本清理无关）。生产影响：v1.1.2 镜像起无 legacy 查询回退，生产异常时回滚 = 重部署 v1.1.1 镜像。
+
+### Phase 6：TS Canonical Source Projection（写路径投影收口）
+
+目标：解决 Python/TS 双重实现 `source record → document chunk` 导致的方言漂移。TS
+Worker 成为 record-based 来源的唯一生产投影实现；Python 只负责业务数据读取、权限事实、
+scope/baseline/context 计算、持久化事务和结果回填。
+
+范围：file、note、canvas、calendar、scheduled_task、conversation、Memory、Knowledge、Project
+全部来源。Python 领域 adapter 只读取业务主数据、执行权限/scope 事实和上下文组装，提交未切块
+canonical source record；TS worker 统一负责来源投影、文本组装、分块、版本和 wire document。
+
+- [x] 删除 `rag_write_mode` 与 `rag_write_shadow` 配置；生产写路径不再存在 Python 模式或影子分支。
+- [x] TS `adapt` 负责所有来源的文本组装、切块、版本和 wire document；Python 不再预先执行本地投影。
+- [x] 对话 `context_current` 与 `context_before/after` 在 Python/TS 两侧统一保存；长消息每个 chunk 的 `context_text` 均引用完整当前消息。
+- [x] TS canonical 写路径不再并行运行 Python shadow projection，避免重复 CPU/IPC 和重复告警。
+- [x] 增加长消息多 chunk 的 Python↔TS wire 等价回归，覆盖上下文、metadata、切块和持久身份。
+- [x] 明确 worker 失败不静默回退 Python，由索引事件重试机制处理；故障通过事件重试和诊断暴露。
+- [x] 删除 Python `split_text`/`text_version`/`_make_chunks` 以及旧 source projection、shadow 测试和旧 builder benchmark；保留业务需要的 Markdown section 解析，不再承担索引分块。
+
+验收：默认写路径使用 TS 投影；Python/TS RAG 相关测试全部通过；同一 source record 的
+chunk 数、身份、版本、正文、metadata 和有限上下文逐字段一致；现网切换后不再出现
+“Python/TS 写路径影子比对不一致”作为正常 TS 写入告警。
+
+Phase 6 最终验证记录（2026-09-09）：Memory、Knowledge、Project 的直接 adapter 构建、全量
+重建、事件增量和 snapshot 缓存均改走同一条 `source record → TS adapt → persistent document`
+路径；TS packaged worker 已重建。后端全量 2352 项通过，TS worker 40 项通过。修复的具体缺陷
+是长对话 chunk 使用当前 chunk 作为上下文，而 TS 使用完整消息；已有索引需要执行一次
+conversation 重建才能写入新的 `context_current` metadata。后续不再维护 Python 投影 oracle，
+只保留 source record 与 TS worker 协议测试。
 
 ## 7. 诊断指标
 

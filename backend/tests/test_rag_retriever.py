@@ -317,6 +317,19 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
             hit_count=3, elapsed_ms=17, fallback_reason="embedding_disabled",
             index_version="memory-rag-v1", mode="passive", engine="typescript",
             cache_hit=True, cache_entries=1,
+            rank_details=[{
+                "rank": 1,
+                "source_type": "knowledge",
+                "fused_score": 0.42,
+                "normalized_score": 0.42,
+                "confidence": 0.71,
+                "rank_score": 12.5,
+                "query_idf_baseline": 3.2,
+                "contributions": [{
+                    "term": "t6", "idf": 7.964, "query_weight": 2.5,
+                    "term_frequency": 1, "weighted": 11.929, "nonlinear": 142.3,
+                }],
+            }],
         )
     finally:
         state._scope_run.reset(token)
@@ -328,8 +341,14 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
     assert span.attributes["engine"] == "typescript"
     assert span.attributes["cache_hit"] is True
     assert span.attributes["cache_entries"] == 1
+    assert span.attributes["rank_details"][0]["fused_score"] == 0.42
+    assert span.attributes["rank_details"][0]["confidence"] == 0.71
+    assert span.attributes["rank_details"][0]["rank_score"] == 12.5
+    assert span.attributes["rank_details"][0]["contributions"][0]["term"] == "t6"
+    assert span.output["rank_details"][0]["query_idf_baseline"] == 3.2
     assert span.output["hit_count"] == 3
-    assert "query" not in str(span.payload())
+    # 允许排序元数据中的 query_idf_baseline，但不得写入原始 query 字段。
+    assert "'query':" not in str(span.payload())
 
 
 def test_recall_diagnostics_preserves_multiple_scope_identity(monkeypatch):

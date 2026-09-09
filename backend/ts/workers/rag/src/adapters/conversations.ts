@@ -11,6 +11,8 @@ export type ConversationSourceRecord = {
   summary?: string;
   /** message 专用：消息正文。 */
   content?: string;
+  context_before?: string;
+  context_after?: string;
   title?: string;
   session_source?: string;
   session_updated_at?: string;
@@ -31,6 +33,11 @@ const buildMetadata = (record: ConversationSourceRecord): Record<string, string 
   if (record.kind === "message") {
     metadata.message_id = String(record.id);
     metadata.role = record.role ?? "";
+    metadata.context_before = record.context_before ?? "";
+    metadata.context_after = record.context_after ?? "";
+    // 每个 chunk 的 context_text 都引用完整当前消息；持久化 metadata 也要
+    // 保留它，避免 Python 从 TS 写入结果恢复时退回到 chunk 正文。
+    metadata.context_current = `${record.role ?? ""}：${record.content ?? ""}`;
   }
   return metadata;
 };
@@ -46,10 +53,20 @@ export const conversationAdapter: SourceAdapter<ConversationSourceRecord> = {
         : (record.content ?? "");
       if (!body.trim()) return [];
       if (record.kind === "message" && !record.role) return [];
+      const currentContent = record.kind === "summary" ? `会话摘要：${body}` : `${record.role}：${body}`;
+      const contextText = record.kind === "message"
+        ? [record.context_before, currentContent, record.context_after]
+          .filter((part) => String(part || "").trim())
+          .join("\n")
+        : "";
       return buildDocuments({
         id: String(record.id), source_type: "conversation", scope: record.scope,
         title: record.title || "未命名",
-        content: record.kind === "summary" ? `会话摘要：${body}` : `${record.role}：${body}`,
+        summary: record.kind === "message" ? "" : undefined,
+        content: currentContent,
+        // 会话标题是展示元数据，不参与 conversation 的词法召回与重排。
+        ranking_text: currentContent,
+        ...(contextText ? { context_text: contextText } : {}),
         document_version: record.document_version ?? "",
         version_parts: record.version_parts,
         updated_at: record.updated_at,

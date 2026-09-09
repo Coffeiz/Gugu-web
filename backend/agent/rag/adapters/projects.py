@@ -5,7 +5,6 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from agent.rag.chunking import split_text, text_version
 from agent.rag.models import IndexDocument, Scope
 from app.models import Project
 
@@ -25,53 +24,48 @@ class ProjectAdapter:
         self._db_factory = db_factory
 
     async def build_documents(self, *, scope: Scope) -> list[IndexDocument]:
+        from agent.rag.index_builder import records_to_write_documents
+
+        records = await self.build_source_records(scope=scope)
+        return await records_to_write_documents(self.user_id, self.source_type, records)
+
+    async def build_source_records(self, *, scope: Scope) -> list[tuple[dict, Scope]]:
+        """构建未切块的 canonical Project record，由 TS 负责投影。"""
         if scope.owner_user_id != str(self.user_id) or scope.scope_type != "owner":
             return []
         if self._db is not None:
-            return await self._build_from_db(self._db, scope)
-
+            return await self._records_from_db(self._db, scope)
         if self._db_factory is not None:
             async with self._db_factory() as db:
-                return await self._build_from_db(db, scope)
-
+                return await self._records_from_db(db, scope)
         import app.db.session as db_session
 
         if db_session._engine is None:
             db_session._build_engine()
         async with db_session._SessionLocal() as db:
-            return await self._build_from_db(db, scope)
+            return await self._records_from_db(db, scope)
 
-    async def _build_from_db(self, db, scope: Scope) -> list[IndexDocument]:
+    async def _records_from_db(self, db, scope: Scope) -> list[tuple[dict, Scope]]:
         rows = (await db.execute(
             select(Project)
             .where(Project.user_id == self.user_id, Project.deleted_at.is_(None), Project.archived == False)
             .order_by(Project.updated_at.desc(), Project.id.desc())
         )).scalars().all()
-        documents: list[IndexDocument] = []
+        records = []
         for project in rows:
             text = self._project_text(project)
-            pieces = split_text(text, max_chars=1400)
-            if not pieces:
+            if not text.strip():
                 continue
             document_id = f"project:{project.id}"
-            version = text_version(text, project.id, project.version or 1)
-            for position, piece in enumerate(pieces):
-                documents.append(IndexDocument(
-                    document_id=document_id,
-                    parent_document_id=document_id,
-                    source_type=self.source_type,
-                    source_id=str(project.id),
-                    scope=scope,
-                    title=project.name or "未命名项目",
-                    summary=text[:240],
-                    content=piece,
-                    version=version,
-                    chunk_index=position,
-                    chunk_count=len(pieces),
-                    updated_at=_iso(project.updated_at),
-                    metadata={"project_id": str(project.id), "status": project.status or "pending"},
-                ))
-        return documents
+            records.append(({
+                "source_type": "project", "id": str(project.id),
+                "source_id": str(project.id), "parent_id": document_id,
+                "title": project.name or "未命名项目", "summary": text[:240],
+                "content": text, "version_parts": [project.id, project.version or 1],
+                "updated_at": _iso(project.updated_at),
+                "metadata": {"project_id": str(project.id), "status": project.status or "pending"},
+            }, scope))
+        return records
 
     @staticmethod
     def _project_text(project) -> str:

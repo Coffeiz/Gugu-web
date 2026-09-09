@@ -25,6 +25,18 @@ def test_wire_document_keeps_business_fields_for_cold_restore():
     assert wire["source_id"] == "1"
 
 
+def test_wire_conversation_separates_display_title_from_ranking_text():
+    from agent.rag.ts_sidecar import _wire_document
+
+    document = IndexDocument(
+        "conversation:1", "conversation", "1", Scope("owner"),
+        "今天天气", "", "user：看看有什么笔记", "v1",
+    )
+    wire = _wire_document(document)
+    assert wire["text"].startswith("今天天气\n")
+    assert wire["ranking_text"] == "user：看看有什么笔记"
+
+
 def test_index_dir_for_owner_uses_hidden_user_storage(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from agent.rag.ts_sidecar import index_dir_for_owner

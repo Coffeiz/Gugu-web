@@ -19,6 +19,11 @@ import type {
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2_000;
+const CONVERSATION_CONTEXT_MAX_CHARS = 600;
+
+function conversationContext(value: unknown): string {
+  return Array.from(String(value || "")).slice(0, CONVERSATION_CONTEXT_MAX_CHARS).join("");
+}
 
 function limitOf(value?: number): number {
   const requested = Number(value ?? DEFAULT_LIMIT);
@@ -208,7 +213,13 @@ export class DataRuntime {
     const afterId = afterIdOf(options.afterId);
     const rows = await this.query(() => this.sql`
       SELECT m.id AS message_id, m.session_id, m.role, m.content,
-             m.created_at, s.title, s.summary
+             m.created_at, s.title, s.summary,
+             LAG(m.role || '：' || m.content) OVER (
+               PARTITION BY m.session_id ORDER BY m.id
+             ) AS context_before,
+             LEAD(m.role || '：' || m.content) OVER (
+               PARTITION BY m.session_id ORDER BY m.id
+             ) AS context_after
       FROM conversation_messages AS m
       JOIN conversation_sessions AS s ON s.id = m.session_id
       WHERE s.user_id = ${ownerId}
@@ -230,6 +241,8 @@ export class DataRuntime {
         title: String(row.title || "未命名对话"),
         summary: String(row.summary || ""),
         content: String(row.content),
+        context_before: conversationContext(row.context_before),
+        context_after: conversationContext(row.context_after),
         document_version: String(row.message_id),
         updated_at: row.created_at?.toISOString?.() ?? String(row.created_at || ""),
         metadata: { session_id: String(row.session_id), message_id: String(row.message_id), role: String(row.role) },

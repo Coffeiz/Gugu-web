@@ -1,7 +1,8 @@
 /** TypeScript RAG Worker 与业务桥接层共用的 canonical contract。 */
 
 export const RAG_CONTRACT_VERSION = "rag-v1" as const;
-export const RAG_WORKER_VERSION = "0.2.0" as const;
+// 0.3.3：TS Data Runtime 补齐 conversation 相邻上下文，旧磁盘索引不得继续恢复。
+export const RAG_WORKER_VERSION = "0.3.3" as const;
 
 export type RagSourceType =
   | "memory"
@@ -20,17 +21,23 @@ export type RagScopeType = "owner" | "workspace" | "project" | "folder" | "group
 export type RagDocument = {
   id: string;
   text: string;
+  /** 仅用于展示/注入的有限上下文；不参与排序。 */
+  context_text?: string;
+  /** 可选的排序文本；不改变展示/引用用的 text。 */
+  ranking_text?: string;
   source_type: RagSourceType | string;
   source_id?: string;
   content?: string;
   title?: string;
   summary?: string;
+  /** 可选的排序文本；不改变展示/引用用的 text。 */
+  ranking_text?: string;
   platform?: string;
   bot_id?: string;
   group_id?: string;
   scope_type: RagScopeType | string;
   scope_id: string;
-  document_version: string;
+  document_version?: string;
   parent_id?: string;
   chunk_index?: number;
   chunk_count?: number;
@@ -43,6 +50,9 @@ export type RagSourceRecord = {
   id: string | number;
   source_type: RagSourceType | string;
   scope: RagSearchScope;
+  /** 可选的业务 source_id/父文档身份；未提供时由 source_type + id 推导。 */
+  source_id?: string | number;
+  parent_id?: string;
   title: string;
   summary?: string;
   content: string;
@@ -118,6 +128,9 @@ export type RagScoreStats = {
   preferred_threshold: number;
   selection_mode: "confidence" | "top_k";
   scoring_version: string;
+  rescore_version?: string;
+  idf_source?: "full_ts_index" | "combined_ts_index" | "none";
+  contribution_exponent?: number | null;
 };
 
 export type RagUnifiedDiagnostics = {
@@ -153,8 +166,20 @@ export type RagRankResult = {
   text: string;
   confidence: number;
   source_quality: number;
+  query_match?: number;
   normalized_score: number;
   fused_score: number;
+  rank_score?: number;
+  query_idf_baseline?: number;
+  query_idf_terms?: Array<{ term: string; idf: number }>;
+  rank_contributions?: Array<{
+    term: string;
+    idf: number;
+    query_weight: number;
+    term_frequency: number;
+    weighted: number;
+    nonlinear: number;
+  }>;
   citation: RagCitation;
   citations: RagCitation[];
 };
@@ -206,7 +231,19 @@ export type RagRequest =
   | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[] }
   | { op: "search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope }
   | { op: "unified_search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; max_chars?: number }
-  | { op: "rank_candidates"; query: string; candidates: RagRankCandidate[]; limit?: number; max_chars?: number; max_per_source?: number; max_per_parent?: number; exclude_content_hashes?: string[]; selection_mode?: "confidence" | "top_k" };
+  | {
+      op: "rank_candidates";
+      query: string;
+      candidates: RagRankCandidate[];
+      /** 诊断/离线比较可显式提供完整语料，用于按完整索引计算 IDF。线上默认不传。 */
+      corpus_documents?: RagDocument[];
+      limit?: number;
+      max_chars?: number;
+      max_per_source?: number;
+      max_per_parent?: number;
+      exclude_content_hashes?: string[];
+      selection_mode?: "confidence" | "top_k";
+    };
 
 export type RagHybridFuseResult = { chunk_id: string; score: number };
 

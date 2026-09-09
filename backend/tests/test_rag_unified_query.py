@@ -171,6 +171,42 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert memory_candidate.document is memory_doc
 
 
+def test_unified_retriever_reconstructs_persistent_row_after_cold_restore():
+    """TS 冷恢复没有 Python 文档副本时，仍保留持久化来源的选中行。"""
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    retriever = UnifiedQueryRetriever([])
+    row = {
+        "id": "knowledge:entry-1:0",
+        "document_key": "knowledge:entry-1:0",
+        "text": "蒙扎弯道中英名对照\nT6：Roggia",
+        "raw_score": 5.8,
+        "confidence": 0.87,
+        "citation": {
+            "source_type": "knowledge",
+            "source_id": "knowledge-entry-1",
+            "title": "蒙扎弯道中英名对照",
+            "chunk_id": "knowledge:entry-1:0",
+            "version": "1",
+        },
+    }
+    index = SimpleNamespace(
+        documents_by_id={},
+        client=SimpleNamespace(owner_user_id="synthetic-owner"),
+    )
+
+    rows = retriever._resolve_rank_rows(index, {"selected": [row]}, [])
+
+    assert len(rows) == 1
+    candidate, text, resolved = rows[0]
+    assert candidate.document.source_type == "knowledge"
+    assert candidate.document.source_id == "knowledge-entry-1"
+    assert candidate.document.title == "蒙扎弯道中英名对照"
+    assert candidate.document.content == row["text"]
+    assert text == row["text"]
+    assert resolved is row
+
+
 @pytest.mark.asyncio
 async def test_unified_retriever_fallback_labels_follow_python_facts(monkeypatch):
     """fallback 标签按 Python 侧事实判定：关闭=embedding_disabled，其余采纳 worker 回报。"""

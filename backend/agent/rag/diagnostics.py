@@ -1,4 +1,4 @@
-"""RAG 脱敏诊断，只记录结构和耗时，不记录查询或记忆正文。"""
+"""RAG 脱敏诊断；普通诊断不记录正文，受控 LoopScope 可记录排序 token 明细。"""
 from __future__ import annotations
 
 import time
@@ -14,6 +14,7 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
                   cache_entries: int | None = None,
                   cache_miss_reasons: list[str] | None = None,
                   quality: dict[str, object] | None = None,
+                  rank_details: list[dict[str, object]] | None = None,
                   stages: dict[str, object] | None = None,
                   source_diagnostics: dict[str, object] | None = None,
                   scope_details: list[dict[str, object]] | None = None) -> None:
@@ -30,6 +31,7 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
                 "sidecar_reused": sidecar_reused, "cache_entries": cache_entries,
                 "cache_miss_reasons": cache_miss_reasons or [],
                 "quality": quality or {}, "stages": stages or {},
+                "rank_details": rank_details or [],
                 "source_diagnostics": source_diagnostics or {},
                 "scope_type": scope_type, "scope_digest": scope_digest,
                 "scope_details": scope_details or [], "index_version": index_version,
@@ -54,6 +56,7 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
         cache_entries=cache_entries,
         cache_miss_reasons=cache_miss_reasons,
         quality=quality,
+        rank_details=rank_details,
         stages=stages,
         source_diagnostics=source_diagnostics,
         scope_details=scope_details,
@@ -70,10 +73,11 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
                              cache_entries: int | None = None,
                              cache_miss_reasons: list[str] | None = None,
                              quality: dict[str, object] | None = None,
+                             rank_details: list[dict[str, object]] | None = None,
                              stages: dict[str, object] | None = None,
                              source_diagnostics: dict[str, object] | None = None,
                              scope_details: list[dict[str, object]] | None = None) -> None:
-    """把召回指标写入当前 LoopScope run；绝不携带 query、正文或 owner。"""
+    """把召回指标写入当前 LoopScope run；排序明细只进入受控 trace。"""
     try:
         from agent.runtime.loopscope_trace.state import _scope_run, _enabled
 
@@ -107,6 +111,7 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
             cache_entries=cache_entries,
             cache_miss_reasons=cache_miss_reasons or [],
             quality=quality or {},
+            rank_details=rank_details or [],
             stages=stages or {},
             source_diagnostics=source_diagnostics or {},
             fallback_reason=fallback_reason or "",
@@ -128,6 +133,7 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
             "sidecar_reused": sidecar_reused,
             "cache_entries": cache_entries,
             "quality": quality or {},
+            "rank_details": rank_details or [],
             "stages": stages or {},
             "source_diagnostics": source_diagnostics or {},
         })

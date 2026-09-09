@@ -309,6 +309,7 @@ class TsSidecarClient:
         max_chars: int, max_per_source: int, max_per_parent: int,
         exclude_content_hashes: set[str] | None = None,
         selection_mode: str = "confidence",
+        corpus_documents: list[dict] | None = None,
     ) -> tuple[list[dict], dict]:
         """调用 TS 完成来源归一化、confidence 过滤和统一预算。"""
         response = (await self._request({
@@ -321,6 +322,7 @@ class TsSidecarClient:
             "max_per_parent": max(1, int(max_per_parent)),
             "exclude_content_hashes": sorted(exclude_content_hashes or set()),
             "selection_mode": selection_mode,
+            **({"corpus_documents": corpus_documents} if corpus_documents is not None else {}),
         })).response
         return list(response.get("selected") or []), dict(response.get("stats") or {})
 
@@ -542,12 +544,16 @@ class TsLexicalIndex:
 
 
 def _wire_document(document: IndexDocument) -> dict[str, Any]:
-    return {
+    text_parts = [document.title]
+    if document.summary:
+        text_parts.append(document.summary)
+    text_parts.append(document.content)
+    wire = {
         # worker 内部使用稳定的 chunk slot；版本变化只更新同一 slot 的内容，
         # 避免一个文档改动后把所有未变化 chunk 当成删除再新增。
         "id": _worker_document_key(document),
         # 保留原文，避免 Python 侧预分词导致 TS/Python 两套语义漂移。
-        "text": "\n".join((document.title, document.summary, document.content)),
+        "text": "\n".join(text_parts),
         "source_id": document.source_id,
         "title": document.title,
         "summary": document.summary,
@@ -565,6 +571,14 @@ def _wire_document(document: IndexDocument) -> dict[str, Any]:
         "updated_at": document.updated_at,
         "metadata": document.metadata,
     }
+    if document.source_type == "conversation":
+        # 会话标题只用于展示；词法召回与重排只使用当前消息/摘要正文。
+        wire["ranking_text"] = document.content
+    if document.source_type == "conversation" and document.metadata.get("kind") == "message":
+        context_text = document.contextual_content()
+        if context_text:
+            wire["context_text"] = context_text
+    return wire
 
 
 def _from_wire_document(raw: dict[str, Any], owner_user_id: str) -> IndexDocument | None:
@@ -655,13 +669,16 @@ _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str,
 
 
 def _index_document_digest(document: IndexDocument) -> str:
-    """只计算影响词法索引的字段，版本变化不应触发无意义 upsert。"""
+    """计算词法索引字段及召回展示上下文的摘要。"""
+    context = document.contextual_content() if document.source_type == "conversation" else ""
     payload = "\x1f".join((
         _worker_document_key(document),
         document.source_type,
         document.title,
         document.summary,
         document.content,
+        context,
+        "conversation-ranking-v1" if document.source_type == "conversation" else "",
     ))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -694,6 +711,7 @@ async def rank_candidates_with_cache(
     max_per_parent: int,
     exclude_content_hashes: set[str] | None = None,
     selection_mode: str = "confidence",
+    corpus_documents: list[IndexDocument] | None = None,
 ) -> tuple[list[tuple[RecallCandidate, str, dict]], dict]:
     """调用 TS 完成完整的候选评分、过滤、去重和预算。"""
     if not candidates:
@@ -724,36 +742,51 @@ async def rank_candidates_with_cache(
         candidate_id = f"{candidate.source_type}:{candidate.document.chunk_id}:{index}"
         by_id[candidate_id] = candidate
         document = candidate.document
+        rank_document = {
+            "id": candidate_id,
+            # 与持久化 TS 索引保持同一评分文本（标题/摘要/正文），避免独立
+            # 候选排序链再次退回到与持久化索引不同的口径。
+            "text": "\n".join(part for part in (document.title, document.summary, document.content) if part),
+            # 跨轮排除使用 IndexDocument.content_hash；独立 rank 路径也必须
+            # 把 canonical 正文传给 TS，不能只传用于 BM25 的拼接 text。
+            "content": document.content,
+            "source_type": document.source_type,
+            "title": document.title,
+            "summary": document.summary,
+            "scope_type": document.scope.scope_type,
+            "scope_id": document.scope.scope_id,
+            "platform": document.scope.platform,
+            "bot_id": document.scope.bot_id,
+            "group_id": document.scope.group_id,
+            "document_version": document.version,
+            "parent_id": document.parent_document_id or document.document_id,
+            "chunk_index": document.chunk_index,
+            "chunk_count": document.chunk_count,
+            "updated_at": document.updated_at,
+            "metadata": document.metadata,
+        }
+        if document.source_type == "conversation":
+            # 与 lexical worker 一致：自动会话标题不参与候选重排。
+            rank_document["ranking_text"] = document.content
+        if document.source_type == "conversation" and document.metadata.get("kind") == "message":
+            context_text = document.contextual_content()
+            if context_text:
+                rank_document["context_text"] = context_text
         payload.append({
             "id": candidate_id,
             "source_type": candidate.source_type,
             "raw_score": candidate.raw_score,
             "fusion": "hybrid-rrf" if candidate.fused_score else "bm25",
             "fused_score": candidate.fused_score if candidate.fused_score else None,
-            "document": {
-                "id": candidate_id,
-                "text": document.content,
-                "source_type": document.source_type,
-                "title": document.title,
-                "summary": document.summary,
-                "scope_type": document.scope.scope_type,
-                "scope_id": document.scope.scope_id,
-                "platform": document.scope.platform,
-                "bot_id": document.scope.bot_id,
-                "group_id": document.scope.group_id,
-                "document_version": document.version,
-                "parent_id": document.parent_document_id or document.document_id,
-                "chunk_index": document.chunk_index,
-                "chunk_count": document.chunk_count,
-                "updated_at": document.updated_at,
-                "metadata": document.metadata,
-            },
+            "document": rank_document,
         })
     selected, stats = await client.rank_candidates(
         query, payload, limit=limit, max_chars=max_chars,
         max_per_source=max_per_source, max_per_parent=max_per_parent,
         exclude_content_hashes=exclude_content_hashes,
         selection_mode=selection_mode,
+        corpus_documents=([_wire_document(document) for document in corpus_documents]
+                          if corpus_documents is not None else None),
     )
     # 冻结契约：评分实现必须是唯一的 confidence-v1；版本漂移说明出现了
     # 第二套评分或新旧实现混跑，显式失败而不是静默接受结果差异。
@@ -877,7 +910,7 @@ RANK_SCORING_VERSION = "confidence-v1"
 def _timeout_seconds() -> float:
     from app.core.config import get_settings
 
-    value = getattr(get_settings().search, "ts_sidecar_timeout_ms", 500)
+    value = getattr(get_settings().search, "ts_sidecar_timeout_ms", 5000)
     return max(0.05, min(int(value), 30_000) / 1000)
 
 

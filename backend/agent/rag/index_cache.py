@@ -343,7 +343,7 @@ class KnowledgeIndexCache:
         raise TsSidecarUnavailable(f"不支持的词法后端: {backend}")
 
     async def _revision(self, db, owner_user_id: object) -> str | None:
-        from agent.rag.protocol import TOKENIZER_VERSION
+        from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
 
         rows = (await db.execute(select(
             KnowledgeIndexEntry.source_type,
@@ -358,7 +358,7 @@ class KnowledgeIndexCache:
             f"{source}:{value.isoformat() if value is not None else ''}"
             for source, value in sorted(rows, key=lambda item: str(item[0]))
         )
-        return f"{TOKENIZER_VERSION}:{revisions}"
+        return f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}:{revisions}"
 
     def invalidate(self, owner_user_id: object, source_type: str | None = None) -> int:
         owner_key = str(owner_user_id)
@@ -513,9 +513,9 @@ def _selected_backend(settings) -> str:
 
 def _documents_fingerprint(documents: list[IndexDocument]) -> str:
     import hashlib
-    from agent.rag.protocol import TOKENIZER_VERSION
+    from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
 
-    payload = TOKENIZER_VERSION + "\n" + "\n".join(
+    payload = f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}\n" + "\n".join(
         "|".join(map(str, document.identity())) for document in documents
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]

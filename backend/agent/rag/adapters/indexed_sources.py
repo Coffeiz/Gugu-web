@@ -1,4 +1,4 @@
-"""文件、画布、笔记和对话的统一业务来源桥接。
+"""文件、画布、笔记、日历和对话的统一业务来源桥接。
 
 统一查询主链下，本模块只提供来源容器的 DB 会话托管；文档转换、检索和
 conversation 水位过滤全部由 TS Worker 完成（``unified_query`` 的
@@ -10,10 +10,14 @@ from contextlib import asynccontextmanager
 
 
 class IndexedSourceRetriever:
-    """把文件、画布、笔记、Knowledge 和对话来源接入统一查询链。"""
+    """把持久化索引来源接入统一查询链；文档投影由 TS Worker 完成。"""
+
+    SUPPORTED_SOURCE_TYPES = frozenset({
+        "file", "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",
+    })
 
     def __init__(self, user_id: object, *, db=None, db_factory=None, source_type: str):
-        if source_type not in {"file", "canvas", "note", "conversation", "knowledge"}:
+        if source_type not in self.SUPPORTED_SOURCE_TYPES:
             raise ValueError(f"不支持的统一来源：{source_type}")
         self.user_id = user_id
         self.db = db

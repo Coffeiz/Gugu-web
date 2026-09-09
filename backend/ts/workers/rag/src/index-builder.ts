@@ -1,5 +1,5 @@
 import type { RagDocument, RagSourceBatch, RagSourceRecord } from "../../../packages/contracts/src/rag.ts";
-import { buildDocuments } from "./adapters/base.ts";
+import { buildDocuments, validScope } from "./adapters/base.ts";
 import { calendarAdapter, type CalendarSourceRecord } from "./adapters/calendar.ts";
 import { canvasAdapter, type CanvasSourceRecord } from "./adapters/canvas.ts";
 import { conversationAdapter, type ConversationSourceRecord } from "./adapters/conversations.ts";
@@ -11,7 +11,8 @@ export type { RagSourceBatch } from "../../../packages/contracts/src/rag.ts";
 
 function buildGenericDocuments(records: readonly RagSourceRecord[]): RagDocument[] {
   return records.flatMap((record) => {
-    if (record.id === null || record.id === undefined || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
+    if (record.id === null || record.id === undefined || !record.source_type || !record.title
+      || !validScope(record.scope)) return [];
     return buildDocuments(record);
   });
 }

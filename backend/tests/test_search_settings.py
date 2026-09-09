@@ -19,6 +19,10 @@ def test_rag_auto_sources_are_enabled_by_default():
     ]
 
 
+def test_ts_sidecar_timeout_is_five_seconds_by_default():
+    assert SearchSettings().ts_sidecar_timeout_ms == 5000
+
+
 def test_rag_index_ttl_has_safe_default_and_bounds():
     settings = SearchSettings()
 

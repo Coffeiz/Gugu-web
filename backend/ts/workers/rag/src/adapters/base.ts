@@ -6,7 +6,7 @@ export type SourceAdapter<T> = {
   toDocuments(records: readonly T[]): RagDocument[];
 };
 
-export function chunkText(text: string, maxChars = 1400, overlap = 120): string[] {
+export function chunkText(text: string, maxChars = 1000, overlap = 150): string[] {
   const normalized = String(text || "").trim();
   if (!normalized) return [];
   const paragraphs = normalized.split(/\n\s*\n/gu).map((part) => part.trim()).filter(Boolean);
@@ -49,17 +49,19 @@ export function textVersion(text: string, ...parts: (string | number)[]): string
 
 export function buildDocuments(
   record: RagSourceRecord,
-  maxChars = 1400,
+  maxChars = 1000,
+  overlap = 150,
 ): RagDocument[] {
   // Python _documents 先 strip 再分块、取摘要，这里保持同一口径。
   const normalized = String(record.content || "").trim();
-  const chunks = chunkText(normalized, maxChars);
+  const chunks = chunkText(normalized, maxChars, overlap);
   if (!chunks.length) return [];
   // parent_id = document_id = "{source_type}:{source_id}"；
   // wire id = _worker_document_key = "{source_type}:{document_id}:{chunkIndex}"（id 双重前缀是现网口径）。
-  const parentId = `${record.source_type}:${record.id}`;
+  const parentId = String(record.parent_id ?? `${record.source_type}:${record.id}`);
+  const sourceId = String(record.source_id ?? record.id);
   // 摘要截断与 Python text[:240] 同为码点口径。
-  const summary = record.summary || Array.from(normalized).slice(0, 240).join("");
+  const summary = record.summary ?? Array.from(normalized).slice(0, 240).join("");
   const parts = record.version_parts;
   const documentVersion = parts
     ? textVersion(normalized, ...parts)
@@ -69,10 +71,16 @@ export function buildDocuments(
   const title = record.title || "未命名";
   return chunks.map((text, chunkIndex) => ({
     id: `${record.source_type}:${parentId}:${chunkIndex}`,
-    text: [title, summary, text].join("\n"),
+    text: [title, ...(summary ? [summary] : []), text].join("\n"),
+    ...(typeof record.context_text === "string" && record.context_text.trim()
+      ? { context_text: record.context_text.trim() }
+      : {}),
+    ...(typeof record.ranking_text === "string" && record.ranking_text.trim()
+      ? { ranking_text: record.ranking_text.trim() }
+      : {}),
     content: text,
     source_type: record.source_type,
-    source_id: String(record.id),
+    source_id: sourceId,
     title,
     summary,
     ...record.scope,

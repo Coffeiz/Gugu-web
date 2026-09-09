@@ -27,7 +27,7 @@
 
 ## 2. 来源与适配器
 
-当前 Python 侧通过 source adapter 把不同来源转换为统一 `IndexDocument`：
+当前 Python 侧通过 source adapter 读取业务主数据，生成已授权、未切块的 source record；TS worker 再把它们投影为统一 `IndexDocument`：
 
 | 来源 | 作用 | 典型模块 |
 |---|---|---|
@@ -64,11 +64,11 @@
 | memory | profile、pattern、daily、长期记忆 | 按记忆条目或 daily 行拆分，再按通用规则切分 | 记忆类型、scope、版本 | Memory adapter 直接参与统一召回 |
 | knowledge | KnowledgeEntry 标题、正文和来源 | 按 Markdown section，再按段落/句子切分 | entry、source、version、parent | Knowledge adapter 参与统一召回，保留来源 citation |
 | project | 项目标题、描述、阶段和客户等字段 | 按项目投影字段组合后切分 | project、scope、更新时间 | Project adapter 参与统一召回 |
-| file | 文件名、类型、项目/目录元数据和可抽取正文 | 元数据 + 文本正文按通用规则切分；不支持的文件仅保留元数据 | file、project、folder、version | File retriever 召回，正文由 Python 回填 |
+| file | 文件名、类型、项目/目录元数据和可抽取正文 | 元数据 + 文本正文按 1000 字符切分，150 字符 overlap；不支持的文件仅保留元数据 | file、project、folder、version | File retriever 召回，正文由 Python 回填 |
 | canvas | 画布节点正文、关系摘要和分组路径 | 节点投影后按通用规则切分 | canvas item、node、map、relation | Canvas retriever 召回，保留画布关系上下文 |
-| note | 标题 + `content_plain`（无纯文本时使用 `content_md`） | 按空行拆段、句末标点/换行拆句；最多 1400 字符，120 字符 overlap | `note:<node_id>`、`chunk_index`、`chunk_count`、版本和内容指纹 | Note retriever 按 owner scope 召回；`note_search` 继续提供节点关系查询 |
+| note | 标题 + `content_plain`（无纯文本时使用 `content_md`） | 按空行拆段、句末标点/换行拆句；最多 1000 字符，150 字符 overlap | `note:<node_id>`、`chunk_index`、`chunk_count`、版本和内容指纹 | Note retriever 按 owner scope 召回；`note_search` 继续提供节点关系查询 |
 
-通用 `rag/chunking.py` 的默认规则是：优先按段落和句子边界切分；超长单句按固定窗口切分；相邻 chunk 保留有限 overlap。每个 chunk 都保留 `source_type`、`source_id`、`parent_document_id`、版本、序号和内容指纹，保证增量更新、去重和 citation 稳定。
+TS worker 的通用切块规则是：优先按段落和句子边界切分；超长单句按固定窗口切分；相邻 chunk 保留有限 overlap。每个 chunk 都保留 `source_type`、`source_id`、`parent_id`、版本、序号和内容指纹，保证增量更新、去重和 citation 稳定。Python 不再维护第二套索引分块实现。
 
 所有来源统一经过以下注入链路：
 
@@ -117,15 +117,16 @@ RAG 不信任模型自行传入的用户、群号或成员身份。Web 和 owner
 TypeScript worker 是固定 Node 制品，不是完整后端：
 
 ```text
-Python 构建/投影 chunk
+Python 读取主数据并生成 source record
+        -> TS worker canonical projection / chunk
         -> JSONL replace / patch
-        -> TS worker Jieba + ASCII entity tokenizer
-        -> BM25 lexical search / score filter
-        -> 稳定 candidate ID + score
-        -> Python 回填正文和 citation
+        -> Jieba + ASCII entity tokenizer
+        -> BM25 召回 + IDF 非线性重排
+        -> confidence 选择、去重和预算
+        -> Python scope 复核、正文和 citation 回填
 ```
 
-worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约，支持 `ping`、`replace`、`patch`、`search` 和 `score_filter`。`patch` 只同步发生变化的 chunk slot，文档版本变化不会让未变化 chunk 被误判为新文档。
+worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约，支持 `ping`、`adapt`、`replace`、`patch`、`search`、`batch_search`、`unified_query`、`hybrid_fuse` 和 `rank_candidates`。`patch` 只同步发生变化的 chunk slot，文档版本变化不会让未变化 chunk 被误判为新文档。
 
 worker 不访问网络、不输出业务正文、不做权限授权；运行时使用随制品发布的分词依赖，不能在 devserver 或 Docker 运行时临时编译 TypeScript。
 
@@ -133,10 +134,10 @@ worker 不访问网络、不输出业务正文、不做权限授权；运行时�
 
 TS 模块是 RAG 的确定性 lexical sidecar，职责限定在“索引操作和候选计算”，不承载业务语义。具体包括：
 
-- **协议处理**：解析并校验 JSONL `ping`、`replace`、`patch`、`search`、`score_filter` 请求，返回稳定的结构化结果和协议错误。
+- **协议处理**：解析并校验 JSONL `ping`、`adapt`、`replace`、`patch`、`search`、`batch_search`、`unified_query`、`hybrid_fuse` 和 `rank_candidates` 请求，返回稳定的结构化结果和协议错误。
 - **索引维护**：按 owner/source 建立和替换索引，应用 chunk 增量 patch，维护 revision 与 candidate ID 的稳定映射。
 - **文本处理**：执行 Jieba 中文分词、ASCII entity tokenizer、规范化和必要的 token 统计；不修改 Python 传入的业务正文。
-- **词法检索**：执行 BM25 lexical search、候选截断、基础 score filter，并返回 candidate ID、原始分数和排序位置。
+- **词法检索与排序**：执行 BM25 lexical search、完整索引 IDF 重排、confidence 选择、候选截断，并返回 candidate ID、原始分数、重排分和排序位置。
 - **运行时隔离**：作为固定 Node 制品运行，不访问数据库、网络、文件业务存储或用户配置，不读取 API Key 和会话上下文。
 
 TS 模块明确不负责：
@@ -151,7 +152,7 @@ TS 模块明确不负责：
 
 ## 6. 检索策略
 
-当前 RAG 支持 lexical、vector 和 hybrid 相关路径：
+当前 RAG 支持 lexical、vector 和 hybrid 相关路径。生产候选排序统一由 TS worker 完成；Python 不再实现第二套 scorer/ranker：
 
 - lexical 使用 Jieba/BM25，适合低延迟自动召回和关键词明确的查询；
 - vector 通过 embedding 与 vector cache 提供语义候选；
@@ -159,6 +160,100 @@ TS 模块明确不负责：
 - source、scope、版本和内容指纹在融合前后都要保留，便于 citation 和诊断。
 
 检索器只返回候选，不直接决定是否写入 Memory 或 Knowledge。低质量、空正文、越过 scope 或超过预算的结果在注入前丢弃。
+
+### 6.1 当前 TS BM25 + IDF 非线性重排算法
+
+排序分为两层：BM25 先负责词法候选的基础相关度，IDF 重排再负责区分本次 query 中的信息量高低。两者都在 TS worker 内执行，并使用完整 TS 索引的 corpus statistics，而不是只用当前 Top-K 候选估算 IDF。
+
+#### 1）统一分词和 BM25 基础分
+
+query 和候选文档使用同一套 TS tokenizer（中文 Jieba + ASCII entity tokenizer）。BM25 使用固定参数：
+
+```text
+k1 = 1.2
+b  = 0.75
+
+idf(t) = ln(1 + (N - df(t) + 0.5) / (df(t) + 0.5))
+
+bm25_term(t, d) =
+  idf(t) * tf(t, d) * (k1 + 1)
+  -----------------------------------------
+  tf(t, d) + k1 * (1 - b + b * len(d) / avg_len)
+```
+
+其中 `N` 是当前评分语料的文档数，`df(t)` 是包含 token `t` 的文档数，`len(d)` 是候选文档的 token 长度。BM25 的原始结果会保留在 `raw_score` / `fused_score` 等诊断字段中。
+
+#### 2）按本次 query 的 IDF 计算 token 权重
+
+不再维护按语言拆分的 stopword 表，也不直接过滤低 IDF token。先取 query 中在完整索引里有统计值的 token，计算本次 query 的平均 IDF：
+
+```text
+query_idf_baseline = mean(idf(t))
+```
+
+每个命中 token 的 query 权重为：
+
+```text
+query_weight(t) = clamp(
+  (idf(t) / query_idf_baseline)^1,
+  0.25,
+  4.0
+)
+```
+
+因此低信息 token 会自然获得较低权重，高 IDF token 会获得更高权重，但所有 token 仍可参与匹配。比如：
+
+```text
+query：蒙扎的 T6 叫什么
+
+蒙    idf=4.371
+扎    idf=4.371
+的    idf=较低
+t6    idf=7.964
+叫    idf=4.250
+什么  idf=较低
+```
+
+`t6` 命中时的贡献会高于普通 token；“的”“什么”等低 IDF token 不会被一刀切删除，只是在排序中自然落后。
+
+#### 3）非线性放大信息量差异
+
+候选文档命中的每个 query token 单独计算：
+
+```text
+weighted(t, d) = bm25_term(t, d) * query_weight(t)
+nonlinear(t, d) = weighted(t, d)^2
+
+rank_score(d) = Σ nonlinear(t, d)
+```
+
+当前版本为 `idf-nonlinear-v1`，贡献指数为 `2`。平方会放大高 IDF token 的优势：一个候选命中 `t6` 这种稀有实体时，通常会比只命中多个泛词的候选更靠前。排序贡献会通过 `rank_contributions` 返回，包含 token、IDF、query weight、TF、线性贡献和非线性贡献，便于 LoopScope 解释排序原因。
+
+如果 query 没有任何可从完整索引取得 IDF 的 token，或 corpus statistics 不可用，则不启用该重排，回退使用当前的 `fused` 分作为 `rank_score`；这不是 Python scorer 兜底，而是 TS ranker 对缺少统计数据的明确退化行为。
+
+#### 4）排序和 confidence 的关系
+
+`rank_score` 只负责排序，不替代 `confidence`：
+
+```text
+rank_score 降序
+  → fused_score 降序
+  → 来源优先级
+  → updated_at 降序
+  → document_version 升序
+  → document id 升序
+```
+
+`confidence-v1` 仍使用 fused/raw 相关信号计算，当前阈值为：
+
+- `confidence >= 0.55`：preferred 结果；
+- 没有 preferred 结果时，使用 `0.35 <= confidence < 0.55` 的 fallback 结果；
+- 低于 `0.35` 的结果在 confidence 模式下过滤；
+- 显式 Top-K 模式不依赖 confidence 阈值，只按 `rank_score` 取 Top-K。
+
+所以当前链路是“IDF 非线性分负责排序，confidence 负责选择/过滤”，不会把 `confidence` 再乘进 `rank_score`，也不会把 `rank_score` 当作事实置信度。
+
+诊断字段：`rescore_version=idf-nonlinear-v1`、`idf_source=full_ts_index`（Memory 瞬态语料合并时为 `combined_ts_index`）、`query_idf_baseline`、`contribution_exponent=2`。若看到 `rescore_version=disabled`，表示该次请求没有可用的完整 corpus statistics。
 
 ## 7. 自动召回与显式搜索
 

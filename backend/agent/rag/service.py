@@ -179,7 +179,18 @@ class UnifiedRecallService:
         ]
         rank_stats = dict(pre_ranked.rank_stats or {})
         selected: list[dict] = []
+        rank_details: list[dict] = []
         for candidate, selected_text, rank_item in ranked_candidates:
+            rank_details.append({
+                "rank": len(rank_details) + 1,
+                "source_type": candidate.source_type,
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
+                "query_idf_baseline": rank_item.get("query_idf_baseline"),
+                "contributions": rank_item.get("rank_contributions") or [],
+            })
             public_item = candidate.as_public()
             public_item.update({
                 "text": selected_text,
@@ -187,6 +198,7 @@ class UnifiedRecallService:
                 "source_quality": round(float(rank_item.get("source_quality") or 0), 6),
                 "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
                 "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
             })
             public_item["citation"] = rank_item.get("citation") or public_item["citation"]
             public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
@@ -237,6 +249,9 @@ class UnifiedRecallService:
             "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
             "selection_mode": rank_stats.get("selection_mode", "confidence"),
             "scoring_version": rank_stats.get("scoring_version", "confidence-v1"),
+            "rescore_version": rank_stats.get("rescore_version", "disabled"),
+            "idf_source": rank_stats.get("idf_source", "none"),
+            "contribution_exponent": rank_stats.get("contribution_exponent"),
             "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
             "cache_hit": bool(cache_values) and all(cache_values),
             "cache_entries": 1,
@@ -249,6 +264,7 @@ class UnifiedRecallService:
             "stage_ms": stage_ms,
             "source_diagnostics": source_diagnostics,
             "scope_diagnostics": [],
+            "_rank_details": rank_details,
         }
 
     async def search(
@@ -359,7 +375,18 @@ class UnifiedRecallService:
             }
 
         selected: list[dict] = []
+        rank_details: list[dict] = []
         for candidate, selected_text, rank_item in ranked_candidates:
+            rank_details.append({
+                "rank": len(rank_details) + 1,
+                "source_type": candidate.source_type,
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
+                "query_idf_baseline": rank_item.get("query_idf_baseline"),
+                "contributions": rank_item.get("rank_contributions") or [],
+            })
             public_item = candidate.as_public()
             public_item.update({
                 "text": selected_text,
@@ -367,6 +394,7 @@ class UnifiedRecallService:
                 "source_quality": round(float(rank_item.get("source_quality") or 0), 6),
                 "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
                 "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
             })
             public_item["citation"] = rank_item.get("citation") or public_item["citation"]
             public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
@@ -441,6 +469,9 @@ class UnifiedRecallService:
             "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
             "selection_mode": rank_stats.get("selection_mode", "confidence"),
             "scoring_version": rank_stats.get("scoring_version", "confidence-v1"),
+            "rescore_version": rank_stats.get("rescore_version", "disabled"),
+            "idf_source": rank_stats.get("idf_source", "none"),
+            "contribution_exponent": rank_stats.get("contribution_exponent"),
             "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
             "cache_hit": bool(cache_values) and all(cache_values),
             "cache_entries": (
@@ -459,6 +490,7 @@ class UnifiedRecallService:
             "stage_ms": stage_ms,
             "source_diagnostics": source_diagnostics,
             "scope_diagnostics": scope_details,
+            "_rank_details": rank_details,
         }
 
 
@@ -498,6 +530,7 @@ async def search_memory(
         mode=mode,
     )
     scope_type, scope_key = _scope_record_fields(query_scopes)
+    rank_details = result.pop("_rank_details", [])
     record_recall(
         namespace="knowledge",
         source_type="memory",
@@ -518,13 +551,15 @@ async def search_memory(
         source_diagnostics=result.get("source_diagnostics"),
         scope_details=result.get("scope_diagnostics"),
         sidecar_reused=result.get("sidecar_reused"),
+        rank_details=rank_details,
         quality={
             key: result.get(key)
             for key in (
                 "accepted_count", "rejected_low_score", "rejected_not_preferred",
                 "rejected_duplicate", "rejected_parent", "rejected_source",
                 "rejected_diversity", "top_confidence", "confidence_threshold",
-                "preferred_confidence_threshold", "scoring_version",
+                "preferred_confidence_threshold", "scoring_version", "rescore_version",
+                "idf_source", "contribution_exponent",
             )
             if result.get(key) is not None
         },
@@ -590,6 +625,7 @@ async def search_knowledge(
         mode=mode,
     )
     scope_type, scope_key = _scope_record_fields(scope)
+    rank_details = result.pop("_rank_details", [])
     record_recall(
         namespace="knowledge", source_type="all" if source == "all" else source,
         candidate_count=result.get("candidate_count", 0), hit_count=len(result["results"]),
@@ -607,13 +643,15 @@ async def search_knowledge(
         sidecar_reused=result.get("sidecar_reused"),
         source_diagnostics=result.get("source_diagnostics"),
         scope_details=result.get("scope_diagnostics"),
+        rank_details=rank_details,
         quality={
             key: result.get(key)
             for key in (
                 "accepted_count", "rejected_low_score", "rejected_not_preferred",
                 "rejected_duplicate", "rejected_parent", "rejected_source",
                 "rejected_diversity", "top_confidence", "confidence_threshold",
-                "preferred_confidence_threshold", "scoring_version",
+                "preferred_confidence_threshold", "scoring_version", "rescore_version",
+                "idf_source", "contribution_exponent",
             )
             if result.get(key) is not None
         },
@@ -641,7 +679,9 @@ async def search_conversations(
         limit=max(1, min(int(limit or 6), 20)),
         mode=mode,
     )
+    rank_details = result.pop("_rank_details", [])
     record_recall(
+        rank_details=rank_details,
         namespace="conversation", source_type="conversation",
         candidate_count=result.get("candidate_count", 0),
         hit_count=len(result.get("results", [])),
@@ -657,7 +697,8 @@ async def search_conversations(
                 "accepted_count", "rejected_low_score", "rejected_not_preferred",
                 "rejected_duplicate", "rejected_parent", "rejected_source",
                 "rejected_diversity", "top_confidence", "confidence_threshold",
-                "preferred_confidence_threshold", "scoring_version",
+                "preferred_confidence_threshold", "scoring_version", "rescore_version",
+                "idf_source", "contribution_exponent",
             )
             if result.get(key) is not None
         },

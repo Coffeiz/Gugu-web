@@ -1,306 +1,190 @@
-# PRD-RAG-8：字段感知软重排与来源字段加权
+# PRD-RAG-8：全量 Token + IDF 非线性软重排
 
-> 状态：待实施
+> 状态：Phase 1/2/3 已完成，待 Phase 4 评估
 > 创建：2026-09-09
+> 更新：2026-09-09
 > 所属层：RAG / TypeScript Worker / Scorer & Ranker
 > 前置 PRD：[`PRD-RAG-7-TS全链路检索分阶段迁移.md`](./PRD-RAG-7-TS全链路检索分阶段迁移.md)
 > 关联 PRD：[`【已完成】PRD-RAG-6-TypeScript词法检索与评分过滤直接替换.md`](./【已完成】PRD-RAG-6-TypeScript词法检索与评分过滤直接替换.md)
 > 关联代码：`backend/ts/workers/rag/src/ranking/`
+> 离线验证脚本：`backend/ts/workers/rag/scripts/idf-rescore-from-report.ts`
 
 ## 0. 一句话目标
 
-在不替换现有 BM25/hybrid 召回、不改变权限边界和 `confidence-v1` 过滤契约的前提下，让项目名、活动标题、Knowledge 标题和 Knowledge 关键词等高信息字段获得可解释的软加权，同时让只命中正文、未命中这些字段的候选得到有限降权。
+在不改变 BM25/hybrid 召回、权限边界和 `confidence-v1` 过滤契约的前提下，使用完整 TS 索引的 IDF 判断本次查询中各 token 的信息量，对每个 token 的 BM25 贡献进行相对 IDF 加权，再使用 `p=2` 非线性聚合突出高信息 token。
 
 ## 1. 背景与问题
 
 ### 1.1 当前现状
 
-当前 RAG 已由 TypeScript Worker 承担词法索引、BM25、hybrid 融合、候选评分和统一排序。`RagDocument` 已经包含 `title`、`summary`、`text` 和 `metadata`，不同来源的业务字段在索引投影阶段已经落入这些字段：
+当前 RAG 已由 TypeScript Worker 承担词法索引、BM25、hybrid 融合、候选评分和统一排序。BM25 已经使用当前完整索引计算 IDF，但现有排序对 query 中多个 token 的贡献主要采用线性累加。
 
-| 来源 | 高信息字段 | 当前映射 |
-|---|---|---|
-| project | 项目名 | `document.title` |
-| calendar | 活动标题 | `document.title` |
-| scheduled_task | 定时任务名 | `document.title` |
-| knowledge | Knowledge 标题 | `document.title` |
-| knowledge | Knowledge 关键词 | `document.metadata.keywords` |
-| file | 文件名 | `document.title` |
+当前链路为：
 
-这些字段同时也可能被拼进统一检索文本，因此当前 BM25 会把它们当作普通正文的一部分处理。字段本身的“对象身份”价值没有被单独表达。
+```text
+完整 TS 索引 → BM25 / hybrid 召回 → 来源归一化与融合
+→ confidence-v1 → 统一排序、去重和字符预算
+```
 
 ### 1.2 可复现问题
 
-当用户查询一个具体项目或实体时，正文中包含泛化词的其他候选可能获得较高 BM25 分。例如查询 `speedream` 时，真正的项目名命中应该明显优先于只在正文中出现“设计”等泛化词的文件或 Knowledge。
+查询 `蒙扎的 T6 叫什么` 时，Knowledge 实际命中了 `t6`、`蒙`、`扎`、`的`，其中 `t6` 单项贡献最高；但 conversation 命中了 `蒙`、`扎`、`叫`、`什么`，多个贡献线性累加后反而超过 Knowledge。
 
-但不能简单规定“没有命中标题就排除”：
-
-- “今天有什么安排”可能只命中日程正文或日期字段；
-- “之前讨论过缓存问题吗”可能只命中会话、Memory 或 Knowledge 正文；
-- “帮我看看项目”本身缺少稳定实体，标题未命中不能成为硬过滤条件。
-
-因此需要的是基于查询具体程度的软重排，而不是来源硬优先级或标题硬过滤。
+问题不是召回缺失，而是线性聚合没有充分突出高信息 token，导致“命中更多口语 token”的候选可能压过“命中明确实体”的候选。
 
 ## 2. 目标与非目标
 
 ### 2.1 目标
 
-1. 为项目名、活动标题、Knowledge 标题和 Knowledge 关键词提供独立、可解释的匹配信号。
-2. 对高辨识度查询提高名称/关键词命中的候选排序；对只命中正文的候选有限降权。
-3. 保持当前 BM25、hybrid、权限、scope、去重、字符预算和 `confidence-v1` 的既有语义。
-4. 将原始融合分、字段匹配分、字段调整因子和最终排序分分开记录，便于 LoopScope 解释排名变化。
-5. 让中文、英文、数字、混合实体和 i18n 查询使用同一套字段匹配逻辑，不维护按语言分裂的算法分支。
-6. 通过真实 run 报告和固定 fixture 调参，避免凭单个案例直接放大权重。
+1. 使用完整 TS 索引计算 query token 的 IDF，不使用候选子集重新计算 IDF。
+2. 保留所有 query token，不使用固定 stopword 表，也不按语言拆分算法。
+3. 让 token 的相对 IDF 决定额外权重，高信息 token 获得更高贡献。
+4. 对逐 token 加权贡献使用有界非线性聚合，默认指数 `p=2`。
+5. 适用于 conversation、knowledge、project、calendar、file、memory 等所有来源。
+6. 保留原始融合分、逐 token 贡献和最终排序分，便于 LoopScope 解释排名变化。
+7. 通过真实 run 报告和固定 fixture 验证高信息实体与泛词多命中之间的排序差异。
 
 ### 2.2 非目标
 
-- 第一阶段不重写 BM25，也不把该方案做成完整 BM25F 索引重构。
-- 不在 `source_type=project/calendar/knowledge` 时无条件整体加分；只有字段实际命中才加权。
-- 不把标题未命中作为硬过滤，不把正文命中结果直接删除。
-- 不在第一阶段引入大型语言词典、按语言拆分的 stopword 表或 POS 词性系统。
+- 第一阶段不重写 tokenizer、倒排索引、BM25 召回或 hybrid 融合。
+- 不按 `source_type`、title、项目名、活动名或 Knowledge 名称写专用加分分支。
+- 不删除低 IDF token，不把任何 token 设为硬 MUST 条件。
+- 不引入大型语言词典、按语言拆分的 stopword 表或 POS 词性系统。
 - 不修改 owner、workspace、project、folder、group/member 等权限校验。
 - 不把加权后的分数覆盖现有 `fused_score`，不破坏现有诊断字段含义。
-- 不在第一阶段改变 `confidence-v1` 的 `0.35/0.55` 阈值。
+- 不在第一阶段把 `rank_score` 直接用于 `confidence-v1`，也不改变其 `0.35/0.55` 阈值。
 
 ## 3. 设计原则
 
-### 3.1 基础召回与字段重排分层
+### 3.1 召回、评分、重排分层
 
 现有流程保持不变：
 
 ```text
 BM25 / hybrid 召回
         ↓
-来源内归一化
+来源归一化与融合
         ↓
-字段感知 scorer
+现有 confidence-v1 诊断
         ↓
-rank_score
+全量 token + 相对 IDF soft-rescore
         ↓
-ranker 排序
+非线性聚合得到 rank_score
         ↓
-现有 confidence、去重、预算和输出选择
+统一排序、去重、来源上限和字符预算
 ```
 
-字段加权是候选重排信号，不是权限判断，也不是新的召回来源。
+新算法只负责排序信号，不负责权限判断、候选召回或内容过滤。
 
-### 3.2 只对高信息字段加权
+### 3.2 完整索引 IDF
 
-字段信号按“这个字段是否说明候选对象就是用户要找的对象”定义：
-
-| 字段 | 初始权重 | 说明 |
-|---|---:|---|
-| project.name / `title` | 1.00 | 项目身份字段 |
-| calendar.title / `title` | 1.00 | 活动身份字段 |
-| knowledge.title / `title` | 1.00 | Knowledge 身份字段 |
-| knowledge.keywords | 0.90 | 人工或系统维护的显式关键词 |
-| scheduled_task.name / `title` | 0.90 | 任务身份字段 |
-| file.name / `title` | 0.90 | 文件身份字段，作为同一机制接入 |
-
-正文仍由现有 BM25 处理，不因为正文属于某种来源而额外加分。
-
-### 3.3 软加权和软降权
-
-字段匹配因子必须有明确上下界：
+IDF 必须来自当前 scope/revision 对应的完整 TS 索引：
 
 ```text
-没有明显字段信号       约 1.00
-只命中正文             0.88 ~ 0.98
-字段部分命中           1.05 ~ 1.18
-字段高覆盖命中         1.25 ~ 1.35
-完整查询命中身份字段   1.40 ~ 1.50
+idf(t) = log(1 + (N - df(t) + 0.5) / (df(t) + 0.5))
 ```
 
-具体因子还要乘以查询具体程度。泛查询的调整幅度更小，避免“今天安排”被名称字段支配；实体查询的调整幅度更大，避免“speedream”被无关正文结果稀释。
+其中 `N` 是完整索引文档数，`df(t)` 是包含 token `t` 的文档数。不使用当前 Top-K 或候选子集估算 IDF。
 
-## 4. 字段匹配算法
+### 3.3 查询级相对权重
 
-### 4.1 查询与高信息字段分别分词
-
-当前 BM25 对组装后的 `document.text` 统一分词，标题、文件名和关键词只是作为正文的一部分参与检索。字段 scorer 不复用这个混合文本作为字段信号，而是先对查询和每个高信息字段独立分词：
+对 query 去重分词，但不删除 token。只对存在于完整索引中的 token 计算本次 query 的 IDF 基准：
 
 ```text
-query
- ├─ query_tokens
- └─ normalized_query_phrase
-
-title / project name / activity title
- ├─ title_tokens
- └─ normalized_title_phrase
-
-file name
- ├─ filename_tokens
- └─ normalized_filename_phrase
-
-knowledge keywords
- ├─ keyword_tokens
- └─ normalized_keyword_phrases
+baseline = mean(idf(t))
+query_weight(t) = clamp((idf(t) / baseline) ^ idf_exponent, 0.25, 4.0)
 ```
 
-字段匹配至少支持：
+第一版 `idf_exponent=1`。这一步只决定 token 的相对权重，不重复计算或重复乘一遍 IDF。
 
-1. 规范化后的完整短语命中；
-2. 加权 token 覆盖率命中；
-3. 单 token 部分命中。
+## 4. 全量 Token 非线性重排算法
 
-所有字段复用当前统一 tokenizer，不为中文、英文、日文或混合查询增加独立算法分支。字段 scorer 不做词性分析，也不依赖按语言拆分的词库。
+### 4.1 单 token BM25 贡献
 
-规范化只用于比较，不改变原始文档正文：
-
-- Unicode 大小写归一化；
-- 合并可忽略空白；
-- 将 `-`、`_`、`.`、空格等文件名连接符作为 token 边界；
-- 关键词字段额外按 `、`、逗号、分号和 `#` 等分隔符切分；
-- 保留数字、版本号、项目标识符和中英文实体。
-
-字段 scorer 的内部输入应能表达以下结构：
-
-```ts
-{
-  queryTokens,
-  titleTokens,
-  filenameTokens,
-  keywordTokens,
-  exactTitleText,
-  exactFilenameText,
-}
-```
-
-文件名示例：
+对每个候选和每个 query token，使用现有 BM25 参数计算 token 的原始贡献：
 
 ```text
-F1蒙扎-排位赛-圈速差距图-本地-v5.png
+norm(t, d) = tf(t, d) + k1 × (1 - b + b × |d| / avgdl)
+
+bm25_term(t, d) =
+  idf(t) × tf(t, d) × (k1 + 1) / norm(t, d)
 ```
 
-应保留并分别识别类似以下 token：
+默认参数沿用现有 worker：`k1=1.2`、`b=0.75`。
+
+再乘以 query 相对 IDF 权重：
 
 ```text
-F1、蒙扎、排位赛、圈速、差距、图、本地、v5
+weighted_term(t, d) = bm25_term(t, d) × query_weight(t)
 ```
 
-文件扩展名默认不参与字段权重；只有用户明确查询 `.png`、`.svg` 等扩展名时，才允许作为普通 token 参与匹配。文件路径不得进入字段 scorer。
+### 4.2 非线性贡献放大
 
-### 4.2 加权字段匹配分
-
-对每个候选计算字段覆盖率：
+对每个 token 的加权贡献做幂函数放大：
 
 ```text
-title_match   ∈ [0, 1]
-keyword_match ∈ [0, 1]
+nonlinear_term(t, d) = weighted_term(t, d) ^ p
+rank_score(d) = Σ nonlinear_term(t, d)
 ```
 
-字段匹配分不简单相加，避免标题和关键词重复表达同一信息时被双重放大：
+第一版固定 `p=2`。这会放大高贡献 token 的差异，同时保留多个 token 的累积效果；不是取最大 token，也不是硬过滤其他 token。
+
+### 4.3 示例
+
+查询 `蒙扎的 T6 叫什么` 的离线结果：
 
 ```text
-identity_match =
-  1 - (1 - title_match) × (1 - 0.90 × keyword_match)
+Knowledge：
+t6 = 11.929 → 142.308
+扎  =  6.361 →  40.468
+蒙  =  6.361 →  40.468
+的  =  0.155 →   0.024
+总分 = 223.267
+
+Curva Biassono：
+扎   = 8.504 → 72.311
+蒙   = 8.504 → 72.311
+叫   = 8.040 → 64.640
+什么 = 3.029 →  9.174
+总分 = 218.436
 ```
 
-对于没有关键词字段的来源，使用 `title_match`；对于项目、日程、任务和文件，`title_match` 是主要身份信号。
+非线性聚合后，Knowledge 从原来的第 3 位升到第 1 位。
 
-完整查询短语命中标题时，`title_match` 直接接近 `1.0`；只有一个泛化 token 命中时，保持较低的部分覆盖分。
-
-### 4.3 查询具体程度
-
-查询具体程度用于控制字段加权幅度，不作为独立过滤器。优先使用当前 BM25 语料已有的 IDF 统计：
+### 4.4 分数语义
 
 ```text
-query_specificity =
-  clamp(查询有效 token 的信息量聚合结果, 0, 1)
+fused_score             原始 BM25/hybrid 融合分
+normalized_score        来源归一化分
+confidence              现有 confidence-v1
+weighted_term           非线性前的逐 token 贡献
+nonlinear_term          非线性后的逐 token 贡献
+rank_score              nonlinear_term 的总和
 ```
 
-建议聚合方式：
-
-- 稀有实体、项目标识符、版本号、混合字母数字词提高具体程度；
-- 在语料中高频的泛词降低具体程度；
-- 查询只有泛词时保持低具体程度；
-- 查询中出现未知但稳定的实体 token 时，不因没有历史 df 而把它当作无信息词。
-
-第一阶段可以先复用现有 IDF 和 token 特征生成稳定的 bounded 值；不要在 scorer 中重复计算或再次乘一遍 IDF。
-
-### 4.4 初始字段因子
-
-推荐的初始形式：
-
-```text
-field_adjustment =
-    +0.35 × identity_match
-    -0.12 × (1 - identity_match)
-
-field_factor =
-    1 + query_specificity × field_adjustment
-```
-
-边界示例：
-
-| 查询具体程度 | 字段匹配 | 因子效果 |
-|---:|---:|---:|
-| 1.0 | 1.0 | 1.35 |
-| 1.0 | 0.5 | 1.105 |
-| 1.0 | 0.0 | 0.88 |
-| 0.3 | 1.0 | 1.105 |
-| 0.3 | 0.0 | 0.964 |
-
-完整短语命中身份字段时，可在不超过 `1.50` 的总上限内增加一次 exact phrase bonus。所有因子最终必须经过 clamp，禁止由单个字段命中产生无限放大。
-
-### 4.5 最终排序分
-
-第一阶段不修改原始融合分：
-
-```text
-base_score = candidate.fused_score
-rank_score = base_score × field_factor
-```
-
-排序和后续候选顺序使用 `rank_score`。以下字段保持原语义：
-
-```text
-fused_score       原始 BM25/hybrid 融合分
-normalized_score  来源归一化分
-rank_score        字段感知重排分
-field_factor      本次字段调整因子
-field_match       身份字段匹配分
-field_hits        命中的字段名称
-```
-
-如果后续确认字段分也应参与置信度，再单独设计 `confidence-v2`；不得在第一阶段静默把 `rank_score` 塞进现有 `confidence-v1`。
+`rank_score` 仅用于排序，不覆盖 `fused_score`，也不直接进入 `confidence-v1`。
 
 ## 5. 典型案例
 
-### 5.1 具体项目查询
+### 5.1 高信息实体查询
 
 查询：
 
 ```text
-我再看看 speedream 前端设计
+蒙扎的 T6 叫什么
 ```
 
-候选 A：项目名 `speedream前端设计`
+高信息 token `t6` 的单项贡献应通过 `p=2` 被显著放大；只命中 `蒙`、`扎`、`叫`、`什么` 的 conversation 不应仅凭命中数量压过明确包含 `t6` 的 Knowledge。
 
-```text
-正文 BM25       正常
-项目名命中      高覆盖
-field_factor    约 1.25 ~ 1.40
-```
-
-候选 B：文件名 `新手引导设计`
-
-```text
-正文 BM25       可能有分
-身份字段命中    0 或很低
-field_factor    约 0.88 ~ 0.98
-```
-
-候选 B 不会被删除，但在 BM25 接近时应自然落到候选 A 后面。
-
-### 5.2 Knowledge 标题和关键词
+### 5.2 混合语言和标识符
 
 查询：
 
 ```text
-Monza corner
+speedream frontend
 ```
 
-Knowledge 标题命中 `Monza`、关键词命中 `corner` 时，标题和关键词联合形成高 `identity_match`；只有正文中提到其中一个词的其他 Knowledge 不获得同等加权。
+`speedream`、`frontend`、版本号和其他字母数字标识符与中文 token 走同一 tokenizer、IDF 和非线性贡献路径，不增加语言分支。
 
 ### 5.3 泛查询
 
@@ -310,107 +194,133 @@ Knowledge 标题命中 `Monza`、关键词命中 `corner` 时，标题和关键�
 最近有什么安排
 ```
 
-即使没有命中某个活动标题，也只产生轻微降权。日程正文、日期和任务内容仍可依靠原始 BM25 排到前面。
+所有 token 仍可参与计算。由于高频 token 的 IDF 相对较低，其贡献自然较小；日程正文、日期和任务内容仍可依靠原始 BM25/hybrid 排到前面，不因未命中某个标题被硬过滤。
 
 ## 6. 诊断与 LoopScope
 
-字段重排必须可解释，但诊断不得泄露用户正文。每个候选只记录必要的结构化信息：
+重排诊断必须能够解释高 IDF token 的影响，但不得泄露用户正文：
 
 ```json
 {
-  "scoring_version": "field-v1",
-  "base_score": 0.42,
-  "field_match": 0.86,
-  "query_specificity": 0.91,
-  "field_factor": 1.29,
-  "rank_score": 0.54,
-  "field_hits": ["title", "keywords"]
+  "scoring_version": "idf-nonlinear-v1",
+  "idf_source": "full_ts_index",
+  "idf_exponent": 1,
+  "contribution_exponent": 2,
+  "fused_score": 0.42,
+  "confidence": 0.61,
+  "rank_score": 223.267,
+  "matched_terms": ["t6", "蒙", "扎"],
+  "term_contributions": [
+    {"term": "t6", "weighted": 11.929, "nonlinear": 142.308}
+  ]
 }
 ```
 
 约束：
 
-- 不记录查询原文、正文、附件名、用户昵称、内部路径、密钥或 token；
-- `field_hits` 只允许固定字段枚举，不写入字段值；
-- 保留 `fused_score` 和 `rank_score`，方便定位是召回分问题还是重排问题；
-- `scoring_version` 变更时必须同步测试和 LoopScope 诊断契约。
+- 不记录查询原文、候选正文、附件原名、用户昵称、内部路径、密钥或 token；
+- 如果线上日志需要关联 token，使用现有 fingerprint/脱敏机制；
+- `idf_source`、指数和 `scoring_version` 必须进入 LoopScope 诊断；
+- 算法版本变化时，必须同步测试、回放报告和协议诊断。
 
 ## 7. 实施分期
 
-### Phase 0：离线基线与测试数据
+### Phase 0：离线算法与基线
 
-- [ ] 固定当前 `speedream`、Knowledge 标题/关键词、日程、泛查询和正文误命中案例。
-- [ ] 从已有 LoopScope 报告提取候选 ID、原始分、来源和当前排序，正文只保存在本地受控诊断目录。
-- [ ] 增加 scorer 单测，覆盖完整命中、部分命中、只命中正文、空字段和混合语言。
-- [ ] 明确 `field_factor` 的上下界和 `rank_score` 的排序契约。
+- [x] 使用完整 TS 索引计算 IDF。
+- [x] 保留全部 query token，不做 token 过滤。
+- [x] 增加逐 token BM25、相对 IDF 和非线性贡献的离线报告。
+- [x] 增加 `--contribution-exponent` 参数，支持 `p=1` 与 `p=2` 对比。
+- [x] 用 `蒙扎的 T6 叫什么` 验证 Knowledge 从第 3 位升至第 1 位。
 
-### Phase 1：字段 scorer
+### Phase 1：生产 scorer/ranker 接入
 
-- [ ] 在 `src/ranking/` 实现字段匹配、查询具体程度和 bounded factor。
-- [ ] 保留 `fused_score`、`normalized_score` 和 `confidence-v1` 原逻辑。
-- [ ] 在 ranker 中接入 `rank_score` 排序，不改变权限、去重和字符预算。
-- [ ] 更新 TypeScript contract、Python bridge 和 LoopScope 诊断字段。
+- [x] 在 `backend/ts/workers/rag/src/ranking/` 收敛 scorer 与 ranker 的非线性算法实现。
+- [x] 保留完整索引 IDF 统计，禁止从 Top-K 候选重新估计 IDF。
+- [x] 保持召回、权限、scope、去重、来源限制和字符预算不变。
+- [x] 将 `rank_score` 接入排序，但保留 `fused_score`、`normalized_score` 和 `confidence-v1`。
+- [x] 增加非线性排序 fixture；现有 BM25-only、hybrid、无向量和多来源协议测试继续覆盖边界。
 
 ### Phase 2：离线回放与 shadow
 
-- [ ] 对真实脱敏 run 执行旧排序与新排序对比。
-- [ ] 统计 Top-1/Top-3 变化、字段命中率、正文-only 候选降权比例和泛查询误伤率。
-- [ ] 未达到验收标准前只记录 shadow 结果，不切生产排序。
+- [x] 对真实 run 执行 `p=1` 与 `p=2` 对比，统计 Top-1/Top-3 变化。
+- [x] 通过逐项贡献和完整内容报告检查高 IDF 单 token、泛词多 token 与正文长度归一化的排序变化。
+- [x] 复核泛查询样本，未发现仅凭单个偶然高 IDF token 把无关候选抬到 Top-1 的情况；保留 bounded 权重作为风险边界。
+- [x] 生产链保留 `rescore_version`/`idf_source`/`contribution_exponent` 诊断；未完成 devserver 核验前不宣称最终启用。
 
-### Phase 3：devserver 验证与小范围启用
+### Phase 3：devserver 验证与启用
 
-- [ ] 使用 devserver 固定账号和固定索引 revision 验证冷/热索引、BM25-only、hybrid 和空关键词场景。
-- [ ] 检查 LoopScope 能否同时看到 `fused_score` 与 `rank_score`。
-- [ ] 通过后再决定是否启用默认字段重排。
+- [x] 使用固定账号、固定 scope 和固定 index revision 验证冷/热索引。
+- [x] 验证 BM25-only、hybrid、embedding 不可用和索引重建场景。
+- [x] 检查 LoopScope 同时展示原始分、confidence、逐 token 贡献和 rank_score。
+- [x] 通过回放和人工核验后，默认启用 `p=2`。
 
 ### Phase 4：后续评估
 
-- [ ] 根据回放结果决定是否把字段信号纳入 confidence。
-- [ ] 若需要，另立 `confidence-v2` 变更，明确阈值迁移和兼容策略。
-- [ ] 只有在 post-rescore 信号不足时，才评估真正的 BM25F 多字段索引；不提前引入索引重建成本。
+- [ ] 评估 `p=1.5`、`p=2`、`p=2.5` 的稳定性，不直接扩大指数。
+- [ ] 如果 rank_score 需要参与过滤，另立 confidence-v2 PRD，不在本 PRD 中静默改变阈值。
+- [ ] 只有在单 token 信息仍不足时，才重新评估 BM25F 或字段索引，不提前引入字段专用分支。
 
 ## 8. 验收标准
 
 ### 8.1 正确性
 
-- 具体项目名命中时，对应项目在同等基础分下优先于只命中正文的文件或 Knowledge。
-- Knowledge 标题/关键词命中时，相关 Knowledge 获得加权；只有正文命中时不获得同等加权。
-- 活动标题命中时，活动优先；查询日期、时间或安排等泛词时，不能因为标题未命中而过滤日程。
-- 没有字段命中的候选仍可保留，只受到 bounded 软降权。
-- 空标题、空关键词、未知来源和旧索引数据不会导致异常或 NaN 分数。
+- 完整索引 IDF 与 BM25 使用同一 scope/revision。
+- 所有 query token 都可以参与评分；未索引 token 不产生异常或 NaN。
+- 高 IDF token 的单项贡献在 `p=2` 下得到稳定放大。
+- 多个低信息 token 的线性累加不能轻易压过明确实体 token 的合理匹配。
+- 具体实体查询中，正确 Knowledge/项目/活动/文件可以因命中实体而升序，但不依赖 `source_type` 硬编码。
+- 没有命中高信息 token 的候选仍由原始 BM25/hybrid 决定，不被硬删除。
 
 ### 8.2 稳定性
 
-- 现有 BM25、hybrid、权限、scope、去重、父级限制和字符预算测试全部通过。
-- `fused_score` 的含义保持不变。
-- `confidence-v1` 阈值和结果契约保持不变，除非另立版本迁移。
-- 同一 query、revision、候选集和配置下排序结果确定性一致。
-- 字段重排失败时必须显式记录错误类别，不得静默把所有候选变成高分或零分。
+- 现有 BM25、hybrid、权限、scope、去重、来源上限和字符预算测试全部通过。
+- `fused_score`、`normalized_score` 和 `confidence-v1` 含义不变。
+- 同一 query、scope、revision、候选集和参数下排序确定性一致。
+- 非线性计算失败时显式报告错误，不静默把候选变成零分或无限分。
+- 分数过大时仍使用有限权重、有限指数和稳定浮点计算。
 
 ### 8.3 质量指标
 
-第一阶段先使用离线回放和人工核验，不设未经基线验证的绝对线上指标。至少记录：
+至少记录：
 
 - 具体实体查询的目标对象 Top-1/Top-3 命中率；
-- 正文-only 候选的平均降权幅度；
-- 字段命中候选的平均提升幅度；
+- 高 IDF 单 token 命中候选的平均排名变化；
+- 泛词多 token 候选的误抬高率；
 - 泛查询的排序变化率和误伤率；
-- 新旧排序的首个差异位置及候选来源。
+- `p=1` 与 `p=2` 的首个差异位置；
+- BM25-only 与 hybrid 两种模式下的排序稳定性。
 
 ## 9. 风险与应对
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| 标题字段过度加权 | 泛查询被项目/Knowledge 名称霸榜 | 使用 query_specificity 控制幅度，保持因子上限 |
-| 关键词重复计分 | Knowledge 被重复抬高 | 使用递减合并，不简单相加 |
-| source normalization 掩盖字段效果 | 真实跨来源提升不明显 | 在现有归一化后的基础分上做 bounded rescore，并记录诊断 |
-| hybrid 分数尺度差异 | 不同融合模式下因子效果不同 | 保留原分数，分别在 BM25-only/hybrid fixture 校准 |
-| confidence 与 rank_score 混用 | 阈值行为不可解释 | 第一阶段只用 rank_score 排序，保留 confidence-v1 |
-| 语言或 tokenizer 差异 | 中英文混合查询结果不稳定 | 复用统一 tokenizer，测试混合实体，不按语言复制算法 |
-| 字段缺失或旧索引 | 重排结果异常 | 字段缺失按无字段信号处理，不伪造命中 |
+| 非线性指数过大 | 单个偶然 token 过度支配排序 | 第一版固定 `p=2`，离线比较后再调参 |
+| query 中存在 typo/随机串 | 罕见 token 获得过高 IDF | 记录高 IDF 命中案例，后续增加实体确认或上限，不先做硬过滤 |
+| 泛词多 token 仍然累计较高 | 具体实体没有稳定上升 | 比较 `p=1`/`p=2`，必要时评估 top-contribution 聚合 |
+| 文档长度归一化影响过强 | 长 Knowledge 被系统性压低 | 保持 BM25 参数不变，单独统计长度分布后再调参 |
+| IDF 语料范围错误 | 分数不可解释、跨 scope 漂移 | 绑定 index revision 和完整语料统计，禁止候选池 IDF |
+| rank_score 与 confidence 混用 | 过滤阈值行为变化 | 第一阶段明确分离，另立 confidence-v2 |
+| 分数数值膨胀 | 诊断和序列化不稳定 | 指数和权重 bounded，使用有限浮点并记录版本 |
 
 ## 10. 当前结论
 
-采用“现有融合分 + 字段感知 bounded soft-rescore”的方案作为第一版。先验证项目名、活动标题、Knowledge 标题/关键词对具体查询的排序收益，再决定是否扩展到 confidence 或真正的 BM25F 多字段索引。
+采用以下排序算法作为 RAG-8 第一版生产目标：
 
-第一阶段的成功标准不是让所有标题命中结果都排第一，而是让高辨识度查询中的身份字段命中成为稳定、可解释的强信号，同时保留正文检索对泛查询和描述性问题的召回能力。
+```text
+完整 TS 索引 IDF
+  ↓
+BM25 单 token 贡献
+  ↓
+相对 query IDF 加权
+  ↓
+逐 token p=2 非线性放大
+  ↓
+求和得到 rank_score
+  ↓
+排序
+```
+
+离线真实索引验证表明，`蒙扎的 T6 叫什么` 中 Knowledge 文档能够从第 3 位升到第 1 位，说明该算法可以突出 `t6` 这类高信息实体，同时保留 `蒙`、`扎` 等辅助命中。
+
+Phase 1 已接入生产 scorer/ranker，Phase 2 已完成 12 条真实查询的 p=1/p=2 shadow 回放；报告显示 Top-1 变化 4/12、Top-3 集合变化 11/12，`蒙扎的 T6 叫什么` 的 Knowledge 结果由第 3 位升至第 1 位。Phase 3 已在 devserver 完成固定 revision 的冷/热索引、BM25-only、hybrid、embedding 不可用与索引重建验证；LoopScope 受控 trace 同时记录 `fused_score`、`confidence`、`rank_score`、IDF 基线和逐 token 贡献，生产默认使用 `p=2`。后续仅保留 Phase 4 的参数稳定性和过滤策略评估。

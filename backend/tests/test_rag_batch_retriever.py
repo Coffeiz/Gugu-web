@@ -58,6 +58,15 @@ def test_source_order_includes_calendar_sources():
     )
 
 
+@pytest.mark.parametrize("source_type", [
+    "file", "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",
+])
+def test_indexed_source_retriever_accepts_every_unified_persistent_source(source_type):
+    """Python 来源容器必须覆盖 TS unified_query 已注册的持久化来源。"""
+    retriever = IndexedSourceRetriever("synthetic-owner", source_type=source_type)
+    assert retriever.source_type == source_type
+
+
 @pytest.mark.asyncio
 async def test_memory_only_query_runs_transient_spec_without_persistent_sources(monkeypatch):
     """只有 Memory 的显式查询：持久化索引仅作 IPC 宿主，searches 只含瞬态规格。"""

@@ -199,7 +199,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
     def _resolve_rank_rows(self, ts_index, response, memory_documents):
         """把 worker 选中行回连 Python 文档，输出 (candidate, text, row) 三元组。"""
         from agent.rag.index_cache import _worker_document_key
-        from agent.rag.models import RecallCandidate, RecallResult
+        from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 
         documents_by_key = dict(ts_index.documents_by_id)
         for document in memory_documents or ():
@@ -207,6 +207,27 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         triples = []
         for row in response.get("selected") or []:
             document = documents_by_key.get(str(row.get("document_key") or ""))
+            if document is None:
+                # 冷恢复时 Python 侧可能没有持久化文档副本，但 TS 仍会返回
+                # citation/text。不要因此静默丢掉 knowledge/file/project 等结果。
+                citation = row.get("citation") if isinstance(row.get("citation"), dict) else {}
+                source_type = str(citation.get("source_type") or row.get("source_type") or "")
+                source_id = str(citation.get("source_id") or "")
+                chunk_id = str(citation.get("chunk_id") or row.get("document_key") or "")
+                text = str(row.get("text") or "").strip()
+                if source_type and (source_id or chunk_id) and text:
+                    document = IndexDocument(
+                        document_id=chunk_id or source_id,
+                        source_type=source_type,
+                        source_id=source_id or chunk_id,
+                        scope=Scope(owner_user_id=str(ts_index.client.owner_user_id)),
+                        title=str(citation.get("title") or ""),
+                        summary="",
+                        content=text,
+                        version=str(citation.get("version") or "restored"),
+                        parent_document_id=source_id or None,
+                        updated_at=str(citation.get("updated_at") or "") or None,
+                    )
             if document is None:
                 continue
             candidate = RecallCandidate.from_result(

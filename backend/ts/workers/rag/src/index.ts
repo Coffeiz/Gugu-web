@@ -14,8 +14,9 @@ import type {
 import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
 import { tokenizeRaw } from "./tokenizer.ts";
 import { buildSourceDocuments, type RagSourceBatch } from "./index-builder.ts";
-import { rankCandidates, selectUnifiedRecall } from "./service.ts";
-import { scoreTerms, termFrequency, tokenize as tokens } from "./ranking/bm25.ts";
+import { rankCandidates } from "./service.ts";
+import { corpusStatistics, mergeCorpusStatistics, scoreTerms, termFrequency, tokenize as tokens } from "./ranking/bm25.ts";
+import { rankingText } from "./ranking/document-text.ts";
 import type { Posting } from "./ranking/types.ts";
 
 const VERSION = RAG_WORKER_VERSION;
@@ -134,7 +135,7 @@ function replaceInMemory(state: State, revision: string, documents: Document[]):
 function addDocument(state: State, document: Document): void {
   state.documents.push(document);
   state.documentsById.set(document.id, document);
-  const frequency = termFrequency(tokens(document.text));
+  const frequency = termFrequency(tokens(rankingText(document)));
   const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
   state.lengths.set(document.id, length);
   state.totalLength += length;
@@ -150,7 +151,7 @@ function addDocument(state: State, document: Document): void {
 function removeDocument(state: State, id: string): void {
   const document = state.documentsById.get(id);
   if (!document) return;
-  const frequency = termFrequency(tokens(document.text));
+  const frequency = termFrequency(tokens(rankingText(document)));
   const length = state.lengths.get(id) ?? 0;
   state.totalLength -= length;
   for (const term of frequency.keys()) {
@@ -374,6 +375,9 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       }
     }
     const rankOptions = (request.rank ?? {}) as NonNullable<typeof request.rank>;
+    const rankingStatistics = hasTransient
+      ? mergeCorpusStatistics([state, transient])
+      : corpusStatistics(state);
     const ranked = rankCandidates(request.query, payload, {
       limit: Number(rankOptions.limit ?? 5),
       maxChars: Number(rankOptions.max_chars ?? 3000),
@@ -381,6 +385,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       maxPerParent: Number(rankOptions.max_per_parent ?? 3),
       excludeContentHashes: rankOptions.exclude_content_hashes ?? [],
       selectionMode: rankOptions.selection_mode ?? "confidence",
+      corpusStatistics: rankingStatistics,
     });
     const document_counts: Record<string, number> = {};
     for (const corpus of [state, transient]) {
@@ -525,16 +530,36 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const allowedSources = new Set(request.source_types ?? []);
     const searched = search(state, request.query ?? "", 50, allowedSources, request.scope);
     const documentsById = new Map(state.documents.map((document) => [document.id, document]));
-    const output = selectUnifiedRecall(
-      searched.results.flatMap((result) => {
-        const document = documentsById.get(result.id);
-        return document ? [{ result, document }] : [];
-      }),
-      { limit: request.limit ?? 5, maxChars: request.max_chars ?? 3000 },
-    );
-    return { status: "ok", version: VERSION, revision: state.revision, ...output };
+    const candidates: RagRankCandidate[] = searched.results.flatMap((result) => {
+      const document = documentsById.get(result.id);
+      return document ? [{
+        id: result.id,
+        source_type: document.source_type,
+        raw_score: result.score,
+        fusion: "bm25" as const,
+        fused_score: null,
+        document,
+      }] : [];
+    });
+    const ranked = rankCandidates(request.query ?? "", candidates, {
+      limit: request.limit ?? 5,
+      maxChars: request.max_chars ?? 3000,
+      selectionMode: "top_k",
+      corpusStatistics: corpusStatistics(state),
+    });
+    const results = ranked.results.flatMap((result) => {
+      const document = documentsById.get(result.id);
+      return document ? [{ ...document, text: result.text }] : [];
+    });
+    return { status: "ok", version: VERSION, revision: state.revision, results, has_more: candidates.length > results.length, diagnostics: ranked.diagnostics };
   }
   if (request.op === "rank_candidates") {
+    const diagnosticCorpus = Array.isArray(request.corpus_documents)
+      ? makeState()
+      : null;
+    if (diagnosticCorpus) {
+      replaceInMemory(diagnosticCorpus, "diagnostic", request.corpus_documents ?? []);
+    }
     const output = rankCandidates(
       request.query ?? "",
       (request.candidates ?? []) as RagRankCandidate[],
@@ -545,6 +570,9 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         maxPerParent: request.max_per_parent ?? 3,
         excludeContentHashes: request.exclude_content_hashes ?? [],
         selectionMode: request.selection_mode ?? "confidence",
+        corpusStatistics: diagnosticCorpus
+          ? corpusStatistics(diagnosticCorpus)
+          : corpusStatistics(state),
       },
     );
     return {

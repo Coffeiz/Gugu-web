@@ -10,7 +10,10 @@
               │ 成功写入后发布索引事件
               ▼
         Python 来源适配器
-              │ 生成已授权的 IndexDocument
+              │ 生成已授权、未切块的 source record
+              ▼
+        TS canonical projection
+              │ 文本组装、切块、版本、wire document
               ▼
    knowledge_index_entries（统一持久投影）
               │
@@ -25,9 +28,10 @@
 职责划分如下：
 
 - 业务表、Knowledge 文件和 Memory 存储保存事实数据。
-- Python 负责权限边界、来源适配、分块、版本、持久投影和正文回填。
+- Python 负责业务主数据读取、权限边界、source record、持久化事务和正文回填。
+- TS worker 是唯一的索引投影实现，负责来源文本组装、分块、版本、wire document、BM25、融合和排序。
 - `knowledge_index_entries` 只保存可重建的统一索引文档；不能把它当作业务主表使用。
-- TS worker 负责 Jieba 分词、BM25、候选召回、向量融合和候选排序，不访问数据库、不判断用户权限、不输出未授权正文。
+- TS worker 负责来源 projection、Jieba 分词、BM25、候选召回、向量融合和候选排序，不访问数据库、不判断用户权限、不输出未授权正文。
 - 最终召回结果必须经过 Python 的 owner/scope 校验；TS 返回的分数不能替代权限判断。
 
 ## 2. 来源与映射
@@ -55,7 +59,8 @@
 
 1. 先完成主数据写入并提交事务。
 2. 提交成功后发布 `RagIndexUpdated`；Memory 使用 `MemoryUpdated`。
-3. 由 `agent.events.bus` 异步调用 `agent.rag.pipeline` 重建受影响来源。
+3. 由 `agent.events.bus` 异步调用 `agent.rag.pipeline` 重建受影响来源；同一用户同一来源
+   的连续事件合并为最新事件，重建期间到达的后续事件会在当前任务完成后再处理一次。
 4. 索引任务失败最多重试三次，并记录索引诊断；不能回滚已经成功的业务写入。
 5. `replace_source_documents` 以来源为边界替换投影，清理本来源的过期 chunk，并失效进程内缓存。
 
@@ -71,6 +76,7 @@
 - TS worker 使用持久索引 revision；`patch` 必须携带正确的 `base_revision`，revision 不匹配时必须显式失败并由 Python 重建。
 - Memory 的向量缓存与统一来源投影是不同的存储边界；Knowledge 等来源的索引投影仍统一管理，避免被动 RAG 只覆盖某一个来源。
 - 索引缺失、旧版本或事件丢失时，以主数据为准，执行来源级或用户级重建，不修改业务主数据。
+- 写路径不再有 Python 分块、`rag_write_mode` 或 shadow 分支；TS worker 失败由索引事件重试和诊断暴露，禁止静默回退到第二套投影。
 
 ## 5. 召回链路与分数
 

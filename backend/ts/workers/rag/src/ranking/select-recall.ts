@@ -29,9 +29,10 @@ export function selectUnifiedRecall(
     (left, right) => right.result.score - left.result.score || left.result.id.localeCompare(right.result.id),
   );
   for (const { document } of ordered) {
-    const text = String(document.text || "").trim();
+    const text = String(document.context_text || document.text || "").trim();
+    const primaryText = String(document.text || "").trim();
     if (!text) continue;
-    const hash = digest(compact(text));
+    const hash = digest(compact(primaryText));
     if (hashes.has(hash)) {
       rejectedDuplicate += 1;
       continue;
@@ -52,14 +53,16 @@ export function selectUnifiedRecall(
     }
     const remaining = maxChars - outputChars;
     if (remaining <= 0) break;
-    const next = text.length > remaining ? { ...document, text: text.slice(0, remaining).trimEnd() } : document;
+    const next = text.length > remaining
+      ? { ...document, context_text: text.slice(0, remaining).trimEnd() }
+      : document;
     if (!next.text) continue;
     selected.push(next);
     hashes.add(hash);
     selectedTokens.push(tokens);
     parentCounts.set(parent, (parentCounts.get(parent) ?? 0) + 1);
     sourceCounts.set(document.source_type, (sourceCounts.get(document.source_type) ?? 0) + 1);
-    outputChars += next.text.length;
+    outputChars += String(next.context_text || next.text || "").length;
     if (selected.length >= limit) break;
   }
 

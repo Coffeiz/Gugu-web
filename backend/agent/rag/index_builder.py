@@ -12,7 +12,6 @@ from app.services.storage import get_storage
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.adapters.projects import ProjectAdapter
-from agent.rag.chunking import split_text, text_version
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import replace_source_documents
 from app.models import (
@@ -30,6 +29,7 @@ from app.models import (
 
 FILE_TEXT_MAX_BYTES = 1 * 1024 * 1024
 FILE_DOCUMENT_LOAD_CONCURRENCY = 8
+CONVERSATION_CONTEXT_MAX_CHARS = 600
 
 
 async def _extract_file_text(row: File) -> str:
@@ -140,125 +140,40 @@ def conversation_summary_record(session) -> dict:
     }
 
 
-def conversation_message_record(session, row) -> dict:
+def _conversation_context_line(row) -> str:
+    content = str(row.content or "").strip()
+    if row.role not in {"user", "assistant"} or not content:
+        return ""
+    return f"{row.role}：{content[:CONVERSATION_CONTEXT_MAX_CHARS]}"
+
+
+def conversation_message_record(
+    session, row, *, context_before: str = "", context_after: str = "",
+) -> dict:
     return {
         "source_type": "conversation", "kind": "message", "id": str(row.id),
         "session_id": str(session.id),
         "title": session.title or "", "role": row.role, "content": row.content or "",
         "session_source": session.source or "",
         "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
-        "version_parts": _version_parts(row.id, row.created_at, row.content),
+        "context_before": context_before,
+        "context_after": context_after,
+        "version_parts": _version_parts(
+            row.id, row.created_at, row.content, context_before, context_after,
+        ),
         "updated_at": (row.sent_at or row.created_at).isoformat() if (row.sent_at or row.created_at) else None,
     }
-
-
-def record_text(record: dict) -> str:
-    """来源记录 → 检索全文；与 TS 适配器的文本组装逐字段对齐。"""
-    source_type = record["source_type"]
-    if source_type == "file":
-        return "\n".join(filter(None, [
-            f"文件：{record['title']}",
-            f"类型：{record['ext']}" if record["ext"] else "",
-            f"空间：{record['space']}" if record["space"] else "",
-            f"阶段：{record['stage_name']}" if record["stage_name"] else "",
-            record["content"],
-        ]))
-    if source_type == "note":
-        return "\n".join(filter(None, [record["title"] or "", record["content_plain"] or record["content_md"] or ""]))
-    if source_type == "canvas":
-        return "\n".join(filter(None, [
-            f"画布：{record['canvas_title'] or '未命名画布'}",
-            f"节点：{record['node_title'] or '未命名节点'}",
-            f"类型：{record['node_type']}",
-            f"分组：{record['group_path']}" if record["group_path"] else "",
-            f"关系：{record['relation_summary']}" if record["relation_summary"] else "",
-            record["content"],
-        ]))
-    if source_type == "calendar":
-        return "\n".join(filter(None, [
-            f"活动：{record['title']}", f"日期：{record['date']}",
-            f"时间：{record['time'] or '全天'}", record["description"] or "",
-        ]))
-    if source_type == "scheduled_task":
-        return f"定时任务：{record['name']}\n计划：{record['cron']}\n状态：{'启用' if record['enabled'] else '停用'}\n{record['payload']}"
-    if source_type == "conversation":
-        if record["kind"] == "summary":
-            return f"会话摘要：{record['summary']}"
-        return f"{record['role']}：{record['content']}"
-    raise ValueError(f"不支持的知识索引来源：{source_type}")
-
-
-def record_metadata(record: dict) -> dict:
-    source_type = record["source_type"]
-    if source_type == "file":
-        return {
-            "file_id": record["id"], "mime_type": record["mime_type"],
-            "project_id": record["project_id"], "folder_id": record["folder_id"],
-            "space": record["space"],
-        }
-    if source_type == "note":
-        return {"node_id": record["id"], "kind": record["kind"]}
-    if source_type == "canvas":
-        return {
-            "canvas_id": record["canvas_id"], "node_id": record["node_id"],
-            "node_type": record["node_type"], "group_path": record["group_path"],
-            "project_id": record["project_id"], "relation_summary": record["relation_summary"],
-        }
-    if source_type == "calendar":
-        return {"event_id": record["id"], "project_id": record["project_id"]}
-    if source_type == "scheduled_task":
-        return {"task_id": record["id"], "enabled": record["enabled"]}
-    metadata = {
-        "session_id": record["session_id"],
-        "kind": record["kind"],
-        "session_source": record["session_source"],
-        "session_updated_at": record["session_updated_at"],
-    }
-    if record["kind"] == "message":
-        metadata["message_id"] = record["id"]
-        metadata["role"] = record["role"]
-    return metadata
-
-
-def record_title(record: dict) -> str:
-    source_type = record["source_type"]
-    if source_type == "note":
-        return record["title"] or "便签"
-    if source_type == "canvas":
-        return f"{record['canvas_title'] or '未命名画布'} · {record['node_title'] or '未命名节点'}"
-    if source_type == "scheduled_task":
-        return record["name"]
-    return record["title"]
-
-
-def record_documents(owner_user_id, record: dict, scope: Scope) -> list[IndexDocument]:
-    """来源记录 → 索引 chunk；与 TS ``build_documents`` 输出逐字段等价（有等价测试锁定）。"""
-    text = record_text(record).strip()
-    pieces = split_text(text, max_chars=1400)
-    if not pieces:
-        return []
-    document_id = f"{record['source_type']}:{record['id']}"
-    version = text_version(text, *record["version_parts"])
-    return [IndexDocument(
-        document_id=document_id,
-        parent_document_id=document_id,
-        source_type=record["source_type"],
-        source_id=record["id"],
-        scope=scope,
-        title=record_title(record) or "未命名",
-        summary=text[:240],
-        content=piece,
-        version=version,
-        chunk_index=index,
-        chunk_count=len(pieces),
-        updated_at=record.get("updated_at"),
-        metadata=record_metadata(record),
-    ) for index, piece in enumerate(pieces)]
 
 
 async def build_source_records(db, owner_user_id: object, source_type: str) -> list[tuple[dict, Scope]] | None:
     """构建一个来源的统一 source record（各记录携带自己的 Scope）；无 record 管线的来源返回 None。"""
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
+    if source_type == "memory":
+        return await MemoryAdapter(owner_user_id).build_source_records(scope=owner_scope)
+    if source_type == "knowledge":
+        return await KnowledgeAdapter(owner_user_id).build_source_records()
+    if source_type == "project":
+        return await ProjectAdapter(owner_user_id, db=db).build_source_records(scope=owner_scope)
     if source_type == "file":
         rows = (await db.execute(select(File).where(
             File.user_id == owner_user_id, File.deleted_at.is_(None),
@@ -347,24 +262,20 @@ async def build_source_records(db, owner_user_id: object, source_type: str) -> l
             session_scope = _scope(owner_user_id, session)
             if (session.summary or "").strip():
                 records.append((conversation_summary_record(session), session_scope))
-            for row in messages_by_session.get(session.id, ()):
-                if row.id <= (session.baseline_message_id or 0):
-                    continue
-                if row.role not in {"user", "assistant"} or not (row.content or "").strip():
-                    continue
-                records.append((conversation_message_record(session, row), session_scope))
+            eligible_messages = [
+                row for row in messages_by_session.get(session.id, ())
+                if row.id > (session.baseline_message_id or 0)
+                and row.role in {"user", "assistant"}
+                and (row.content or "").strip()
+            ]
+            for index, row in enumerate(eligible_messages):
+                before = _conversation_context_line(eligible_messages[index - 1]) if index else ""
+                after = _conversation_context_line(eligible_messages[index + 1]) if index + 1 < len(eligible_messages) else ""
+                records.append((conversation_message_record(
+                    session, row, context_before=before, context_after=after,
+                ), session_scope))
         return records
-    if source_type in {"memory", "knowledge", "project"}:
-        return None
     raise ValueError(f"不支持的知识索引来源：{source_type}")
-
-
-def documents_from_records(owner_user_id: object, records: list[tuple[dict, Scope]]) -> list[IndexDocument]:
-    """record 管线 → 索引 chunk；与 TS ``adapt`` op 输出逐字段等价（有等价测试锁定）。"""
-    documents: list[IndexDocument] = []
-    for record, scope in records:
-        documents.extend(record_documents(owner_user_id, record, scope))
-    return documents
 
 
 async def records_to_write_documents(
@@ -374,18 +285,10 @@ async def records_to_write_documents(
     *,
     settings=None,
 ) -> list[IndexDocument]:
-    """写库产物投影：``rag_write_mode`` 选择引擎（写路径移交第③步）。
-
-    ``python``（生产默认）走本地 record 管线，行为与移交前逐位一致；``ts`` 经
-    worker ``adapt`` op 投影后经 ``wire_document_to_persistent`` 回转持久文档，
-    worker 不可用或投影结构缺陷时显式失败（由事件管线重试），不静默回退 Python。
-    """
+    """把授权 source record 经 TS canonical projection 转为持久化文档。"""
     from app.core.config import get_settings
 
     settings = settings or get_settings()
-    python_documents = documents_from_records(owner_user_id, records)
-    if settings.search.rag_write_mode != "ts":
-        return python_documents
     import time
 
     from agent.rag.index_cache import index_dir_for_owner
@@ -408,18 +311,11 @@ async def records_to_write_documents(
 
 
 async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
-    """构建一个来源，查询仅限 owner；不在日志中输出正文。"""
-    owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
-    if source_type == "memory":
-        return await MemoryAdapter(owner_user_id).build_documents(scope=owner_scope)
-    if source_type == "knowledge":
-        return await KnowledgeAdapter(owner_user_id).build_index_documents()
-    if source_type == "project":
-        return await ProjectAdapter(owner_user_id, db=db).build_documents(scope=owner_scope)
+    """兼容旧调用方：读取 canonical source record 后统一交给 TS 投影。"""
     records = await build_source_records(db, owner_user_id, source_type)
     if records is None:
-        raise ValueError(f"不支持的知识索引来源：{source_type}")
-    return documents_from_records(owner_user_id, records)
+        raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
+    return await records_to_write_documents(owner_user_id, source_type, records)
 
 
 INDEX_SOURCE_TYPES = (
@@ -428,20 +324,15 @@ INDEX_SOURCE_TYPES = (
 
 
 async def rebuild_knowledge_index(db, owner_user_id: object, source_types=None) -> dict[str, int]:
-    """重建 owner 的统一索引，返回各来源 chunk 数量；影子比对开启时记录投影诊断。"""
+    """重建 owner 的统一索引，返回各来源 chunk 数量。"""
     selected = tuple(source_types or INDEX_SOURCE_TYPES)
     counts: dict[str, int] = {}
     for source_type in selected:
         records = await build_source_records(db, owner_user_id, source_type)
         if records is None:
-            documents = await build_source_documents(db, owner_user_id, source_type)
-        else:
-            documents = await records_to_write_documents(owner_user_id, source_type, records)
+            raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
+        documents = await records_to_write_documents(owner_user_id, source_type, records)
         counts[source_type] = await replace_source_documents(db, owner_user_id, source_type, documents)
-        if records is not None:
-            from agent.rag.write_shadow import shadow_compare_build
-
-            await shadow_compare_build(owner_user_id, source_type, records, documents)
     await db.commit()
     return counts
 
@@ -450,7 +341,6 @@ __all__ = [
     "INDEX_SOURCE_TYPES",
     "build_source_documents",
     "build_source_records",
-    "documents_from_records",
     "records_to_write_documents",
     "rebuild_knowledge_index",
 ]

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { textVersion } from "../src/adapters/base.ts";
+import { buildDocuments, textVersion } from "../src/adapters/base.ts";
 import { calendarAdapter } from "../src/adapters/calendar.ts";
 import { canvasAdapter } from "../src/adapters/canvas.ts";
 import { conversationAdapter } from "../src/adapters/conversations.ts";
@@ -42,23 +42,20 @@ test("file 适配器输出「文件/类型/空间/阶段」头部与五字段元
   assert.equal(minimal.metadata.space, "");
 });
 
-test("分块长度按码点计数：非 BMP 字符不误切、切块窗口逐位对齐", () => {
-  // 1360 码点 / 1420 UTF-16 码元：Python 语义不切分，UTF-16 口径会误切。
-  const single = "a".repeat(1300) + "\u{1F600}".repeat(60);
-  const [singleDoc] = fileAdapter.toDocuments([{
-    id: 31, title: "表情.md", content: single, version_parts: ["31"], scope: ownerScope,
-  }]);
-  assert.equal(singleDoc.chunk_count, 1);
-  assert.equal(singleDoc.content, `文件：表情.md\n${single}`);
-  // 1420 码点正文：头部行先独立成块，正文走长文切步且窗口按码点对齐。
-  const long = "\u5b57".repeat(1380) + "\u{1F600}".repeat(40);
+test("文件按 1000 字符分块、150 字符 overlap，并按码点计数", () => {
+  // 文件来源的元数据头部先独立成块，正文按统一的 1000 字符窗口切分。
+  const long = "\u5b57".repeat(1000) + "\u{1F600}".repeat(40);
   const documents = fileAdapter.toDocuments([{
-    id: 32, title: "长表情.md", content: long, version_parts: ["32"], scope: ownerScope,
+    id: 31, title: "长表情.md", content: long, version_parts: ["31"], scope: ownerScope,
   }]);
   assert.equal(documents.length, 3);
   assert.equal(documents[0].content, "文件：长表情.md");
-  assert.equal(documents[1].content, Array.from(long).slice(0, 1400).join(""));
-  assert.equal(documents[2].content, Array.from(long).slice(1280).join(""));
+  assert.equal(Array.from(documents[1].content).length, 1000);
+  assert.equal(Array.from(documents[2].content).length, 190);
+  assert.equal(
+    Array.from(documents[2].content).slice(0, 150).join(""),
+    Array.from(documents[1].content).slice(-150).join(""),
+  );
   assert.ok(documents.every((document) => document.chunk_count === 3));
 });
 
@@ -128,6 +125,8 @@ test("conversation 适配器输出摘要与消息两种文档，元数据含会�
     {
       kind: "message" as const, id: 12, session_id: 1, role: "user",
       content: "怎么部署", title: "部署会话", session_source: "qq",
+      context_before: "user：之前的部署问题",
+      context_after: "assistant：可以先检查配置",
       session_updated_at: "2026-09-09T01:00:00",
       version_parts: [12, "2026-09-09T00:30:00", "怎么部署"],
       updated_at: "2026-09-09T00:30:00", scope: ownerScope,
@@ -138,19 +137,27 @@ test("conversation 适配器输出摘要与消息两种文档，元数据含会�
   assert.equal(documents[0].parent_id, "conversation:1:summary");
   assert.equal(documents[0].content, "会话摘要：讨论了部署");
   assert.equal(documents[0].text, ["部署会话", "会话摘要：讨论了部署", "会话摘要：讨论了部署"].join("\n"));
+  assert.equal(documents[0].ranking_text, "会话摘要：讨论了部署");
   assert.deepEqual(documents[0].metadata, {
     session_id: "1", kind: "summary", session_source: "qq",
     session_updated_at: "2026-09-09T01:00:00",
   });
   assert.equal(documents[1].id, "conversation:conversation:12:0");
   assert.equal(documents[1].content, "user：怎么部署");
+  assert.equal(documents[1].summary, "");
+  assert.equal(documents[1].text, ["部署会话", "user：怎么部署"].join("\n"));
+  assert.equal(documents[1].ranking_text, "user：怎么部署");
+  assert.equal(documents[1].context_text,
+    ["user：之前的部署问题", "user：怎么部署", "assistant：可以先检查配置"].join("\n"));
   assert.deepEqual(documents[1].metadata, {
     session_id: "1", kind: "message", session_source: "qq",
     session_updated_at: "2026-09-09T01:00:00", message_id: "12", role: "user",
+    context_before: "user：之前的部署问题", context_after: "assistant：可以先检查配置",
+    context_current: "user：怎么部署",
   });
 });
 
-test("统一入口按来源分发，长文按 1400 字符分块", () => {
+test("统一入口按来源分发，文件长文按 1000 字符分块", () => {
   const documents = buildSourceDocuments({
     files: [{ id: 1, title: "长文.txt", content: "字".repeat(3000),
               version_parts: [1], scope: ownerScope }],
@@ -159,7 +166,24 @@ test("统一入口按来源分发，长文按 1400 字符分块", () => {
   assert.ok(documents.every((document) => document.source_type !== undefined));
   const fileChunks = documents.filter((document) => document.source_type === "file");
   assert.ok(fileChunks.length >= 3);
+  assert.equal(Array.from(fileChunks[1].content).length, 1000);
+  assert.equal(
+    Array.from(fileChunks[2].content).slice(0, 150).join(""),
+    Array.from(fileChunks[1].content).slice(-150).join(""),
+  );
   assert.ok(fileChunks.every((chunk) => chunk.chunk_count === fileChunks[0].chunk_count));
   const noteDocuments = documents.filter((document) => document.source_type === "note");
   assert.equal(noteDocuments.length, 1);
+
+  // 所有未显式覆盖参数的来源都走同一套 1000/150 默认契约。
+  const genericDocuments = buildDocuments({
+    id: "knowledge-1", source_type: "knowledge", title: "知识", content: "字".repeat(1200),
+    document_version: "v1", scope: ownerScope,
+  });
+  assert.equal(genericDocuments.length, 2);
+  assert.equal(Array.from(genericDocuments[0].content).length, 1000);
+  assert.equal(
+    Array.from(genericDocuments[1].content).slice(0, 150).join(""),
+    Array.from(genericDocuments[0].content).slice(-150).join(""),
+  );
 });

@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.diagnostics import record_index_update
-from agent.rag.index_builder import build_source_documents, build_source_records, records_to_write_documents
+from agent.rag.index_builder import build_source_records, records_to_write_documents
 from agent.rag.scope import normalize_memory_scope
 from agent.rag.persistent_store import replace_source_documents
 from agent.rag.storage import PersistentMemoryIndex
@@ -27,13 +27,14 @@ async def rebuild_memory_index(user_id: object, *, operation: str = "upsert") ->
     key = str(user_id)
     async with _locks[key]:
         scope = normalize_memory_scope(user_id, "auto")
-        documents = await MemoryAdapter(user_id).build_documents(scope=scope)
+        records = await MemoryAdapter(user_id).build_source_records(scope=scope)
+        documents = await records_to_write_documents(user_id, "memory", records)
         await PersistentMemoryIndex(user_id).replace(documents)
         await sync_memory_index_vectors(user_id, documents)
         return len(documents)
 
 
-async def handle_memory_index_event(event) -> None:
+async def handle_memory_index_event(event) -> bool:
     """处理 Memory 更新事件，最多重试三次，失败不影响业务写入。"""
     started = time.monotonic()
     for attempt in range(1, MAX_RETRIES + 1):
@@ -47,7 +48,7 @@ async def handle_memory_index_event(event) -> None:
                 success=True,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
-            return
+            return True
         except Exception:
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_BACKOFF_SECONDS[attempt - 1])
@@ -60,7 +61,7 @@ async def handle_memory_index_event(event) -> None:
                 success=False,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
-            return
+            return False
 
 
 async def rebuild_source_index(user_id: object, source_type: str, *, operation: str = "upsert") -> int:
@@ -83,24 +84,18 @@ async def rebuild_source_index(user_id: object, source_type: str, *, operation: 
         async with db_session._SessionLocal() as db:
             records = await build_source_records(db, user_id, source_type)
             if records is None:
-                documents = await build_source_documents(db, user_id, source_type)
-            else:
-                documents = await records_to_write_documents(user_id, source_type, records)
+                raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
+            documents = await records_to_write_documents(user_id, source_type, records)
             count = await replace_source_documents(db, user_id, source_type, documents)
             await db.commit()
         if source_type == "knowledge":
             from agent.rag.vector_cache import sync_knowledge_index_vectors
 
             await sync_knowledge_index_vectors(user_id, documents)
-        if records is not None:
-            # 影子比对在写库与向量同步之后：观测缺失绝不影响写路径。
-            from agent.rag.write_shadow import shadow_compare_build
-
-            await shadow_compare_build(user_id, source_type, records, documents)
         return count
 
 
-async def handle_rag_index_event(event) -> None:
+async def handle_rag_index_event(event) -> bool:
     """处理非 Memory 来源索引事件，失败重试但不阻塞主业务写入。"""
     started = time.monotonic()
     for attempt in range(1, MAX_RETRIES + 1):
@@ -116,7 +111,7 @@ async def handle_rag_index_event(event) -> None:
                 success=True,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
-            return
+            return True
         except Exception:
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_BACKOFF_SECONDS[attempt - 1])
@@ -129,4 +124,4 @@ async def handle_rag_index_event(event) -> None:
                 success=False,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
-            return
+            return False

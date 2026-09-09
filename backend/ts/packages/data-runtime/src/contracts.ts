@@ -91,6 +91,8 @@ export type ConversationRecord = RagSourceRecord & {
   session_id: number;
   message_id: number;
   role: "user" | "assistant";
+  context_before?: string;
+  context_after?: string;
 };
 
 export type KnowledgeRecord = RagSourceRecord & {
