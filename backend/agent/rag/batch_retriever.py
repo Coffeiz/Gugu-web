@@ -113,6 +113,9 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         "exclude_content_hashes": rank_options.get("exclude_content_hashes") or (),
                     },
                     before_message_id=get_conversation_before_message_id(),
+                    # 持久向量表（knowledge 等）按此版本戳校验：worker 驻留表不同版
+                    # （换模型窗口）时非 memory 组自动降级纯词法。
+                    vector_version=embedding.model_tag() if embedding_enabled else None,
                 )
         except BaseException as exc:
             for item in selected:

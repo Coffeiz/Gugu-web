@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
-// ts/workers/rag/src/index.ts
+// src/index.ts
 import { createHash as createHash3 } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-// ts/packages/contracts/src/rag.ts
+// ../../packages/contracts/src/rag.ts
 var RAG_WORKER_VERSION = "0.3.3";
 
-// ts/workers/rag/src/tokenizer.ts
+// src/tokenizer.ts
 import { Jieba } from "@node-rs/jieba";
 import { dict } from "@node-rs/jieba/dict.js";
 var TOKEN_RE = /[A-Za-z0-9_]+|[\u4e00-\u9fff]+/gu;
@@ -31,7 +31,7 @@ function tokenizeRaw(text) {
   return output;
 }
 
-// ts/workers/rag/src/adapters/base.ts
+// src/adapters/base.ts
 import { createHash } from "node:crypto";
 function chunkText(text, maxChars = 1e3, overlap = 150) {
   const normalized = String(text || "").trim();
@@ -109,7 +109,7 @@ function validScope(scope) {
   return true;
 }
 
-// ts/workers/rag/src/adapters/calendar.ts
+// src/adapters/calendar.ts
 var calendarAdapter = {
   sourceType: "calendar",
   toDocuments(records) {
@@ -138,7 +138,7 @@ var calendarAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/canvas.ts
+// src/adapters/canvas.ts
 var canvasAdapter = {
   sourceType: "canvas",
   toDocuments(records) {
@@ -174,7 +174,7 @@ var canvasAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/conversations.ts
+// src/adapters/conversations.ts
 var buildMetadata = (record) => {
   const metadata = {
     session_id: String(record.session_id),
@@ -220,7 +220,7 @@ var conversationAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/files.ts
+// src/adapters/files.ts
 var fileAdapter = {
   sourceType: "file",
   toDocuments(records) {
@@ -254,7 +254,7 @@ var fileAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/note.ts
+// src/adapters/note.ts
 var noteAdapter = {
   sourceType: "note",
   toDocuments(records) {
@@ -282,7 +282,7 @@ var noteAdapter = {
   }
 };
 
-// ts/workers/rag/src/adapters/scheduled-tasks.ts
+// src/adapters/scheduled-tasks.ts
 var scheduledTaskAdapter = {
   sourceType: "scheduled_task",
   toDocuments(records) {
@@ -309,7 +309,7 @@ ${record.payload || ""}`;
   }
 };
 
-// ts/workers/rag/src/index-builder.ts
+// src/index-builder.ts
 function buildGenericDocuments(records) {
   return records.flatMap((record) => {
     if (record.id === null || record.id === void 0 || !record.source_type || !record.title || !validScope(record.scope)) return [];
@@ -330,7 +330,7 @@ function buildSourceDocuments(batch) {
   ];
 }
 
-// ts/workers/rag/src/ranking/bm25.ts
+// src/ranking/bm25.ts
 var K1 = 1.2;
 var B = 0.75;
 function tokenize(value) {
@@ -383,12 +383,34 @@ function scoreTerms(corpus, terms) {
   return scores;
 }
 
-// ts/workers/rag/src/ranking/document-text.ts
+// src/ranking/document-text.ts
 function rankingText(document) {
   return String(document.ranking_text ?? document.text ?? "");
 }
 
-// ts/workers/rag/src/ranking/confidence.ts
+// src/ranking/confidence.ts
+var V4_LEXICAL_WEIGHT = 0.75;
+var V4_QUERY_MATCH_WEIGHT = 0.25;
+var V4_PREFERRED_THRESHOLD = 0.55;
+var V4_LOW_SCORE_THRESHOLD = 0.35;
+var SOURCE_QUALITY_V4 = {
+  knowledge: 1,
+  memory: 0.8,
+  project: 0.8,
+  file: 0.8,
+  journal: 0.8,
+  note: 0.8,
+  calendar: 0.8,
+  canvas: 0.6,
+  conversation: 0.6
+};
+var V4_UNKNOWN_SOURCE_QUALITY = 0.6;
+function sourceQualityV4(sourceType) {
+  return SOURCE_QUALITY_V4[sourceType] ?? V4_UNKNOWN_SOURCE_QUALITY;
+}
+function confidenceV4(lexicalNorm, match, sourceQuality) {
+  return (V4_LEXICAL_WEIGHT * lexicalNorm + V4_QUERY_MATCH_WEIGHT * match) * sourceQuality;
+}
 var SOURCE_QUALITY = {
   memory: 0.8,
   project: 0.9,
@@ -410,7 +432,7 @@ function queryMatch(query, document) {
   for (const token of meaningful) if (documentTerms.has(token)) matched += 1;
   return matched / meaningful.size;
 }
-function confidence(candidate, fused, query) {
+function confidenceV1(candidate, fused, query) {
   let sourceQuality = SOURCE_QUALITY[candidate.source_type] ?? 0.7;
   if (candidate.source_type === "knowledge") {
     const weight = { confirmed: 1, probable: 0.85, unverified: 0.65, conflict: 0.35 }[String(candidate.document.metadata?.confidence ?? "")] ?? 0.65;
@@ -421,10 +443,14 @@ function confidence(candidate, fused, query) {
   if (match <= 0) value = Math.min(value, 0.35 - 0.01);
   return { value: Math.min(1, Math.max(0, value)), sourceQuality, match };
 }
+var SCORING_THRESHOLDS = {
+  "confidence-v4": { preferred: V4_PREFERRED_THRESHOLD, low: V4_LOW_SCORE_THRESHOLD },
+  "confidence-v1": { preferred: 0.55, low: 0.35 }
+};
 
-// ts/workers/rag/src/ranking/idf-rescore.ts
+// src/ranking/idf-rescore.ts
 var IDF_EXPONENT = 1;
-var CONTRIBUTION_EXPONENT = 2;
+var CONTRIBUTION_EXPONENT = 1.5;
 var MIN_QUERY_WEIGHT = 0.25;
 var MAX_QUERY_WEIGHT = 4;
 function idf(term, statistics) {
@@ -480,7 +506,7 @@ function rescoreDocument(query, document, statistics) {
   };
 }
 
-// ts/workers/rag/src/ranking/normalize.ts
+// src/ranking/normalize.ts
 function normalizeBySource(candidates) {
   const grouped = /* @__PURE__ */ new Map();
   for (const candidate of candidates) {
@@ -501,7 +527,7 @@ function normalizeBySource(candidates) {
   return normalized;
 }
 
-// ts/workers/rag/src/ranking/helpers.ts
+// src/ranking/helpers.ts
 import { createHash as createHash2 } from "node:crypto";
 function compact(value) {
   return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();
@@ -547,7 +573,7 @@ function similarity(left, right) {
   return union ? intersection / union : 0;
 }
 
-// ts/workers/rag/src/ranking/select-recall.ts
+// src/ranking/select-recall.ts
 function selectUnifiedRecall(candidates, options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit ?? 5), 50));
   const maxChars = Math.max(1, Number(options.maxChars ?? 3e3));
@@ -617,7 +643,7 @@ function selectUnifiedRecall(candidates, options = {}) {
   };
 }
 
-// ts/workers/rag/src/ranking/rank-candidates.ts
+// src/ranking/rank-candidates.ts
 var SOURCE_PRIORITY = {
   memory: 0,
   project: 10,
@@ -630,32 +656,51 @@ var SOURCE_PRIORITY = {
 };
 function rankCandidates(query, candidates, options = {}) {
   const started = performance.now();
+  const version = options.scoringVersion ?? "confidence-v4";
+  const thresholds = SCORING_THRESHOLDS[version];
   const excluded = new Set(options.excludeContentHashes ?? []);
   const eligible = candidates.filter(
     (candidate) => !contentHashes(candidate.document).some((hash) => excluded.has(hash))
   );
   const normalized = normalizeBySource(eligible);
-  const scored = eligible.map((candidate) => {
+  let scored = eligible.map((candidate) => {
     const normalizedScore = normalized.get(candidate.id) ?? 0;
     const fused = candidate.fused_score !== void 0 && candidate.fused_score !== null ? Number(candidate.fused_score) : candidate.fusion === "hybrid-rrf" ? Number(candidate.raw_score || 0) : normalizedScore;
-    const quality = confidence(candidate, fused, query);
     const rescore = rescoreDocument(query, candidate.document, options.corpusStatistics);
+    const rankScore = rescore?.rankScore ?? fused;
+    let value;
+    let sourceQuality;
+    let match;
+    if (version === "confidence-v4") {
+      match = Math.min(1, queryMatch(query, candidate.document));
+      sourceQuality = sourceQualityV4(candidate.source_type);
+      value = confidenceV4(rankScore, match, sourceQuality);
+      if (match <= 0) value = Math.min(value, thresholds.low - 0.01);
+    } else {
+      ({ value, sourceQuality, match } = confidenceV1(candidate, fused, query));
+    }
     return {
       candidate,
       normalizedScore,
       fused,
-      rankScore: rescore?.rankScore ?? fused,
+      rankScore,
       rescore,
-      ...quality
+      value,
+      sourceQuality,
+      match
     };
   });
-  const orderedScored = [...scored].sort(
-    (left, right) => right.rankScore - left.rankScore || right.fused - left.fused || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100) || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? "")) || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version)) || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
+  if (version === "confidence-v4") {
+    scored = normalizeV4Lexical(scored);
+  }
+  const orderedScored = scored;
+  const finalOrdered = [...orderedScored].sort(
+    (left, right) => right.value - left.value || right.rankScore - left.rankScore || right.fused - left.fused || (SOURCE_PRIORITY[left.candidate.source_type] ?? 100) - (SOURCE_PRIORITY[right.candidate.source_type] ?? 100) || String(right.candidate.document.updated_at ?? "").localeCompare(String(left.candidate.document.updated_at ?? "")) || String(left.candidate.document.document_version).localeCompare(String(right.candidate.document.document_version)) || String(left.candidate.document.id).localeCompare(String(right.candidate.document.id))
   );
   const selectionMode = options.selectionMode ?? "confidence";
-  const preferred = orderedScored.filter((item) => item.value >= 0.55);
-  const fallback = orderedScored.filter((item) => item.value >= 0.35 && item.value < 0.55);
-  const confidenceSelected = (selectionMode === "top_k" ? orderedScored : preferred.length ? preferred : fallback).slice(0, Math.max(1, Number(options.limit ?? 5)));
+  const preferred = finalOrdered.filter((item) => item.value >= thresholds.preferred);
+  const fallback = finalOrdered.filter((item) => item.value >= thresholds.low && item.value < thresholds.preferred);
+  const confidenceSelected = (selectionMode === "top_k" ? finalOrdered : preferred.length ? preferred : fallback).slice(0, Math.max(1, Number(options.limit ?? 5)));
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
   const unified = selectUnifiedRecall(
@@ -714,23 +759,33 @@ function rankCandidates(query, candidates, options = {}) {
   const stats = {
     ...unified.diagnostics,
     accepted_count: results.length,
-    rejected_low_score: selectionMode === "confidence" ? scored.filter((item) => item.value < 0.35).length : 0,
-    rejected_not_preferred: selectionMode === "confidence" ? scored.filter((item) => preferred.length > 0 && item.value >= 0.35 && !selectedIds.has(item.candidate.id)).length : 0,
+    rejected_low_score: selectionMode === "confidence" ? scored.filter((item) => item.value < thresholds.low).length : 0,
+    rejected_not_preferred: selectionMode === "confidence" ? scored.filter((item) => preferred.length > 0 && item.value >= thresholds.low && !selectedIds.has(item.candidate.id)).length : 0,
     top_confidence: Math.max(0, ...scored.map((item) => item.value)),
-    threshold: 0.35,
-    preferred_threshold: 0.55,
+    threshold: thresholds.low,
+    preferred_threshold: thresholds.preferred,
     selection_mode: selectionMode,
-    scoring_version: "confidence-v1",
-    rescore_version: options.corpusStatistics ? "idf-nonlinear-v1" : "disabled",
+    scoring_version: version,
+    rescore_version: options.corpusStatistics ? "idf-nonlinear-v2" : "disabled",
     idf_source: options.corpusStatistics?.source ?? "none",
-    contribution_exponent: options.corpusStatistics ? 2 : null,
+    contribution_exponent: options.corpusStatistics ? 1.5 : null,
     source_diagnostics: sourceDiagnostics,
     elapsed_ms: Math.round(performance.now() - started)
   };
   return { results, diagnostics: stats };
 }
+function normalizeV4Lexical(scored) {
+  const topLexical = Math.max(0, ...scored.map((item) => item.rankScore));
+  if (topLexical <= 0) return scored;
+  return scored.map((item) => {
+    const lexicalNorm = Math.min(1, item.rankScore / topLexical);
+    let value = confidenceV4(lexicalNorm, item.match, item.sourceQuality);
+    if (item.match <= 0) value = Math.min(value, V4_LOW_SCORE_THRESHOLD - 0.01);
+    return { ...item, value };
+  });
+}
 
-// ts/workers/rag/src/index.ts
+// src/index.ts
 var VERSION = RAG_WORKER_VERSION;
 function hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeight, rrfK) {
   const getVector = (key) => vectors instanceof Map ? vectors.get(key) : vectors[key];
@@ -1240,6 +1295,7 @@ async function handle(state2, transient2, request) {
         maxPerParent: request.max_per_parent ?? 3,
         excludeContentHashes: request.exclude_content_hashes ?? [],
         selectionMode: request.selection_mode ?? "confidence",
+        scoringVersion: request.scoring_version ?? "confidence-v4",
         corpusStatistics: diagnosticCorpus ? corpusStatistics(diagnosticCorpus) : corpusStatistics(state2)
       }
     );

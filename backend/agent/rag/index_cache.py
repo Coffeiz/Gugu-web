@@ -51,6 +51,36 @@ def _worker_document_key(document: IndexDocument) -> str:
     return f"{document.source_type}:{parent}:{document.chunk_index}"
 
 
+async def _persistent_vectors(
+    owner_user_id, documents: list[IndexDocument], diagnostics: dict[str, object] | None = None,
+) -> tuple[dict[str, list[float]], str]:
+    """整表收集持久来源的缓存向量，按 worker 文档键映射后随 replace/patch 搭载。
+
+    memory/pattern 走 replace_transient 的瞬态槽通道，不进持久表（控制 IPC 体量）；
+    embedding 未启用或缓存未命中时返回空表，worker 端按纯词法降级。读取失败只
+    标记诊断并降级，不允许向量缓存问题阻断索引构建。
+    """
+    from agent.memory import embedding
+    from agent.rag.service import _load_cached_vectors
+
+    if not documents:
+        return {}, ""
+    try:
+        if not embedding.is_enabled():
+            return {}, ""
+        cached = await _load_cached_vectors(owner_user_id, documents)
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics["persistent_vectors_error"] = type(exc).__name__
+        return {}, ""
+    vectors: dict[str, list[float]] = {}
+    for document in documents:
+        vector = cached.get(document.chunk_id)
+        if vector and document.source_type not in {"memory", "pattern"}:
+            vectors[_worker_document_key(document)] = vector
+    return vectors, embedding.model_tag()
+
+
 @dataclass
 class _Entry:
     index: object
@@ -305,6 +335,7 @@ class KnowledgeIndexCache:
                         return TsLexicalIndex([], client, revision)
                     return None
                 if not reused:
+                    vectors, vector_tag = await _persistent_vectors(owner_user_id, documents, diagnostics)
                     can_patch = bool(
                         settings.ts_sidecar_index_dir
                         and previous_documents is not None
@@ -322,13 +353,16 @@ class KnowledgeIndexCache:
                             _worker_document_key(document) for key, document in previous.items()
                             if key not in current
                         ]
-                        await client.patch(upserts, deletes, revision, previous_revision)
+                        await client.patch(
+                            upserts, deletes, revision, previous_revision,
+                            vectors=vectors, vector_version=vector_tag,
+                        )
                         if diagnostics is not None:
                             diagnostics["index_sync"] = "patch"
                             diagnostics["upsert_count"] = len(upserts)
                             diagnostics["delete_count"] = len(deletes)
                     else:
-                        await client.replace(documents, revision)
+                        await client.replace(documents, revision, vectors=vectors, vector_version=vector_tag)
                         if diagnostics is not None:
                             diagnostics["index_sync"] = "replace"
             except TsSidecarUnavailable:

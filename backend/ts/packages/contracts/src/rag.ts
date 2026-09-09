@@ -30,8 +30,6 @@ export type RagDocument = {
   content?: string;
   title?: string;
   summary?: string;
-  /** 可选的排序文本；不改变展示/引用用的 text。 */
-  ranking_text?: string;
   platform?: string;
   bot_id?: string;
   group_id?: string;
@@ -116,6 +114,8 @@ export type RagRankCandidate = {
   rank?: number;
   fusion?: "bm25" | "hybrid-rrf";
   fused_score?: number | null;
+  /** 与查询向量的原始余弦相似度；仅向量通道命中的候选携带。 */
+  semantic_score?: number;
   document: RagDocument;
 };
 
@@ -169,6 +169,8 @@ export type RagRankResult = {
   query_match?: number;
   normalized_score: number;
   fused_score: number;
+  /** 池内归一化后的语义分（cosine/池最大值，已截断到 0~1）；无语义通道的候选缺省。 */
+  semantic_norm?: number;
   rank_score?: number;
   query_idf_baseline?: number;
   query_idf_terms?: Array<{ term: string; idf: number }>;
@@ -209,6 +211,8 @@ export type RagRequest =
       query: string;
       /** Memory 融合用查询向量；空数组表示本轮 embedding 不可用（纯词法）。 */
       query_vector?: number[];
+      /** Python 侧当前生效的 embedding 模型版本戳；与持久向量表的 vector_version 不一致时，非 memory 组降级纯词法。 */
+      vector_version?: string;
       lexical_weight?: number;
       vector_weight?: number;
       rrf_k?: number;
@@ -227,14 +231,16 @@ export type RagRequest =
   | { op: "adapt"; source_type: RagSourceType | string; records: Record<string, unknown>[] }
   | { op: "build_documents"; batch: RagSourceBatch }
   | { op: "build_and_index"; revision: string; batch: RagSourceBatch }
-  | { op: "replace"; revision: string; documents: RagDocument[] }
-  | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[] }
+  | { op: "replace"; revision: string; documents: RagDocument[]; /** 全量持久向量表（键为 document_key），worker 整表替换并记录版本戳；缺省表示本轮不更新向量。 */ vectors?: Record<string, number[]>; /** 与 vectors 配套的生效 embedding 模型版本戳。 */ vector_version?: string }
+  | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[]; /** 与 replace 相同的整表持久向量替换（Python 每次构建都随载全量当前映射，整表覆盖即自清理已删文档）。 */ vectors?: Record<string, number[]>; vector_version?: string }
   | { op: "search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope }
   | { op: "unified_search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; max_chars?: number }
   | {
       op: "rank_candidates";
       query: string;
       candidates: RagRankCandidate[];
+      /** 评分版本；缺省 confidence-v4，confidence-v1 仅作短期回滚。 */
+      scoring_version?: "confidence-v4" | "confidence-v1";
       /** 诊断/离线比较可显式提供完整语料，用于按完整索引计算 IDF。线上默认不传。 */
       corpus_documents?: RagDocument[];
       limit?: number;

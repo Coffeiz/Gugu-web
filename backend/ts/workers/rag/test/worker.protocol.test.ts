@@ -191,7 +191,7 @@ test("RAG worker unified_search 执行正文去重、来源上限和字符预算
   assert.equal((result.results as Array<Record<string, unknown>>).length, 2);
   assert.equal((result.diagnostics as Record<string, unknown>).rejected_duplicate, 1);
   assert.equal((result.diagnostics as Record<string, unknown>).output_chars, 18);
-  assert.equal((result.diagnostics as Record<string, unknown>).rescore_version, "idf-nonlinear-v1");
+  assert.equal((result.diagnostics as Record<string, unknown>).rescore_version, "idf-nonlinear-v2");
   assert.equal((result.diagnostics as Record<string, unknown>).idf_source, "full_ts_index");
   child.stdin.end();
   await once(child, "close");
@@ -213,11 +213,14 @@ test("TS 完整候选流水线与 Python 评分契约保持一致", () => {
     },
   ], { limit: 5, maxChars: 1000 });
 
-  assert.deepEqual(output.results.map((item) => item.id), ["file:1", "memory:1"]);
+  // v4 首选带非空时 fallback 不参与：memory:1(0.5) 落选，仅 file:1 入选。
+  assert.deepEqual(output.results.map((item) => item.id), ["file:1"]);
   assert.equal(output.results[0].fused_score, output.results[0].normalized_score);
   assert.equal(output.diagnostics.rejected_low_score, 1);
-  assert.equal(output.diagnostics.scoring_version, "confidence-v1");
-  assert.equal(output.diagnostics.output_chars, 12);
+  assert.equal(output.diagnostics.rejected_not_preferred >= 1, true);
+  assert.equal(output.diagnostics.scoring_version, "confidence-v4");
+  // 只有 file:1 入选，字符预算按其实际正文计。
+  assert.equal(output.diagnostics.output_chars, 6);
 });
 
 test("主动候选搜索按 Top-K 返回，不受 confidence 阈值过滤", () => {
@@ -353,9 +356,9 @@ test("Phase 1：生产排序使用完整 TS 索引 IDF 的非线性 token 贡献
 
   assert.equal(output.results[0].id, "knowledge:monza");
   assert.ok((output.results[0].rank_score ?? 0) > (output.results[1].rank_score ?? 0));
-  assert.equal(output.diagnostics.rescore_version, "idf-nonlinear-v1");
+  assert.equal(output.diagnostics.rescore_version, "idf-nonlinear-v2");
   assert.equal(output.diagnostics.idf_source, "full_ts_index");
-  assert.equal(output.diagnostics.contribution_exponent, 2);
+  assert.equal(output.diagnostics.contribution_exponent, 1.5);
   // 原始 fused/confidence 仍保留，重排只改变排序分。
   assert.equal(output.results[0].fused_score, 0);
   assert.ok((output.results[0].query_idf_baseline ?? 0) > 0);
@@ -520,15 +523,15 @@ test("冻结契约：来源优先级决定入选，最终输出同分按 id 升�
   assert.deepEqual(sameOutput.results.map((item) => item.id), ["c-a", "c-b"]);
 });
 
-test("冻结契约：confidence 阈值与 scoring_version 保持 confidence-v1", () => {
+test("冻结契约：confidence 阈值与 scoring_version 切换 confidence-v4", () => {
   const low = {
     id: "low", source_type: "file", raw_score: 1,
     document: rankDocument("low", "file", "毫不相关的-random-tokens"),
   };
   const output = rankCandidates("缓存", [low], { limit: 5, maxChars: 1000 });
-  // match=0 的候选 confidence 被压到 0.35 以下，confidence 模式下全部被拒。
+  // v4 零命中候选受无命中保护（压到 0.35 以下），进不了任何 band。
   assert.equal(output.results.length, 0);
-  assert.equal(output.diagnostics.scoring_version, "confidence-v1");
+  assert.equal(output.diagnostics.scoring_version, "confidence-v4");
   assert.equal(output.diagnostics.threshold, 0.35);
   assert.equal(output.diagnostics.preferred_threshold, 0.55);
   assert.equal(output.diagnostics.selection_mode, "confidence");
@@ -754,10 +757,14 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
     ...memoryHits.map((hit) => {
       const candidateId = `memory:${hit.id}:0`;
       keyById.set(candidateId, hit.id);
-      return { id: candidateId, source_type: "memory", raw_score: fusedScores.get(hit.id)!, fusion: "bm25", fused_score: null as number | null, document: { ...memoryDocs.find((doc) => doc.id === hit.id)!, id: candidateId } };
+      // 语义分与统一查询同源：m1 与查询向量同向（cos=1），m2 正交（cos=0）。
+      const semanticScore = hit.id === "memory:m1:0" ? 1 : 0;
+      return { id: candidateId, source_type: "memory", raw_score: fusedScores.get(hit.id)!, fusion: "bm25", fused_score: null as number | null, semantic_score: semanticScore, document: { ...memoryDocs.find((doc) => doc.id === hit.id)!, id: candidateId } };
     }),
   ];
-  request({ op: "rank_candidates", query: "缓存", candidates, limit: 5, max_chars: 3000, max_per_source: 3, max_per_parent: 3, selection_mode: "confidence" });
+  // v4 的 confidence 依赖池内词法归一化，参考管线必须与统一查询引用同一份
+  // 完整语料统计，否则 rank_score 的 IDF 基准不同会导致分数不可比。
+  request({ op: "rank_candidates", query: "缓存", candidates, limit: 5, max_chars: 3000, max_per_source: 3, max_per_parent: 3, selection_mode: "confidence", corpus_documents: [...docs, ...memoryDocs] });
   const reference = await readResponse();
 
   // ── 统一查询：同语料同参数一次完成 ──
@@ -775,8 +782,8 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   assert.equal(unified.fusion.vector_doc_count, 2);
   assert.equal(unified.fusion.vector_version, "prov:model:2");
   assert.equal(unified.fusion.fallback, null);
-  assert.equal(unified.stats.scoring_version, "confidence-v1");
-  assert.equal(unified.stats.rescore_version, "idf-nonlinear-v1");
+  assert.equal(unified.stats.scoring_version, "confidence-v4");
+  assert.equal(unified.stats.rescore_version, "idf-nonlinear-v2");
   assert.equal(unified.stats.idf_source, "combined_ts_index");
   // 水位：message_id=5 的会话文档不参与。
   const unifiedRows = unified.selected as Array<{ document_key: string; confidence: number }>;
@@ -816,6 +823,84 @@ test("unified_query 将跨轮 content hash 排除参数传到统一排序器", a
   const result = await readResponse() as Record<string, any>;
   assert.equal(result.status, "ok");
   assert.deepEqual(result.selected, []);
+  child.stdin.end();
+  await closed;
+});
+
+test("unified_query 持久向量随 replace 整表搭载并按版本戳融合非 memory 组", async (t) => {
+  const { request, readResponse, closed, child } = spawnWorker(t);
+  // 对称文本（同 token 数、同查询词频、Jaccard 0.33 不触发相似度去重）：
+  // 词法完全打平（lexical_norm 同为 1），confidence 差异只能来自语义混合。
+  // 交付顺序遵循冻结契约（fused 降序 + id 升序），语义通过 v4 confidence 生效。
+  const docs = [
+    { id: "file:f1:0", text: "缓存甲级说明", source_type: "file", scope_type: "owner", scope_id: "o1", document_version: "1" },
+    { id: "note:n1:0", text: "缓存乙级结论", source_type: "note", scope_type: "owner", scope_id: "o1", document_version: "1" },
+  ];
+  request({ op: "replace", revision: "r1", documents: docs,
+    vectors: { "file:f1:0": [1, 0], "note:n1:0": [1, 0.2] }, vector_version: "prov:model:9" });
+  assert.equal((await readResponse()).revision, "r1");
+
+  const runQuery = async (revision: string, vectorVersion: string | null) => {
+    request({ op: "unified_query", revision, query: "缓存", query_vector: [1, 1],
+      ...(vectorVersion ? { vector_version: vectorVersion } : {}), source_order: ["file", "note"],
+      searches: [
+        { id: "0", source_types: ["file"], limit: 20 },
+        { id: "1", source_types: ["note"], limit: 20 },
+      ], candidate_limit: 20,
+      rank: { limit: 5, max_chars: 3000, max_per_source: 3, max_per_parent: 3, selection_mode: "confidence" } });
+    return await readResponse() as Record<string, any>;
+  };
+  const key = (row: { document_key: string }) => row.document_key;
+
+  // 基线：Python 不带 vector_version（旧调用方）→ 非 memory 组不融合，纯词法。
+  const baseline = await runQuery("r1", null);
+  assert.equal(baseline.fusion.fusion, "bm25");
+  assert.equal(baseline.fusion.fallback, "embedding_cache_unavailable");
+  const baselineRows = baseline.selected as Array<{ document_key: string; confidence: number; semantic_norm?: number }>;
+  assert.deepEqual(baselineRows.map(key), ["file:f1:0", "note:n1:0"]);
+  assert.ok(baselineRows.every((row) => row.semantic_norm === undefined));
+
+  // 版本戳一致：融合生效，两个候选都拿到池内归一化语义分。
+  const fused = await runQuery("r1", "prov:model:9");
+  assert.equal(fused.status, "ok");
+  assert.equal(fused.fusion.fusion, "hybrid-rrf");
+  assert.equal(fused.fusion.vector_doc_count, 2);
+  assert.equal(fused.fusion.vector_version, "prov:model:9");
+  assert.equal(fused.fusion.fallback, null);
+  const fusedRows = fused.selected as Array<{ document_key: string; confidence: number; semantic_norm?: number }>;
+  assert.deepEqual(fusedRows.map(key), ["file:f1:0", "note:n1:0"]);
+  const fileFused = fusedRows.find((row) => row.document_key === "file:f1:0")!;
+  const noteFused = fusedRows.find((row) => row.document_key === "note:n1:0")!;
+  const fileBase = baselineRows.find((row) => row.document_key === "file:f1:0")!;
+  const noteBase = baselineRows.find((row) => row.document_key === "note:n1:0")!;
+  // file 与查询不同向（cos 0.707，池内归一 0.849837）→ v4 词法位被 0.45/0.55 拉低。
+  assert.equal(fileFused.semantic_norm, 0.849837);
+  assert.ok(fileFused.confidence < fileBase.confidence, `file 混合后应降分 ${fileFused.confidence} vs ${fileBase.confidence}`);
+  // note 是池内最大余弦（归一 1.0）→ fused 与纯词法同值，confidence 不变。
+  assert.equal(noteFused.semantic_norm, 1);
+  assert.equal(noteFused.confidence, noteBase.confidence);
+
+  // 版本戳不一致（换模型窗口）：非 memory 组降级纯词法，回退到基线数值。
+  const degraded = await runQuery("r1", "other:model:1");
+  assert.equal(degraded.status, "ok");
+  assert.equal(degraded.fusion.fusion, "bm25");
+  assert.equal(degraded.fusion.vector_doc_count, 0);
+  assert.equal(degraded.fusion.fallback, "embedding_cache_unavailable");
+  assert.deepEqual((degraded.selected as Array<{ confidence: number }>).map((row) => row.confidence),
+    baselineRows.map((row) => row.confidence));
+
+  // patch 整表搭载新映射：file 向量随整表消失（只剩 note 命中向量）。
+  request({ op: "patch", revision: "r2", base_revision: "r1", upserts: [docs[1]], deletes: [],
+    vectors: { "note:n1:0": [1, 0.2] }, vector_version: "prov:model:10" });
+  assert.equal((await readResponse()).revision, "r2");
+  const afterPatch = await runQuery("r2", "prov:model:10");
+  assert.equal(afterPatch.status, "ok");
+  assert.equal(afterPatch.fusion.fusion, "hybrid-rrf");
+  assert.equal(afterPatch.fusion.vector_doc_count, 1);
+  assert.equal(afterPatch.fusion.vector_version, "prov:model:10");
+  const patchRows = afterPatch.selected as Array<{ document_key: string; semantic_norm?: number }>;
+  assert.equal(patchRows.find((row) => row.document_key === "note:n1:0")!.semantic_norm, 1);
+  assert.equal(patchRows.find((row) => row.document_key === "file:f1:0")!.semantic_norm, undefined);
   child.stdin.end();
   await closed;
 });

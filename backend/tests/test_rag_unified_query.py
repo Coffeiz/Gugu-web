@@ -48,7 +48,7 @@ def _canned_response(file_doc, memory_doc, file_key, memory_key, *, fallback=Non
         ],
         "stats": {"candidate_count": 2, "accepted_count": 2, "top_confidence": 0.9,
                   "threshold": 0.35, "preferred_threshold": 0.55,
-                  "selection_mode": "confidence", "scoring_version": "confidence-v1",
+                  "selection_mode": "confidence", "scoring_version": "confidence-v4",
                   "elapsed_ms": 3, "source_diagnostics": {"file": {"candidate_count": 1}}},
         "fusion": {"fusion": "hybrid-rrf", "vector_doc_count": 1,
                    "vector_version": "prov:model:2", "fallback": fallback},
@@ -71,10 +71,12 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
         calls["transient"] = (list(documents), revision, vectors, vector_version)
 
     async def unified_query(query, *, searches, query_vector, source_order,
-                            candidate_limit, rank_options, before_message_id=None):
+                            candidate_limit, rank_options, before_message_id=None,
+                            vector_version=None):
         calls["query"] = {"query": query, "searches": searches, "query_vector": query_vector,
                           "source_order": source_order, "candidate_limit": candidate_limit,
-                          "rank_options": rank_options, "before_message_id": before_message_id}
+                          "rank_options": rank_options, "before_message_id": before_message_id,
+                          "vector_version": vector_version}
         return canned
 
     index = SimpleNamespace(
@@ -237,7 +239,7 @@ def _pre_ranked_batch(triples, *, metadata=None):
         source_type="unified", rank_rows=tuple(triples), rank_stats={
             "candidate_count": len(triples), "accepted_count": len(triples),
             "top_confidence": 0.9, "threshold": 0.35, "preferred_threshold": 0.55,
-            "selection_mode": "confidence", "scoring_version": "confidence-v1",
+            "selection_mode": "confidence", "scoring_version": "confidence-v4",
             "elapsed_ms": 2,
         },
         metadata=metadata or {"engine": "typescript", "cache_hit": "True",

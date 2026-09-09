@@ -165,6 +165,8 @@ TS 模块明确不负责：
 
 排序分为两层：BM25 先负责词法候选的基础相关度，IDF 重排再负责区分本次 query 中的信息量高低。两者都在 TS worker 内执行，并使用完整 TS 索引的 corpus statistics，而不是只用当前 Top-K 候选估算 IDF。
 
+> 2026-09-10 起（PRD-TS-RAG-0.4.0）：生产评分为 **confidence-v4**，非线性贡献指数为 `1.5`（`rescore_version=idf-nonlinear-v2`）；confidence-v1 保留为回滚开关（`search.ts_rank_scoring_version`）。算法细节以 [`docs/prds/PRD-TS-RAG-0.4.0-算法设计.md`](../prds/PRD-TS-RAG-0.4.0-算法设计.md) 为准，本节描述现行实现。
+
 #### 1）统一分词和 BM25 基础分
 
 query 和候选文档使用同一套 TS tokenizer（中文 Jieba + ASCII entity tokenizer）。BM25 使用固定参数：
@@ -222,21 +224,36 @@ t6    idf=7.964
 
 ```text
 weighted(t, d) = bm25_term(t, d) * query_weight(t)
-nonlinear(t, d) = weighted(t, d)^2
+nonlinear(t, d) = weighted(t, d)^1.5
 
 rank_score(d) = Σ nonlinear(t, d)
 ```
 
-当前版本为 `idf-nonlinear-v1`，贡献指数为 `2`。平方会放大高 IDF token 的优势：一个候选命中 `t6` 这种稀有实体时，通常会比只命中多个泛词的候选更靠前。排序贡献会通过 `rank_contributions` 返回，包含 token、IDF、query weight、TF、线性贡献和非线性贡献，便于 LoopScope 解释排序原因。
+当前版本为 `idf-nonlinear-v2`，贡献指数为 `1.5`（2026-09-10 从 `2` 下调：平方在池内归一化下对次头部候选挤压过强，笔记、长文档类候选的相对词法分被压到接近 0；1.5 保留非线性放大的同时维持合理区分度）。高信息 token（如 `t6` 这种稀有实体）仍然比多个泛词更靠前。排序贡献会通过 `rank_contributions` 返回，包含 token、IDF、query weight、TF、线性贡献和非线性贡献，便于 LoopScope 解释排序原因。
 
 如果 query 没有任何可从完整索引取得 IDF 的 token，或 corpus statistics 不可用，则不启用该重排，回退使用当前的 `fused` 分作为 `rank_score`；这不是 Python scorer 兜底，而是 TS ranker 对缺少统计数据的明确退化行为。
 
-#### 4）排序和 confidence 的关系
+#### 4）confidence-v4：排序与过滤的统一分数
 
-`rank_score` 只负责排序，不替代 `confidence`：
+生产评分 `confidence-v4`（2026-09-10 定稿）把检索质量统一折算为一个分数，同时承担排序和过滤：
 
 ```text
-rank_score 降序
+lexical_norm(d) = rank_score(d) / max(rank_score)   # 同一候选池内归一化
+retrieval_norm  = lexical_norm                       # 有 embedding 时 0.45*lexical + 0.55*semantic
+match(d)        = query 与候选文本的命中覆盖度 [0,1]
+quality(source) = 来源质量先验（knowledge 1.0；memory/project/file/journal/note/calendar 0.8；
+                  canvas/conversation/未知 0.6）
+
+confidence_v4(d) = (0.75 × retrieval_norm + 0.25 × match) × quality
+```
+
+乘法公式天然有界：分数上界就是该候选的来源质量，不需要额外截断。`query_match = 0` 的候选受无命中保护，`confidence` 压到 `0.35` 以下，不进任何 band——零命中候选不能凭来源质量混进首选集合。
+
+最终排序：
+
+```text
+confidence_v4 降序
+  → rank_score 降序（同分决胜）
   → fused_score 降序
   → 来源优先级
   → updated_at 降序
@@ -244,16 +261,16 @@ rank_score 降序
   → document id 升序
 ```
 
-`confidence-v1` 仍使用 fused/raw 相关信号计算，当前阈值为：
+过滤阈值：
 
 - `confidence >= 0.55`：preferred 结果；
 - 没有 preferred 结果时，使用 `0.35 <= confidence < 0.55` 的 fallback 结果；
 - 低于 `0.35` 的结果在 confidence 模式下过滤；
-- 显式 Top-K 模式不依赖 confidence 阈值，只按 `rank_score` 取 Top-K。
+- 显式 Top-K 模式不依赖 confidence 阈值，只按分数取 Top-K。
 
-所以当前链路是“IDF 非线性分负责排序，confidence 负责选择/过滤”，不会把 `confidence` 再乘进 `rank_score`，也不会把 `rank_score` 当作事实置信度。
+回滚开关：`search.ts_rank_scoring_version = confidence-v1` 时恢复旧评分（`0.55*fused + 0.25*match + 0.20*quality`，含零命中硬保护），TS 与 Python guard 按配置同步切换。
 
-诊断字段：`rescore_version=idf-nonlinear-v1`、`idf_source=full_ts_index`（Memory 瞬态语料合并时为 `combined_ts_index`）、`query_idf_baseline`、`contribution_exponent=2`。若看到 `rescore_version=disabled`，表示该次请求没有可用的完整 corpus statistics。
+诊断字段：`scoring_version=confidence-v4`、`rescore_version=idf-nonlinear-v2`、`idf_source=full_ts_index`（Memory 瞬态语料合并时为 `combined_ts_index`）、`query_idf_baseline`、`contribution_exponent=1.5`、`source_quality`、`query_match`。若看到 `rescore_version=disabled`，表示该次请求没有可用的完整 corpus statistics；此时 v4 词法归一化退化为 fused 口径。注意 v4 分数依赖候选池与语料统计（IDF 基准），跨管线比较必须使用同一份完整索引统计。
 
 ## 7. 自动召回与显式搜索
 

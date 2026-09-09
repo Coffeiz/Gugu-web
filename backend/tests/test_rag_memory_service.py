@@ -54,7 +54,8 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
         calls["transient"] = list(docs)
 
     async def unified_query(query, *, searches, query_vector, source_order,
-                            candidate_limit, rank_options, before_message_id=None):
+                            candidate_limit, rank_options, before_message_id=None,
+                            vector_version=None):
         calls["searches"] = searches
         calls["rank_options"] = rank_options
         rows = list(selected or ())
@@ -62,7 +63,7 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
             "selected": rows,
             "stats": {"candidate_count": len(rows), "accepted_count": len(rows),
                       "top_confidence": 0.9, "threshold": 0.35, "preferred_threshold": 0.55,
-                      "selection_mode": "top_k", "scoring_version": "confidence-v1",
+                      "selection_mode": "top_k", "scoring_version": "confidence-v4",
                       "elapsed_ms": 2, "source_diagnostics": {}},
             "fusion": {"fusion": "bm25"},
             "document_counts": {"memory": len(documents)},
@@ -130,7 +131,7 @@ async def test_memory_search_passes_source_filter_and_unknown_source_stays_empty
                     "rejected_not_preferred": 0, "rejected_duplicate": 0, "rejected_parent": 0,
                     "rejected_source": 0, "rejected_similarity": 0, "output_chars": 0,
                     "top_confidence": 0.0, "threshold": 0.35, "preferred_threshold": 0.55,
-                    "selection_mode": "top_k", "scoring_version": "confidence-v1",
+                    "selection_mode": "top_k", "scoring_version": "confidence-v4",
                     "elapsed_ms": 0}
 
     monkeypatch.setattr(service, "rank_candidates_with_cache", empty_rank)

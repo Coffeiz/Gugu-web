@@ -64,7 +64,7 @@ def _mock_ts_ranker(monkeypatch):
             "rejected_not_preferred": 0, "top_confidence": 0.9,
             "threshold": 0.35, "preferred_threshold": 0.55,
             "selection_mode": selection_mode,
-            "scoring_version": "confidence-v1", "elapsed_ms": 0,
+            "scoring_version": "confidence-v4", "elapsed_ms": 0,
         }
     monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
 
@@ -124,7 +124,7 @@ async def test_explicit_search_uses_top_k_but_passive_search_keeps_confidence_fi
             "rejected_low_score": 0, "rejected_not_preferred": 0,
             "top_confidence": 0.1, "threshold": 0.35,
             "preferred_threshold": 0.55, "selection_mode": selection_mode,
-            "scoring_version": "confidence-v1", "elapsed_ms": 0,
+            "scoring_version": "confidence-v4", "elapsed_ms": 0,
         }
 
     monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)

@@ -25,7 +25,8 @@ type Document = RagDocument;
 type State = {
   revision: string;
   restoreError: string | null;
-  /** 瞬态槽驻留的 Memory 向量（transient 专用）；键 = worker 文档键。 */
+  /** 向量驻留表；键 = worker 文档键。transient 槽放 Memory 快照向量，
+   * persistent 槽放 knowledge 等持久来源向量（随 replace/patch 整表搭载、可落盘）。 */
   vectors: Map<string, number[]>;
   vectorVersion: string;
   documents: Document[];
@@ -47,7 +48,7 @@ function hybridFuseScores(
   lexicalWeight: number,
   vectorWeight: number,
   rrfK: number,
-): { fusedScores: Map<string, number>; vectorDocCount: number } {
+): { fusedScores: Map<string, number>; vectorDocCount: number; vectorScores: Map<string, number> } {
   const getVector = (key: string): number[] | undefined =>
     vectors instanceof Map ? vectors.get(key) : vectors[key];
   const vectorScores = new Map<string, number>();
@@ -73,7 +74,7 @@ function hybridFuseScores(
   if (vectorScores.size === 0) {
     // vector_map 非空但命中都无可用向量时 Python 按纯词法 RRF 重打分；这里由
     // 调用方决定透传或重打分，空命中集返回空表。
-    return { fusedScores, vectorDocCount: 0 };
+    return { fusedScores, vectorDocCount: 0, vectorScores };
   }
   const rrf = (rank: number, weight: number) => weight * ((rrfK + 1) / (rrfK + Math.max(1, rank)));
   const lexicalRanks = new Map(hits.map((hit, index) => [String(hit.chunk_id), index + 1]));
@@ -87,7 +88,7 @@ function hybridFuseScores(
     if (vectorRank !== undefined) score += rrf(vectorRank, vectorWeight);
     fusedScores.set(key, score);
   }
-  return { fusedScores, vectorDocCount: vectorScores.size };
+  return { fusedScores, vectorDocCount: vectorScores.size, vectorScores };
 }
 
 function makeState(indexDir?: string): State {
@@ -109,12 +110,17 @@ async function restore(state: State): Promise<void> {
   }
   // 恢复失败由上层 replace 重建；结局必须显式可观测，不能伪装成有数据或无声跳过。
   try {
-    const parsed = JSON.parse(raw) as { version?: string; revision?: string; documents?: Document[] };
+    const parsed = JSON.parse(raw) as {
+      version?: string; revision?: string; documents?: Document[];
+      vectors?: Record<string, number[]>; vector_version?: string;
+    };
     if (parsed.version !== VERSION) {
       state.restoreError = "version_mismatch";
       return;
     }
     replaceInMemory(state, parsed.revision ?? "", parsed.documents ?? []);
+    state.vectors = new Map(Object.entries(parsed.vectors ?? {}));
+    state.vectorVersion = String(parsed.vector_version ?? "");
   } catch {
     state.restoreError = "corrupt";
   }
@@ -186,8 +192,19 @@ async function persist(state: State): Promise<void> {
   await mkdir(state.indexDir, { recursive: true, mode: 0o700 });
   const target = join(state.indexDir, "index.json");
   const temporary = `${target}.tmp`;
-  await writeFile(temporary, JSON.stringify({ version: VERSION, revision: state.revision, documents: state.documents }), { mode: 0o600 });
+  await writeFile(temporary, JSON.stringify({
+    version: VERSION, revision: state.revision, documents: state.documents,
+    vectors: Object.fromEntries(state.vectors), vector_version: state.vectorVersion,
+  }), { mode: 0o600 });
   await rename(temporary, target);
+}
+
+/** replace/patch 携带向量时的整表替换：Python 每次索引构建都随载全量当前映射，
+ * 因此直接整表覆盖即可自清理已删除文档，不保留增量残留。 */
+function applyVectorMap(state: State, request: { vectors?: Record<string, number[]>; vector_version?: string }): void {
+  if (request.vectors === undefined) return;
+  state.vectors = new Map(Object.entries(request.vectors ?? {}));
+  state.vectorVersion = String(request.vector_version ?? "");
 }
 
 function matchesScope(document: Document, scope?: RagSearchScope): boolean {
@@ -329,28 +346,61 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       }
     }
 
-    // Memory 融合：向量来自瞬态槽驻留（随语料上传），语义与 hybrid_fuse 冻结契约一致。
+    // 融合：Memory 组向量来自瞬态槽驻留（随语料上传），语义与 hybrid_fuse 冻结契约一致；
+    // 其余持久来源组用 replace/patch 整表搭载的持久向量，且要求 Python 声明的
+    // embedding 版本戳与驻留表一致——不一致（换模型窗口）时降级纯词法，宁缺勿错。
     const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
-    const memoryGroup = merged.get("memory");
+    const lexicalWeight = Number(request.lexical_weight ?? 0.45);
+    const vectorWeight = Number(request.vector_weight ?? 0.55);
+    const rrfK = Number(request.rrf_k ?? 60);
     let fusion: { fusion: "hybrid-rrf" | "bm25"; vector_doc_count: number; vector_version: string; fallback: string | null } = {
       fusion: "bm25", vector_doc_count: 0, vector_version: transient.vectorVersion, fallback: "embedding_cache_unavailable",
     };
+    let fusedAny = false;
+    let memoryFused = false;
+    let vectorDocCount = 0;
+    let fusionVersion = transient.vectorVersion;
+    // 候选池级语义分（原始余弦）：融合生效的组内每个向量命中都进池，
+    // 供 v4 排序按 池最大值 归一化后以 0.45/0.55 混入词法位（镜像 Python
+    // 诊断探针 apply_confidence_v4 的语义混合公式）。
+    const semanticCosines = new Map<string, number>();
+    const memoryGroup = merged.get("memory");
     if (memoryGroup && memoryGroup.length && queryVector.length && transient.vectors.size) {
-      const lexicalWeight = Number(request.lexical_weight ?? 0.45);
-      const vectorWeight = Number(request.vector_weight ?? 0.55);
-      const rrfK = Number(request.rrf_k ?? 60);
       const hits = memoryGroup.map((item) => ({ chunk_id: item.key }));
-      const { fusedScores, vectorDocCount } = hybridFuseScores(
+      const { fusedScores, vectorDocCount: memoryVectorDocs, vectorScores } = hybridFuseScores(
         hits, queryVector, transient.vectors, lexicalWeight, vectorWeight, rrfK);
       if (fusedScores.size) {
         merged.set("memory", memoryGroup.map((item) => ({
           ...item, score: fusedScores.get(item.key) ?? item.score,
         })));
-        fusion = { fusion: "hybrid-rrf", vector_doc_count: vectorDocCount, vector_version: transient.vectorVersion, fallback: null };
+        fusedAny = true;
+        memoryFused = true;
+        vectorDocCount += memoryVectorDocs;
+        fusionVersion = transient.vectorVersion;
+        for (const [key, cosine] of vectorScores) semanticCosines.set(key, cosine);
       }
-    } else if (memoryGroup && memoryGroup.length && queryVector.length && !transient.vectors.size) {
-      // 查询向量在但语料没有驻留向量：纯词法（Python hybrid_results 的空缓存透传语义）。
-      fusion = { fusion: "bm25", vector_doc_count: 0, vector_version: transient.vectorVersion, fallback: "embedding_cache_unavailable" };
+    }
+    const persistentVectorsUsable = queryVector.length > 0 && state.vectors.size > 0
+      && String(request.vector_version ?? "") !== ""
+      && state.vectorVersion === String(request.vector_version);
+    if (persistentVectorsUsable) {
+      for (const [source, group] of merged) {
+        if (source === "memory" || group.length === 0) continue;
+        const hits = group.map((item) => ({ chunk_id: item.key }));
+        const { fusedScores, vectorDocCount: groupVectorDocs, vectorScores } = hybridFuseScores(
+          hits, queryVector, state.vectors, lexicalWeight, vectorWeight, rrfK);
+        if (!fusedScores.size) continue;
+        merged.set(source, group.map((item) => ({
+          ...item, score: fusedScores.get(item.key) ?? item.score,
+        })));
+        fusedAny = true;
+        vectorDocCount += groupVectorDocs;
+        if (!memoryFused) fusionVersion = state.vectorVersion;
+        for (const [key, cosine] of vectorScores) semanticCosines.set(key, cosine);
+      }
+    }
+    if (fusedAny) {
+      fusion = { fusion: "hybrid-rrf", vector_doc_count: vectorDocCount, vector_version: fusionVersion, fallback: null };
     }
 
     // 候选打包镜像 Python rank_candidates_with_cache 的 payload（含平铺顺序）。
@@ -364,12 +414,14 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       for (const item of merged.get(source)!) {
         const candidateId = `${source}:${item.key}:${payload.length}`;
         keysByCandidateId.set(candidateId, item.key);
+        const semanticScore = semanticCosines.get(item.key);
         payload.push({
           id: candidateId,
           source_type: source,
           raw_score: item.score,
           fusion: "bm25",
           fused_score: null,
+          ...(semanticScore !== undefined ? { semantic_score: semanticScore } : {}),
           document: { ...item.document, id: candidateId },
         });
       }
@@ -507,6 +559,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
   }
   if (request.op === "replace") {
     replaceInMemory(state, request.revision ?? "", request.documents ?? []);
+    applyVectorMap(state, request);
     state.restoreError = null;
     await persist(state);
     return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
@@ -516,6 +569,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       return { status: "error", code: "revision_mismatch", message: "TS worker patch 基线 revision 与当前索引不一致" };
     }
     patchInMemory(state, request.revision ?? "", request.upserts ?? [], request.deletes ?? []);
+    applyVectorMap(state, request);
     await persist(state);
     return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
   }
@@ -570,6 +624,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         maxPerParent: request.max_per_parent ?? 3,
         excludeContentHashes: request.exclude_content_hashes ?? [],
         selectionMode: request.selection_mode ?? "confidence",
+        scoringVersion: request.scoring_version ?? "confidence-v4",
         corpusStatistics: diagnosticCorpus
           ? corpusStatistics(diagnosticCorpus)
           : corpusStatistics(state),

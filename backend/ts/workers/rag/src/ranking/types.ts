@@ -9,6 +9,8 @@ export type UnifiedRecallOptions = {
   maxPerParent?: number;
   excludeContentHashes?: string[];
   selectionMode?: "confidence" | "top_k";
+  /** 评分版本；生产默认 confidence-v4，confidence-v1 仅作短期回滚。 */
+  scoringVersion?: "confidence-v4" | "confidence-v1";
   /** 完整索引统计；生产排序禁止从当前候选池估算 IDF。 */
   corpusStatistics?: CorpusStatistics;
 };

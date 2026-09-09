@@ -97,13 +97,24 @@ class TsSidecarClient:
         current = now if now is not None else asyncio.get_running_loop().time()
         return self._active_requests == 0 and current - self._last_used_at >= SIDE_CAR_IDLE_TTL_SECONDS
 
-    async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
+    async def replace(
+        self,
+        documents: list[IndexDocument],
+        revision: str | None,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
+    ) -> None:
         # 索引构建不是用户等待的搜索路径，全量 replace 可能远超 500ms 搜索超时。
-        result = await self._request({
+        payload: dict[str, Any] = {
             "op": "replace",
             "revision": revision or "",
             "documents": [_wire_document(document) for document in documents],
-        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
@@ -133,15 +144,25 @@ class TsSidecarClient:
         deletes: list[str],
         revision: str | None,
         base_revision: str | None,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
     ) -> None:
-        """只同步发生变化的 chunk，保持 worker 的 revision 原子推进。"""
-        result = await self._request({
+        """只同步发生变化的 chunk，保持 worker 的 revision 原子推进。
+
+        vectors 与 replace 同语义：整表搭载当前持久向量映射，worker 整表覆盖。
+        """
+        payload: dict[str, Any] = {
             "op": "patch",
             "revision": revision or "",
             "base_revision": base_revision or "",
             "upserts": [_wire_document(document) for document in upserts],
             "deletes": list(deletes),
-        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or 0)
@@ -309,6 +330,7 @@ class TsSidecarClient:
         max_chars: int, max_per_source: int, max_per_parent: int,
         exclude_content_hashes: set[str] | None = None,
         selection_mode: str = "confidence",
+        scoring_version: str = "confidence-v4",
         corpus_documents: list[dict] | None = None,
     ) -> tuple[list[dict], dict]:
         """调用 TS 完成来源归一化、confidence 过滤和统一预算。"""
@@ -322,6 +344,7 @@ class TsSidecarClient:
             "max_per_parent": max(1, int(max_per_parent)),
             "exclude_content_hashes": sorted(exclude_content_hashes or set()),
             "selection_mode": selection_mode,
+            "scoring_version": scoring_version,
             **({"corpus_documents": corpus_documents} if corpus_documents is not None else {}),
         })).response
         return list(response.get("selected") or []), dict(response.get("stats") or {})
@@ -489,11 +512,14 @@ class TsLexicalIndex:
         candidate_limit: int,
         rank_options: dict,
         before_message_id: int | None = None,
+        vector_version: str | None = None,
     ) -> dict:
         """Phase 5 统一查询：一次 IPC 完成召回、聚合、水位、Memory 融合与排序。
 
         返回 worker 响应（selected/stats/fusion/document_counts/source_groups）；
-        权限复核与注入组装仍由 Python 收口。
+        权限复核与注入组装仍由 Python 收口。vector_version 是 Python 当前生效的
+        embedding 模型版本戳，worker 用它校验持久向量表是否同版，不匹配则非
+        memory 组降级纯词法。
         """
         requests = []
         for position, item in enumerate(searches):
@@ -524,6 +550,8 @@ class TsLexicalIndex:
         }
         if any(item.get("corpus") == "transient" for item in searches):
             payload["transient_revision"] = self.client._transient_revision or ""
+        if vector_version:
+            payload["vector_version"] = vector_version
         response = await self.client._request(payload)
         return dict(response.response)
 
@@ -723,7 +751,7 @@ async def rank_candidates_with_cache(
             "rejected_not_preferred": 0, "top_confidence": 0.0,
             "threshold": 0.35, "preferred_threshold": 0.55,
             "selection_mode": selection_mode,
-            "scoring_version": "confidence-v1",
+            "scoring_version": _expected_scoring_version(),
         }
     from app.core.config import get_settings
 
@@ -780,20 +808,22 @@ async def rank_candidates_with_cache(
             "fused_score": candidate.fused_score if candidate.fused_score else None,
             "document": rank_document,
         })
+    scoring_version = _expected_scoring_version()
     selected, stats = await client.rank_candidates(
         query, payload, limit=limit, max_chars=max_chars,
         max_per_source=max_per_source, max_per_parent=max_per_parent,
         exclude_content_hashes=exclude_content_hashes,
         selection_mode=selection_mode,
+        scoring_version=scoring_version,
         corpus_documents=([_wire_document(document) for document in corpus_documents]
                           if corpus_documents is not None else None),
     )
-    # 冻结契约：评分实现必须是唯一的 confidence-v1；版本漂移说明出现了
-    # 第二套评分或新旧实现混跑，显式失败而不是静默接受结果差异。
+    # 冻结契约：TS 评分版本必须与配置一致；版本漂移说明出现了第二套评分
+    # 或新旧实现混跑，显式失败而不是静默接受结果差异。
     version = str(stats.get("scoring_version") or "")
-    if version != RANK_SCORING_VERSION:
+    if version != scoring_version:
         raise TsSidecarUnavailable(
-            f"TS 评分器版本与 Python 契约不一致：{version or '缺失'} ≠ {RANK_SCORING_VERSION}")
+            f"TS 评分器版本与 Python 契约不一致：{version or '缺失'} ≠ {scoring_version}")
     output = []
     for item in selected:
         candidate = by_id.get(str(item.get("id") or ""))
@@ -904,7 +934,13 @@ def active_index_dirs() -> set[Path]:
 
 # 冻结的统一评分契约版本（见 docs/prds/PRD-RAG-7 Phase 2）；与
 # ts/workers/rag/src/service.ts 的 scoring_version 必须同步演进。
-RANK_SCORING_VERSION = "confidence-v1"
+RANK_SCORING_VERSION = "confidence-v4"
+
+
+def _expected_scoring_version() -> str:
+    """回滚开关：search.ts_rank_scoring_version 决定期望的 TS 评分版本。"""
+    from app.core.config import get_settings
+    return str(getattr(get_settings().search, "ts_rank_scoring_version", "") or RANK_SCORING_VERSION)
 
 
 def _timeout_seconds() -> float:

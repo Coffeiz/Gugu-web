@@ -4,7 +4,7 @@ import { rankingText } from "./document-text.ts";
 import type { CorpusStatistics } from "./types.ts";
 
 export const IDF_EXPONENT = 1;
-export const CONTRIBUTION_EXPONENT = 2;
+export const CONTRIBUTION_EXPONENT = 1.5;
 export const MIN_QUERY_WEIGHT = 0.25;
 export const MAX_QUERY_WEIGHT = 4;
 

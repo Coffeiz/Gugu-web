@@ -84,7 +84,8 @@ async def test_memory_only_query_runs_transient_spec_without_persistent_sources(
         calls["transient"] = list(documents)
 
     async def unified_query(query, *, searches, query_vector, source_order,
-                            candidate_limit, rank_options, before_message_id=None):
+                            candidate_limit, rank_options, before_message_id=None,
+                            vector_version=None):
         calls["searches"] = searches
         calls["source_order"] = source_order
         return {
