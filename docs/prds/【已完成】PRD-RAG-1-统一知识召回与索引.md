@@ -19,7 +19,7 @@
 | Phase 1：Memory 内容摘要与分块召回 | ✅ 已完成 | Memory adapter、稳定切片、中文字符 n-gram BM25、可替换的 `IndexStore` 协议、内存 upsert/invalidate、版本去重和 `search_memory` 已落地；支持空结果、limit 上限、scope 与旧版本失效；已补自动化测试 | IM scope 后置到多来源阶段 |
 | Phase 2：统一索引管线与查询预算 | ✅ Memory 试点完成 | Memory 更新已接入 event 体系并发出独立 `rag.index.upsert` 信号；已实现按 owner 持久化 JSON 索引、异步串行更新、最多 3 次有限重试和脱敏生命周期诊断；查询优先读取索引，缺失时可重建回填；召回最多 10 条、单一 Memory 子来源最多 3 条、总输出 3000 字符；主动 `search_memory` 默认 5 条；embedding 作为可选补充，失败或缺缓存稳定退回 BM25 | 其他来源的持久化索引和生产规模升级移至 Phase 6 |
 | Phase 3：统一召回服务 | ✅ Memory 单来源完成 | 已抽取 `UnifiedRetriever` / `UnifiedRecallService`；统一候选结果、来源引用、父文档/正文去重、3000 字符预算和 snapshot 去重；显式 `search_memory` 保持 canonical tool round；历史问题启用同一服务的低成本 BM25 被动召回，并以 provider-compatible history 消息注入；LoopScope 增加脱敏 `Knowledge RAG recall` span，区分 `tool` / `passive` 入口；保留 `global_search`、`search_conversations` 等精确工具作为兜底 | Capability RAG 后置到 PRD-LLM-9 后续阶段；群聊 scope 规则在 Phase 4 落地 |
-| Phase 4：全量主动召回与 History 生命周期 | ✅ 已完成 | 每条用户消息统一执行 BM25；owner、group、member 共用 `UnifiedRetriever` 与 `MemoryAdapter`，群聊通过 scope、ACL 和两个记忆开关隔离；自动结果放在当前用户消息后的动态尾部，并保存为 canonical `knowledge-context`；按正文 hash 去重，LoopScope 记录模式、scope digest、命中数和注入状态 | 无；Embedding 仍只作为显式/限定条件召回能力，跨来源 RAG 后置 |
+| Phase 4：全量主动召回与 History 生命周期 | ✅ 已完成 | 每条用户消息统一执行 BM25；owner、group、member 共用 `UnifiedRetriever` 与 `MemoryAdapter`，群聊通过 scope、ACL 和两个记忆开关隔离；自动结果放在当前用户消息前的独立 canonical `knowledge-context` 边界，并在下一轮按同一顺序恢复；按正文 hash 去重，LoopScope 记录模式、scope digest、命中数和注入状态 | 无；Embedding 仍只作为显式/限定条件召回能力，跨来源 RAG 后置 |
 | Phase 5：跨来源混合召回 | ✅ 首个跨来源闭环完成 | Project 和 Knowledge 已注册为 Knowledge 来源；owner scope、稳定切片、BM25 候选、来源优先级、正文 hash 去重、父文档预算、合并引用和 3000 字符总预算统一由 `UnifiedRecallService` 收口；`search_memory(source=knowledge)` 已可显式召回用户知识；未引入独立 Ranking/Reranker | 文件、画布、对话等来源和生产规模索引继续后置到 `PRD-RAG-5`；跨来源标注集与质量评估后置 |
 | Phase 6：灰度与质量评估 | ✅ 已完成（RAG-4） | `knowledge_index_entries`、owner 级持久化索引、统一 `confidence` 过滤、去重、多样性和质量诊断已完成；质量复测覆盖 BM25/向量/hybrid 与无 embedding 回退。2026-08-26 起，RAG 召回在一次 snapshot/request 生命周期内复用同一个共享 TypeScript lexical index，持久化与 transient 来源会按 chunk 合并；查询时再按 `source_type` 和 `Scope` 过滤。Global Search 继续保留 ILIKE 紧急开关，Rust 制品发布灰度由 RAG-3 Phase 5 管理 | 文件正文抽取、更新事件自动重建和生产规模切换仍按来源独立推进 |
 
@@ -323,8 +323,8 @@ snapshot 的内容不应再次作为 RAG 结果返回；只有超出当前注入
 
 RAG 去重不是永久黑名单。Compaction 把旧 history 收进 summary 后，summary/baseline 的内部 metadata 可以记录已覆盖的 RAG hash；如果无法确认某个 chunk 已被 summary 保留，必须允许再次注入，不能为了去重造成知识丢失。
 
-自动 RAG history 位于当前 user message 之后、时间 reminder 之前，因此不会改变已经稳定
-缓存的历史前缀；同一 Run 的后续 tool round 继续复用它。当前轮新增的 RAG 区域本身属于
+自动 RAG history 位于当前 user message 之前、时间 reminder 也位于 RAG 之后且用户正文之前，
+因此本轮和下一轮恢复保持同一 canonical 边界；同一 Run 的后续 tool round 继续复用它。当前轮新增的 RAG 区域本身属于
 新鲜输入，回复完成后会成为下一 Run 的稳定 history 前缀。显式工具结果按普通 canonical
 tool history 持久化；自动 RAG 则保存为 canonical knowledge-context history，不伪装成
 模型已经执行过的工具。
