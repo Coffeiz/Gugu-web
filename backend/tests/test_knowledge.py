@@ -39,6 +39,45 @@ async def test_knowledge_store_upserts_same_topic_and_increments_version(knowled
 
 
 @pytest.mark.asyncio
+async def test_knowledge_store_normalizes_and_roundtrips_at_most_ten_keywords(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    entry = KnowledgeEntry.create(
+        title="关键词规则", content="用于检索", topic="检索",
+        keywords=[" RAG ", "rag", *[f"词语{i}" for i in range(12)]],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(entry)
+
+    saved = (await store.list())[0]
+    assert len(saved.keywords) == 10
+    assert saved.keywords[0] == "RAG"
+    assert saved.keywords.count("rag") == 0
+    assert (await store.list())[0].keywords == saved.keywords
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_updates_keywords_without_content_change(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="脚本规则", content="使用受控执行方式", topic="工具",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("conversation"),
+    )
+    await store.save(original)
+    enriched = KnowledgeEntry.create(
+        title="脚本规则", content="使用受控执行方式", topic="工具",
+        keywords=["run_script", "脚本工具"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("conversation"),
+    )
+
+    saved = await store.save(enriched)
+
+    assert saved.id == original.id
+    assert saved.version == 2
+    assert saved.keywords == ["run_script", "脚本工具"]
+    assert (await store.list())[0].keywords == saved.keywords
+
+
+@pytest.mark.asyncio
 async def test_knowledge_store_keeps_cross_source_conflict_visible(knowledge_storage):
     store = KnowledgeStore("user-a")
     original = KnowledgeEntry.create(
@@ -100,6 +139,25 @@ async def test_knowledge_adapter_exposes_source_and_confidence(knowledge_storage
     public = documents[0].as_public_result(0.8)
     assert public["confidence"] == "probable"
     assert public["source_label"] == "协议文档"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_adapter_makes_keywords_searchable(knowledge_storage):
+    from agent.rag.adapters.knowledge import KnowledgeAdapter
+    from agent.rag.models import Scope
+
+    await KnowledgeStore("user-a").save(KnowledgeEntry.create(
+        title="脚本执行", content="脚本应使用受控执行方式。", topic="工具经验",
+        keywords=["run_script", "脚本工具"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("conversation"),
+    ))
+
+    document = (await KnowledgeAdapter("user-a").build_documents(
+        scope=Scope(owner_user_id="user-a"),
+    ))[0]
+    assert "关键词：run_script、脚本工具" in document.summary
+    assert document.metadata["keywords"] == "run_script、脚本工具"
+    assert ":k" in document.version
 
 
 @pytest.mark.asyncio
@@ -181,6 +239,7 @@ def test_knowledge_reflection_prompt_covers_tool_and_person_knowledge():
     assert "工具调用失败本身不值得保存" in prompt
     assert "不同人物使用能区分主体的 `topic`" in prompt
     assert "高风险个人信息" in prompt
+    assert '"keywords"' in prompt
 
 
 def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():

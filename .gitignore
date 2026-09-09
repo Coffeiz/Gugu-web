@@ -89,6 +89,8 @@ Trace-*.json
 frontend/nohup.out
 # RAG 压测生成的本地 Embedding 缓存（按当前模型可重建）
 backend/scripts/.bench_rag_embeddings.json
+# 真实用户 RAG/LoopScope 诊断输出，只允许留在本机或 devserver
+/backend/scripts/diagnostics/local/
 
 # Rust RAG sidecar 构建产物
 /rust/target/

@@ -15,14 +15,12 @@ import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
 import { tokenizeRaw } from "./tokenizer.ts";
 import { buildSourceDocuments, type RagSourceBatch } from "./index-builder.ts";
 import { rankCandidates, selectUnifiedRecall } from "./service.ts";
+import { scoreTerms, termFrequency, tokenize as tokens } from "./scorer/bm25.ts";
+import type { Posting } from "./scorer/types.ts";
 
 const VERSION = RAG_WORKER_VERSION;
-const K1 = 1.2;
-const B = 0.75;
 
 type Document = RagDocument;
-
-type Posting = { ids: string[]; frequencies: number[] };
 type State = {
   revision: string;
   restoreError: string | null;
@@ -38,10 +36,6 @@ type State = {
   totalLength: number;
   indexDir?: string;
 };
-
-function tokens(value: string): string[] {
-  return tokenizeRaw(value);
-}
 
 /** 与 Python hybrid_results 逐位一致的融合核心：cosine 含 sqrt、
  * 维度不匹配/零向量记 0.0 但保留向量名次；返回每个命中的融合分与向量候选数。 */
@@ -93,12 +87,6 @@ function hybridFuseScores(
     fusedScores.set(key, score);
   }
   return { fusedScores, vectorDocCount: vectorScores.size };
-}
-
-function termFrequency(items: string[]): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const item of items) out.set(item, (out.get(item) ?? 0) + 1);
-  return out;
 }
 
 function makeState(indexDir?: string): State {
@@ -218,22 +206,6 @@ function matchesScope(document: Document, scope?: RagSearchScope): boolean {
     if (wanted && document[key] !== wanted) return false;
   }
   return true;
-}
-
-function scoreTerms(state: State, terms: Set<string>): Map<string, number> {
-  const scores = new Map<string, number>();
-  for (const term of terms) {
-    const posting = state.postings.get(term);
-    if (!posting) continue;
-    const idf = Math.log(1 + (state.documents.length - posting.ids.length + 0.5) / (posting.ids.length + 0.5));
-    posting.ids.forEach((id, position) => {
-      const tf = posting.frequencies[position];
-      const length = Math.max(1, state.lengths.get(id) ?? 0);
-      const norm = tf + K1 * (1 - B + B * length / (state.avgLength || 1));
-      scores.set(id, (scores.get(id) ?? 0) + idf * tf * (K1 + 1) / norm);
-    });
-  }
-  return scores;
 }
 
 function search(

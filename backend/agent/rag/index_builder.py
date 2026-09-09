@@ -320,6 +320,7 @@ async def build_source_records(db, owner_user_id: object, source_type: str) -> l
     if source_type == "calendar":
         rows = (await db.execute(select(CalendarEvent).where(
             CalendarEvent.user_id == owner_user_id,
+            CalendarEvent.deleted_at.is_(None),
         ).order_by(CalendarEvent.created_at.desc(), CalendarEvent.id.desc()))).scalars().all()
         return [(calendar_record(row), owner_scope) for row in rows]
     if source_type == "scheduled_task":

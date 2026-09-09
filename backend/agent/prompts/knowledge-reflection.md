@@ -116,6 +116,7 @@ Reflection 只负责语义判断，不要猜测或生成 `source_type`、`source
       "target_id": "knowledge-id-or-empty",
       "title": "不超过80字符",
       "topic": "不超过40字符",
+      "keywords": ["最多10个、用于检索的关键词或别名"],
       "content": "不超过1000字符的完整知识正文",
       "certainty": "confirmed|probable",
       "reason": "简短内部判定理由"
@@ -129,6 +130,7 @@ Reflection 只负责语义判断，不要猜测或生成 `source_type`、`source
 - `create` 的 `target_id` 必须为空；填写标题、主题、正文、certainty 和 reason。
 - `update` 的 `target_id` 必须是旧 Knowledge ID；正文必须是保留旧有效信息并合并本轮信息后的完整正文。
 - `conflict` 的 `target_id` 必须是旧 Knowledge ID；正文是本轮形成的新冲突版本，调用方会用 parent 关系保存新条目。
+- `create`、`update`、`conflict` 可填写 `keywords`；关键词是未来检索时可能出现的稳定别名、工具名或专有名词，最多10个，必须能从正文、标题或主题直接支持；不要把关键词当成额外事实。
 - `ignore` 只填写 `action`、`target_id` 和 `reason`。
 - 正文最多 1000 字符，标题最多 80 字符，主题最多 40 字符。
 - 没有值得保存的知识时输出一个 `ignore` 操作。

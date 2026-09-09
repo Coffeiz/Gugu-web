@@ -44,6 +44,7 @@ class KnowledgeEntry:
     title: str
     content: str
     topic: str
+    keywords: list[str]
     scope: KnowledgeScope
     source: KnowledgeSource
     confidence: KnowledgeConfidence = "confirmed"
@@ -61,6 +62,7 @@ class KnowledgeEntry:
         title: str,
         content: str,
         topic: str = "",
+        keywords: list[str] | None = None,
         scope: KnowledgeScope,
         source: KnowledgeSource,
         confidence: KnowledgeConfidence = "confirmed",
@@ -69,7 +71,7 @@ class KnowledgeEntry:
         now = time.time()
         return cls(
             id=f"knowledge-{uuid.uuid4().hex}", title=title.strip(),
-            content=content.strip(), topic=topic.strip(), scope=scope,
+            content=content.strip(), topic=topic.strip(), keywords=list(keywords or []), scope=scope,
             source=source, confidence=confidence, parent_id=parent_id,
             created_at=now, updated_at=now,
         )
@@ -81,9 +83,11 @@ class KnowledgeEntry:
     def from_dict(cls, raw: dict) -> "KnowledgeEntry":
         scope = KnowledgeScope(**(raw.get("scope") or {}))
         source = KnowledgeSource(**(raw.get("source") or {}))
+        raw_keywords = raw.get("keywords")
         return cls(
             id=str(raw["id"]), title=str(raw.get("title") or ""),
             content=str(raw.get("content") or ""), topic=str(raw.get("topic") or ""),
+            keywords=[str(item) for item in (raw_keywords if isinstance(raw_keywords, list) else []) if str(item).strip()],
             scope=scope, source=source,
             confidence=str(raw.get("confidence") or "confirmed"),  # type: ignore[arg-type]
             version=max(1, int(raw.get("version") or 1)),

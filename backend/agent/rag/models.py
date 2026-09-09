@@ -87,7 +87,7 @@ class IndexDocument:
             "citation": citation,
         }
         if self.source_type == "knowledge":
-            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "parent_id"):
+            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "keywords", "parent_id"):
                 if self.metadata.get(key):
                     result[key] = self.metadata[key]
         if self.source_type == "conversation":
@@ -157,4 +157,3 @@ class RecallCandidate:
         result["fused_score"] = round(self.fused_score, 6)
         result["confidence"] = round(self.confidence, 6)
         return result
-

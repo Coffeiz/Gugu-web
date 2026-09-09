@@ -44,7 +44,7 @@ class ProjectAdapter:
     async def _build_from_db(self, db, scope: Scope) -> list[IndexDocument]:
         rows = (await db.execute(
             select(Project)
-            .where(Project.user_id == self.user_id, Project.archived == False)
+            .where(Project.user_id == self.user_id, Project.deleted_at.is_(None), Project.archived == False)
             .order_by(Project.updated_at.desc(), Project.id.desc())
         )).scalars().all()
         documents: list[IndexDocument] = []
