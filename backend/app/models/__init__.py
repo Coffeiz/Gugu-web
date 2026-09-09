@@ -1273,6 +1273,7 @@ class AgentUsage(Base):
     provider:   Mapped[str]           = mapped_column(String(50))
     is_byok:    Mapped[bool]           = mapped_column(Boolean, default=False, nullable=False, index=True)
     tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
+    scenario:   Mapped[str]            = mapped_column(String(32), default="chat", nullable=False, server_default="chat")
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
 
 

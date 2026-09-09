@@ -20,10 +20,16 @@ _user_scope: ContextVar[bool] = ContextVar("modelctx_user_scope", default=False)
 
 @dataclass(frozen=True)
 class UsageContext:
-    """当前用户链路的用量归属。后台派生任务会继承父任务的上下文。"""
+    """当前用户链路的用量归属。后台派生任务会继承父任务的上下文。
+
+    scenario 标记这次（组）provider 调用的场景：chat=主对话、reflection=记忆
+    反思、compaction=会话压缩、knowledge=知识反思；ContextBranch 进入分支时
+    临时改写、退出还原，让 agent_usage 能按场景区分缓存率。
+    """
 
     user_id: object
     session_id: int | None = None
+    scenario: str = "chat"
 
 
 _usage_context: ContextVar[UsageContext | None] = ContextVar(
@@ -41,9 +47,9 @@ def get_model_cfg():
     return _model_cfg.get()
 
 
-def set_usage_context(user_id, session_id: int | None = None) -> None:
+def set_usage_context(user_id, session_id: int | None = None, scenario: str = "chat") -> None:
     """绑定当前用户链路，供非对话 provider 调用统一记录用量。"""
-    _usage_context.set(UsageContext(user_id=user_id, session_id=session_id))
+    _usage_context.set(UsageContext(user_id=user_id, session_id=session_id, scenario=scenario))
 
 
 def get_usage_context() -> UsageContext | None:
