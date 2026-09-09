@@ -247,6 +247,22 @@ class UndoService:
         }
 
     @classmethod
+    def _claim_select(cls, *, operation_id: str, user_id, context_id: str | None):
+        """apply 的操作行认领查询：FOR UPDATE 把「读状态→校验→执行→落终态」串成原子段。
+
+        两个并发 undo/redo 同时到达时，后到者阻塞在行锁上，等前者提交后读到的
+        已是终态，因此走幂等/冲突分支，不会重复执行资源变更。
+        """
+        return (
+            select(UndoOperation).where(
+                UndoOperation.id == operation_id,
+                UndoOperation.user_id == user_id,
+                UndoOperation.undo_context_id == context_id,
+                UndoOperation.actor_type == "web",
+            ).with_for_update()
+        )
+
+    @classmethod
     async def apply(
         cls,
         db: AsyncSession,
@@ -258,12 +274,8 @@ class UndoService:
     ) -> dict:
         context_id = cls._context(context_id)
         operation = (await db.execute(
-            select(UndoOperation).where(
-                UndoOperation.id == operation_id,
-                UndoOperation.user_id == user_id,
-                UndoOperation.undo_context_id == context_id,
-                UndoOperation.actor_type == "web",
-            )
+            cls._claim_select(
+                operation_id=operation_id, user_id=user_id, context_id=context_id)
         )).scalar_one_or_none()
         if operation is None:
             raise UndoNotFound()
