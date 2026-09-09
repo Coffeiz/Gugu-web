@@ -20,11 +20,15 @@ FROM python:latest
 # ffmpeg 在 Debian trixie 下会拉一整条音视频编解码库依赖链（100+ 包），每次 Dockerfile 这行
 # 之前有改动都要重新全量下载，缓存后只需下一次。
 ARG GUGU_INSTALL_DOCKER_CLI=false
+# libgstreamer-plugins-base1.0-0 显式列出以强制升到最新修复版：它是 ffmpeg 的传递依赖，
+# 基础镜像可能携带旧版且 apt 对已装依赖不会自动升级（CVE-2026-18297：OGG 任意代码执行，
+# 修复版 deb13u2）。
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         poppler-utils fonts-noto-cjk ffmpeg curl build-essential nodejs acl \
-        $(if [ "${GUGU_INSTALL_DOCKER_CLI}" = "true" ]; then echo docker.io; fi)
+        $(if [ "${GUGU_INSTALL_DOCKER_CLI}" = "true" ]; then echo docker.io; fi) \
+        libgstreamer-plugins-base1.0-0
 
 WORKDIR /app
 
