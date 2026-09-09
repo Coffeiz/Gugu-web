@@ -476,6 +476,32 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
         await _drain_group_owner_buffer(user_id, settings)
 
 
+async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
+                             *, session_id=None) -> None:
+    """Memory 反思末尾追加的 Knowledge 沉淀；落库成功后补发索引重建事件。
+
+    这条链路不经 save_knowledge 工具，没人替它发 RagIndexUpdated，漏发会让
+    持久索引投影缺行（主数据存在但检索不到）。source_id 留空即按
+    (user, source_type) 整源重建，与 rebuild 粒度一致。
+    """
+    try:
+        from agent.knowledge.reflection import candidate_request, reflect_if_candidate
+        should_reflect, query = candidate_request(out)
+        if should_reflect:
+            mode = "explicit" if _explicit_knowledge_request(user_msg) else "automatic"
+            saved = await reflect_if_candidate(
+                user_id, user_msg, assistant_reply, settings, query,
+                save_mode=mode, session_id=session_id,
+            )
+            if saved:
+                from agent import events
+                events.publish(events.types.RagIndexUpdated(
+                    user_id=user_id, source_type="knowledge", source_id="", operation="upsert",
+                ))
+    except Exception:
+        _memdiff_log.debug("knowledge reflection skipped", exc_info=True)
+
+
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
                   turns=None) -> bool:
     out = None
@@ -581,17 +607,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)
         # Knowledge 复用本轮 Memory 反思时机；只有 Memory 反思明确标记候选时才追加一次调用。
-        try:
-            from agent.knowledge.reflection import candidate_request, reflect_if_candidate
-            should_reflect, query = candidate_request(out)
-            if should_reflect:
-                mode = "explicit" if _explicit_knowledge_request(user_msg) else "automatic"
-                await reflect_if_candidate(
-                    user_id, user_msg, assistant_reply, settings, query,
-                    save_mode=mode, session_id=session_id,
-                )
-        except Exception:
-            _memdiff_log.debug("knowledge reflection skipped", exc_info=True)
+        await _reflect_knowledge(
+            user_id, user_msg, assistant_reply, settings, out, session_id=session_id,
+        )
         try:
             from agent.security.logsafe import fingerprint
             _memdiff_log.info(
