@@ -10,6 +10,19 @@
         <div class="behavior-label"><span>{{ t('adminAgentMemory.rag') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.ragHint') }}</span></div>
         <ToggleSwitch v-model="ragEnabled" :aria-label="t('adminAgentMemory.toggleRag')" />
       </div>
+      <div class="behavior-item full-row" :class="{ 'is-disabled': !ragEnabled }">
+        <div class="behavior-label"><span>{{ t('adminAgentMemory.recallSources') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.recallSourcesHint') }}</span></div>
+        <div class="source-row">
+          <label v-for="key in RAG_SOURCE_KEYS" :key="key" class="source-chip">
+            <input type="checkbox" :checked="ragAutoSources.includes(key)" :disabled="!ragEnabled" @change="toggleRagSource(key, ($event.target as HTMLInputElement).checked)" />
+            <span>{{ t(`adminAgentMemory.source_${key}`) }}</span>
+          </label>
+          <div class="source-bulk">
+            <button class="btn-ghost source-bulk-btn" :disabled="!ragEnabled" @click="ragAutoSources = [...RAG_SOURCE_KEYS]">{{ t('adminAgentMemory.sourceSelectAll') }}</button>
+            <button class="btn-ghost source-bulk-btn" :disabled="!ragEnabled || !ragAutoSources.length" @click="ragAutoSources = []">{{ t('adminAgentMemory.sourceClearAll') }}</button>
+          </div>
+        </div>
+      </div>
       <div class="section-label full-row">{{ t('adminAgentMemory.capability') }}</div>
       <div class="behavior-item full-row">
         <div class="behavior-label"><span>{{ t('adminAgentMemory.capability') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.capabilityHint') }}</span></div>
@@ -49,8 +62,8 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
-import { useMemoryRecallConfig } from '../useMemoryRecallConfig'
-const { configStore, embeddingDraft, ragEnabled, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit, ragSaving, ragSaved, ragError, embeddingSaving, embeddingSaved, embeddingError, embTest, rebuild, startRebuild, resetEmbedding, resetRag, syncFromStore, saveAll, testEmbedding } = useMemoryRecallConfig()
+import { useMemoryRecallConfig, RAG_SOURCE_KEYS } from '../useMemoryRecallConfig'
+const { configStore, embeddingDraft, ragEnabled, ragAutoSources, toggleRagSource, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit, ragSaving, ragSaved, ragError, embeddingSaving, embeddingSaved, embeddingError, embTest, rebuild, startRebuild, resetEmbedding, resetRag, syncFromStore, saveAll, testEmbedding } = useMemoryRecallConfig()
 const { t } = useI18n()
 onMounted(async () => { await configStore.fetchConfig(); syncFromStore() })
 </script>
@@ -59,4 +72,5 @@ onMounted(async () => { await configStore.fetchConfig(); syncFromStore() })
 .config-card{background:var(--panel-glass-bg);border:1px solid var(--panel-glass-border);border-radius:var(--radius-lg);padding:22px 24px;color:var(--content-primary);box-shadow:var(--elevation-card);backdrop-filter:var(--panel-glass-blur);-webkit-backdrop-filter:var(--panel-glass-blur)}
 .card-head{display:flex;align-items:center;gap:13px;margin-bottom:20px}.card-icon{width:38px;height:38px;border-radius:11px;background:var(--selection-bg);color:var(--action-primary);display:flex;align-items:center;justify-content:center;flex:0 0 38px}.card-title-block{flex:1;min-width:0}.card-title-block h3{color:var(--content-primary);font-size:var(--font-size-md,14px);font-weight:700}.card-title-block p{margin-top:3px;color:var(--content-tertiary);font-size:var(--font-size-sm,12px);line-height:1.5}.behavior-grid{display:flex;flex-direction:column;gap:2px}.behavior-item{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--panel-divider)}.behavior-item:last-child{border-bottom:0}.full-row{grid-column:1/-1}.behavior-label{display:flex;flex-direction:column;gap:3px;min-width:0}.behavior-label>span:first-child{color:var(--content-primary);font-size:13px;font-weight:500}.behavior-desc{color:var(--content-tertiary);font-size:12px;line-height:1.5}.behavior-input{width:280px;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-glass);color:var(--content-primary);outline:none}.behavior-input:focus{border-color:var(--action-primary)}.secret-mark{margin-left:6px;color:var(--status-success);font-size:11px}.action-row,.card-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px}.card-actions{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-divider)}.action-message,.save-hint{max-width:420px;overflow:hidden;color:var(--status-success);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.action-message.error,.save-hint.error{color:var(--status-danger)}.btn-ghost,.btn-primary{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;cursor:pointer;white-space:nowrap}.btn-ghost{border:1px solid var(--border-subtle);background:var(--surface-glass);color:var(--content-secondary)}.btn-primary{border:0;background:var(--action-primary-bg);color:var(--content-on-accent);font-weight:600}.btn-ghost:disabled,.btn-primary:disabled{opacity:.5;cursor:default}@media(max-width:720px){.behavior-item{align-items:flex-start;flex-direction:column}.behavior-input{width:100%}.card-actions{justify-content:flex-start;flex-wrap:wrap}}
 .section-label{padding:18px 0 4px;color:var(--content-secondary);font-size:12px;font-weight:700;letter-spacing:.02em}.behavior-item.is-disabled{opacity:.58}.compact-input,.number-input{width:96px;flex:0 0 96px;text-align:center}.behavior-input:disabled{cursor:not-allowed}
+.source-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:flex-end;max-width:460px}.source-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--border-subtle);border-radius:999px;background:var(--surface-glass);color:var(--content-secondary);font-size:12px;cursor:pointer;user-select:none}.source-chip:has(input:checked){border-color:var(--action-primary);color:var(--content-primary);background:var(--selection-bg)}.source-chip input{accent-color:var(--action-primary);margin:0;cursor:pointer}.source-chip:has(input:disabled){cursor:not-allowed;opacity:.6}.source-bulk{display:flex;gap:6px;margin-left:4px}.source-bulk-btn{min-height:26px;padding:3px 10px;font-size:12px}
 </style>

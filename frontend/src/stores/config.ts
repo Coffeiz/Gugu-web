@@ -117,6 +117,7 @@ export const useConfigStore = defineStore('config', () => {
     },
     search: {
       rag_enabled: true,
+      rag_auto_sources: ['memory', 'knowledge', 'project', 'file', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation'],
       capability_rag_enabled: false,
       capability_rag_shadow: true,
       capability_rag_limit: 5,
