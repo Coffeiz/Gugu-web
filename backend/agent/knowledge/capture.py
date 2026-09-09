@@ -10,7 +10,7 @@ from .store import KnowledgeStore, source_from_input
 _SOURCE_TYPES = {"user", "file", "web", "derived", "conversation"}
 _CONFIDENCES = {"confirmed", "probable", "unverified"}
 _CAPTURE_MODES = {"explicit", "tool_result", "automatic"}
-_LIMITS = {"title": 80, "topic": 40, "content": 1000, "source_ref": 300, "source_label": 120}
+_LIMITS = {"title": 80, "topic": 40, "content": 3000, "source_ref": 300, "source_label": 120}
 _MAX_KEYWORDS = 10
 _MAX_KEYWORD = 40
 

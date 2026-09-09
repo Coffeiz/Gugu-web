@@ -202,14 +202,14 @@ async def test_knowledge_store_uses_one_markdown_file_per_entry(knowledge_storag
 
 
 @pytest.mark.asyncio
-async def test_knowledge_store_rejects_content_over_1000_characters(knowledge_storage):
+async def test_knowledge_store_rejects_content_over_3000_characters(knowledge_storage):
     store = KnowledgeStore("user-a")
     entry = KnowledgeEntry.create(
-        title="过长知识", content="x" * 1001, topic="长度",
+        title="过长知识", content="x" * 3001, topic="长度",
         scope=KnowledgeScope(owner_user_id="user-a"),
         source=KnowledgeSource("user"),
     )
-    with pytest.raises(ValueError, match="content.*1000"):
+    with pytest.raises(ValueError, match="content.*3000"):
         await store.save(entry)
 
 
@@ -250,8 +250,10 @@ def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
         confidence="confirmed", capture_mode="tool_result",
     )
     assert values["confidence"] == "probable"
-    with pytest.raises(ValueError, match="content.*1000"):
-        normalize_capture("过长", "x" * 1001)
+    accepted = normalize_capture("边界知识", "x" * 3000)
+    assert len(accepted["content"]) == 3000
+    with pytest.raises(ValueError, match="content.*3000"):
+        normalize_capture("过长", "x" * 3001)
 
 
 @pytest.mark.asyncio

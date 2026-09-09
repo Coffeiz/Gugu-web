@@ -27,7 +27,7 @@ def build_request(
             "id": str(item.get("source_id") or item.get("id") or ""),
             "title": str(item.get("title") or "")[:80],
             "topic": str(item.get("topic") or "")[:40],
-            "text": str(item.get("text") or item.get("content") or "")[:1000],
+            "text": str(item.get("text") or item.get("content") or "")[:3000],
             "source_type": str(item.get("source_type") or item.get("source") or ""),
             "confidence": str(item.get("confidence") or "confirmed"),
             "source_ref": str(item.get("source_ref") or "")[:300],
