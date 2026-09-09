@@ -18,7 +18,7 @@ from agent.context import builder, loaders, session_snapshot, assembly, session_
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
-from agent.conversation.lifecycle import schedule_summary, schedule_title
+from agent.conversation.session_metadata import schedule_summary, schedule_title
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
 from agent.im.context_runtime import (
@@ -529,7 +529,10 @@ async def _run_collect_unlocked(
         # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
         # 闲置后「重新聊天」=新会话，原来要在回复后再串行等一次 LLM 起标题才返回 → 慢一倍，这里去掉。
         if is_new_session and text:
-            schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+            schedule_title(
+                user_id, session_id, req.message, text, settings, use_anthropic,
+                locale=req.locale or (snapshot or {}).get("locale"),
+            )
         # 会话「一句话总结」：新会话先出一版，之后每 ~6 条刷新（跟着话题走）；供 search_conversations + 续接桥
         if text:
             schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
@@ -1026,7 +1029,10 @@ async def _run_stream_unlocked(
         )
 
         if is_new_session and text:
-            schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+            schedule_title(
+                user_id, session_id, req.message, text, settings, use_anthropic,
+                locale=req.locale or (snapshot or {}).get("locale"),
+            )
         if text:
             schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
 

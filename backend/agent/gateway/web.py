@@ -23,7 +23,7 @@ from agent.llm import genstream
 from agent import quota
 from agent.context import builder, loaders, session_snapshot, session_history, run_context, session_system
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
-from agent.conversation.lifecycle import generate_title, schedule_summary
+from agent.conversation.session_metadata import generate_title, schedule_summary
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
@@ -668,7 +668,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
         if is_new_session and full_reply and not resume_interaction:
-            title = (await generate_title(req.message, full_reply, settings, use_anthropic, model_cfg) or "").strip()
+            title = (await generate_title(
+                req.message, full_reply, settings, use_anthropic, model_cfg, locale=locale,
+            ) or "").strip()
             if title:
                 async with _sess._SessionLocal() as db3:
                     s = await db3.get(ConversationSession, session_id)

@@ -839,7 +839,7 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     # P1-3：手动重命名后置 True，永久禁止自动标题覆盖（与 generated_at 配合，
     # 任何后续自动标题任务直接跳过本 session）。rename_session API 写入 True，
-    # conversation.lifecycle.generate_title_bg 在改 title 前查并跳过。
+    # conversation.session_metadata.generate_title_bg 在改 title 前查并跳过。
     title_locked: Mapped[bool]   = mapped_column(Boolean, default=False)
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")

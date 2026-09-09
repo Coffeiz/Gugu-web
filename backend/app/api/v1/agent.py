@@ -893,7 +893,7 @@ async def rename_session(
     """重命名会话标题，方便用户区分不同对话。
 
     P1-3：手动改名后置 ``title_locked=True``，永久禁止自动标题任务覆盖。后续
-    ``conversation.lifecycle.generate_title_bg`` 在写 title 前会查这个标志，是 True 直接跳过——手动改名
+    ``conversation.session_metadata.generate_title_bg`` 在写 title 前会查这个标志，是 True 直接跳过——手动改名
     一劳永逸地赢下与异步自动标题生成的竞态。
     """
     title = (body.title or "").strip()

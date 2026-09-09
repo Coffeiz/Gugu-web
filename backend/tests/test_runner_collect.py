@@ -13,7 +13,7 @@ def test_non_streaming_runner_has_conversation_lifecycle_hooks():
     flush 阶段抛 NameError，导致 QQ 只收到前置进度而收不到最终正文。
     """
     from agent import runner
-    from agent.conversation.lifecycle import schedule_summary, schedule_title
+    from agent.conversation.session_metadata import schedule_summary, schedule_title
 
     assert runner.schedule_summary is schedule_summary
     assert runner.schedule_title is schedule_title
