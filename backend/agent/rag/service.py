@@ -160,22 +160,23 @@ class UnifiedRecallService:
         逐 spec scope 过滤仍是第一道边界，这里保留统一校验作为第二道防线；被拒
         候选从交付行中剔除并计数，不再回补预算。
         """
-        candidates: list[tuple[int, RecallCandidate]] = []
-        for order, (candidate, _text, _row) in enumerate(pre_ranked.rank_rows):
-            candidates.append((order, candidate))
         permission_rejected = 0
+        rank_rows = list(pre_ranked.rank_rows)
         if isinstance(scope, Scope) or isinstance(scope, (list, tuple)):
             query_scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
-            authorized = []
-            for order, candidate in candidates:
+            # 整个三元组一起过滤：candidate 与正文/citation/score 行是按位置
+            # 配对的，绝不能只过滤 candidate 再和原 rank_rows 从头 zip——
+            # 那会把越权候选的正文和分数拼到合法候选上。
+            authorized_rows = []
+            for candidate, text, row in rank_rows:
                 if matches_any_scope(candidate.document, query_scopes):
-                    authorized.append((order, candidate))
+                    authorized_rows.append((candidate, text, row))
                 else:
                     permission_rejected += 1
-            candidates = authorized
+            rank_rows = authorized_rows
         ranked_candidates = [
             (candidate, str(text), dict(row))
-            for (_order, candidate), (_c, text, row) in zip(candidates, pre_ranked.rank_rows)
+            for candidate, text, row in rank_rows
         ]
         rank_stats = dict(pre_ranked.rank_stats or {})
         selected: list[dict] = []

@@ -298,3 +298,29 @@ async def test_service_pre_ranked_permission_recheck_drops_foreign_scope():
     assert response["permission_rejected"] == 1
     assert [item["text"] for item in response["results"]] == [owned.content]
     assert response["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_service_pre_ranked_permission_recheck_keeps_row_pairing():
+    """越权候选排在合法候选之前时，过滤不得错位配对。
+
+    回归：旧实现只过滤 candidate 再和原 rank_rows 从头 zip，会把越权候选的
+    正文/citation/分数行拼到合法候选上（[foreign, owned] 排列才暴露）。
+    """
+    from agent.rag.service import UnifiedRecallService
+
+    foreign = IndexDocument(
+        "file-2", "file", "2", Scope("other-owner"), "文件", "", "越权正文", "1")
+    owned = _file_doc()
+    batch = _pre_ranked_batch([_triple(foreign), _triple(owned, text="自有正文")])
+
+    async def retrieve(query, **kwargs):
+        return [batch]
+
+    response = await UnifiedRecallService(SimpleNamespace(retrieve=retrieve)).search(
+        "缓存", scope=SCOPE)
+    assert response["permission_rejected"] == 1
+    item = response["results"][0]
+    assert item["text"] == "自有正文"
+    assert item["citation"] == {"chunk_id": owned.chunk_id}
+    assert item["citations"] == [{"chunk_id": owned.chunk_id}]
