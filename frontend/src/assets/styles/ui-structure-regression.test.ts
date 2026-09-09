@@ -70,6 +70,7 @@ const terminalPty = load('../../views/Terminals/components/InteractivePtyTermina
 const profileWorkspacesPane = load('../../components/common/profile/ProfileWorkspacesPane.vue')
 const overlayScrollbars = load('../../utils/overlayScrollbars.ts')
 const notificationBubble = load('../../components/common/feedback/NotificationBubble.vue')
+const chatToolBubble = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
   it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
@@ -112,6 +113,12 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatWindow).not.toContain('chat-main:not(.is-expanded) :deep(.chat-input-row)')
     expect(chatWindow).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
+  })
+
+  it('工具事件卡片点击后不把焦点误当成持续 hover', () => {
+    expect(chatToolBubble).toContain('.tool-event-bubble:hover {')
+    expect(chatToolBubble).toContain('.tool-event-head:focus-visible')
+    expect(chatToolBubble).not.toContain('.tool-event-bubble:focus-within')
   })
 
   it('交互消费失败时进入终态，避免重复提交已消费 token', () => {

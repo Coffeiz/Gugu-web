@@ -12,9 +12,11 @@
       @before-enter="prepareDetailEnter"
       @enter="animateDetailEnter"
       @after-enter="cleanupDetailTransition"
+      @enter-cancelled="cancelDetailTransition"
       @before-leave="prepareDetailLeave"
       @leave="animateDetailLeave"
       @after-leave="cleanupDetailTransition"
+      @leave-cancelled="cancelDetailTransition"
     >
       <div v-if="expanded" class="tool-detail-shell">
         <div class="tool-event-detail">
@@ -81,6 +83,7 @@ const displayResult = computed(() => resultDisplayTruncated.value
   : formattedResult.value)
 
 const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis), opacity var(--motion-hover-card) var(--motion-ease-standard)'
+const detailTransitionCleanups = new WeakMap<HTMLElement, () => void>()
 
 function prepareDetailEnter(element: Element) {
   const node = element as HTMLElement
@@ -98,11 +101,15 @@ function prepareDetailLeave(element: Element) {
 
 function animateDetail(element: Element, targetHeight: string, targetOpacity: string, done: () => void) {
   const node = element as HTMLElement
+  detailTransitionCleanups.get(node)?.()
   let finished = false
+  let timer: number | undefined
   const finish = () => {
     if (finished) return
     finished = true
     node.removeEventListener('transitionend', onEnd)
+    if (timer !== undefined) window.clearTimeout(timer)
+    detailTransitionCleanups.delete(node)
     done()
   }
   const onEnd = (event: TransitionEvent) => {
@@ -111,10 +118,18 @@ function animateDetail(element: Element, targetHeight: string, targetOpacity: st
   node.addEventListener('transitionend', onEnd)
   node.style.transition = detailTransition
   requestAnimationFrame(() => {
+    if (finished) return
     node.style.height = targetHeight
     node.style.opacity = targetOpacity
   })
-  window.setTimeout(finish, 380)
+  timer = window.setTimeout(finish, 380)
+  detailTransitionCleanups.set(node, () => {
+    if (finished) return
+    finished = true
+    node.removeEventListener('transitionend', onEnd)
+    if (timer !== undefined) window.clearTimeout(timer)
+    detailTransitionCleanups.delete(node)
+  })
 }
 
 function animateDetailEnter(element: Element, done: () => void) {
@@ -124,6 +139,12 @@ function animateDetailEnter(element: Element, done: () => void) {
 
 function animateDetailLeave(element: Element, done: () => void) {
   animateDetail(element, '0px', '0', done)
+}
+
+function cancelDetailTransition(element: Element) {
+  const node = element as HTMLElement
+  detailTransitionCleanups.get(node)?.()
+  cleanupDetailTransition(node)
 }
 
 function cleanupDetailTransition(element: Element) {
@@ -136,10 +157,13 @@ function cleanupDetailTransition(element: Element) {
 </script>
 
 <style scoped>
-.tool-event-bubble { width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: background var(--motion-hover-card) var(--motion-ease-standard), border-color var(--motion-hover-card) var(--motion-ease-standard), box-shadow var(--motion-hover-card) var(--motion-ease-standard); }
+.tool-event-bubble { width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background-color: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: background-color var(--motion-hover-card) var(--motion-ease-standard), border-color var(--motion-hover-card) var(--motion-ease-standard), box-shadow var(--motion-hover-card) var(--motion-ease-standard); }
 /* hover 底色走专用 token：亮色=主题玻璃 hover（白系提亮），暗色=气泡底色向白偏移
-   （通用 --surface-glass-hover 在暗色是透明白叠层，透出页面暗底反而更暗，实测翻车）。 */
-.tool-event-bubble:has(.tool-event-head:hover) { background: var(--gugu-chat-tool-bubble-hover); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
+   （通用 --surface-glass-hover 在暗色是透明白叠层，透出页面暗底反而更暗，实测翻车）。
+   这里只响应真实鼠标 hover；不要用 focus-within 模拟 hover，否则点击标题按钮后
+   按钮持续获得焦点，卡片会一直停留在 hover 外观，直到点击空白处。键盘焦点仍由
+   .tool-event-head:focus-visible 提供明确的焦点反馈。 */
+.tool-event-bubble:hover { background-color: var(--gugu-chat-tool-bubble-hover); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
 .tool-event-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 9px; width: 100%; min-height: 54px; border: 0; padding: 10px 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tool-event-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--border-focus); }
 .tool-event-state { grid-row: 1 / span 2; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--content-tertiary); }
