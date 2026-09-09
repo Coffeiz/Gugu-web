@@ -20,15 +20,25 @@ FROM python:latest
 # ffmpeg 在 Debian trixie 下会拉一整条音视频编解码库依赖链（100+ 包），每次 Dockerfile 这行
 # 之前有改动都要重新全量下载，缓存后只需下一次。
 ARG GUGU_INSTALL_DOCKER_CLI=false
-# libgstreamer-plugins-base1.0-0 显式列出以强制升到最新修复版：它是 ffmpeg 的传递依赖，
-# 基础镜像可能携带旧版且 apt 对已装依赖不会自动升级（CVE-2026-18297：OGG 任意代码执行，
-# 修复版 deb13u2）。
+ARG TARGETARCH
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         poppler-utils fonts-noto-cjk ffmpeg curl build-essential nodejs acl \
-        $(if [ "${GUGU_INSTALL_DOCKER_CLI}" = "true" ]; then echo docker.io; fi) \
-        libgstreamer-plugins-base1.0-0
+        $(if [ "${GUGU_INSTALL_DOCKER_CLI}" = "true" ]; then echo docker.io; fi)
+
+# CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁：
+# libgstreamer-plugins-base1.0-0 是 ffmpeg 的传递依赖，基础镜像携带旧版；GitHub
+# 构建机侧 deb.debian.org 的 CDN 边缘可能滞后，apt 索引仍解析到带漏洞的
+# 1.26.2-1+deb13u1，所以这里直接从 security pool 拉修复版 .deb 安装，不依赖
+# 索引新鲜度。基础镜像自带版本 >= 修复版后即可删除本段。
+ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    curl -fsSL -o /tmp/gst-base.deb \
+        "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
+    && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
+    && rm -f /tmp/gst-base.deb
 
 WORKDIR /app
 
