@@ -85,6 +85,16 @@ RUN apt-get update \
     && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
     && rm -rf /var/lib/apt/lists/*
 
+# CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，
+# 与 backend/Dockerfile.prod 同款：libgstreamer-plugins-base1.0-0 是 ffmpeg 的传递
+# 依赖，基础镜像携带旧版；直接从 security pool 拉修复版 .deb 安装，不依赖镜像源
+# 索引新鲜度。基础镜像自带版本 >= 修复版后即可删除本段。
+ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
+RUN curl -fsSL -o /tmp/gst-base.deb \
+        "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
+    && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
+    && rm -f /tmp/gst-base.deb
+
 WORKDIR /app
 
 ENV PATH=/opt/venv/bin:${PATH} \
