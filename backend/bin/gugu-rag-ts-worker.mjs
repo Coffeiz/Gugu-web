@@ -704,6 +704,8 @@ function rankCandidates(query, candidates, options = {}) {
   const selectedIds = new Set(confidenceSelected.map((item) => item.candidate.id));
   const ordered = confidenceSelected;
   const unified = selectUnifiedRecall(
+    // 交付与预算顺序保持冻结契约：fused（归一化词法融合分）降序 + id 升序；
+    // confidence 只决定入选集合（band/限额），语义混合通过 v4 confidence 生效。
     ordered.map((item) => ({ result: { id: item.candidate.id, score: item.rankScore, source_type: item.candidate.source_type, document_version: item.candidate.document.document_version }, document: { ...item.candidate.document, id: item.candidate.id, text: item.candidate.document.text } })),
     options
   );
@@ -728,6 +730,7 @@ function rankCandidates(query, candidates, options = {}) {
       query_match: item?.match ?? 0,
       normalized_score: item?.normalizedScore ?? 0,
       fused_score: item?.fused ?? 0,
+      semantic_norm: item?.semanticNorm,
       rank_score: item?.rankScore ?? item?.fused ?? 0,
       query_idf_baseline: item?.rescore?.queryIdfBaseline,
       query_idf_terms: item?.rescore?.queryIdfTerms,
@@ -777,11 +780,25 @@ function rankCandidates(query, candidates, options = {}) {
 function normalizeV4Lexical(scored) {
   const topLexical = Math.max(0, ...scored.map((item) => item.rankScore));
   if (topLexical <= 0) return scored;
+  let topSemantic = 0;
+  for (const item of scored) {
+    const semantic = item.candidate.semantic_score;
+    if (semantic !== void 0 && semantic > topSemantic) topSemantic = semantic;
+  }
+  const hasSemantic = topSemantic > 0;
   return scored.map((item) => {
     const lexicalNorm = Math.min(1, item.rankScore / topLexical);
-    let value = confidenceV4(lexicalNorm, item.match, item.sourceQuality);
+    let semanticNorm;
+    if (hasSemantic && item.candidate.semantic_score !== void 0) {
+      const normalized = item.candidate.semantic_score / topSemantic;
+      if (normalized > 0) {
+        semanticNorm = Math.round(Math.min(1, normalized) * 1e6) / 1e6;
+      }
+    }
+    const fusedNorm = semanticNorm !== void 0 ? 0.45 * lexicalNorm + 0.55 * semanticNorm : lexicalNorm;
+    let value = confidenceV4(fusedNorm, item.match, item.sourceQuality);
     if (item.match <= 0) value = Math.min(value, V4_LOW_SCORE_THRESHOLD - 0.01);
-    return { ...item, value };
+    return { ...item, value, semanticNorm };
   });
 }
 
@@ -808,7 +825,7 @@ function hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeigh
   }
   const fusedScores = /* @__PURE__ */ new Map();
   if (vectorScores.size === 0) {
-    return { fusedScores, vectorDocCount: 0 };
+    return { fusedScores, vectorDocCount: 0, vectorScores };
   }
   const rrf = (rank, weight) => weight * ((rrfK + 1) / (rrfK + Math.max(1, rank)));
   const lexicalRanks = new Map(hits.map((hit, index) => [String(hit.chunk_id), index + 1]));
@@ -821,7 +838,7 @@ function hybridFuseScores(hits, queryVector, vectors, lexicalWeight, vectorWeigh
     if (vectorRank !== void 0) score += rrf(vectorRank, vectorWeight);
     fusedScores.set(key, score);
   }
-  return { fusedScores, vectorDocCount: vectorScores.size };
+  return { fusedScores, vectorDocCount: vectorScores.size, vectorScores };
 }
 function makeState(indexDir2) {
   return {
@@ -854,6 +871,8 @@ async function restore(state2) {
       return;
     }
     replaceInMemory(state2, parsed.revision ?? "", parsed.documents ?? []);
+    state2.vectors = new Map(Object.entries(parsed.vectors ?? {}));
+    state2.vectorVersion = String(parsed.vector_version ?? "");
   } catch {
     state2.restoreError = "corrupt";
   }
@@ -923,8 +942,19 @@ async function persist(state2) {
   await mkdir(state2.indexDir, { recursive: true, mode: 448 });
   const target = join(state2.indexDir, "index.json");
   const temporary = `${target}.tmp`;
-  await writeFile(temporary, JSON.stringify({ version: VERSION, revision: state2.revision, documents: state2.documents }), { mode: 384 });
+  await writeFile(temporary, JSON.stringify({
+    version: VERSION,
+    revision: state2.revision,
+    documents: state2.documents,
+    vectors: Object.fromEntries(state2.vectors),
+    vector_version: state2.vectorVersion
+  }), { mode: 384 });
   await rename(temporary, target);
+}
+function applyVectorMap(state2, request) {
+  if (request.vectors === void 0) return;
+  state2.vectors = new Map(Object.entries(request.vectors ?? {}));
+  state2.vectorVersion = String(request.vector_version ?? "");
 }
 function matchesScope(document, scope) {
   if (!scope) return true;
@@ -1041,19 +1071,24 @@ async function handle(state2, transient2, request) {
       }
     }
     const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
-    const memoryGroup = merged.get("memory");
+    const lexicalWeight = Number(request.lexical_weight ?? 0.45);
+    const vectorWeight = Number(request.vector_weight ?? 0.55);
+    const rrfK = Number(request.rrf_k ?? 60);
     let fusion = {
       fusion: "bm25",
       vector_doc_count: 0,
       vector_version: transient2.vectorVersion,
       fallback: "embedding_cache_unavailable"
     };
+    let fusedAny = false;
+    let memoryFused = false;
+    let vectorDocCount = 0;
+    let fusionVersion = transient2.vectorVersion;
+    const semanticCosines = /* @__PURE__ */ new Map();
+    const memoryGroup = merged.get("memory");
     if (memoryGroup && memoryGroup.length && queryVector.length && transient2.vectors.size) {
-      const lexicalWeight = Number(request.lexical_weight ?? 0.45);
-      const vectorWeight = Number(request.vector_weight ?? 0.55);
-      const rrfK = Number(request.rrf_k ?? 60);
       const hits = memoryGroup.map((item) => ({ chunk_id: item.key }));
-      const { fusedScores, vectorDocCount } = hybridFuseScores(
+      const { fusedScores, vectorDocCount: memoryVectorDocs, vectorScores } = hybridFuseScores(
         hits,
         queryVector,
         transient2.vectors,
@@ -1066,10 +1101,39 @@ async function handle(state2, transient2, request) {
           ...item,
           score: fusedScores.get(item.key) ?? item.score
         })));
-        fusion = { fusion: "hybrid-rrf", vector_doc_count: vectorDocCount, vector_version: transient2.vectorVersion, fallback: null };
+        fusedAny = true;
+        memoryFused = true;
+        vectorDocCount += memoryVectorDocs;
+        fusionVersion = transient2.vectorVersion;
+        for (const [key, cosine] of vectorScores) semanticCosines.set(key, cosine);
       }
-    } else if (memoryGroup && memoryGroup.length && queryVector.length && !transient2.vectors.size) {
-      fusion = { fusion: "bm25", vector_doc_count: 0, vector_version: transient2.vectorVersion, fallback: "embedding_cache_unavailable" };
+    }
+    const persistentVectorsUsable = queryVector.length > 0 && state2.vectors.size > 0 && String(request.vector_version ?? "") !== "" && state2.vectorVersion === String(request.vector_version);
+    if (persistentVectorsUsable) {
+      for (const [source, group] of merged) {
+        if (source === "memory" || group.length === 0) continue;
+        const hits = group.map((item) => ({ chunk_id: item.key }));
+        const { fusedScores, vectorDocCount: groupVectorDocs, vectorScores } = hybridFuseScores(
+          hits,
+          queryVector,
+          state2.vectors,
+          lexicalWeight,
+          vectorWeight,
+          rrfK
+        );
+        if (!fusedScores.size) continue;
+        merged.set(source, group.map((item) => ({
+          ...item,
+          score: fusedScores.get(item.key) ?? item.score
+        })));
+        fusedAny = true;
+        vectorDocCount += groupVectorDocs;
+        if (!memoryFused) fusionVersion = state2.vectorVersion;
+        for (const [key, cosine] of vectorScores) semanticCosines.set(key, cosine);
+      }
+    }
+    if (fusedAny) {
+      fusion = { fusion: "hybrid-rrf", vector_doc_count: vectorDocCount, vector_version: fusionVersion, fallback: null };
     }
     const orderedSources = [
       ...sourceOrder.filter((source) => merged.has(source)),
@@ -1081,12 +1145,14 @@ async function handle(state2, transient2, request) {
       for (const item of merged.get(source)) {
         const candidateId = `${source}:${item.key}:${payload.length}`;
         keysByCandidateId.set(candidateId, item.key);
+        const semanticScore = semanticCosines.get(item.key);
         payload.push({
           id: candidateId,
           source_type: source,
           raw_score: item.score,
           fusion: "bm25",
           fused_score: null,
+          ...semanticScore !== void 0 ? { semantic_score: semanticScore } : {},
           document: { ...item.document, id: candidateId }
         });
       }
@@ -1234,6 +1300,7 @@ async function handle(state2, transient2, request) {
   }
   if (request.op === "replace") {
     replaceInMemory(state2, request.revision ?? "", request.documents ?? []);
+    applyVectorMap(state2, request);
     state2.restoreError = null;
     await persist(state2);
     return { status: "ok", version: VERSION, revision: state2.revision, document_count: state2.documents.length };
@@ -1243,6 +1310,7 @@ async function handle(state2, transient2, request) {
       return { status: "error", code: "revision_mismatch", message: "TS worker patch \u57FA\u7EBF revision \u4E0E\u5F53\u524D\u7D22\u5F15\u4E0D\u4E00\u81F4" };
     }
     patchInMemory(state2, request.revision ?? "", request.upserts ?? [], request.deletes ?? []);
+    applyVectorMap(state2, request);
     await persist(state2);
     return { status: "ok", version: VERSION, revision: state2.revision, document_count: state2.documents.length };
   }
