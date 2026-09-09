@@ -71,8 +71,19 @@ const profileWorkspacesPane = load('../../components/common/profile/ProfileWorks
 const overlayScrollbars = load('../../utils/overlayScrollbars.ts')
 const notificationBubble = load('../../components/common/feedback/NotificationBubble.vue')
 const chatToolBubble = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
+const globalStyles = load('./global.css')
+const componentTokens = load('./tokens/components.css')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('卡片 hover 不常驻合成层，且不连续插值阴影，避免快速移动时反复 paint', () => {
+    const hoverCard = cssBlock(globalStyles, '.hover-card-fx')
+    expect(hoverCard).not.toContain('will-change: transform')
+    expect(hoverCard).toContain('transition: transform var(--motion-hover-card)')
+    expect(hoverCard).not.toContain('box-shadow var(--motion-hover-card)')
+    expect(componentTokens).toContain('--card-motion: transform var(--motion-hover-card)')
+    expect(componentTokens).not.toContain('box-shadow var(--motion-hover-card) ease')
+  })
+
   it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
     expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup')
     expect(overlayScrollbars).toContain("thumb.classList.add('overlay-scrollbar--notif')")
