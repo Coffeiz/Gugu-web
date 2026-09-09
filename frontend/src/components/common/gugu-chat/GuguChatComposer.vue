@@ -52,7 +52,7 @@
       :aria-pressed="unlimitedMode"
       @click="onToggleUnlimited"
     >
-      <Icon :name="unlimitedMode ? 'action.infinity-fill' : 'action.infinity'" :size="16" />
+      <Icon :name="unlimitedMode ? 'action.speed-fill' : 'action.speed'" :size="16" />
     </button>
     <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
     <div v-if="!recording" class="chat-input-editor">
