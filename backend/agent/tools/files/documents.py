@@ -693,8 +693,8 @@ async def _copy_file(db, user_id, args: dict):
     if workspace_target is not None and not any(
         target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
     ):
-        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
-    space, project_id, folder_id = _target_loc(f, target)
+        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id", "workspace_directory_id")}
+    space, project_id, folder_id, workspace_directory_id = _target_loc(f, target)
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err
@@ -704,7 +704,9 @@ async def _copy_file(db, user_id, args: dict):
         if fname in ("", "根", "根目录", "/"):
             folder_id = None
         else:
-            fo, err = await _folder_by_name(db, user_id, fname, space, project_id)
+            fo, err = await _folder_by_name(
+                db, user_id, fname, space, project_id, workspace_directory_id,
+            )
             if err:
                 return err
             folder_id = fo.id
@@ -712,6 +714,7 @@ async def _copy_file(db, user_id, args: dict):
             if fo.project_id is not None:
                 project_id = fo.project_id
                 space = "project"
+            workspace_directory_id = fo.workspace_directory_id
     if workspace_target is not None and not await _location_matches(
         db, user_id, space, project_id, folder_id, workspace_target,
     ):
@@ -725,6 +728,7 @@ async def _copy_file(db, user_id, args: dict):
         result = await FileService(db).copy_file(
             user_id, f.id, folder_id=folder_id,
             project_id=project_id if space == "project" else None,
+            workspace_directory_id=workspace_directory_id if space == "workspace" else None,
         )
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})

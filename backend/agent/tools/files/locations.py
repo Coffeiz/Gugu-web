@@ -103,7 +103,7 @@ def _norm_target(target):
 
 
 def _target_loc(f, target: dict):
-    """据 target 算出 (space, project_id, folder_id)。关键：跨项目/空间又没显式指定 folder 时，
+    """据 target 算出 (space, project_id, folder_id, workspace_directory_id)。关键：跨项目/空间又没显式指定 folder 时，
     folder_id 落到目标根目录（None），**不继承源文件夹**——否则「复制到别的项目」会落回原文件夹
     （源文件夹属于原项目），表现为「原地复制了一份」。给了 project_id 没给 space 则视为进项目空间。"""
     def _i(v):
@@ -118,13 +118,19 @@ def _target_loc(f, target: dict):
     else:
         space = f.space
     project_id = _i(target.get("project_id", f.project_id))
+    if "workspace_directory_id" in target:
+        workspace_directory_id = _i(target.get("workspace_directory_id"))
+    elif space == f.space and project_id == f.project_id:
+        workspace_directory_id = f.workspace_directory_id
+    else:
+        workspace_directory_id = None
     if "folder_id" in target:
         folder_id = _i(target.get("folder_id"))
     elif space == f.space and project_id == f.project_id:
         folder_id = f.folder_id          # 同项目同空间内复制/移动 → 默认留在原文件夹
     else:
         folder_id = None                 # 跨项目/空间 → 落目标根目录，不继承源文件夹
-    return space, project_id, folder_id
+    return space, project_id, folder_id, workspace_directory_id
 
 
 async def _bound_workspace_target(db, user_id):
@@ -135,10 +141,8 @@ async def _bound_workspace_target(db, user_id):
     """
     policy = await current_filesystem_policy(db, user_id)
     if policy is not None:
-        # 完整用户沙箱已经明确放开 /personal 和 /project，不能被默认
-        # Workspace 语义替代；显式绑定则失效时 fail closed。
-        if policy.full_user_sandbox:
-            return None
+        # 完整用户沙箱只扩大显式 personal/project 的写权限，不能把已绑定
+        # Workspace 的默认文件落点降级回源文件所在的 personal 空间。
         if policy.workspace_id is not None:
             return await current_workspace_target(db, user_id, policy)
         from app.services.workspaces import resolve_default_workspace_target
@@ -155,10 +159,19 @@ def _workspace_location(target: dict) -> tuple[str, int | None, int | None, int 
 
 async def _location_matches(db, user_id, space, project_id, folder_id, target: dict) -> bool:
     """复用统一 workspace 权限，允许根目录下的子文件夹。"""
+    policy = await current_filesystem_policy(db, user_id)
+    # 直接调用 handler 的测试没有 dispatch policy；不同主体的 workspace
+    # 也不能复用当前 policy。真实完整授权则保留其跨 personal/project 的
+    # 写权限，但默认落点仍由 target 指定的 workspace 决定。
+    if policy is None or (
+        not policy.full_user_sandbox
+        and policy.workspace_id != target["workspace_id"]
+    ):
+        policy = FilesystemPolicy(workspace_id=target["workspace_id"])
     return await filesystem_location_can_write(
         db,
         user_id,
-        FilesystemPolicy(workspace_id=target["workspace_id"]),
+        policy,
         space=space,
         project_id=project_id,
         folder_id=folder_id,

@@ -44,9 +44,14 @@ async def current_filesystem_policy(db, user_id) -> FilesystemPolicy | None:
 
 
 async def current_workspace_target(db, user_id, policy: FilesystemPolicy | None = None):
-    """返回当前主体的 workspace 文件库落点；完整授权时不限制到 workspace。"""
+    """返回当前主体的 workspace 文件库落点。
+
+    完整用户沙箱授权只扩大显式 ``/personal``/``/project`` 的写权限，不能
+    抹掉已绑定 Workspace 作为文件工具默认落点的语义。权限判断仍由
+    ``filesystem_location_can_write`` 负责，这里只解析默认位置。
+    """
     policy = policy or await current_filesystem_policy(db, user_id)
-    if policy is None or policy.full_user_sandbox or policy.workspace_id is None:
+    if policy is None or policy.workspace_id is None:
         return None
     from app.services.workspaces import resolve_workspace_target
     return await resolve_workspace_target(db, user_id, policy.workspace_id)

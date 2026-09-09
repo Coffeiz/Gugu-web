@@ -131,7 +131,9 @@ async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user
 
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):
     fo = await _mk(db, Folder(user_id=user_b.id, name="B的文件夹"))
-    space, pid, fid, err = await _resolve_target(db, user_a.id, {"folder_id": fo.id})
+    space, pid, fid, workspace_directory_id, err = await _resolve_target(
+        db, user_a.id, {"folder_id": fo.id}
+    )
     assert err is not None and "error" in err
 
 
