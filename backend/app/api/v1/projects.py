@@ -160,6 +160,10 @@ async def update_project(
     if not updated:
         await db.rollback()
         raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+    # update_project_atomic 使用 Core UPDATE；在 asyncpg 下 SQLAlchemy 可能把未参与
+    # 更新的标量字段标记为 expired。Undo 快照必须在显式刷新后读取，避免访问
+    # p.done_at 等字段时触发隐式 IO，落入 MissingGreenlet 并把已成功的更新报成 500。
+    await db.refresh(p)
     await UndoService.record_forward(
         db, user_id=current_user.id,
         context_id=request.headers.get("X-Undo-Context-ID") if request else None,
