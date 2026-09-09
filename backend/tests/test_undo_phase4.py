@@ -1,4 +1,4 @@
-"""UI-8 Phase 4：历史摘要、统计、过期操作和 artifact 清理回归。"""
+"""UI-8 Phase 4：过期操作和 artifact 清理回归。"""
 from datetime import timedelta
 from pathlib import Path
 
@@ -8,38 +8,6 @@ from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.undo import UndoService
 from app.services.undo.files import save_content_artifacts
-
-
-@pytest.mark.asyncio
-async def test_undo_history_is_scoped_and_does_not_expose_snapshots(db, user_a, user_b):
-    first = await UndoService.record_forward(
-        db, user_id=user_a.id, context_id="phase4-tab", resource="files", action="update",
-        target_refs=[{"kind": "file", "id": 1}],
-        before_state={"items": {"file:1": {
-            "content": "绝不应进入可见摘要的正文",
-            "credential": "fake-token-for-test",
-            "host_path": "/Users/example/private.txt",
-        }}},
-        after_state={"items": {"file:1": {"version": 2}}}, base_versions={},
-        artifact_refs={"file:1": {"before_key": "private-artifact-key"}},
-    )
-    await UndoService.record_forward(
-        db, user_id=user_b.id, context_id="phase4-tab", resource="files", action="delete",
-        target_refs=[{"kind": "file", "id": 2}], before_state={}, after_state={}, base_versions={},
-    )
-    await db.commit()
-
-    history = await UndoService.history(db, user_id=user_a.id, context_id="phase4-tab")
-    assert [item["operation_id"] for item in history] == [first.id]
-    rendered = str(history)
-    assert "绝不应进入可见摘要的正文" not in rendered
-    assert "fake-token-for-test" not in rendered
-    assert "/Users/example/private.txt" not in rendered
-    assert "private-artifact-key" not in rendered
-    assert history[0]["can_undo"] is True
-
-    stats = await UndoService.stats(db, user_id=user_a.id, context_id="phase4-tab")
-    assert stats == {"total": 1, "by_status": {"active": 1, "undone": 0, "conflicted": 0, "failed": 0, "expired": 0}}
 
 
 @pytest.mark.asyncio

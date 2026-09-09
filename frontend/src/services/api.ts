@@ -164,32 +164,8 @@ export interface UndoPreview {
   redo: { operation_id: string; summary: string; resource: string; action: string; target_count: number } | null
 }
 
-export interface UndoHistoryEntry {
-  operation_id: string
-  group_id: string
-  resource: string
-  action: string
-  target_count: number
-  summary: string
-  created_at: string
-  status: 'active' | 'undone' | 'conflicted' | 'failed' | 'expired'
-  can_undo: boolean
-  can_redo: boolean
-}
-
-export interface UndoHistoryResponse {
-  items: UndoHistoryEntry[]
-}
-
-export interface UndoStats {
-  total: number
-  by_status: Record<'active' | 'undone' | 'conflicted' | 'failed' | 'expired', number>
-}
-
 export const undoApi = {
   preview: () => get<UndoPreview>(`/undo/preview?context_id=${encodeURIComponent(UNDO_CONTEXT_ID)}`),
-  history: (limit = 50) => get<UndoHistoryResponse>(`/undo/history?context_id=${encodeURIComponent(UNDO_CONTEXT_ID)}&limit=${limit}`),
-  stats: () => get<UndoStats>(`/undo/stats?context_id=${encodeURIComponent(UNDO_CONTEXT_ID)}`),
   undo: (operationId: string) => post(`/undo`, { operation_id: operationId, context_id: UNDO_CONTEXT_ID }),
   redo: (operationId: string) => post(`/undo/redo`, { operation_id: operationId, context_id: UNDO_CONTEXT_ID }),
 }

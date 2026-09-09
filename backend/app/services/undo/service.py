@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -38,8 +38,6 @@ class UndoService:
     """
 
     RETENTION = timedelta(days=30)
-    HISTORY_LIMIT = 50
-
     @staticmethod
     def new_id(prefix: str) -> str:
         return f"{prefix}-{uuid4().hex}"
@@ -181,58 +179,6 @@ class UndoService:
             "undo": cls._shape(active) if active else None,
             "redo": cls._shape(undone) if undone else None,
         }
-
-    @classmethod
-    async def history(
-        cls,
-        db: AsyncSession,
-        *,
-        user_id,
-        context_id: str | None,
-        limit: int = HISTORY_LIMIT,
-        include_expired: bool = False,
-    ) -> list[dict]:
-        """返回当前 Web 上下文的安全操作摘要，不返回正文、快照或 artifact key。"""
-        context_id = cls._context(context_id)
-        if context_id is None:
-            return []
-        limit = max(1, min(limit, cls.HISTORY_LIMIT))
-        query = (
-            select(UndoOperation)
-            .where(
-                UndoOperation.user_id == user_id,
-                UndoOperation.undo_context_id == context_id,
-                UndoOperation.actor_type == "web",
-            )
-            .order_by(UndoOperation.created_at.desc())
-            .limit(limit)
-        )
-        if not include_expired:
-            query = query.where(UndoOperation.status != "expired")
-        rows = (await db.execute(query)).scalars().all()
-        return [cls._shape(row) for row in rows]
-
-    @classmethod
-    async def stats(cls, db: AsyncSession, *, user_id, context_id: str | None) -> dict:
-        """返回当前上下文的数量统计；只暴露状态计数，不暴露操作内容。"""
-        context_id = cls._context(context_id)
-        empty = {status: 0 for status in ("active", "undone", "conflicted", "failed", "expired")}
-        if context_id is None:
-            return {"total": 0, "by_status": empty}
-        rows = (await db.execute(
-            select(UndoOperation.status, func.count())
-            .where(
-                UndoOperation.user_id == user_id,
-                UndoOperation.undo_context_id == context_id,
-                UndoOperation.actor_type == "web",
-            )
-            .group_by(UndoOperation.status)
-        )).all()
-        counts = empty.copy()
-        for status, count in rows:
-            if status in counts:
-                counts[status] = int(count)
-        return {"total": sum(counts.values()), "by_status": counts}
 
     @classmethod
     async def cleanup_expired(cls, db: AsyncSession, *, storage=None, now=None, limit: int = 100) -> dict:

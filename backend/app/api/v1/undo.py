@@ -1,7 +1,7 @@
 """Web 统一撤销/重做 API。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,34 +35,6 @@ async def preview_undo(
     db: AsyncSession = Depends(get_db),
 ):
     return await UndoService.preview(db, user_id=current_user.id, context_id=context_id)
-
-
-@router.get("/history")
-async def undo_history(
-    context_id: str,
-    limit: int = Query(50, ge=1, le=50),
-    include_expired: bool = Query(False),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return {
-        "items": await UndoService.history(
-            db,
-            user_id=current_user.id,
-            context_id=context_id,
-            limit=limit,
-            include_expired=include_expired,
-        )
-    }
-
-
-@router.get("/stats")
-async def undo_stats(
-    context_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await UndoService.stats(db, user_id=current_user.id, context_id=context_id)
 
 
 async def _apply(body: UndoRequest, mode: str, current_user: User, db: AsyncSession) -> dict:

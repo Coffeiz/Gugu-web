@@ -510,7 +510,7 @@ frontend/
 
 ### Phase 4：跨端增强
 
-- [x] 增加操作历史面板和更早操作的选择性撤回。
+- [ ] 操作历史面板和更早操作的选择性撤回（暂不提供入口，后续按需实现）。
 - [x] 增加 Ctrl+Shift+Z / Command+Shift+Z 重做，并验证撤回/重做栈清空规则（快捷键已在 Phase 1 实现，本阶段补齐历史与分支回归）。
 - [x] 评估显式 /undo 是否需要支持咕咕/IM 操作：本期不接入 Web 撤回栈；后续若需要，使用独立 actor/context 和明确操作卡片。
 - [x] 增加后台保留期清理、artifact 清理和审计统计。
@@ -526,7 +526,6 @@ backend/
 
 frontend/
 ├── src/App.vue                          # 挂载全局历史面板
-├── src/interaction/undo/UndoHistoryPanel.vue # 历史查看、选择性撤回和重做
 ├── src/services/api.ts                   # 历史/统计 API 类型与请求
 └── src/i18n/locales/                     # 中/英/日文案
 ```
