@@ -13,6 +13,8 @@ def test_rag_auto_sources_are_enabled_by_default():
         "file",
         "canvas",
         "note",
+        "calendar",
+        "scheduled_task",
         "conversation",
     ]
 

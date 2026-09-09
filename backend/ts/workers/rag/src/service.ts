@@ -1,8 +1,8 @@
-/** 统一评分/排序门面；算法实现分别位于 scorer 与 ranker。 */
+/** 统一评分/排序门面；算法实现集中位于 ranking。 */
 export type {
   UnifiedRecallDiagnostics,
   UnifiedRecallOptions,
   UnifiedRecallOutput,
-} from "./ranker/types.ts";
-export { rankCandidates } from "./ranker/rank-candidates.ts";
-export { selectUnifiedRecall } from "./ranker/select-recall.ts";
+} from "./ranking/types.ts";
+export { rankCandidates } from "./ranking/rank-candidates.ts";
+export { selectUnifiedRecall } from "./ranking/select-recall.ts";

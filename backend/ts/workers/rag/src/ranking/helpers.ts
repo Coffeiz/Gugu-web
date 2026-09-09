@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RagCitation, RagDocument } from "../../../../packages/contracts/src/rag.ts";
-import { tokenize } from "../scorer/bm25.ts";
+import { tokenize } from "./bm25.ts";
 
 export function compact(value: string): string {
   return String(value || "").replace(/\s+/gu, "").trim().toLocaleLowerCase();

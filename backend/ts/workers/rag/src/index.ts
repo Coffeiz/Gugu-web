@@ -15,8 +15,8 @@ import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
 import { tokenizeRaw } from "./tokenizer.ts";
 import { buildSourceDocuments, type RagSourceBatch } from "./index-builder.ts";
 import { rankCandidates, selectUnifiedRecall } from "./service.ts";
-import { scoreTerms, termFrequency, tokenize as tokens } from "./scorer/bm25.ts";
-import type { Posting } from "./scorer/types.ts";
+import { scoreTerms, termFrequency, tokenize as tokens } from "./ranking/bm25.ts";
+import type { Posting } from "./ranking/types.ts";
 
 const VERSION = RAG_WORKER_VERSION;
 

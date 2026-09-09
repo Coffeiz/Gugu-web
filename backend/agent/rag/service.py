@@ -569,6 +569,8 @@ async def search_knowledge(
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="file"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="note"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="calendar"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="scheduled_task"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="conversation"),
     ]
     if mode == "automatic" and source == "all":

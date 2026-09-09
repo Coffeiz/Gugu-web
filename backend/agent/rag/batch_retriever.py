@@ -23,7 +23,10 @@ class UnifiedQueryRetriever(UnifiedRetriever):
     向量随瞬态语料驻留 worker（指纹耦合 embedding 模型版本戳），不随查询重复传输。
     """
 
-    SOURCE_ORDER = ("memory", "knowledge", "project", "file", "canvas", "note", "conversation")
+    SOURCE_ORDER = (
+        "memory", "knowledge", "project", "file", "canvas", "note",
+        "calendar", "scheduled_task", "conversation",
+    )
 
     def __init__(self, retrievers=None, *, session_factory=None, session=None):
         super().__init__(retrievers)
@@ -176,6 +179,8 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             elif name in {"file", "canvas", "note"}:
                 types = {"file": {"owner", "project", "folder"}, "canvas": {"owner", "project"}, "note": {"owner"}}[name]
                 valid = [value for value in valid if value.scope_type in types]
+            elif name in {"calendar", "scheduled_task"}:
+                valid = [value for value in valid if value.scope_type == "owner"]
             allowed[name] = valid
             progress(name, "index_prepare")
             specs.extend({"source_types": {name}, "scope": value, "limit": limit} for value in valid)

@@ -1,5 +1,5 @@
 import type { RagCitation, RagRankCandidate, RagRankDiagnostics, RagRankResult } from "../../../../packages/contracts/src/rag.ts";
-import { confidence } from "../scorer/confidence.ts";
+import { confidence } from "./confidence.ts";
 import { normalizeBySource } from "./normalize.ts";
 import { citation, contentHashes, contentKey } from "./helpers.ts";
 import { selectUnifiedRecall } from "./select-recall.ts";
@@ -9,6 +9,8 @@ const SOURCE_PRIORITY: Record<string, number> = {
   memory: 0,
   project: 10,
   file: 20,
+  calendar: 30,
+  scheduled_task: 35,
   journal: 30,
   canvas: 40,
   conversation: 50,

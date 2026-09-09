@@ -32,7 +32,7 @@ def test_persistent_specs_scope_matrix():
     folder = Scope("synthetic-owner", scope_type="folder", scope_id="f1")
     group = Scope("synthetic-owner", scope_type="group", scope_id="g1")
     stubs = [_StubRetriever("synthetic-owner", name)
-             for name in ("file", "canvas", "note", "conversation")]
+             for name in ("file", "canvas", "note", "calendar", "scheduled_task", "conversation")]
     specs, allowed = UnifiedQueryRetriever([])._persistent_specs(
         stubs, [owner, project, folder, group], limit=5)
     by_source = {}
@@ -41,9 +41,21 @@ def test_persistent_specs_scope_matrix():
     assert sorted(by_source["file"]) == ["folder", "owner", "project"]
     assert sorted(by_source["canvas"]) == ["owner", "project"]
     assert by_source["note"] == ["owner"]
+    assert by_source["calendar"] == ["owner"]
+    assert by_source["scheduled_task"] == ["owner"]
     assert sorted(by_source["conversation"]) == ["folder", "group", "owner", "project"]
     assert allowed["note"] == [owner]
+    assert allowed["calendar"] == [owner]
+    assert allowed["scheduled_task"] == [owner]
     assert all(spec["limit"] == 5 for spec in specs)
+
+
+def test_source_order_includes_calendar_sources():
+    """日历和定时任务必须进入统一查询的稳定来源顺序。"""
+    assert UnifiedQueryRetriever.SOURCE_ORDER == (
+        "memory", "knowledge", "project", "file", "canvas", "note",
+        "calendar", "scheduled_task", "conversation",
+    )
 
 
 @pytest.mark.asyncio
