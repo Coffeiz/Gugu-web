@@ -295,19 +295,9 @@ async def _create_folder(db, user_id, args: dict):
 
 
 async def _list_folders(db, user_id, args: dict):
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        args.get(key) not in (None, "")
-        for key in ("space", "project_id", "folder_id", "parent_id")
-    ):
-        args = {**args, **{
-            "space": workspace_target["space"],
-            "project_id": workspace_target.get("project_id"),
-            "parent_id": workspace_target.get("folder_id"),
-            "workspace_directory_id": workspace_target.get("workspace_directory_id"),
-        }}
     rows = await list_user_folders(
         db, user_id,
+        space=args.get("space"),
         project_id=args.get("project_id"),
         parent_id=args.get("parent_id"),
         workspace_directory_id=args.get("workspace_directory_id"),

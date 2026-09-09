@@ -268,27 +268,51 @@ async def find_user_folders_by_name(
 ):
     """按名称查找当前用户文件夹；调用方负责处理重名提示。"""
     stmt = select(Folder).where(Folder.user_id == user_id, Folder.name == name)
-    if space == "project" and project_id:
-        stmt = stmt.where(Folder.project_id == project_id)
-    elif space == "workspace" and workspace_directory_id is not None:
-        stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
-    elif space and space != "project":
+    if space == "project":
+        stmt = stmt.where(
+            Folder.project_id == project_id
+            if project_id is not None else Folder.project_id.is_not(None)
+        )
+    elif space == "workspace":
         stmt = stmt.where(Folder.project_id.is_(None))
+        if workspace_directory_id is not None:
+            stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
+        else:
+            stmt = stmt.where(Folder.workspace_directory_id.is_not(None))
+    elif space in {"personal", "mind", "asset"}:
+        stmt = stmt.where(
+            Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
+        )
     return (await db.execute(stmt)).scalars().all()
 
 
 async def list_user_folders(
     db: AsyncSession, user_id, *, project_id=None, parent_id=None,
-    workspace_directory_id=None,
+    workspace_directory_id=None, space=None,
 ):
     """查询当前用户存活文件夹。"""
     stmt = select(Folder).where(
         Folder.user_id == user_id,
         Folder.deleted_at.is_(None),
     )
-    if project_id is not None:
-        stmt = stmt.where(Folder.project_id == project_id)
-    if workspace_directory_id is not None:
+    if space == "project" or project_id is not None:
+        stmt = stmt.where(
+            Folder.project_id == project_id
+            if project_id is not None else Folder.project_id.is_not(None)
+        )
+    elif space == "workspace":
+        stmt = stmt.where(Folder.project_id.is_(None))
+        if workspace_directory_id is not None:
+            stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
+        else:
+            stmt = stmt.where(Folder.workspace_directory_id.is_not(None))
+    elif space in {"personal", "mind", "asset"}:
+        stmt = stmt.where(
+            Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
+        )
+    elif workspace_directory_id is not None:
         stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
     if parent_id is not None:
         stmt = stmt.where(Folder.parent_id == parent_id)

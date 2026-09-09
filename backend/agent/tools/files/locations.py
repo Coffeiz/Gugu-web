@@ -268,7 +268,12 @@ async def _folder_by_name(
     if not rows:
         # 报错时只列出同项目/同空间的文件夹名，避免跨项目泄露
         available = await list_user_folders(
-            db, user_id, project_id=project_id if space == "project" else None)
+            db,
+            user_id,
+            space=space,
+            project_id=project_id,
+            workspace_directory_id=workspace_directory_id,
+        )
         avail = [folder.name for folder in available]
         return None, json.dumps({"error": f"未找到名为「{name}」的文件夹",
                                  "available_folders": sorted(set(avail))})

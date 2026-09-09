@@ -171,15 +171,6 @@ def _strip_ext(name: str, ext: str) -> str:
 
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
-    ):
-        args = {**args, **{
-            "space": workspace_target["space"],
-            "project_id": workspace_target.get("project_id"),
-            "folder_id": workspace_target.get("folder_id"),
-        }}
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
@@ -194,6 +185,7 @@ async def _list_files(db, user_id, args: dict):
                 folder_value,
                 args.get("space"),
                 args.get("project_id"),
+                args.get("workspace_directory_id"),
             )
             if error:
                 return error
@@ -211,7 +203,7 @@ async def _list_files(db, user_id, args: dict):
         space=args.get("space"),
         project_id=args.get("project_id"),
         folder_id=folder_id,
-        workspace_directory_id=workspace_target.get("workspace_directory_id") if workspace_target else None,
+        workspace_directory_id=args.get("workspace_directory_id"),
         ext=args.get("ext"),
         queries=file_queries,
         mode=args.get("mode"),
@@ -224,6 +216,7 @@ async def _list_files(db, user_id, args: dict):
             resolved = await resolve_folder_path(
                 db, user_id, file.folder_id,
                 file.project_id if file.space == "project" else None,
+                file.workspace_directory_id,
             )
             if resolved:
                 _, folder_path = resolved
@@ -759,14 +752,15 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description_short='查询文件；支持按空间、项目、文件夹和关键词筛选。',
-            description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
+            description_short='查询文件；默认覆盖当前用户可访问的所有空间。',
+            description="按空间、项目、工作区、文件夹、扩展名或名称关键词查询文件；不传位置条件时查询当前用户所有可访问空间，结果含完整 folder_path。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
+                    "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer"},
+                    "workspace_directory_id": {"type": "integer"},
                     "folder": {"type": "string"},
                     "ext": {"type": "string"},
                     "query": {"type": "string"},
@@ -1054,14 +1048,16 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
-            description_short='查询个人或项目文件夹路径；用于确认文件位置和落点。',
-            description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
+            description_short='查询文件夹；默认覆盖当前用户可访问的所有空间。',
+            description="列出文件夹，可按空间、项目、工作区或父文件夹筛选；不传位置条件时查询当前用户所有可访问空间。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
                 "type": "object",
                 "properties": {
+                    "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                     "project_id": {"type": "integer"},
                     "parent_id": {"type": "integer"},
+                    "workspace_directory_id": {"type": "integer"},
                 },
             },
             repeat_safe=True,

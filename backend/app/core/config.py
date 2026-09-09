@@ -244,8 +244,8 @@ class QuotaSettings(BaseModel):
 
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
-    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "conversation"]] = Field(
-        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "conversation"],
+    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
+        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"],
         description="自动 Knowledge RAG 允许召回的来源；显式工具不受此开关影响",
     )
     capability_rag_enabled: bool = Field(False, description="是否启用能力目录 RAG 软推荐；只调整目录顺序，不裁剪授权工具")

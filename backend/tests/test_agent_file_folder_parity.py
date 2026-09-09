@@ -5,6 +5,7 @@ from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import move_file_to_trash
+from app.models import Folder, WorkspaceDirectory
 
 
 async def _wire_agent_storage(monkeypatch, root: Path):
@@ -42,6 +43,48 @@ async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp
     trash = await agent_trash._list_trash(db, user_a.id, {})
     assert isinstance(trash, list)
     assert {item["folder_id"] for item in trash if item["kind"] == "folder"} == {folder_id}
+
+
+async def test_list_folders_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
+    personal = Folder(user_id=user_a.id, name="个人影视")
+    workspace = await _mk_workspace_folder(db, user_a.id)
+    db.add(personal)
+    await db.commit()
+    await db.refresh(personal)
+
+    import agent.tools.files.folders as folder_tools
+
+    async def bound_workspace(*_args, **_kwargs):
+        return {
+            "space": "workspace",
+            "project_id": None,
+            "folder_id": None,
+            "workspace_directory_id": workspace.workspace_directory_id,
+        }
+
+    monkeypatch.setattr(folder_tools, "_bound_workspace_target", bound_workspace)
+
+    rows = await folder_tools._list_folders(db, user_a.id, {})
+
+    assert {item["id"] for item in rows} == {personal.id, workspace.id}
+
+
+async def _mk_workspace_folder(db, user_id):
+    workspace_directory = WorkspaceDirectory(
+        user_id=user_id, name="F1 工作区", directory_name="f1-folders",
+    )
+    db.add(workspace_directory)
+    await db.commit()
+    await db.refresh(workspace_directory)
+    folder = Folder(
+        user_id=user_id,
+        name="工作区目录",
+        workspace_directory_id=workspace_directory.id,
+    )
+    db.add(folder)
+    await db.commit()
+    await db.refresh(folder)
+    return folder
 
 
 async def test_agent_folder_move_uses_service_physical_relocation(db, user_a, tmp_path, monkeypatch):

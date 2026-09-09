@@ -1,8 +1,8 @@
 """当前用户文件正文的轻量文本检索。
 
 这是文件工具，不是 Shell 命令执行器：只按逐行字面量匹配，不解析管道、重定向
-或命令替换。文件范围沿用 Agent 当前的 Workspace/沙箱上下文，并始终按 user_id
-隔离；命中后返回行号和有限上下文，正文精读仍交给 ``read_file``。
+或命令替换。默认检索当前用户可访问的所有文件空间，显式 path 才收窄范围，
+并始终按 user_id 隔离；命中后返回行号和有限上下文，正文精读仍交给 ``read_file``。
 """
 from __future__ import annotations
 
@@ -115,21 +115,11 @@ async def _grep_files(db, user_id, args: dict):
     except ValueError as exc:
         return {"error": str(exc)}
 
-    # 与 list_files 保持一致：有当前工作区时默认只看该工作区；完整授权或
-    # 直接调用 handler 的测试没有这个限制。显式 path 也不能越过当前上下文。
-    from agent.tools.files import _bound_workspace_target, _is_text_file_record
+    # 只读检索默认覆盖当前用户所有可访问空间；Workspace 是写入默认落点，
+    # 不是文件库查询的隐式目录。需要收窄范围时使用显式 path。
+    from agent.tools.files import _is_text_file_record
 
-    workspace_target = await _bound_workspace_target(db, user_id)
     scope_prefix = None
-    if workspace_target is not None:
-        scope_prefix = await _logical_path(
-            db,
-            user_id,
-            space=workspace_target["space"],
-            project_id=workspace_target.get("project_id"),
-            folder_id=workspace_target.get("folder_id"),
-            workspace_directory_id=workspace_target.get("workspace_directory_id"),
-        )
 
     rows = await list_grep_candidates(db, user_id=user_id, spaces=_SEARCH_SPACES)
 

@@ -128,6 +128,44 @@ async def test_grep_can_search_personal_project_and_workspace_files(db, user_a, 
     assert all(item["matches"][0]["line"] == 1 for item in result["results"])
 
 
+async def test_grep_does_not_inherit_bound_workspace_scope(db, user_a, tmp_path, monkeypatch):
+    storage = await _wire_storage(monkeypatch, tmp_path)
+    workspace = WorkspaceDirectory(
+        user_id=user_a.id, name="检索工作区", directory_name="workspace-bound",
+    )
+    db.add(workspace)
+    await db.commit()
+    await db.refresh(workspace)
+    await _create_file(db, user_a.id, storage, name="personal.txt", content="已看电影")
+    await _create_file(
+        db,
+        user_a.id,
+        storage,
+        name="workspace.txt",
+        content="已看工作记录",
+        space="workspace",
+        workspace_directory_id=workspace.id,
+    )
+
+    import agent.tools.files as agent_files
+
+    async def bound_workspace(*_args, **_kwargs):
+        return {
+            "space": "workspace",
+            "project_id": None,
+            "folder_id": None,
+            "workspace_directory_id": workspace.id,
+        }
+
+    monkeypatch.setattr(agent_files, "_bound_workspace_target", bound_workspace)
+
+    from agent.tools.files.grep import _grep_files
+
+    result = await _grep_files(db, user_a.id, {"query": "已看", "context_lines": 0})
+
+    assert result["matched_files"] == 2
+
+
 async def test_grep_path_limits_results_to_requested_personal_folder(db, user_a, tmp_path, monkeypatch):
     storage = await _wire_storage(monkeypatch, tmp_path)
     folder = await FileService(db, storage=storage).create_folder(
