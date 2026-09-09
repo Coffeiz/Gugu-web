@@ -5,6 +5,7 @@
   color-scheme: light;
   --theme-page: linear-gradient(160deg,#e8e9ee 0%,#d8dae4 35%,#bfc4d2 65%,#9aa2b8 100%);
   --theme-sidebar: rgba(255,255,255,.42); --theme-base: rgba(238,240,246,.90);
+  --theme-chat-main-bg: #eef0f6;
   --theme-glass: rgba(255,255,255,.56); --theme-glass-hover: rgba(255,255,255,.70);
   --theme-card-solid: rgba(255,255,255,.82); --theme-soft: rgba(123,127,178,.06); --theme-soft-hover: rgba(123,127,178,.10);
   --theme-raised: rgba(255,255,255,.70); --theme-floating: rgba(255,255,255,.72); --theme-scrim: rgba(31,34,45,.22); --theme-column: rgba(255,255,255,.16);

@@ -702,10 +702,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 .chat-open-leave-active {
   transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0) !important;
   transform-origin: right bottom;
-  /* Chrome 在变换中的子元素上会提前停止 backdrop-filter 合成；离场根节点保留
-     一层同值材质，确保玻璃效果跟随 opacity 一起淡出，而不是先变成普通半透明。 */
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
 }
 .chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.78); }
 
@@ -747,7 +743,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   transition:
     background-color var(--motion-hover-control) var(--motion-ease-standard),
     border-color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
     transform var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
@@ -820,7 +815,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 }
 :deep(.msg.user .msg-bubble) {
   background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
 }
 /* 用户气泡 MD 排版（.user-md）：md-view 默认把标题/加粗/引用映射到深色文字
    token，紫底上对比不足，重映射到气泡前景。行内代码叠半透明前景，代码块用
@@ -885,7 +880,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight), var(--gugu-chat-file-shadow);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
      避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
-  transition: background 0.2s ease, box-shadow 0.25s ease,
+  transition: background 0.2s ease, border-color 0.2s ease,
     transform 0.15s ease, opacity 0.15s ease;
 }
 :deep(.msg-file.press-fx:hover) {
@@ -921,7 +916,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: var(--gugu-chat-voice-bg); border: 1px solid var(--gugu-chat-voice-border);
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 var(--gugu-chat-voice-highlight), var(--elevation-card);
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 :deep(.msg-voice:hover) { background: var(--surface-glass-hover); box-shadow: inset 0 1px 0 var(--highlight-strong), var(--elevation-card-hover); }
 :deep(.msg-voice .mv-btn) {

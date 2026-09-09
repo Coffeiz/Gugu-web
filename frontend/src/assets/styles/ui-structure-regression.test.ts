@@ -126,10 +126,56 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
   })
 
+  it('GuguChat 主体使用静态背景，关闭窗口时也不恢复 backdrop-filter', () => {
+    const chatMainStart = chatWindow.indexOf('.chat-main {')
+    const chatMainBlock = chatWindow.slice(chatMainStart, chatWindow.indexOf('}', chatMainStart))
+    const chatLeaveBlock = cssBlock(guguChat, '.chat-open-leave-active')
+    expect(chatMainBlock).toContain('background: var(--gugu-chat-main-bg);')
+    expect(chatMainBlock).toContain('backdrop-filter: none;')
+    expect(chatMainBlock).toContain('-webkit-backdrop-filter: none;')
+    expect(chatLeaveBlock).not.toContain('backdrop-filter:')
+    expect(chatLeaveBlock).not.toContain('-webkit-backdrop-filter:')
+  })
+
+  it('GuguChat 主体背景使用各主题的实色 token，避免页面内容透出', () => {
+    const components = load('./tokens/components.css')
+    const themeFiles = [
+      load('./tokens/themes/glass-light.css'),
+      load('./tokens/themes/glass-dark.css'),
+      load('./tokens/themes/mono-light.css'),
+      load('./tokens/themes/mono-dark.css'),
+      load('./tokens/themes/material-composition.css'),
+    ]
+    expect(components).toContain('--gugu-chat-main-bg: var(--theme-chat-main-bg);')
+    for (const theme of themeFiles) expect(theme).toContain('--theme-chat-main-bg:')
+  })
+
   it('工具事件卡片点击后不把焦点误当成持续 hover', () => {
     expect(chatToolBubble).toContain('.tool-event-bubble:hover {')
     expect(chatToolBubble).toContain('.tool-event-head:focus-visible')
     expect(chatToolBubble).not.toContain('.tool-event-bubble:focus-within')
+  })
+
+  it('工具卡片展开后仍通过独立 opacity 层过渡 hover，避免高度重排打断高亮', () => {
+    const bubbleBlock = cssBlock(chatToolBubble, '.tool-event-bubble')
+    const hoverLayerBlock = cssBlock(chatToolBubble, '.tool-event-bubble::after')
+    expect(bubbleBlock).toContain('isolation: isolate;')
+    expect(bubbleBlock).toContain('transition: border-color var(--motion-hover-card)')
+    expect(bubbleBlock).not.toContain('background-color var(--motion-hover-card)')
+    expect(bubbleBlock).not.toContain('box-shadow var(--motion-hover-card)')
+    expect(hoverLayerBlock).toContain('opacity: 0;')
+    expect(hoverLayerBlock).toContain('transition: opacity var(--motion-hover-card)')
+    expect(chatToolBubble).toContain('.tool-event-bubble:hover::after { opacity: 1; }')
+    expect(chatToolBubble).toContain('.tool-event-detail { position: relative; z-index: 1;')
+  })
+
+  it('聊天附件和语音 hover 不连续插值阴影，避免快速移动时触发密集 paint', () => {
+    const chatActionBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card))')
+    const chatFileBlock = cssBlock(guguChat, ':deep(.msg-file)')
+    const chatVoiceBlock = cssBlock(guguChat, ':deep(.msg-voice)')
+    expect(chatActionBlock).not.toContain('box-shadow var(--motion-hover-control)')
+    expect(chatFileBlock).not.toContain('box-shadow 0.25s')
+    expect(chatVoiceBlock).not.toContain('box-shadow 0.15s')
   })
 
   it('交互消费失败时进入终态，避免重复提交已消费 token', () => {

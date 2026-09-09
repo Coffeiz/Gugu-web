@@ -157,14 +157,17 @@ function cleanupDetailTransition(element: Element) {
 </script>
 
 <style scoped>
-.tool-event-bubble { width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background-color: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: background-color var(--motion-hover-card) var(--motion-ease-standard), border-color var(--motion-hover-card) var(--motion-ease-standard), box-shadow var(--motion-hover-card) var(--motion-ease-standard); }
+.tool-event-bubble { position: relative; isolation: isolate; width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background-color: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: border-color var(--motion-hover-card) var(--motion-ease-standard); }
+/* hover 高亮独立成 opacity 层：展开详情会改变父卡片高度，不能让背景色插值和这次重排互相打断。 */
+.tool-event-bubble::after { content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none; border-radius: inherit; background-color: var(--gugu-chat-tool-bubble-hover); opacity: 0; transition: opacity var(--motion-hover-card) var(--motion-ease-standard); }
 /* hover 底色走专用 token：亮色=主题玻璃 hover（白系提亮），暗色=气泡底色向白偏移
    （通用 --surface-glass-hover 在暗色是透明白叠层，透出页面暗底反而更暗，实测翻车）。
    这里只响应真实鼠标 hover；不要用 focus-within 模拟 hover，否则点击标题按钮后
    按钮持续获得焦点，卡片会一直停留在 hover 外观，直到点击空白处。键盘焦点仍由
    .tool-event-head:focus-visible 提供明确的焦点反馈。 */
-.tool-event-bubble:hover { background-color: var(--gugu-chat-tool-bubble-hover); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
-.tool-event-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 9px; width: 100%; min-height: 54px; border: 0; padding: 10px 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.tool-event-bubble:hover { border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
+.tool-event-bubble:hover::after { opacity: 1; }
+.tool-event-head { position: relative; z-index: 1; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 9px; width: 100%; min-height: 54px; border: 0; padding: 10px 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tool-event-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--border-focus); }
 .tool-event-state { grid-row: 1 / span 2; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--content-tertiary); }
 .tool-event-state.is-running { background: var(--action-primary); animation: tool-pulse 1.2s ease-in-out infinite; }
@@ -175,8 +178,8 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-meta { grid-column: 2; grid-row: 2; color: var(--content-secondary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-duration { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--content-tertiary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-head :deep(.flip-chevron) { grid-column: 4; grid-row: 1 / span 2; align-self: center; }
-.tool-event-detail { padding: 10px 12px 11px; border-top: 1px solid var(--border-default); background: var(--gugu-chat-assistant-bg); color: var(--content-secondary); }
-.tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-default); }
+.tool-event-detail { position: relative; z-index: 1; padding: 10px 12px 11px; border-top: 1px solid var(--panel-divider); background: transparent; color: var(--content-secondary); }
+.tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-divider); }
 .tool-event-caption { display: block; margin-bottom: 4px; color: var(--content-tertiary); font-size: var(--font-size-xs); font-weight: 600; }
 .tool-event-limit { margin-left: 6px; color: var(--content-tertiary); font-weight: 400; }
 pre { max-height: 180px; margin: 0; overflow: auto; color: var(--content-primary); white-space: pre-wrap; word-break: break-word; font: var(--font-size-xs)/var(--line-height-body) var(--font-family-mono); }

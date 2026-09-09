@@ -78,6 +78,7 @@ const paletteTokens = [
   '--theme-scrollbar-thumb-hover',
 ]
 const notificationBubbleVue = load('../../components/common/feedback/NotificationBubble.vue')
+const guguChatToolBubbleVue = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
 const newProjectModalVue = load('../../views/Projects/components/NewProjectModal.vue')
 const appSidebarVue = load('../../components/common/layout/AppSidebar.vue')
 const themeRefinementsCss = load('./theme-refinements.css')
@@ -256,6 +257,8 @@ describe('主题 CSS 回归契约', () => {
 
   it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
     expect(guguChatVue).toContain('background: var(--gugu-chat-user-bg)')
+    expect(guguChatVue).toContain('border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight)')
+    expect(guguChatVue).not.toContain('var(--gugu-chat-user-shadow)')
     expect(guguChatVue).toContain('background: var(--gugu-chat-voice-bg)')
     expect(guguChatVue).not.toMatch(/background:\s*(?:linear-gradient|rgba?\(|#[0-9a-f]{3,8})/i)
 
@@ -519,10 +522,15 @@ describe('主题 CSS 回归契约', () => {
     expect(darkChatBlock).toContain('box-shadow: none')
   })
 
+  it('工具气泡内部内容分割线使用内容分隔色，避免亮色主题变成纯白', () => {
+    expect(guguChatToolBubbleVue).toContain('border-top: 1px solid var(--panel-divider)')
+    expect(guguChatToolBubbleVue).not.toContain('border-top: 1px solid var(--border-default)')
+  })
+
   it('咕咕聊天窗口离场时保留玻璃材质，避免 blur 先于淡出消失', () => {
     const leaveBlock = guguChatVue.match(/\.chat-open-leave-active\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-    expect(leaveBlock).toContain('backdrop-filter: var(--glass-blur)')
-    expect(leaveBlock).toContain('-webkit-backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).not.toContain('backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).not.toContain('-webkit-backdrop-filter: var(--glass-blur)')
     expect(leaveBlock).toContain('transition: opacity')
   })
 })

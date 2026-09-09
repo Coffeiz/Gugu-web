@@ -84,8 +84,8 @@ html[data-theme][data-family] .file-card-btn:hover { color: var(--content-primar
 html[data-theme][data-family] .file-card-btn.del:hover { color: var(--status-danger); background: var(--status-danger-bg); }
 
 /* ── GuguChat ───────────────────────────────────────────────────
-   窗口根节点只负责边框、圆角和阴影；聊天主体继续沿用组件自己的背景与 blur，避免根节点
-   和 chat-main 同时铺材质导致整窗变成另一层面板。 */
+   窗口根节点只负责边框、圆角和阴影；聊天主体使用静态主题背景，避免覆盖页面时重复采样
+   背景内容。 */
 html[data-theme][data-family] .chat-window {
   border-color: var(--gugu-chat-border);
   border-radius: var(--gugu-chat-radius);

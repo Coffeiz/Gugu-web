@@ -1,6 +1,7 @@
 /* Mono / Mono light values: quieter solid neutral surfaces. */
 :root[data-family='mono'][data-theme='light'] {
   color-scheme: light;
+  --theme-chat-main-bg: #f7f5f8;
   --theme-page: radial-gradient(900px 560px at 78% -8%,rgba(132,121,178,.10),transparent 62%),radial-gradient(700px 440px at 18% 110%,rgba(113,158,170,.08),transparent 65%),linear-gradient(180deg,#f5f3f6,#eeecf0);
   --theme-sidebar: rgba(248,246,249,.90); --theme-base: #f7f5f8; --theme-glass: rgba(252,251,253,.76); --theme-glass-hover: rgba(255,255,255,.90); --theme-card-solid: #fbfafc;
   --theme-soft: rgba(62,54,72,.040); --theme-soft-hover: rgba(62,54,72,.065); --theme-raised: #ffffff; --theme-floating: rgba(253,252,254,.94); --theme-scrim: rgba(31,27,36,.22); --theme-column: rgba(255,255,255,.16);
