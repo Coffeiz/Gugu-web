@@ -8,7 +8,7 @@ import json
 import logging
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -142,7 +142,7 @@ async def get_terminal_metrics(user: User = Depends(get_current_user), db: Async
 
 
 @router.post("")
-async def add_terminal(body: TerminalCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def add_terminal(body: TerminalCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     try:
         row = await create_terminal(db, user.id, name=body.name, session_id=body.sessionId,
                                     workspace_id=body.workspaceId, mode=body.mode)
@@ -153,7 +153,8 @@ async def add_terminal(body: TerminalCreate, user: User = Depends(get_current_us
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await db.commit()
-    await events.publish(user.id, "terminals", operation="create", entity_id=row.id,
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="create", entity_id=row.id,
                          event_payload=serialize_terminal(row))
     return serialize_terminal(row)
 
@@ -437,7 +438,7 @@ async def stream_terminal_events(terminal_id: str, after: int = Query(default=0,
 
 
 @router.patch("/{terminal_id}")
-async def rename_terminal_route(terminal_id: str, body: TerminalUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def rename_terminal_route(terminal_id: str, body: TerminalUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     row = _require(await get_terminal(db, user.id, terminal_id))
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.VIEW)
     if not access.allowed:
@@ -447,13 +448,14 @@ async def rename_terminal_route(terminal_id: str, body: TerminalUpdate, user: Us
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    await events.publish(user.id, "terminals", operation="update", entity_id=row.id,
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="update", entity_id=row.id,
                          event_payload={"terminal": serialize_terminal(row), "reset": True})
     return serialize_terminal(row)
 
 
 @router.post("/{terminal_id}/input")
-async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     row = _require(await get_terminal(db, user.id, terminal_id))
     if row.mode == TerminalMode.INTERACTIVE_PTY.value:
         pty_status = await pty_access(db, user.id)
@@ -465,7 +467,8 @@ async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Dep
     request_id = uuid4().hex
     status_event = await append_terminal_status(db, row, command=body.command, status="running", run_id=request_id)
     await db.commit()
-    await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="append", entity_id=row.id,
                          event_payload={"terminal_id": row.id, "event": serialize_event(status_event),
                                         "terminal": serialize_terminal(row)})
     task = asyncio.create_task(_run_terminal_command(user.id, row.id, request_id, body))
@@ -574,7 +577,7 @@ async def cancel_terminal_command(terminal_id: str, request_id: str, user: User 
 
 
 @router.post("/{terminal_id}/terminate")
-async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     row = _require(await get_terminal(db, user.id, terminal_id))
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.TERMINATE)
     if not access.allowed:
@@ -590,25 +593,27 @@ async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_cur
                 await manager.terminate(row.id, force=True)
             except LookupError:
                 pass
-    await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="append", entity_id=row.id,
                          event_payload={"terminal_id": row.id, "terminal": serialize_terminal(row)})
     return serialize_terminal(row)
 
 
 @router.delete("/{terminal_id}")
-async def delete_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     row = _require(await get_terminal(db, user.id, terminal_id))
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.DELETE)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
     await delete_terminal(db, row)
     await db.commit()
-    await events.publish(user.id, "terminals", operation="delete", entity_id=terminal_id)
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="delete", entity_id=terminal_id)
     return {"deleted": True, "terminalId": terminal_id}
 
 
 @router.post("/{terminal_id}/reopen")
-async def reopen_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def reopen_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     row = _require(await get_terminal(db, user.id, terminal_id))
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id,
                                        workspace_id=row.workspace_id, operation=TerminalOperation.REOPEN)
@@ -623,13 +628,14 @@ async def reopen_terminal_view(terminal_id: str, user: User = Depends(get_curren
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
-    await events.publish(user.id, "terminals", operation="update", entity_id=row.id,
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="update", entity_id=row.id,
                          event_payload=serialize_terminal(row))
     return serialize_terminal(row)
 
 
 @router.post("/{terminal_id}/reset")
-async def reset_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def reset_terminal_view(terminal_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     """重建当前终端的 PTY/沙盒运行态，不删除工作区文件或输出历史。"""
     row = _require(await get_terminal(db, user.id, terminal_id))
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id,
@@ -645,6 +651,7 @@ async def reset_terminal_view(terminal_id: str, user: User = Depends(get_current
                 pass
     await reset_terminal(db, row)
     await db.commit()
-    await events.publish(user.id, "terminals", operation="update", entity_id=row.id,
+    await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="update", entity_id=row.id,
                          event_payload={"terminal": serialize_terminal(row), "reset": True})
     return serialize_terminal(row)

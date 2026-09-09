@@ -87,7 +87,8 @@ async def create_event(
     await db.commit()
     await db.refresh(e)
     response = _to_resp(e)
-    await events.publish(current_user.id, "calendar", operation="create", entity_id=e.id,
+    await events.publish(current_user.id, "calendar", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="create", entity_id=e.id,
                          event_payload=response.model_dump(mode="json", by_alias=True))
     return response
 
@@ -127,7 +128,8 @@ async def update_event(
     await db.commit()
     await db.refresh(e)
     response = _to_resp(e)
-    await events.publish(current_user.id, "calendar", operation="update", entity_id=e.id,
+    await events.publish(current_user.id, "calendar", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="update", entity_id=e.id,
                          event_payload=response.model_dump(mode="json", by_alias=True))
     return response
 
@@ -166,7 +168,9 @@ async def delete_event(
                        for ref, snapshot in before_items.items()},
     )
     await db.commit()
-    await events.publish(current_user.id, "calendar", operation="delete", entity_id=eid)
+    await events.publish(current_user.id, "calendar", origin=request.headers.get("X-Client-Id") if request else None,
+                         operation="delete", entity_id=eid)
     if tasks:
         await events.publish(current_user.id, "scheduled_tasks", operation="update",
-                             entity_ids=[task.id for task in tasks])
+                             entity_ids=[task.id for task in tasks],
+                             origin=request.headers.get("X-Client-Id") if request else None)
