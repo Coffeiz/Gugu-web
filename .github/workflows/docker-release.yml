@@ -95,6 +95,9 @@ jobs:
           cache-from: type=gha,scope=default-compose
           cache-to: type=gha,mode=max,scope=default-compose
 
+      # 沙盒镜像不走构建缓存：apt 层一旦命中旧缓存，apt-get upgrade 不会真跑，
+      # 镜像里就是旧包，而 trivy 漏洞库每次都是最新，必然假红（linux-libc-dev
+      # 6.1.180-1 vs 6.1.187-1 案例 2026-09-10）。镜像小，全新构建只多几分钟。
       - name: Build Shell sandbox runtime image
         uses: docker/build-push-action@v6
         with:
@@ -104,8 +107,7 @@ jobs:
           push: false
           load: true
           tags: gugu-sandbox:ci
-          cache-from: type=gha,scope=sandbox
-          cache-to: type=gha,mode=max,scope=sandbox
+          no-cache: true
 
       - name: Smoke test Shell sandbox runtime
         run: |
