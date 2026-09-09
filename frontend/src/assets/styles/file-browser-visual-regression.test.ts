@@ -25,6 +25,9 @@ const projectAdoption = load('./adoption/project.css')
 const runtimeAdoption = load('./adoption/runtime.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
+const renameInput = load('../../components/common/file-browser/RenameInput.vue')
+const filesGridView = load('../../views/Files/components/FilesGridView.vue')
+const filesCss = load('./components/files.css')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const filesListView = load('../../views/Files/components/FilesListView.vue')
 const filesListRows = load('./filesListRows.css')
@@ -36,6 +39,16 @@ const runtimeSetup = load('../../interaction/runtime/setup.ts')
 const mindRuntimeObject = load('../../composables/mind/useMindRuntimeObject.ts')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
+  it('网格重命名输入可选中文本，透明悬浮层不会抢占文件名点击区域', () => {
+    expect(renameInput).toContain('@pointerdown.stop @mousedown.stop @click.stop')
+    expect(filesGridView).toContain('<RenameInput v-if="renamingFileId === f.id"')
+    expect(filesCss).toContain('user-select: text;')
+    expect(filesCss).toContain('.fc-name:has(.rename-input-inline) .rename-sizer')
+    expect(filesGridView).toContain('top:8px; right:8px;')
+    expect(filesGridView).toContain('pointer-events:none;')
+    expect(filesGridView).toContain('pointer-events:auto;')
+  })
+
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
     expect(browserPanel).toContain('height: 52px;')
     expect(browserPanel).toContain('padding: 0 16px;')

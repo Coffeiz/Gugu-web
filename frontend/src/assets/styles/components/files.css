@@ -38,6 +38,7 @@
 .rename-sizer {
   display: inline-block; position: relative;
   max-width: 100%; vertical-align: top;
+  user-select: text;
 }
 .rename-sizer::after {
   content: '';
@@ -63,9 +64,17 @@
   border-radius: var(--rename-input-radius); padding: var(--rename-input-padding);
   font: inherit; color: var(--rename-input-fg); caret-color: var(--action-primary);
   box-shadow: var(--input-hover-shadow);
+  user-select: text;
+  text-align: left;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
               border-color var(--motion-hover-control) var(--motion-ease-standard),
               box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
 .fc-name:has(.rename-input-inline),
 .fd-name:has(.rename-input-inline) { overflow: visible; }
+.fc-name:has(.rename-input-inline) .rename-sizer,
+.fd-name:has(.rename-input-inline) .rename-sizer {
+  /* 名称行两侧各有 13px padding；编辑态把右侧内边距也纳入命中区，避免
+     点击文本末端时落到卡片根节点而触发打开文件。 */
+  width: calc(100% + 13px); max-width: none; z-index: 3;
+}
