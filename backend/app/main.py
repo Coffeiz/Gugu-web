@@ -54,6 +54,7 @@ from app.api.v1 import email_admin as email_admin_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import user_skills as user_skills_router
 from app.api.v1 import byok as byok_router
+from app.api.v1 import undo as undo_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from app.api.v1 import public_config as public_config_router
@@ -113,8 +114,17 @@ async def _auto_cleanup_loop():
                 security_n = await cleanup_expired_security_events(db)
                 if security_n:
                     logger.info("安全事件自动清理 %d 条过期记录", security_n)
+                from app.services.storage import get_storage
+                from app.services.undo import UndoService
+                undo_cleanup = await UndoService.cleanup_expired(db, storage=get_storage())
+                if undo_cleanup["expired"] or undo_cleanup["artifacts"]:
+                    logger.info(
+                        "撤回记录自动清理：%d 条操作，%d 个正文 artifact",
+                        undo_cleanup["expired"], undo_cleanup["artifacts"],
+                    )
+                await db.commit()
         except Exception as e:
-            logger.error("回收站自动清理出错: %s", e, exc_info=True)
+            logger.error("后台过期数据自动清理出错: %s", e, exc_info=True)
         # 缩略图 TTL 驱逐（每 24 小时一次）
         if time.time() - _last_thumb_cleanup > 86400:
             try:
@@ -474,6 +484,7 @@ app.include_router(
 app.include_router(notifications_router.router, prefix="/api/v1")
 app.include_router(user_skills_router.router, prefix="/api/v1")
 app.include_router(byok_router.router, prefix="/api/v1")
+app.include_router(undo_router.router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)

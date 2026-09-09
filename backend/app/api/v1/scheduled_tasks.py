@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +33,7 @@ from app.core.schedule_rules import (
     task_schedule_kind,
 )
 from app.core.tz import iso_utc
+from app.services.undo import UndoService
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 _TRIAL_WAIT_SECONDS = 180
@@ -183,7 +184,12 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
 
 
 @router.post("", status_code=201)
-async def create_task(body: TaskCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_task(
+    body: TaskCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
     spec = _normalize_schedule(
         schedule_kind=body.schedule_kind,
         cron=body.cron,
@@ -214,7 +220,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     if body.event_id is not None:
         from app.models import CalendarEvent
         ev = await get_owned(db, CalendarEvent, body.event_id, user.id)
-        if not ev:
+        if not ev or ev.deleted_at is not None:
             raise HTTPException(400, "绑定的日历事件不存在")
         existing = await find_event_reminder_by_cron(db, user.id, body.event_id, spec.cron)
         if existing:
@@ -238,6 +244,13 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     db.add(t)
     try:
+        await db.flush()
+        if body.event_id is not None:
+            await UndoService.attach_calendar_create_task(
+                db, user_id=user.id,
+                context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+                event_id=body.event_id, task=t,
+            )
         await db.commit()
     except IntegrityError:
         await db.rollback()

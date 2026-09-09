@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 
 from app.core.ownership import get_owned
 from app.models import CalendarEvent, File, MindCanvasItem, MindNode, Project
@@ -90,8 +90,9 @@ async def soft_delete_canvas_note(db, node_id: int, user_id, client_version: int
     )
     if result.rowcount != 1:
         return False
-    await db.execute(delete(MindCanvasItem).where(
+    await db.execute(update(MindCanvasItem).where(
         MindCanvasItem.node_id == node_id,
         MindCanvasItem.user_id == _as_uuid(user_id),
-    ))
+        MindCanvasItem.deleted_at.is_(None),
+    ).values(deleted_at=now_utc(), updated_at=now_utc()))
     return True

@@ -274,6 +274,7 @@ class ProjectResponse(CamelModel):
     version: int = 1
     done_at: Optional[str] = None
     updated_at: Optional[str] = None
+    deleted_at: Optional[str] = None
     created_at: str = ""
     file_count: int = 0
 

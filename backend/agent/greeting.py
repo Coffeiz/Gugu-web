@@ -117,7 +117,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     try:
         rows = (await db.execute(
             select(Project)
-            .where(Project.user_id == user_id, Project.archived.is_(False),
+            .where(Project.user_id == user_id, Project.deleted_at.is_(None), Project.archived.is_(False),
                    Project.status.in_(("pending", "active"))))).scalars().all()
         grouped = {"pending": [], "active": []}
         for project in rows:

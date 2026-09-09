@@ -37,7 +37,7 @@ async def load_projects(db, user_id) -> list:
     result = await db.execute(
         select(Project)
         .options(selectinload(Project.folders))
-        .where(Project.user_id == user_id, Project.archived == False)
+        .where(Project.user_id == user_id, Project.deleted_at.is_(None), Project.archived == False)
     )
     grouped = {status: [] for status in PROJECT_CONTEXT_LIMITS}
     for project in result.scalars().all():
@@ -61,7 +61,7 @@ async def load_events(db, user_id, limit: int = 10, tz=None) -> list:
     today = today_str(tz)
     result = await db.execute(
         select(CalendarEvent)
-        .where(CalendarEvent.user_id == user_id, CalendarEvent.date >= today)
+        .where(CalendarEvent.user_id == user_id, CalendarEvent.deleted_at.is_(None), CalendarEvent.date >= today)
         .order_by(CalendarEvent.date).limit(limit)
     )
     return result.scalars().all()

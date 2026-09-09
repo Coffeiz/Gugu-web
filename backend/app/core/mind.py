@@ -268,6 +268,9 @@ async def upsert_relation(
     if not allow_parallel:
         found = await _find_relation(db, uid, src, dst, rel_type, canvas_id)
         if found is not None:
+            if found.deleted_at is not None:
+                found.deleted_at = None
+                found.updated_at = now_utc()
             return found
 
     rel = MindRelation(

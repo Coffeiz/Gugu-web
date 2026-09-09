@@ -54,6 +54,8 @@ const eventEditModal = load('../../components/events/EventEditModal.vue')
 const contextMenu = load('../../components/common/overlays/ContextMenu.vue')
 const dateSpanPicker = load('../../components/common/controls/DateSpanPicker.vue')
 const projectCard = load('../../views/Projects/components/ProjectCard.vue')
+const projectStagesPanel = load('../../views/Projects/components/ProjectStagesPanel.vue')
+const projectTodosPanel = load('../../views/Projects/components/ProjectTodosPanel.vue')
 const sortMenu = load('../../components/common/controls/SortMenu.vue')
 const datePicker = load('../../components/common/controls/DatePicker.vue')
 const adminDatePicker = load('../../components/AdminDatePicker.vue')
@@ -105,6 +107,8 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatComposer).toContain('.chat-input-row > .att-btn,')
     expect(chatComposer).toContain('.chat-input-row > .send-btn { align-self: center; }')
     expect(chatComposer).toContain('display: flex; align-items: center; gap: 8px;')
+    expect(chatComposer).toContain(":name=\"unlimitedMode ? 'action.speed-fill' : 'action.speed'\"")
+    expect(chatComposer).not.toContain('action.infinity')
     expect(chatWindow).not.toContain('chat-main:not(.is-expanded) :deep(.chat-input-row)')
     expect(chatWindow).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
@@ -166,6 +170,21 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(projectCard).not.toContain('v-for="(t, i) in currentTodos"')
     expect(projectCard).toContain('v-for="(todo, i) in currentTodos"')
     expect(projectCard).toContain(':placeholder="t(\'projects.todoPlaceholder\')"')
+  })
+
+  it('项目阶段和待办删除操作保持可见且具备可访问名称', () => {
+    expect(projectStagesPanel).toContain(':aria-label="t(\'common.actions.delete\')"')
+    expect(projectStagesPanel).toContain(':size="12"')
+    expect(projectStagesPanel).toContain('width: 24px; height: 24px;')
+    expect(projectStagesPanel).toContain('color: var(--danger-button-fg); opacity: 0; pointer-events: none;')
+    expect(projectStagesPanel).toContain('.node-row:hover .del-stage')
+    expect(projectTodosPanel).toContain(':aria-label="t(\'common.actions.delete\')"')
+    expect(projectTodosPanel).toContain(':size="12"')
+    expect(projectTodosPanel).toContain('width: 24px; height: 24px;')
+    expect(projectTodosPanel).toContain('color: var(--danger-button-fg); opacity: 0; pointer-events: none;')
+    expect(projectTodosPanel).toContain('.todo-item:hover .todo-del')
+    expect(projectTodosPanel).toContain('.todo-item { display: flex; align-items: center;')
+    expect(projectTodosPanel).toContain('.todo-check, .todo-del { margin-top: 0; }')
   })
 
   it('Admin field-input 使用完整实线边框，避免回落到浏览器原生双层描边', () => {
@@ -450,16 +469,34 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(guide).toContain('background:var(--done-group-border)')
   })
 
+  it('项目已完成列的归档入口使用明亮控制色，删除入口保留危险色', () => {
+    expect(doneColumn).toContain('class="project-collection-entry-mini archived-entry-mini"')
+    const archived = cssBlock(doneColumn, '.done-col .archived-entry-mini {')
+    expect(archived).toContain('color:var(--control-fg)')
+    expect(archived).toContain('border-color:var(--input-border)')
+    expect(archived).toContain('background:var(--control-bg)')
+
+    const archivedHover = cssBlock(doneColumn, '.done-col .archived-entry-mini:hover {')
+    expect(archivedHover).toContain('color:var(--control-fg-strong)')
+    expect(archivedHover).toContain('border-color:var(--input-border-hover)')
+    expect(archivedHover).toContain('background:var(--control-bg-hover)')
+
+    const deleted = cssBlock(doneColumn, '.done-col .deleted-entry-mini {')
+    expect(deleted).toContain('color:var(--status-danger)')
+    expect(deleted).toContain('background:var(--status-danger-bg)')
+  })
+
   it('内容 disclosure 统一为收起向右、展开向下', () => {
     // 已完成年组与月组统一使用 FlipChevron 组件。
     expect(doneGroup).toContain('FlipChevron :open="group.open"')
     expect(doneGroup).toContain('FlipChevron :open="isUndatedOpen"')
     expect(doneGroup).toContain('FlipChevron :open="group.open" :size="8"')
-    // FlipChevron 自带旋转动画，DoneColumn 不再有 .year-chev/.month-chev CSS。
-
-    expect(archivedProjects).toContain('transform: rotate(-90deg);')
-    expect(archivedProjects).toContain('.year-chev.open { transform: rotate(0deg); }')
-    expect(archivedProjects).toContain('.month-chev.open { transform: rotate(0deg); }')
+    // 归档与已删除弹窗共用 FlipChevron，旋转动画由公共组件统一负责。
+    expect(archivedProjects).toContain("import FlipChevron from '@/components/common/controls/FlipChevron.vue'")
+    expect(archivedProjects).toContain('<FlipChevron :open="openYears.has(yg.year)" />')
+    expect(archivedProjects).toContain('<FlipChevron :open="openMonths.has(yg.year + mg.month)" :size="8" />')
+    expect(archivedProjects).not.toContain('.year-chev')
+    expect(archivedProjects).not.toContain('.month-chev')
 
     expect(uploadModal).toContain('.toggle-chev, .year-chev, .month-chev')
     expect(uploadModal).toContain('transform:rotate(-90deg)')

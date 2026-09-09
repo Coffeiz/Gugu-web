@@ -45,6 +45,9 @@ export const useProjectStore = defineStore('projects', () => {
   const archivedProjects = ref<Project[]>([])
   const archivedLoading  = ref(false)
   const archivedLoaded   = ref(false)
+  const deletedProjects = ref<Project[]>([])
+  const deletedLoading  = ref(false)
+  const deletedLoaded   = ref(false)
   // 每个项目只允许一个在途写入：后续操作在拿到前一次的新版本后再发送，避免快速点击时
   // 所有请求都带着同一个旧 version。confirmed 是服务端最后确认的快照，失败就从这里回滚。
   const confirmedProjects = new Map<number, Project>()
@@ -137,6 +140,7 @@ export const useProjectStore = defineStore('projects', () => {
   async function deleteProject(id: number) {
     await projectsApi.delete(id)
     projects.value = projects.value.filter(p => p.id !== id)
+    if (deletedLoaded.value) void fetchDeletedProjects()
   }
 
   async function archiveProject(id: number) {
@@ -164,10 +168,36 @@ export const useProjectStore = defineStore('projects', () => {
     }
   }
 
+  async function fetchDeletedProjects() {
+    if (deletedLoading.value) return
+    deletedLoading.value = true
+    const requestEpoch = getAccountBoundaryEpoch()
+    try {
+      // 旧后端不识别 deleted 查询参数时会返回普通项目列表；没有墓碑时间的记录
+      // 不能进入回收站，避免把全部项目误显示成已删除项目。
+      const nextProjects = (await projectsApi.list(false, true))
+        .map(mapProjectResponse)
+        .filter(project => Boolean(project.deletedAt))
+      if (requestEpoch !== getAccountBoundaryEpoch()) return
+      deletedProjects.value = nextProjects
+      deletedLoaded.value = true
+    } catch (e) {
+      error.value = errMsg(e)
+    } finally {
+      deletedLoading.value = false
+    }
+  }
+
   async function unarchiveProject(id: number) {
     const p = archivedProjects.value.find(p => p.id === id)
     await projectsApi.update(id, { archived: false, version: p?.version })
     archivedProjects.value = archivedProjects.value.filter(p => p.id !== id)
+    await fetchProjects()
+  }
+
+  async function restoreDeletedProject(id: number) {
+    await projectsApi.restore(id)
+    deletedProjects.value = deletedProjects.value.filter(p => p.id !== id)
     await fetchProjects()
   }
 
@@ -365,9 +395,11 @@ export const useProjectStore = defineStore('projects', () => {
     confirmedProjects.clear()
     projects.value = []
     archivedProjects.value = []
+    deletedProjects.value = []
     upcomingCalEvents.value = []
     projectsLoaded.value = false
     archivedLoaded.value = false
+    deletedLoaded.value = false
     modalProjectId.value = null
     error.value = null
   }
@@ -383,6 +415,7 @@ export const useProjectStore = defineStore('projects', () => {
     if (event.operation === 'delete') {
       projects.value = projects.value.filter(project => project.id !== id)
       confirmedProjects.delete(id)
+      if (deletedLoaded.value) void fetchDeletedProjects()
       return true
     }
     if (!payload || Number(payload.id) !== id) return false
@@ -421,5 +454,6 @@ export const useProjectStore = defineStore('projects', () => {
     modalProject, openModal, closeModal, resetAccountState,
     upcomingCalEvents, fetchUpcomingCalEvents,
     archivedProjects, archivedLoading, archivedLoaded, fetchArchivedProjects, unarchiveProject,
+    deletedProjects, deletedLoading, deletedLoaded, fetchDeletedProjects, restoreDeletedProject,
   }
 })

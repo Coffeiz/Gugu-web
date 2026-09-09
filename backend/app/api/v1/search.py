@@ -119,6 +119,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         rows = list((await db.execute(
             select(Project).where(
                 Project.user_id == uid,
+                Project.deleted_at.is_(None),
                 keyword_condition([Project.name, Project.client, Project.current_stage], search_queries, mode),
             ).order_by(keyword_score([Project.name, Project.client, Project.current_stage], search_queries).desc(),
                        _primary_rank(Project.name, q), Project.updated_at.desc()).limit(per_type)
@@ -126,7 +127,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             seen = {p.id for p in rows}
             scan = (await db.execute(
-                select(Project).where(Project.user_id == uid)
+                select(Project).where(Project.user_id == uid, Project.deleted_at.is_(None))
                 .order_by(Project.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for p in scan:
@@ -198,6 +199,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         rows = list((await db.execute(
             select(CalendarEvent).where(
                 CalendarEvent.user_id == uid,
+                CalendarEvent.deleted_at.is_(None),
                 keyword_condition([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client],
                                   search_queries, mode),
             ).order_by(keyword_score([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client],
@@ -207,7 +209,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             seen = {e.id for e in rows}
             scan = (await db.execute(
-                select(CalendarEvent).where(CalendarEvent.user_id == uid)
+                select(CalendarEvent).where(CalendarEvent.user_id == uid, CalendarEvent.deleted_at.is_(None))
                 .order_by(CalendarEvent.date.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for e in scan:
@@ -447,7 +449,7 @@ async def _run_index_search(
                 continue
             if source == "project":
                 rows = (await db.execute(select(Project).where(
-                    Project.user_id == user_id, Project.id.in_([int(i) for i in ids if str(i).isdigit()]),
+                    Project.user_id == user_id, Project.deleted_at.is_(None), Project.id.in_([int(i) for i in ids if str(i).isdigit()]),
                 ))).scalars().all()
                 by_id = {str(row.id): row for row in rows}
                 items = [{"id": row.id, "title": row.name,

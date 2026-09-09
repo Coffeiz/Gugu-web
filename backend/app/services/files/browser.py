@@ -66,7 +66,7 @@ def all_files_query(user_id: int) -> Select:
 
 
 def storage_usage_query(user_id: int) -> Select:
-    return select(func.sum(File.size_bytes)).where(File.user_id == user_id)
+    return select(func.sum(File.size_bytes)).where(File.user_id == user_id, File.deleted_at.is_(None))
 
 
 async def list_file_rows(
@@ -149,7 +149,7 @@ async def get_file_tree_rows(db: AsyncSession, user_id: int):
     )
     project_rows = await db.execute(
         select(Project)
-        .where(Project.user_id == user_id)
+        .where(Project.user_id == user_id, Project.deleted_at.is_(None))
         .order_by(Project.created_at.desc())
     )
     personal_count = await db.execute(

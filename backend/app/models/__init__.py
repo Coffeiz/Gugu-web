@@ -509,6 +509,7 @@ class Project(Base):
     done_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     created_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc)
     updated_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc, onupdate=now_utc)
+    deleted_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner:   Mapped["User"]          = relationship(back_populates="projects")
     files:   Mapped[list["File"]]    = relationship(back_populates="project", lazy="select")
@@ -564,6 +565,34 @@ class File(Base):
     workspace_directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="files")
 
 
+class UndoOperation(Base):
+    """Web 可撤销操作索引；领域快照只由对应适配器解释，不执行任意 JSON 回写。"""
+
+    __tablename__ = "undo_operations"
+    __table_args__ = (
+        Index("ix_undo_operations_context_status_created", "user_id", "undo_context_id", "status", "created_at"),
+        Index("ix_undo_operations_group", "user_id", "group_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    undo_context_id: Mapped[str] = mapped_column(String(128), index=True)
+    group_id: Mapped[str] = mapped_column(String(80), index=True)
+    resource: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(32))
+    target_refs: Mapped[list] = mapped_column(JSON, default=list)
+    before_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    after_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    base_versions: Mapped[dict] = mapped_column(JSON, default=dict)
+    artifact_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor_type: Mapped[str] = mapped_column(String(32), default="web", server_default="web", index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", server_default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    undone_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, default=None)
+
+
 # ── Folder（项目内用户文件夹）────────────────────────────────────────────────
 
 class Folder(Base):
@@ -616,6 +645,7 @@ class MindMap(Base):
     data_json:  Mapped[str]           = mapped_column(Text, default="{}")
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"]       = relationship(back_populates="mind_maps")
     files: Mapped[list["File"]] = relationship(back_populates="mind_map")
@@ -706,6 +736,7 @@ class MindCanvasItem(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"] = relationship(back_populates="mind_canvas_items")
 
@@ -740,6 +771,7 @@ class MindRelation(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"] = relationship(back_populates="mind_relations")
 
@@ -775,6 +807,7 @@ class CalendarEvent(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version:     Mapped[int]           = mapped_column(Integer, default=1)
     created_at:  Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
+    deleted_at:  Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"] = relationship(back_populates="events")
 

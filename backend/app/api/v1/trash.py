@@ -3,11 +3,11 @@ from datetime import datetime, timedelta
 from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Project, Folder, User
+from app.models import CalendarEvent, File, Folder, Project, ScheduledTask, User
 from app.schemas import (
     BatchDeleteBody,
     FileResponse,
@@ -246,5 +246,52 @@ async def cleanup_expired(db: AsyncSession) -> int:
     if roots:
         await db.commit()
         _log.info("回收站自动清理 %d 个过期文件夹", len(roots))
+
+    # 项目删除不是文件回收站的独立恢复单元；30 天后连同项目关系和仍残留的文件墓碑
+    # 一起永久清理，避免已删除项目长期占用数据库。正常情况下文件/文件夹已在上面清理，
+    # 这里仍显式处理剩余关联行，兼容物理搬迁失败或历史脏数据。
+    expired_projects = (await db.execute(select(Project).where(
+        Project.deleted_at.isnot(None), Project.deleted_at <= cutoff,
+    ))).scalars().all()
+    project_purged = 0
+    for project in expired_projects:
+        folders = (await db.execute(select(Folder).where(
+            Folder.user_id == project.user_id, Folder.project_id == project.id,
+        ))).scalars().all()
+        folder_ids = [folder.id for folder in folders]
+        file_scope = [File.project_id == project.id]
+        if folder_ids:
+            file_scope.append(File.folder_id.in_(folder_ids))
+        project_files = (await db.execute(select(File).where(
+            File.user_id == project.user_id, or_(*file_scope),
+        ))).scalars().all()
+        project_events = (await db.execute(select(CalendarEvent).where(
+            CalendarEvent.user_id == project.user_id,
+            CalendarEvent.project_id == project.id,
+        ))).scalars().all()
+        event_ids = [event.id for event in project_events]
+        project_tasks = []
+        if event_ids:
+            project_tasks = (await db.execute(select(ScheduledTask).where(
+                ScheduledTask.user_id == project.user_id,
+                ScheduledTask.event_id.in_(event_ids),
+            ))).scalars().all()
+        for file in project_files:
+            try:
+                await storage.delete(file.storage_key)
+            except Exception:
+                pass
+            await db.delete(file)
+        for task in project_tasks:
+            await db.delete(task)
+        for event in project_events:
+            await db.delete(event)
+        for folder in folders:
+            await db.delete(folder)
+        await db.delete(project)
+        project_purged += 1
+    if project_purged:
+        await db.commit()
+        _log.info("项目回收站自动清理 %d 个过期项目", project_purged)
 
     return len(fids)

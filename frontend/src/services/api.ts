@@ -44,7 +44,24 @@ export function getCsrfHeaders(cookieName = 'gugu_user_csrf_token'): Record<stri
 // 每标签页独立并在 sessionStorage 中保持；刷新同一 Tab 不会改变来源身份。
 export const CLIENT_ID: string = getInteractionClientId()
 
-export interface RequestMeta { mutationId?: string }
+const UNDO_CONTEXT_STORAGE_KEY = 'gugu.undo.context-id'
+
+function getUndoContextId(): string {
+  if (typeof window === 'undefined') return `undo-${CLIENT_ID}`
+  try {
+    const existing = window.sessionStorage.getItem(UNDO_CONTEXT_STORAGE_KEY)
+    if (existing) return existing
+    const value = `undo-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`
+    window.sessionStorage.setItem(UNDO_CONTEXT_STORAGE_KEY, value)
+    return value
+  } catch {
+    return `undo-${CLIENT_ID}`
+  }
+}
+
+export const UNDO_CONTEXT_ID = getUndoContextId()
+
+export interface RequestMeta { mutationId?: string; undoGroupId?: string }
 
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
@@ -53,9 +70,12 @@ async function request<T = any>(method: string, path: string, body: any = null, 
   const token = getToken()
   const headers: Record<string, string> = {
     'X-Client-Id': CLIENT_ID,
-    ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? {} : getCsrfHeaders()),
+    ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
+      ? {}
+      : { ...getCsrfHeaders(), 'X-Undo-Context-ID': UNDO_CONTEXT_ID }),
   }
   if (meta?.mutationId) headers['X-Mutation-Id'] = meta.mutationId
+  if (meta?.undoGroupId) headers['X-Undo-Group-ID'] = meta.undoGroupId
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers, signal, credentials: 'include' }
@@ -82,6 +102,7 @@ async function request<T = any>(method: string, path: string, body: any = null, 
     const msg = !d ? i18n.global.t('errors.http', { status: res.status })
       : typeof d === 'string' ? d
       : Array.isArray(d) ? d.map((e: any) => e.msg ?? e).join('；')
+      : typeof (d as any).message === 'string' ? (d as any).message
       : i18n.global.t('errors.http', { status: res.status })
     const apiErr = new Error(msg) as Error & { status?: number; code?: string; params?: Record<string, unknown> }
     apiErr.status = res.status
@@ -111,6 +132,7 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.setRequestHeader('X-Client-Id', CLIENT_ID)   // 上传也带 client-id，供后端回声抑制
+    xhr.setRequestHeader('X-Undo-Context-ID', UNDO_CONTEXT_ID)
     const csrf = getCsrfHeaders()
     if (csrf['X-CSRF-Token']) xhr.setRequestHeader('X-CSRF-Token', csrf['X-CSRF-Token'])
     xhr.upload.onprogress = (e) => {
@@ -135,6 +157,43 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
   })
 }
 
+export interface UndoPreview {
+  available: boolean
+  redo_available: boolean
+  undo: { operation_id: string; summary: string; resource: string; action: string; target_count: number } | null
+  redo: { operation_id: string; summary: string; resource: string; action: string; target_count: number } | null
+}
+
+export interface UndoHistoryEntry {
+  operation_id: string
+  group_id: string
+  resource: string
+  action: string
+  target_count: number
+  summary: string
+  created_at: string
+  status: 'active' | 'undone' | 'conflicted' | 'failed' | 'expired'
+  can_undo: boolean
+  can_redo: boolean
+}
+
+export interface UndoHistoryResponse {
+  items: UndoHistoryEntry[]
+}
+
+export interface UndoStats {
+  total: number
+  by_status: Record<'active' | 'undone' | 'conflicted' | 'failed' | 'expired', number>
+}
+
+export const undoApi = {
+  preview: () => get<UndoPreview>(`/undo/preview?context_id=${encodeURIComponent(UNDO_CONTEXT_ID)}`),
+  history: (limit = 50) => get<UndoHistoryResponse>(`/undo/history?context_id=${encodeURIComponent(UNDO_CONTEXT_ID)}&limit=${limit}`),
+  stats: () => get<UndoStats>(`/undo/stats?context_id=${encodeURIComponent(UNDO_CONTEXT_ID)}`),
+  undo: (operationId: string) => post(`/undo`, { operation_id: operationId, context_id: UNDO_CONTEXT_ID }),
+  redo: (operationId: string) => post(`/undo/redo`, { operation_id: operationId, context_id: UNDO_CONTEXT_ID }),
+}
+
 export function uploadDirectWithProgress(url: string, file: File, onProgress: (p: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -154,11 +213,12 @@ export function uploadDirectWithProgress(url: string, file: File, onProgress: (p
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 export const projectsApi = {
-  list:   (archived = false)                       => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : ''}`),
+  list:   (archived = false, deleted = false)      => get<Schemas['ProjectResponse'][]>(`/projects${archived ? '?archived=true' : deleted ? '?deleted=true' : ''}`),
   get:    (id: number)                             => get<Schemas['ProjectResponse']>(`/projects/${id}`),
   create: (data: Schemas['ProjectCreate'])         => post<Schemas['ProjectResponse']>('/projects', data),
   update: (id: number, data: Schemas['ProjectUpdate'], meta?: RequestMeta) => patch<Schemas['ProjectResponse']>(`/projects/${id}`, data, meta),
   delete: (id: number)                             => del(`/projects/${id}`),
+  restore: (id: number)                             => post<Schemas['ProjectResponse']>(`/projects/${id}/restore`),
 }
 
 // ── ScheduledTasks（定时任务）─────────────────────────────────────────────────

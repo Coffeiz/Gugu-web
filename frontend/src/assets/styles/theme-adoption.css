@@ -71,11 +71,6 @@ html[data-theme][data-family] .column .add-card:hover {
   background: var(--inline-action-bg-hover);
   border-color: var(--inline-action-border-hover);
 }
-html[data-theme][data-family] .done-col .archived-entry-mini {
-  color: var(--control-fg);
-  background: var(--control-bg);
-  border-color: var(--input-border);
-}
 html[data-theme][data-family] .done-col .year-row:hover,
 html[data-theme][data-family] .done-col .month-row:hover { background: var(--surface-soft-hover); }
 /* FlipChevron 组件自带颜色，不再需要外部 theme override。 */
