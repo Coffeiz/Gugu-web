@@ -314,6 +314,18 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(interactionCardBlock).not.toContain('transition:')
   })
 
+  it('技能卡与定时任务卡共用同一份卡片 hover 提亮', () => {
+    // hover 提亮由主题层收口：技能卡只在组件内写了静止面，漏掉这一层就完全没有 hover 反馈
+    //（暗色下 --card-shadow-hover 与 --card-hover-overlay 都被主题置成 inert，只剩背景这一路）。
+    expect(interactionRefinements).toContain(
+      'html[data-theme][data-family] .task-card:hover,\nhtml[data-theme][data-family] .skill-card:hover {',
+    )
+    const hoverBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .skill-card:hover')
+    expect(hoverBlock).toContain('background: var(--surface-raised);')
+    expect(hoverBlock).toContain('border-color: var(--border-hover);')
+    expect(hoverBlock).toContain('box-shadow: var(--elevation-card-hover);')
+  })
+
   it('卡片页脚文字操作共用 card-actions 契约，hover 表现不再各写一套', () => {
     const cardActions = load('./components/card-actions.css')
     expect(cardActions).toContain('.card-link-btn {')
