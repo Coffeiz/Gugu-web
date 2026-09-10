@@ -41,6 +41,8 @@ import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const PADDING = 32
+// 溢出钳制的宽松系数：1.0 = 图片边缘最多贴视口边缘；1.5 = 允许再推出去半程留白
+const PAN_SLACK = 1.5
 
 const props = defineProps({
   blobUrl: { type: String, default: null },
@@ -74,13 +76,14 @@ function getBounds() {
   if (!wrapRef.value || !imgRef.value) return { maxTx: 0, maxTy: 0 }
   const wrap = wrapRef.value
   const img  = imgRef.value
-  // 放大到超出视口时，平移范围 = 溢出量的一半：图片任一边最多贴到视口边缘，
-  // 缩放后右侧/底部被裁掉的内容都能拖进来。未超出视口时保留原有的自由拖动
-  // 余量（布局尺寸的 200%），缩小后的小图仍可挪到一边对比。
+  // 放大到超出视口时，平移范围 = 溢出量的一半 × PAN_SLACK：默认允许把图片
+  // 边缘推过视口边界半程（留白便于把关注内容挪到视口中央），又不至于把图片
+  // 整个拖丢。未超出视口时保留原有的自由拖动余量（布局尺寸的 200%），
+  // 缩小后的小图仍可挪到一边对比。
   const overflowX = (img.clientWidth  * scale.value - wrap.clientWidth) / 2
   const overflowY = (img.clientHeight * scale.value - wrap.clientHeight) / 2
-  const maxTx = overflowX > 0 ? overflowX : img.clientWidth  * 0.5
-  const maxTy = overflowY > 0 ? overflowY : img.clientHeight * 0.5
+  const maxTx = overflowX > 0 ? overflowX * PAN_SLACK : img.clientWidth  * 0.5
+  const maxTy = overflowY > 0 ? overflowY * PAN_SLACK : img.clientHeight * 0.5
   return { maxTx, maxTy }
 }
 
