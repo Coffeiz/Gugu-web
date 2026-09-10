@@ -796,6 +796,12 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
     heartbeat_task = asyncio.create_task(_run_heartbeat())
     try:
+        # 进入会话门前如果基线整理还在进行，先给订阅端发一条排队提示，
+        # 否则用户发的消息会静默等待几十秒，看起来像「发了没反应」。
+        if await compress_conv._read_execution_state(session_id) == "baseline_updating":
+            await genstream.publish(session_id, {
+                "type": "_context_compaction", "phase": "started", "reason": "queued_baseline",
+            })
         async with compress_conv.session_run_gate(req, run_id=owner_run_id) as claimed_owner_run_id:
             refreshed = await _refresh_generation_history(
                 session_id, snapshot, model_cfg,

@@ -368,6 +368,26 @@ async def resume_stream(
     )
 
 
+@router.get("/sessions/{session_id}/state")
+async def get_session_state(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """会话执行状态的轻量快照，供前端在基线整理期间轮询收尾提示。"""
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
+        raise HTTPException(404, "对话不存在")
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=current_user.id)
+    await db.refresh(session)
+    return {
+        "executionState": session.execution_state,
+        "pendingMessageCount": int(session.pending_message_count or 0),
+        "active": await genstream.is_active(session_id),
+    }
+
+
 @router.post("/sessions/{session_id}/cancel")
 async def cancel_stream(
     session_id: int,
@@ -747,6 +767,9 @@ async def get_session_messages(
                     "goalActive": bool(session_context.get("goal_mode") and session_context.get("goal_text")),
                     "goalStatus": "paused" if session_context.get("goal_status") == "paused" and session_context.get("goal_text") else ("active" if session_context.get("goal_text") else None)},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
+        # 排队/基线整理是持久状态，刷新或切回会话后前端据此恢复「正在整理上下文」提示
+        "executionState": session.execution_state,
+        "pendingMessageCount": int(session.pending_message_count or 0),
         "pagination": {
             "limit": limit,
             "hasMore": has_more,

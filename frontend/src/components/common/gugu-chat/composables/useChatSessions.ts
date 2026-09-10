@@ -103,6 +103,8 @@ export function useChatSessions(options: {
   resetSessionTurn: () => void
   clearPendingQueue: () => void
   clearStatus: () => void
+  setStatus: (item: { kind: 'text' | 'dots' | 'hide'; label?: string }) => void
+  contextCompactingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   onContentReset: () => void
   onCaptureBaseScrollH: () => void
   scrollBottom: (force?: boolean) => Promise<void>
@@ -110,6 +112,30 @@ export function useChatSessions(options: {
   setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
+
+  let baselinePollTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 轮询基线整理是否结束；结束/切走/超时即收起提示，避免「正在整理上下文」卡在屏幕上。 */
+  function pollBaselineDone(id: number, viewGeneration: number) {
+    if (baselinePollTimer) clearTimeout(baselinePollTimer)
+    const startedAt = Date.now()
+    const tick = async () => {
+      if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id) return
+      try {
+        const state = await agentApi.getSessionState(String(id))
+        if (state.executionState !== 'baseline_updating') {
+          options.clearStatus()
+          return
+        }
+      } catch { /* 网络抖动下一轮再试 */ }
+      if (Date.now() - startedAt > 5 * 60_000) {
+        options.clearStatus()
+        return
+      }
+      baselinePollTimer = setTimeout(tick, 4000)
+    }
+    baselinePollTimer = setTimeout(tick, 4000)
+  }
 
   const webSessions = computed(() => sessions.value.filter(s => !s.source || s.source === 'web'))
   const imSessions = computed(() => sessions.value.filter(s => s.source && s.source !== 'web'))
@@ -252,6 +278,12 @@ export function useChatSessions(options: {
         data.active && lastVisible?.role === 'assistant' && Boolean(lastVisible.content?.trim()),
       )
       const shouldResume = Boolean(data.active && !staleActive)
+      // 基线整理是持久状态：刷新或切回会话时 SSE 已结束、没有可续看的流，
+      // 从会话行状态恢复「正在整理上下文」提示，否则用户看到的就是静默卡死。
+      if (!shouldResume && data.executionState === 'baseline_updating') {
+        options.setStatus(options.contextCompactingItem())
+        pollBaselineDone(id, viewGeneration)
+      }
       // 初始历史消息结算期间列表保持不可见。虚拟列表需要先滚到底部挂载目标行，
       // 再等待其真实高度连续稳定；否则估算高度会在解除隐藏后的下一帧被修正，造成
       // 会话位置跳动。这个隐藏阶段只覆盖历史快照，不能覆盖后面的流式续接。
