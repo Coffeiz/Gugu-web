@@ -355,8 +355,18 @@ async def compress_if_needed(
     settings,
     *,
     force: bool = False,
+    reuse_summary: str | None = None,
+    reuse_before_message_id: int | None = None,
 ) -> bool:
-    """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。"""
+    """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。
+
+    ``reuse_summary``：本 run 刚在 provider round 边界生成的压缩摘要。run 内压缩
+    的分支请求已与主对话共享前缀（能命中缓存），baseline 再用摊平文本重放一次
+    是一次结构性全冷的 3 万 token 调用，因此 run 收尾时直接复用该摘要，只重算
+    baseline 水位。``reuse_before_message_id``（通常是本轮用户消息 id）用来把
+    可压缩范围限制在本 run 开始之前——run 内摘要不覆盖本轮自身的消息，复用时
+    水位绝不能推进到它们之上。
+    """
     from app.core import redis as redis_core
 
     lock = redis_core.get_redis().lock(
@@ -373,6 +383,8 @@ async def compress_if_needed(
     try:
         result = await _compress_if_needed_unlocked(
             session_id, user_id, settings, force=force,
+            reuse_summary=reuse_summary,
+            reuse_before_message_id=reuse_before_message_id,
         )
         persisted = bool(result)
         return result
@@ -408,6 +420,8 @@ async def _compress_if_needed_unlocked(
     settings,
     *,
     force: bool = False,
+    reuse_summary: str | None = None,
+    reuse_before_message_id: int | None = None,
 ) -> bool:
     """检查并执行压缩，返回是否实际执行了压缩。
 
@@ -431,10 +445,20 @@ async def _compress_if_needed_unlocked(
     baseline_id = int(getattr(session, "baseline_message_id", 0) or 0)
     baseline_hash_before = str(getattr(session, "baseline_message_hash", "") or "")
     all_msgs = [m for m in rows if m.role != "summary" and m.id > baseline_id]
+    if reuse_before_message_id:
+        # 复用 run 内摘要时，可压缩范围只允许覆盖本 run 开始之前的历史：run 内
+        # 压缩把本轮消息整体保护，不会写进摘要；水位若推进到它们之上会丢上下文。
+        # 本 run 的消息（含 RAG/姿态注入）都在 finalize 里才拿到 id，因此必然
+        # 落在 ``>= reuse_before_message_id`` 一侧，被这条过滤整体排除。
+        all_msgs = [m for m in all_msgs if m.id < reuse_before_message_id]
     if not all_msgs:
         return False
 
     # 不把本地 token 估算用于决定哪些 history 被保留；保留窗口采用字符硬上限。
+    # 复用 run 内摘要时这条规则同时保证水位安全：run 内的保留窗口不超过
+    # RECENT_HISTORY_KEEP_CHARS 且按工具单元（更粗的粒度）回退，这里的 20k
+    # 按单条消息回退、只会保留得更多，因此水位最多推进到 run 内摘要已覆盖的
+    # 位置，不会越过被压缩内容。
     target_keep_chars = _RECENT_HISTORY_KEEP_CHARS
     tail_chars = 0
     split_idx = 0
@@ -471,23 +495,30 @@ async def _compress_if_needed_unlocked(
     from agent.llm.modelctx import effective_ai
     model_cfg = effective_ai(settings)
 
-    async def call_once(items, previous):
-        return await _call_llm(
-            "\n\n".join(items), previous, settings, model_cfg=model_cfg,
-        )
-
-    summary = await generate_compact_summary(
-        content_items,
-        prev_summary,
-        call_once,
-        model_cfg=model_cfg,
-    )
     limits = resolve_compaction_limits(model_cfg=model_cfg)
-    compression_mode = (
-        "branch"
-        if estimate_tokens("\n".join(content_items)) + estimate_tokens(prev_summary or "") <= limits.input_tokens
-        else "rolling-fallback"
-    )
+    if reuse_summary:
+        # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
+        # 不再用摊平文本重放一遍——那条路结构上不可能共享前缀，每次都是
+        # 全冷的 3 万 token 调用。水位边界仍按上面的保留窗口规则计算。
+        summary = reuse_summary
+        compression_mode = "run-reuse"
+    else:
+        async def call_once(items, previous):
+            return await _call_llm(
+                "\n\n".join(items), previous, settings, model_cfg=model_cfg,
+            )
+
+        summary = await generate_compact_summary(
+            content_items,
+            prev_summary,
+            call_once,
+            model_cfg=model_cfg,
+        )
+        compression_mode = (
+            "branch"
+            if estimate_tokens("\n".join(content_items)) + estimate_tokens(prev_summary or "") <= limits.input_tokens
+            else "rolling-fallback"
+        )
     from agent.context.compaction import validate_compact_summary
 
     summary_ok, summary_reason = validate_compact_summary(
@@ -563,7 +594,7 @@ async def _compress_if_needed_unlocked(
         source="persistent_baseline_update",
         old=prev_summary,
         new=summary,
-        trigger="force" if force else "budget",
+        trigger="force" if force else ("run_reuse" if reuse_summary else "budget"),
         baseline_before=baseline_id,
         baseline_after=to_compress[-1].id,
         compressed_messages=len(to_compress),

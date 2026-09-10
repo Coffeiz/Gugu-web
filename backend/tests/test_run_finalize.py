@@ -21,6 +21,9 @@ class _Db:
     def add(self, item):
         self.items.append(item)
 
+    async def get(self, *args, **kwargs):
+        return None
+
     async def commit(self):
         return None
 
@@ -121,7 +124,119 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     assert result.tokens_out == 3
     assert len(db.items) == 4  # RAG、tool turn、assistant、usage
     assert trim_calls == [7]
-    assert baseline_calls == [((7, "user-test", settings), {"force": False})]
+    assert baseline_calls == [(
+        (7, "user-test", settings),
+        {"force": False, "reuse_summary": None, "reuse_before_message_id": None},
+    )]
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
+    """run 内压缩的摘要要在 baseline 收尾时复用，不再触发摊平文本重放。"""
+    from agent.context.summary_format import format_compacted_summary
+
+    db = _Db()
+    baseline_calls = []
+
+    async def cap_usage(*args):
+        return 0, 0
+
+    async def trim(session_id):
+        return None
+
+    async def persist_baseline(*args, **kwargs):
+        baseline_calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
+    monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", persist_baseline)
+    monkeypatch.setattr(
+        "agent.context.assembly.newly_appended",
+        lambda messages, initial_len: messages[initial_len:],
+    )
+    monkeypatch.setattr(
+        "agent.context.history.canonicalize_tool_messages",
+        lambda messages: [],
+    )
+
+    wrapped = format_compacted_summary("run 内摘要正文")
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    model = SimpleNamespace(
+        model="test-model", provider="test", context_tokens=80000, max_tokens=4000,
+    )
+    await run_finalize.finalize_run(
+        session_factory=lambda: _DbContext(db),
+        session_id=9,
+        user_id="user-test",
+        settings=settings,
+        model_cfg=model,
+        rag_context=None,
+        messages=[
+            {"role": "user", "content": wrapped},
+            {"role": "assistant", "content": "new"},
+        ],
+        initial_len=0,
+        text="reply",
+        files=[],
+        tokens_in=10,
+        tokens_out=2,
+        compaction_applied=True,
+        user_message_id=321,
+    )
+
+    assert baseline_calls == [{
+        "force": False,
+        "reuse_summary": "run 内摘要正文",
+        "reuse_before_message_id": 321,
+    }]
+
+
+def _summary_model(**overrides):
+    values = {"model": "test-model", "provider": "test", "context_tokens": 80000, "max_tokens": 4000}
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_run_compaction_summary_requires_summary_shaped_candidate():
+    """正文里恰好出现标记的用户消息不能被当成摘要复用。"""
+    from agent.context.run_finalize import _run_compaction_summary
+    from agent.context.summary_format import format_compacted_summary
+
+    model = _summary_model()
+    assert _run_compaction_summary(
+        [{"role": "user", "content": "帮我看下 <compacted-summary> 是什么格式"}],
+        model, 321,
+    ) is None
+    assert _run_compaction_summary(
+        [{"role": "user", "content": format_compacted_summary("正文")}],
+        model, 321,
+    ) == "正文"
+    # 多次压缩取最后一条（最新一版已把上一版滚动合并进去）。
+    assert _run_compaction_summary(
+        [
+            {"role": "user", "content": format_compacted_summary("旧版")},
+            {"role": "assistant", "content": "…"},
+            {"role": "user", "content": format_compacted_summary("新版")},
+        ],
+        model, 321,
+    ) == "新版"
+
+
+def test_run_compaction_summary_falls_back_without_reusable_candidate():
+    """缺少摘要、缺少本轮消息 id、或预算不可解析时都必须退回旧路径。"""
+    from agent.context.run_finalize import _run_compaction_summary
+    from agent.context.summary_format import format_compacted_summary
+
+    wrapped = format_compacted_summary("正文")
+    assert _run_compaction_summary([{"role": "user", "content": wrapped}], _summary_model(), None) is None
+    assert _run_compaction_summary([{"role": "assistant", "content": "无摘要"}], _summary_model(), 321) is None
+    assert _run_compaction_summary([{"role": "user", "content": wrapped}], SimpleNamespace(), 321) is None
+    # 摘要超过输出预算时同样不复用，避免把超限文本写进持久 baseline。
+    assert _run_compaction_summary(
+        [{"role": "user", "content": format_compacted_summary("细节" * 5000)}],
+        _summary_model(max_tokens=16), 321,
+    ) is None
 
 
 @pytest.mark.asyncio
