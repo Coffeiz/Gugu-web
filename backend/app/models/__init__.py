@@ -1233,6 +1233,45 @@ class KnowledgeIndexEntry(Base):
     )
 
 
+class RagIndexJob(Base):
+    """RAG 索引更新的持久任务状态。
+
+    业务表是事实来源，事件只负责触发重建。这里按用户和来源合并最新事件，
+    让索引失败后可以跨进程、跨重启继续退避重试，而不会为同一来源堆积任务。
+    """
+
+    __tablename__ = "rag_index_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(32))
+    source_id: Mapped[str] = mapped_column(String(255), default="")
+    version: Mapped[str] = mapped_column(String(64), default="")
+    operation: Mapped[str] = mapped_column(String(24), default="upsert")
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    completed_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        UtcDateTime, nullable=True, index=True
+    )
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_succeeded_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source_type", name="uq_rag_index_job_user_source",
+        ),
+        Index("ix_rag_index_jobs_due", "status", "next_attempt_at"),
+    )
+
+
 class MemoryScopeTombstone(Base):
     """IM 记忆 scope 的删除屏障；清理完成后才删除记录。"""
     __tablename__ = "memory_scope_tombstones"

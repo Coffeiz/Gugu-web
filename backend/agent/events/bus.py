@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import Awaitable, Callable
 
 from agent.events.types import Event, MemoryUpdated, RagIndexUpdated
+from agent.rag import index_jobs
 
 _log = logging.getLogger("agent.events")
 _listeners: dict[type, list[Callable[[Event], Awaitable]]] = defaultdict(list)
@@ -22,6 +23,8 @@ _tasks: set = set()   # 持后台任务引用防 GC
 _rag_workers: dict[tuple[str, str], asyncio.Task] = {}
 _rag_pending: dict[tuple[str, str], RagIndexUpdated] = {}
 _rag_status: dict[tuple[str, str], dict[str, object]] = {}
+_rag_persist_locks: dict[tuple[str, str], asyncio.Lock] = {}
+_rag_recovery_task: asyncio.Task | None = None
 
 
 def subscribe(event_type: type, listener: Callable[[Event], Awaitable]) -> None:
@@ -47,8 +50,37 @@ def _rag_event_key(event: RagIndexUpdated) -> tuple[str, str]:
     return str(event.user_id), str(event.source_type)
 
 
-def _enqueue_rag_index_event(event: RagIndexUpdated) -> None:
-    """合并同源事件并启动唯一的来源级 drain worker。"""
+def _ensure_rag_worker(key: tuple[str, str]) -> None:
+    worker = _rag_workers.get(key)
+    if worker is None or worker.done():
+        try:
+            worker = asyncio.create_task(_drain_rag_index_events(key))
+        except RuntimeError:
+            # 和普通 listener 一样，无事件循环时不影响主写入；恢复循环会稍后重试。
+            status = _rag_status.setdefault(key, {"state": "idle", "generation": 0, "completed_generation": 0, "pending": False})
+            status["state"] = "failed"
+            status["pending"] = False
+            status["last_error"] = "no_event_loop"
+            return
+        _rag_workers[key] = worker
+        _tasks.add(worker)
+        worker.add_done_callback(_tasks.discard)
+
+
+async def _persist_rag_event_and_start(event: RagIndexUpdated) -> None:
+    key = _rag_event_key(event)
+    lock = _rag_persist_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        try:
+            await index_jobs.persist_event(event)
+        except Exception:
+            # 持久任务是可靠性旁路，不能让文件/知识主写入失败；内存 worker 仍继续执行。
+            _log.warning("rag index durable enqueue failed for source=%s", key[1])
+        _ensure_rag_worker(key)
+
+
+def _enqueue_rag_index_event(event: RagIndexUpdated, *, persist: bool = True) -> None:
+    """合并同源事件，先持久化最新状态，再启动唯一的来源级 worker。"""
     key = _rag_event_key(event)
     _rag_pending[key] = event
     status = _rag_status.setdefault(key, {
@@ -59,19 +91,21 @@ def _enqueue_rag_index_event(event: RagIndexUpdated) -> None:
     status["pending"] = True
     if status["state"] != "running":
         status["state"] = "queued"
-    worker = _rag_workers.get(key)
-    if worker is None or worker.done():
+    if not persist:
+        _ensure_rag_worker(key)
+        return
+    try:
+        task = asyncio.create_task(_persist_rag_event_and_start(event))
+    except RuntimeError:
         try:
-            worker = asyncio.create_task(_drain_rag_index_events(key))
+            _ensure_rag_worker(key)
         except RuntimeError:
-            # 和普通 listener 一样，无事件循环时不影响主写入；事件无法排队。
             status["state"] = "failed"
             status["pending"] = False
             status["last_error"] = "no_event_loop"
-            return
-        _rag_workers[key] = worker
-        _tasks.add(worker)
-        worker.add_done_callback(_tasks.discard)
+        return
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
 
 
 def get_rag_index_status(user_id: object, source_type: str) -> dict[str, object]:
@@ -103,11 +137,30 @@ async def _drain_rag_index_events(key: tuple[str, str]) -> None:
             status["state"] = "running"
             status["pending"] = bool(key in _rag_pending)
             try:
+                durable_generation = await index_jobs.mark_running(event)
+            except Exception:
+                _log.warning("rag index durable lease failed for source=%s", key[1])
+                durable_generation = None
+            if durable_generation == index_jobs.NOT_CLAIMED:
+                # 另一个进程已持有同一来源的租约；本地恢复任务不重复执行。
+                status["state"] = "ready"
+                status["pending"] = bool(key in _rag_pending)
+                continue
+            try:
                 success = bool(await _log_rag_index_updated(event))
             except Exception:
                 # 异常详情可能包含宿主路径或用户数据；可见日志只保留固定分类。
                 _log.warning("rag index worker failed for source=%s", key[1])
                 success = False
+            try:
+                retry_delay = await index_jobs.mark_result(
+                    event,
+                    durable_generation,
+                    success=success,
+                )
+            except Exception:
+                _log.warning("rag index durable result failed for source=%s", key[1])
+                retry_delay = None
             status = _rag_status.get(key)
             if status is None:
                 continue
@@ -117,11 +170,50 @@ async def _drain_rag_index_events(key: tuple[str, str]) -> None:
                 status["state"] = "ready" if key not in _rag_pending else "queued"
             else:
                 status["last_error"] = "index_update_failed"
+                if retry_delay is not None:
+                    status["retry_after_seconds"] = retry_delay
                 status["state"] = "failed" if key not in _rag_pending else "queued"
             status["pending"] = bool(key in _rag_pending)
     finally:
         if _rag_workers.get(key) is current:
             _rag_workers.pop(key, None)
+
+
+async def _recover_due_rag_index_jobs() -> None:
+    try:
+        events = await index_jobs.due_events()
+    except Exception:
+        _log.warning("rag index durable recovery query failed")
+        return
+    for event in events:
+        key = _rag_event_key(event)
+        if key in _rag_workers or key in _rag_pending:
+            continue
+        _enqueue_rag_index_event(event, persist=False)
+
+
+async def _rag_recovery_loop() -> None:
+    """定期捞取失败/重启遗留任务，避免索引永久落后于业务事实。"""
+    while True:
+        await _recover_due_rag_index_jobs()
+        await asyncio.sleep(5)
+
+
+def start_rag_index_recovery() -> None:
+    """启动进程级 RAG 持久任务恢复器。"""
+    global _rag_recovery_task
+    if _rag_recovery_task is None or _rag_recovery_task.done():
+        _rag_recovery_task = asyncio.create_task(_rag_recovery_loop())
+
+
+async def stop_rag_index_recovery() -> None:
+    """停止恢复器，供应用 lifespan 退出时调用。"""
+    global _rag_recovery_task
+    task = _rag_recovery_task
+    _rag_recovery_task = None
+    if task is not None and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def _safe(listener: Callable, event: Event) -> None:

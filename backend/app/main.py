@@ -252,6 +252,8 @@ async def lifespan(app: FastAPI):
     retry_task = asyncio.create_task(_db_retry_loop()) if RUN_STARTUP_MIGRATIONS else None
     filesync_task = asyncio.create_task(_filesync_outbox_loop())
     log_task   = asyncio.create_task(flush_log_queue())
+    from agent.events.bus import start_rag_index_recovery, stop_rag_index_recovery
+    start_rag_index_recovery()
     yield
     task.cancel()
     if retry_task is not None:
@@ -262,6 +264,7 @@ async def lifespan(app: FastAPI):
         task, *( [retry_task] if retry_task is not None else [] ), filesync_task, log_task,
         return_exceptions=True,
     )
+    await _shutdown_step("RAG 索引持久任务恢复", stop_rag_index_recovery)
     from agent.rag.injection import shutdown_background_recall_tasks
     await _shutdown_step("RAG 自动召回任务", shutdown_background_recall_tasks)
     await _shutdown_step("PTY", close_pty_manager)
