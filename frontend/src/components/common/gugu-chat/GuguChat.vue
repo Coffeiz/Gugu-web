@@ -831,6 +831,12 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 :deep(.msg-bubble.user-md pre) {
   background: color-mix(in srgb, var(--gugu-chat-user-fg) 92%, transparent);
 }
+/* 亮色下面板色必须提到整个代码块容器：只给 pre 的话，md-code-header 悬在
+   强调底气泡上，10% 紫叠在 100% 紫上头部条完全隐形（用户实测反馈）。
+   暗色由下方 :global 规则换成 assistant 表面契约。 */
+:deep(.msg-bubble.user-md .md-code-block) {
+  background: color-mix(in srgb, var(--gugu-chat-user-fg) 92%, transparent);
+}
 /* 行内 code 的半透明底只能给行内用：这条若误伤 pre code，暗色下每行代码
    都会拖一条「被选中」的浅色底条。 */
 :deep(.msg-bubble.user-md pre code) { background: none; color: var(--text-primary); }
