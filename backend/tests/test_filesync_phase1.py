@@ -575,3 +575,138 @@ async def test_filesync_event_outbox_retries_and_preserves_event_id(db, user_a, 
     assert published[0][1]["event_id"] == row.event_id
     assert published[0][1]["entity_ids"] == [7]
     assert published[0][1]["source"] == "local_directory"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stat_cache_skips_rehash(db, user_a, monkeypatch, tmp_path):
+    """size+mtime 未变的已知文件走快路径，不重复整文件哈希；强制关闭时恢复全量哈希。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.statcache as statcache
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(statcache, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "kept.txt").write_text("kept", encoding="utf-8")
+
+    first = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=True)
+    await db.commit()
+    assert first.created == 1
+
+    calls = {"count": 0}
+    real_fingerprint = reconcile._fingerprint
+
+    def counting_fingerprint(path):
+        calls["count"] += 1
+        return real_fingerprint(path)
+
+    monkeypatch.setattr(reconcile, "_fingerprint", counting_fingerprint)
+    second = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=True)
+    await db.commit()
+    assert second.created == 0 and second.updated == 0
+    assert calls["count"] == 0  # 快路径命中，未重新哈希
+
+    forced = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=False)
+    await db.commit()
+    assert forced.created == 0 and forced.updated == 0
+    assert calls["count"] >= 1  # 日级兜底强制全量哈希
+
+
+@pytest.mark.asyncio
+async def test_targeted_projection_handles_create_update_move_delete(db, user_a, monkeypatch, tmp_path):
+    """sidecar 精确事件按路径单点投影：创建/更新/移动重挂/软删除/空目录。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.statcache as statcache
+    import app.services.filesync.targeted as targeted
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(statcache, "get_settings", lambda: settings)
+    monkeypatch.setattr(targeted, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "base.txt").write_text("base", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+    ))).one()
+
+    # 创建
+    (root / "new.txt").write_text("v1", encoding="utf-8")
+    batch = targeted.PathEventBatch(changed={"new.txt"})
+    summary = await targeted.project_path_events(db, user_a.id, binding, root, batch)
+    await db.commit()
+    assert summary.created == 1
+    created = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.display_name == "new", File.ext == "txt",
+        File.deleted_at.is_(None),
+    ))).one()
+    original_id = created.id
+
+    # 更新
+    (root / "new.txt").write_text("v2-longer", encoding="utf-8")
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"new.txt"}),
+    )
+    await db.commit()
+    assert summary.updated == 1
+    updated = await db.get(File, original_id)
+    await db.refresh(updated)
+    assert updated.size_bytes == len("v2-longer")
+
+    # 改名 = unlink+add：同指纹且原路径已消失 → 移动重挂，不删旧建新
+    (root / "new.txt").rename(root / "moved.txt")
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(changed={"moved.txt"}, deleted={"new.txt"}),
+    )
+    await db.commit()
+    assert summary.moved == 1 and summary.deleted == 0 and summary.created == 0
+    moved = await db.get(File, original_id)
+    await db.refresh(moved)
+    assert moved.storage_key.endswith("moved.txt")
+
+    # 软删除
+    (root / "moved.txt").unlink()
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(deleted={"moved.txt"}),
+    )
+    await db.commit()
+    assert summary.deleted == 1
+    deleted = await db.get(File, original_id)
+    await db.refresh(deleted)
+    assert deleted.deleted_at is not None
+
+    # 空目录：创建 → 删除
+    (root / "sub").mkdir()
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(folders_created={"sub"}),
+    )
+    await db.commit()
+    assert summary.folders_created == 1
+    (root / "sub").rmdir()
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(folders_deleted={"sub"}),
+    )
+    await db.commit()
+    assert summary.folders_deleted == 1

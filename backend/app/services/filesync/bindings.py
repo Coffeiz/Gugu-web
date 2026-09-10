@@ -253,6 +253,7 @@ async def sync_existing_binding(
     *,
     root: Path,
     allow_delete: bool = True,
+    use_stat_cache: bool = True,
 ) -> BindingSyncResult:
     """同步 watcher 已登记的绑定，不重新创建或切换绑定范围。"""
     if binding.user_id != user_id:
@@ -269,7 +270,7 @@ async def sync_existing_binding(
         summary = await reconcile_local_directory(
             db, user_id, root=root, workspace_id=binding.workspace_id,
             source=FileSyncSource.LOCAL_DIRECTORY, allow_delete=allow_delete,
-            blocked_paths=blocked, binding=binding,
+            blocked_paths=blocked, binding=binding, use_stat_cache=use_stat_cache,
         )
     binding.last_reconciled_at = now_utc()
     await db.flush()

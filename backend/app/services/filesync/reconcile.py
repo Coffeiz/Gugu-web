@@ -31,6 +31,7 @@ from app.services.filesync.protocol import (
 from app.services.workspaces import get_workspace, resolve_workspace_root, workspace_shell_supported
 from app.core.config import get_settings
 from app.services.filesync.snapshots import save_snapshot
+from app.services.filesync.statcache import StatCache
 from app.services.storage.folders import folder_dir_key
 from app.services.files.previews import delete_thumb_cache
 
@@ -165,6 +166,30 @@ async def _ensure_folder_path(
     return parent_id, created
 
 
+async def _find_folder_path(
+    db: AsyncSession,
+    user_id,
+    *,
+    space: str,
+    project_id: int | None,
+    folder_names: list[str],
+    workspace_directory_id: int | None = None,
+) -> int | None:
+    """只读定位目录链，任何一层缺失即返回 None；不创建。"""
+    parent_id = None
+    for name in folder_names:
+        folder = await db.scalar(select(Folder).where(
+            Folder.user_id == user_id, Folder.project_id == project_id,
+            Folder.parent_id == parent_id, Folder.name == name,
+            Folder.workspace_directory_id == workspace_directory_id,
+            Folder.deleted_at.is_(None),
+        ))
+        if folder is None:
+            return None
+        parent_id = folder.id
+    return parent_id
+
+
 def _directory_fingerprint(directory: Path) -> str:
     """用目录结构生成稳定指纹，不把文件正文重复写入文件夹日志。"""
     digest = hashlib.sha256()
@@ -255,6 +280,19 @@ async def _classify_path(
     return space, project_id, folder_id, display_name, ext, None
 
 
+async def _workspace_directory_id_for(db: AsyncSession, user_id, workspace_id: int) -> int | None:
+    """directory 型工作区（WorkspaceDirectory）的绑定根就是工作区目录本身，
+    不在 canonical 个人/项目前缀树下；文件与目录都按 space=workspace 投影，
+    并挂到对应 workspace_directory_id，否则整棵树会被当作不支持路径拒绝。"""
+    ws_row = await get_workspace(db, user_id, workspace_id)
+    if ws_row is None or ws_row.kind != "directory" or ws_row.directory_id is None:
+        return None
+    directory_row = await get_owned(db, WorkspaceDirectory, ws_row.directory_id, user_id)
+    if directory_row is None or directory_row.deleted_at is not None:
+        return None
+    return directory_row.id
+
+
 async def reconcile_local_directory(
     db: AsyncSession,
     user_id,
@@ -266,6 +304,7 @@ async def reconcile_local_directory(
     blocked_paths: set[str] | None = None,
     binding: FileSyncBinding | None = None,
     dry_run: bool = False,
+    use_stat_cache: bool = True,
 ) -> SyncSummary:
     """扫描一个已归属的本地根并将物理变化投影为 File/Folder。
 
@@ -293,16 +332,10 @@ async def reconcile_local_directory(
     if not root.exists() or not root.is_dir():
         return SyncSummary(rejected=1)
 
-    # directory 型工作区（WorkspaceDirectory）的绑定根就是工作区目录本身，
-    # 不在 canonical 个人/项目前缀树下；文件与目录都按 space=workspace 投影，
-    # 并挂到对应 workspace_directory_id，否则整棵树会被当作不支持路径拒绝。
+    # directory 型工作区例外见 _workspace_directory_id_for。
     workspace_directory_id: int | None = None
     if workspace_id is not None:
-        ws_row = await get_workspace(db, user_id, workspace_id)
-        if ws_row is not None and ws_row.kind == "directory" and ws_row.directory_id is not None:
-            directory_row = await get_owned(db, WorkspaceDirectory, ws_row.directory_id, user_id)
-            if directory_row is not None and directory_row.deleted_at is None:
-                workspace_directory_id = directory_row.id
+        workspace_directory_id = await _workspace_directory_id_for(db, user_id, workspace_id)
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     quota_settings = getattr(settings, "quota", None)
@@ -324,6 +357,9 @@ async def reconcile_local_directory(
         binding = await _binding_for(
             db, user_id, source=str(source), workspace_id=workspace_id, root=root,
         )
+    # 快路径：size+mtime 未变直接复用上次内容指纹，跳过整文件哈希；
+    # 日级补偿扫描传 use_stat_cache=False 强制全量哈希自愈统计漂移。
+    stat_cache = StatCache(user_id, binding.id) if use_stat_cache and not dry_run else None
     physical = []
     physical_folders: dict[str, Path] = {}
     rejected = 0
@@ -473,7 +509,11 @@ async def reconcile_local_directory(
                 workspace_directory_id=workspace_directory_id,
                 base=root,
             )
-            observed = _stable_fingerprint(path)
+            observed = stat_cache.lookup(relative, path) if stat_cache else None
+            if observed is None:
+                observed = _stable_fingerprint(path)
+                if stat_cache:
+                    stat_cache.store(relative, path, observed)
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -550,7 +590,11 @@ async def reconcile_local_directory(
         if relative in blocked_paths:
             continue
         try:
-            observed = _stable_fingerprint(path)
+            observed = stat_cache.lookup(relative, path) if stat_cache else None
+            if observed is None:
+                observed = _stable_fingerprint(path)
+                if stat_cache:
+                    stat_cache.store(relative, path, observed)
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -630,6 +674,8 @@ async def reconcile_local_directory(
             baseline_fingerprint=None, status=FileSyncStatus.SYNCED,
         )
         journal_ids.append(journal.id)
+    if stat_cache is not None:
+        stat_cache.save()
     binding.last_reconciled_at = now_utc()
     await db.flush()
     return SyncSummary(
