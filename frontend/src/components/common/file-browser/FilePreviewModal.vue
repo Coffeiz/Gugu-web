@@ -4,9 +4,9 @@
     <Transition name="fp" :duration="{ enter: 420, leave: 260 }">
       <div v-if="show && !!file" class="fp-root" :style="{ zIndex: myZ }" @mousedown.capture="raise">
         <div class="fp-overlay" @click="$emit('close')" />
-        <div class="fp-panel">
+        <div class="fp-panel" :style="panelStyle">
           <!-- 顶栏 -->
-          <div class="fp-header">
+          <div ref="panelHeaderRef" class="fp-header">
             <div class="fp-title">
               <span class="fp-ext" :style="{ color: extColor, background: extColor + '1a' }">{{ file.ext }}</span>
               <span class="fp-name" :title="file.displayName">{{ file.displayName }}</span>
@@ -131,6 +131,35 @@ const currentCacheKey = ref('')
 const isImage  = computed(() => isImageExt(props.file?.ext))
 // 矢量图放大无损：适配视口允许超过折算 natural 尺寸（无尺寸 SVG 的 natural 只是 300×150）
 const isVectorImage = computed(() => props.file?.ext?.toUpperCase() === 'SVG')
+
+// 矢量图按内容纵横比收窄抽屉：全高抽屉固定 60vw 是竖长的，宽图只会在中间占一条。
+// 拿到图片真实纵横比后把面板宽度收成「与图片等高」的比例匹配值；横向不够时封顶
+// 92vw（此时上下留白已不可避免），非矢量文件保持 60vw 不变。
+const panelHeaderRef = ref<HTMLElement | null>(null)
+const vectorPanelWidth = ref<number | null>(null)
+const panelStyle = computed(() => (
+  isVectorImage.value && vectorPanelWidth.value
+    ? { width: `${vectorPanelWidth.value}px` }
+    : undefined
+))
+// .iv-wrap 自带 32px 内边距；头部高度运行时实测，量不到用 58 估（14+13 padding + 30 按钮 + 1 分隔线）
+const IV_BODY_PAD = 32
+function measureVectorPanel(url: string) {
+  const img = new Image()
+  img.onload = () => {
+    if (!img.naturalWidth || !img.naturalHeight) return
+    const headerH = panelHeaderRef.value?.offsetHeight || 58
+    const availH = window.innerHeight - headerH - IV_BODY_PAD * 2
+    const aspect = img.naturalWidth / img.naturalHeight
+    const fitW = availH * aspect + IV_BODY_PAD * 2
+    vectorPanelWidth.value = Math.round(Math.max(320, Math.min(fitW, window.innerWidth * 0.92)))
+  }
+  img.src = url
+}
+watch(blobUrl, url => {
+  if (url && isVectorImage.value) measureVectorPanel(url)
+  else vectorPanelWidth.value = null
+})
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
