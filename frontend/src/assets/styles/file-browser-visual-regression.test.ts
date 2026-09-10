@@ -14,6 +14,7 @@ function cssBlock(css: string, selectorNeedle: string) {
 }
 
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
+const folderPresentation = load('../../composables/files/useFileLibraryFolderPresentation.ts')
 const fileCard = load('../../components/common/file-browser/FileCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
 const componentRefinements = load('./component-theme-refinements.css')
@@ -100,6 +101,12 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).not.toContain('.folder-card.pre-selected {')
   })
 
+  it('普通文件夹图标跟随当前主题操作色，语义目录继续保留专属颜色', () => {
+    expect(folderPresentation).toContain("return 'var(--action-primary)'")
+    expect(folderPresentation).toContain("if (folder.type === 'trash') return '#987070'")
+    expect(folderPresentation).toContain("if (folder.type === 'status') return STATUS_COLOR")
+  })
+
   it('文件卡 hover/图片预框选不会覆盖 selected，亮色 full-card preview 由 FileCard 自己统一拥有', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
@@ -114,9 +121,15 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).toContain('background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid));')
   })
 
+  it('亮色文件卡 hover 使用高光覆盖，不被调色板主色压暗', () => {
+    expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 16%,transparent);')
+    expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--action-primary) 6%,transparent);')
+  })
+
   it('20.4 selected ring 在 hover 时保持，generic hover utility 不再拥有 File/FolderCard shadow/transition', () => {
     expect(fileCard).toContain('.fc-card.selected {')
     expect(fileCard).toContain('box-shadow: var(--file-card-shadow-selected);')
+    expect(filesGridView).not.toContain('class="hover-card-fx"')
     expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):hover')
     expect(productCss).not.toContain('html[data-theme][data-family] .hover-card-fx:hover { box-shadow:')
     expect(componentRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card),')

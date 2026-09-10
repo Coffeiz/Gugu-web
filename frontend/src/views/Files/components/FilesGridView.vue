@@ -18,7 +18,7 @@
       </template>
     </RuntimeFolderCard>
 
-    <RuntimeFileCard v-for="f in sortedContents.files" :key="f.id" class="hover-card-fx"
+    <RuntimeFileCard v-for="f in sortedContents.files" :key="f.id"
       :card-props="{ ext: f.ext, displayName: f.displayName, hasThumb: isImageExt(f.ext), selected: selectedIds.has(f.id), preSelected: previewFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id), selectionMode: inSelectionMode }"
       :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser"
       :runtime-selected="selectedIds.has(f.id)"

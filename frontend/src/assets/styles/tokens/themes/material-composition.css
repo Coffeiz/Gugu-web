@@ -5,8 +5,8 @@
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 4%,rgba(255,255,255,.42));
   --theme-base: color-mix(in srgb,var(--palette-surface-strong) 90%,transparent);
   --theme-chat-main-bg: color-mix(in srgb,var(--palette-surface-strong) 90%,#ffffff 10%);
-  --theme-glass: color-mix(in srgb,var(--palette-surface) 56%,transparent);
-  --theme-glass-hover: color-mix(in srgb,var(--palette-surface) 70%,transparent);
+  --theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,color-mix(in srgb,var(--palette-surface) 60%,transparent));
+  --theme-glass-hover: color-mix(in srgb,var(--palette-surface) 75%,transparent);
   --theme-card-solid: color-mix(in srgb,var(--palette-surface) 82%,transparent);
   --theme-soft: color-mix(in srgb,var(--theme-action-primary) 6%,transparent);
   --theme-soft-hover: color-mix(in srgb,var(--theme-action-primary) 10%,transparent);

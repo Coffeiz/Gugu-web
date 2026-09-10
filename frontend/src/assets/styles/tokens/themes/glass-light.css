@@ -3,10 +3,11 @@
 :root[data-family='glass'][data-theme='light'],
 :root:not([data-family])[data-theme='light'] {
   color-scheme: light;
-  --theme-page: linear-gradient(160deg,#e8e9ee 0%,#d8dae4 35%,#bfc4d2 65%,#9aa2b8 100%);
+  --theme-page: linear-gradient(160deg,#e8e9ee 0%,#d8dae4 35%,#bfc4d2 65%,color-mix(in srgb,var(--theme-action-pressed) 15%,#cfd3dc) 100%);
   --theme-sidebar: rgba(255,255,255,.42); --theme-base: rgba(238,240,246,.90);
   --theme-chat-main-bg: #eef0f6;
-  --theme-glass: rgba(255,255,255,.56); --theme-glass-hover: rgba(255,255,255,.70);
+  /* Glass 保持透明，但让当前配色有可辨识的轻微染色；页面底色仍由灰阶渐变负责。 */
+  --theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,rgba(255,255,255,.60)); --theme-glass-hover: rgba(255,255,255,.75);
   --theme-card-solid: rgba(255,255,255,.82); --theme-soft: rgba(123,127,178,.06); --theme-soft-hover: rgba(123,127,178,.10);
   --theme-raised: rgba(255,255,255,.70); --theme-floating: rgba(255,255,255,.72); --theme-scrim: rgba(31,34,45,.22); --theme-column: rgba(255,255,255,.16);
   --theme-content-primary: #1e2028; --theme-content-secondary: #747985; --theme-content-tertiary: #969bab; --theme-content-disabled: #b8bdc8; --theme-content-inverse: #fff;
