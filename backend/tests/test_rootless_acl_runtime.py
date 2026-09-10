@@ -83,3 +83,19 @@ def test_prepare_workspace_root_prefers_acl_over_chmod(tmp_path: Path, fake_root
     # ACL 路径直接返回，不再追加 0777 兜底 chmod
     assert len(fake_rootless) == 1
     assert fake_rootless[0].root == root.resolve()
+
+
+def test_build_permission_plan_non_root_replaces_chown_with_chmod(tmp_path: Path):
+    """非 root 运行时 chgrp 到映射组会 EPERM，头命令必须退化为 chmod。"""
+    ranges = (SubordinateRange("tester", 100000, 65536),)
+    plan = rootless_permissions.build_permission_plan(
+        tmp_path / "workspace", login="tester", subuid=ranges, subgid=ranges,
+        apply_ownership=False,
+    )
+    assert plan.commands[0] == ("chmod", "0770", str(tmp_path / "workspace"))
+    assert all(command[0] != "install" for command in plan.commands)
+
+    root_plan = rootless_permissions.build_permission_plan(
+        tmp_path / "workspace", login="tester", subuid=ranges, subgid=ranges,
+    )
+    assert root_plan.commands[0][0] == "install"

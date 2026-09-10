@@ -93,12 +93,17 @@ def build_permission_plan(
     container_gid: int = 65532,
     mapped_uid: int | None = None,
     mapped_gid: int | None = None,
+    apply_ownership: bool = True,
 ) -> WorkspacePermissionPlan:
     """生成安全的 workspace ACL 初始化计划，不执行任何命令。
 
     Rootless Docker 使用 subordinate UID/GID 映射；rootful Docker 则直接使用
     容器 UID/GID。调用方可以显式传入已从目标 daemon 解析出的宿主 ID，避免把
     rootless 映射规则错误地应用到另一个 Docker daemon。
+
+    apply_ownership=False 适用于以部署用户（非 root）身份执行的运行时初始化：
+    chown/chgrp 到映射组需要 root，此时退化为仅 chmod + setfacl——沙盒映射身份
+    的访问由命名 ACL 条目和每级目录 default ACL 继承保证，不依赖文件属组。
     """
     resolved = Path(root).expanduser().resolve(strict=False)
     if not resolved.is_absolute() or resolved == Path("/"):
@@ -112,8 +117,11 @@ def build_permission_plan(
     # subordinate UID。若只给映射组权限，宿主 backend 无法在该目录创建原子
     # 替换文件，表现为 edit_file 的 PermissionError。login 可以是用户名，也
     # 可以是数字 UID；后者适用于权限初始化容器未携带宿主机 passwd 的情况。
-    commands = (
-        ("install", "-d", "-o", login, "-g", str(gid), "-m", "0770", str(resolved)),
+    if apply_ownership:
+        head = (("install", "-d", "-o", login, "-g", str(gid), "-m", "0770", str(resolved)),)
+    else:
+        head = (("chmod", "0770", str(resolved)),)
+    commands = head + (
         ("setfacl", "-m", f"u:{login}:rwx,g:{gid}:rwx", str(resolved)),
         ("setfacl", "-d", "-m", f"u::rwx,u:{login}:rwx,g::rwx,g:{gid}:rwx,m::rwx", str(resolved)),
         ("setfacl", "-R", "-m", f"u:{login}:rwX,g:{gid}:rwX", str(resolved)),
@@ -177,6 +185,8 @@ def ensure_sandbox_acl(root: str | Path) -> bool:
             subgid=read_subordinate_ranges("/etc/subgid", login),
             container_uid=_CONTAINER_SANDBOX_UID,
             container_gid=_CONTAINER_SANDBOX_GID,
+            # 非 root 运行时无法 chgrp 到映射组（EPERM），只做 chmod + setfacl。
+            apply_ownership=os.geteuid() == 0,
         )
         apply_permission_plan(plan)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
