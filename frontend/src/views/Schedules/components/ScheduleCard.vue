@@ -94,7 +94,7 @@ function fmtDateTime(iso: string) {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: var(--card-hover-overlay);
   box-shadow: none;
-  opacity: 0; transition: opacity var(--card-overlay-motion); pointer-events: none;
+  opacity: 0; transition: var(--card-overlay-motion); pointer-events: none;
 }
 .task-card > * { position: relative; z-index: 1; }
 .task-card:hover { box-shadow: var(--card-shadow-hover); }
