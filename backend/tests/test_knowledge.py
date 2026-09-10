@@ -340,3 +340,47 @@ async def test_knowledge_reflection_conflict_keeps_parent_and_new_id(monkeypatch
     conflict = next(item for item in entries if item.parent_id == original.id)
     assert conflict.id != original.id
     assert conflict.confidence == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_save_knowledge_tool_persists_and_normalizes_keywords(knowledge_storage, monkeypatch):
+    """save_knowledge 工具路径必须把 keywords 落库（此前 schema 没有该字段，恒为空）。"""
+    from agent import events
+    from agent.tools.memory import _save_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    result = await _save_knowledge(None, "user-a", {
+        "title": "部署规则", "content": "只使用 Linux 部署", "topic": "部署",
+        "keywords": [" deploy ", "Deploy", "linux", *[f"词{i}" for i in range(12)]],
+    })
+
+    assert result["success"] is True
+    saved = (await KnowledgeStore("user-a").list())[0]
+    # 去重（casefold）+ 超限静默截断到 10 个，与反思路径同一套 normalize_capture。
+    assert saved.keywords == ["deploy", "linux", *[f"词{i}" for i in range(8)]]
+
+
+@pytest.mark.asyncio
+async def test_save_knowledge_tool_drops_non_list_keywords(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _save_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    result = await _save_knowledge(None, "user-a", {
+        "title": "检索规则", "content": "关键词必须是数组", "topic": "检索",
+        "keywords": "deploy",
+    })
+
+    assert result["success"] is True
+    saved = (await KnowledgeStore("user-a").list())[0]
+    assert saved.keywords == []
+
+
+def test_save_knowledge_schema_declares_keywords():
+    from agent.tools import registry
+
+    tool = registry.get("save_knowledge")
+    assert tool.input_schema["properties"]["keywords"] == {
+        "type": "array", "items": {"type": "string"},
+    }
+    assert "keywords" in tool.description

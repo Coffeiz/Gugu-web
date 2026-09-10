@@ -74,6 +74,7 @@ async def _search_memory(db, user_id, args: dict):
 
 async def _save_knowledge(db, user_id, args: dict):
     from agent.knowledge.capture import normalize_capture, save_capture
+    keywords = args.get("keywords")
     try:
         values = normalize_capture(
             args.get("title", ""), args.get("content", ""),
@@ -81,6 +82,7 @@ async def _save_knowledge(db, user_id, args: dict):
             source_ref=args.get("source_ref", ""), source_label=args.get("source_label", ""),
             confidence=args.get("confidence", "confirmed"),
             capture_mode=args.get("capture_mode", "explicit"),
+            keywords=[item for item in keywords if isinstance(item, str)] if isinstance(keywords, list) else [],
         )
     except ValueError as exc:
         return {"error": str(exc)}
@@ -130,32 +132,35 @@ async def _delete_knowledge(db, user_id, args: dict):
 class MemorySkill(BaseSkill):
     name = "memory"
     tools = [
-        Tool(
-            name="save_knowledge", label="保存知识",
-            description_short='保存可复用知识；支持来源类型和置信度。',
-            description=(
-                "保存一条已经整理好的、可长期复用的事实、规则或资料摘要。"
-                "仅在用户明确要求保存，或已确认需要保留工具结果时使用；"
-                "普通聊天不要自动保存。正文必须自包含并填写真实来源。"
-                "成功后会立即返回 knowledge_id 和 index_status=queued，但检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "content": {"type": "string", "maxLength": 3000},
-                    "topic": {"type": "string"},
-                    "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"]},
-                    "source_ref": {"type": "string"},
-                    "source_label": {"type": "string"},
-                    "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
-                    "capture_mode": {"type": "string", "enum": ["explicit", "tool_result", "automatic"]},
-                },
-                "required": ["title", "content"],
-            },
-            handler=_save_knowledge,
-            mutates=True,
+    Tool(
+        name="save_knowledge", label="保存知识",
+        description_short='保存可复用知识；支持来源类型、关键词和置信度。',
+        description=(
+            "保存一条已经整理好的、可长期复用的事实、规则或资料摘要。"
+            "仅在用户明确要求保存，或已确认需要保留工具结果时使用；"
+            "普通聊天不要自动保存。正文必须自包含并填写真实来源。"
+            "keywords 填未来检索时可能出现的稳定别名、工具名或专有名词，最多10个，"
+            "单个不超过40字符，必须能从标题、主题或正文直接支持；不要把关键词当成额外事实。"
+            "成功后会立即返回 knowledge_id 和 index_status=queued，但检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
         ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "content": {"type": "string", "maxLength": 3000},
+                "topic": {"type": "string"},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"]},
+                "source_ref": {"type": "string"},
+                "source_label": {"type": "string"},
+                "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
+                "capture_mode": {"type": "string", "enum": ["explicit", "tool_result", "automatic"]},
+            },
+            "required": ["title", "content"],
+        },
+        handler=_save_knowledge,
+        mutates=True,
+    ),
         Tool(
             name="remember", label="记住",
             description_short='记住用户信息或行为模式；省略目标时保存为用户画像。',
