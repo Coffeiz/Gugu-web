@@ -701,3 +701,70 @@ async def test_dispatch_unknown_field_warning_not_added_to_error_result():
     payload = json.loads(raw)
     assert payload.get("error") == "业务校验失败"
     assert "ignored_fields" not in payload
+
+
+_EDIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "file_id": {"type": ["integer", "string"]},
+        "mode": {"type": "string"},
+        "line_edits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"target_lines": {"type": "string"}, "content": {"type": "string"}},
+                "required": ["target_lines", "content"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["mode"],
+    "additionalProperties": False,
+}
+
+
+def test_container_field_accepts_json_encoded_string():
+    """edit_file 实测：模型把 line_edits 整体传成 JSON 字符串，schema_hints 三轮改不动。"""
+    normalized, adaptations = normalize_input_by_schema(_EDIT_SCHEMA, {
+        "file_id": "5275",
+        "mode": "line_edit",
+        "line_edits": '[{"target_lines": "58", "content": "OUT_DIR = \\"charts\\""}]',
+    })
+
+    assert normalized["line_edits"] == [{"target_lines": "58", "content": 'OUT_DIR = "charts"'}]
+    assert "line_edits:json_string_to_array" in adaptations
+
+
+def test_container_field_json_string_must_match_declared_type():
+    """string-only 字段里的 JSON 文本不能当成数组回填，解析失败也保持原样报错。"""
+    schema = {"type": "object", "properties": {"text": {"type": "string"}}, "additionalProperties": False}
+    normalized, adaptations = normalize_input_by_schema(schema, {"text": "[1, 2]"})
+    assert normalized["text"] == "[1, 2]"
+    assert adaptations == []
+
+    normalized, _ = normalize_input_by_schema(_EDIT_SCHEMA, {"mode": "line_edit", "line_edits": "not json"})
+    assert normalized["line_edits"] == "not json"
+
+
+def test_whole_call_wrapper_is_unwrapped_when_unambiguous():
+    """模型把整次调用包进不存在的单键（edits）时上提内层参数。"""
+    normalized, adaptations = normalize_input_by_schema(_EDIT_SCHEMA, {
+        "edits": '[{"file_id": 5275, "mode": "line_edit", "line_edits": [{"target_lines": "58", "content": "x"}]}]',
+    })
+
+    assert normalized == {
+        "file_id": 5275,
+        "mode": "line_edit",
+        "line_edits": [{"target_lines": "58", "content": "x"}],
+    }
+    assert adaptations == ["edits:call_wrapper_unwrapped"]
+
+
+def test_whole_call_wrapper_is_not_unwrapped_with_unknown_inner_keys():
+    """内层含 schema 之外的键就不动它，交给校验报真实结构错误。"""
+    normalized, adaptations = normalize_input_by_schema(_EDIT_SCHEMA, {
+        "edits": '[{"file_id": 5275, "bogus": 1}]',
+    })
+
+    assert "edits" in normalized
+    assert adaptations == []

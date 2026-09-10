@@ -226,6 +226,20 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 return _OMIT
             return value
         if not types.intersection({"boolean", "integer", "number"}):
+            # 容器字段被整体序列化成 JSON 字符串（edit_file 的 line_edits 实测：
+            # 模型连续三轮传 "[{...}]" 这种字符串，schema_hints 改不动）。schema 在
+            # 该位置只接受 array/object、不接受 string 时，解析结果类型又正好落在
+            # 允许集合内，才回填；解析失败或类型不符则原样返回交给校验报错。
+            if types.intersection({"array", "object"}) and "string" not in types:
+                try:
+                    parsed_container = json.loads(text)
+                except ValueError:
+                    parsed_container = None
+                if isinstance(parsed_container, (list, dict)):
+                    parsed_type = "array" if isinstance(parsed_container, list) else "object"
+                    if parsed_type in types:
+                        adaptations.append(f"{path or 'args'}:json_string_to_{parsed_type}")
+                        return normalize_value(parsed_container, field_schema, path, True)
             return value
 
         if "boolean" in types:
@@ -282,6 +296,33 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 item = {key: instance.pop(key) for key in hoisted_keys}
                 instance[field_name] = [item]
                 adaptations.append(f"{field_name}:flattened_items_hoisted")
+
+    # 整次调用被塞进一个不存在的单键（edit_file 实测：{"edits": "[{file_id, mode,
+    # line_edits}]"}——模型把批量调用的外壳也一起序列化了）。只在无歧义时上提：
+    # 顶层 additionalProperties=false、只有一个键、该键不是合法属性名、值是数组或
+    # JSON 字符串解析出的数组、恰好一个元素，且该元素的键全部是顶层合法属性键。
+    if isinstance(instance, dict) and len(instance) == 1 and schema.get("additionalProperties") is False:
+        top_properties = schema.get("properties")
+        wrapper_key = next(iter(instance))
+        if isinstance(top_properties, dict) and wrapper_key not in top_properties:
+            wrapper_value = instance[wrapper_key]
+            if isinstance(wrapper_value, str):
+                try:
+                    wrapper_value = json.loads(wrapper_value)
+                except ValueError:
+                    wrapper_value = None
+            if (
+                isinstance(wrapper_value, list)
+                and len(wrapper_value) == 1
+                and isinstance(wrapper_value[0], dict)
+                and wrapper_value[0]
+                and all(key in top_properties for key in wrapper_value[0])
+            ):
+                inner = instance.pop(wrapper_key)
+                if isinstance(inner, str):
+                    inner = json.loads(inner)
+                instance.update(inner[0])
+                adaptations.append(f"{wrapper_key}:call_wrapper_unwrapped")
 
     normalized = normalize_value(instance, schema, "", True)
     return ({} if normalized is _OMIT else normalized), adaptations
