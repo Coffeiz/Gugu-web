@@ -185,7 +185,7 @@ class DockerSandboxExecutor:
         allow_script_execution: bool = False,
         environment: dict[str, str] | None = None,
     ) -> list[str]:
-        argv = LocalWorkspaceExecutor._parse_command(command)
+        argv = LocalWorkspaceExecutor._parse_command(command, allow_script_execution=allow_script_execution)
         workdir = self._resolve_cwd(cwd)
         self._validate_container_interpreter_inputs(argv, allow_script_execution=allow_script_execution)
         LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
