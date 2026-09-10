@@ -72,10 +72,15 @@ const imgStyle = computed(() => ({
 
 function getBounds() {
   if (!wrapRef.value || !imgRef.value) return { maxTx: 0, maxTy: 0 }
+  const wrap = wrapRef.value
   const img  = imgRef.value
-  // 限制区域 = 图片布局尺寸的 200%，与 scale 无关
-  const maxTx = img.clientWidth  * 0.5
-  const maxTy = img.clientHeight * 0.5
+  // 放大到超出视口时，平移范围 = 溢出量的一半：图片任一边最多贴到视口边缘，
+  // 缩放后右侧/底部被裁掉的内容都能拖进来。未超出视口时保留原有的自由拖动
+  // 余量（布局尺寸的 200%），缩小后的小图仍可挪到一边对比。
+  const overflowX = (img.clientWidth  * scale.value - wrap.clientWidth) / 2
+  const overflowY = (img.clientHeight * scale.value - wrap.clientHeight) / 2
+  const maxTx = overflowX > 0 ? overflowX : img.clientWidth  * 0.5
+  const maxTy = overflowY > 0 ? overflowY : img.clientHeight * 0.5
   return { maxTx, maxTy }
 }
 
@@ -183,7 +188,12 @@ onMounted(() => {
   if (typeof ResizeObserver === 'undefined' || !wrapRef.value) return
   // 浮动窗口会在图片读取完成后异步调整尺寸；观察容器可以覆盖这段竞态，
   // 也同时处理最大化、手动 resize 和浏览器窗口变化。
-  resizeObserver = new ResizeObserver(() => fitToView())
+  resizeObserver = new ResizeObserver(() => {
+    // 用户已手动缩放时窗口变化不应重置视图，但平移钳制要按新视口重算，
+    // 避免拖出去的内容在窗口变窄后 stranded 在不可达位置。
+    if (hasUserZoom.value) clamp()
+    else fitToView()
+  })
   resizeObserver.observe(wrapRef.value)
 })
 
