@@ -12,8 +12,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
@@ -26,15 +26,28 @@ import SkillForm from './components/SkillForm.vue'
 const { skills, tools, loading, saving, error, load, save, toggle, remove } = useUserSkills()
 const { t, locale } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const formOpen = ref(false)
 const formKey = ref(0)
 const editing = ref<UserSkillItem | null>(null)
+// 聊天技能卡片 / 全局搜索跳转是 router.push（?skill=slug）：已在 /skills 时组件
+// 不会重新挂载，所以 onMounted 之外还要 watch query 变化。
+async function openRequestedSkill() {
+  const slug = typeof route.query.skill === 'string' ? route.query.skill : ''
+  if (!slug) return
+  const target = skills.value.find(skill => skill.slug === slug)
+  if (!target) return
+  openEdit(target)
+  // 用完即清：skill 留在地址栏的话，关掉编辑窗后一刷新又会弹出来（与
+  // Schedules/Canvas/Notes 的 object_id 同一契约）。replace 不产生历史记录；
+  // 清空触发的 watch 拿到空串直接返回，是安全的空操作。
+  await router.replace({ query: { ...route.query, skill: undefined } })
+}
 onMounted(async () => {
   await load()
-  const slug = typeof route.query.skill === 'string' ? route.query.skill : ''
-  const target = slug ? skills.value.find(skill => skill.slug === slug) : null
-  if (target) openEdit(target)
+  await openRequestedSkill()
 })
+watch(() => route.query.skill, () => { void openRequestedSkill() })
 function openCreate() { editing.value = null; formKey.value++; formOpen.value = true }
 function openEdit(skill: UserSkillItem) { editing.value = skill; formKey.value++; formOpen.value = true }
 async function saveForm(data: UserSkillWrite) { await save(data, editing.value?.slug); formOpen.value = false }
