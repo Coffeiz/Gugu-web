@@ -250,10 +250,10 @@ html[data-theme][data-family] .task-card:hover::after { background: var(--highli
 html[data-theme][data-family] .task-card .tc-name { color: var(--content-primary); }
 html[data-theme][data-family] .task-card .tc-when,
 html[data-theme][data-family] .task-card .tc-last,
-html[data-theme][data-family] .task-card .link { color: var(--content-secondary); }
+html[data-theme][data-family] .task-card .card-link-btn { color: var(--content-secondary); }
 html[data-theme][data-family] .task-card .tc-payload { color: var(--content-secondary); background: var(--surface-soft); }
-html[data-theme][data-family] .task-card .link:hover { color: var(--content-primary); }
-html[data-theme][data-family] .task-card .link.danger:hover { color: var(--status-danger); }
+html[data-theme][data-family] .task-card .card-link-btn:hover { color: var(--content-primary); }
+html[data-theme][data-family] .task-card .card-link-btn.danger:hover { color: var(--status-danger); }
 /* task-card 的 switch 轨道/滑块不再单独覆盖：--switch-track-bg/-thumb-bg token
    已按主题提供同值（亮色 surface-raised / 暗色 78% 提亮），单独写 border-strong
    反而在暗色下变成亮白轨道。 */

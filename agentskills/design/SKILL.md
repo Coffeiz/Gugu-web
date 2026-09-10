@@ -36,6 +36,10 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
   `CardAffordances.vue` 的 `:deep(button)` 复用同一口径。**新卡片类型一律消费该契约，
   禁止另画透明底、无过渡的按钮**；改动契约时 `card-actions.css` 与 `CardAffordances.vue`
   两处声明同步（归属说明见 `assets/styles/STYLE-OWNERS.md`）。
+- **卡片页脚文字操作**（「编辑 / 删除 / 测试执行」一类）：同一契约的 `.card-link-btn`（可选
+  `danger`）。hover = 文字色转 `--text-primary` + `--action-soft` 药丸底，破坏性操作用
+  `--status-danger` / `--status-danger-bg`，`:disabled` 半透明且不hover出药丸底。定时任务卡与
+  技能卡共用这一份——发现两张卡片 hover 表现不一致时，先查是不是有人又写了本地 `.link`。
 - 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
 - 单选下拉：统一使用 `frontend/src/components/common/controls/SelectPopup.vue`；Admin 普通选项通过 `AdminSelect` 使用，Provider 分组等特殊场景在其基础上扩展，不使用页面专用原生 `<select>` 或重复绘制列表弹窗；保存中或不可用时使用公共组件的 `disabled` 状态。
 - 卡片：`--surface-card-solid` 或毛玻璃背景，圆角 12-16px

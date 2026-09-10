@@ -37,6 +37,7 @@ const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
 const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
 const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
 const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
+const skillCard = load('../../views/Skills/components/SkillCard.vue')
 const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
@@ -311,6 +312,23 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
     const interactionCardBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .task-card')
     expect(interactionCardBlock).not.toContain('transition:')
+  })
+
+  it('卡片页脚文字操作共用 card-actions 契约，hover 表现不再各写一套', () => {
+    const cardActions = load('./components/card-actions.css')
+    expect(cardActions).toContain('.card-link-btn {')
+    expect(cardActions).toContain('.card-link-btn:not(:disabled):hover { color: var(--text-primary); background: var(--action-soft); }')
+    expect(cardActions).toContain('.card-link-btn.danger:not(:disabled):hover { color: var(--status-danger); background: var(--status-danger-bg); }')
+
+    // 两个卡片只消费共享类，不得再保留本地 .link 定义（历史漂移来源）
+    for (const card of [scheduleCard, skillCard]) {
+      expect(card).toContain('class="card-link-btn')
+      expect(card).not.toMatch(/^\.link[ {.:]/m)
+      expect(card).not.toContain('class="link')
+    }
+    // 主题层继续持有定时任务卡的最终 paint 与过渡（含新增的背景药丸）
+    expect(load('./theme-adoption.css')).toContain('html[data-theme][data-family] .task-card .card-link-btn { color: var(--content-secondary); }')
+    expect(interactionRefinements).toContain('background-color var(--hover-motion-control), opacity var(--hover-motion-control);')
   })
 
   it('公共操作按钮的 secondary hover 滤镜平滑过渡', () => {

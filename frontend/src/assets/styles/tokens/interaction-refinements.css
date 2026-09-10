@@ -174,8 +174,10 @@ html[data-theme][data-family] .task-card:hover {
   box-shadow: var(--elevation-card-hover);
 }
 html[data-theme][data-family] .task-card:hover::after { opacity: 1; }
-html[data-theme][data-family] .task-card .link {
-  transition: color var(--hover-motion-control), opacity var(--hover-motion-control);
+html[data-theme][data-family] .task-card .card-link-btn {
+  /* 页脚文字操作（含测试执行/编辑/删除）在本层收口过渡：hover 的 --action-soft 药丸底
+     与文字色一起淡入，与技能卡共用 components/card-actions.css 的同一份 hover 表现。 */
+  transition: color var(--hover-motion-control), background-color var(--hover-motion-control), opacity var(--hover-motion-control);
 }
 html[data-theme][data-family] .sched-page .btn-primary {
   transition:

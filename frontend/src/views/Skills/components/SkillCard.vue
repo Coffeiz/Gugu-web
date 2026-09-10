@@ -12,8 +12,8 @@
     <div class="sc-foot">
       <span class="sc-updated">{{ t('skills.updatedAt', { date: fmtDate(props.skill.updated_at) }) }}</span>
       <span class="sc-acts">
-        <button class="link" @click="$emit('edit', props.skill)">{{ t('skills.edit') }}</button>
-        <button class="link danger" @click="$emit('remove', props.skill)">{{ t('skills.delete') }}</button>
+        <button class="card-link-btn" @click="$emit('edit', props.skill)">{{ t('skills.edit') }}</button>
+        <button class="card-link-btn danger" @click="$emit('remove', props.skill)">{{ t('skills.delete') }}</button>
       </span>
     </div>
   </article>
@@ -68,7 +68,4 @@ function fmtDate(value: string | null) {
 .sc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
 .sc-updated { font-size: 11px; color: var(--text-secondary); opacity: 0.75; }
 .sc-acts { display: flex; gap: 8px; justify-content: flex-end; }
-.link { border: 0; border-radius: 6px; background: none; color: var(--text-secondary); cursor: pointer; padding: 2px 3px; font: inherit; font-family: var(--font-sans); font-size: 12px; transition: color 0.15s, background 0.15s; }
-.link:hover { color: var(--text-primary); background: var(--action-soft); }
-.link.danger:hover { color: var(--status-danger); background: var(--status-danger-bg); }
 </style>
