@@ -693,6 +693,12 @@ async def _copy_file(db, user_id, args: dict):
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err
+    if space == "workspace" and workspace_directory_id is None:
+        # 显式 workspace ＝ 当前绑定工作区（与 create_file/_resolve_target 一致，不暴露跨工作区）
+        bound = await _bound_workspace_target(db, user_id)
+        workspace_directory_id = (bound or {}).get("workspace_directory_id")
+        if workspace_directory_id is None:
+            return {"error": "当前会话没有绑定带文件目录的工作区，无法以 space=workspace 为目标"}
     fname = target.get("folder")
     if fname is not None:
         fname = str(fname).strip()
@@ -963,7 +969,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="move_items", label="移动文件/文件夹",
             description_short='移动文件或文件夹；批量传 files/folders，目标传 target；folder_id 优先，project 空间传 project_id',
-            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。项目目标用 project_id，workspace_id 不能代替它。",
+            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。目标空间用 target.space（project/workspace/mind/asset/personal），workspace＝当前绑定工作区；项目目标用 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -974,7 +980,7 @@ class FilesSkill(BaseSkill):
                         "properties": {
                             "folder": {"type": "string"},
                             "folder_id": {"type": "integer"},
-                            "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
                             "project_id": {"type": "integer"},
                         },
                     },
@@ -998,7 +1004,7 @@ class FilesSkill(BaseSkill):
                         "type": "object",
                         "properties": {
                             "folder": {"type": "string"},
-                            "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
                             "project_id": {"type": "integer"},
                             "folder_id": {"type": "integer"},
                         },

@@ -82,3 +82,18 @@ async def file_write_access_error(db, user_id, file, *, policy: FilesystemPolicy
         project_id=file.project_id if file.space == "project" else None,
         folder_id=file.folder_id, policy=policy,
     )
+
+
+def folder_write_space(folder) -> str:
+    """文件夹的三值空间：project / workspace / personal。
+
+    曾经到处内联「project_id 有无」的二值判断，工作区文件夹（project_id 为空、
+    workspace_directory_id 非空）被误判成 personal，删除/重命名/移动/恢复全部被
+    权限检查拒掉（_location_is_in_workspace 对 directory 型绑定只认 space="workspace"）。
+    文件侧一直用 file.space 真值没这问题，这里把文件夹对齐。
+    """
+    if folder.project_id is not None:
+        return "project"
+    if getattr(folder, "workspace_directory_id", None) is not None:
+        return "workspace"
+    return "personal"

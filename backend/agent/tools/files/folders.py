@@ -13,7 +13,7 @@ from app.services.files.browser import (
 )
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import resolve_folder_path
-from agent.tools.filesystem_policy import file_write_access_error, write_access_error
+from agent.tools.filesystem_policy import file_write_access_error, folder_write_space, write_access_error
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name, _location_matches,
     _norm_target, _resolve_file, _target_loc, _workspace_conflict,
@@ -115,11 +115,22 @@ async def _descendant_folder_ids(db, user_id, root_id: int) -> list[int]:
 async def _resolve_target(db, user_id, target: dict):
     """把 target 解析成统一落点。返回
     ``(space, project_id, folder_id, workspace_directory_id, err_dict|None)``。
-    支持 folder_id（最准）/ folder 名 + space/project_id 限定 / 不给文件夹=空间根。"""
+    支持 folder_id（最准）/ folder 名 + space/project_id 限定 / 不给文件夹=空间根。
+    space="workspace" ＝ 当前绑定工作区的文件目录；与 create_file 一致，
+    不暴露跨工作区写入，目录 id 一律取绑定落点。"""
     space = target.get("space")
     project_id = target.get("project_id")
     folder_id = target.get("folder_id")
     fname = target.get("folder")
+    bound_wd = None
+    if space == "workspace" or target.get("workspace_directory_id"):
+        bound = await _bound_workspace_target(db, user_id)
+        bound_wd = (bound or {}).get("workspace_directory_id")
+        if bound_wd is None:
+            return None, None, None, None, {
+                "error": "当前会话没有绑定带文件目录的工作区，无法以 space=workspace 为目标",
+                "hint": "省略目标位置参数即写入当前绑定落点，或改用 personal/project。",
+            }
     if folder_id:
         fo = await get_user_folder(db, user_id, folder_id)
         if not fo:
@@ -135,10 +146,10 @@ async def _resolve_target(db, user_id, target: dict):
         fname = str(fname).strip()
         if fname in ("", "根", "根目录", "/"):
             sp = space or ("project" if project_id else "personal")
-            return sp, (project_id if sp == "project" else None), None, target.get("workspace_directory_id"), None
+            return sp, (project_id if sp == "project" else None), None, (bound_wd if sp == "workspace" else target.get("workspace_directory_id")), None
         sp = space or ("project" if project_id else "personal")
         fo, err = await _folder_by_name(
-            db, user_id, fname, sp, project_id, target.get("workspace_directory_id"),
+            db, user_id, fname, sp, project_id, bound_wd if sp == "workspace" else target.get("workspace_directory_id"),
         )
         if err:
             return None, None, None, None, {"error": f"目标文件夹「{fname}」没找到，请用 list_folders 确认，或改用 folder_id"}
@@ -150,14 +161,14 @@ async def _resolve_target(db, user_id, target: dict):
             None,
         )
     sp = space or "personal"
-    return sp, (project_id if sp == "project" else None), None, target.get("workspace_directory_id"), None
+    return sp, (project_id if sp == "project" else None), None, (bound_wd if sp == "workspace" else target.get("workspace_directory_id")), None
 
 
 async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id, t_workspace_id=None) -> dict:
     """委托 FileService 搬文件夹树，并同步重建所有后代文件的物理路径。"""
     name = folder.name
     source_error = await write_access_error(
-        db, user_id, space="project" if folder.project_id is not None else "personal",
+        db, user_id, space=folder_write_space(folder),
         project_id=folder.project_id, folder_id=folder.id,
     )
     if source_error:
@@ -358,7 +369,7 @@ async def _rename_folder(db, user_id, args: dict):
     if isinstance(fo, str):
         return fo
     access_error = await write_access_error(
-        db, user_id, space="project" if fo.project_id is not None else "personal",
+        db, user_id, space=folder_write_space(fo),
         project_id=fo.project_id, folder_id=fo.id,
     )
     if access_error:
@@ -384,7 +395,7 @@ async def _delete_folder(db, user_id, args: dict):
             if isinstance(folder, str):
                 return folder
             access_error = await write_access_error(
-                db, user_id, space="project" if folder.project_id is not None else "personal",
+                db, user_id, space=folder_write_space(folder),
                 project_id=folder.project_id, folder_id=folder.id,
             )
             if access_error:
@@ -404,7 +415,7 @@ async def _delete_folder(db, user_id, args: dict):
     if isinstance(fo, str):
         return fo
     access_error = await write_access_error(
-        db, user_id, space="project" if fo.project_id is not None else "personal",
+        db, user_id, space=folder_write_space(fo),
         project_id=fo.project_id, folder_id=fo.id,
     )
     if access_error:
