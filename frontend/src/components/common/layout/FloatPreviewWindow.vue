@@ -36,7 +36,7 @@
     <!-- 内容区 -->
     <div class="fpw-body">
       <!-- 真实内容（在下层） -->
-      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
+      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
       <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
@@ -181,6 +181,9 @@ const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext, props.win.file.mimeType))
 const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
+const _SVG_EXTS = new Set(['SVG'])
+// 矢量图放大无损：开窗尺寸与内部适配都允许超过折算 natural 尺寸
+const isVector = computed(() => _SVG_EXTS.has((props.win.file.ext ?? '').toUpperCase()))
 
 // ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
 const navImages = computed(() => (props.win.siblings || []).filter(f => isImageExt(f.ext)))
@@ -215,7 +218,6 @@ const error           = ref<string | null>(null)
 const placeholderReady = ref(false)
 const imageReady       = ref(false)
 
-const _SVG_EXTS    = new Set(['SVG'])
 const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
 const currentCacheKey = ref('')
 let loadSequence = 0
@@ -282,6 +284,17 @@ function onInfoDragUp() {
   infoDragOrig = null
   window.removeEventListener('mousemove', onInfoDragMove)
   window.removeEventListener('mouseup',   onInfoDragUp)
+}
+
+// 矢量图（无尺寸 SVG 的 natural 只是浏览器折算的默认对象尺寸，如 300×150）开窗时
+// 按比例放大到「恰好 contain 进视口舒适区」，只放大不缩小（大尺寸 SVG 仍按原逻辑
+// 由 fitWindow 缩到视口内），避免矢量文件以缩略图大小开窗。
+const COMFORT_W_RATIO = 0.44
+const COMFORT_H_RATIO = 0.7
+function vectorWindowScale(nw: number, nh: number) {
+  const comfortW = window.innerWidth * COMFORT_W_RATIO
+  const comfortH = window.innerHeight * COMFORT_H_RATIO
+  return Math.max(1, Math.min(comfortW / nw, comfortH / nh))
 }
 
 // 按内容自然尺寸适配窗口，居中+错位
@@ -351,7 +364,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   // 决定，跟内容解耦——切换到其它图片不再重新定窗口尺寸，图片靠 object-fit:contain
   // 在固定窗口里自适应显示，不然窗口宽高跟着每张图变化，观感很跳。
   if (isImg.value && f.imgWidth && f.imgHeight && !ready.value) {
-    fitWindow(f.imgWidth, f.imgHeight)
+    const vs = isVector.value ? vectorWindowScale(f.imgWidth, f.imgHeight) : 1
+    fitWindow(Math.round(f.imgWidth * vs), Math.round(f.imgHeight * vs))
   }
   const token   = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
@@ -424,7 +438,10 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         img.onload = () => {
           if (sequence !== loadSequence) return
           contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
-          if (!ready.value) fitWindow(img.naturalWidth, img.naturalHeight)
+          if (!ready.value) {
+            const vs = isVector.value ? vectorWindowScale(img.naturalWidth, img.naturalHeight) : 1
+            fitWindow(Math.round(img.naturalWidth * vs), Math.round(img.naturalHeight * vs))
+          }
         }
         img.src = cached
         return
@@ -467,7 +484,10 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         if (sequence !== loadSequence) return
         contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
         // 窗口尺寸只由打开时的第一张图决定（同上），这里只在窗口还没显示过时才定尺。
-        if (!ready.value) fitWindow(img.naturalWidth, img.naturalHeight)
+        if (!ready.value) {
+          const vs = isVector.value ? vectorWindowScale(img.naturalWidth, img.naturalHeight) : 1
+          fitWindow(Math.round(img.naturalWidth * vs), Math.round(img.naturalHeight * vs))
+        }
       }
       img.src = url
     }

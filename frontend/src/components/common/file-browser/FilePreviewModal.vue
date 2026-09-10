@@ -36,7 +36,7 @@
             </div>
             <template v-else-if="blobUrl || videoSrc">
               <PdfViewer   v-if="isPdf || isOffice" :blobUrl="blobUrl ?? undefined" />
-              <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" />
+              <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
               <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" />
 
@@ -129,6 +129,8 @@ const previewBlobCache = usePreviewBlobCache()
 const currentCacheKey = ref('')
 
 const isImage  = computed(() => isImageExt(props.file?.ext))
+// 矢量图放大无损：适配视口允许超过折算 natural 尺寸（无尺寸 SVG 的 natural 只是 300×150）
+const isVectorImage = computed(() => props.file?.ext?.toUpperCase() === 'SVG')
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')

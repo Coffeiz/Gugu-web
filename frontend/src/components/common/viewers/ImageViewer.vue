@@ -43,9 +43,14 @@ const { t } = useI18n()
 const PADDING = 32
 // 溢出钳制的宽松系数：1.0 = 图片边缘最多贴视口边缘；1.5 = 允许再推出去半程留白
 const PAN_SLACK = 1.5
+// 手动缩放上限；矢量文件（upscale）自动适配也允许放大到该上限填满视口
+const MAX_ZOOM = 8
 
 const props = defineProps({
   blobUrl: { type: String, default: null },
+  // 矢量图（svg）放大无损：打开时自动适配允许超过 100% 填满视口。
+  // 位图保持默认（适配不放大），避免糊。
+  upscale: { type: Boolean, default: false },
 })
 
 const wrapRef = ref<HTMLElement | null>(null)
@@ -97,7 +102,7 @@ const pct = computed(() => Math.round(scale.value * 100))
 
 function applyZoom(newScale: number) {
   hasUserZoom.value = true
-  scale.value = Math.min(8, Math.max(0.05, newScale))
+  scale.value = Math.min(MAX_ZOOM, Math.max(0.05, newScale))
   clamp()
 }
 
@@ -132,13 +137,20 @@ function onMouseUp() {
 
 function reset() {
   hasUserZoom.value = true
+  // 矢量图的“原始大小”只是浏览器折算的默认对象尺寸（如无尺寸 SVG 的
+  // 300×150），重置回 100% 会缩回窗口中间一小块，因此回到适配视图；
+  // 位图保持原有的 100% 语义。
+  if (props.upscale) {
+    fitToView(true)
+    return
+  }
   scale.value = 1
   tx.value = 0
   ty.value = 0
 }
 
-function fitToView() {
-  if (hasUserZoom.value || !wrapRef.value || !naturalWidth.value || !naturalHeight.value) return
+function fitToView(force = false) {
+  if ((!force && hasUserZoom.value) || !wrapRef.value || !naturalWidth.value || !naturalHeight.value) return
   // 原图加载和浮动窗口尺寸调整不是同一帧完成的：首轮可能先按默认窗口计算，
   // 随后 ResizeObserver 再按最终窗口重算。所有自动适配都必须瞬时切换，不能
   // 把这次内部重算表现成“原图从缩略图大小放大到最终大小”的动画。
@@ -148,8 +160,11 @@ function fitToView() {
   }
   const availableWidth = Math.max(1, wrapRef.value.clientWidth - PADDING * 2)
   const availableHeight = Math.max(1, wrapRef.value.clientHeight - PADDING * 2)
+  // 适配只缩小不放大，防止位图拉伸发糊；矢量图（upscale）放大无损，
+  // 允许放大到缩放上限以填满视口——无尺寸 SVG 的“natural”只是 300×150
+  // 的折算值，封顶 1 会让它以小尺寸打开。
   scale.value = Math.min(
-    1,
+    props.upscale ? MAX_ZOOM : 1,
     availableWidth / naturalWidth.value,
     availableHeight / naturalHeight.value,
   )
