@@ -690,6 +690,76 @@ async def test_tool_confirmation_state_survives_wait_but_replay_is_single_shot(m
     assert not any("needs_confirm" in (c or "") for c in tool_results), "确认占位不能留在工具往返里"
 
 
+async def test_user_cancel_closes_tool_bubble_and_starts_new_round(monkeypatch, dispatched):
+    """用户点「取消」：气泡要有终态，收尾正文必须另起一轮。
+
+    停在等待态的气泡刷新后依然显示「等待回复」（展示时间线存的就是进交互门时那条
+    status="waiting"）；收尾正文若和上一轮同帧，前端会把它拼进「工具调用前那条气泡」，
+    用户看到的是「取消了，但底部没有任何下文」。
+    """
+    import json as _json
+
+    blocked = _json.dumps({
+        "status": "waiting_confirmation", "needs_confirm": True,
+        "summary": "将删除定时任务", "confirm_code": "abc123",
+    }, ensure_ascii=False)
+    calls: list[str] = []
+
+    async def fake_dispatch(_uid, name, _inp):
+        calls.append(name)
+        return blocked, None      # 被确认门拦截，从未执行
+
+    async def fake_create_tool_confirmation(**_kwargs):
+        return {
+            "prompt_id": 906, "kind": "confirm", "title": "任务已暂停 · 删除定时任务",
+            "body": "确认后将继续执行当前任务。",
+            "options": [{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+            "task_paused": True,
+            "expires_at": "2026-09-10T21:00:00+08:00",
+        }
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return {"status": "cancelled", "option_id": "cancel", "text": "取消"}
+
+    monkeypatch.setattr(core.registry, "dispatch", fake_dispatch)
+    monkeypatch.setattr("app.services.interactions.create_tool_confirmation", fake_create_tool_confirmation)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+
+    patch_anthropic(monkeypatch, [msg([TU("delete_scheduled_task", "call-1", {"task_id": 266})])])
+    messages = [{"role": "user", "content": "把定时任务删掉"}]
+
+    frames = []
+    async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1):
+        try:
+            frames.append(json.loads(chunk[len("data: "):]))
+        except Exception:
+            continue
+
+    kinds = [f.get("type") for f in frames]
+    assert kinds.count("tool_done") == 2, "进交互门一条 waiting，取消后必须再补一条终态"
+    waiting_index = kinds.index("tool_done")
+    cancelled_index = kinds.index("tool_done", waiting_index + 1)
+    assert frames[waiting_index]["status"] == "waiting"
+    assert frames[cancelled_index]["status"] == "cancelled", "气泡没有终态就会永远停在「等待回复」"
+    assert frames[cancelled_index]["tool_call_id"] == frames[waiting_index]["tool_call_id"]
+
+    tokens = [i for i, f in enumerate(frames) if f.get("type") == "token"]
+    assert tokens, "取消后要有收尾正文"
+    assert cancelled_index < tokens[0], "先给气泡收终态，再发收尾正文"
+    # 分帧必须用 round_start：_new_round 会被 _recover_interrupted_continuation 判成
+    # 「续轮还没开始」而重发一次模型请求，用户会在取消文案后又看到一条自我解释。
+    assert kinds.index("round_start", cancelled_index) < tokens[0], "收尾正文必须另起一轮"
+    assert "_new_round" not in kinds[cancelled_index:], "取消收尾不能再发 _new_round 触发续轮恢复"
+    assert "已取消" in "".join(f.get("content", "") for f in frames if f.get("type") == "token")
+    assert calls == ["delete_scheduled_task"], "取消不能触发重投"
+
+    tool_results = [
+        block.get("content") for m in messages if m.get("role") == "user"
+        for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert any('"status": "cancelled"' in (c or "") for c in tool_results), "取消结果要落进本轮工具往返"
+
+
 async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
     """Anthropic / OpenAI 两路同构：同样的"干净核实通过"场景，OpenAI 路行为一致。"""
     patch_openai(monkeypatch, [
@@ -1214,3 +1284,46 @@ async def test_polluted_tool_name_salvaged_before_dispatch_and_events(monkeypatc
     assert calls == ["create_file"], f"dispatch 应收到干净名：{calls}"
     assert events and all(name == "create_file" for _t, name in events), \
         f"前端事件不应看到污染名：{events}"
+
+
+async def _recover_frames(stub_frames, monkeypatch):
+    """跑一次 _recover_interrupted_continuation，返回 (此轮吐出的帧, 重发模型的次数)。"""
+    runner = make_runner()
+    retries: list[int] = []
+
+    async def fake_provider(*_a, **_kw):
+        retries.append(1)
+        for f in stub_frames:
+            yield f"data: {json.dumps(f, ensure_ascii=False)}\n\n"
+
+    monkeypatch.setattr(runner, "_run_provider", fake_provider)
+
+    async def first():
+        for f in stub_frames:
+            yield f"data: {json.dumps(f, ensure_ascii=False)}\n\n"
+
+    out = []
+    async for line in runner._recover_interrupted_continuation(
+        first(), "u", "sys", [], use_anthropic=True, model_cfg=None, session_id=1,
+    ):
+        out.append(line)
+    return out, len(retries)
+
+
+async def test_continuation_recovery_refires_only_without_round_start(monkeypatch):
+    """续轮恢复只看 _new_round 之后有没有 round_start。
+
+    取消收尾必须发 round_start：发 _new_round 的话，收尾正文后紧接着结束流会被判成
+    「续轮中断」，凭空再发一次模型请求，用户在取消文案后又会看到一条自我解释。
+    """
+    pending = [{"type": "_new_round", "round_id": "round-1", "next_round": 2}]
+    _out, refires = await _recover_frames(pending, monkeypatch)
+    assert refires == 1, "只发 _new_round 不跟 round_start 时，恢复逻辑会重发模型请求"
+
+    settled = [
+        {"type": "_new_round", "round_id": "round-1", "next_round": 2},
+        {"type": "round_start", "round_id": "round-2"},
+    ]
+    out, refires = await _recover_frames(settled, monkeypatch)
+    assert refires == 0, "续轮已开始（round_start）就不该再发模型请求"
+    assert [json.loads(l[len("data: "):])["type"] for l in out] == ["_new_round", "round_start"]

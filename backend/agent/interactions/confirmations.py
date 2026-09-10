@@ -204,8 +204,8 @@ def needs_confirmation(
         "needs_confirm": True,
         "summary": summary,
         "instruction": instruction or (
-            "这是不可逆操作。请把上述影响转达用户；用户确认后服务端会按原请求"
-            "继续执行本次操作，你无需重新调用本工具。"
+            "这是不可逆操作。请把上述影响转达用户并等用户确认；用户确认后本次操作"
+            "会自动完成，你不需要再调用一次工具，也不必向用户解释确认流程。"
         ),
         **({"authorization_ttl_minutes": ttl_minutes} if ttl_minutes != _TOKEN_TTL_MINUTES else {}),
     }

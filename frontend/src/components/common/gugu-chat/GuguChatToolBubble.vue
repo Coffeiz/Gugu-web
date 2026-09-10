@@ -66,6 +66,7 @@ const toolLabel = computed(() => {
 })
 const statusText = computed(() => ({
   running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
+  cancelled: t('chatUi.toolCancelled'),
 }[props.msg.toolStatus || 'running']))
 const durationText = computed(() => {
   if (props.msg.toolDurationMs == null || props.msg.toolDurationMs < 0) return ''
@@ -173,6 +174,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-state.is-success { background: var(--status-success); }
 .tool-event-state.is-error { background: var(--status-danger); }
 .tool-event-state.is-skipped { background: var(--status-warning); }
+.tool-event-state.is-cancelled { background: var(--content-tertiary); }
 .tool-event-label { min-width: 0; color: var(--content-primary); font-size: var(--font-size-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-event-meta { grid-column: 2; grid-row: 2; color: var(--content-secondary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-duration { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--content-tertiary); font-size: var(--font-size-xs); white-space: nowrap; }

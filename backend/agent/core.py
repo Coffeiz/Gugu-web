@@ -407,6 +407,49 @@ def _user_cancel(answer) -> bool:
     )
 
 
+_CANCEL_CLOSE_TEXT = (
+    "好的，已取消这项操作，任务停在这里；前面完成的部分仍然有效，需要继续随时说一声。"
+)
+# 轮次限额弹窗（goal/budget）的取消文案：语义是「先停下攒额度」，不是「这次操作取消了」。
+_PAUSE_CLOSE_TEXT = "好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。"
+
+
+def _closing_frames(text: str, *, next_round: int) -> list[str]:
+    """用户取消后的收尾帧：先另起一轮，再发收尾正文。
+
+    前端按轮切分气泡（见 useChatStream.ts 的 finishRoundMessage），同一轮里的 token
+    会被追加到「工具调用前那条气泡」上——那样用户在底部看不到任何新内容，只看到
+    「取消没有下文」。取消是运行侧直接收尾、不走模型，所以必须自己补这次分帧。
+
+    这里必须发 ``round_start`` 而不是 ``_new_round``：后者在
+    ``_recover_interrupted_continuation`` 里表示「模型续轮还没开始」，收尾后紧接着
+    结束流会被判成续轮中断，于是凭空再发一次模型请求，用户会看到取消文案后面又
+    跟一条自我解释。``round_start`` 既同样切气泡，也让恢复逻辑认为续轮已开始。
+    """
+    return [
+        f"data: {json.dumps({'type': 'round_start', 'round_id': f'round-{next_round}', 'next_round': next_round}, ensure_ascii=False)}\n\n",
+        f"data: {json.dumps({'type': 'token', 'content': text}, ensure_ascii=False)}\n\n",
+    ]
+
+
+def _pending_tool_signal(status: str, result, pending: "_PendingInteraction", *, verify: bool) -> dict:
+    """交互中断（用户取消/超时）时，给工具气泡补的终态事件负载。
+
+    进交互门时运行侧已经发过一条 ``status="waiting"`` 的 tool_done，不补终态的话
+    气泡会永远停在「等待回复」——实时如此，刷新后也一样，因为展示时间线里存的
+    就是这个状态。
+    """
+    payload = {
+        "tool_call_id": pending.tool_call_id,
+        "name": pending.tool_name,
+        "status": status,
+        "verify": verify,
+    }
+    if result is not None:
+        payload["result"] = result
+    return payload
+
+
 class _PendingInteraction(NamedTuple):
     """等待用户交互时暂存的调用现场。
 
@@ -1035,7 +1078,10 @@ class LLMRunner:
                     if _user_cancel(answer):
                         # 用户在弹窗上主动点取消＝正常收尾：补一段收尾正文走正常
                         # 持久化+done，不留 SSE 黑洞，也不把终止当异常。
-                        yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                        for _frame in _closing_frames(
+                            _PAUSE_CLOSE_TEXT, next_round=round_number + 1,
+                        ):
+                            yield _frame
                         return
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
@@ -1097,7 +1143,10 @@ class LLMRunner:
                     )
                     if _user_cancel(answer):
                         # 用户主动点取消＝正常收尾：补收尾正文走正常持久化+done。
-                        yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                        for _frame in _closing_frames(
+                            _PAUSE_CLOSE_TEXT, next_round=round_number + 1,
+                        ):
+                            yield _frame
                         return
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
@@ -1821,22 +1870,32 @@ class LLMRunner:
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
                     if _user_cancel(answer):
-                        # 用户在交互卡上主动点「取消」＝正常收尾，不是异常终止。只把
-                        # 取消结果落进本轮工具往返，再补一段收尾正文走正常持久化+done。
-                        # 直接 _cancelled 的话会话会残留一个「等待确认」的工具往返
-                        # （下一次 run 回放会把已取消的操作读成还在等），SSE 也因缺
-                        # 终态事件挂到 keepalive 兜底。
-                        if _replace_tool_result(
+                        # 用户在交互卡上主动点「取消」＝正常收尾，不是异常终止。先把取消
+                        # 结果落进本轮工具往返（否则下一次 run 回放会把已取消的操作读成
+                        # 还在等），再补终态事件与收尾正文走正常持久化+done。
+                        _replace_tool_result(
                             messages,
                             tool_call_id=pending_tool_call_id,
                             result=answer,
+                        )
+                        yield stream_event("tool_done", **_pending_tool_signal(
+                            "cancelled", answer, pending_interaction, verify=verify_mode,
+                        ))
+                        for _frame in _closing_frames(
+                            _CANCEL_CLOSE_TEXT, next_round=round_number + 1,
                         ):
-                            yield f"data: {json.dumps({'type': 'token', 'content': '好的，已取消这项操作，任务停在这里；前面完成的部分仍然有效，需要继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                            yield _frame
                         return
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        yield stream_event("tool_done", **_pending_tool_signal(
+                            "cancelled", None, pending_interaction, verify=verify_mode,
+                        ))
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
+                        yield stream_event("tool_done", **_pending_tool_signal(
+                            "error", None, pending_interaction, verify=verify_mode,
+                        ))
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return
                     replay_ctx = pending_interaction.replay

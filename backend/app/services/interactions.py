@@ -448,10 +448,9 @@ async def consume_action(
                         "text": "确认已过期，请让助手重新发起操作。",
                     })
                 else:
-                    result["text"] = (
-                        f"{result_text}（用户已确认，授权 {ttl} 分钟内有效；"
-                        "本次操作会按原请求继续执行。）"
-                    )
+                    # 只回真实结果，不写「授权 N 分钟内有效」这类内部机制：模型会把
+                    # 工具回执里的机制说明复述给用户（"系统判定""没走确认门"）。
+                    result["text"] = result_text
         else:
             result.update({"status": "cancelled", "confirm": False})
     # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
