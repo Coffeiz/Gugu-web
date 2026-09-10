@@ -1,3 +1,5 @@
+import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -710,3 +712,63 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
     )
     await db.commit()
     assert summary.folders_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_create_file_advances_baseline_without_conflict(db, user_a, monkeypatch, tmp_path):
+    """工具新建文件必须推进同步基线：同路径历史 journal（已删除旧版）不能让
+    双向冲突检测把「工具单写两边」误判成两边都改过（咕咕天气产物误报案例）。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.statcache as statcache
+    from app.services.storage import LocalStorageBackend
+    from app.services.storage.file_service import FileService
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for mod in (reconcile, protocol, statcache, bindings):
+        monkeypatch.setattr(mod, "get_settings", lambda: settings)
+
+    storage = LocalStorageBackend(Path(tmp_path))
+    monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+
+    # 第一版：直接落盘 + 对账，建立基线 journal；再删掉，留下 DELETE journal。
+    (root / "doc.txt").write_text("old", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+    (root / "doc.txt").unlink()
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+        FileSyncBinding.workspace_id.is_(None),
+    ))).one()
+
+    # 工具新建同名文件：修复前 latest journal 是 DELETE（obs=None），
+    # row.updated 更新且盘上指纹 != None → 误报冲突。
+    svc = FileService(db)
+    await svc.create_file(
+        user_a.id, space="personal", project_id=None, folder_id=None, stage_name="",
+        mind_map_id=None, display_name="doc", ext="txt", mime_type="text/plain",
+        data=b"new-content",
+    )
+    await db.commit()
+
+    conflict_ids = await bindings._pending_conflicts(db, user_a.id, binding, root)
+    assert conflict_ids == ()
+    journal = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.source == "file_api",
+    ).order_by(FileSyncJournal.id.desc()))).first()
+    assert journal is not None
+    assert journal.observed_fingerprint == hashlib.sha256(b"new-content").hexdigest()
