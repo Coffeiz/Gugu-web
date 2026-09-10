@@ -579,7 +579,7 @@ class ShellSkill(BaseSkill):
             name="shell",
             label="执行 Shell 命令",
             description_short='在当前授权范围内受控执行 Shell；目录挂载和网络能力由后台策略决定',
-            description="在当前授权 Shell 范围执行一条受控命令；默认工作目录为 /workspace，其他目录挂载、网络和危险操作以服务端策略为准；网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络），不要根据默认配置或脚本错误臆测当前网络状态；危险命令需确认，不支持管道和重定向。",
+            description="在当前授权 Shell 范围执行一条受控命令；默认工作目录为 /workspace，其他目录挂载、网络和危险操作以服务端策略为准；网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络），不要根据默认配置或脚本错误臆测当前网络状态；支持 &&、||、;、| 等复合命令与管道；重定向（> >>）和命令替换属于危险操作，需用户确认；python/node/bash 等运行时默认禁止直接执行，需要运行脚本时改用 run_script 工具。",
             input_schema={
                 "type": "object",
                 "properties": {
