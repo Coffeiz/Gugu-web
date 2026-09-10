@@ -177,9 +177,15 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     from agent import commands as _commands
     command_name, _command_arg = _commands.parse(req.message)
     goal_start, goal_text = _commands.is_goal_start(req.message)
+    if command_name == "compact":
+        # /compact 在命令处理器里同步等摘要 LLM（可能分块滚动，数十秒），不发
+        # 事件前端就只能一直转「。。。」；复用自动压缩的同款状态提示。
+        yield f"data: {json.dumps({'type': '_context_compaction', 'phase': 'started', 'reason': 'manual_compact'})}\n\n"
     cmd_reply = await _commands.handle(
         user_id, req.message, session_id=session_id, locale=current_locale,
     )
+    if command_name == "compact":
+        yield f"data: {json.dumps({'type': '_context_compaction', 'phase': 'completed', 'reason': 'manual_compact'})}\n\n"
     if command_name in {"goal", "unlimited"}:
         async with _sess._SessionLocal() as state_db:
             state_session = await state_db.get(ConversationSession, session_id)
