@@ -149,7 +149,7 @@ async def resume_interaction(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """消费 ask_user 回答，唤醒仍在等待中的原 Agent Run。"""
+    """消费工具确认或 ask_user 选择，唤醒仍在等待中的原 Agent Run。"""
     try:
         result = await interactions.consume_action(
             db,
@@ -164,7 +164,15 @@ async def resume_interaction(
         raise HTTPException(409, str(exc))
     if not result.get("context", {}).get("tool_call_id"):
         raise HTTPException(409, "该交互不支持恢复原任务")
-    return {"ok": True, "session_id": result["session_id"]}
+    resolved = result.get("result") if isinstance(result.get("result"), dict) else {}
+    if resolved.get("status") == "error":
+        raise HTTPException(409, str(resolved.get("text") or "确认未生效，请重新发起操作。"))
+    return {
+        "ok": True,
+        "session_id": result["session_id"],
+        "status": resolved.get("status"),
+        "option_id": result.get("option_id"),
+    }
 
 
 @router.post("/interactions/{prompt_id}/resume-text")
@@ -351,6 +359,8 @@ async def resume_stream(
         session = await get_owned(db, ConversationSession, session_id, user_id)
     if not session:
         raise HTTPException(404, "对话不存在")
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=user_id)
     return StreamingResponse(
         web_adapter.resume(session_id),
         media_type="text/event-stream",
@@ -368,6 +378,8 @@ async def cancel_stream(
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
         raise HTTPException(404, "会话不存在")
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=current_user.id)
     active = await genstream.is_active(session_id)
     if active:
         await genstream.request_cancel(session_id)
@@ -617,6 +629,10 @@ async def get_session_messages(
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
+    # 刷新/重新进入会话时顺便收口 worker 重启留下的 running 状态，避免
+    # 前端后续发送继续被旧 run 的持久化状态阻塞。
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=current_user.id)
     limit = min(max(limit, 1), 200)
     base_filters = (
         ConversationMessage.session_id == session_id,
@@ -877,7 +893,7 @@ async def rename_session(
     """重命名会话标题，方便用户区分不同对话。
 
     P1-3：手动改名后置 ``title_locked=True``，永久禁止自动标题任务覆盖。后续
-    ``conversation.lifecycle.generate_title_bg`` 在写 title 前会查这个标志，是 True 直接跳过——手动改名
+    ``conversation.session_metadata.generate_title_bg`` 在写 title 前会查这个标志，是 True 直接跳过——手动改名
     一劳永逸地赢下与异步自动标题生成的竞态。
     """
     title = (body.title or "").strip()

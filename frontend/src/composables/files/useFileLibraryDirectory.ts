@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { filesApi, foldersApi, trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
+import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
@@ -22,6 +22,8 @@ interface DirectoryCacheStore {
   getProjectRootFiles: (projectId: number) => FileMeta[]
   getSubFolders: (folderId: number) => FolderMeta[]
   getFolderFiles: (folderId: number) => FileMeta[]
+  getWorkspaceFolders: (workspaceDirectoryId: number, parentId?: number | null) => FolderMeta[]
+  getWorkspaceFiles: (workspaceDirectoryId: number, folderId?: number | null) => FileMeta[]
 }
 
 interface DirectoryOptions {
@@ -163,26 +165,17 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
       const segment = currentSeg.value
       if (segment?.folderId == null) return
       if (segment.space === 'workspace' && segment.workspaceDirectoryId != null) {
-        // 守卫收窄不跨异步回调：先落常量，避免 null 流入 FolderCard（严格类型检查）
         const workspaceDirectoryId = segment.workspaceDirectoryId
-        loading.value = true
-        // 目录是异步加载的：先同步清空旧投影，避免上一目录的卡片在请求期间
-        // 残留一帧、随面板卸载整体跳位（进入工作区时闪一下的根因）。
-        contents.value = { folders: [], files: [] }
-        Promise.all([
-          filesApi.list({ space: 'workspace', folderId: segment.folderId, workspaceDirectoryId }),
-          foldersApi.list({ parentId: segment.folderId, workspaceDirectoryId }),
-        ]).then(([files, folders]) => {
-          contents.value = {
-            folders: folders.map(folder => ({
-              id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
-              displayName: folder.name, color: null, space: 'workspace',
-              workspaceDirectoryId, count: folder.fileCount ?? 0,
-            })),
-            files: files as FileMeta[],
-          }
-        }).catch(error => console.error('[Files] Workspace 文件夹加载失败:', error instanceof Error ? error.message : error))
-          .finally(() => { loading.value = false })
+        const folderId = segment.folderId
+        const folderItems = cacheStore.getWorkspaceFolders(workspaceDirectoryId, folderId).map(folder => ({
+          id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
+          displayName: folder.name, color: null, space: 'workspace',
+          workspaceDirectoryId, count: cacheStore.getWorkspaceFiles(workspaceDirectoryId, folder.id).length,
+        }))
+        contents.value = {
+          folders: folderItems,
+          files: cacheStore.getWorkspaceFiles(workspaceDirectoryId, folderId),
+        }
         return
       }
       const folderId = segment.folderId
@@ -198,23 +191,15 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     if (type === 'workspace') {
       const directoryId = currentSeg.value?.workspaceDirectoryId
       if (directoryId == null) return
-      loading.value = true
-      // 同上：先清空旧投影（根目录卡片），避免请求期间残留跳位。
-      contents.value = { folders: [], files: [] }
-      Promise.all([
-        filesApi.list({ space: 'workspace', workspaceDirectoryId: directoryId }),
-        foldersApi.list({ workspaceDirectoryId: directoryId }),
-      ]).then(([files, folders]) => {
-        contents.value = {
-          folders: folders.filter(folder => folder.parentId == null).map(folder => ({
-            id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
-            displayName: folder.name, color: null, space: 'workspace',
-            workspaceDirectoryId: directoryId, count: folder.fileCount ?? 0,
-          })),
-          files: files.filter(file => file.folderId == null) as FileMeta[],
-        }
-      }).catch(error => console.error('[Files] Workspace 加载失败:', error instanceof Error ? error.message : error))
-        .finally(() => { loading.value = false })
+      const folderItems = cacheStore.getWorkspaceFolders(directoryId).map(folder => ({
+        id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
+        displayName: folder.name, color: null, space: 'workspace',
+        workspaceDirectoryId: directoryId, count: cacheStore.getWorkspaceFiles(directoryId, folder.id).length,
+      }))
+      contents.value = {
+        folders: folderItems,
+        files: cacheStore.getWorkspaceFiles(directoryId),
+      }
     }
   }
 

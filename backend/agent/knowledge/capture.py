@@ -10,21 +10,34 @@ from .store import KnowledgeStore, source_from_input
 _SOURCE_TYPES = {"user", "file", "web", "derived", "conversation"}
 _CONFIDENCES = {"confirmed", "probable", "unverified"}
 _CAPTURE_MODES = {"explicit", "tool_result", "automatic"}
-_LIMITS = {"title": 80, "topic": 40, "content": 1000, "source_ref": 300, "source_label": 120}
+_LIMITS = {"title": 80, "topic": 40, "content": 3000, "source_ref": 300, "source_label": 120}
+_MAX_KEYWORDS = 10
+_MAX_KEYWORD = 40
 
 
 def normalize_capture(
     title: str, content: str, *, topic: str = "", source_type: str = "user",
     source_ref: str = "", source_label: str = "", confidence: str = "confirmed",
-    capture_mode: str = "explicit",
-) -> dict[str, str]:
+    capture_mode: str = "explicit", keywords: list[str] | None = None,
+) -> dict[str, Any]:
     """校验一次写入请求；超限直接拒绝，不静默截断。"""
+    normalized_keywords: list[str] = []
+    seen_keywords: set[str] = set()
+    for keyword in list(keywords or []):
+        normalized = " ".join(str(keyword or "").strip().split())
+        dedupe_key = normalized.casefold()
+        if normalized and len(normalized) <= _MAX_KEYWORD and dedupe_key not in seen_keywords:
+            normalized_keywords.append(normalized)
+            seen_keywords.add(dedupe_key)
+            if len(normalized_keywords) >= _MAX_KEYWORDS:
+                break
     values = {
         "title": str(title or "").strip(), "content": str(content or "").strip(),
         "topic": str(topic or "").strip(), "source_type": str(source_type or "user").strip().lower(),
         "source_ref": str(source_ref or "").strip(), "source_label": str(source_label or "").strip(),
         "confidence": str(confidence or "confirmed").strip().lower(),
         "capture_mode": str(capture_mode or "explicit").strip().lower(),
+        "keywords": normalized_keywords,
     }
     if not values["title"] or not values["content"]:
         raise ValueError("需要提供 title 和 content")
@@ -46,6 +59,7 @@ def build_entry(user_id: object, values: dict[str, Any]) -> KnowledgeEntry:
     source = source_from_input(values["source_type"], values["source_ref"], values["source_label"])
     return KnowledgeEntry.create(
         title=values["title"], content=values["content"], topic=values["topic"],
+        keywords=values.get("keywords", []),
         scope=KnowledgeScope(type="owner", owner_user_id=str(user_id)),
         source=source, confidence=values["confidence"],
     )

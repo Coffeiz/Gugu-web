@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import re
 import uuid
 from typing import Iterable
@@ -15,11 +16,14 @@ from .models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
 _PREFIX = "/.agent/knowledge/entries/"
 _MAX_TITLE = 80
 _MAX_TOPIC = 40
-_MAX_CONTENT = 1000
+_MAX_KEYWORDS = 10
+_MAX_KEYWORD = 40
+_MAX_CONTENT = 3000
 _MAX_SOURCE_LABEL = 120
 _MAX_SOURCE_REF = 300
 _MAX_HISTORY = 5
 _MAX_TOTAL_BYTES = 32 * 1024 * 1024
+KNOWLEDGE_DOCUMENT_LOAD_CONCURRENCY = 8
 
 
 def _prefix(user_id: object) -> str:
@@ -49,6 +53,7 @@ def _serialize(entry: KnowledgeEntry) -> bytes:
         "id": entry.id,
         "title": entry.title,
         "topic": entry.topic,
+        "keywords_json": entry.keywords,
         "scope_json": entry.scope.__dict__,
         "source_json": entry.source.to_dict(),
         "confidence": entry.confidence,
@@ -93,6 +98,7 @@ def _parse(raw: bytes) -> KnowledgeEntry:
         "id": fields["id"],
         "title": fields.get("title", ""),
         "topic": fields.get("topic", ""),
+        "keywords": obj("keywords_json", []),
         "content": content,
         "scope": obj("scope_json", {}),
         "source": obj("source_json", {}),
@@ -116,6 +122,17 @@ def _validate(entry: KnowledgeEntry) -> None:
     ):
         if len(value) > limit:
             raise ValueError(f"{name} 不能超过 {limit} 个字符")
+    normalized_keywords: list[str] = []
+    seen: set[str] = set()
+    for keyword in entry.keywords:
+        value = re.sub(r"\s+", " ", str(keyword or "").strip())
+        key = value.casefold()
+        if value and len(value) <= _MAX_KEYWORD and key not in seen:
+            normalized_keywords.append(value)
+            seen.add(key)
+            if len(normalized_keywords) >= _MAX_KEYWORDS:
+                break
+    entry.keywords = normalized_keywords
     if len(entry.history) > _MAX_HISTORY:
         entry.history = entry.history[-_MAX_HISTORY:]
 
@@ -130,19 +147,27 @@ class KnowledgeStore:
             keys = await storage.list_keys()
         except Exception:
             return []
-        entries: list[KnowledgeEntry] = []
-        for key in keys:
+        semaphore = asyncio.Semaphore(KNOWLEDGE_DOCUMENT_LOAD_CONCURRENCY)
+
+        async def load_one(key: str) -> KnowledgeEntry | None:
             if not key.startswith(_prefix(self.user_id)) or not key.endswith(".md"):
-                continue
-            try:
-                entry = _parse(await storage.get(key))
-            except (KeyError, TypeError, ValueError, OSError):
-                continue
+                return None
+            async with semaphore:
+                try:
+                    entry = _parse(await storage.get(key))
+                except (KeyError, TypeError, ValueError, OSError):
+                    return None
             if active_only and not entry.active:
-                continue
+                return None
             if scope is not None and not self.matches_scope(entry.scope, scope):
-                continue
-            entries.append(entry)
+                return None
+            return entry
+
+        loaded = await asyncio.gather(*(load_one(key) for key in keys))
+        entries: list[KnowledgeEntry] = []
+        for entry in loaded:
+            if entry is not None:
+                entries.append(entry)
         return sorted(entries, key=lambda item: (item.updated_at, item.id), reverse=True)
 
     async def save(self, entry: KnowledgeEntry) -> KnowledgeEntry:
@@ -155,8 +180,20 @@ class KnowledgeStore:
         current = current or next((item for item in candidates if item.source.type == entry.source.type), None)
         current = current or (candidates[0] if candidates else None)
         if current is not None:
-            if _norm(current.content) == _norm(entry.content):
+            if not entry.keywords:
+                entry.keywords = list(current.keywords)
+            same_content = _norm(current.content) == _norm(entry.content)
+            same_keywords = current.keywords == entry.keywords
+            if same_content and same_keywords:
                 return current
+            if same_content:
+                entry.id = current.id
+                entry.version = max(current.version + 1, entry.version)
+                entry.created_at = current.created_at
+                entry.history = list(current.history)
+                entry.parent_id = current.parent_id
+                await self._write_entry(entry)
+                return entry
             if entry.source.type != "user" and current.source.type != entry.source.type:
                 entry.confidence = "conflict"
                 entry.parent_id = current.id
@@ -165,6 +202,7 @@ class KnowledgeStore:
                     "version": current.version,
                     "title": current.title,
                     "content": current.content,
+                    "keywords": current.keywords,
                     "source": current.source.to_dict(),
                     "confidence": current.confidence,
                     "updated_at": current.updated_at,

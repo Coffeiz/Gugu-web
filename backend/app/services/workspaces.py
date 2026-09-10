@@ -561,6 +561,32 @@ async def resolve_workspace_target(
     return None
 
 
+async def resolve_default_workspace_target(db: AsyncSession, user_id) -> dict | None:
+    """解析用户默认 Workspace 的文件库落点，不改变会话绑定或数据库状态。
+
+    未绑定会话使用默认 Workspace 是运行时默认值，不等同于给会话授予
+    ``/personal`` 或 ``/project`` 的完整用户沙箱权限。OSS 模式没有本地
+    Workspace，因此始终返回 ``None``。
+    """
+    if not workspace_shell_supported():
+        return None
+    workspace = await db.scalar(
+        select(Workspace)
+        .join(WorkspaceDirectory, Workspace.directory_id == WorkspaceDirectory.id)
+        .where(
+            Workspace.user_id == user_id,
+            Workspace.enabled.is_(True),
+            WorkspaceDirectory.user_id == user_id,
+            WorkspaceDirectory.is_default.is_(True),
+            WorkspaceDirectory.deleted_at.is_(None),
+        )
+        .order_by(Workspace.id)
+    )
+    if workspace is None:
+        return None
+    return await resolve_workspace_target(db, user_id, workspace.id)
+
+
 async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -> Path | None:
     """把已归属的工作区解析为本地存储根下的真实目录。
 

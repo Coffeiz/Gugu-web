@@ -19,6 +19,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellSystemEnabled = ref(false)
   const shellDangerousEnabled = ref(false)
   const shellAutopilotEnabled = ref(false)
+  const unlimitedMode = ref(false)
   const showToolInteractions = ref(false)
   const toolInjectionMode = ref<'description' | 'full'>('full')
   const personalityPreference = ref('')
@@ -58,6 +59,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellSystemEnabled.value = (data as any).shellSystemEnabled ?? false
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
       shellAutopilotEnabled.value = (data as any).shellAutopilotEnabled ?? false
+      unlimitedMode.value = (data as any).unlimitedMode ?? false
       showToolInteractions.value = (data as any).showToolInteractions ?? false
       toolInjectionMode.value = (data as any).toolInjectionMode === 'description' ? 'description' : 'full'
       personalityPreference.value = data.personalityPreference ?? ''
@@ -132,6 +134,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
     await saveOptimistically('shellAutopilotEnabled', { shellAutopilotEnabled: v }, () => { shellAutopilotEnabled.value = v }, () => { shellAutopilotEnabled.value = previous })
   }
 
+  async function saveUnlimitedMode(v: boolean) {
+    const previous = unlimitedMode.value
+    await saveOptimistically('unlimitedMode', { unlimitedMode: v }, () => { unlimitedMode.value = v }, () => { unlimitedMode.value = previous })
+  }
+
   async function saveShowToolInteractions(v: boolean) {
     const previous = showToolInteractions.value
     await saveOptimistically('showToolInteractions', { showToolInteractions: v }, () => { showToolInteractions.value = v }, () => { showToolInteractions.value = previous })
@@ -187,7 +194,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, unlimitedMode, showToolInteractions, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveUnlimitedMode, saveShowToolInteractions, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

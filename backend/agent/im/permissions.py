@@ -28,11 +28,11 @@ class ImAccess:
     allowed_tool_names: Optional[List[str]] = None
 
 
-def filter_tool_names(profile_tool_names: List[str], allowed_tool_names: Optional[List[str]]) -> List[str]:
-    """按请求权限裁剪模型可见工具，保留旧有白名单顺序。"""
+def filter_tool_names(system_tool_names: List[str], allowed_tool_names: Optional[List[str]]) -> List[str]:
+    """按请求权限裁剪模型可见工具，保留白名单顺序。"""
     if allowed_tool_names is None:
-        return profile_tool_names
-    return [name for name in allowed_tool_names if name in profile_tool_names]
+        return system_tool_names
+    return [name for name in allowed_tool_names if name in system_tool_names]
 
 
 def can_use_tool(name: str, allowed_tool_names: Optional[List[str]]) -> bool:

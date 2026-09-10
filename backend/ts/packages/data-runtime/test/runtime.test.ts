@@ -99,6 +99,26 @@ test("Data Runtime 读取 Knowledge 和 Canvas 时保留 owner 边界", async ()
   assert.equal(canvas.records[0]?.title, "画布 · 便签");
 });
 
+test("Data Runtime conversation 读取相邻消息上下文但保留当前消息正文", async () => {
+  const runtime = new DataRuntime((() => Promise.resolve([{
+    message_id: 12,
+    session_id: 3,
+    role: "user",
+    content: "当前问题",
+    title: "测试会话",
+    summary: "",
+    created_at: "2026-09-09T00:00:00.000Z",
+    context_before: "assistant：上一条回答",
+    context_after: "assistant：下一条回答",
+  }])) as never);
+
+  const result = await runtime.loadConversationMessages({ ownerId: "owner-1" });
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0]?.content, "当前问题");
+  assert.equal(result.records[0]?.context_before, "assistant：上一条回答");
+  assert.equal(result.records[0]?.context_after, "assistant：下一条回答");
+});
+
 test("Data Runtime 的 Memory 读取只通过显式 StorageReader", async () => {
   const runtime = new DataRuntime((() => Promise.resolve([])) as never);
   const seen: string[] = [];

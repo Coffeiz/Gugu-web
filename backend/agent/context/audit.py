@@ -40,7 +40,7 @@ def _message_audit(message: Any) -> dict[str, Any]:
         for marker in (
             "[system-reminder]", "[群聊历史消息", "[当前群聊发言人", "[group-rag]",
             "[owner-rag]", "[group-member-rag]", "[knowledge-context]",
-            "## 当前群组记忆", "## 当前 IM 身份事实", "## 默认相处姿态", "当前时间：",
+            "## 当前群组记忆", "## 当前 IM 身份事实", "## 回应时请遵循以下规则", "当前时间：",
         ):
             if marker in value:
                 markers.append(marker)

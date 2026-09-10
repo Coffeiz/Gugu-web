@@ -47,6 +47,8 @@ from app.services.canvas.service import (
     update_canvas as update_canvas_service,
 )
 from app.services.canvas.layout_engine import canvas_layout
+from app.services.undo.service import UndoService
+from app.services.undo.mind import canvas_snapshot, item_snapshot, node_snapshot, relation_snapshot, state, ref
 from app.services.mind import (
     create_note as create_note_service,
     delete_note as delete_note_service,
@@ -109,6 +111,39 @@ async def _get_live_note(db: AsyncSession, nid: int, user_id) -> MindNode:
     return n
 
 
+def _undo_context(request: Request | None) -> str | None:
+    return request.headers.get("X-Undo-Context-ID") if request else None
+
+
+async def _canvas_undo_state(db: AsyncSession, user_id, canvas_id: int) -> dict:
+    """读取包含软删子项的完整画布快照；仅供 mind 领域适配器解释。"""
+    canvas = await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))  # orm-exempt: 画布读取待 Service 收口（1.1.2 遗留）
+    items = (await db.execute(select(MindCanvasItem).where(  # orm-exempt: 画布条目读取待 Service 收口（1.1.2 遗留）
+        MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
+    ))).scalars().all()
+    relations = (await db.execute(select(MindRelation).where(  # orm-exempt: 画布连线读取待 Service 收口（1.1.2 遗留）
+        MindRelation.canvas_id == canvas_id, MindRelation.user_id == user_id,
+    ))).scalars().all()
+    node_ids = {item.node_id for item in items}
+    nodes = (await db.execute(select(MindNode).where(  # orm-exempt: 画布节点读取待 Service 收口（1.1.2 遗留）
+        MindNode.id.in_(node_ids), MindNode.user_id == user_id,
+    ))).scalars().all() if node_ids else []
+    result = {}
+    if canvas is not None:
+        result[ref("canvas", canvas.id)] = canvas_snapshot(canvas)
+    result.update({ref("canvas_item", item.id): item_snapshot(item) for item in items})
+    result.update({ref("relation", relation.id): relation_snapshot(relation) for relation in relations})
+    result.update({ref("canvas_note", node.id): node_snapshot(node) for node in nodes if node.kind == "canvas_note"})
+    return state(result)
+
+
+async def _canvas_item_undo_state(db: AsyncSession, user_id, canvas_id: int) -> dict:
+    rows = (await db.execute(select(MindCanvasItem).where(  # orm-exempt: 画布条目读取待 Service 收口（1.1.2 遗留）
+        MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
+    ))).scalars().all()
+    return state({ref("canvas_item", item.id): item_snapshot(item) for item in rows})
+
+
 @router.get("/notes", response_model=list[MindNodeResponse])
 async def list_notes(
     limit: int = Query(50, ge=1, le=200),
@@ -135,8 +170,14 @@ async def create_note(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc))
-    await db.commit()
+    await db.flush()
     await db.refresh(n)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="create",
+        target_refs=[{"kind": "note", "id": n.id}], before_state=state({}),
+        after_state=state({ref("note", n.id): node_snapshot(n)}), base_versions={ref("note", n.id): {"version": 0}},
+    )
+    await db.commit()
     response = _to_resp(n)
     await _publish_mind(current_user.id, "create", n.id, "note", response, request)
     return response
@@ -151,6 +192,7 @@ async def update_note(
     db: AsyncSession = Depends(get_db),
 ):
     n = await _get_live_note(db, nid, current_user.id)
+    before_snapshot = node_snapshot(n)
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
     client_version = data.pop("version")
@@ -165,8 +207,14 @@ async def update_note(
     if not ok:
         await db.rollback()
         raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
-    await db.commit()
+    await db.flush()
     await db.refresh(n)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="update",
+        target_refs=[{"kind": "note", "id": n.id}], before_state=state({ref("note", n.id): before_snapshot}),
+        after_state=state({ref("note", n.id): node_snapshot(n)}), base_versions={ref("note", n.id): {"version": before_snapshot["version"]}},
+    )
+    await db.commit()
     response = _to_resp(n)
     await _publish_mind(current_user.id, "update", n.id, "note", response, request)
     return response
@@ -182,9 +230,17 @@ async def delete_note(
     """软删=墓碑：只写 deleted_at。节点行、它的画布项和关系全留着，图谱不静默断裂。
     真正清掉要等用户明确「清理」（那时才 DELETE 行，靠 CASCADE 连带清）。"""
     n = await _get_live_note(db, nid, current_user.id)
+    before_snapshot = node_snapshot(n)
     if not await delete_note_service(db, current_user.id, nid, n.version):
         await db.rollback()
         raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
+    await db.flush()
+    await db.refresh(n)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="delete",
+        target_refs=[{"kind": "note", "id": nid}], before_state=state({ref("note", nid): before_snapshot}),
+        after_state=state({ref("note", nid): node_snapshot(n)}), base_versions={ref("note", nid): {"version": before_snapshot["version"]}},
+    )
     await db.commit()
     await _publish_mind(current_user.id, "delete", nid, "note", {"id": nid}, request)
 
@@ -208,9 +264,9 @@ async def ref_suggest(
     if not q:
         # `@` 刚触发时展示用户最近使用/更新的对象，用户继续输入后再切换为搜索结果。
         recent: list[MindRefSuggestItem] = []
-        projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id).order_by(Project.updated_at.desc()).limit(limit))).all()
+        projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id, Project.deleted_at.is_(None)).order_by(Project.updated_at.desc()).limit(limit))).all()  # orm-exempt: 概览项目读取待 Service 收口（1.1.2 遗留）
         files = (await db.scalars(select(File).where(File.user_id == current_user.id, File.deleted_at.is_(None)).order_by(File.updated_at.desc()).limit(limit))).all()
-        events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id).order_by(CalendarEvent.date.desc()).limit(limit))).all()
+        events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id, CalendarEvent.deleted_at.is_(None)).order_by(CalendarEvent.date.desc()).limit(limit))).all()  # orm-exempt: 概览活动读取待 Service 收口（1.1.2 遗留）
         recent.extend(MindRefSuggestItem(type="project", id=x.id, label=x.name, subtitle=x.client) for x in projects)
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
@@ -287,6 +343,7 @@ async def _ref_data_by_node_id(
     events = (await db.execute(
         select(CalendarEvent).where(
             CalendarEvent.user_id == user_id,
+            CalendarEvent.deleted_at.is_(None),
             CalendarEvent.id.in_(event_ids),
         )
     )).scalars().all()
@@ -341,6 +398,12 @@ async def create_canvas(
     )
     if canvas is None:
         raise HTTPException(404, "项目不存在")
+    await db.flush()
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="create",
+        target_refs=[{"kind": "canvas", "id": canvas.id}], before_state=state({}),
+        after_state=state({ref("canvas", canvas.id): canvas_snapshot(canvas)}), base_versions={ref("canvas", canvas.id): {}},
+    )
     await db.commit()
     response = _canvas_resp(canvas)
     await _publish_mind(current_user.id, "create", canvas.id, "canvas", response, request)
@@ -356,6 +419,7 @@ async def update_canvas(
     db: AsyncSession = Depends(get_db),
 ):
     canvas = await _get_canvas(db, cid, current_user.id)
+    before_snapshot = canvas_snapshot(canvas)
     data = body.model_dump(exclude_unset=True, by_alias=False)
     fields = {}
     if "title" in data:
@@ -363,6 +427,13 @@ async def update_canvas(
     if "data" in data:
         fields["data_json"] = json.dumps(data["data"], ensure_ascii=False)
     canvas = await update_canvas_service(db, current_user.id, cid, fields)
+    await db.flush()
+    await db.refresh(canvas)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="update",
+        target_refs=[{"kind": "canvas", "id": cid}], before_state=state({ref("canvas", cid): before_snapshot}),
+        after_state=state({ref("canvas", cid): canvas_snapshot(canvas)}), base_versions={ref("canvas", cid): {}},
+    )
     await db.commit()
     response = _canvas_resp(canvas)
     await _publish_mind(current_user.id, "update", canvas.id, "canvas", response, request)
@@ -377,7 +448,14 @@ async def delete_canvas(
     db: AsyncSession = Depends(get_db),
 ):
     canvas = await _get_canvas(db, cid, current_user.id)
+    before_state = await _canvas_undo_state(db, current_user.id, cid)
     await delete_canvas_service(db, current_user.id, cid)
+    after_state = await _canvas_undo_state(db, current_user.id, cid)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="delete",
+        target_refs=[{"kind": key.split(":", 1)[0], "id": int(key.split(":", 1)[1])} for key in before_state["items"]],
+        before_state=before_state, after_state=after_state, base_versions={},
+    )
     await db.commit()
     await _publish_mind(current_user.id, "delete", cid, "canvas", {"id": cid}, request)
 
@@ -415,6 +493,13 @@ async def add_canvas_item(
     if not created:
         ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
         return _item_resp(item, node, ref_data)
+    await db.flush()
+    await db.refresh(item)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="create",
+        target_refs=[{"kind": "canvas_item", "id": item.id}], before_state=state({}),
+        after_state=state({ref("canvas_item", item.id): item_snapshot(item)}), base_versions={ref("canvas_item", item.id): {}},
+    )
     await db.commit()
     ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
     response = _item_resp(item, node, ref_data)
@@ -440,6 +525,15 @@ async def create_canvas_note(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+    await db.flush()
+    await db.refresh(node)
+    await db.refresh(item)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="create",
+        target_refs=[{"kind": "canvas_note", "id": node.id}, {"kind": "canvas_item", "id": item.id}], before_state=state({}),
+        after_state=state({ref("canvas_note", node.id): node_snapshot(node), ref("canvas_item", item.id): item_snapshot(item)}),
+        base_versions={ref("canvas_note", node.id): {"version": 0}, ref("canvas_item", item.id): {}},
+    )
     await db.commit()
     response = _item_resp(item, node)
     await _publish_mind(current_user.id, "create", item.id, "canvas_item", response, request)
@@ -458,6 +552,7 @@ async def update_canvas_note(
     if node is None:
         raise HTTPException(404, "画布便签不存在")
     data = body.model_dump(exclude_unset=True, by_alias=False)
+    before_snapshot = node_snapshot(node)
     client_version = data.pop("version")
     if "content_md" in data:
         data["content_plain"] = to_plain_text(data["content_md"])
@@ -469,6 +564,13 @@ async def update_canvas_note(
     if node is False:
         await db.rollback()
         raise HTTPException(409, "画布便签已被其他端修改，请刷新后重试")
+    await db.flush()
+    await db.refresh(node)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="update",
+        target_refs=[{"kind": "canvas_note", "id": node.id}], before_state=state({ref("canvas_note", node.id): before_snapshot}),
+        after_state=state({ref("canvas_note", node.id): node_snapshot(node)}), base_versions={ref("canvas_note", node.id): {"version": before_snapshot["version"]}},
+    )
     await db.commit()
     response = _to_resp(node)
     await _publish_mind(current_user.id, "update", node.id, "canvas_note", response, request)
@@ -486,13 +588,22 @@ async def bring_canvas_item_to_front(
 ):
     """在一个事务内置顶卡片，避免前端逐张更新 z 导致层级顺序被并发请求打乱。"""
     await _get_canvas(db, cid, current_user.id)
+    before_state = await _canvas_item_undo_state(db, current_user.id, cid)
     target = await bring_canvas_item_to_front_service(
         db, current_user.id, cid, iid, body.x, body.y,
     )
     if target is None:
         raise HTTPException(404, "画布贴纸不存在")
-    await db.commit()
+    await db.flush()
     target_item, target_node = target
+    await db.refresh(target_item)
+    after_state = await _canvas_item_undo_state(db, current_user.id, cid)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="update",
+        target_refs=[{"kind": "canvas_item", "id": int(key.split(":", 1)[1])} for key in before_state["items"]],
+        before_state=before_state, after_state=after_state, base_versions={},
+    )
+    await db.commit()
     ref_data = (await _ref_data_by_node_id(db, [target_node], current_user.id)).get(target_node.id)
     response = _item_resp(target_item, target_node, ref_data)
     await _publish_mind(current_user.id, "update", target_item.id, "canvas_item", response, request)
@@ -512,6 +623,7 @@ async def update_canvas_item(
     item = await get_canvas_item(db, current_user.id, cid, iid)
     if item is None or item.canvas_id != cid:
         raise HTTPException(404, "画布贴纸不存在")
+    before_snapshot = item_snapshot(item)
     node = await get_owned(db, MindNode, item.node_id, current_user.id)
     if node is None:
         raise HTTPException(404, "节点不存在")
@@ -526,6 +638,13 @@ async def update_canvas_item(
         data["data_json"] = json.dumps(data.pop("data"), ensure_ascii=False)
     item = await update_canvas_item_service(
         db, current_user.id, cid, iid, data,
+    )
+    await db.flush()
+    await db.refresh(item)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="update",
+        target_refs=[{"kind": "canvas_item", "id": item.id}], before_state=state({ref("canvas_item", item.id): before_snapshot}),
+        after_state=state({ref("canvas_item", item.id): item_snapshot(item)}), base_versions={ref("canvas_item", item.id): {}},
     )
     await db.commit()
     ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
@@ -546,7 +665,15 @@ async def remove_canvas_item(
     item = await get_canvas_item(db, current_user.id, cid, iid)
     if item is None or item.canvas_id != cid:
         raise HTTPException(404, "画布贴纸不存在")
+    before_snapshot = item_snapshot(item)
     await remove_canvas_item_service(db, current_user.id, cid, iid)
+    await db.refresh(item)
+    after_snapshot = item_snapshot(item)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="delete",
+        target_refs=[{"kind": "canvas_item", "id": iid}], before_state=state({ref("canvas_item", iid): before_snapshot}),
+        after_state=state({ref("canvas_item", iid): after_snapshot}), base_versions={ref("canvas_item", iid): {}},
+    )
     await db.commit()
     await _publish_mind(current_user.id, "delete", iid, "canvas_item", {"id": iid, "canvas_id": cid}, request)
 
@@ -569,6 +696,12 @@ async def create_relation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    relation_before = None
+    if body.canvas_id is not None:
+        existing_relations = await list_canvas_relations_for_canvas(db, current_user.id, body.canvas_id)
+        relation_before = next((candidate for candidate in existing_relations if {
+            candidate.src_node_id, candidate.dst_node_id,
+        } == {body.src_node_id, body.dst_node_id}), None)
     relation, error = await create_relation_service(
         db, current_user.id, body.src_node_id, body.dst_node_id,
         canvas_id=body.canvas_id,
@@ -578,6 +711,15 @@ async def create_relation(
         raise HTTPException(404, error)
     if error:
         raise HTTPException(422, error)
+    before_snapshot = relation_snapshot(relation) if relation_before is not None else None
+    await db.flush()
+    await db.refresh(relation)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="create",
+        target_refs=[{"kind": "relation", "id": relation.id}],
+        before_state=state({ref("relation", relation.id): before_snapshot}) if before_snapshot else state({}),
+        after_state=state({ref("relation", relation.id): relation_snapshot(relation)}), base_versions={ref("relation", relation.id): {}},
+    )
     await db.commit()
     response = _relation_resp(relation)
     await _publish_mind(current_user.id, "create", relation.id, "relation", response, request)
@@ -594,7 +736,15 @@ async def delete_relation(
     relation = await get_canvas_relation(db, current_user.id, rid)
     if relation is None or relation.canvas_id is not None:
         raise HTTPException(404, "关联不存在")
+    before_snapshot = relation_snapshot(relation)
     await disconnect_node_relation(db, current_user.id, rid)
+    await db.flush()
+    await db.refresh(relation)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="delete",
+        target_refs=[{"kind": "relation", "id": rid}], before_state=state({ref("relation", rid): before_snapshot}),
+        after_state=state({ref("relation", rid): relation_snapshot(relation)}), base_versions={ref("relation", rid): {}},
+    )
     await db.commit()
     await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid}, request)
 
@@ -612,7 +762,15 @@ async def delete_canvas_relation(
     relation = await get_canvas_relation(db, current_user.id, rid, cid)
     if relation is None:
         raise HTTPException(404, "画布关联不存在")
+    before_snapshot = relation_snapshot(relation)
     await disconnect_node_relation(db, current_user.id, rid, canvas_id=cid)
+    await db.refresh(relation)
+    after_snapshot = relation_snapshot(relation)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="delete",
+        target_refs=[{"kind": "relation", "id": rid}], before_state=state({ref("relation", rid): before_snapshot}),
+        after_state=state({ref("relation", rid): after_snapshot}), base_versions={ref("relation", rid): {}},
+    )
     await db.commit()
     await _publish_mind(current_user.id, "delete", rid, "relation", {"id": rid, "canvas_id": cid}, request)
 
@@ -634,7 +792,13 @@ async def create_ref_node(
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     if created:
-        await db.commit()
+        await db.flush()
         response = _to_resp(node)
+        await UndoService.record_forward(
+            db, user_id=current_user.id, context_id=_undo_context(request), resource="mind", action="create",
+            target_refs=[{"kind": "ref_node", "id": node.id}], before_state=state({}),
+            after_state=state({ref("ref_node", node.id): node_snapshot(node)}), base_versions={ref("ref_node", node.id): {"version": 0}},
+        )
+        await db.commit()
         await _publish_mind(current_user.id, "create", node.id, "ref_node", response, request)
     return _to_resp(node)

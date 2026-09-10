@@ -267,6 +267,7 @@ class FileOps:
         f.project_id = new_pid
         f.space = new_space
         f.workspace_directory_id = new_wid
+        f.version = int(f.version or 1) + 1
         f.updated_at = now_utc()
         await self.db.flush()
         return FileResult(f, project, folder_name or None)

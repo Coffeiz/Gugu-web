@@ -29,15 +29,14 @@ from agent.context.audit import session_scope, summary_change
 
 logger = logging.getLogger(__name__)
 
-# provider 预算阈值由 agent.core 读取，普通 run 收尾不推进 baseline。
-BASELINE_UPDATE_RATIO = 0.90
+# provider 实际上下文达到该比例后，由 agent.core 在当前 round 内触发压缩。
+AUTO_COMPACTION_RATIO = 0.90
 _RECENT_HISTORY_KEEP_CHARS = 20_000
 # 在模型预算允许时，优先从当前 session history 分支出一次摘要请求，保持稳定
 # provider 前缀；超出该上限才退回分块滚动，避免一次摘要输入超过 provider 硬限制。
 _COMPRESS_LOCK_TIMEOUT = 300
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
-_baseline_tasks: dict[int, asyncio.Task] = {}
 _SESSION_RUN_LOCK_TIMEOUT = 300
 _SESSION_RUN_HEARTBEAT_INTERVAL = 15
 _BASELINE_WAIT_INTERVAL = 0.1
@@ -66,6 +65,36 @@ async def _read_execution_state(session_id: int) -> str | None:
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id)
         return str(session.execution_state) if session is not None else None
+
+
+async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
+    """回收进程退出后遗留的 ``running`` 会话状态。
+
+    生成任务正常结束会在 genstream 和会话行上分别收口；worker 被杀死或重启
+    时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。只有在
+    Redis 明确可用且生成快照、owner、lease 全部消失时才允许修复，Redis 故障
+    或 baseline 压缩状态都不会被误判。
+    """
+    from agent.llm import genstream
+    from app.models import ConversationSession
+    import app.db.session as _sess
+
+    status = await genstream.probe(session_id)
+    if not status.get("redis_ok") or status.get("active"):
+        return False
+
+    async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id, with_for_update=True)
+        if session is None or session.execution_state != "running":
+            return False
+        if user_id is not None and session.user_id != user_id:
+            return False
+        session.execution_state = "idle"
+        session.active_run_id = None
+        await db.commit()
+
+    logger.warning("[compress_conv] session=%s 回收进程退出遗留的生成状态", session_id)
+    return True
 
 
 async def _wait_for_baseline_idle(session_id: int) -> None:
@@ -192,7 +221,11 @@ async def session_run_gate(request, run_id: str | None = None):
             async with _sess._SessionLocal() as db:
                 session = await db.get(ConversationSession, session_id, with_for_update=True)
                 if session is not None and session.active_run_id == run_id:
-                    session.execution_state = "idle"
+                    # baseline 更新任务可能已经把状态切到 updating；
+                    # 清理生成认领时不能覆盖这个状态，否则下一 run 会
+                    # 绕过等待直接读取旧 baseline。
+                    if session.execution_state != "baseline_updating":
+                        session.execution_state = "idle"
                     session.active_run_id = None
                     await db.commit()
         if lock_acquired:
@@ -257,7 +290,10 @@ async def session_run_gate(request, run_id: str | None = None):
                 async with _sess._SessionLocal() as db:
                     session = await db.get(ConversationSession, session_id, with_for_update=True)
                     if session is not None and session.active_run_id == run_id:
-                        session.execution_state = "idle"
+                        # 生成结束与 baseline 更新是两个生命周期；不能把后台
+                        # baseline_updating 覆盖成 idle，避免竞态放行下一 run。
+                        if session.execution_state != "baseline_updating":
+                            session.execution_state = "idle"
                         session.active_run_id = None
                         await db.commit()
         if lock_acquired and not session_lock_lost:
@@ -326,67 +362,6 @@ async def _set_baseline_state(session_id: int, state: str) -> None:
             return
         session.execution_state = state
         await db.commit()
-
-
-def schedule_baseline_update(
-    session_id: int,
-    user_id: int,
-    settings,
-    context_tokens: int,
-    *,
-    actual_usage_tokens: int = 0,
-    compaction_applied: bool = False,
-) -> None:
-    """仅在 provider usage 达到 90% 或本轮已压缩时推进 baseline。"""
-    if not session_id:
-        return
-    context_tokens = max(1, int(context_tokens or 0))
-    usage_ratio = max(0.0, float(actual_usage_tokens or 0) / context_tokens)
-    logger.info("[runtime-baseline-lifecycle] %s", {
-        "session_id": session_id,
-        "provider_usage_tokens": int(actual_usage_tokens or 0),
-        "model_context_tokens": context_tokens,
-        "usage_ratio": round(usage_ratio, 4),
-        "compaction_applied": bool(compaction_applied),
-        "phase": "schedule",
-    })
-    if not compaction_applied and usage_ratio < BASELINE_UPDATE_RATIO:
-        return
-    existing = _baseline_tasks.get(session_id)
-    if existing is not None and not existing.done():
-        return
-    task = asyncio.create_task(
-        compress_if_needed(session_id, user_id, settings, force=False),
-        name=f"context-baseline:{session_id}",
-    )
-    _baseline_tasks[session_id] = task
-
-    def _cleanup(done: asyncio.Task) -> None:
-        if _baseline_tasks.get(session_id) is done:
-            _baseline_tasks.pop(session_id, None)
-        try:
-            done.exception()
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception("[compress_conv] session=%s 后台 baseline 更新失败", session_id)
-
-    task.add_done_callback(_cleanup)
-
-
-async def wait_for_baseline_update(session_id: int | None) -> None:
-    """等待当前进程任务和持久化状态，避免下一 run 读取旧水位。"""
-    if not session_id:
-        return
-    task = _baseline_tasks.get(session_id)
-    if task is not None:
-        try:
-            await task
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("[compress_conv] session=%s 后台 baseline 更新失败", session_id)
-    await _wait_for_baseline_idle(session_id)
 
 
 async def _compress_if_needed_unlocked(

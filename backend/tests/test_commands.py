@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from agent import commands, router
 from agent.llm.genstream import immediate_stream
-from app.models import ConversationSession, Folder
+from app.models import ConversationSession, Folder, UserPreferences
 
 
 def test_router_recognizes_compact_without_starting_agent():
@@ -316,8 +316,30 @@ async def test_unlimited_mode_does_not_enable_goal_loop(db, user_a):
     await db.commit()
     await db.refresh(session)
 
-    assert "已开启无限工具调用模式" in await commands.handle(
+    assert "已开启用户级无限工具调用模式" in await commands.handle(
         user_a.id, "/unlimited", session_id=session.id,
     )
     await db.refresh(session)
-    assert session.session_context == {"unlimited_mode": True}
+    assert session.session_context is None
+    from sqlalchemy import select
+    prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_a.id))
+    assert prefs is not None and prefs.data["unlimited_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_unlimited_mode_is_shared_by_user_not_session(db, user_a, user_b):
+    first = ConversationSession(user_id=user_a.id, title="第一会话", source="web")
+    second = ConversationSession(user_id=user_a.id, title="第二会话", source="web")
+    other = ConversationSession(user_id=user_b.id, title="其他用户会话", source="web")
+    db.add_all([first, second, other])
+    await db.commit()
+    await db.refresh(first)
+    await db.refresh(second)
+    await db.refresh(other)
+
+    await commands.handle(user_a.id, "/unlimited on", session_id=first.id)
+    assert "已开启" in await commands.handle(user_a.id, "/unlimited status", session_id=second.id)
+    assert "未开启" in await commands.handle(user_b.id, "/unlimited status", session_id=other.id)
+
+    await commands.handle(user_a.id, "/unlimited off", session_id=second.id)
+    assert "未开启" in await commands.handle(user_a.id, "/unlimited status", session_id=first.id)

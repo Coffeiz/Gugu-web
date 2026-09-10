@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
 from jose import JWTError, jwt
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import events
@@ -47,6 +48,8 @@ from app.services.files.previews import (
     read_file_thumbnail,
     read_pdf_preview,
 )
+from app.services.undo import UndoService
+from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -201,6 +204,7 @@ async def upload_file(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     # 直接调用路由函数（测试/内部适配器）时，FastAPI 的 Form 默认值会保留为
     # ``Form(None)``；真实 HTTP 请求则已经完成类型转换。统一在 API 边界解包，
@@ -223,6 +227,13 @@ async def upload_file(
     img_width, img_height = read_image_dimensions(data, mime_type)
 
     _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    before_file = None
+    before_content = None
+    if on_conflict == "overwrite" and overwrite_file_id is not None:
+        before_file = await get_owned(db, File, overwrite_file_id, current_user.id)
+        if before_file is not None:
+            before_content = await get_storage().get(before_file.storage_key)
+    before_snapshot = file_snapshot(before_file) if before_file else None
 
     # 语义核心（key/配额/覆盖/落库）交 FileService；端点保留传输面：图片尺寸解出、缩略图调度、
     # 缓存清理、响应 shape、事务与事件。
@@ -237,6 +248,19 @@ async def upload_file(
     f = result.file
     if result.was_overwrite:
         delete_thumb_cache(f.id)   # 旧缩略图必须清，否则还显示覆盖前的图
+
+    operation = await UndoService.record_forward(
+        db, user_id=current_user.id,
+        context_id=request.headers.get("X-Undo-Context-ID") if request else None, resource="files",
+        action="overwrite" if result.was_overwrite else "create",
+        target_refs=[{"kind": "file", "id": f.id}],
+        before_state=operation_state({ref_for("file", f.id): before_snapshot} if before_snapshot else {}),
+        after_state=operation_state({ref_for("file", f.id): file_snapshot(f)}),
+        base_versions={ref_for("file", f.id): {"version": before_snapshot.get("version", 0) if before_snapshot else 0}},
+    )
+    if operation and result.was_overwrite and before_content is not None:
+        await save_content_artifacts(operation, get_storage(), current_user.id,
+                                     ref_for("file", f.id), before_content, data)
 
     await db.commit()
     await db.refresh(f)
@@ -331,6 +355,7 @@ async def confirm_upload(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。
 
@@ -338,6 +363,13 @@ async def confirm_upload(
     校验通过后会把它 copy 到最终 key，真实内容全程不经过未经校验的直接覆盖。
     """
     storage = get_storage()
+    before_file = None
+    before_content = None
+    if body.overwrite_file_id is not None:
+        before_file = await get_owned(db, File, body.overwrite_file_id, current_user.id)
+        if before_file is not None:
+            before_content = await storage.get(before_file.storage_key)
+    before_snapshot = file_snapshot(before_file) if before_file else None
     try:
         object_info = await validate_oss_upload(storage, current_user.id, body.storage_key)
         result = await confirm_oss_upload(
@@ -363,13 +395,26 @@ async def confirm_upload(
 
     if result.overwritten_file_id is not None:
         delete_thumb_cache(result.overwritten_file_id)
+    response = to_related_file_response(result.file, result.project, result.folder_name)
+    operation = await UndoService.record_forward(
+        db, user_id=current_user.id,
+        context_id=request.headers.get("X-Undo-Context-ID") if request else None, resource="files",
+        action="overwrite" if result.overwritten_file_id is not None else "create",
+        target_refs=[{"kind": "file", "id": result.file.id}],
+        before_state=operation_state({ref_for("file", result.file.id): before_snapshot} if before_snapshot else {}),
+        after_state=operation_state({ref_for("file", result.file.id): file_snapshot(result.file)}),
+        base_versions={ref_for("file", result.file.id): {"version": before_snapshot.get("version", 0) if before_snapshot else 0}},
+    )
+    if operation and result.overwritten_file_id is not None and before_content is not None:
+        await save_content_artifacts(operation, storage, current_user.id,
+                                     ref_for("file", result.file.id), before_content,
+                                     await storage.get(result.file.storage_key))
     await db.commit()
     await db.refresh(result.file)
     # 旧物理对象只在新 key 已经落库并提交成功后才删——confirm 中途失败时，旧文件
     # 完全没被碰过（copy 是 rename_file 里那一步，早于这里），不会有数据丢失窗口。
     if result.old_storage_key is not None:
         await storage.delete(result.old_storage_key)
-    response = to_related_file_response(result.file, result.project, result.folder_name)
     await events.publish(
         current_user.id, "files", origin=origin,
         operation="update" if result.overwritten_file_id is not None else "create",
@@ -389,9 +434,12 @@ async def update_file(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     # folder_id/project_id 只在显式出现（含 null）时才更新——纯改名 patch 不带这两字段，
     # 不能被当成「移到个人空间」。key 重算/物理搬迁/落库交 FileService。
+    previous = await get_owned(db, File, fid, current_user.id)
+    before = file_snapshot(previous) if previous else None
     result = await FileService(db).update_file(
         current_user.id, fid,
         display_name=body.display_name, stage_name=body.stage_name,
@@ -400,6 +448,14 @@ async def update_file(
         project_set='project_id' in body.model_fields_set,
         workspace_directory_id=body.workspace_directory_id,
         workspace_directory_set='workspace_directory_id' in body.model_fields_set,
+    )
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="update",
+        target_refs=[{"kind": "file", "id": result.file.id}],
+        before_state=operation_state({ref_for("file", result.file.id): before or {}}),
+        after_state=operation_state({ref_for("file", result.file.id): file_snapshot(result.file)}),
+        base_versions={ref_for("file", result.file.id): {"version": before.get("version", 0) if before else 0}},
     )
     await db.commit()
     await db.refresh(result.file)
@@ -421,8 +477,12 @@ async def update_file_content(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """改文本文件正文（md 预览里点任务勾选框等场景，前端直接存）。仅文本类、限 1MB。"""
+    previous = await get_owned(db, File, fid, current_user.id)
+    before = file_snapshot(previous) if previous else None
+    before_content = await get_storage().get(previous.storage_key) if previous else None
     try:
         f = await update_file_content_service(
             db, get_storage(), current_user.id, fid, body.content
@@ -431,6 +491,17 @@ async def update_file_content(
         raise HTTPException(error.status_code, error.detail) from error
     if f is None:
         raise HTTPException(404, "文件不存在")
+    operation = await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="update",
+        target_refs=[{"kind": "file", "id": f.id}],
+        before_state=operation_state({ref_for("file", f.id): before or {}}),
+        after_state=operation_state({ref_for("file", f.id): file_snapshot(f)}),
+        base_versions={ref_for("file", f.id): {"version": before.get("version", 0) if before else 0}},
+    )
+    if operation and before_content is not None:
+        await save_content_artifacts(operation, get_storage(), current_user.id,
+                                     ref_for("file", f.id), before_content, body.content.encode("utf-8"))
     await db.commit()
     await db.refresh(f)
     response = to_file_response(f)
@@ -448,6 +519,7 @@ async def copy_file(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     # 目标空间由调用方明确指定的 project_id 决定，不从源文件继承——否则「项目文件复制到个人
     # 文件库」这类跨空间粘贴会静默失败，复制出的文件还留在原项目里（两处前端调用都会显式带上
@@ -456,6 +528,14 @@ async def copy_file(
     current_user.id, fid, folder_id=body.folder_id, project_id=body.project_id,
         workspace_directory_id=body.workspace_directory_id,
         on_conflict=body.on_conflict, overwrite_file_id=body.overwrite_file_id)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="create",
+        target_refs=[{"kind": "file", "id": result.file.id}],
+        before_state=operation_state({}),
+        after_state=operation_state({ref_for("file", result.file.id): file_snapshot(result.file)}),
+        base_versions={ref_for("file", result.file.id): {"version": 0}},
+    )
     await db.commit()
     await db.refresh(result.file)
     response = to_related_file_response(result.file, result.project, result.folder_name)
@@ -473,11 +553,23 @@ async def delete_file(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
+    previous = await get_owned(db, File, fid, current_user.id)
+    before = file_snapshot(previous) if previous else None
     moved = await delete_file_service(
         db, get_storage(), current_user.id, fid, now_utc())
     if not moved:
         raise HTTPException(404, "文件不存在")
+    current = await get_owned(db, File, fid, current_user.id)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="delete",
+        target_refs=[{"kind": "file", "id": fid}],
+        before_state=operation_state({ref_for("file", fid): before or {}}),
+        after_state=operation_state({ref_for("file", fid): file_snapshot(current) if current else {}}),
+        base_versions={ref_for("file", fid): {"version": before.get("version", 0) if before else 0}},
+    )
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,
                          file_op={"op": "remove", "kind": "file", "id": fid})
@@ -491,11 +583,23 @@ async def batch_delete_files(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     if not body.ids:
         return
+    previous_rows = (await db.execute(select(File).where(File.id.in_(body.ids), File.user_id == current_user.id, File.deleted_at.is_(None)))).scalars().all()  # orm-exempt: 批量操作前行读取待 files Service 收口（1.1.2 遗留）
+    before = {ref_for("file", f.id): file_snapshot(f) for f in previous_rows}
     file_ids = await delete_files(
         db, get_storage(), current_user.id, body.ids, now_utc())
+    current_rows = (await db.execute(select(File).where(File.id.in_(file_ids), File.user_id == current_user.id))).scalars().all()  # orm-exempt: 批量操作后行读取待 files Service 收口（1.1.2 遗留）
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="delete",
+        target_refs=[{"kind": "file", "id": fid} for fid in file_ids],
+        before_state=operation_state(before),
+        after_state=operation_state({ref_for("file", f.id): file_snapshot(f) for f in current_rows}),
+        base_versions={ref: {"version": snapshot.get("version", 0)} for ref, snapshot in before.items()},
+    )
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin,
                          file_op={"op": "remove", "kind": "file", "ids": file_ids})

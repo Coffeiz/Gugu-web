@@ -33,6 +33,71 @@ async def test_ack_qq_interaction_without_id_is_noop(monkeypatch):
     assert await qq._ack_qq_interaction("bot-1", "") is False
 
 
+async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeypatch):
+    """Web 端先消费后，群里残留按钮再次点击不能把过期提示发到私聊。"""
+    import app.db.session as db_session
+    from app.services import interactions
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _SessionFactory:
+        def __call__(self):
+            return _SessionContext()
+
+    async def stale_action(*_args, **_kwargs):
+        raise ValueError("动作无效或已使用")
+
+    protocol_acks = []
+    user_replies = []
+
+    async def fake_protocol_ack(channel_id, interaction_id, *, code=0):
+        protocol_acks.append((channel_id, interaction_id, code))
+        return True
+
+    async def fake_qq_ack(channel_id, chat_type, target_id, text, msg_id):
+        user_replies.append((channel_id, chat_type, target_id, text, msg_id))
+
+    monkeypatch.setattr(db_session, "_SessionLocal", _SessionFactory())
+    monkeypatch.setattr(interactions, "consume_action", stale_action)
+    monkeypatch.setattr(qq, "_ack_qq_interaction", fake_protocol_ack)
+    monkeypatch.setattr(qq, "_qq_ack", fake_qq_ack)
+
+    await qq._handle_qq_interaction({
+        "id": "interaction-1",
+        "user_openid": "user-1",
+        "group_openid": "group-1",
+        "data": {"action_data": "17:opaque-token"},
+    }, "bot-1", "019eec39-4f5e-73cf-817d-60c0e0b640a8")
+
+    assert protocol_acks == [("bot-1", "interaction-1", 3)]
+    assert user_replies == [(
+        "bot-1", "group", "group-1", "这个操作已过期或已经处理过了。", None,
+    )]
+
+
+def test_confirmation_fallback_announces_paused_task():
+    from agent.interactions.qq import format_text_fallback
+
+    text = format_text_fallback({
+        "title": "任务已暂停 · 发送邮件",
+        "body": "将发送邮件至 c****t@example.com。\n\n确认后将继续执行当前任务。",
+        "task_paused": True,
+        "options": [
+            {"id": "confirm", "label": "确认", "token": "opaque-token"},
+            {"id": "cancel", "label": "取消", "token": "opaque-token-2"},
+        ],
+    })
+
+    assert text.startswith("⏸️ 任务已暂停，等待确认。")
+    assert "确认后将继续执行当前任务" in text
+    assert "opaque-token" not in text
+
+
 async def _fake_next_seq(msg_id):
     return 1
 
@@ -277,3 +342,32 @@ async def test_send_group_file_uses_group_media_endpoints(monkeypatch):
     assert calls[0][1]["file_data"] == "aW1hZ2UtYnl0ZXM="
     assert calls[1][0] == "/v2/groups/group-1/messages"
     assert calls[1][1]["media"] == {"file_info": "group-media-token"}
+
+
+async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((path, json_body))
+        if path.endswith("/files"):
+            return {"file_info": "group-media-token"}
+        if json_body.get("msg_id"):
+            raise qq.QQAPIError(
+                "POST", path, 400,
+                {"code": 40034031, "message": "msgid已经过期,不能回复"},
+            )
+        return {}
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    ok = await qq.send_file(
+        "group-1", b"document-bytes", "report", "pdf", "bot-1", "expired-msg", group=True,
+    )
+
+    assert ok is True
+    assert len(calls) == 3
+    assert calls[0][0] == "/v2/groups/group-1/files"
+    assert calls[1][1]["msg_id"] == "expired-msg"
+    assert "msg_id" not in calls[2][1]
+    assert calls[2][1]["media"] == {"file_info": "group-media-token"}

@@ -509,6 +509,7 @@ class Project(Base):
     done_at:       Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     created_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc)
     updated_at:    Mapped[datetime]      = mapped_column(UtcDateTime,    default=now_utc, onupdate=now_utc)
+    deleted_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner:   Mapped["User"]          = relationship(back_populates="projects")
     files:   Mapped[list["File"]]    = relationship(back_populates="project", lazy="select")
@@ -564,6 +565,34 @@ class File(Base):
     workspace_directory: Mapped[Optional["WorkspaceDirectory"]] = relationship(back_populates="files")
 
 
+class UndoOperation(Base):
+    """Web 可撤销操作索引；领域快照只由对应适配器解释，不执行任意 JSON 回写。"""
+
+    __tablename__ = "undo_operations"
+    __table_args__ = (
+        Index("ix_undo_operations_context_status_created", "user_id", "undo_context_id", "status", "created_at"),
+        Index("ix_undo_operations_group", "user_id", "group_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    undo_context_id: Mapped[str] = mapped_column(String(128), index=True)
+    group_id: Mapped[str] = mapped_column(String(80), index=True)
+    resource: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(32))
+    target_refs: Mapped[list] = mapped_column(JSON, default=list)
+    before_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    after_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    base_versions: Mapped[dict] = mapped_column(JSON, default=dict)
+    artifact_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor_type: Mapped[str] = mapped_column(String(32), default="web", server_default="web", index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", server_default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    undone_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, default=None)
+
+
 # ── Folder（项目内用户文件夹）────────────────────────────────────────────────
 
 class Folder(Base):
@@ -616,6 +645,7 @@ class MindMap(Base):
     data_json:  Mapped[str]           = mapped_column(Text, default="{}")
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"]       = relationship(back_populates="mind_maps")
     files: Mapped[list["File"]] = relationship(back_populates="mind_map")
@@ -706,6 +736,7 @@ class MindCanvasItem(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"] = relationship(back_populates="mind_canvas_items")
 
@@ -740,6 +771,7 @@ class MindRelation(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"] = relationship(back_populates="mind_relations")
 
@@ -775,6 +807,7 @@ class CalendarEvent(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version:     Mapped[int]           = mapped_column(Integer, default=1)
     created_at:  Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
+    deleted_at:  Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None, index=True)
 
     owner: Mapped["User"] = relationship(back_populates="events")
 
@@ -806,7 +839,7 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     # P1-3：手动重命名后置 True，永久禁止自动标题覆盖（与 generated_at 配合，
     # 任何后续自动标题任务直接跳过本 session）。rename_session API 写入 True，
-    # conversation.lifecycle.generate_title_bg 在改 title 前查并跳过。
+    # conversation.session_metadata.generate_title_bg 在改 title 前查并跳过。
     title_locked: Mapped[bool]   = mapped_column(Boolean, default=False)
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
@@ -1200,6 +1233,45 @@ class KnowledgeIndexEntry(Base):
     )
 
 
+class RagIndexJob(Base):
+    """RAG 索引更新的持久任务状态。
+
+    业务表是事实来源，事件只负责触发重建。这里按用户和来源合并最新事件，
+    让索引失败后可以跨进程、跨重启继续退避重试，而不会为同一来源堆积任务。
+    """
+
+    __tablename__ = "rag_index_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(32))
+    source_id: Mapped[str] = mapped_column(String(255), default="")
+    version: Mapped[str] = mapped_column(String(64), default="")
+    operation: Mapped[str] = mapped_column(String(24), default="upsert")
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    completed_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        UtcDateTime, nullable=True, index=True
+    )
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_succeeded_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source_type", name="uq_rag_index_job_user_source",
+        ),
+        Index("ix_rag_index_jobs_due", "status", "next_attempt_at"),
+    )
+
+
 class MemoryScopeTombstone(Base):
     """IM 记忆 scope 的删除屏障；清理完成后才删除记录。"""
     __tablename__ = "memory_scope_tombstones"
@@ -1240,6 +1312,7 @@ class AgentUsage(Base):
     provider:   Mapped[str]           = mapped_column(String(50))
     is_byok:    Mapped[bool]           = mapped_column(Boolean, default=False, nullable=False, index=True)
     tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
+    scenario:   Mapped[str]            = mapped_column(String(32), default="chat", nullable=False, server_default="chat")
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
 
 
@@ -1441,6 +1514,8 @@ class ScheduledTask(Base):
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     # 用户创建任务时明确授权的自动工具；当前仅允许 send_email，空值表示不自动授权。
     authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+    # 定时任务直投邮件时附带的文件库文件；只保存 file_id，不保存宿主机路径。
+    email_attachment_file_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     # 定时任务可执行的唯一脚本；为空时不暴露 run_script。
     script_authorization: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)

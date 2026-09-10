@@ -1,4 +1,5 @@
 """统一 run 收尾契约的回归测试。"""
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent.context import run_finalize
 from agent.context.assembly import PromptMessages, assemble_turn
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from agent.context.history import build_history_parts
+from agent.context.session_history import load_session_history
 from app.models import ConversationBatch, ConversationMessage, ConversationSession
 
 
@@ -69,6 +72,7 @@ async def test_insert_or_get_batch_reuses_existing_unique_row(db, user_a):
 async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch):
     db = _Db()
     trim_calls = []
+    baseline_calls = []
 
     async def cap_usage(*args):
         return 12, 3
@@ -76,9 +80,13 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     async def trim(session_id):
         trim_calls.append(session_id)
 
+    async def persist_baseline(*args, **kwargs):
+        baseline_calls.append((args, kwargs))
+        return True
+
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
-    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", persist_baseline)
     monkeypatch.setattr(
         "agent.context.assembly.newly_appended",
         lambda messages, initial_len: messages[initial_len:],
@@ -106,12 +114,14 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         cache_read=4,
         cache_write=5,
         tools_used=["test_tool"],
+        compaction_applied=True,
     )
 
     assert result.tokens_in == 12
     assert result.tokens_out == 3
     assert len(db.items) == 4  # RAG、tool turn、assistant、usage
     assert trim_calls == [7]
+    assert baseline_calls == [((7, "user-test", settings), {"force": False})]
 
 
 @pytest.mark.asyncio
@@ -126,7 +136,6 @@ async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypa
         return None
 
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
-    monkeypatch.setattr("agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
 
     settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
     model = SimpleNamespace(model="user-model", provider="user-provider", is_byok=True, context_tokens=80000)
@@ -173,8 +182,6 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
 
     monkeypatch.setattr(
         "app.services.conversation_retention.trim_session_messages", _trim)
-    monkeypatch.setattr(
-        "agent.context.compress_conv.schedule_baseline_update", lambda *args, **kwargs: None)
     # 模拟 resolve_run_config_for_user：model_copy(update=...) 注入 is_byok（llm_select.py）
     base = AIPresetItem(model="MiniMax-M3", provider="minimax", context_tokens=80000)
     model = base.model_copy(update={"api_key": "sk-test", "is_byok": True})
@@ -229,10 +236,6 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
         "app.services.conversation_retention.trim_session_messages",
         lambda *_args, **_kwargs: _async_none(),
     )
-    monkeypatch.setattr(
-        "agent.context.compress_conv.schedule_baseline_update",
-        lambda *_args, **_kwargs: None,
-    )
 
     import app.db.session as db_session
 
@@ -268,6 +271,94 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
     assert len(batches) == 1
     assert len(messages) == 1
     assert messages[0].canonical_batch_id == batches[0].id
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_persists_rag_before_user_and_restores_provider_history(
+    db, user_a, monkeypatch,
+):
+    """RAG 落库顺序必须让下一轮恢复与本轮 provider 投影完全一致。"""
+    session = ConversationSession(user_id=user_a.id, title="RAG 顺序")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    sent_at = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+    user_message = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="当前问题",
+        content_json=[{"type": "text", "text": "当前问题"}],
+        sent_at=sent_at,
+        created_at=sent_at,
+    )
+    db.add(user_message)
+    await db.commit()
+    await db.refresh(user_message)
+
+    async def fake_record_usage(*args, **kwargs):
+        from agent.usage import UsageResult
+
+        return UsageResult()
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr(
+        "app.services.conversation_retention.trim_session_messages",
+        lambda *_args, **_kwargs: _async_none(),
+    )
+
+    session_factory = async_sessionmaker(
+        db.bind, class_=AsyncSession, expire_on_commit=False,
+    )
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    model = SimpleNamespace(model="test-model", provider="test", context_tokens=80000)
+    rag_block = {
+        "type": "knowledge-context",
+        "scope": "owner-rag",
+        "text": "[owner-rag]\n参考资料\n[/owner-rag]",
+    }
+
+    await run_finalize.finalize_run(
+        session_factory=session_factory,
+        session_id=session.id,
+        user_id=str(user_a.id),
+        settings=settings,
+        model_cfg=model,
+        rag_context={"blocks": [rag_block]},
+        messages=[],
+        initial_len=0,
+        text="",
+        files=[],
+        tokens_in=0,
+        tokens_out=0,
+        user_message_id=user_message.id,
+    )
+
+    async with session_factory() as check_db:
+        rows = await load_session_history(check_db, session.id, max_messages=20)
+
+    # 数据库按 created_at/id 倒序取窗口后反转；RAG 仍应出现在问题之前。
+    assert [row.content_json for row in rows[:2]] == [
+        [rag_block],
+        [{"type": "text", "text": "当前问题"}],
+    ]
+
+    for use_anthropic in (True, False):
+        restored = build_history_parts(
+            rows,
+            SimpleNamespace(source="web", chat_id=None),
+            use_anthropic=use_anthropic,
+            user_tz=timezone.utc,
+        )
+        assert restored[0]["content"] == [
+            {"type": "knowledge-context", "scope": "owner-rag", "text": rag_block["text"]},
+        ]
+        assert restored[1]["content"][0]["type"] == "time-context"
+        assert restored[2]["role"] == "user"
+        if use_anthropic:
+            assert restored[2]["content"] == [{"type": "text", "text": "当前问题"}]
+        else:
+            assert restored[2]["content"] == "当前问题"
 
 
 async def _async_none():

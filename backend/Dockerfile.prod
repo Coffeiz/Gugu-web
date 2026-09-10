@@ -48,6 +48,14 @@ ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 # LibreOffice 用于 doc/docx/ppt 转 PDF 预览，默认保留；不需要文档预览时可关闭，
 # 以换取约 500MB 的镜像体积收益：--build-arg GUGU_INSTALL_LIBREOFFICE=false。
 ARG GUGU_INSTALL_LIBREOFFICE=true
+# CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁：
+# 该库经 ffmpeg/libreoffice 依赖链进入镜像；默认 APT_MIRROR（TUNA）对
+# trixie-security 的同步可能滞后，apt 只能装到带漏洞的 1.26.2-1+deb13u1，
+# trivy 门会挂（2026-09-09 docker-release 连败根因）。这里在 apt 安装后绕过
+# 镜像源、直接从 Debian security pool 拉修复版安装，不依赖索引新鲜度。
+# 镜像源自身同步到 >= 修复版后可删除对应两行。
+ARG TARGETARCH
+ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
 
 RUN sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
@@ -63,6 +71,10 @@ RUN sed -i \
         nodejs \
         acl \
         $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice; fi) \
+    && curl -fsSL -o /tmp/gst-base.deb \
+        "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
+    && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
+    && rm -f /tmp/gst-base.deb \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/opt/venv/bin:${PATH}" \

@@ -135,6 +135,14 @@ class SandboxSettings(BaseModel):
         True,
         description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",
     )
+    shell_direct_runtime_enabled: bool = Field(
+        False,
+        description=(
+            "自部署便捷开关：允许普通 Shell 在沙盒内直接执行 Python/Node/npm 等运行时，"
+            "无需经由 run_script（默认关闭；code_execution_enabled 关闭时无效）。"
+            "危险命令确认门与沙盒边界不受影响"
+        ),
+    )
     terminal_mode: Literal["auto", "pty_disabled", "entry_disabled"] = Field(
         "auto",
         description="用户终端策略：自动、关闭交互式 PTY 或关闭终端入口；不影响咕咕 Shell 执行器",
@@ -229,13 +237,10 @@ class AgentBehaviorSettings(BaseModel):
     shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")
     personality_preference_enabled: bool = Field(True, description="是否启用用户人格偏好（托管服务由后台权益开关控制，本地默认开启）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
-    reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
+    reflection_threshold: int = Field(10, description="Owner 反思触发的对话回合数；不影响群成员与群级反思")
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")
     conv_compress_enabled: bool = Field(True, description="允许手动对话压缩；正常请求按实际组装上下文预算判断，不按数据库累计消息量后台压缩")
-    im_progress_announce_enabled: bool = Field(True, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）先发一句「我去查一下」这类声明再执行，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
-    daily_retention_days: int = Field(14, description="daily 记忆保留天数（过期直接压进 memory.md）")
-    # 已废弃：weekly 层已砍，压缩定为 daily→memory 两段；字段暂留兼容旧 override，不再使用
-    weekly_retention_weeks: int = Field(6, description="（已废弃，weekly 层取消）")
+    im_progress_announce_enabled: bool = Field(False, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）可先发一句「我去查一下」这类声明再执行；默认关闭以避免与每轮 draft 重复，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
 
 
 class QuotaSettings(BaseModel):
@@ -247,9 +252,13 @@ class QuotaSettings(BaseModel):
 
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
-    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "conversation"]] = Field(
-        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "conversation"],
+    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
+        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"],
         description="自动 Knowledge RAG 允许召回的来源；显式工具不受此开关影响",
+    )
+    ts_rank_scoring_version: Literal["confidence-v4", "confidence-v1"] = Field(
+        "confidence-v4",
+        description="TS 候选评分器版本；confidence-v4 为生产默认，confidence-v1 仅作短期回滚开关",
     )
     capability_rag_enabled: bool = Field(False, description="是否启用能力目录 RAG 软推荐；只调整目录顺序，不裁剪授权工具")
     capability_rag_shadow: bool = Field(True, description="能力目录 RAG 是否只记录推荐而不改变目录顺序")
@@ -279,7 +288,11 @@ class SearchSettings(BaseModel):
         le=365 * 24 * 3600,
         description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
     )
-    ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
+    rag_query_mode: Literal["unified"] = Field(
+        "unified",
+        description="RAG 查询交付链：unified 为 TS worker 统一查询主链（唯一保留档；legacy/batch/shadow 灰度档已随旧 Python 查询链删除，显式配置旧值会在启动时报校验错误）",
+    )
+    ts_sidecar_timeout_ms: int = Field(5000, ge=50, le=30_000, description="TypeScript worker 单次查询请求超时毫秒数")
     similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
     similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")

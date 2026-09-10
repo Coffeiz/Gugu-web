@@ -2,7 +2,10 @@
   <BaseModal :show="show" width="480px" background="var(--panel-bg)" @close="$emit('close')">
     <div class="ap-modal">
       <div class="ap-header">
-        <span class="ap-title">{{ t('projects.archived') }}</span>
+        <div class="ap-heading">
+          <span class="ap-title">{{ title }}</span>
+          <span v-if="isDeleted" class="ap-retention">{{ t('projectsDeleted.deletedRetention') }}</span>
+        </div>
         <button class="ap-close" @click="$emit('close')">
           <Icon name="action.close" :size="14" />
         </button>
@@ -10,20 +13,14 @@
 
       <div ref="layoutRoot" class="ap-body">
         <!-- 只有真·首次（还没任何缓存数据）才显示加载态；已有数据后台静默刷新不再闪这个 -->
-        <div v-if="projectStore.archivedLoading && !projectStore.archivedLoaded" class="ap-empty">{{ t('common.status.loading') }}</div>
-        <div v-else-if="!projectStore.archivedProjects.length" class="ap-empty">{{ t('projects.noArchived') }}</div>
+        <div v-if="loading && !loaded" class="ap-empty">{{ t('common.status.loading') }}</div>
+        <div v-else-if="!collection.length" class="ap-empty">{{ emptyText }}</div>
 
         <template v-else>
           <!-- 年目录（同「已完成」列的年/月折叠约定）-->
           <div v-for="yg in groupedByYear" :key="yg.year" class="year-group">
             <button class="year-row" @click="toggleYear(yg.year)">
-              <svg
-                class="year-chev" :class="{ open: openYears.has(yg.year) }"
-                width="9" height="9" viewBox="0 0 10 10" fill="none"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"
-              >
-                <path d="M2 3.5l3 3 3-3"/>
-              </svg>
+              <FlipChevron :open="openYears.has(yg.year)" />
               <span class="year-label">{{ yg.year }}</span>
               <span class="year-cnt">{{ yg.total }}</span>
             </button>
@@ -35,13 +32,7 @@
                   <Icon name="file.folder" v-else :size="13" style="flex-shrink:0; opacity:0.6" />
                   <span class="month-name">{{ mg.month }}</span>
                   <span class="month-cnt">{{ mg.items.length }}</span>
-                  <svg
-                    class="month-chev" :class="{ open: openMonths.has(yg.year + mg.month) }"
-                    width="8" height="8" viewBox="0 0 10 10" fill="none"
-                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                  >
-                    <path d="M2 3.5l3 3 3-3"/>
-                  </svg>
+                  <FlipChevron :open="openMonths.has(yg.year + mg.month)" :size="8" />
                 </button>
 
                 <div class="ap-list" data-layout-content :data-layout-key="yg.year + mg.month" :data-layout-open="openMonths.has(yg.year + mg.month) ? 'true' : 'false'">
@@ -49,10 +40,13 @@
                     <span class="ap-dot" :style="{ background: p.color }"></span>
                     <div class="ap-info">
                       <div class="ap-name">{{ p.name }}</div>
-                      <div class="ap-sub">{{ p.client || t('projects.noClient') }} · {{ statusLabel(p.status) }}</div>
+                      <div class="ap-sub">
+                        <template v-if="isDeleted">{{ t('projectsDeleted.deletedAt', { date: formatDate(p.deletedAt) }) }}</template>
+                        <template v-else>{{ p.client || t('projects.noClient') }} · {{ statusLabel(p.status) }}</template>
+                      </div>
                     </div>
                     <button class="ap-restore" :disabled="restoringId === p.id" @click="restore(p.id)">
-                      {{ restoringId === p.id ? t('projects.restoring') : t('projects.cancelArchive') }}
+                      {{ restoringId === p.id ? t('projects.restoring') : restoreLabel }}
                     </button>
                   </div>
                 </div>
@@ -68,6 +62,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'
@@ -75,13 +70,23 @@ import type { Project } from '@/types/project'
 import { naturalCompare } from '@/utils/textSort'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps({ show: { type: Boolean, default: false } })
+const props = defineProps({
+  show: { type: Boolean, default: false },
+  mode: { type: String, default: 'archived' },
+})
 const emit = defineEmits(['close'])
 
 const projectStore = useProjectStore()
 const { t } = useI18n()
 const restoringId = ref<number | null>(null)
 const layoutRoot = ref<HTMLElement | null>(null)
+const isDeleted = computed(() => props.mode === 'deleted')
+const title = computed(() => t(isDeleted.value ? 'projectsDeleted.deleted' : 'projects.archived'))
+const emptyText = computed(() => t(isDeleted.value ? 'projectsDeleted.noDeleted' : 'projects.noArchived'))
+const restoreLabel = computed(() => t(isDeleted.value ? 'projectsDeleted.restoreDeleted' : 'projects.cancelArchive'))
+const collection = computed(() => isDeleted.value ? projectStore.deletedProjects : projectStore.archivedProjects)
+const loading = computed(() => isDeleted.value ? projectStore.deletedLoading : projectStore.archivedLoading)
+const loaded = computed(() => isDeleted.value ? projectStore.deletedLoaded : projectStore.archivedLoaded)
 
 const STATUS_KEYS: Record<string, string> = { pending: 'projects.notStarted', active: 'projects.inProgress', done: 'projects.done' }
 function statusLabel(status: string) { return t(STATUS_KEYS[status] ?? status) }
@@ -99,8 +104,8 @@ watch(() => props.show, show => {
 
 const groupedByYear = computed(() => {
   const yearMap = new Map<string, Map<string, Project[]>>()
-  for (const p of projectStore.archivedProjects) {
-    const src = p.updatedAt || p.createdAt
+  for (const p of collection.value) {
+    const src = isDeleted.value ? (p.deletedAt || p.updatedAt || p.createdAt) : (p.updatedAt || p.createdAt)
     const d = src ? new Date(src) : new Date()
     const y = String(d.getFullYear())
     const m = String(d.getMonth() + 1).padStart(2, '0') + '月'
@@ -171,10 +176,17 @@ function toggleMonth(key: string) {
 async function restore(id: number) {
   restoringId.value = id
   try {
-    await projectStore.unarchiveProject(id)
+    if (isDeleted.value) await projectStore.restoreDeletedProject(id)
+    else await projectStore.unarchiveProject(id)
   } finally {
     restoringId.value = null
   }
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return t('projectsDeleted.unknownDate')
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? t('projectsDeleted.unknownDate') : date.toLocaleDateString()
 }
 </script>
 
@@ -184,7 +196,9 @@ async function restore(id: number) {
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0;
 }
+.ap-heading { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .ap-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
+.ap-retention { font-size:11px; color:var(--content-tertiary); }
 .ap-close {
   width: 26px; height: 26px; border-radius: 8px; border: none; background: none;
   color: var(--content-secondary); display: flex; align-items: center; justify-content: center;
@@ -206,13 +220,6 @@ async function restore(id: number) {
   transition: background 0.12s;
 }
 .year-row:hover { background: var(--surface-soft-hover); }
-.year-chev {
-  color: var(--content-tertiary);
-  transform: rotate(-90deg);
-  transition: transform 0.2s cubic-bezier(0.34,1.1,0.64,1);
-  flex-shrink: 0;
-}
-.year-chev.open { transform: rotate(0deg); }
 .year-label { font-size: 12px; font-weight: 700; color: var(--content-primary); flex: 1; letter-spacing: 0.03em; }
 .year-cnt { font-size: 10px; color: var(--content-tertiary); }
 .year-body {
@@ -234,9 +241,6 @@ async function restore(id: number) {
 .month-row:hover { background: var(--surface-soft-hover); }
 .month-name { font-size: 11px; font-weight: 500; color: var(--content-secondary); flex: 1; }
 .month-cnt { font-size: 10px; color: var(--content-tertiary); }
-.month-chev { color: var(--content-tertiary); transform:rotate(-90deg); transition: transform 0.16s; }
-.month-chev.open { transform: rotate(0deg); }
-
 /* ── 项目行 ── */
 .ap-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 4px; min-height: 0; overflow: hidden; }
 .year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]),

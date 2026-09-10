@@ -13,7 +13,6 @@ import re
 
 from app.core.redaction import redact
 from app.core.tz import now_utc
-from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 from app.services.files.response import color_value
 from app.services.files.browser import (
@@ -42,7 +41,32 @@ from agent.tools.filesystem_policy import (
     file_write_access_error,
     write_access_error,
 )
-from agent.tools.line_edit import apply_line_edits, numbered_lines
+from agent.tools.text_edit import apply_line_edits, select_numbered_lines
+from .locations import (
+    _bound_workspace_target, _coerce_loc, _folder_by_name,
+    _location_matches, _location_receipt, _norm_target,
+    _resolve_create_location, _resolve_file as _locations_resolve_file, _resolve_key,
+    _target_loc, _workspace_conflict,
+)
+from .folders import (
+    _create_folder, _delete_folder, _find_folder, _list_folders,
+    _move_items, _rename_folder,
+)
+from .grep import _grep_files
+
+
+def get_storage():
+    """兼容旧的 agent.tools.files.get_storage 注入点。"""
+    from . import get_storage as package_get_storage
+    return package_get_storage()
+
+
+async def _resolve_file(db, user_id, args):
+    """兼容旧的 agent.tools.files._resolve_file 注入点。"""
+    from . import _resolve_file as package_resolve_file
+    if package_resolve_file is not _resolve_file:
+        return await package_resolve_file(db, user_id, args)
+    return await _locations_resolve_file(db, user_id, args)
 
 # 可读/可改的文本类扩展名
 TEXT_EXTS = frozenset({
@@ -130,62 +154,8 @@ def _split_create_name(name: str) -> tuple[str | None, str | None, str | None]:
     return display_name, ext, None
 
 
-# ── 内部：按目标解析 storage_key（复刻 update_file/copy_file）──
-async def _resolve_key(db, user_id, space, display_name, ext,
-                       project_id=None, folder_id=None):
-    project_name = project_year = project_month = folder_path = ""
-    if space == "project" and project_id:
-        p = await get_user_project(db, user_id, project_id)
-        if not p:
-            raise ValueError("目标项目不存在")
-        project_name = p.name
-        date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
-        project_year, project_month = date_str[:4], date_str[5:7]
-    if folder_id:
-        resolved = await resolve_folder_path(
-            db, user_id, folder_id, project_id if space == "project" else None,
-        )
-        if not resolved:
-            raise ValueError("目标文件夹不存在，或不属于指定的项目/个人空间")
-        _, folder_path = resolved
-    key = _build_key(
-        uid=user_id, space=space, display_name=display_name, ext=ext,
-        project_name=project_name, project_id=project_id or 0,
-        project_year=project_year, project_month=project_month,
-        folder_path=folder_path,
-    )
-    return key
-
-
-async def _location_receipt(db, user_id, space, project_id, folder_id):
-    """保存/创建后的真实落点，完整路径供模型照回执转告，不再猜目录。"""
-    project_name = None
-    if space == "project" and project_id:
-        project = await get_user_project(db, user_id, project_id)
-        project_name = project.name if project else None
-    folder_path = "（根目录）"
-    if folder_id:
-        resolved = await resolve_folder_path(
-            db, user_id, folder_id, project_id if space == "project" else None,
-        )
-        if resolved:
-            _, folder_path = resolved
-    return {
-        "space": space,
-        "project_id": project_id if space == "project" else None,
-        "project_name": project_name,
-        "folder_id": folder_id,
-        "folder_path": folder_path,
-    }
-
-
 def _strip_ext(name: str, ext: str) -> str:
-    """把 name 末尾的 ext 等价后缀全部剥到稳定。
-
-    按 _DOC_EXT_ALIASES 整族匹配（md/markdown、txt/text、yaml/yml 互认），谁在末尾都剥。
-    长 alias 优先匹配（".markdown" 4 字符比 ".md" 2 字符先命中，避免 "notes.markdown.md"
-    这种字符串剥错位）。**循环到稳定**——name 已经被拼成 "README.md.markdown" 这种双
-    后缀进来时，单次剥完仍残留一层后缀，再拼 ext 又会回到双后缀。"""
+    """把 name 末尾的 ext 等价后缀全部剥到稳定。"""
     aliases = _DOC_EXT_ALIASES.get(ext.lower(), {ext.lower()})
     sorted_aliases = sorted(aliases, key=len, reverse=True)
     while True:
@@ -199,149 +169,8 @@ def _strip_ext(name: str, ext: str) -> str:
             return name
 
 
-def _coerce_loc(space, project_id, folder_id):
-    """归一 move/copy 的目标位置，返回 (space, project_id, folder_id, error_json|None)。
-    ① id 字符串转 int —— LLM 常把 "91" 当字符串传，int4 列拿到字符串会让 asyncpg 直接抛错。
-    ② 落到「项目空间」却没指定具体项目 → 报错，挡住 space=project 但 project_id=None 的孤儿文件
-       （在任何项目里都看不到、却占着"项目空间"，正是之前让人困惑的状态）。"""
-    def _as_int(v):
-        try:
-            return int(str(v).strip().lstrip("#")) if v not in (None, "") else None
-        except (ValueError, TypeError):
-            return None   # 解析不出（如把项目名当 id 传进来）→ None，别回原串：否则非数字会流进整数主键查询 → asyncpg DataError 崩
-    project_id = _as_int(project_id)
-    folder_id = _as_int(folder_id)
-    if space == "project" and not project_id:
-        return space, project_id, folder_id, json.dumps(
-            {"error": "移动/复制到项目空间必须指定 target.project_id（具体哪个项目）。"
-                      "可先用 list_projects 拿到项目 id 再操作。"})
-    return space, project_id, folder_id, None
-
-
-def _norm_target(target):
-    """target 容错：模型偶尔把它序列化成字符串（JSON 或 Python 字面量），统一回 dict。"""
-    if isinstance(target, dict):
-        return target
-    if isinstance(target, str) and target.strip():
-        import ast
-        for _p in (json.loads, ast.literal_eval):
-            try:
-                v = _p(target)
-                if isinstance(v, dict):
-                    return v
-            except Exception:
-                pass
-    return {}
-
-
-def _target_loc(f, target: dict):
-    """据 target 算出 (space, project_id, folder_id)。关键：跨项目/空间又没显式指定 folder 时，
-    folder_id 落到目标根目录（None），**不继承源文件夹**——否则「复制到别的项目」会落回原文件夹
-    （源文件夹属于原项目），表现为「原地复制了一份」。给了 project_id 没给 space 则视为进项目空间。"""
-    def _i(v):
-        try:
-            return int(str(v).strip().lstrip("#")) if v not in (None, "") else None
-        except (ValueError, TypeError):
-            return None   # 同 _as_int：非数字（项目名误当 id）→ None，别让它流进整数查询崩
-    if "space" in target:
-        space = target["space"]
-    elif target.get("project_id") not in (None, ""):
-        space = "project"
-    else:
-        space = f.space
-    project_id = _i(target.get("project_id", f.project_id))
-    if "folder_id" in target:
-        folder_id = _i(target.get("folder_id"))
-    elif space == f.space and project_id == f.project_id:
-        folder_id = f.folder_id          # 同项目同空间内复制/移动 → 默认留在原文件夹
-    else:
-        folder_id = None                 # 跨项目/空间 → 落目标根目录，不继承源文件夹
-    return space, project_id, folder_id
-
-
-async def _bound_workspace_target(db, user_id):
-    """返回当前工具调用所属会话的文件库落点；没有绑定工作区则返回 None。"""
-    policy = await current_filesystem_policy(db, user_id)
-    if policy is not None:
-        return await current_workspace_target(db, user_id, policy)
-    session = current_dispatch_session()
-    workspace_id = getattr(session, "workspace_id", None)
-    if workspace_id is None:
-        return None
-    from app.services.workspaces import resolve_workspace_target
-    return await resolve_workspace_target(db, user_id, workspace_id)
-
-
-def _workspace_location(target: dict) -> tuple[str, int | None, int | None, int | None]:
-    return target["space"], target.get("project_id"), target.get("folder_id"), target.get("workspace_directory_id")
-
-
-async def _location_matches(db, user_id, space, project_id, folder_id, target: dict) -> bool:
-    """复用统一 workspace 权限，允许根目录下的子文件夹。"""
-    return await filesystem_location_can_write(
-        db,
-        user_id,
-        FilesystemPolicy(workspace_id=target["workspace_id"]),
-        space=space,
-        project_id=project_id,
-        folder_id=folder_id,
-    )
-
-
-def _workspace_conflict(target: dict) -> str:
-    location = target.get("workspace_name") or f"工作区 {target['workspace_id']}"
-    return json.dumps({
-        "error": f"当前会话已绑定工作区「{location}」，不能写入其它项目或文件夹。",
-        "workspace_id": target["workspace_id"],
-        "expected": {k: target.get(k) for k in ("space", "project_id", "folder_id")},
-        "hint": "省略目标位置参数即可使用当前工作区；workspace_id 不能当作 project_id 使用。",
-    }, ensure_ascii=False)
-
-
-async def _resolve_create_location(db, user_id, args: dict):
-    target = await _bound_workspace_target(db, user_id)
-    explicit = any(args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id"))
-    if target is not None:
-        if not explicit:
-            return (*_workspace_location(target), None)
-        # folder_id 本身足以确定空间；不要因为模型省略 space/project_id 而把项目文件夹误判为 personal。
-        explicit_folder_id = args.get("folder_id")
-        if explicit_folder_id not in (None, "") and args.get("space") in (None, "") and args.get("project_id") in (None, ""):
-            try:
-                folder = await get_user_folder(db, user_id, int(explicit_folder_id))
-            except (TypeError, ValueError):
-                folder = None
-            if folder is not None:
-                inferred_space = "project" if folder.project_id is not None else "personal"
-                if await _location_matches(
-                    db, user_id, inferred_space, folder.project_id, folder.id, target,
-                ):
-                    return inferred_space, folder.project_id, folder.id, None
-        space, project_id, folder_id, error = _coerce_loc(
-            args.get("space") or ("project" if args.get("project_id") else "personal"),
-            args.get("project_id"), args.get("folder_id"),
-        )
-        if error:
-            return None, None, None, None, error
-        if not await _location_matches(db, user_id, space, project_id, folder_id, target):
-            return None, None, None, None, _workspace_conflict(target)
-        return space, project_id, folder_id, None, None
-    space = args.get("space", "personal")
-    space, project_id, folder_id, error = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
-    return space, project_id, folder_id, None, error
-
-
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
-    ):
-        args = {**args, **{
-            "space": workspace_target["space"],
-            "project_id": workspace_target.get("project_id"),
-            "folder_id": workspace_target.get("folder_id"),
-        }}
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
@@ -356,6 +185,7 @@ async def _list_files(db, user_id, args: dict):
                 folder_value,
                 args.get("space"),
                 args.get("project_id"),
+                args.get("workspace_directory_id"),
             )
             if error:
                 return error
@@ -373,7 +203,7 @@ async def _list_files(db, user_id, args: dict):
         space=args.get("space"),
         project_id=args.get("project_id"),
         folder_id=folder_id,
-        workspace_directory_id=workspace_target.get("workspace_directory_id") if workspace_target else None,
+        workspace_directory_id=args.get("workspace_directory_id"),
         ext=args.get("ext"),
         queries=file_queries,
         mode=args.get("mode"),
@@ -386,6 +216,7 @@ async def _list_files(db, user_id, args: dict):
             resolved = await resolve_folder_path(
                 db, user_id, file.folder_id,
                 file.project_id if file.space == "project" else None,
+                file.workspace_directory_id,
             )
             if resolved:
                 _, folder_path = resolved
@@ -440,11 +271,17 @@ async def _read_file(db, user_id, args: dict):
         text = await doctext.extract_text(data, ext)   # 文本类直接 decode；文档走 pdftotext/LibreOffice
     except Exception as e:
         return json.dumps({"error": f"读取失败：{str(e)[:80]}"})
+    target_lines = args.get("target_lines", "all")
+    try:
+        selected_content, selected_numbered, selected_range = select_numbered_lines(text, target_lines)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
     return {
         "file_id": f.id,
         "name": f"{f.display_name}.{f.ext}",
-        "content": text,
-        "numbered_content": numbered_lines(text),
+        "content": selected_content,
+        "numbered_content": selected_numbered,
+        "line_range": {"start": selected_range[0], "end": selected_range[1]},
     }
 
 
@@ -607,7 +444,9 @@ async def _create_file(db, user_id, args: dict):
                 display_name=display_name,
                 ext=ext,
                 # 未知后缀也按文本落库，保证 read/edit/前端预览使用同一事实。
-                mime_type=("text/plain" if ext == "svg" else _DOC_MIME.get(ext, "text/plain")),
+                # svg 按 _DOC_MIME 落 image/svg+xml：read/edit 靠扩展名白名单（TEXT_EXTS
+                # 含 svg）依旧可读写；落成 text/plain 会让缩略图/图片预览端点按 MIME 拒绝。
+                mime_type=_DOC_MIME.get(ext, "text/plain"),
                 data=data,
                 workspace_directory_id=workspace_directory_id,
             )
@@ -801,297 +640,6 @@ async def _rename_file(db, user_id, args: dict):
     return await _rename_one(db, user_id, f, args["new_name"], args.get("format"))
 
 
-async def _resolve_file(db, user_id, args):
-    """按 file_id 或文件名 file 定位（仅未删除文件）；返回 (File|None, 错误JSON|None)。"""
-    fid = args.get("file_id")
-    if fid:
-        f = await get_user_file(db, user_id, fid)
-        if not f:
-            return None, json.dumps({"error": "文件不存在"})
-        return f, None
-    name = args.get("file")
-    if name:
-        name = str(name).strip()
-        base = name.rsplit(".", 1)[0] if "." in name else name
-        workspace_target = await _bound_workspace_target(db, user_id)
-        rows = await find_user_files_by_name(
-            db, user_id, base,
-            **({
-                "space": workspace_target["space"],
-                "project_id": workspace_target.get("project_id"),
-                "folder_id": workspace_target.get("folder_id"),
-                "root": workspace_target.get("kind") == "project",
-            } if workspace_target else {}),
-        )
-        if not rows:
-            return None, json.dumps({"error": f"未找到文件「{name}」"})
-        if len(rows) > 1:
-            return None, json.dumps({"error": f"有多个匹配「{name}」的文件，请指明",
-                                     "candidates": [{"id": f.id, "name": f"{f.display_name}.{f.ext}",
-                                                     "space": f.space, "folder_id": f.folder_id} for f in rows[:10]]})
-        return rows[0], None
-    return None, json.dumps({"error": "需提供 file_id 或文件名 file"})
-
-
-async def _folder_by_name(db, user_id, name, space=None, project_id=None):
-    """按名称定位文件夹，返回 (Folder|None, 错误JSON字符串|None)。
-
-    重名时优先顶层（parent_id 为空）；仍有歧义则返回候选让调用方/模型用 folder_id 指定。
-    """
-    name = str(name).strip()
-    rows = await find_user_folders_by_name(
-        db, user_id, name, space=space, project_id=project_id)
-    if not rows:
-        # 报错时只列出同项目/同空间的文件夹名，避免跨项目泄露
-        available = await list_user_folders(
-            db, user_id, project_id=project_id if space == "project" else None)
-        avail = [folder.name for folder in available]
-        return None, json.dumps({"error": f"未找到名为「{name}」的文件夹",
-                                 "available_folders": sorted(set(avail))})
-    if len(rows) > 1:
-        top = [f for f in rows if f.parent_id is None]
-        if len(top) == 1:
-            return top[0], None
-        cand = top or rows
-        return None, json.dumps({"error": f"有多个名为「{name}」的文件夹，请用 folder_id 指定",
-                                 "candidates": [{"id": f.id, "parent_id": f.parent_id} for f in cand]})
-    return rows[0], None
-
-
-async def _move_one(db, user_id, f, target: dict) -> dict:
-    """把已解析的 File f 移到 target，各自 commit。返回结果 dict（成功或 {"error":...}）。
-    供 move_items 移动文件时复用（单个文件也走它）。"""
-    target = _norm_target(target)
-    space, project_id, folder_id = _target_loc(f, target)
-    space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
-    if loc_err:
-        return loc_err
-    source_error = await file_write_access_error(db, user_id, f)
-    if source_error:
-        return {"error": source_error, "name": f"{f.display_name}.{f.ext}"}
-
-    # 支持按文件夹「名称」移动（agent 通常不知道 folder_id）
-    fname = target.get("folder")
-    if fname is not None:
-        fname = str(fname).strip()
-        if fname in ("", "根", "根目录", "/"):
-            folder_id = None
-        else:
-            fo, err = await _folder_by_name(db, user_id, fname, space, project_id)
-            if err:
-                return err
-            folder_id = fo.id
-            # 文件夹决定归属项目：以 folder 的 project_id 为准，避免跨项目移动后 project_id 与 folder 不一致
-            if fo.project_id is not None:
-                project_id = fo.project_id
-                space = "project"
-
-    # 无变动 → 明确报错，而不是假成功（避免咕咕误报"已移动"）
-    cur_pid = f.project_id
-    new_pid = project_id if space == "project" else None
-    if folder_id == f.folder_id and space == f.space and new_pid == cur_pid:
-        return json.dumps({"error": "未指定有效目标或文件已在该位置，未移动。"
-                                    "请用 target.folder 指定目标文件夹名，或先用 list_folders 确认。",
-                           "current_folder_id": f.folder_id})
-
-    target_error = await write_access_error(
-        db, user_id, space=space, project_id=new_pid, folder_id=folder_id,
-    )
-    if target_error:
-        return {"error": target_error, "name": f"{f.display_name}.{f.ext}"}
-
-    try:
-        result = await FileService(db).update_file(
-            user_id,
-            f.id,
-            display_name=None,
-            stage_name=target.get("stage_name") if "stage_name" in target else None,
-            folder_id=folder_id,
-            project_id=new_pid,
-            folder_set=True,
-            project_set=True,
-        )
-    except Exception as e:
-        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    await db.commit()
-    moved = result.file
-    folder_name = result.folder_name or "（根目录）"
-    # 明确回报落点的「空间/项目/文件夹」，别只给文件夹名——否则模型无从确认到底进了哪个项目，
-    # 容易自行脑补位置（曾出现移到项目根目录后谎报项目/文件名的情况）
-    project_name = result.project.name if result.project else None
-    return {"success": True, "file_id": moved.id, "name": f"{moved.display_name}.{moved.ext}",
-            "space": moved.space, "project_id": moved.project_id, "project_name": project_name,
-            "folder_id": moved.folder_id, "moved_to": folder_name}
-
-
-def _as_dict(r):
-    """把 _move_one 的返回归一成 dict（错误分支历史上返回 json 字符串）。"""
-    if isinstance(r, str):
-        try:
-            return json.loads(r)
-        except Exception:
-            return {"error": r}
-    return r
-
-
-# ── move_items：统一「集合移动」（文件 + 文件夹混合，文件夹后端递归展开）──────────────
-
-async def _descendant_folder_ids(db, user_id, root_id: int) -> list[int]:
-    """root_id 及其所有子孙文件夹 id（沿 parent_id 逐层 BFS）。"""
-    return await descendant_folder_ids(db, user_id, root_id)
-
-
-async def _resolve_target(db, user_id, target: dict):
-    """把 target 解析成统一落点 (space, project_id, folder_id)。返回 (space, pid, folder_id, err_dict|None)。
-    支持 folder_id（最准）/ folder 名 + space/project_id 限定 / 不给文件夹=空间根。"""
-    space = target.get("space")
-    project_id = target.get("project_id")
-    folder_id = target.get("folder_id")
-    fname = target.get("folder")
-    if folder_id:
-        fo = await get_user_folder(db, user_id, folder_id)
-        if not fo:
-            return None, None, None, {"error": "目标文件夹不存在"}
-        return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
-    if fname is not None:
-        fname = str(fname).strip()
-        if fname in ("", "根", "根目录", "/"):
-            sp = space or ("project" if project_id else "personal")
-            return sp, (project_id if sp == "project" else None), None, None
-        sp = space or ("project" if project_id else "personal")
-        fo, err = await _folder_by_name(db, user_id, fname, sp, project_id)
-        if err:
-            return None, None, None, {"error": f"目标文件夹「{fname}」没找到，请用 list_folders 确认，或改用 folder_id"}
-        return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
-    sp = space or "personal"
-    return sp, (project_id if sp == "project" else None), None, None
-
-
-async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict:
-    """委托 FileService 搬文件夹树，并同步重建所有后代文件的物理路径。"""
-    name = folder.name
-    source_error = await write_access_error(
-        db, user_id, space="project" if folder.project_id is not None else "personal",
-        project_id=folder.project_id, folder_id=folder.id,
-    )
-    if source_error:
-        return {"error": source_error, "folder": name}
-    target_error = await write_access_error(
-        db, user_id, space=t_space, project_id=t_pid, folder_id=t_parent_id,
-    )
-    if target_error:
-        return {"error": target_error, "folder": name}
-    sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
-    try:
-        await FileService(db).move_folder(
-            user_id, folder.id, t_parent_id, client_version=folder.version,
-            target_project_id=t_pid,
-        )
-        await db.commit()
-    except Exception as e:
-        return {"error": redact(f"{type(e).__name__}: {e}")}
-    return {"success": True, "type": "folder", "folder": name,
-            "subfolders": len(sub_ids) - 1,
-            "space": t_space, "project_id": t_pid}
-
-
-async def _move_items(db, user_id, args: dict):
-    """统一移动：files + folders 一次搬到同一 target。文件夹连内容递归搬（后端展开，
-    Agent 不必知道里面有多少文件）。逐条如实回报成功/失败。"""
-    target = _norm_target(args.get("target", {}))
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
-    ):
-        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
-    t_space, t_pid, t_folder_id, terr = await _resolve_target(db, user_id, target)
-    if terr:
-        return terr
-    if workspace_target is not None and not await _location_matches(
-        db, user_id, t_space, t_pid, t_folder_id, workspace_target,
-    ):
-        return _workspace_conflict(workspace_target)
-    file_target = {"space": t_space, "project_id": t_pid, "folder_id": t_folder_id}
-
-    moved_files, moved_folders, failed = [], [], []
-    # 文件
-    for it in (args.get("files") or []):
-        sub = {}
-        if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
-            sub["file_id"] = int(it)
-        else:
-            sub["file"] = str(it)
-        f, _err = await _resolve_file(db, user_id, sub)
-        if _err:
-            failed.append({"item": it, "kind": "file", "error": "没找到这个文件"})
-            continue
-        r = _as_dict(await _move_one(db, user_id, f, file_target))
-        (moved_files if r.get("success") else failed).append(
-            r if r.get("success") else {"item": it, "kind": "file", **r})
-    # 文件夹
-    for it in (args.get("folders") or []):
-        if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
-            fo = await get_user_folder(db, user_id, int(it))
-        else:
-            # 按名找：在源处可能任意空间，这里全局按名匹配（重名则提示用 id）
-            rows = await find_user_folders_by_name(db, user_id, str(it))
-            fo = rows[0] if len(rows) == 1 else None
-            if len(rows) > 1:
-                failed.append({"item": it, "kind": "folder", "error": "有多个同名文件夹，请改用 folder_id"})
-                continue
-        if not fo:
-            failed.append({"item": it, "kind": "folder", "error": "没找到这个文件夹"})
-            continue
-        r = await _move_folder(db, user_id, fo, t_space, t_pid, t_folder_id)
-        (moved_folders if r.get("success") else failed).append(
-            r if r.get("success") else {"item": it, "kind": "folder", **r})
-
-    return {"success": True,
-            "moved_files": len(moved_files), "moved_folders": len(moved_folders),
-            "failed_count": len(failed),
-            "files": moved_files, "folders": moved_folders, "failed": failed}
-
-
-async def _create_folder(db, user_id, args: dict):
-    workspace_target = await _bound_workspace_target(db, user_id)
-    project_id = args.get("project_id")
-    parent_id = args.get("parent_id")
-    if workspace_target is not None:
-        try:
-            explicit_project_id = int(project_id) if project_id not in (None, "") else None
-            explicit_parent_id = int(parent_id) if parent_id not in (None, "") else None
-        except (TypeError, ValueError):
-            return _workspace_conflict(workspace_target)
-        if explicit_project_id is not None and explicit_project_id != workspace_target.get("project_id"):
-            return _workspace_conflict(workspace_target)
-        project_id = workspace_target.get("project_id")
-        if explicit_parent_id is None:
-            parent_id = workspace_target.get("folder_id")
-        else:
-            parent = await get_user_folder(db, user_id, explicit_parent_id)
-            if not parent or parent.project_id != workspace_target.get("project_id"):
-                return _workspace_conflict(workspace_target)
-            if workspace_target.get("folder_id") is not None and explicit_parent_id != workspace_target["folder_id"]:
-                return _workspace_conflict(workspace_target)
-            parent_id = explicit_parent_id
-    access_error = await write_access_error(
-        db, user_id,
-        space="project" if project_id is not None else "personal",
-        project_id=project_id, folder_id=parent_id,
-    )
-    if access_error:
-        return {"error": access_error}
-    try:
-        fo = await FileService(db).create_folder(
-            user_id, name=args["name"], parent_id=parent_id,
-            project_id=project_id,
-        )
-    except Exception as e:
-        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    await db.commit()
-    return {"success": True, "folder_id": fo.id, "name": fo.name}
-
-
 async def _delete_file(db, user_id, args: dict):
     # 软删进回收站，30 天可还原 —— 非不可逆，无需二次确认
     file_ids = args.get("file_ids")
@@ -1129,120 +677,6 @@ async def _delete_file(db, user_id, args: dict):
             "_file_op": {"op": "remove", "kind": "file", "id": fid}}
 
 
-async def _list_folders(db, user_id, args: dict):
-    rows = await list_user_folders(
-        db, user_id,
-        project_id=args.get("project_id"),
-        parent_id=args.get("parent_id"),
-    )
-    out = []
-    for folder in rows:
-        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
-        if not resolved:
-            continue
-        _, path = resolved
-        out.append({
-            "id": folder.id, "name": folder.name, "path": path,
-            "project_id": folder.project_id, "parent_id": folder.parent_id,
-            "depth": path.count("/"),
-        })
-    return sorted(out, key=lambda item: (item["depth"], item["path"]))
-
-
-async def _find_folder(db, user_id, args: dict):
-    """按 folder_id 或文件夹名定位；返回 Folder 或错误 JSON 字符串（含可选项）。"""
-    fid = args.get("folder_id")
-    if fid:
-        try:
-            fid = int(str(fid).strip())
-        except (ValueError, TypeError):
-            pass
-        fo = await get_user_folder(db, user_id, fid)
-        if not fo:
-            return json.dumps({"error": "文件夹不存在"})
-        return fo
-    name = args.get("name") or args.get("folder")
-    if name:
-        # 把调用方传来的项目上下文透传进去，防止跨项目同名文件夹被误操作
-        pid = args.get("project_id")
-        try:
-            pid = int(str(pid).strip()) if pid not in (None, "") else None
-        except (ValueError, TypeError):
-            pid = None
-        space = "project" if pid else args.get("space")
-        fo, err = await _folder_by_name(db, user_id, name, space, pid)
-        return err if err else fo
-    return json.dumps({"error": "需提供 folder_id 或文件夹名 name"})
-
-
-async def _rename_folder(db, user_id, args: dict):
-    fo = await _find_folder(db, user_id, args)
-    if isinstance(fo, str):
-        return fo
-    access_error = await write_access_error(
-        db, user_id, space="project" if fo.project_id is not None else "personal",
-        project_id=fo.project_id, folder_id=fo.id,
-    )
-    if access_error:
-        return {"error": access_error}
-    try:
-        fo = await FileService(db).rename_folder(
-            user_id, fo.id, args["new_name"], client_version=fo.version,
-        )
-        await db.commit()
-    except Exception as e:
-        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    return {"success": True, "folder_id": fo.id, "name": fo.name}
-
-
-async def _delete_folder(db, user_id, args: dict):
-    folder_ids = args.get("folder_ids")
-    if folder_ids is not None:
-        if not isinstance(folder_ids, list) or not folder_ids or len(folder_ids) > 50:
-            return json.dumps({"error": "folder_ids 必须是 1-50 个文件夹 id"})
-        folders = []
-        for folder_id in folder_ids:
-            folder = await _find_folder(db, user_id, {"folder_id": folder_id})
-            if isinstance(folder, str):
-                return folder
-            access_error = await write_access_error(
-                db, user_id, space="project" if folder.project_id is not None else "personal",
-                project_id=folder.project_id, folder_id=folder.id,
-            )
-            if access_error:
-                return {"error": access_error}
-            folders.append(folder)
-        results = []
-        try:
-            for folder in folders:
-                await FileService(db).delete_folder(user_id, folder.id)
-                results.append({"deleted_folder_id": folder.id, "name": folder.name,
-                                "_file_op": {"op": "remove", "kind": "folder", "id": folder.id}})
-            await db.commit()
-        except Exception as e:
-            return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-        return {"success": True, "deleted_count": len(results), "results": results}
-    fo = await _find_folder(db, user_id, args)
-    if isinstance(fo, str):
-        return fo
-    access_error = await write_access_error(
-        db, user_id, space="project" if fo.project_id is not None else "personal",
-        project_id=fo.project_id, folder_id=fo.id,
-    )
-    if access_error:
-        return {"error": access_error}
-    fid = fo.id
-    fname = fo.name
-    try:
-        await FileService(db).delete_folder(user_id, fo.id)
-        await db.commit()
-    except Exception as e:
-        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    note = f"文件夹「{fname}」已删除，其中的文件已移入回收站（30 天内可恢复）"
-    return {"success": True, "deleted_folder_id": fid, "note": note,
-            "_file_op": {"op": "remove", "kind": "folder", "id": fid}}
-
-
 async def _copy_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
@@ -1254,18 +688,26 @@ async def _copy_file(db, user_id, args: dict):
     if workspace_target is not None and not any(
         target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
     ):
-        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
-    space, project_id, folder_id = _target_loc(f, target)
+        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id", "workspace_directory_id")}
+    space, project_id, folder_id, workspace_directory_id = _target_loc(f, target)
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err
+    if space == "workspace" and workspace_directory_id is None:
+        # 显式 workspace ＝ 当前绑定工作区（与 create_file/_resolve_target 一致，不暴露跨工作区）
+        bound = await _bound_workspace_target(db, user_id)
+        workspace_directory_id = (bound or {}).get("workspace_directory_id")
+        if workspace_directory_id is None:
+            return {"error": "当前会话没有绑定带文件目录的工作区，无法以 space=workspace 为目标"}
     fname = target.get("folder")
     if fname is not None:
         fname = str(fname).strip()
         if fname in ("", "根", "根目录", "/"):
             folder_id = None
         else:
-            fo, err = await _folder_by_name(db, user_id, fname, space, project_id)
+            fo, err = await _folder_by_name(
+                db, user_id, fname, space, project_id, workspace_directory_id,
+            )
             if err:
                 return err
             folder_id = fo.id
@@ -1273,6 +715,7 @@ async def _copy_file(db, user_id, args: dict):
             if fo.project_id is not None:
                 project_id = fo.project_id
                 space = "project"
+            workspace_directory_id = fo.workspace_directory_id
     if workspace_target is not None and not await _location_matches(
         db, user_id, space, project_id, folder_id, workspace_target,
     ):
@@ -1286,6 +729,7 @@ async def _copy_file(db, user_id, args: dict):
         result = await FileService(db).copy_file(
             user_id, f.id, folder_id=folder_id,
             project_id=project_id if space == "project" else None,
+            workspace_directory_id=workspace_directory_id if space == "workspace" else None,
         )
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
@@ -1296,284 +740,19 @@ async def _copy_file(db, user_id, args: dict):
 
 
 # ── 网络图片下载（send_file 的 url 分支用）：SSRF 防护 ─────────────────────────
-_SEND_URL_MAX_BYTES = 15 * 1024 * 1024   # 下载体积上限
-_SEND_URL_IMAGE_EXT = {
-    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/gif": "gif",
-    "image/webp": "webp", "image/bmp": "bmp",
-}
-
-
-def _url_is_safe(url: str) -> str | None:
-    from app.core.url_security import url_is_safe
-
-    return url_is_safe(url)
-
-
-def _build_pinned_request(client, method: str, url: str):
-    """校验 host 并把连接 pin 到校验时解析到的那个 IP，返回 (request, error)。
-
-    单纯"校验一次、httpx 连接时再 resolve 一次"堵不住 DNS rebinding（攻击者控制的域名
-    可以在两次解析之间把 A 记录从公网 IP 换成内网 IP，见 url_security.resolve_pinned_ip
-    文档）。这里改成用解析到的 IP 直接建连，Host 头 / TLS SNI 仍用原始域名，保证证书
-    校验和路由都不受影响，只是"连去哪"这件事不再交给 httpx 自己二次决定。
-    """
-    from urllib.parse import urlparse
-
-    from app.core.url_security import resolve_pinned_ip
-
-    ip, error = resolve_pinned_ip(url)
-    if error:
-        return None, error
-    parsed = urlparse(url)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    netloc = f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
-    pinned_url = parsed._replace(netloc=netloc).geturl()
-    extensions = {"sni_hostname": parsed.hostname} if parsed.scheme == "https" else {}
-    # Host 头：字面 IPv6 地址在 URI authority/HTTP Host 里必须带方括号（如
-    # "[2606:4700:4700::1111]"），否则冒号会被误当成端口分隔符——parsed.hostname
-    # 对这种 URL 返回的是不带括号的裸地址，直接拼进 Host 头格式不合法（code review
-    # 发现）。普通域名不含冒号，加不加这个判断都不受影响。
-    host = f"[{parsed.hostname}]" if ":" in (parsed.hostname or "") else parsed.hostname
-    # 非默认端口（如 :8443）省略端口会让部分虚拟主机/CDN 按错误的站点路由（同样是
-    # code review 发现）；有 parsed.port 时原样带上，用默认端口时留纯 host。
-    host_header = f"{host}:{parsed.port}" if parsed.port else host
-    req = client.build_request(method, pinned_url, headers={"Host": host_header}, extensions=extensions)
-    return req, None
-
-
-def _fmt_age(ttl_left: int, total_ttl: int) -> str:
-    """按剩余 TTL 反推大致存了多久（暂存无绝对时间戳，只能这样估）。"""
-    if ttl_left is None or ttl_left < 0:
-        return "未知"
-    elapsed = max(0, total_ttl - ttl_left)
-    if elapsed < 3600:
-        return f"约{max(1, elapsed // 60)}分钟前"
-    if elapsed < 86400:
-        return f"约{elapsed // 3600}小时前"
-    return f"约{elapsed // 86400}天前"
-
-
-async def _list_recent_attachments(db, user_id, args: dict):
-    """列出该用户当前暂存区（未过期）的附件，供模型在「刚刚的图/那张图」等模糊指代时反查 attach_id。"""
-    from app.core import chat_attach
-    staged = await chat_attach.list_staged(user_id)
-    if not staged:
-        return {"count": 0, "items": [], "note": "暂存区当前没有未过期的附件"}
-    items = [{
-        "attach_id": m["attach_id"], "name": m.get("name"), "ext": m.get("ext"),
-        "kind": m.get("kind"), "platform": m.get("platform"),
-        "size_bytes": m.get("size"), "img_width": m.get("img_width"), "img_height": m.get("img_height"),
-        "staged_about": _fmt_age(m.get("_ttl"), chat_attach.TTL),
-    } for m in staged]
-    return {"count": len(items), "items": items}
-
-
-async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True):
-    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
-
-    下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
-    Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
-    有 Content-Length 提前拒绝；chunked/无 Content-Length 在读取过程中累计，超限立即中止。
-
-    生命周期：**最终 response 的完整消费（含 aiter_bytes）必须留在 AsyncClient 的
-    async with 块内**——真实 httpx 的 transport 随 client 关闭，若在 __aexit__ 之后
-    才读 body，连接已关会抛 ReadError。原则：创建 client → 获取 streaming response →
-    完整消费/主动中止 → close response → 最后才 close client。
-    """
-    import httpx
-    from urllib.parse import urljoin
-    try:
-        # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过校验（SSRF）。
-        # stream=True 只读响应头不读 body，避免 redirect 探测阶段就把大 body 读进内存。
-        # 每一跳都用 _build_pinned_request 把"校验的地址"和"实际连接的地址"锁定成同一个 IP，
-        # 防 DNS rebinding（见该函数文档）。
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
-            follow_redirects=False,
-            # 禁用连接池 keep-alive：pin 到 IP 后，重定向多跳可能解析到同一个 IP（CDN
-            # 场景很常见），httpcore 按 origin（这里全是同一个 IP:port）复用连接池——
-            # 但 sni_hostname 只在新建 TLS 连接时生效，复用已有连接不会重新握手，会
-            # 出现"握手时验证了 A 的证书，之后却拿这条连接发 Host: B 的请求"这种
-            # TLS hostname 隔离缺口（code review 发现）。这个下载器最多才 4 跳，
-            # 完全没必要为了 keep-alive 收益承担这个风险，禁掉最简单也最彻底。
-            limits=httpx.Limits(max_keepalive_connections=0),
-        ) as client:
-            cur = url
-            req, reason = _build_pinned_request(client, "GET", cur)
-            if reason:
-                return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-            resp = await client.send(req, stream=True)
-            for _ in range(3):   # 最多跟 3 跳
-                if resp.status_code not in (301, 302, 303, 307, 308):
-                    break
-                loc = resp.headers.get("location")
-                await resp.aclose()   # 关闭 3xx 响应连接，再发下一跳
-                if not loc:
-                    break
-                cur = urljoin(cur, loc)
-                req, reason = _build_pinned_request(client, "GET", cur)   # 每一跳的目标都重新解析+校验+pin
-                if reason:
-                    return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-                resp = await client.send(req, stream=True)
-
-            # 最终 response 的完整消费留在 client 生命周期内（见 docstring）。
-            if resp.status_code != 200:
-                await resp.aclose()
-                return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
-
-            ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-            ext = _SEND_URL_IMAGE_EXT.get(ctype)
-            if not ext:
-                await resp.aclose()
-                return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
-            # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
-            clen = resp.headers.get("content-length")
-            if clen and clen.isdigit() and int(clen) > _SEND_URL_MAX_BYTES:
-                await resp.aclose()
-                return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
-
-            # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
-            # 不把整个响应消费完（防 DoS）。
-            total = 0
-            chunks: list[bytes] = []
-            try:
-                async for chunk in resp.aiter_bytes():
-                    total += len(chunk)
-                    if total > _SEND_URL_MAX_BYTES:
-                        return json.dumps({"error": f"图片过大（超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
-                    chunks.append(chunk)
-            finally:
-                await resp.aclose()
-            data = b"".join(chunks)
-    except Exception as e:
-        return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
-    if not data:
-        return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
-
-    if not stage:
-        return {"data": data, "ext": ext, "mime": ctype}
-
-    from app.core import chat_attach
-    name = (title or "").strip()[:80] or "图片"
-    meta = await chat_attach.stage(user_id, name, ext, ctype, data, kind="image")
-    return {
-        "ok": True,
-        "message": f"已把「{name}」发到对话窗口。",
-        "_artifact": {
-            "attach_id": meta["attach_id"],
-            "name": name,
-            "ext": ext,
-            "size_bytes": len(data),
-            "kind": "image",
-            # 带上真实像素尺寸：前端预览窗口直接按此定尺，不用再靠缩略图猜（猜不准会出现
-            # 「先弹很大的窗口再缩小」的问题，小图/非4K图尤其明显）
-            "img_width": meta.get("img_width"),
-            "img_height": meta.get("img_height"),
-        },
-    }
-
-
-async def inspect_image_url(url: str):
-    """安全下载网络图片并转换成视觉输入，不把图片发送到对话附件区。"""
-    from app.core import chat_attach
-
-    if not chat_attach.vision_ready():
-        return {"error": "当前模型/通道不支持直接读取网络图片"}
-    result = await _send_file_from_url(None, url, "", stage=False)
-    if not isinstance(result, dict) or not result.get("data"):
-        return {"error": "网络图片下载失败，无法读取"}
-    ext = result.get("ext")
-    if ext not in chat_attach.VISION_EXTS:
-        return {"error": f"图片格式 {ext} 暂不支持识别"}
-    block = chat_attach.vision_block(result["data"], ext)
-    if not block:
-        return {"error": "图片无法解析"}
-    return {"block": block}
-
-
-async def _send_file(db, user_id, args: dict):
-    """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
-    网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
-    之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
-    返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。
-
-    群成员（member/unknown）只能用 url 发网络图片（搜图配图），不能发文件库文件
-    （file/file_id）或重发暂存附件（attach_id）——后两者会读取 Bot 所属账号的私有文件。
-    """
-    from agent.im import imctx
-    im = imctx.get_im()
-    is_restricted = bool(im and im.get("im_role") in ("member", "unknown"))
-
-    source_type = args.get("source_type")
-    if source_type:
-        source_key = "file_id" if source_type == "file_id" else source_type
-        if not args.get(source_key):
-            return {"error": f"source_type={source_type} 时必须提供 {source_key}"}
-
-    url = (args.get("url") or "").strip()
-    if url:
-        return await _send_file_from_url(user_id, url, args.get("title") or "")
-
-    if is_restricted:
-        # 群成员只允许发网络图片（url 分支）；file/file_id/attach_id 涉及 owner 私有文件，禁止。
-        return json.dumps({"error": "群聊里只能发网络图片（用 url 传图片直链），不能发文件库文件或重发附件"}, ensure_ascii=False)
-
-    attach_id = (args.get("attach_id") or "").strip()
-    if attach_id:
-        from app.core import chat_attach
-        meta, note = await chat_attach.resolve_attach(user_id, attach_id)
-        if not meta:
-            return json.dumps({"error": "没找到这个附件，可能已经过期了（聊天附件只暂存 7 天）"}, ensure_ascii=False)
-        name = f"{meta['name']}.{meta['ext']}" if meta.get("ext") else meta["name"]
-        return {
-            "ok": True,
-            "message": f"已把《{name}》重新发到对话窗口。{note}".strip(),
-            "_artifact": {
-                "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta.get("ext"),
-                "size_bytes": meta.get("size"), "kind": meta.get("kind"),
-                "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
-            },
-        }
-
-    f, err = await _resolve_file(db, user_id, args)
-    if err:
-        return err
-    name = f"{f.display_name}.{f.ext}"
-    return {
-        "ok": True,
-        "message": f"已把《{name}》发到对话窗口，用户可直接下载。",
-        "_artifact": {
-            "file_id": f.id,
-            "name": f.display_name,
-            "ext": f.ext,
-            "size_bytes": f.size_bytes,
-            "img_width": f.img_width,
-            "img_height": f.img_height,
-        },
-    }
-
-
-async def _present_file(db, user_id, args: dict):
-    """把文件直接推到用户当前网页上打开（全局预览窗口）。只读、不改数据。
-
-    复用 events:{user_id} 实时频道：载荷只含 file_id/name/ext 三个展示必需字段，
-    取数由前端预览组件走既有 /files/{id}/download 端点（端点自身校验属主）。
-    IM 会话里禁用——用户不在网页上，推了也看不到。
-    """
-    from agent.im import imctx
-    if imctx.get_im():
-        return json.dumps({"error": "present_file 只支持网页端；IM 会话里请用 send_file 发送文件"}, ensure_ascii=False)
-
-    f, err = await _resolve_file(db, user_id, args)
-    if err:
-        return err
-    from app.core.redis import get_redis
-    payload = {"present": {"file_id": f.id, "name": f.display_name, "ext": f.ext}}
-    try:
-        await get_redis().publish(f"events:{user_id}", json.dumps(payload, ensure_ascii=False))
-    except Exception as exc:
-        return json.dumps({"error": f"推送失败：{redact(str(exc))}"}, ensure_ascii=False)
-    return {"ok": True, "message": f"已在用户当前页面打开《{f.display_name}.{f.ext}》。", "file_id": f.id}
+from .transfer import (
+    _normalize_send_path,
+    _stage_send_path,
+    _send_file_from_url,
+    _send_file,
+    _present_file,
+    _list_recent_attachments,
+    inspect_image_url,
+    _build_pinned_request,
+    _url_is_safe,
+    _SEND_URL_MAX_BYTES,
+    _SEND_URL_IMAGE_EXT,
+)
 
 
 class FilesSkill(BaseSkill):
@@ -1581,14 +760,15 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description_short='查询文件；支持按空间、项目、文件夹和关键词筛选。',
-            description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
+            description_short='查询文件；默认覆盖当前用户可访问的所有空间。',
+            description="按空间、项目、工作区、文件夹、扩展名或名称关键词查询文件；不传位置条件时查询当前用户所有可访问空间，结果含完整 folder_path。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
+                    "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer"},
+                    "workspace_directory_id": {"type": "integer"},
                     "folder": {"type": "string"},
                     "ext": {"type": "string"},
                     "query": {"type": "string"},
@@ -1603,18 +783,38 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description_short='读取文件内容；图片会交给视觉模型查看。',
-            description="读取文本、文档、表格、图片、音频或视频并返回与问题相关的内容；文件库位图会直接交给视觉模型查看，SVG 按源码文本读取；不要把本地路径或 file:/// URI 传给 inspect_images。",
+            description_short='读取文件内容；支持按行范围读取，图片会交给视觉模型查看。',
+            description="读取文本、文档、表格、图片、音频或视频并返回与问题相关的内容；文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all；文件库位图会直接交给视觉模型查看，SVG 按源码文本读取；不要把本地路径或 file:/// URI 传给 inspect_images。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "file_id": {"type": "integer"},
                     "file": {"type": "string"},
+                    "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},
                 },
                 "required": [],
             },
             repeat_safe=True,
             handler=_read_file,
+        ),
+        Tool(
+            name="grep", label="搜索文件正文",
+            description_short='在当前权限内的个人、项目和 Workspace 文本文件中查找内容。',
+            description="按关键词逐行搜索当前用户有权访问的个人、项目和 Workspace 文本文件；返回 file_id、逻辑路径、命中行号、匹配行和可选上下文，不执行 Shell grep。可用 context_lines 控制命中行前后行数，limit 限制总命中数；需要完整正文或精确读取时再调用 read_file。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1},
+                    "path": {"type": "string", "description": "可选逻辑路径，如 /personal/F1、/project/项目名、/workspace/workspace-1"},
+                    "context_lines": {"type": "integer", "minimum": 0, "maximum": 20},
+                    "case_sensitive": {"type": "boolean"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            repeat_safe=True,
+            handler=_grep_files,
         ),
         Tool(
             name="edit_file", label="修改文件",
@@ -1696,14 +896,14 @@ class FilesSkill(BaseSkill):
         Tool(
             name="create_file", label="创建文件",
             description_short='批量创建 UTF-8 文本文件；支持自定义扩展名。',
-            description="批量创建 UTF-8 文本文件；files 必须是数组，name 和 content 写在数组项内，不要放到顶层。每项填写完整文件名（如 script.py、page.html、config.custom）和 content，未知扩展名也按文本保存。可用 target 指定默认 personal/project、project_id、folder_id，单项可覆盖；不做格式转换、不执行内容，同名自动保留副本。",
+            description="批量创建 UTF-8 文本文件；files 必须是数组，name 和 content 写在数组项内，不要放到顶层。每项填写完整文件名（如 script.py、page.html、config.custom）和 content，未知扩展名也按文本保存。可用 target 指定默认 personal/project、project_id、folder_id，单项可覆盖；会话绑定 Workspace 时可显式传 target.space=workspace（或整体省略目标参数）写入当前工作区。不做格式转换、不执行内容，同名自动保留副本。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "target": {
                         "type": "object",
                         "properties": {
-                            "space": {"type": "string", "enum": ["project", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                             "project_id": {"type": "integer"},
                             "folder_id": {"type": "integer"},
                         },
@@ -1716,7 +916,7 @@ class FilesSkill(BaseSkill):
                             "properties": {
                                 "name": {"type": "string", "minLength": 1, "maxLength": 300},
                                 "content": {"type": "string", "maxLength": 262144},
-                                "space": {"type": "string", "enum": ["project", "personal"]},
+                                "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                                 "project_id": {"type": "integer"},
                                 "folder_id": {"type": "integer"},
                             },
@@ -1769,7 +969,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="move_items", label="移动文件/文件夹",
             description_short='移动文件或文件夹；批量传 files/folders，目标传 target；folder_id 优先，project 空间传 project_id',
-            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。项目目标用 project_id，workspace_id 不能代替它。",
+            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。目标空间用 target.space（project/workspace/mind/asset/personal），workspace＝当前绑定工作区；项目目标用 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1780,7 +980,7 @@ class FilesSkill(BaseSkill):
                         "properties": {
                             "folder": {"type": "string"},
                             "folder_id": {"type": "integer"},
-                            "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
                             "project_id": {"type": "integer"},
                         },
                     },
@@ -1804,7 +1004,7 @@ class FilesSkill(BaseSkill):
                         "type": "object",
                         "properties": {
                             "folder": {"type": "string"},
-                            "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
                             "project_id": {"type": "integer"},
                             "folder_id": {"type": "integer"},
                         },
@@ -1856,14 +1056,16 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
-            description_short='查询个人或项目文件夹路径；用于确认文件位置和落点。',
-            description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
+            description_short='查询文件夹；默认覆盖当前用户可访问的所有空间。',
+            description="列出文件夹，可按空间、项目、工作区或父文件夹筛选；不传位置条件时查询当前用户所有可访问空间。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
                 "type": "object",
                 "properties": {
+                    "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                     "project_id": {"type": "integer"},
                     "parent_id": {"type": "integer"},
+                    "workspace_directory_id": {"type": "integer"},
                 },
             },
             repeat_safe=True,
@@ -1905,7 +1107,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="send_file", label="发送文件",
             description_short='发送文件或图片。',
-            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用，查位置请用文件链接。",
+            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用。文件库文件优先使用 list_files 返回的 file_id；也支持 Shell 逻辑路径 /workspace/...、/personal/...、/project/...，不要把路径填到 file_id。查位置请用文件链接。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1986,6 +1188,3 @@ class FilesSkill(BaseSkill):
             mutates=True,
         ),
     ]
-
-
-FilesSkill().register()

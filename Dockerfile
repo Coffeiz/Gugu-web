@@ -85,6 +85,18 @@ RUN apt-get update \
     && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
     && rm -rf /var/lib/apt/lists/*
 
+# CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，
+# 与 backend/Dockerfile.prod 同款：libgstreamer-plugins-base1.0-0 是 ffmpeg 的传递
+# 依赖，基础镜像携带旧版；直接从 security pool 拉修复版 .deb 安装，不依赖镜像源
+# 索引新鲜度。基础镜像自带版本 >= 修复版后即可删除本段。
+ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
+# TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串
+ARG TARGETARCH
+RUN curl -fsSL -o /tmp/gst-base.deb \
+        "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
+    && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
+    && rm -f /tmp/gst-base.deb
+
 WORKDIR /app
 
 ENV PATH=/opt/venv/bin:${PATH} \
@@ -133,8 +145,8 @@ EXPOSE 9595
 
 # 一键部署面板（fnOS / 群晖 / Portainer 等）从镜像 ENV 枚举「可填变量」——业务默认值
 # 必须在这里声明，否则面板只露出 Python 自带的 PATH/PYTHON_*，用户根本不知道要填
-# 数据库。默认值与 docker-compose.yml 注入的值保持一致；SECRET_KEY / DB__PASSWORD
-# 留空，由面板或 backend/.env 填写。入口端口统一 9595：Nginx 在容器内监听 9595，
+# 数据库。默认值与 docker-compose.yml 注入的值保持一致；SECRET_KEY 留空时由入口首次
+# 启动生成并写入持久化 env 文件，DB__PASSWORD 由面板或 backend/.env 填写。入口端口统一 9595：Nginx 在容器内监听 9595，
 # Uvicorn 藏在 127.0.0.1:8001 后面（GUGU_APP_PORT），对外只有 9595 一个入口。
 #
 # 单容器完整启动契约也在这里默认成立（裸 docker run = 完整应用）：
@@ -152,9 +164,9 @@ ENV DB__HOST=postgres \
     SECRET_KEY="" \
     GUGU_DB_PASSWORD="" \
     ADMIN_USERNAME=admin \
-    # 不写死默认密码：随镜像公开的默认口令会压过用户在 backend/.env 配置的强密码
+    # 不写死默认密码：随镜像公开的默认口令会压过用户在 env 文件配置的强密码
     # （process env 优先级高于 dotenv）。留空 = 首次启动自动生成随机密码写入
-    # backend/.env 并打印一次，公网部署用户显式覆盖即可。
+    # 持久化 env 文件并打印一次，公网部署用户显式覆盖即可。
     ADMIN_PASSWORD="" \
     GUGU_SINGLE_CONTAINER=1 \
     GUGU_APP_PORT=8001 \
@@ -169,6 +181,9 @@ ENV DB__HOST=postgres \
     GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
+
+# 未显式绑定宿主目录时，让 Docker 自动创建匿名持久卷；显式 bind mount 仍优先。
+VOLUME ["/data", "/config"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD curl -sf http://127.0.0.1:9595/health || exit 1

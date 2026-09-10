@@ -45,6 +45,26 @@ GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference"
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
 
 
+def _log_reflection_failure(job, *, phase: str, exc: BaseException) -> None:
+    """记录反思原始异常；正文/作用域标识不进入可见 worker 日志。"""
+    from agent.security.logsafe import fingerprint
+    from app.core.redaction import diag_log
+
+    _reflection_log.error(
+        "[memory-reflection-failed] job_id=%s phase=%s scope_type=%s "
+        "scope_id_fp=%s source=%s task_type=%s error=%s",
+        getattr(job, "id", None),
+        phase,
+        getattr(job, "scope_type", ""),
+        fingerprint(getattr(job, "scope_id", "")),
+        getattr(job, "platform", ""),
+        getattr(job, "task_type", ""),
+        type(exc).__name__,
+    )
+    # 原始 traceback 只进受限诊断文件，不进入 gugu.log/SystemLog/Debug 面板。
+    diag_log(f"agent.memory.im_reflection.{phase}", exc)
+
+
 def _daily_entries(text: str) -> List[tuple[str, str]]:
     entries: List[tuple[str, str]] = []
     current = ""
@@ -55,6 +75,17 @@ def _daily_entries(text: str) -> List[tuple[str, str]]:
         elif current and line.startswith("- ") and line[2:].strip():
             entries.append((current, line[2:].strip()))
     return entries
+
+
+def _daily_items(value: Any) -> list[str]:
+    """把模型返回的 daily 统一成字符串列表，避免字符串被按字符遍历。"""
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, (list, tuple)):
+        candidates = value
+    else:
+        return []
+    return [item.strip() for item in candidates if isinstance(item, str) and item.strip()]
 
 
 def _render_daily(entries: List[tuple[str, str]]) -> str:
@@ -206,6 +237,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
         job.locked_at = now
         job.updated_at = now
         await db.commit()
+        phase = "bind_model"
         try:
             scope = MemoryScope(job.owner_user_id, job.platform, job.bot_id, job.scope_type, job.scope_id)
             # 反思任务在独立 worker 中执行，重新解析用户 BYOK，随后由 provider 用量
@@ -218,6 +250,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             modelctx.set_usage_context(scope.owner_user_id)
             from app.byok.service import resolve_and_bind_user_embedding
             await resolve_and_bind_user_embedding(settings, db, scope.owner_user_id)   # 向量化走用户 embedding 凭据（PRD-SEC-2）
+            phase = "load_entry"
             existing_entry = (await db.execute(
                 select(MemoryEntry).where(
                     MemoryEntry.owner_user_id == scope.owner_user_id,
@@ -229,6 +262,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 )
             )).scalars().first()
             if existing_entry:
+                phase = "persist_existing_entry"
                 cursor = (await db.execute(
                     select(MemoryReflectionCursor).where(*[
                         MemoryReflectionCursor.owner_user_id == scope.owner_user_id,
@@ -248,6 +282,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 job.updated_at = now
                 await db.commit()
                 return True
+            phase = "load_cursor"
             cursor = (await db.execute(
                 select(MemoryReflectionCursor).where(
                     MemoryReflectionCursor.owner_user_id == scope.owner_user_id,
@@ -265,10 +300,12 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 )
                 if reflected_id:
                     job.from_message_id = max(job.from_message_id or 0, reflected_id + 1)
+            phase = "load_messages"
             messages = await _messages_for_job(db, job)
             if scope.scope_type == "group":
                 # members.json 的 DB 字段独立于下面的 LLM 调用是否成功，见 _merge_members 注释。
                 try:
+                    phase = "aggregate_members"
                     aggregated = await _aggregate_members(db, scope)
                     # 这里只需要 members.json 一个文件，不用 read_scope() 把 profile/
                     # summary/daily/memory 全部读一遍（code review 复审提出的 P3 性能
@@ -285,6 +322,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     # ——这正是本 PRD 最初诞生的原因（真实故障排查困难），不能在这里重蹈覆辙。
                     from app.core.redaction import diag_log
                     diag_log("agent.memory.im_members.aggregate", exc)
+            phase = "load_scope"
             current = await read_scope(scope)
             payload = "\n".join(
                 f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
@@ -300,6 +338,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 f"本批新增消息：\n{payload or '（无消息）'}"
             )
             task_type = job.task_type or "group"
+            phase = "reflection_provider"
             branch = await ContextBranch().run(
                 BranchInput(
                     stable_system=_scope_prompt(scope, task_type=task_type),
@@ -319,17 +358,21 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")
             if task_type == "member-batch":
+                phase = "apply_member_output"
                 await _apply_member_batch_output(scope, out, messages)
             elif task_type == "private-owner":
                 # 私聊复用 owner 的反思 JSON；只有写入目标 scope 的适配不同。
+                phase = "apply_owner_output"
                 await _apply_output(scope, current, {
                     "profile": out.get("profile_add"),
                     "pattern": out.get("pattern_add"),
                     "summary": out.get("summary"),
                 }, messages, settings)
             else:
+                phase = "apply_group_output"
                 await _apply_output(scope, current, out, messages, settings)
 
+            phase = "persist_result"
             cursor = (await db.execute(
                 select(MemoryReflectionCursor).where(
                     MemoryReflectionCursor.owner_user_id == scope.owner_user_id,
@@ -379,7 +422,12 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             )
             return True
         except Exception as exc:
-            await _mark_failure(db, job, exc)
+            _log_reflection_failure(job, phase=phase, exc=exc)
+            try:
+                await _mark_failure(db, job, exc)
+            except Exception as mark_exc:
+                _log_reflection_failure(job, phase="mark_failure", exc=mark_exc)
+                raise
             return False
 
 
@@ -623,9 +671,8 @@ async def _apply_output(
                 await write_scope_json(scope, "members.json", {"updated_at": now_utc().timestamp(), "members": updated})
         entries = _daily_entries(current.get("daily") or "")
         date = (messages[-1].created_at.date().isoformat() if messages and messages[-1].created_at else now_utc().date().isoformat())
-        for item in output.get("daily") or []:
-            if str(item).strip():
-                entries.insert(0, (date, str(item).strip()))
+        for item in _daily_items(output.get("daily")):
+            entries.insert(0, (date, item))
         await write_scope_file(scope, "daily.md", _render_daily(entries))
         summary = str(output.get("summary") or "").strip()
         if summary:

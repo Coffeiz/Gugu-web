@@ -88,25 +88,15 @@ async def _save_knowledge(db, user_id, args: dict):
         saved = await save_capture(user_id, values)
     except ValueError as exc:
         return {"error": str(exc)}
-    try:
-        from agent.rag.adapters.knowledge import KnowledgeAdapter
-        from agent.memory import embedding
-        from agent.rag.models import Scope
-        from agent.rag.vector_cache import sync_knowledge_index_vectors
-
-        if embedding.is_enabled():
-            vector_scope = Scope(
-                owner_user_id=str(user_id), scope_type="owner",
-            )
-            documents = await KnowledgeAdapter(user_id).build_documents(scope=vector_scope)
-            await sync_knowledge_index_vectors(user_id, documents)
-    except Exception:
-        # 向量是可重建缓存，保存主数据成功后不因缓存不可用而失败。
-        pass
+    from agent.events import bus, types
+    bus.publish(types.RagIndexUpdated(
+        user_id=user_id, source_type="knowledge", source_id=saved.id, operation="upsert",
+    ))
     return {
         "success": True, "id": saved.id, "title": saved.title,
         "source_type": saved.source.type,
         "confidence": saved.confidence,
+        "index_status": "queued",
     }
 
 
@@ -130,20 +120,10 @@ async def _delete_knowledge(db, user_id, args: dict):
         return blocked
     deleted = await store.delete(entry_id)
     if deleted:
-        try:
-            from agent.knowledge.vector_cache import sync_vectors
-            from agent.rag.adapters.knowledge import KnowledgeAdapter
-            from agent.rag.models import Scope
-
-            documents = await KnowledgeAdapter(user_id).build_documents(
-                scope=Scope(owner_user_id=str(user_id), scope_type="owner"),
-            )
-            await sync_vectors(user_id, documents)
-        except Exception:
-            # 向量是可重建缓存，删除主数据成功后不因缓存 GC 失败而回滚。
-            pass
-        from agent.rag.index_cache import get_index_cache
-        get_index_cache().invalidate(user_id, "knowledge")
+        from agent.events import bus, types
+        bus.publish(types.RagIndexUpdated(
+            user_id=user_id, source_type="knowledge", source_id=entry_id, operation="delete",
+        ))
     return {"success": deleted, "knowledge_id": entry_id}
 
 
@@ -157,12 +137,13 @@ class MemorySkill(BaseSkill):
                 "保存一条已经整理好的、可长期复用的事实、规则或资料摘要。"
                 "仅在用户明确要求保存，或已确认需要保留工具结果时使用；"
                 "普通聊天不要自动保存。正文必须自包含并填写真实来源。"
+                "成功后会立即返回 knowledge_id 和 index_status=queued，但检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
-                    "content": {"type": "string"},
+                    "content": {"type": "string", "maxLength": 3000},
                     "topic": {"type": "string"},
                     "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"]},
                     "source_ref": {"type": "string"},
@@ -213,7 +194,11 @@ class MemorySkill(BaseSkill):
         Tool(
             name="search_memory", label="搜索记忆",
             description_short='搜索历史记忆；可按 scope/source/strategy 筛选，省略筛选项用默认值',
-            description="搜索用户的历史记忆、事件和对话背景；source=knowledge 用于已保存的事实与规则。",
+            description=(
+                "搜索用户的历史记忆、事件和对话背景；source=knowledge 用于已保存的事实与规则。"
+                "Knowledge 刚保存后索引可能尚未更新；若 save_knowledge 已成功，不要立即重复相同查询，"
+                "以保存回执为准，确需复查时下一轮再搜索一次。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {

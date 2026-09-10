@@ -14,7 +14,7 @@ from app.core.tz import now_utc
 
 from app.models import (
     CalendarEvent, Client, ConversationSession, ConversationMessage,
-    File, Folder, Project, ScheduledTask,
+    File, Folder, Project, ScheduledTask, WorkspaceDirectory,
 )
 
 from agent.tools.files import _list_files, _resolve_file, _resolve_key, _resolve_target
@@ -129,9 +129,42 @@ async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user
     assert [item["id"] for item in rows] == [inside.id]
 
 
+async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
+    workspace = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="F1 工作区", directory_name="f1-list",
+    ))
+    personal_folder = await _mk(db, Folder(user_id=user_a.id, name="影视"))
+    personal_file = await _mk(db, File(
+        user_id=user_a.id, display_name="已看", ext="md",
+        folder_id=personal_folder.id, storage_key="personal-watched",
+    ))
+    await _mk(db, File(
+        user_id=user_a.id, display_name="工作区记录", ext="md", space="workspace",
+        workspace_directory_id=workspace.id, storage_key="workspace-note",
+    ))
+
+    import agent.tools.files.documents as file_documents
+
+    async def bound_workspace(*_args, **_kwargs):
+        return {
+            "space": "workspace",
+            "project_id": None,
+            "folder_id": None,
+            "workspace_directory_id": workspace.id,
+        }
+
+    monkeypatch.setattr(file_documents, "_bound_workspace_target", bound_workspace)
+
+    rows = await _list_files(db, user_a.id, {"queries": ["已看"]})
+
+    assert [item["id"] for item in rows] == [personal_file.id]
+
+
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):
     fo = await _mk(db, Folder(user_id=user_b.id, name="B的文件夹"))
-    space, pid, fid, err = await _resolve_target(db, user_a.id, {"folder_id": fo.id})
+    space, pid, fid, workspace_directory_id, err = await _resolve_target(
+        db, user_a.id, {"folder_id": fo.id}
+    )
     assert err is not None and "error" in err
 
 

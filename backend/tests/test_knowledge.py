@@ -39,6 +39,45 @@ async def test_knowledge_store_upserts_same_topic_and_increments_version(knowled
 
 
 @pytest.mark.asyncio
+async def test_knowledge_store_normalizes_and_roundtrips_at_most_ten_keywords(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    entry = KnowledgeEntry.create(
+        title="关键词规则", content="用于检索", topic="检索",
+        keywords=[" RAG ", "rag", *[f"词语{i}" for i in range(12)]],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(entry)
+
+    saved = (await store.list())[0]
+    assert len(saved.keywords) == 10
+    assert saved.keywords[0] == "RAG"
+    assert saved.keywords.count("rag") == 0
+    assert (await store.list())[0].keywords == saved.keywords
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_updates_keywords_without_content_change(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="脚本规则", content="使用受控执行方式", topic="工具",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("conversation"),
+    )
+    await store.save(original)
+    enriched = KnowledgeEntry.create(
+        title="脚本规则", content="使用受控执行方式", topic="工具",
+        keywords=["run_script", "脚本工具"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("conversation"),
+    )
+
+    saved = await store.save(enriched)
+
+    assert saved.id == original.id
+    assert saved.version == 2
+    assert saved.keywords == ["run_script", "脚本工具"]
+    assert (await store.list())[0].keywords == saved.keywords
+
+
+@pytest.mark.asyncio
 async def test_knowledge_store_keeps_cross_source_conflict_visible(knowledge_storage):
     store = KnowledgeStore("user-a")
     original = KnowledgeEntry.create(
@@ -103,14 +142,27 @@ async def test_knowledge_adapter_exposes_source_and_confidence(knowledge_storage
 
 
 @pytest.mark.asyncio
-async def test_search_memory_accepts_knowledge_source(monkeypatch, knowledge_storage):
+async def test_knowledge_adapter_makes_keywords_searchable(knowledge_storage):
+    from agent.rag.adapters.knowledge import KnowledgeAdapter
+    from agent.rag.models import Scope
+
+    await KnowledgeStore("user-a").save(KnowledgeEntry.create(
+        title="脚本执行", content="脚本应使用受控执行方式。", topic="工具经验",
+        keywords=["run_script", "脚本工具"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("conversation"),
+    ))
+
+    document = (await KnowledgeAdapter("user-a").build_documents(
+        scope=Scope(owner_user_id="user-a"),
+    ))[0]
+    assert "关键词：run_script、脚本工具" in document.summary
+    assert document.metadata["keywords"] == "run_script、脚本工具"
+    assert ":k" in document.version
+
+
+@pytest.mark.asyncio
+async def test_search_memory_accepts_knowledge_source(knowledge_storage):
     from agent.rag import service
-
-    async def fake_search(*args, **kwargs):
-        from agent.rag.retriever import RetrievalBatch
-        return RetrievalBatch(source_type="knowledge")
-
-    monkeypatch.setattr(service.KnowledgeAdapter, "retrieve", fake_search)
     result = await service.search_memory("user-a", "项目协议", source="knowledge")
     assert result["results"] == []
 
@@ -150,14 +202,14 @@ async def test_knowledge_store_uses_one_markdown_file_per_entry(knowledge_storag
 
 
 @pytest.mark.asyncio
-async def test_knowledge_store_rejects_content_over_1000_characters(knowledge_storage):
+async def test_knowledge_store_rejects_content_over_3000_characters(knowledge_storage):
     store = KnowledgeStore("user-a")
     entry = KnowledgeEntry.create(
-        title="过长知识", content="x" * 1001, topic="长度",
+        title="过长知识", content="x" * 3001, topic="长度",
         scope=KnowledgeScope(owner_user_id="user-a"),
         source=KnowledgeSource("user"),
     )
-    with pytest.raises(ValueError, match="content.*1000"):
+    with pytest.raises(ValueError, match="content.*3000"):
         await store.save(entry)
 
 
@@ -178,6 +230,18 @@ def test_knowledge_reflection_limits_candidates_and_validates_operations():
     assert candidate_request({"knowledge_candidate": {"should_reflect": "true", "query": "规则"}}) == (False, "")
 
 
+def test_knowledge_reflection_prompt_covers_tool_and_person_knowledge():
+    from agent.knowledge.reflection import load_prompt
+
+    prompt = load_prompt()
+    assert "工具使用与效率经验" in prompt
+    assert "人物与关系知识" in prompt
+    assert "工具调用失败本身不值得保存" in prompt
+    assert "不同人物使用能区分主体的 `topic`" in prompt
+    assert "高风险个人信息" in prompt
+    assert '"keywords"' in prompt
+
+
 def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
     from agent.knowledge.capture import normalize_capture
 
@@ -186,8 +250,10 @@ def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
         confidence="confirmed", capture_mode="tool_result",
     )
     assert values["confidence"] == "probable"
-    with pytest.raises(ValueError, match="content.*1000"):
-        normalize_capture("过长", "x" * 1001)
+    accepted = normalize_capture("边界知识", "x" * 3000)
+    assert len(accepted["content"]) == 3000
+    with pytest.raises(ValueError, match="content.*3000"):
+        normalize_capture("过长", "x" * 3001)
 
 
 @pytest.mark.asyncio

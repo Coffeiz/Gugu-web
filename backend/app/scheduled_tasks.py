@@ -323,6 +323,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             payload, uid, name = t.payload or "", t.user_id, t.name
             target_map = t.delivery_targets
             authorized_tools = t.authorized_tools or []
+            email_attachment_file_ids = getattr(t, "email_attachment_file_ids", None) or []
             workspace_id = t.workspace_id
             from app.services.filesystem_authorization import resolve_filesystem_policy
             filesystem_policy = await resolve_filesystem_policy(
@@ -384,7 +385,10 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 ),
                 allow_shell=allow_shell,
             )
-            result = await deliver_to_channels(uid, name, text, chans, target_map, files=files, status=status)
+            delivery_kwargs = {"files": files, "status": status}
+            if email_attachment_file_ids:
+                delivery_kwargs["email_attachment_file_ids"] = email_attachment_file_ids
+            result = await deliver_to_channels(uid, name, text, chans, target_map, **delivery_kwargs)
             if not is_trial and is_once:
                 if _delivery_succeeded(result):
                     await _delete_completed_once(task_id, uid)
@@ -454,6 +458,7 @@ async def deliver_to_channels(
     delivery_targets: dict | None = None,
     files: list | None = None,
     status: str = "success",
+    email_attachment_file_ids: list[int] | None = None,
 ) -> dict:
     """把 text（+ 可选 files，execution 阶段 send_file 产出的 _artifact 列表）投递到选定渠道，
     返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
@@ -465,7 +470,15 @@ async def deliver_to_channels(
     title = f"{name}{_STATUS_PREFIX.get(status, '')}"
     if "email" in chans:
         try:
-            _sent, email_status = await _deliver_email(uid, title, text)
+            if email_attachment_file_ids or files:
+                _sent, email_status = await _deliver_email(
+                    uid, title, text,
+                    file_ids=email_attachment_file_ids,
+                    generated_files=files,
+                )
+            else:
+                # 保持无附件的旧调用形态，便于外部集成和测试替身兼容。
+                _sent, email_status = await _deliver_email(uid, title, text)
             result["邮件"] = email_status
         except Exception as e:
             result["邮件"] = f"发送失败（{type(e).__name__}）"
@@ -1054,7 +1067,14 @@ async def _deliver_im(
     return await send_text(payload, text)
 
 
-async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
+async def _deliver_email(
+    user_id,
+    name: str,
+    text: str,
+    *,
+    file_ids: list[int] | None = None,
+    generated_files: list | None = None,
+) -> tuple[bool, str]:
     """把定时任务正文投递到用户注册邮箱。
 
     每次执行只调用一次 SMTP，不在这里自动重试：SMTP 发送不是可安全假设幂等的
@@ -1062,6 +1082,7 @@ async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
     """
     import app.db.session as ss
     from app.models import User, UserPreferences, UserSmtpConfig
+    from app.services.email.attachments import EmailAttachmentError, resolve_email_attachments
     async with ss._SessionLocal() as db:
         user = await db.get(User, _as_uuid(user_id))
         if user is None or not user.email:
@@ -1072,6 +1093,12 @@ async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
         prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
         data = prefs.data if prefs else {}
         theme, palette = data.get("theme", "light"), data.get("palette", "mist")
+        try:
+            attachments = await resolve_email_attachments(
+                db, user.id, file_ids=file_ids, artifacts=generated_files,
+            )
+        except EmailAttachmentError as exc:
+            return False, f"附件不可用（{str(exc)}）"
     from app.services.email import send_email_with_status
     subject = f"咕咕 · {name}"
     delivery = await asyncio.to_thread(
@@ -1086,6 +1113,7 @@ async def _deliver_email(user_id, name: str, text: str) -> tuple[bool, str]:
         sections=[{"heading": "任务内容", "text": text}],
         theme=theme,
         palette=palette,
+        attachments=attachments,
     )
     if delivery.get("status") == "sent":
         return True, "已发送"

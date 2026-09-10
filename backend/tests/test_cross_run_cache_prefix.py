@@ -35,6 +35,35 @@ def _history_row(*, role, content="", content_json=None, sent_at=None, row_id=1)
     )
 
 
+def test_rag_context_precedes_user_in_anthropic_and_openai_projections():
+    rag = {
+        "role": "user",
+        "content": [{
+            "type": "knowledge-context",
+            "scope": "owner-rag",
+            "text": "[owner-rag]\n参考资料\n[/owner-rag]",
+        }],
+    }
+    batch, _ = assemble_turn(
+        current_user={"role": "user", "content": "当前问题"},
+        conversation_tail=[rag],
+    )
+    prompt = PromptMessages()
+    prompt.append_batch(batch)
+
+    # Anthropic/MiniMax 路径先清洗，再在 provider 边界渲染 canonical event。
+    anthropic = render_anthropic_message_roles(
+        sanitize.sanitize_messages(list(prompt.conversation)), None,
+    )
+    # OpenAI 兼容路径保留独立消息边界，canonical event 也在 provider 边界渲染。
+    openai = list(render_events_for_provider(prompt))
+
+    for projected in (anthropic, openai):
+        assert [message["role"] for message in projected] == ["user", "user"]
+        assert "参考资料" in str(projected[0]["content"])
+        assert projected[1]["content"] in ("当前问题", [{"type": "text", "text": "当前问题"}])
+
+
 def test_provider_render_keeps_canonical_blocks_in_original_position():
     time_text = "[system-reminder]\n08-27 17:08\n[/system-reminder]"
     runtime_text = "[system-reminder]\n身份事实\n[/system-reminder]"
@@ -298,12 +327,12 @@ def test_replayed_knowledge_context_keeps_standalone_boundary_across_runs():
     }
     history = [
         _history_row(
-            row_id=1, role="user", content="上一条问题",
-            content_json=[{"type": "text", "text": "上一条问题"}],
+            row_id=1, role="user", content_json=[dict(rag_block)],
             sent_at=sent_at,
         ),
         _history_row(
-            row_id=2, role="user", content_json=[dict(rag_block)],
+            row_id=2, role="user", content="上一条问题",
+            content_json=[{"type": "text", "text": "上一条问题"}],
             sent_at=sent_at,
         ),
         _history_row(
@@ -321,14 +350,14 @@ def test_replayed_knowledge_context_keeps_standalone_boundary_across_runs():
     )
     clean = sanitize.sanitize_messages(restored)
 
-    # 时间 reminder、用户正文、RAG、回答都保持独立边界，RAG 没有被合并进相邻 user 消息
+    # RAG、时间 reminder、用户正文、回答都保持独立边界，连续 user 没有被合并
     assert len(clean) == 4
-    assert clean[2]["content"] == [rag_block]
+    assert clean[0]["content"] == [rag_block]
 
     # provider wire 上与注入形状一致：canonical event 原位渲染成独立 user 消息
     wire = _provider_wire(restored)
     assert len(wire) == 4
-    assert wire[2] == {
+    assert wire[0] == {
         "role": "user",
         "content": [{"type": "text", "text": rag_block["text"]}],
     }

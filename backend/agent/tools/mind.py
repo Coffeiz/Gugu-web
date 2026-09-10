@@ -11,7 +11,7 @@ from app.services.mind import get_live_note, get_user_node, latest_gugu_note, li
 from app.search.query import normalize_queries
 from app.core.tz import LOCAL_TZ
 from agent.tools.base import BaseSkill, Tool
-from agent.tools.line_edit import apply_line_edits, numbered_lines
+from agent.tools.text_edit import apply_line_edits, numbered_lines
 
 _MAX_RESULTS = 10
 _PREVIEW_LENGTH = 240

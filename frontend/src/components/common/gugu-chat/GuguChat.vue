@@ -51,6 +51,7 @@
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
       :streaming="streaming" :is-chat-dragging="isChatDragging"
+      :unlimited-mode="preferencesStore.unlimitedMode" :on-toggle-unlimited="toggleUnlimitedMode"
       :current-session-title="currentSessionTitle"
       :current-session-workspace-name="currentSessionWorkspaceName"
       :current-session-goal-active="currentSessionGoalActive"
@@ -116,6 +117,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
+import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
 import { prefetchGreeting } from '@/composables/shared/useGreeting'
@@ -149,6 +151,7 @@ interface QuotaInfo {
 
 const audioStore    = useAudioStore()
 const uiStore       = useUiStore()
+const preferencesStore = usePreferencesStore()
 const router        = useRouter()
 
 // 顶栏全局搜索点「对话」结果 / 笔记里点「@对话」引用卡片：打开聊天面板并切到该会话。
@@ -314,6 +317,7 @@ async function exitExpanded() {
 }
 
 onMounted(() => {
+  if (!preferencesStore.loaded) void preferencesStore.fetch()
   window.addEventListener('gugu-quota-changed', onQuotaChanged)
   window.addEventListener('beforeunload', saveProgress)
   // 小窗也需要会话权限摘要，避免只有展开聊天窗口后才知道当前 Session 的授权状态。
@@ -344,6 +348,10 @@ onMounted(() => {
     prefetchGreeting()
   }
 })
+function toggleUnlimitedMode() {
+  void preferencesStore.saveUnlimitedMode(!preferencesStore.unlimitedMode)
+}
+
 onUnmounted(() => {
   window.removeEventListener('gugu-quota-changed', onQuotaChanged)
   window.removeEventListener('beforeunload', saveProgress)
@@ -444,15 +452,18 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
         body: JSON.stringify({ token: option.token }),
       })
       if (!res.ok) {
+        if (_msg.interaction) _msg.interaction.submitting = false
         _chatTip(t('chatUi.interactionSubmitFailed'))
         return
       }
       pendingCustomPromptId.value = promptId
       _msg.interaction.customInputActive = true
+      _msg.interaction.submitting = false
       inputText.value = ''
       await nextTick()
       composerRef.value?.focus?.()
     } catch {
+      if (_msg.interaction) _msg.interaction.submitting = false
       _chatTip(t('chatUi.interactionSubmitFailed'))
     }
     return
@@ -460,8 +471,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
   pendingCustomPromptId.value = null
   if (_msg.interaction) {
     _msg.interaction.customInputActive = false
-    _msg.interaction.resolved = true
-    _msg.interaction.selectedOptionId = option.id
+    _msg.interaction.submitting = true
   }
   try {
     const token = getToken()
@@ -475,16 +485,34 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     })
     if (!res.ok) {
       if (_msg.interaction) {
-        _msg.interaction.resolved = false
-        _msg.interaction.selectedOptionId = null
+        _msg.interaction.submitting = false
+        // 409/404 表示服务端已经结束或消费了这次交互；此时不能恢复按钮，
+        // 否则前端会让用户重复点击一个后端已不可再次消费的 token。
+        if (res.status === 409 || res.status === 404) {
+          const body = await res.json().catch(() => ({})) as { detail?: unknown }
+          _msg.interaction.resolved = true
+          _msg.interaction.selectedOptionId = option.id
+          _msg.interaction.responseText = typeof body.detail === 'string'
+            ? body.detail
+            : t('chatUi.interactionSubmitFailed')
+        } else {
+          _chatTip(t('chatUi.interactionSubmitFailed'))
+        }
       }
       return
     }
   } catch {
     if (_msg.interaction) {
+      _msg.interaction.submitting = false
       _msg.interaction.resolved = false
       _msg.interaction.selectedOptionId = null
     }
+    return
+  }
+  if (_msg.interaction) {
+    _msg.interaction.submitting = false
+    _msg.interaction.resolved = true
+    _msg.interaction.selectedOptionId = option.id
   }
 }
 
@@ -674,10 +702,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 .chat-open-leave-active {
   transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0) !important;
   transform-origin: right bottom;
-  /* Chrome 在变换中的子元素上会提前停止 backdrop-filter 合成；离场根节点保留
-     一层同值材质，确保玻璃效果跟随 opacity 一起淡出，而不是先变成普通半透明。 */
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
 }
 .chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.78); }
 
@@ -719,7 +743,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   transition:
     background-color var(--motion-hover-control) var(--motion-ease-standard),
     border-color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
     transform var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
@@ -792,7 +815,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 }
 :deep(.msg.user .msg-bubble) {
   background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
 }
 /* 用户气泡 MD 排版（.user-md）：md-view 默认把标题/加粗/引用映射到深色文字
    token，紫底上对比不足，重映射到气泡前景。行内代码叠半透明前景，代码块用
@@ -857,7 +880,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight), var(--gugu-chat-file-shadow);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
      避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
-  transition: background 0.2s ease, box-shadow 0.25s ease,
+  transition: background 0.2s ease, border-color 0.2s ease,
     transform 0.15s ease, opacity 0.15s ease;
 }
 :deep(.msg-file.press-fx:hover) {
@@ -879,8 +902,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   object-fit: cover; display: block;
 }
 :deep(.msg-file-info) { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-:deep(.msg-file-name) { font-size: 15px; font-weight: 500; color: var(--gugu-chat-file-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:deep(.msg-file-meta) { font-size: 12px; color: var(--gugu-chat-file-meta); }
+:deep(.msg-file-name) { display: block; font-size: 15px; font-weight: 500; line-height: var(--line-height-ui); color: var(--gugu-chat-file-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:deep(.msg-file-meta) { font-size: 12px; line-height: var(--line-height-ui); color: var(--gugu-chat-file-meta); }
 :deep(.msg-file-dl) {
   flex-shrink: 0; color: var(--action-primary); cursor: pointer; border-radius: 4px; padding: 3px;
   margin: -3px; box-sizing: content-box; transition: background 0.12s, color 0.12s;
@@ -893,7 +916,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: var(--gugu-chat-voice-bg); border: 1px solid var(--gugu-chat-voice-border);
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 var(--gugu-chat-voice-highlight), var(--elevation-card);
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 :deep(.msg-voice:hover) { background: var(--surface-glass-hover); box-shadow: inset 0 1px 0 var(--highlight-strong), var(--elevation-card-hover); }
 :deep(.msg-voice .mv-btn) {

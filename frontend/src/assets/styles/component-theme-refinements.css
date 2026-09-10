@@ -19,11 +19,11 @@ html[data-theme][data-family] .cal-chip::after {
    hover look like light travelled vertically through the card. It is now one opacity layer. */
 html[data-theme][data-family] .task-card {
   /* 启停状态动画必须保留在最终 transition 所有者中，避免被组件 scoped 规则覆盖。 */
-  transition: var(--card-motion), opacity var(--hover-motion-control);
+  transition: var(--card-motion), box-shadow var(--motion-hover-card) ease, opacity var(--hover-motion-control);
 }
 html[data-theme][data-family] .task-card::after {
   background: var(--card-hover-overlay) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft) !important;
+  box-shadow: none !important;
   opacity: 0;
   transition: var(--card-overlay-motion) !important;
 }

@@ -92,7 +92,7 @@ def record_shell_prompt_sources(dynamic_prompt: str, *, code_target: Any = None)
 def _record_builder_sources(context_builder: Any, original_build: Any, bound: inspect.BoundArguments, result: tuple[str, str, str], start: float, end: float) -> None:
     try:
         args = bound.arguments
-        profile = str(args.get("profile") or "default")
+        prompt_name = str(args.get("prompt_name") or "default")
         include_memory = bool(args.get("include_memory", True))
         include_projects = bool(args.get("include_projects", True))
         include_calendar = bool(args.get("include_calendar", True))
@@ -102,11 +102,11 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
         files = args.get("files") or {}
         memory = args.get("memory") or {}
         style_prefs = args.get("style_prefs") or {}
-        skills = args.get("skills") or []
+        skills = args.get("skills")
         source = args.get("source")
         im_channels = args.get("im_channels") or {}
 
-        # 先把真正读取的 prompt 文件逐个登记。profile 模板包含占位符，因此记录 raw；最终展开值在
+        # 先把真正读取的 prompt 文件逐个登记。prompt 模板包含占位符，因此记录 raw；最终展开值在
         # Context Assembly 的完整 system_prompt 与下面各 runtime fragment 里查看。
         prompt_dir = getattr(context_builder, "_PROMPTS_DIR", None)
         if prompt_dir:
@@ -114,7 +114,7 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                 ("persona.md", "persona"),
                 ("skills.md", "execution_policy"),
                 ("policy.md", "content_policy"),
-                (f"{profile}.md", "profile_template"),
+                (f"{prompt_name}.md", "prompt_template"),
             ):
                 path = Path(prompt_dir) / filename
                 try:
@@ -129,7 +129,7 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     attributes={"path": _prompt_file_path(path), "role": role},
                     code_target=original_build,
                     source_value=content,
-                    included_value=content if role != "profile_template" else None,
+                    included_value=content if role != "prompt_template" else None,
                     started_at=start,
                     ended_at=end,
                 )
@@ -229,7 +229,11 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
             if block:
                 attributes = {}
                 if label == "Skill index":
-                    skill_rows = skills if isinstance(skills, (list, tuple)) else []
+                    if skills is None:
+                        from agent.skills import skills_index
+                        skill_rows = skills_index()
+                    else:
+                        skill_rows = skills if isinstance(skills, (list, tuple)) else []
                     skill_slugs = []
                     for row in skill_rows:
                         if isinstance(row, str) and row:

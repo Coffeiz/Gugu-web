@@ -356,7 +356,7 @@ async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a
     })
     assert deleted_note["deleted_node_id"] == note.id
     assert (await db.get(MindNode, note.id)).deleted_at is not None
-    assert await db.get(MindCanvasItem, item.id) is None
+    assert (await db.get(MindCanvasItem, item.id)).deleted_at is not None
 
 
 async def test_canvas_mutations_reject_self_cross_user_and_stale_versions(db, user_a, user_b):

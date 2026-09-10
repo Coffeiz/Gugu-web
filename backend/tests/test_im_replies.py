@@ -152,6 +152,40 @@ async def test_send_agent_response_replays_only_unsent_round_indices(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_send_agent_response_sends_error_after_sent_rounds(monkeypatch):
+    """模型续轮失败时，错误提示不能被已发送 round 的去重逻辑吞掉。"""
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(
+            text="模型调用失败，请重试。",
+            round_texts=["前面已经发出的正文"],
+            errored=True,
+        ),
+        already_sent_rounds={0},
+    )
+
+    assert sent == ["模型调用失败，请重试。"]
+    assert result == "模型调用失败，请重试。"
+
+
+@pytest.mark.asyncio
 async def test_attachment_failure_is_not_hidden_by_sent_round_index(monkeypatch):
     from agent.im import replies
     from agent.models import AgentResponse
@@ -208,6 +242,119 @@ async def test_interaction_uses_qq_keyboard_and_keeps_text_fallback(monkeypatch)
     assert len(keyboard_calls) == 1
     assert text_calls == []
     assert "session_id" not in repr(keyboard_calls[0])
+
+
+@pytest.mark.asyncio
+async def test_qq_group_interaction_uses_active_message(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_interaction
+
+    calls = []
+
+    async def fake_keyboard(*args, **kwargs):
+        calls.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr(qq, "send_keyboard", fake_keyboard)
+    await send_interaction(
+        {"platform": "qq", "chat_type": "group", "chat_id": "group-1",
+         "platform_user_id": "member-1", "channel_id": "bot-1", "message_id": "msg-1"},
+        {"prompt_id": 19, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0][0] == "group-1"
+    assert calls[0][1]["group"] is True
+    assert calls[0][1]["msg_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_qq_group_interaction_text_fallback_is_also_active(monkeypatch):
+    from agent.gateway import qq
+    from agent.im import replies
+
+    payloads = []
+
+    async def fake_keyboard(*_args, **_kwargs):
+        return False
+
+    async def fake_text(payload, _text):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(qq, "send_keyboard", fake_keyboard)
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    assert await replies.send_interaction(
+        {"platform": "qq", "chat_type": "group", "chat_id": "group-1",
+         "platform_user_id": "member-1", "channel_id": "bot-1", "message_id": "msg-1"},
+        {"prompt_id": 20, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    ) is True
+
+    assert len(payloads) == 1
+    assert payloads[0]["message_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_qq_passive_reply_is_consumed_once_per_inbound_message(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_text
+
+    message_ids = []
+
+    async def fake_group(_target, _text, msg_id, *_args):
+        message_ids.append(msg_id)
+        return True
+
+    monkeypatch.setattr(qq, "send_group", fake_group)
+    payload = {
+        "platform": "qq", "chat_type": "group", "chat_id": "group-1",
+        "platform_user_id": "member-1", "channel_id": "bot-1", "message_id": "msg-1",
+    }
+
+    assert await send_text(payload, "第一段") is True
+    assert await send_text(payload, "第二段") is True
+    assert message_ids == ["msg-1", None]
+
+
+@pytest.mark.asyncio
+async def test_qq_tool_status_does_not_consume_passive_reply(monkeypatch):
+    from agent.im import replies
+
+    payloads = []
+
+    async def fake_text(payload, _text):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    payload = {
+        "platform": "qq", "chat_type": "group", "chat_id": "group-1",
+        "platform_user_id": "member-1", "message_id": "msg-1",
+        "message_format": "compat",
+    }
+    assert await replies.send_tool_event(
+        payload, {"type": "tool_done", "label": "读取文件", "status": "success"}
+    ) is True
+
+    assert len(payloads) == 1
+    assert payloads[0]["message_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_interaction_prompt_send_result_is_propagated(monkeypatch):
+    from agent.im import loop
+    from agent.im import replies
+
+    async def fake_send(_payload, prompt):
+        return prompt["prompt_id"] == 21
+
+    monkeypatch.setattr(replies, "send_interaction", fake_send)
+    assert await loop._send_interaction_prompts(
+        {"platform": "qq"},
+        [{"prompt_id": 21}, {"prompt_id": 22}],
+    ) is False
 
 
 @pytest.mark.asyncio

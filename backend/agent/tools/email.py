@@ -9,6 +9,10 @@ import re
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool, automation_tool_allowed
 from app.services.email import send_email_with_status
+from app.services.email.attachments import (
+    EmailAttachmentError,
+    resolve_email_attachments,
+)
 from app.services.email.templates import EMAIL_PALETTES, EMAIL_THEMES, TEMPLATES
 from app.services.email.queries import (
     get_enabled_user_smtp,
@@ -33,11 +37,12 @@ def _mask_email(value: str) -> str:
 
 
 def _confirmation_identity(*, recipient, subject, body, html, template, title,
-                           preheader, sections, actions, theme, palette) -> str:
+                           preheader, sections, actions, theme, palette, attachments) -> str:
     payload = {
         "recipient": recipient, "subject": subject, "body": body, "html": html,
         "template": template, "title": title, "preheader": preheader,
         "sections": sections, "actions": actions, "theme": theme, "palette": palette,
+        "attachments": attachments,
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return f"send_email:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
@@ -93,8 +98,19 @@ async def _send_email(db, user_id, args: dict):
     if not _EMAIL_RE.fullmatch(recipient):
         return {"error": "收件人邮箱格式无效"}
 
+    try:
+        attachments = await resolve_email_attachments(
+            db, user_id, file_ids=args.get("file_ids"),
+        )
+    except EmailAttachmentError as exc:
+        return {"error": str(exc)}
+
     format_label = "咕咕标准 HTML + 纯文本" if not html else "纯文本 + HTML"
     summary = f"将发送{format_label}邮件至 {_mask_email(recipient)}（{recipient_source}），主题：{subject}。正文共 {len(body)} 个字符。"
+    if attachments:
+        names = "、".join(attachment.filename for attachment in attachments)
+        total_size = sum(len(attachment.content) for attachment in attachments)
+        summary += f"附件 {len(attachments)} 个（{total_size / 1024 / 1024:.1f}MB）：{names}。"
     preferences = await get_user_email_preferences(db, user_id)
     theme = requested_theme if requested_theme != "auto" else preferences.get("theme", "light")
     palette = requested_palette if requested_palette != "auto" else preferences.get("palette", "mist")
@@ -105,6 +121,12 @@ async def _send_email(db, user_id, args: dict):
                 recipient=recipient, subject=subject, body=body, html=html,
                 template=template, title=title, preheader=preheader,
                 sections=sections, actions=actions, theme=theme, palette=palette,
+                attachments=[{
+                    "file_id": attachment.file_id,
+                    "filename": attachment.filename,
+                    "size": len(attachment.content),
+                    "sha256": hashlib.sha256(attachment.content).hexdigest(),
+                } for attachment in attachments],
             ),
             instruction="邮件发送不可撤回。请确认收件人、主题和正文后再次调用本工具执行，无需携带凭证。",
         )
@@ -114,6 +136,8 @@ async def _send_email(db, user_id, args: dict):
     smtp_config = await get_enabled_user_smtp(db, user_id)
     try:
         send_kwargs = {"to_addr": recipient, "smtp_config": smtp_config}
+        if attachments:
+            send_kwargs["attachments"] = attachments
         if html is not None:
             send_kwargs["html"] = html
         elif any(key in args for key in ("template", "title", "preheader", "sections", "actions", "theme", "palette")) or theme != "light" or palette != "mist":
@@ -150,8 +174,7 @@ class EmailSkill(BaseSkill):
     tools = [
         Tool(
             name="send_email", label="发送邮件",
-            description_short="发送标准或受控 HTML+纯文本邮件；发送前确认并返回 SMTP 状态。",
-            description="发送邮件。subject 和 body 必填，body 是所有客户端的纯文本降级内容。默认使用 notification 模板，由服务端生成咕咕标准排版；可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 mist/cafe/rose/sky/sage。用户明确要求自定义邮件排版时，也可以传 html，但必须同时提供完整 body；html 只能使用基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接，不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。test 仅用于 SMTP 测试场景。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的客户邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
+            description="发送邮件。subject 和 body 必填，body 是所有客户端的纯文本降级内容。可用 file_ids 附加当前用户文件库中的文件（最多 5 个，单个不超过 10MB，总计不超过 25MB），不要传宿主机路径。默认使用 notification 模板，由服务端生成咕咕标准排版；可用 notification、reminder、report、security 或 test 模板，并用 title、preheader、sections（heading/text 数组）和 actions（label/url 数组）表达结构化内容。theme 和 palette 默认 auto，跟随用户偏好；也可分别指定 light/dark 和 mist/cafe/rose/sky/sage。用户明确要求自定义邮件排版时，也可以传 html，但必须同时提供完整 body；html 只能使用基础邮件标签（a、b、blockquote、br、code、div、em、h1-h3、hr、i、img、li、ol、p、pre、span、strong、table、tbody、td、th、thead、tr、u、ul）、允许的内联样式和 http/https/mailto 链接，不要使用 script、style、事件属性、表单、iframe、svg、外部资源、flex/grid 或复杂定位。服务端会再次清洗 HTML，不能依赖被清洗的内容；html 最多 40000 个字符。test 仅用于 SMTP 测试场景。用户说‘发我邮箱’、‘发到我的邮箱’或未指定收件人时，必须省略 to，工具会自动发送到当前用户注册邮箱；不要向用户索要邮箱地址。可用 to 指定其他邮箱，或用 client_id 发给当前用户的客户邮箱。交互式发送前必须确认；已由用户授权的定时任务执行时不要再次请求确认。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -179,6 +202,10 @@ class EmailSkill(BaseSkill):
                     "theme": {"type": "string", "enum": ["auto", "light", "dark"]},
                     "palette": {"type": "string", "enum": ["auto", "mist", "cafe", "rose", "sky", "sage"]},
                     "html": {"type": "string", "minLength": 1, "maxLength": _MAX_HTML_LENGTH},
+                    "file_ids": {
+                        "type": "array", "maxItems": 5, "uniqueItems": True,
+                        "items": {"type": "integer", "minimum": 1},
+                    },
                 },
                 "required": ["subject", "body"],
                 "not": {"required": ["to", "client_id"]},

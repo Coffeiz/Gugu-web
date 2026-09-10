@@ -3,12 +3,12 @@ import zipfile
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import Project, User, WorkspaceDirectory
+from app.models import Folder, Project, User, WorkspaceDirectory  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
 from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
@@ -20,6 +20,8 @@ from app.services.files.browser import (
     folder_download_rows,
     list_folder_rows_with_file_counts,
 )
+from app.services.undo import UndoService
+from app.services.undo.files import folder_snapshot, operation_state, ref_for
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -56,7 +58,7 @@ async def list_folders(
 ):
     if project_id is not None:
         proj = await get_owned(db, Project, project_id, current_user.id)
-        if not proj:
+        if not proj or proj.deleted_at is not None:
             raise HTTPException(404, "项目不存在")
     if workspace_directory_id is not None:
         directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, current_user.id)
@@ -82,17 +84,25 @@ async def create_folder(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     folder = await FileService(db).create_folder(
         current_user.id, name=body.name, parent_id=body.parent_id, project_id=body.project_id,
         workspace_directory_id=body.workspace_directory_id,
     )   # 校验（项目归属/同名）在 FolderTree，失败抛领域异常 → 全局 handler 映射 404/409
-    await db.commit()
-    await db.refresh(folder)
     response = FolderResponse(id=folder.id, project_id=folder.project_id,
                           workspace_directory_id=folder.workspace_directory_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=0,
                           version=folder.version)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="create",
+        target_refs=[{"kind": "folder", "id": folder.id}], before_state=operation_state({}),
+        after_state=operation_state({ref_for("folder", folder.id): folder_snapshot(folder)}),
+        base_versions={ref_for("folder", folder.id): {"version": 0}},
+    )
+    await db.commit()
+    await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=folder.id,
                          event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
     return response
@@ -137,15 +147,26 @@ async def rename_folder(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
+    previous = await get_owned(db, Folder, fid, current_user.id)
+    before = folder_snapshot(previous) if previous else None
     folder = await FileService(db).rename_folder(current_user.id, fid, body.name,
                                                   client_version=body.version)
-    await db.commit()
-    await db.refresh(folder)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
     response = FolderResponse(id=folder.id, project_id=folder.project_id,
                           workspace_directory_id=folder.workspace_directory_id, name=folder.name,
                           file_count=cnt, version=folder.version)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="rename",
+        target_refs=[{"kind": "folder", "id": folder.id}],
+        before_state=operation_state({ref_for("folder", folder.id): before or {}}),
+        after_state=operation_state({ref_for("folder", folder.id): folder_snapshot(folder)}),
+        base_versions={ref_for("folder", folder.id): {"version": before.get("version", 0) if before else 0}},
+    )
+    await db.commit()
+    await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin, operation="update", entity_id=folder.id,
                          event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
     return response
@@ -160,7 +181,10 @@ async def move_folder(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
+    previous = await get_owned(db, Folder, fid, current_user.id)
+    before = folder_snapshot(previous) if previous else None
     folder = await FileService(db).move_folder(current_user.id, fid, body.parent_id,
                                                client_version=body.version,
                                                target_project_id=body.project_id,
@@ -168,13 +192,21 @@ async def move_folder(
                                                target_workspace_directory_id=body.workspace_directory_id,
                                                target_workspace_set='workspace_directory_id' in body.model_fields_set)
     # 归属/循环/跨空间校验在 FolderTree、物理归位在 FileService（relocate），失败抛领域异常
-    await db.commit()
-    await db.refresh(folder)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
     response = FolderResponse(id=folder.id, project_id=folder.project_id,
                           workspace_directory_id=folder.workspace_directory_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="move",
+        target_refs=[{"kind": "folder", "id": folder.id}],
+        before_state=operation_state({ref_for("folder", folder.id): before or {}}),
+        after_state=operation_state({ref_for("folder", folder.id): folder_snapshot(folder)}),
+        base_versions={ref_for("folder", folder.id): {"version": before.get("version", 0) if before else 0}},
+    )
+    await db.commit()
+    await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin, operation="move", entity_id=folder.id,
                          event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
     return response
@@ -212,11 +244,22 @@ async def delete_folder(
     current_user: User = Depends(get_current_user),
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     # P2.2：软删（不再硬删）——DB 行仍在、deleted_at 非空、子树内当时存活的文件同批软删并
     # 搬物理 trash，30 天内可整体恢复（FileService.restore_folder）。校验失败抛领域异常
     # （NotFound → 全局 handler 映射 404），与旧行为一致。
-    await FileService(db).delete_folder(current_user.id, fid)
+    previous = await get_owned(db, Folder, fid, current_user.id)
+    before = folder_snapshot(previous) if previous else None
+    folder = await FileService(db).delete_folder(current_user.id, fid)
+    await UndoService.record_forward(
+        db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
+        resource="files", action="delete",
+        target_refs=[{"kind": "folder", "id": fid}],
+        before_state=operation_state({ref_for("folder", fid): before or {}}),
+        after_state=operation_state({ref_for("folder", fid): folder_snapshot(folder)}),
+        base_versions={ref_for("folder", fid): {"version": before.get("version", 0) if before else 0}},
+    )
     await db.commit()
     # 前端 removeFolder(id) 会本地级联剔除子树文件夹与其中文件，只需给根 folder id
     await events.publish(current_user.id, "files", origin=origin,

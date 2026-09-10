@@ -1,6 +1,6 @@
 import pytest
 
-from agent.tools.line_edit import apply_line_edits, numbered_lines
+from agent.tools.text_edit import apply_line_edits, numbered_lines
 
 
 def test_line_edit_accepts_single_dash_and_bash_comma_ranges():

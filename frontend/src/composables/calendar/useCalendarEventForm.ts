@@ -1,6 +1,7 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { eventsApi } from '@/services/api'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
+import { reconcileOptimisticById } from '@/utils/reconcileById'
 import {
   useEventEditForm, defaultTimeRange, LEAD_OPTIONS, CHAN_LABEL,
   isNextDay, onToggleAllDay,
@@ -124,8 +125,9 @@ export function useCalendarEventForm(options: EventFormOptions) {
     try {
       const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
       const normalized = { ...normalizeCalendarEvent(created), _uid: uid }
-      const index = extraEvents.value.findIndex(item => item._uid === uid)
-      if (index !== -1) extraEvents.value[index] = normalized
+      // 创建响应可能晚于实时 create 事件到达；按服务端 id 只保留一份，避免
+      // “乐观临时项 + 实时正式项”同时留在当前月份列表中。
+      extraEvents.value = reconcileOptimisticById(extraEvents.value, uid, normalized)
       if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)
     } catch { /* 保留原有乐观项，下一次刷新会对账 */ }
     finally {

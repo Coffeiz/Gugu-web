@@ -357,6 +357,60 @@ async def list_user_conflicts(db: AsyncSession, user_id, binding_id: int | None 
     return (await db.scalars(query)).all()
 
 
+async def cleanup_stale_conflicts(
+    db: AsyncSession,
+    binding: FileSyncBinding,
+    *,
+    root: Path,
+) -> int:
+    """关闭两边对象都已消失的历史冲突。
+
+    冲突本身是一次历史快照，文件后来被删除或移动时不会自动跟着消失。
+    只有本地路径和当前 File 记录都不存在，才能确定它已经不再需要人工决策；
+    只剩一边存在时仍保留为真实冲突，避免把删除与保留的选择误判成过期数据。
+    """
+    if not root.exists() or not root.is_dir():
+        return 0
+
+    settings = get_settings()
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(binding.user_id)).resolve()
+    try:
+        root_prefix = root.expanduser().resolve().relative_to(user_root).as_posix()
+    except ValueError:
+        return 0
+    storage_prefix = f"{binding.user_id}/"
+    if root_prefix and root_prefix != ".":
+        storage_prefix += root_prefix.rstrip("/") + "/"
+
+    conflicts = (await db.scalars(select(FileSyncConflict).where(
+        FileSyncConflict.binding_id == binding.id,
+        FileSyncConflict.user_id == binding.user_id,
+        FileSyncConflict.status == "pending",
+    ))).all()
+    cleaned = 0
+    for conflict in conflicts:
+        candidate = (root / conflict.relative_path).resolve(strict=False)
+        try:
+            candidate.relative_to(root.resolve())
+        except ValueError:
+            continue
+        active_file = await db.scalar(select(File.id).where(
+            File.user_id == binding.user_id,
+            File.storage_key == storage_prefix + conflict.relative_path,
+            File.deleted_at.is_(None),
+        ))
+        if candidate.is_file() or active_file is not None:
+            continue
+        now = now_utc()
+        conflict.status = "resolved"
+        conflict.resolution = "stale"
+        conflict.resolved_at = now
+        conflict.updated_at = now
+        cleaned += 1
+    return cleaned
+
+
 async def resolve_sync_conflict(
     db: AsyncSession,
     user_id,

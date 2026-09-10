@@ -13,7 +13,7 @@ def test_non_streaming_runner_has_conversation_lifecycle_hooks():
     flush 阶段抛 NameError，导致 QQ 只收到前置进度而收不到最终正文。
     """
     from agent import runner
-    from agent.conversation.lifecycle import schedule_summary, schedule_title
+    from agent.conversation.session_metadata import schedule_summary, schedule_title
 
     assert runner.schedule_summary is schedule_summary
     assert runner.schedule_title is schedule_title
@@ -216,3 +216,11 @@ def test_tool_event_plain_qq_only_keeps_result_status():
     }, markdown=False)
     assert call == ""
     assert done == "✅ 联网搜索完成"
+
+
+def test_tool_event_waiting_explains_that_the_task_is_paused():
+    text = format_tool_event({
+        "type": "tool_done", "label": "发送邮件", "status": "waiting",
+    }, markdown=False)
+
+    assert text == "⏸️ 发送邮件：任务已暂停，等待确认"

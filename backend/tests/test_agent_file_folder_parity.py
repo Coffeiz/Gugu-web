@@ -5,6 +5,7 @@ from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import move_file_to_trash
+from app.models import Folder, WorkspaceDirectory
 
 
 async def _wire_agent_storage(monkeypatch, root: Path):
@@ -42,6 +43,48 @@ async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp
     trash = await agent_trash._list_trash(db, user_a.id, {})
     assert isinstance(trash, list)
     assert {item["folder_id"] for item in trash if item["kind"] == "folder"} == {folder_id}
+
+
+async def test_list_folders_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
+    personal = Folder(user_id=user_a.id, name="个人影视")
+    workspace = await _mk_workspace_folder(db, user_a.id)
+    db.add(personal)
+    await db.commit()
+    await db.refresh(personal)
+
+    import agent.tools.files.folders as folder_tools
+
+    async def bound_workspace(*_args, **_kwargs):
+        return {
+            "space": "workspace",
+            "project_id": None,
+            "folder_id": None,
+            "workspace_directory_id": workspace.workspace_directory_id,
+        }
+
+    monkeypatch.setattr(folder_tools, "_bound_workspace_target", bound_workspace)
+
+    rows = await folder_tools._list_folders(db, user_a.id, {})
+
+    assert {item["id"] for item in rows} == {personal.id, workspace.id}
+
+
+async def _mk_workspace_folder(db, user_id):
+    workspace_directory = WorkspaceDirectory(
+        user_id=user_id, name="F1 工作区", directory_name="f1-folders",
+    )
+    db.add(workspace_directory)
+    await db.commit()
+    await db.refresh(workspace_directory)
+    folder = Folder(
+        user_id=user_id,
+        name="工作区目录",
+        workspace_directory_id=workspace_directory.id,
+    )
+    db.add(folder)
+    await db.commit()
+    await db.refresh(folder)
+    return folder
 
 
 async def test_agent_folder_move_uses_service_physical_relocation(db, user_a, tmp_path, monkeypatch):
@@ -224,3 +267,29 @@ async def test_agent_delete_file_moves_file_to_trash(db, user_a, tmp_path, monke
     await db.refresh(file)
     assert file.deleted_at is not None
     assert file.storage_key != original_key
+
+
+async def test_agent_create_file_svg_stores_image_mime_and_stays_readable(db, user_a, tmp_path, monkeypatch):
+    """svg 必须落 image/svg+xml：缩略图/图片预览端点按 MIME 白名单放行。
+
+    曾被强制存成 text/plain，导致前端缩略图 415、图片预览拿到的 blob 非图片
+    MIME 无法渲染；read/edit 按扩展名白名单（TEXT_EXTS 含 svg）不受影响。
+    """
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+
+    result = await agent_files._create_file(db, user_a.id, {
+        "files": [{"name": "chart.svg", "content": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"}],
+    })
+    assert result["success"] is True
+    created = result["created"][0]
+
+    svg_file = (await agent_files._resolve_file(db, user_a.id, {"file_id": created["file_id"]}))
+    assert svg_file[0].mime_type == "image/svg+xml"
+
+    # read/edit 走扩展名白名单：svg 仍按 UTF-8 文本读写，不因 MIME 变更回归。
+    read_back = await agent_files._read_file(db, user_a.id, {"file_id": created["file_id"]})
+    assert "svg" in read_back["content"]
+    edited = await agent_files._edit_file(db, user_a.id, {
+        "file_id": created["file_id"], "mode": "replace", "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"/>",
+    })
+    assert edited["success"] is True

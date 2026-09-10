@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +59,18 @@ class IndexDocument:
     def content_hash(self) -> str:
         return content_hash(self.content)
 
+    def contextual_content(self) -> str:
+        """返回给模型的 conversation 上下文；排序正文仍只使用 ``content``。"""
+        if self.source_type != "conversation":
+            return self.content
+        before = str(self.metadata.get("context_before") or "")
+        current = str(self.metadata.get("context_current") or self.content)
+        after = str(self.metadata.get("context_after") or "")
+        # TS adapter 是先过滤空白片段、拼接，再对整体 trim；这里保持同一口径。
+        return "\n".join(
+            part for part in (before, current, after) if part.strip()
+        ).strip()
+
     def identity(self) -> tuple[str, str, str]:
         return self.chunk_id, self.version, self.content_hash
 
@@ -78,7 +89,7 @@ class IndexDocument:
             "source_id": self.source_id,
             "title": self.title,
             "summary": self.summary,
-            "text": self.content,
+            "text": self.contextual_content(),
             "score": round(float(score), 6),
             "chunk_id": self.chunk_id,
             "version": self.version,
@@ -88,7 +99,7 @@ class IndexDocument:
             "citation": citation,
         }
         if self.source_type == "knowledge":
-            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "parent_id"):
+            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "keywords", "parent_id"):
                 if self.metadata.get(key):
                     result[key] = self.metadata[key]
         if self.source_type == "conversation":
@@ -158,9 +169,3 @@ class RecallCandidate:
         result["fused_score"] = round(self.fused_score, 6)
         result["confidence"] = round(self.confidence, 6)
         return result
-
-
-def stable_version(*parts: object) -> str:
-    """从源内容和结构字段生成可重复的版本号。"""
-    payload = json.dumps([str(part or "") for part in parts], ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

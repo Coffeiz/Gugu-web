@@ -4,8 +4,10 @@
   --card-shadow: var(--elevation-card);
   --card-shadow-hover: var(--elevation-card-hover);
   /* One motion contract for project/file/folder/schedule card surfaces. Hover tint is a separate
-     opacity layer so the whole card changes uniformly instead of animating a directional gradient. */
-  --card-motion: transform var(--motion-hover-card) cubic-bezier(.34,1.2,.64,1), box-shadow var(--motion-hover-card) ease, background-color var(--motion-hover-card) ease, border-color var(--motion-hover-card) ease;
+     opacity layer so the whole card changes uniformly instead of animating a directional gradient.
+     box-shadow is intentionally a state change rather than a long interpolation: shadow paint on
+     many cards at once is the main source of flicker when the pointer crosses a dense card grid. */
+  --card-motion: transform var(--motion-hover-card) cubic-bezier(.34,1.2,.64,1), background-color var(--motion-hover-card) ease, border-color var(--motion-hover-card) ease;
   --card-overlay-motion: opacity var(--motion-hover-card) ease;
   --card-hover-overlay: var(--surface-hover-tint);
   --card-surface-bg-hover: var(--surface-raised);
@@ -155,9 +157,9 @@
   --gugu-fab-ripple: color-mix(in srgb,var(--action-primary) 75%,transparent);
 
   /* Gugu chat window + conversation layout. The Design mock consumes this same contract. */
-  /* 主题 surface 已经携带旧版透明度，这里直接复用，避免二次 alpha 混合。 */
+  /* 聊天主区域必须使用独立实色面；Glass 主题的 surface-base 带透明度，会让项目页内容透出。 */
   --gugu-chat-bg: var(--surface-base);
-  --gugu-chat-main-bg: var(--surface-base);
+  --gugu-chat-main-bg: var(--theme-chat-main-bg);
   --gugu-chat-sidebar-bg: var(--surface-sidebar);
   --gugu-chat-border: var(--border-strong);
   --gugu-chat-highlight: var(--border-highlight);

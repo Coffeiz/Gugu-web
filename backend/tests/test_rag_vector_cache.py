@@ -49,11 +49,28 @@ async def test_rag_vector_cache_uses_document_keys_and_keeps_legacy_memory(monke
         written.update(values)
     monkeypatch.setattr("agent.memory.store.write_memory_vecs", fake_write)
 
-    assert cache_key(documents[0]) == f"rag:daily:{documents[0].content_hash}"
+    assert cache_key(documents[0]) == f"rag:{documents[0].chunk_id}"
     assert cache_key(documents[1]) is None
     assert await sync_memory_index_vectors("user-a", documents, force=True) == 1
     assert "legacy-memory-key" in written
     assert cache_key(documents[0]) in written
+    assert written[cache_key(documents[0])]["h"] == documents[0].content_hash
+
+    # 同版本下内容变化：key 不变，但 h 失配必须重嵌而不是静默复用旧向量。
+    changed = IndexDocument(
+        document_id="memory:daily:0",
+        source_type="memory",
+        source_id="daily",
+        scope=scope,
+        title="近期记忆",
+        summary="测试",
+        content="近期测试内容已更新",
+        version="v1",
+        metadata={"vector_key": "daily:0"},
+    )
+    written.clear()
+    assert await sync_memory_index_vectors("user-a", [changed]) == 1
+    assert written[cache_key(changed)]["h"] == changed.content_hash
 
 
 @pytest.mark.asyncio

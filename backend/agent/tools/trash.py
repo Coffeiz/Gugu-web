@@ -23,7 +23,7 @@ from app.services.files.trash import (
 from app.services.files.previews import delete_thumb_cache
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
-from agent.tools.filesystem_policy import file_write_access_error, write_access_error
+from agent.tools.filesystem_policy import file_write_access_error, folder_write_space, write_access_error
 
 
 async def _list_trash(db, user_id, args: dict):
@@ -39,7 +39,7 @@ async def _list_trash(db, user_id, args: dict):
         for f in file_rows
     ] + [
         {"id": folder.id, "folder_id": folder.id, "kind": "folder", "name": folder.name,
-         "space": "project" if folder.project_id is not None else "personal",
+         "space": folder_write_space(folder),
          "deleted_at": folder.deleted_at.isoformat() if folder.deleted_at else None}
         for folder in folder_rows
     ]
@@ -75,7 +75,7 @@ async def _restore_folder(db, user_id, args: dict):
     if folder is None:
         return json.dumps({"error": "文件夹不在回收站"})
     access_error = await write_access_error(
-        db, user_id, space="project" if folder.project_id is not None else "personal",
+        db, user_id, space=folder_write_space(folder),
         project_id=folder.project_id, folder_id=folder.id,
     )
     if access_error:
@@ -101,7 +101,7 @@ async def _permanent_delete(db, user_id, args: dict):
                 return {"error": access_error}
         for folder in folders:
             access_error = await write_access_error(
-                db, user_id, space="project" if folder.project_id is not None else "personal",
+                db, user_id, space=folder_write_space(folder),
                 project_id=folder.project_id, folder_id=folder.id,
             )
             if access_error:
@@ -171,7 +171,7 @@ async def _permanent_delete(db, user_id, args: dict):
             return {"error": access_error}
     for folder in folders:
         access_error = await write_access_error(
-            db, user_id, space="project" if folder.project_id is not None else "personal",
+            db, user_id, space=folder_write_space(folder),
             project_id=folder.project_id, folder_id=folder.id,
         )
         if access_error:

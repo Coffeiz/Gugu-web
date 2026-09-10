@@ -27,7 +27,7 @@ def build_request(
             "id": str(item.get("source_id") or item.get("id") or ""),
             "title": str(item.get("title") or "")[:80],
             "topic": str(item.get("topic") or "")[:40],
-            "text": str(item.get("text") or item.get("content") or "")[:1000],
+            "text": str(item.get("text") or item.get("content") or "")[:3000],
             "source_type": str(item.get("source_type") or item.get("source") or ""),
             "confidence": str(item.get("confidence") or "confirmed"),
             "source_ref": str(item.get("source_ref") or "")[:300],
@@ -61,6 +61,7 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
             "title": str(value.get("title") or "").strip(),
             "topic": str(value.get("topic") or "").strip(),
             "content": str(value.get("content") or "").strip(),
+            "keywords": value.get("keywords") if isinstance(value.get("keywords"), list) else [],
             "certainty": certainty,
             "reason": str(value.get("reason") or "").strip()[:200],
         }
@@ -72,6 +73,7 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
             try:
                 normalized = normalize_capture(
                     item["title"], item["content"], topic=item["topic"],
+                    keywords=item["keywords"],
                     source_type="user" if save_mode == "explicit" else "conversation",
                     source_ref="conversation:reflection",
                     source_label="用户明确保存" if save_mode == "explicit" else "对话反思",
@@ -79,8 +81,8 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
                 )
             except ValueError:
                 continue
-            item["title"], item["topic"], item["content"] = (
-                normalized["title"], normalized["topic"], normalized["content"]
+            item["title"], item["topic"], item["content"], item["keywords"] = (
+                normalized["title"], normalized["topic"], normalized["content"], normalized["keywords"]
             )
         result.append(item)
     return result
@@ -150,7 +152,7 @@ async def reflect_if_candidate(
         source_ref = f"conversation:{session_id}" if session_id else "conversation:reflection"
         entry = build_entry(user_id, {
             "title": operation["title"], "content": operation["content"],
-            "topic": operation["topic"], "source_type": source_type,
+            "topic": operation["topic"], "keywords": operation["keywords"], "source_type": source_type,
             "source_ref": source_ref,
             "source_label": "用户明确保存" if save_mode == "explicit" else "对话反思",
             "confidence": operation["certainty"],

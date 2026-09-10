@@ -10,7 +10,7 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up check-context-compaction
 
 # 非 Compose 的宿主机 ACL 默认不自动修改；Compose sandbox profile 会由 bootstrap 自动初始化。
 SANDBOX_ACL ?= 0
@@ -174,6 +174,10 @@ storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users
 	else \
 	  $(VENV_BIN)/python scripts/migrate_storage_root.py --apply; \
 	fi
+
+check-context-compaction: ## 检查 90% 自动压缩策略和旧入口
+	@if [ -z "$(VENV_BIN)" ]; then echo "ERROR: 未找到 venv，请先创建 .venv"; exit 1; fi
+	@$(VENV_BIN)/python scripts/check_context_compaction.py
 
 migrate:     ## 跑数据库迁移（用 venv 绝对路径，不踩 PEP 668）
 	@if [ -z "$(VENV_BIN)" ]; then \

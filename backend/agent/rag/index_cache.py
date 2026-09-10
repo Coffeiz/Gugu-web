@@ -5,7 +5,6 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 
 from sqlalchemy import func, select
 
@@ -27,7 +26,7 @@ INDEX_CACHE_TTL_SECONDS = 30 * 60
 PER_OWNER_CACHE_BYTES = 32 * 1024 * 1024
 GLOBAL_CACHE_BYTES = 512 * 1024 * 1024
 DEFAULT_SOURCE_TYPES = (
-    "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
 
 
@@ -52,6 +51,36 @@ def _worker_document_key(document: IndexDocument) -> str:
     return f"{document.source_type}:{parent}:{document.chunk_index}"
 
 
+async def _persistent_vectors(
+    owner_user_id, documents: list[IndexDocument], diagnostics: dict[str, object] | None = None,
+) -> tuple[dict[str, list[float]], str]:
+    """整表收集持久来源的缓存向量，按 worker 文档键映射后随 replace/patch 搭载。
+
+    memory/pattern 走 replace_transient 的瞬态槽通道，不进持久表（控制 IPC 体量）；
+    embedding 未启用或缓存未命中时返回空表，worker 端按纯词法降级。读取失败只
+    标记诊断并降级，不允许向量缓存问题阻断索引构建。
+    """
+    from agent.memory import embedding
+    from agent.rag.service import _load_cached_vectors
+
+    if not documents:
+        return {}, ""
+    try:
+        if not embedding.is_enabled():
+            return {}, ""
+        cached = await _load_cached_vectors(owner_user_id, documents)
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics["persistent_vectors_error"] = type(exc).__name__
+        return {}, ""
+    vectors: dict[str, list[float]] = {}
+    for document in documents:
+        vector = cached.get(document.chunk_id)
+        if vector and document.source_type not in {"memory", "pattern"}:
+            vectors[_worker_document_key(document)] = vector
+    return vectors, embedding.model_tag()
+
+
 @dataclass
 class _Entry:
     index: object
@@ -59,12 +88,7 @@ class _Entry:
     revision: str | None
     backend: str
     last_access: float
-
-
-@dataclass
-class _SnapshotDocuments:
-    documents: list[IndexDocument]
-    last_access: float
+    persistent_loaded: bool = False
 
 
 class KnowledgeIndexCache:
@@ -80,8 +104,6 @@ class KnowledgeIndexCache:
         self.global_limit_bytes = global_limit_bytes
         self._entries: OrderedDict[tuple[str, str, str], _Entry] = OrderedDict()
         self._locks: dict[tuple[str, str, str], asyncio.Lock] = {}
-        self._snapshot_documents: dict[tuple[str, str, str], _SnapshotDocuments] = {}
-        self._snapshot_document_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
     async def get(
         self, db, owner_user_id: object, source_type: str, scope: Scope | None = None,
@@ -107,7 +129,7 @@ class KnowledgeIndexCache:
         )
         key = (owner_key, backend, cache_scope)
         entry = self._entries.get(key)
-        if shared_key and entry is not None and self._valid_snapshot_entry(entry, backend):
+        if shared_key and entry is not None and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend):
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
@@ -120,6 +142,8 @@ class KnowledgeIndexCache:
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
+                diagnostics["cache_miss_reason"] = ""
+                diagnostics["document_count"] = _index_document_count(entry.index)
             return entry.index
 
         if diagnostics is not None:
@@ -131,12 +155,20 @@ class KnowledgeIndexCache:
 
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
-            revision = baseline_revision or await self._revision(db, owner_user_id)
             entry = self._entries.get(key)
+            if shared_key and entry is not None and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend):
+                self._touch(key, entry)
+                if diagnostics is not None:
+                    diagnostics.update(cache_hit=True, shared_index=True, snapshot_reused=True,
+                                       cache_miss_reason="", document_count=_index_document_count(entry.index))
+                return entry.index
+            revision = baseline_revision or await self._revision(db, owner_user_id)
             if entry is not None and self._valid(entry, revision, backend) and not shared_key:
                 self._touch(key, entry)
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
+                    diagnostics["cache_miss_reason"] = ""
+                    diagnostics["document_count"] = _index_document_count(entry.index)
                 return entry.index
             # 冷启动优先让 TS worker 从持久化索引恢复。只有索引不存在、版本不匹配或
             # revision 变化时才读取完整 DB 文档并重建，避免每次进程重启都拉全量正文。
@@ -148,6 +180,8 @@ class KnowledgeIndexCache:
                     if diagnostics is not None:
                         diagnostics["cache_hit"] = True
                         diagnostics["cache_hit_layer"] = "persistent_sidecar"
+                        diagnostics["cache_miss_reason"] = "persistent_sidecar_restore"
+                        diagnostics["document_count"] = _index_document_count(restored)
                     self._store(key, _Entry(
                         restored, 1, revision, backend, time.monotonic(),
                     ))
@@ -169,6 +203,7 @@ class KnowledgeIndexCache:
                 previous.update({_document_key(document): document for document in documents})
                 index_documents = list(previous.values())
                 if _documents_match(getattr(entry.index, "documents", ()), index_documents):
+                    entry.persistent_loaded = True
                     self._touch(key, entry)
                     if diagnostics is not None:
                         diagnostics["cache_hit"] = True
@@ -182,9 +217,10 @@ class KnowledgeIndexCache:
             if diagnostics is not None:
                 diagnostics["cache_hit"] = False
                 diagnostics["shared_index"] = bool(shared_key)
+                diagnostics["document_count"] = _index_document_count(index)
             size = estimate_index_bytes(index_documents, index)
             if size <= self.owner_limit_bytes:
-                self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
+                self._store(key, _Entry(index, size, revision, backend, time.monotonic(), persistent_loaded=True))
             else:
                 self._entries.pop(key, None)
                 self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
@@ -217,6 +253,8 @@ class KnowledgeIndexCache:
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
+                diagnostics["cache_miss_reason"] = ""
+                diagnostics["document_count"] = _index_document_count(entry.index)
             return entry.index
         if diagnostics is not None:
             diagnostics["cache_miss_reason"] = (
@@ -231,6 +269,8 @@ class KnowledgeIndexCache:
                 self._touch(key, entry)
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
+                    diagnostics["cache_miss_reason"] = ""
+                    diagnostics["document_count"] = _index_document_count(entry.index)
                 return entry.index
             index_documents = list(documents)
             base_entry = entry or self._latest_snapshot_entry(owner_key, backend, key)
@@ -261,9 +301,11 @@ class KnowledgeIndexCache:
             if diagnostics is not None:
                 diagnostics["cache_hit"] = False
                 diagnostics["shared_index"] = bool(shared_key)
+                diagnostics["document_count"] = _index_document_count(index)
             size = estimate_index_bytes(index_documents, index)
             if size <= self.owner_limit_bytes:
-                self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
+                self._store(key, _Entry(index, size, revision, backend, time.monotonic(),
+                                        persistent_loaded=bool(entry and entry.persistent_loaded)))
             else:
                 self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
             return index
@@ -283,6 +325,9 @@ class KnowledgeIndexCache:
                 reused = await client.reuse_if_current(revision)
                 if diagnostics is not None:
                     diagnostics["sidecar_reused"] = bool(reused)
+                    if client.restore_error:
+                        # 磁盘索引损坏或版本不匹配：显式报告，本次必然走全量重建。
+                        diagnostics["index_restore_error"] = client.restore_error
                 if documents is None:
                     if reused:
                         if diagnostics is not None:
@@ -290,6 +335,7 @@ class KnowledgeIndexCache:
                         return TsLexicalIndex([], client, revision)
                     return None
                 if not reused:
+                    vectors, vector_tag = await _persistent_vectors(owner_user_id, documents, diagnostics)
                     can_patch = bool(
                         settings.ts_sidecar_index_dir
                         and previous_documents is not None
@@ -307,13 +353,16 @@ class KnowledgeIndexCache:
                             _worker_document_key(document) for key, document in previous.items()
                             if key not in current
                         ]
-                        await client.patch(upserts, deletes, revision, previous_revision)
+                        await client.patch(
+                            upserts, deletes, revision, previous_revision,
+                            vectors=vectors, vector_version=vector_tag,
+                        )
                         if diagnostics is not None:
                             diagnostics["index_sync"] = "patch"
                             diagnostics["upsert_count"] = len(upserts)
                             diagnostics["delete_count"] = len(deletes)
                     else:
-                        await client.replace(documents, revision)
+                        await client.replace(documents, revision, vectors=vectors, vector_version=vector_tag)
                         if diagnostics is not None:
                             diagnostics["index_sync"] = "replace"
             except TsSidecarUnavailable:
@@ -328,7 +377,7 @@ class KnowledgeIndexCache:
         raise TsSidecarUnavailable(f"不支持的词法后端: {backend}")
 
     async def _revision(self, db, owner_user_id: object) -> str | None:
-        from agent.rag.protocol import TOKENIZER_VERSION
+        from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
 
         rows = (await db.execute(select(
             KnowledgeIndexEntry.source_type,
@@ -343,7 +392,7 @@ class KnowledgeIndexCache:
             f"{source}:{value.isoformat() if value is not None else ''}"
             for source, value in sorted(rows, key=lambda item: str(item[0]))
         )
-        return f"{TOKENIZER_VERSION}:{revisions}"
+        return f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}:{revisions}"
 
     def invalidate(self, owner_user_id: object, source_type: str | None = None) -> int:
         owner_key = str(owner_user_id)
@@ -364,8 +413,6 @@ class KnowledgeIndexCache:
             self._dispose(entry)
         self._entries.clear()
         self._locks.clear()
-        self._snapshot_documents.clear()
-        self._snapshot_document_locks.clear()
 
     def stats(self) -> dict[str, int]:
         self._purge_expired()
@@ -444,42 +491,6 @@ class KnowledgeIndexCache:
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._dispose(entry)
-        document_expired = [
-            key for key, entry in self._snapshot_documents.items()
-            if now - entry.last_access > self.ttl_seconds
-        ]
-        for key in document_expired:
-            self._snapshot_documents.pop(key, None)
-
-    async def get_snapshot_documents(
-        self,
-        owner_user_id: object,
-        source_key: str,
-        loader: Callable[[], Awaitable[list[IndexDocument]]],
-    ) -> list[IndexDocument]:
-        """在同一 snapshot 内复用来源文档，避免索引命中前重复读取主数据。"""
-        from agent.rag.context import get_shared_index_key
-
-        shared_key = get_shared_index_key()
-        if not shared_key:
-            return await loader()
-        key = (str(owner_user_id), shared_key, source_key)
-        self._purge_expired()
-        entry = self._snapshot_documents.get(key)
-        if entry is not None:
-            entry.last_access = time.monotonic()
-            return list(entry.documents)
-        lock = self._snapshot_document_locks.setdefault(key, asyncio.Lock())
-        async with lock:
-            entry = self._snapshot_documents.get(key)
-            if entry is not None:
-                entry.last_access = time.monotonic()
-                return list(entry.documents)
-            documents = list(await loader())
-            self._snapshot_documents[key] = _SnapshotDocuments(
-                documents=documents, last_access=time.monotonic(),
-            )
-            return list(documents)
 
     @staticmethod
     def _dispose(entry: _Entry) -> None:
@@ -536,12 +547,17 @@ def _selected_backend(settings) -> str:
 
 def _documents_fingerprint(documents: list[IndexDocument]) -> str:
     import hashlib
-    from agent.rag.protocol import TOKENIZER_VERSION
+    from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
 
-    payload = TOKENIZER_VERSION + "\n" + "\n".join(
+    payload = f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}\n" + "\n".join(
         "|".join(map(str, document.identity())) for document in documents
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _index_document_count(index) -> int:
+    """返回当前索引可诊断的文档数；磁盘恢复索引由 sidecar 提供数量。"""
+    return int(getattr(index, "document_count", len(getattr(index, "documents", ()) or ())) or 0)
 
 
 def _documents_match(left, right) -> bool:

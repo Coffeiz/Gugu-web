@@ -130,7 +130,9 @@
   --file-card-bg-selected: rgba(255,255,255,.92);
   --file-card-border-selected: rgba(123,127,178,.55);
   --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
-  --file-card-hover-overlay: var(--card-hover-overlay);
+  /* 亮色文件卡 hover 必须使用白色高光；--card-hover-overlay 会随非 Aero 调色板染成主色，
+     在 cafe/rose 等亮色主题上会把卡片压暗。暗色在下方单独使用自己的 action overlay。 */
+  --file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 16%,transparent);
   --file-card-preselection-bg: rgba(123,127,178,.06);
   --file-card-preselection-border: rgba(123,127,178,.45);
   --file-card-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px rgba(123,127,178,.15);

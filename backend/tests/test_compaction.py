@@ -417,51 +417,11 @@ class TestCompactContext:
         assert "本轮问题" in result_text
         assert "本轮工具结果" in result_text
 
-    def test_baseline_scheduler_only_runs_at_provider_threshold(self, monkeypatch):
-        """普通 run 不裁剪；达到 90% 才启动 baseline 收敛。"""
-        calls = []
-
-        async def fake_read_state(_session_id):
-            return None
-
-        async def fake_compress(session_id, user_id, settings, *, force=False):
-            calls.append((session_id, user_id, force))
-            return False
-
-        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compress)
-
-        async def exercise():
-            compress_conv._baseline_tasks.clear()
-            monkeypatch.setattr(compress_conv, "_read_execution_state", fake_read_state)
-            compress_conv.schedule_baseline_update(
-                88, "user", object(), 1000, actual_usage_tokens=899,
-            )
-            await compress_conv.wait_for_baseline_update(88)
-            assert calls == []
-            compress_conv.schedule_baseline_update(
-                88, "user", object(), 1000, actual_usage_tokens=900,
-            )
-            await compress_conv.wait_for_baseline_update(88)
-
-        asyncio.get_event_loop().run_until_complete(exercise())
-        assert calls == [(88, "user", False)]
-
-    def test_wait_for_baseline_update_polls_persisted_state_without_local_task(self, monkeypatch):
-        """压缩任务在另一个 worker 时，下一 run 仍必须等待数据库状态回到 idle。"""
-        states = iter(("baseline_updating", "baseline_updating", "idle"))
-        calls = []
-
-        async def fake_read_state(session_id):
-            calls.append(session_id)
-            return next(states)
-
-        async def exercise():
-            compress_conv._baseline_tasks.clear()
-            monkeypatch.setattr(compress_conv, "_read_execution_state", fake_read_state)
-            await compress_conv.wait_for_baseline_update(88)
-
-        asyncio.get_event_loop().run_until_complete(exercise())
-        assert calls == [88, 88, 88]
+    def test_provider_threshold_is_the_single_automatic_trigger(self):
+        """自动压缩阈值固定为 provider 实际上下文的 90%。"""
+        assert compress_conv.AUTO_COMPACTION_RATIO == 0.90
+        assert not hasattr(compress_conv, "schedule_baseline_update")
+        assert not hasattr(compress_conv, "wait_for_baseline_update")
 
     def test_claim_session_run_rechecks_baseline_state_under_row_lock(self, db, user_a):
         """拿到会话锁后 baseline 才切换为 updating 时，不能认领新 run。"""

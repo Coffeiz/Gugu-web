@@ -9,7 +9,8 @@
     <div class="col-header">
       <div class="col-title"><span class="col-dot"></span>{{ t('projects.done') }}</div>
       <div class="col-header-right">
-        <button class="archived-entry-mini" @click="$emit('open-archived')" :title="t('projects.archivedView')">{{ t('projects.archivedShort') }}</button>
+        <button class="project-collection-entry-mini archived-entry-mini" @click="$emit('open-archived')" :title="t('projects.archivedView')">{{ t('projects.archivedShort') }}</button>
+        <button class="project-collection-entry-mini deleted-entry-mini" @click="$emit('open-deleted')" :title="t('projectsDeleted.deletedView')">{{ t('projectsDeleted.deletedShort') }}</button>
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
@@ -29,7 +30,7 @@ const props = defineProps({
   ownershipVersionFor: { type: Function as PropType<(projects: Project[]) => number>, required: true },
   isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },
 })
-defineEmits(['card-click', 'open-archived'])
+defineEmits(['card-click', 'open-archived', 'open-deleted'])
 const { t } = useI18n()
 const colBodyRef = ref<HTMLElement | null>(null)
 const columnRef = ref<HTMLElement | null>(null)
@@ -61,7 +62,28 @@ onUnmounted(() => {
 .done-col .col-dot { width:7px; height:7px; border-radius:50%; background:#5a9e88; flex-shrink:0; }
 .done-col .col-header-right { display:flex; align-items:center; gap:8px; }
 .done-col .col-count { font-size:11px; font-weight:700; color:#fff; background:rgba(123,127,178,.42); border-radius:20px; padding:1px 7px; min-width:22px; text-align:center; }
-.done-col .archived-entry-mini { display:flex; align-items:center; padding:2px 8px; border-radius:7px; border:1px solid rgba(0,0,0,.08); background:rgba(255,255,255,.5); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; }
+.done-col .project-collection-entry-mini { display:flex; align-items:center; padding:2px 8px; border-radius:7px; border:1px solid var(--border-subtle); background:var(--surface-soft); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; transition:background .15s, color .15s, border-color .15s; }
+.done-col .project-collection-entry-mini:hover { background:var(--surface-soft-hover); color:var(--text-primary); }
+.done-col .archived-entry-mini {
+  color:var(--control-fg);
+  border-color:var(--input-border);
+  background:var(--control-bg);
+}
+.done-col .archived-entry-mini:hover {
+  color:var(--control-fg-strong);
+  border-color:var(--input-border-hover);
+  background:var(--control-bg-hover);
+}
+.done-col .deleted-entry-mini {
+  color:var(--status-danger);
+  border-color:color-mix(in srgb,var(--status-danger) 30%,var(--border-subtle));
+  background:var(--status-danger-bg);
+}
+.done-col .deleted-entry-mini:hover {
+  color:var(--status-danger);
+  border-color:var(--status-danger);
+  background:color-mix(in srgb,var(--status-danger) 14%,var(--surface-soft));
+}
 .done-col .col-body { display:flex; flex-direction:column; gap:2px; flex:1; overflow-y:auto; min-width:0; box-sizing:border-box; overflow-x:hidden; scrollbar-gutter:auto; padding:2px 6px; }
 .done-col .done-layout-root { display:flex; flex-direction:column; width:100%; min-width:0; }
 .done-col .col-empty { display:flex; align-items:center; justify-content:center; min-height:96px; color:var(--text-secondary); opacity:.4; }

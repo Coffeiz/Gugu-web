@@ -1,8 +1,6 @@
 """Knowledge RAG 的来源无关 Retriever 注册与候选契约。"""
 from __future__ import annotations
 
-import asyncio
-import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -19,6 +17,10 @@ class RetrievalBatch:
     fallback_reason: str | None = None
     candidate_count: int = 0
     metadata: dict[str, str] = field(default_factory=dict)
+    # Phase 5 统一查询：worker 内已完成融合+排序时，(candidate, text, row) 三元组
+    # 随批次上送，上层 UnifiedRecallService 跳过独立的 rank_candidates 步骤。
+    rank_rows: tuple = field(default_factory=tuple)
+    rank_stats: dict | None = None
 
     def candidates(self) -> tuple[RecallCandidate, ...]:
         """把来源结果转换为统一 Phase 1 候选，保留来源内 rank。"""
@@ -44,7 +46,11 @@ class SourceRetriever(Protocol):
 
 
 class UnifiedRetriever:
-    """按 source_type 调度来源 Retriever，权限和结果预算仍由上层统一收口。"""
+    """按 source_type 注册来源 Retriever 的容器；交付统一走 TS worker（Phase 5）。
+
+    旧的多请求逐来源调度已随 legacy 查询链删除（2026-09-09 清理）；本类只保留
+    注册表职责，供统一查询主链枚举来源、装载语料和收口 scope。
+    """
 
     def __init__(self, retrievers: list[SourceRetriever] | None = None):
         self._retrievers: dict[str, SourceRetriever] = {}
@@ -61,34 +67,6 @@ class UnifiedRetriever:
 
     def sources(self) -> tuple[str, ...]:
         return tuple(self._retrievers)
-
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        source: str = "all",
-        scope: str = "auto",
-        strategy: str = "auto",
-        candidate_limit: int = 20,
-    ) -> list[RetrievalBatch]:
-        if source == "all":
-            selected = list(self._retrievers.values())
-        else:
-            retriever = self._retrievers.get(source)
-            selected = [retriever] if retriever is not None else []
-        async def run_one(retriever: SourceRetriever) -> RetrievalBatch:
-            started = time.monotonic()
-            batch = await retriever.retrieve(
-                query, scope=scope, strategy=strategy, candidate_limit=candidate_limit,
-            )
-            metadata = dict(batch.metadata)
-            metadata["retrieve_ms"] = str(int((time.monotonic() - started) * 1000))
-            return RetrievalBatch(
-                source_type=batch.source_type, results=batch.results,
-                index_source=batch.index_source, fallback_reason=batch.fallback_reason,
-                candidate_count=batch.candidate_count, metadata=metadata,
-            )
-        return list(await asyncio.gather(*(run_one(retriever) for retriever in selected)))
 
 
 __all__ = ["RecallCandidate", "RetrievalBatch", "SourceRetriever", "UnifiedRetriever"]

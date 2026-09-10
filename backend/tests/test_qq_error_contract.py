@@ -47,6 +47,16 @@ def test_msg_id_invalid_is_only_classified_for_qq_expiry_error():
     ))
 
 
+def test_passive_reply_limit_is_classified_for_active_fallback():
+    assert qq._qq_passive_reply_limited(qq.QQAPIError(
+        "POST", "/messages", 400,
+        {"code": 40034128, "message": "回复消息失败，被动回复时间或者次数超过限制"},
+    ))
+    assert not qq._qq_passive_reply_limited(qq.QQAPIError(
+        "POST", "/messages", 400, {"code": 400, "message": "bad request"}
+    ))
+
+
 # ── QQAPIError 不把原始响应体拼进 str()（P2-b §5）──────────────────────────
 
 def test_qq_api_error_str_does_not_leak_raw_body():
@@ -131,6 +141,23 @@ async def test_send_group_does_not_retry_permanent_4xx(monkeypatch):
 
     assert ok is False
     assert len(calls) == 1
+
+
+async def test_send_group_falls_back_to_active_message_when_passive_limit_reached(monkeypatch):
+    calls = []
+
+    async def fake_post_group(channel_id, group_openid, text, msg_id):
+        calls.append(msg_id)
+        if msg_id:
+            raise qq.QQAPIError(
+                "POST", "/v2/groups/g1/messages", 400,
+                {"code": 40034128, "message": "被动回复时间或者次数超过限制"},
+            )
+
+    monkeypatch.setattr(qq, "_post_group", fake_post_group)
+
+    assert await qq.send_group("g1", "hi", "msg-1", "bot-fallback") is True
+    assert calls == ["msg-1", None]
 
 
 # ── _qq_request：非 2xx 抛 QQAPIError，不把响应体拼进异常字符串 ────────────

@@ -25,6 +25,18 @@ def test_wire_document_keeps_business_fields_for_cold_restore():
     assert wire["source_id"] == "1"
 
 
+def test_wire_conversation_separates_display_title_from_ranking_text():
+    from agent.rag.ts_sidecar import _wire_document
+
+    document = IndexDocument(
+        "conversation:1", "conversation", "1", Scope("owner"),
+        "今天天气", "", "user：看看有什么笔记", "v1",
+    )
+    wire = _wire_document(document)
+    assert wire["text"].startswith("今天天气\n")
+    assert wire["ranking_text"] == "user：看看有什么笔记"
+
+
 def test_index_dir_for_owner_uses_hidden_user_storage(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from agent.rag.ts_sidecar import index_dir_for_owner
@@ -122,3 +134,148 @@ async def test_search_returns_request_local_timing_for_shared_client(monkeypatch
 
     assert first[1] == SidecarRequestTiming(queue_wait_ms=11, query_ms=111)
     assert second[1] == SidecarRequestTiming(queue_wait_ms=22, query_ms=222)
+
+
+@pytest.mark.asyncio
+async def test_build_ops_use_build_timeout_and_search_keeps_request_timeout(monkeypatch):
+    """replace/patch/replace_transient 走构建超时；search/batch_search 保持搜索超时。"""
+    from agent.rag import ts_sidecar as ts
+    from agent.rag.models import IndexDocument, Scope
+
+    captured: list[tuple[str, float | None]] = []
+
+    async def fake_request_unlocked(self, payload, *, timeout_seconds=None):
+        captured.append((payload["op"], timeout_seconds))
+        return {"status": "ok", "revision": payload.get("revision") or "r1",
+                "document_count": 1}
+
+    async def _none(self):
+        return None
+
+    monkeypatch.setattr(ts.TsSidecarClient, "_request_unlocked", fake_request_unlocked)
+    monkeypatch.setattr(ts.TsSidecarClient, "_ensure_process", _none)
+    client = ts.TsSidecarClient("test-owner", command="")
+    document = IndexDocument("file:1", "file", "1", Scope("test-owner"), "文件", "", "缓存", "1")
+
+    await client.replace([document], "r1")
+    await client.patch([document], [], "r2", "r1")
+    await client.replace_transient([document], "t1")
+    assert captured == [
+        ("replace", ts.BUILD_TIMEOUT_SECONDS),
+        ("patch", ts.BUILD_TIMEOUT_SECONDS),
+        ("replace_transient", ts.BUILD_TIMEOUT_SECONDS),
+    ]
+
+    captured.clear()
+    result = await client._request({"op": "search", "revision": "r1", "query": "缓存"})
+    assert result.response["status"] == "ok"
+    # 搜索类请求不显式传超时，由 _request_unlocked 内部按配置解析。
+    assert captured == [("search", None)]
+
+
+@pytest.mark.asyncio
+async def test_rank_guard_rejects_unknown_scoring_version(monkeypatch):
+    """冻结契约：TS 评分版本漂移必须显式失败，不能静默接受差异。"""
+    from agent.rag import ts_sidecar as ts
+    from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
+
+    async def fake_rank(self, query, candidates, **kwargs):
+        return [], {"scoring_version": "confidence-v2", "accepted_count": 0}
+
+    monkeypatch.setattr(ts.TsSidecarClient, "rank_candidates", fake_rank)
+    monkeypatch.setattr(ts, "_ensure_sidecar_reaper", lambda loop: None)
+    monkeypatch.setattr(ts, "_rank_clients", {})
+    doc = IndexDocument("file:1", "file", "1", Scope("test-owner"), "文件", "", "缓存", "1")
+    candidate = RecallCandidate.from_result(RecallResult(doc, 1.0), rank=1)
+    with pytest.raises(ts.TsSidecarUnavailable, match="评分器版本"):
+        await ts.rank_candidates_with_cache("test-owner", "缓存", [candidate],
+                                            limit=5, max_chars=1000,
+                                            max_per_source=3, max_per_parent=3)
+
+
+@pytest.mark.asyncio
+async def test_corrupt_index_reported_and_rebuilt(tmp_path):
+    """Phase 4：磁盘索引损坏必须显式报告（restore_error），全量重建后恢复健康。"""
+    import hashlib
+
+    owner_hash = hashlib.sha256("test-owner".encode("utf-8")).hexdigest()[:32]
+    index_dir = tmp_path / "index" / owner_hash
+    index_dir.mkdir(parents=True)
+    (index_dir / "index.json").write_text("{损坏的索引", encoding="utf-8")
+    client = TsSidecarClient("test-owner", command=_worker_command(), index_dir=str(tmp_path / "index"))
+    document = IndexDocument("project:1", "project", "1", Scope("test-owner"), "重建计划", "", "重建内容", "v1")
+    try:
+        # 启动探活即上报告损类别；复用检查不能把损坏索引当有效数据。
+        assert await client.reuse_if_current("revision-1") is False
+        assert client.restore_error == "corrupt"
+        await client.replace([document], "revision-1")
+        assert client.restore_error is None
+        assert await client.reuse_if_current("revision-1") is True
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_transient_reuploads_after_worker_death(monkeypatch):
+    """worker 死亡后瞬态语料必须重传：短路判断不得使用死亡进程的旧代数。"""
+    from types import SimpleNamespace
+
+    from agent.rag.ts_sidecar import TsSidecarClient
+
+    client = TsSidecarClient("owner-restart", command="true", index_dir="")
+    client._process = SimpleNamespace(returncode=1)
+    client._process_generation = 3
+    client._transient_generation = 3
+    client._transient_revision = "stale-revision"
+    sent: list[str] = []
+
+    async def fake_request(payload, *, timeout_seconds=None):
+        sent.append(payload["op"])
+        # 模拟 _ensure_process：重启后新进程健康且代数已递增。
+        client._process = SimpleNamespace(returncode=None)
+        client._process_generation += 1
+        return SimpleNamespace(response={"revision": payload.get("revision", "")})
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    await client.replace_transient([], "fresh-revision")
+    assert sent == ["replace_transient"]
+    assert client._transient_revision == "fresh-revision"
+
+    # 进程健康且指纹未变时保持幂等短路，不重复占用 IPC。
+    sent.clear()
+    client._process = SimpleNamespace(returncode=None)
+    await client.replace_transient([], "fresh-revision")
+    assert sent == []
+
+@pytest.mark.asyncio
+async def test_stream_reader_race_closes_connection_and_raises_unavailable(monkeypatch):
+    """wait_for 取消 readline 的竞态会抛 RuntimeError（readuntil already waiting）：
+    必须按致命错误关闭连接并抛 TsSidecarUnavailable，让下一次请求重生 worker，
+    而不是裸抛 RuntimeError 让客户端带着中毒的流永久不可用。"""
+    from types import SimpleNamespace
+
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    class _FakeStdin:
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            return None
+
+    class _PoisonedStdout:
+        async def readline(self):
+            raise RuntimeError(
+                "readuntil() called while another coroutine is already waiting for incoming data")
+
+    async def _noop(self):
+        return None
+
+    monkeypatch.setattr(TsSidecarClient, "_ensure_process", _noop)
+    client = TsSidecarClient("test-owner", command="")
+    client._process = SimpleNamespace(
+        stdin=_FakeStdin(), stdout=_PoisonedStdout(), returncode=0)
+
+    with pytest.raises(TsSidecarUnavailable, match="请求失败"):
+        await client._request({"op": "search", "revision": "r1", "query": "查询"})
+    assert client._process is None

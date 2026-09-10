@@ -80,6 +80,7 @@ export const useConfigStore = defineStore('config', () => {
       image: 'debian:bookworm-slim',
       image_digest: '',
       code_execution_enabled: true,
+      shell_direct_runtime_enabled: false,
       terminal_mode: 'auto' as 'auto' | 'pty_disabled' | 'entry_disabled',
       rootless_required: true,
       cpu_limit: 1,
@@ -107,9 +108,7 @@ export const useConfigStore = defineStore('config', () => {
       reflection_threshold: 10,
       worker_concurrency: 16,
       conv_compress_enabled: true,
-      im_progress_announce_enabled: true,
-      daily_retention_days: 14,
-      weekly_retention_weeks: 6,
+      im_progress_announce_enabled: false,
     },
     quota: {
       default_token_limit_6h: null,
@@ -119,6 +118,7 @@ export const useConfigStore = defineStore('config', () => {
     },
     search: {
       rag_enabled: true,
+      rag_auto_sources: ['memory', 'knowledge', 'project', 'file', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation'],
       capability_rag_enabled: false,
       capability_rag_shadow: true,
       capability_rag_limit: 5,

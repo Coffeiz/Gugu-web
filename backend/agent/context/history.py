@@ -402,7 +402,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
 
     用户消息的时间 reminder 固定放在该用户消息之前。
-    RAG 知识块由调用方放在当前用户消息之后的稳定 conversation 区域；这里只负责
+    RAG 知识块由调用方放在当前用户消息之前的稳定 conversation 区域；这里只负责
     从持久化 history 还原同样的顺序，避免动态尾部与下一轮 history 边界不一致。
     """
     from .session_snapshot import message_time_reminder

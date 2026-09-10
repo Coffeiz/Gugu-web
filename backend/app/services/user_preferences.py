@@ -19,3 +19,15 @@ async def get_user_locale(db, user_id) -> str | None:
     except (TypeError, ValueError):
         return None
     return data.get("locale") if isinstance(data, dict) else None
+
+
+async def get_user_unlimited_mode(db, user_id) -> bool:
+    """读取用户级无限工具调用开关；缺失或损坏的偏好按关闭处理。"""
+    data_json = await db.scalar(
+        select(UserPreferences.data_json).where(UserPreferences.user_id == user_id)
+    )
+    try:
+        data = json.loads(data_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    return bool(data.get("unlimited_mode")) if isinstance(data, dict) else False
