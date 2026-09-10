@@ -1,10 +1,12 @@
 """Shell 策略层回归：默认拒绝、整条命令风险分类和工作区授权。"""
 
 import pytest
+from pathlib import Path
 from types import SimpleNamespace
 
 from agent.security import shell_policy
-from agent.security.shell_policy import ShellRisk, blocked_runtime, classify_command
+from agent.security.shell_policy import ShellRisk, ShellScope, blocked_runtime, classify_command
+from agent.sandbox.client import SandboxdUnavailable
 from agent.tools.shell import ShellSkill, _can_use_shell_lease
 
 
@@ -572,3 +574,144 @@ async def test_run_shell_ignores_model_supplied_confirm(monkeypatch):
 
     assert isinstance(result, dict) and result.get("_audit_event") == "confirmation_required"
     assert result.get("needs_confirm") or "确认" in str(result.get("error", ""))
+
+
+# ── Shell 直跑运行时开关（sandbox.shell_direct_runtime_enabled）────────────────
+
+
+def _direct_runtime_settings(*, direct=False, code_execution=True):
+    return SimpleNamespace(
+        agent=SimpleNamespace(
+            shell_enabled=True, shell_system_enabled=False,
+            shell_dangerous_enabled=False, shell_autopilot_enabled=False,
+        ),
+        sandbox=SimpleNamespace(
+            enabled=True, code_execution_enabled=code_execution,
+            shell_direct_runtime_enabled=direct,
+            network_profile="none", sandboxd_socket="/tmp/gugu-sandboxd.sock",
+            persistent_quota_bytes=1024, egress_proxy_url="",
+        ),
+        ai=SimpleNamespace(deployment_mode="local"),
+    )
+
+
+def _allowed_decision(needs_confirmation=False):
+    return SimpleNamespace(
+        allowed=True, reason="允许在 sandbox 范围执行",
+        risk=ShellRisk.SAFE, needs_confirmation=needs_confirmation,
+        workspace_id=7, scope=ShellScope.SANDBOX,
+        autopilot_enabled=False, full_user_sandbox_write=False,
+    )
+
+
+def _patch_run_shell_harness(monkeypatch, settings, captured):
+    """给 _run_shell 打通到 sandboxd 客户端为止的最小桩件；
+    captured 记录发往执行器的 allow_script_execution 值。"""
+    from agent.tools import shell as shell_tool
+
+    async def _value(value):
+        return value
+
+    class _FakeClient:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def execute_stream(self, request, on_output=None):
+            captured.append(request.allow_script_execution)
+            raise SandboxdUnavailable("测试桩到此为止")
+
+    monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
+    async def _fake_evaluate(*_a, **_k):
+        return _allowed_decision()
+
+    monkeypatch.setattr(shell_tool, "evaluate", _fake_evaluate)
+    monkeypatch.setattr(shell_tool, "current_dispatch_filesystem_subject", lambda: {})
+    monkeypatch.setattr(shell_tool, "current_dispatch_session", lambda: None)
+    monkeypatch.setattr(shell_tool, "current_dispatch_run_id", lambda: None)
+    monkeypatch.setattr(shell_tool, "current_dispatch_session_id", lambda: None)
+    monkeypatch.setattr(shell_tool, "resolve_shell_root", lambda *_a, **_k: _value(Path("/tmp")))
+    monkeypatch.setattr(shell_tool, "resolve_user_personal_root", lambda *_a, **_k: _value(Path("/tmp")))
+    monkeypatch.setattr(shell_tool, "resolve_project_root", lambda *_a, **_k: _value(Path("/tmp")))
+    monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(shell_tool, "SandboxdClient", _FakeClient)
+
+
+@pytest.mark.asyncio
+async def test_shell_direct_runtime_switch_reaches_executor(monkeypatch):
+    """开关开启时，普通 Shell 的运行时命令直接带 allow_script_execution=True
+    进执行器；关闭（默认）时维持 False，由执行器拒绝。"""
+    from agent.tools import shell as shell_tool
+
+    for direct, expected in ((True, True), (False, False)):
+        captured = []
+        _patch_run_shell_harness(monkeypatch, _direct_runtime_settings(direct=direct), captured)
+        result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "npm install"})
+        assert captured == [expected]
+        if not direct:
+            assert "run_script" in result.get("error", "") or result is not None
+
+
+@pytest.mark.asyncio
+async def test_shell_direct_runtime_switch_does_not_authorize_run_script(monkeypatch):
+    """开关只放宽执行器解释器限制，不等价于 run_script 授权：
+    定时任务遇到需确认命令的拦截仍按 script_authorized 判定，不能被绕过。"""
+    from agent.tools import shell as shell_tool
+
+    captured = []
+    _patch_run_shell_harness(monkeypatch, _direct_runtime_settings(direct=True), captured)
+
+    async def _needs_confirm(*_a, **_k):
+        return SimpleNamespace(
+            allowed=True, reason="危险命令需要用户确认",
+            risk=ShellRisk.DANGEROUS, needs_confirmation=True,
+            workspace_id=7, scope=ShellScope.SANDBOX,
+            autopilot_enabled=False, full_user_sandbox_write=False,
+        )
+
+    monkeypatch.setattr(shell_tool, "evaluate", _needs_confirm)
+    monkeypatch.setattr(
+        shell_tool, "current_dispatch_filesystem_subject",
+        lambda: {"subject_type": "scheduled_task", "subject_id": "task-1"},
+    )
+
+    result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "rm -rf build"})
+
+    assert result.get("error") == "定时任务只能执行无需交互确认的 sandbox 命令"
+    assert captured == [], "被拦截的调用不应到达执行器"
+
+
+@pytest.mark.asyncio
+async def test_direct_runtime_switch_still_requires_code_execution_enabled(monkeypatch):
+    """优先级：code_execution_enabled=False 时总开关语义不变，
+    直跑便捷开关不能把运行时命令救回来。"""
+    db = _PolicyDB()
+    settings = _direct_runtime_settings(direct=True, code_execution=False)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "sandbox_readiness", lambda *_a: (True, ""))
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "python3 script.py")
+
+    assert not decision.allowed
+    assert decision.reason == "管理员未开启代码运行环境，禁止使用 python3 运行时"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_prompt_announces_direct_runtime_when_enabled(monkeypatch):
+    """开关开启时动态提示告知模型可直跑；关闭时不得出现，避免误导。"""
+    db = _PolicyDB()
+    settings = _direct_runtime_settings(direct=True)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(
+        shell_policy, "effective_shell_dangerous_enabled", lambda *_: _false())
+    monkeypatch.setattr(shell_policy, "sandbox_readiness", lambda *_a: (True, ""))
+
+    enabled_prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+    assert enabled_prompt is not None
+    assert "代码运行时：沙盒内可直接执行" in enabled_prompt
+
+    settings.sandbox.shell_direct_runtime_enabled = False
+    disabled_prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+    assert disabled_prompt is not None
+    assert "代码运行时：沙盒内可直接执行" not in disabled_prompt

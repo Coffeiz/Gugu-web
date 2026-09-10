@@ -80,6 +80,7 @@ export const useConfigStore = defineStore('config', () => {
       image: 'debian:bookworm-slim',
       image_digest: '',
       code_execution_enabled: true,
+      shell_direct_runtime_enabled: false,
       terminal_mode: 'auto' as 'auto' | 'pty_disabled' | 'entry_disabled',
       rootless_required: true,
       cpu_limit: 1,

@@ -370,6 +370,11 @@ async def build_dynamic_prompt(
         )
     if subject_type == SUBJECT_SCHEDULED_TASK:
         lines.append("- 当前是定时任务；不支持交互式确认，需要确认的危险操作不得执行。")
+    if getattr(getattr(settings, "sandbox", None), "shell_direct_runtime_enabled", False):
+        lines.append(
+            "- 代码运行时：沙盒内可直接执行 python3/node/npm 等命令，无需改走 run_script；"
+            "危险命令确认门与沙盒边界照常生效。"
+        )
     if getattr(getattr(settings, "storage", None), "backend", "local") == "oss":
         lines.extend([
             "- OSS 存储模式：本轮 Shell 只使用独立沙盒 /workspace；/personal、/project 和 workspace 绑定不可用。",

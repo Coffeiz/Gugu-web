@@ -135,6 +135,14 @@ class SandboxSettings(BaseModel):
         True,
         description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",
     )
+    shell_direct_runtime_enabled: bool = Field(
+        False,
+        description=(
+            "自部署便捷开关：允许普通 Shell 在沙盒内直接执行 Python/Node/npm 等运行时，"
+            "无需经由 run_script（默认关闭；code_execution_enabled 关闭时无效）。"
+            "危险命令确认门与沙盒边界不受影响"
+        ),
+    )
     terminal_mode: Literal["auto", "pty_disabled", "entry_disabled"] = Field(
         "auto",
         description="用户终端策略：自动、关闭交互式 PTY 或关闭终端入口；不影响咕咕 Shell 执行器",
