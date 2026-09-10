@@ -6,11 +6,15 @@ Rootless 容器中的非 root UID/GID 会映射到宿主机的 subordinate UID/G
 """
 from __future__ import annotations
 
+import logging
 import os
+import pwd
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -139,3 +143,46 @@ def default_permission_plan(root: str | Path, *, login: str | None = None) -> Wo
         subuid=read_subordinate_ranges("/etc/subuid", owner),
         subgid=read_subordinate_ranges("/etc/subgid", owner),
     )
+
+
+# 沙盒容器内业务进程的固定 UID/GID（与 prepare_rootless_storage.py 保持一致）。
+_CONTAINER_SANDBOX_UID = 65532
+_CONTAINER_SANDBOX_GID = 65532
+# 进程生命周期内的幂等缓存：每棵挂载根只需补一次 ACL，重复递归 setfacl 纯属浪费。
+_acl_ready_roots: set[str] = set()
+_acl_warned_roots: set[str] = set()
+
+
+def ensure_sandbox_acl(root: str | Path) -> bool:
+    """运行时为单棵沙盒挂载根补齐 rootless ACL；成功返回 True。
+
+    与 sandbox-bootstrap 一次性脚本（prepare_rootless_storage.py）使用同一套
+    权限计划，差别只在身份来源：脚本运行在 bootstrap 容器里，需要从 socket
+    属主和 /host/etc 推导登录用户；运行时调用方就是宿主部署用户进程，直接用
+    当前 uid 与 /etc/subuid、/etc/subgid。环境不满足（无 setfacl、无
+    subordinate 映射、命令执行失败，例如容器内 backend 以 root 运行）时返回
+    False，由调用方退回全员可写的 chmod 兜底，不阻塞业务请求。
+    """
+    resolved = str(Path(root).expanduser().resolve())
+    if resolved in _acl_ready_roots:
+        return True
+    try:
+        if not shutil.which("setfacl"):
+            raise RuntimeError("未安装 setfacl")
+        login = pwd.getpwuid(os.getuid()).pw_name
+        plan = build_permission_plan(
+            resolved,
+            login=login,
+            subuid=read_subordinate_ranges("/etc/subuid", login),
+            subgid=read_subordinate_ranges("/etc/subgid", login),
+            container_uid=_CONTAINER_SANDBOX_UID,
+            container_gid=_CONTAINER_SANDBOX_GID,
+        )
+        apply_permission_plan(plan)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        if resolved not in _acl_warned_roots:
+            _acl_warned_roots.add(resolved)
+            _logger.warning("沙盒 ACL 初始化失败，降级为全员可写兜底（%s）：%s", resolved, exc)
+        return False
+    _acl_ready_roots.add(resolved)
+    return True
