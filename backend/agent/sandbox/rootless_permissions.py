@@ -124,11 +124,17 @@ def build_permission_plan(
     commands = head + (
         ("setfacl", "-m", f"u:{login}:rwx,g:{gid}:rwx", str(resolved)),
         ("setfacl", "-d", "-m", f"u::rwx,u:{login}:rwx,g::rwx,g:{gid}:rwx,m::rwx", str(resolved)),
-        ("setfacl", "-R", "-m", f"u:{login}:rwX,g:{gid}:rwX", str(resolved)),
+        # 递归只处理属于 login 的条目：沙盒映射身份在目录里创建的文件不归
+        # 部署用户所有，setfacl 会 EPERM 并中断整批；这些条目沙盒天然可读写，
+        # 无需补 ACL（find -user 接受数字 UID，兼容初始化容器无 passwd 的情况）。
+        (
+            "find", str(resolved), "-user", login, "-exec", "setfacl", "-m",
+            f"u:{login}:rwX,g:{gid}:rwX", "{}", "+",
+        ),
         # 仅给根目录设置 default ACL 不够：文件库里已经存在的子目录不会
         # 继承它。对每一级目录设置 default ACL，保证后续 mkdir/上传都可写。
         (
-            "find", str(resolved), "-type", "d", "-exec", "setfacl", "-m",
+            "find", str(resolved), "-type", "d", "-user", login, "-exec", "setfacl", "-m",
             f"u:{login}:rwx,g:{gid}:rwx,m::rwx,d:u:{login}:rwx,d:g:{gid}:rwx,d:m::rwx", "{}", "+",
         ),
     )

@@ -757,9 +757,11 @@ def test_prepare_storage_discovers_all_compose_writable_roots(tmp_path):
         users_root / "user-a" / "shell",
         users_root / "user-a" / "个人文件",
         users_root / "user-a" / "项目文件",
+        users_root / "user-a" / "workspace",
         users_root / "user-b" / "shell",
         users_root / "user-b" / "个人文件",
         users_root / "user-b" / "项目文件",
+        users_root / "user-b" / "workspace",
     )
 
 
@@ -788,7 +790,7 @@ def test_prepare_storage_applies_target_daemon_mapping_and_probes(tmp_path, monk
         docker_socket="/run/user/1000/docker.sock",
         image_ref="debian:bookworm-slim@sha256:" + "a" * 64,
         probe=True,
-    ) == 3
+    ) == 4
     assert {plan.mapped_uid for plan in plans} == {165531}
     assert {plan.mapped_gid for plan in plans} == {165531}
     assert [root for root, _image in probes] == [plan.root for plan in plans]
