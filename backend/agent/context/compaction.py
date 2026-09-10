@@ -117,6 +117,7 @@ async def compact_context(
     protected_from: int | None = None,
     *,
     model_cfg,
+    system_text: str | None = None,
 ) -> CompactionResult:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
@@ -247,12 +248,26 @@ async def compact_context(
         result = _result(messages, False, "no_compressible_history", None)
         return result
 
+    # 追加式压缩：把待压缩的 canonical 消息原样交给分支，压缩指令只在末尾追加——
+    # 分支请求与主对话最后一帧共享前缀，才能命中 provider 会话内缓存。
+    try:
+        from agent.llm.llm_select import use_anthropic_for
+        # anthropic 路由 system 独立于 messages，需要带上 run 的 system_text 才能
+        # 前缀对齐；openai 路由的 run system 已在 fixed prefix 消息里，传空串让
+        # 分支请求不再注入第二个 system。
+        append_system = (system_text or "") if use_anthropic_for(model_cfg) else ""
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.context.compaction.append_mode", exc)
+        append_system = ""
+
     # 调用 LLM 生成压缩摘要
-    logger.info("[compaction] 调用 LLM 生成摘要，compressible_content=%d 条", len(compressible_content))
-    compact_summary = await _generate_compact_summary(
-        compressible_content,
+    logger.info("[compaction] 调用 LLM 生成摘要（追加式），compressible=%d 条", len(compressible_msgs))
+    compact_summary = await _generate_append_summary(
+        compressible_msgs,
         summary_msg.get("content", "") if summary_msg else None,
         model_cfg=model_cfg,
+        append_system=append_system,
     )
 
     if not compact_summary.strip():
@@ -461,22 +476,97 @@ def validate_compact_summary(
     return True, "摘要候选有效"
 
 
-async def _generate_compact_summary(
-    content_list: list[str],
+_APPEND_TASK_PREFACE = (
+    "【任务切换】以上是正在进行的对话历史。现在不要继续对话、不要回答历史中的任何问题，"
+    "改为执行以下上下文压缩任务：把上面的会话历史整理成一份供后续任务继续使用的"
+    "高信息密度状态摘要。压缩要求如下：\n\n"
+)
+
+
+_COMPRESS_PROMPT_FALLBACK = (
+    "请将历史对话压缩为供后续任务继续使用的中文状态摘要，并严格按“### 1. 对话摘要、"
+    "### 2. 当前任务、### 3. 遗留问题、### 4. 重要决策与约束、### 5. 关键细节”分章节输出。"
+    "保留用户目标、关键经历、"
+    "已确认事实、决定、已完成/未完成状态、阻塞原因和待确认事项。默认丢弃附件、引用、"
+    "完整工具参数、原始 JSON、URL 和中间调用，只保留会影响后续工作的结论。"
+    "不确定内容标记为待确认，不要把口头说明写成已完成；只输出摘要正文。"
+)
+
+
+def _load_compress_prompt() -> str:
+    prompt_path = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
+    try:
+        return prompt_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return _COMPRESS_PROMPT_FALLBACK
+
+
+async def _generate_append_summary(
+    history_messages: list,
     prev_summary: str | None = None,
     *,
     model_cfg,
+    append_system: str = "",
 ) -> str:
-    """使用共享分支/fallback 策略生成摘要。"""
-    async def call_once(items, previous):
-        return await _generate_compact_summary_once(items, previous, model_cfg=model_cfg)
+    """追加式压缩：复用主会话 canonical 消息序列，压缩指令只出现在末尾追加的
+    user 消息里，保证分支请求与主对话最后一帧共享前缀（含 run 的 system）。
 
-    return await generate_compact_summary(
-        content_list,
-        prev_summary,
-        call_once,
-        model_cfg=model_cfg,
-    )
+    超出单请求输入预算时按预算把 canonical 消息分块，逐块滚动合并摘要；
+    任一块失败返回空串，由调用方落到本地有界摘要。
+    """
+    if not history_messages:
+        return ""
+
+    limits = resolve_compaction_limits(model_cfg=model_cfg)
+    instruction = _APPEND_TASK_PREFACE + _load_compress_prompt()
+
+    from app.core.config import get_settings
+    from agent.context.branch import ContextBranch
+    from agent.context.branch_types import BranchInput, BranchPolicy
+    settings = get_settings()
+
+    idx = 0
+    summary = prev_summary
+    while idx < len(history_messages):
+        budget = max(1, limits.input_tokens
+                     - estimate_tokens(instruction) - estimate_tokens(summary or ""))
+        chunk: list = []
+        chunk_size = 0
+        while idx < len(history_messages):
+            size = estimate_tokens(str(history_messages[idx].get("content") or ""))
+            if chunk and chunk_size + size > budget:
+                break
+            chunk.append(history_messages[idx])
+            chunk_size += size
+            idx += 1
+
+        delta = instruction
+        if summary:
+            delta += (
+                "\n\n【已有摘要（更早的对话，需与上面历史合并、保留全部关键信息）】\n"
+                f"{summary}"
+            )
+        delta += "\n\n只输出摘要正文，不要添加前缀或解释。"
+        try:
+            result = await ContextBranch().run(
+                BranchInput(stable_system=append_system, delta=delta,
+                            history_messages=tuple(chunk)),
+                BranchPolicy(
+                    name="compaction",
+                    output_mode="text",
+                    max_tokens=limits.output_tokens,
+                    max_retries=1,
+                ),
+                settings,
+            )
+            new_summary = str(result.output or "").strip() if result.ok else ""
+        except Exception as e:
+            logger.warning("[compaction] 追加式摘要生成失败: %s", e)
+            return ""
+        if not new_summary:
+            return ""
+        summary = new_summary
+    return summary or ""
 
 
 async def generate_compact_summary(content_list, prev_summary, call_once, *, model_cfg) -> str:
@@ -518,62 +608,3 @@ async def generate_compact_summary(content_list, prev_summary, call_once, *, mod
         if not summary:
             return ""
     return summary or ""
-
-
-async def _generate_compact_summary_once(
-    content_list: list[str],
-    prev_summary: str | None = None,
-    *,
-    model_cfg,
-) -> str:
-    """执行单个摘要块；调用方负责跨块滚动合并。"""
-    if not content_list:
-        return prev_summary or ""
-
-    # 构建压缩 prompt
-    conv_text = "\n".join(content_list)
-
-    if prev_summary:
-        user_text = (
-            f"【已有摘要（更早的对话，需与下面新增内容合并、保留全部关键信息）】\n"
-            f"{prev_summary}\n\n"
-            f"【新增对话】\n{conv_text}"
-        )
-    else:
-        user_text = conv_text
-
-    prompt_path = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
-    try:
-        sys_prompt = prompt_path.read_text(encoding="utf-8").strip()
-    except Exception:
-        sys_prompt = (
-            "请将历史对话压缩为供后续任务继续使用的中文状态摘要，并严格按“### 1. 对话摘要、"
-            "### 2. 当前任务、### 3. 遗留问题、### 4. 重要决策与约束、### 5. 关键细节”分章节输出。"
-            "保留用户目标、关键经历、"
-            "已确认事实、决定、已完成/未完成状态、阻塞原因和待确认事项。默认丢弃附件、引用、"
-            "完整工具参数、原始 JSON、URL 和中间调用，只保留会影响后续工作的结论。"
-            "不确定内容标记为待确认，不要把口头说明写成已完成；只输出摘要正文。"
-        )
-
-    try:
-        from app.core.config import get_settings
-        from agent.context.branch import ContextBranch
-        from agent.context.branch_types import BranchInput, BranchPolicy
-        settings = get_settings()
-        limits = resolve_compaction_limits(model_cfg=model_cfg)
-        result = await ContextBranch().run(
-            # 保持旧压缩 Prompt 的 user 正文逐字稳定；分支标识只进入审计元数据。
-            BranchInput(stable_system=sys_prompt, delta=user_text),
-            BranchPolicy(
-                name="compaction",
-                output_mode="text",
-                max_tokens=limits.output_tokens,
-                max_retries=1,
-            ),
-            settings,
-        )
-        summary = result.output if result.ok else ""
-        return str(summary).strip() if summary else ""
-    except Exception as e:
-        logger.warning("[compaction] 摘要生成失败: %s", e)
-        return ""

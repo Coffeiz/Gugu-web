@@ -791,6 +791,7 @@ class LLMRunner:
                         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                         protected_from=protected_from,
                         model_cfg=ai,
+                        system_text=system_text,
                     )
                 except Exception as exc:
                     # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成

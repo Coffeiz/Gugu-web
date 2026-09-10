@@ -14,7 +14,12 @@ OutputMode = Literal["text", "json"]
 
 @dataclass(frozen=True)
 class BranchInput:
-    """分支请求的稳定前缀和本次增量。"""
+    """分支请求的稳定前缀和本次增量。
+
+    history_messages 非空时走「追加式」：直接复用主会话的 canonical 消息序列，
+    delta 作为末尾追加的 user 消息发送（baseline/dynamic_context 被忽略），
+    让分支请求与主对话共享前缀以命中 provider 的会话内缓存。
+    """
 
     stable_system: str
     baseline: str = ""
@@ -25,6 +30,7 @@ class BranchInput:
     session_id: int | None = None
     scope_owner_id: str | int | None = None
     run_id: str | None = None
+    history_messages: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)

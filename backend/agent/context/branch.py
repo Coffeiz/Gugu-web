@@ -63,7 +63,18 @@ class ContextBranch:
             for attempts in range(1, max(0, policy.max_retries) + 2):
                 call_failed = False
                 try:
-                    if policy.output_mode == "text":
+                    if branch_input.history_messages and runner is None:
+                        # 追加式：canonical 消息序列原样发送，user 只是末尾追加的指令。
+                        output = await provider_runner.complete_messages(
+                            branch_input.stable_system,
+                            list(branch_input.history_messages),
+                            user, settings,
+                            max_tokens=policy.max_tokens,
+                            json_mode=policy.output_mode != "text",
+                        )
+                        ok = bool(str(output or "").strip()) and (
+                            not isinstance(output, dict) or bool(output))
+                    elif policy.output_mode == "text":
                         call = runner or provider_runner.complete_text
                         output = await call(
                             branch_input.stable_system, user, settings, policy.max_tokens)
