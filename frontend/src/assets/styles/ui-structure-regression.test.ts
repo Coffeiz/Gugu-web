@@ -37,6 +37,7 @@ const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
 const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
 const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
 const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
+const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
 const trashView = load('../../views/Files/components/FilesTrashView.vue')
@@ -310,6 +311,12 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
     const interactionCardBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .task-card')
     expect(interactionCardBlock).not.toContain('transition:')
+  })
+
+  it('公共操作按钮的 secondary hover 滤镜平滑过渡', () => {
+    const buttonBlock = cssBlock(actionButton, '.app-action-button')
+    expect(buttonBlock).toContain('filter var(--motion-hover-control) var(--motion-ease-standard)')
+    expect(actionButton).toContain('filter: brightness(1.04);')
   })
 
   it('非 Runtime 主题层不接管 Runtime 的 motion 属性', () => {

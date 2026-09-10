@@ -44,6 +44,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
     color var(--motion-hover-control) var(--motion-ease-standard),
     box-shadow var(--motion-hover-control) var(--motion-ease-standard),
     transform var(--motion-hover-control) var(--motion-ease-standard),
+    filter var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) ease;
 }
 .app-action-button.is-fit { width: auto; min-width: 0; flex-basis: auto; }
