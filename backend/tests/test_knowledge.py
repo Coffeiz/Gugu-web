@@ -384,6 +384,10 @@ def test_save_knowledge_schema_declares_keywords():
         "type": "array", "items": {"type": "string"},
     }
     assert "keywords" in tool.description
+    # 先查再合：同主题已有条目时必须引导改用 update_knowledge，防止整段覆盖
+    assert "search_memory" in tool.description
+    assert "update_knowledge" in tool.description
+    assert "整段替换" in tool.description
 
 
 @pytest.mark.asyncio
