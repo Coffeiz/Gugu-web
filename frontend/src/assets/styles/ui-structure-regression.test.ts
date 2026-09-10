@@ -331,6 +331,22 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(interactionRefinements).toContain('background-color var(--hover-motion-control), opacity var(--hover-motion-control);')
   })
 
+  it('定时任务清除边界按钮用居中图标，不回落字体字形', () => {
+    // × 字形的墨迹中心随字体 ascent/descent 漂移（当前字体 20/5，24px 盒里偏高 2.4px），
+    // 改 font-size/line-height 都对不齐；清除符统一走 action.close 图标 + flex 居中盒。
+    const clearBlock = cssBlock(scheduleFormModal, '.boundary-clear {')
+    expect(clearBlock).toContain('display: flex;')
+    expect(clearBlock).toContain('align-items: center;')
+    expect(clearBlock).toContain('justify-content: center;')
+    expect(clearBlock).not.toContain('font-size:')
+    expect(clearBlock).not.toContain('line-height:')
+    expect(clearBlock).toContain('transition: color var(--hover-motion-control), background-color var(--hover-motion-control);')
+    expect(cssBlock(scheduleFormModal, '.boundary-clear:hover')).toContain('background: var(--option-bg-hover);')
+
+    expect(scheduleFormModal).toContain('<Icon name="action.close" :size="20" />')
+    expect(scheduleFormModal).not.toMatch(/>×<\/button>/)
+  })
+
   it('公共操作按钮的 secondary hover 滤镜平滑过渡', () => {
     const buttonBlock = cssBlock(actionButton, '.app-action-button')
     expect(buttonBlock).toContain('filter var(--motion-hover-control) var(--motion-ease-standard)')
