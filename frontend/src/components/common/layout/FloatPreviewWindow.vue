@@ -298,6 +298,39 @@ function vectorWindowScale(nw: number, nh: number) {
   return Math.max(1, Math.min(comfortW / nw, comfortH / nh))
 }
 
+async function svgIntrinsicAspect(url: string): Promise<number | null> {
+  let text = ''
+  try { text = await (await fetch(url)).text() } catch { return null }
+  const vb = text.match(/viewBox\s*=\s*["']\s*[-\d.eE+]+[\s,]+[-\d.eE+]+[\s,]+([\d.eE+]+)[\s,]+([\d.eE+]+)/i)
+  const vw = vb ? Number(vb[1]) : NaN
+  const vh = vb ? Number(vb[2]) : NaN
+  if (vw > 0 && vh > 0) return vw / vh
+  const wh = text.match(/<svg[^>]*\swidth\s*=\s*["']?([\d.]+)(?:px)?["']?[^>]*\sheight\s*=\s*["']?([\d.]+)(?:px)?["']?/i)
+  const sw = wh ? Number(wh[1]) : NaN
+  const sh = wh ? Number(wh[2]) : NaN
+  if (sw > 0 && sh > 0) return sw / sh
+  return null
+}
+
+function fitVectorWindow(nw: number, nh: number, url: string, sequence: number) {
+  const apply = (w: number, h: number) => {
+    if (sequence !== loadSequence) return
+    const vs = vectorWindowScale(w, h)
+    fitWindow(Math.round(w * vs), Math.round(h * vs))
+  }
+  // 浏览器对无尺寸 SVG 折算的 natural 是 300×150 默认对象尺寸，与真实 viewBox
+  // 纵横比不符（方形图标会开成 2:1 宽窗、内容大范围留白）：从 SVG 源码解析真实
+  // 纵横比，按面积等效折算回真实形状；解析失败保持折算值。
+  if (nw !== 300 || nh !== 150) { apply(nw, nh); return }
+  void svgIntrinsicAspect(url).then(aspect => {
+    if (aspect && aspect > 0) {
+      const area = nw * nh
+      const w = Math.round(Math.sqrt(area * aspect))
+      apply(w, Math.max(1, Math.round(w / aspect)))
+    } else apply(nw, nh)
+  })
+}
+
 // 按内容自然尺寸适配窗口，居中+错位
 function fitWindow(contentW: number, contentH: number) {
   const maxW = window.innerWidth  - PAD * 2
@@ -440,8 +473,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
           if (sequence !== loadSequence) return
           contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
           if (!ready.value) {
-            const vs = isVector.value ? vectorWindowScale(img.naturalWidth, img.naturalHeight) : 1
-            fitWindow(Math.round(img.naturalWidth * vs), Math.round(img.naturalHeight * vs))
+            if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, blobUrl.value ?? '', sequence)
+            else fitWindow(img.naturalWidth, img.naturalHeight)
           }
         }
         img.src = cached
@@ -486,8 +519,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
         // 窗口尺寸只由打开时的第一张图决定（同上），这里只在窗口还没显示过时才定尺。
         if (!ready.value) {
-          const vs = isVector.value ? vectorWindowScale(img.naturalWidth, img.naturalHeight) : 1
-          fitWindow(Math.round(img.naturalWidth * vs), Math.round(img.naturalHeight * vs))
+          if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, url, sequence)
+          else fitWindow(img.naturalWidth, img.naturalHeight)
         }
       }
       img.src = url

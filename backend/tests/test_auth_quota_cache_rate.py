@@ -26,7 +26,7 @@ def test_get_quota_without_byok_returns_cache_rate_zero(monkeypatch):
     monkeypatch.setattr(_quota, "has_active_byok_llm", fake_has_byok)
     monkeypatch.setattr("app.api.v1.auth.usage_sum", fake_usage_sum)
 
-    result = asyncio.get_event_loop().run_until_complete(get_quota(_user(), db=None))
+    result = asyncio.run(get_quota(_user(), db=None))
 
     assert result["usage_kind"] == "platform"
     assert result["byok_cache_rate"] == 0

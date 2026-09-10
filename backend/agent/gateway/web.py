@@ -280,8 +280,14 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
+
+        def _unregister_session_task(done_task, *, _sid: int = session_id):
+            # 同会话「取消后立刻重发」时，旧任务迟到的回调不能把新登记的任务摘掉。
+            if _session_gen_tasks.get(_sid) is done_task:
+                _session_gen_tasks.pop(_sid, None)
+
         _session_gen_tasks[session_id] = task
-        task.add_done_callback(lambda _t, sid=session_id: _session_gen_tasks.pop(sid, None))
+        task.add_done_callback(_unregister_session_task)
 
     async for line in genstream.subscribe(session_id, pubsub=pubsub):
         yield line
@@ -718,6 +724,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             reflection.schedule(user_id, req.user_name, req.message, full_reply, settings,
                                 used_tools=used_tools, session_id=session_id)
 
+    except asyncio.CancelledError:
+        # 终止端点直收（task.cancel()）和心跳发现取消标记后的硬取消，取消点会落在
+        # 本函数体内任意 await 处；必须与业务异常分开收尾——被下面的
+        # except BaseException 吞掉的话，用户点「停止」会收到「咕咕开小差了」通用
+        # 报错，且本轮持久化整体跳过。发取消终态让订阅端正常退出后 re-raise，
+        # 交给外层 _generate 的取消分支清 active 快照。
+        await genstream.publish(session_id, {"type": "done", "cancelled": True})
+        raise
     except BaseException as e:
         generation_failed = True
         logger.exception("agent generate error for user %s: %s", req.user_id, e)

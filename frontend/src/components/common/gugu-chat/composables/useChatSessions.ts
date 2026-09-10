@@ -1,4 +1,4 @@
-import { nextTick, computed, type Ref } from 'vue'
+import { nextTick, computed, onScopeDispose, type Ref } from 'vue'
 import { i18n } from '@/i18n'
 import { agentApi, getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
@@ -115,6 +115,10 @@ export function useChatSessions(options: {
 
   let baselinePollTimer: ReturnType<typeof setTimeout> | null = null
 
+  // 组件卸载后 tick 不能再起下一轮：仅靠 sessionId/viewGeneration 守卫是
+  // 「空转不生效」，定时器本身仍会按 4s 醒一次，属于有界泄漏。
+  onScopeDispose(() => { if (baselinePollTimer) clearTimeout(baselinePollTimer) })
+
   /** 轮询基线整理是否结束；结束/切走/超时即收起提示，避免「正在整理上下文」卡在屏幕上。 */
   function pollBaselineDone(id: number, viewGeneration: number) {
     if (baselinePollTimer) clearTimeout(baselinePollTimer)
@@ -124,12 +128,14 @@ export function useChatSessions(options: {
       try {
         const state = await agentApi.getSessionState(String(id))
         if (state.executionState !== 'baseline_updating') {
-          options.clearStatus()
+          // 整理期间用户可能已发新消息开始新一轮流式：状态指示此时归新流程管，
+          // 迟到的轮询结果不能把它误清掉。
+          if (!options.streaming.value) options.clearStatus()
           return
         }
       } catch { /* 网络抖动下一轮再试 */ }
       if (Date.now() - startedAt > 5 * 60_000) {
-        options.clearStatus()
+        if (!options.streaming.value) options.clearStatus()
         return
       }
       baselinePollTimer = setTimeout(tick, 4000)

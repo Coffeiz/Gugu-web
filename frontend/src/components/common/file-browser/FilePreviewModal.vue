@@ -136,6 +136,7 @@ const isVectorImage = computed(() => props.file?.ext?.toUpperCase() === 'SVG')
 // 拿到图片真实纵横比后把面板宽度收成「与图片等高」的比例匹配值；横向不够时封顶
 // 92vw（此时上下留白已不可避免），非矢量文件保持 60vw 不变。
 const panelHeaderRef = ref<HTMLElement | null>(null)
+const vectorAspect = ref<number | null>(null)
 const vectorPanelWidth = ref<number | null>(null)
 const panelStyle = computed(() => (
   isVectorImage.value && vectorPanelWidth.value
@@ -144,21 +145,31 @@ const panelStyle = computed(() => (
 ))
 // .iv-wrap 自带 32px 内边距；头部高度运行时实测，量不到用 58 估（14+13 padding + 30 按钮 + 1 分隔线）
 const IV_BODY_PAD = 32
+// 窗口缩小后旧的 px 宽会超出新视口，必须跟着重算；量不到纵横比时保持旧行为（60vw）。
+function applyVectorPanelWidth() {
+  if (vectorAspect.value == null) return
+  const headerH = panelHeaderRef.value?.offsetHeight || 58
+  const availH = window.innerHeight - headerH - IV_BODY_PAD * 2
+  const fitW = availH * vectorAspect.value + IV_BODY_PAD * 2
+  vectorPanelWidth.value = Math.round(Math.max(320, Math.min(fitW, window.innerWidth * 0.92)))
+}
+function onWindowResize() {
+  if (isVectorImage.value && vectorAspect.value != null) applyVectorPanelWidth()
+}
+window.addEventListener('resize', onWindowResize)
+onUnmounted(() => window.removeEventListener('resize', onWindowResize))
 function measureVectorPanel(url: string) {
   const img = new Image()
   img.onload = () => {
     if (!img.naturalWidth || !img.naturalHeight) return
-    const headerH = panelHeaderRef.value?.offsetHeight || 58
-    const availH = window.innerHeight - headerH - IV_BODY_PAD * 2
-    const aspect = img.naturalWidth / img.naturalHeight
-    const fitW = availH * aspect + IV_BODY_PAD * 2
-    vectorPanelWidth.value = Math.round(Math.max(320, Math.min(fitW, window.innerWidth * 0.92)))
+    vectorAspect.value = img.naturalWidth / img.naturalHeight
+    applyVectorPanelWidth()
   }
   img.src = url
 }
 watch(blobUrl, url => {
   if (url && isVectorImage.value) measureVectorPanel(url)
-  else vectorPanelWidth.value = null
+  else { vectorPanelWidth.value = null; vectorAspect.value = null }
 })
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
