@@ -47,6 +47,9 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesGridView).toContain('top:8px; right:8px;')
     expect(filesGridView).toContain('pointer-events:none;')
     expect(filesGridView).toContain('pointer-events:auto;')
+    expect(filesCss).toContain('.fc-name:has(.rename-input-inline),\n.fd-name:has(.rename-input-inline) { overflow: visible; text-overflow: clip; }')
+    expect(filesCss).toContain('display: block; width: 100%; max-width: 100%; min-width: 0; z-index: 3;')
+    expect(filesCss).not.toContain('width: calc(100% + 13px)')
   })
 
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
