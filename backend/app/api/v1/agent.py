@@ -374,16 +374,25 @@ async def cancel_stream(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """请求停止该用户会话的后台 Web 生成，取消在 Agent round/token 边界生效。"""
+    """终止该用户会话的后台 Web 生成。
+
+    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务直接
+    cancel（立即生效）；跨 worker / 任务未登记时退回 Redis 取消标记，由 run
+    心跳在 5s 内自取消。
+    """
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
         raise HTTPException(404, "会话不存在")
     from agent.context.compress_conv import recover_orphaned_session
-    await recover_orphaned_session(session_id, user_id=current_user.id)
+    recovered = await recover_orphaned_session(session_id, user_id=current_user.id)
     active = await genstream.is_active(session_id)
+    cancelled_locally = False
     if active:
-        await genstream.request_cancel(session_id)
-    return {"ok": True, "active": active}
+        from agent.gateway.web import cancel_local_generation
+        cancelled_locally = cancel_local_generation(session_id)
+        if not cancelled_locally:
+            await genstream.request_cancel(session_id)
+    return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
 
 
 @router.get("/sessions")

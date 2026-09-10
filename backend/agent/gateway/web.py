@@ -6,6 +6,7 @@ user message + yield session_id → 组装 system prompt → 按 provider 组 me
 AgentUsage → yield done。对外 SSE 事件流与原实现字节级一致。
 """
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -273,12 +274,28 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
+        _session_gen_tasks[session_id] = task
+        task.add_done_callback(lambda _t, sid=session_id: _session_gen_tasks.pop(sid, None))
 
     async for line in genstream.subscribe(session_id, pubsub=pubsub):
         yield line
 
 
 _gen_tasks: set = set()   # 持后台生成任务引用，防 GC（任务需脱离请求存活）
+_session_gen_tasks: dict[int, asyncio.Task] = {}   # 按会话登记，供终止端点直接 cancel
+
+
+def cancel_local_generation(session_id: int) -> bool:
+    """同进程内直接取消该会话的后台生成任务；任务不在本进程时返回 False。
+
+    uvicorn 多 worker 下生成任务可能活在另一个进程，此时由调用方回退到
+    genstream 取消标记（run 心跳会自行发现并退出）。
+    """
+    task = _session_gen_tasks.get(session_id)
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False
 
 
 async def resume(session_id) -> AsyncGenerator[str, None]:
@@ -756,6 +773,28 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     from agent.context import compress_conv
 
     owner_run_id = owner_run_id or genstream.new_run_id()
+    # run 级进程心跳：长工具调用/交互等待期间没有 token 事件，快照 TTL 得不到
+    # 刷新；这个心跳让「快照非 done 但心跳已断」可以安全判定为 crash 僵尸
+    # （见 genstream.beat_alive / reap 与 recover_orphaned_session）。
+    # 每 5s 还会检查取消标记：终止端点在另一 worker 进程时只能写 Redis 标记，
+    # 由这里发现并直接 cancel 生成任务，而不是等 token/轮边界的协作检查。
+    generate_task = asyncio.current_task()
+
+    async def _run_heartbeat() -> None:
+        loop = asyncio.get_running_loop()
+        last_touch = 0.0
+        while True:
+            if await genstream.is_cancelled(session_id):
+                if generate_task is not None:
+                    generate_task.cancel()
+                return
+            now = loop.time()
+            if now - last_touch >= 30:
+                await genstream.touch(session_id)
+                last_touch = now
+            await asyncio.sleep(5)
+
+    heartbeat_task = asyncio.create_task(_run_heartbeat())
     try:
         async with compress_conv.session_run_gate(req, run_id=owner_run_id) as claimed_owner_run_id:
             refreshed = await _refresh_generation_history(
@@ -784,6 +823,10 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         await _finalize_preflight_failure(
             session_id, model_cfg, error=exc, owner_run_id=owner_run_id,
         )
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(BaseException):
+            await heartbeat_task
 
 
 async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,

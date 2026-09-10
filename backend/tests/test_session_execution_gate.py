@@ -183,6 +183,8 @@ async def test_recover_orphaned_session_keeps_running_state_when_generation_is_a
 
     fake_redis = _FakeRedis()
     fake_redis.values["genstream:state:%s" % session.id] = '{"done": false}'
+    # 活跃生成的标志：run 进程心跳仍在续期
+    fake_redis.values["genstream:beat:%s" % session.id] = "1"
     monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
 
     assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is False
@@ -190,6 +192,39 @@ async def test_recover_orphaned_session_keeps_running_state_when_generation_is_a
     await db.refresh(session)
     assert session.execution_state == "running"
     assert session.active_run_id == "run-live"
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkeypatch):
+    """快照非 done 但进程心跳已断：连同 Redis 残留一起回收。"""
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="僵尸快照测试",
+        source="web",
+        execution_state="running",
+        active_run_id="run-dead",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    fake_redis = _FakeRedis()
+    fake_redis.values["genstream:state:%s" % session.id] = '{"done": false}'
+    fake_redis.values["genstream:owner:%s" % session.id] = "run-dead"
+    fake_redis.values["genstream:lease:%s" % session.id] = "run-dead"
+    fake_redis.values["genstream:cancel:%s" % session.id] = "1"
+    # 没有 beat 键 = 心跳已断
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is True
+
+    await db.refresh(session)
+    assert session.execution_state == "idle"
+    assert session.active_run_id is None
+    assert "genstream:state:%s" % session.id not in fake_redis.values
+    assert "genstream:owner:%s" % session.id not in fake_redis.values
+    assert "genstream:lease:%s" % session.id not in fake_redis.values
+    assert "genstream:cancel:%s" % session.id not in fake_redis.values
 
 
 @pytest.mark.asyncio
@@ -218,3 +253,57 @@ async def test_recover_orphaned_session_does_not_clear_state_when_redis_is_unava
     await db.refresh(session)
     assert session.execution_state == "running"
     assert session.active_run_id == "run-redis-outage"
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_clears_baseline_updating_when_compress_lock_gone(
+    db, user_a, monkeypatch,
+):
+    """重启打断基线提交：压缩锁（带 TTL）已消失 = 写进程不在，回收孤儿态。"""
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="基线孤儿测试",
+        source="web",
+        execution_state="baseline_updating",
+        active_run_id=None,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is True
+
+    await db.refresh(session)
+    assert session.execution_state == "idle"
+    assert session.active_run_id is None
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_keeps_baseline_updating_while_lock_held(
+    db, user_a, monkeypatch,
+):
+    """压缩锁仍在 = 基线提交正在进行，绝不能回收。"""
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="基线进行中测试",
+        source="web",
+        execution_state="baseline_updating",
+        active_run_id=None,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    fake_redis = _FakeRedis()
+    fake_redis.values["agent:context:compress:%s" % session.id] = "1"
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: fake_redis)
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is False
+
+    await db.refresh(session)
+    assert session.execution_state == "baseline_updating"

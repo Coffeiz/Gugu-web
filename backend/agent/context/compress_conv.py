@@ -68,25 +68,48 @@ async def _read_execution_state(session_id: int) -> str | None:
 
 
 async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
-    """回收进程退出后遗留的 ``running`` 会话状态。
+    """回收进程退出后遗留的 ``running`` / ``baseline_updating`` 会话状态。
 
     生成任务正常结束会在 genstream 和会话行上分别收口；worker 被杀死或重启
-    时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。只有在
-    Redis 明确可用且生成快照、owner、lease 全部消失时才允许修复，Redis 故障
-    或 baseline 压缩状态都不会被误判。
+    时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。两种情况
+    允许修复：① Redis 明确可用且生成快照、owner、lease 全部消失；② 快照仍在
+    但 run 进程心跳已断（probe.stale，crash 后 TTL 内的僵尸快照）——此时同时
+    清掉 Redis 残留，否则 is_active 会在整个 TTL 窗口内挡住新消息、让终止按钮
+    和续看全部空转。``baseline_updating`` 是基线提交被打断后的孤儿态：只有
+    压缩锁（带 TTL）也已消失时才认定写进程不在了，锁还在就仍在提交中。
     """
     from agent.llm import genstream
     from app.models import ConversationSession
     import app.db.session as _sess
 
     status = await genstream.probe(session_id)
-    if not status.get("redis_ok") or status.get("active"):
+    if not status.get("redis_ok") or (status.get("active") and not status.get("stale")):
         return False
+    if status.get("stale"):
+        await genstream.reap(session_id)
 
+    baseline_stuck = False
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id, with_for_update=True)
-        if session is None or session.execution_state != "running":
+        if session is None or session.execution_state not in {"running", "baseline_updating"}:
             return False
+        if user_id is not None and session.user_id != user_id:
+            return False
+        if session.execution_state == "baseline_updating":
+            # 压缩锁在 baseline_updating 之前取得（见 compress_session），锁消失
+            # 才能证明写进程已不在；锁有 TTL，崩溃后最多 _COMPRESS_LOCK_TIMEOUT 秒。
+            from app.core import redis as redis_core
+            try:
+                baseline_stuck = not await redis_core.get_redis().exists(
+                    f"agent:context:compress:{session_id}"
+                )
+            except Exception:
+                return False
+            if not baseline_stuck:
+                return False
+        session.execution_state = "idle"
+        session.active_run_id = None
+        await db.commit()
         if user_id is not None and session.user_id != user_id:
             return False
         session.execution_state = "idle"
@@ -98,13 +121,28 @@ async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
 
 
 async def _wait_for_baseline_idle(session_id: int) -> None:
-    """等待持久化 baseline 更新结束，而不是只看当前进程的 Task。"""
+    """等待持久化 baseline 更新结束，而不是只看当前进程的 Task。
+
+    等待期间顺带做孤儿检测：基线提交进程崩溃后 ``baseline_updating`` 没人
+    收口（写进程的 finally 不会执行），新消息会一直干等到超时。recover 的
+    判据自带压缩锁检查，误伤面为零；这里按低频节流调用即可。
+    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _COMPRESS_LOCK_TIMEOUT
+    next_recover_at = 0.0
     while True:
         state = await _read_execution_state(session_id)
         if state != "baseline_updating":
             return
+        now = loop.time()
+        if now >= next_recover_at:
+            next_recover_at = now + 5.0
+            try:
+                await recover_orphaned_session(session_id)
+            except Exception:
+                logger.debug("[compress_conv] session=%s baseline 孤儿检测失败", session_id, exc_info=True)
+                await asyncio.sleep(_BASELINE_WAIT_INTERVAL)
+                continue
         remaining = deadline - loop.time()
         if remaining <= 0:
             raise TimeoutError(f"session {session_id} baseline 更新等待超时")
