@@ -444,7 +444,9 @@ async def _create_file(db, user_id, args: dict):
                 display_name=display_name,
                 ext=ext,
                 # 未知后缀也按文本落库，保证 read/edit/前端预览使用同一事实。
-                mime_type=("text/plain" if ext == "svg" else _DOC_MIME.get(ext, "text/plain")),
+                # svg 按 _DOC_MIME 落 image/svg+xml：read/edit 靠扩展名白名单（TEXT_EXTS
+                # 含 svg）依旧可读写；落成 text/plain 会让缩略图/图片预览端点按 MIME 拒绝。
+                mime_type=_DOC_MIME.get(ext, "text/plain"),
                 data=data,
                 workspace_directory_id=workspace_directory_id,
             )
