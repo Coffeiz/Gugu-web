@@ -51,7 +51,9 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   border: 0;
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
-  box-shadow: none;
+  /* 玻璃系表面的顶部 1px 内高光（--highlight-soft 随主题给值），与卡片同一条线；
+     渐变顶部混白只有 ~6%，肉眼上比玻璃卡片薄，单靠它顶不住。 */
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
 }
 .app-action-button.is-primary::before {
   position: absolute;
@@ -63,7 +65,9 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   pointer-events: none;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
-.app-action-button.is-primary:hover:not(:disabled) { box-shadow: none; opacity: .92; }
+/* hover 不能加 opacity：透明度把页面底色掺进填充，恰好抵消 hover 渐变的明暗变化
+   （实测亮暗主题下净变化都≈0，肉眼不可见）。按压反馈由 :active 负责。 */
+.app-action-button.is-primary:hover:not(:disabled) { box-shadow: inset 0 1px 0 var(--highlight-soft); }
 .app-action-button-content { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: inherit; }
 .app-action-button.is-primary:hover:not(:disabled)::before { opacity: 1; }
 .app-action-button.is-secondary {

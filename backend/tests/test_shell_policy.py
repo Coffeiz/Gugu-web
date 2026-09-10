@@ -647,8 +647,10 @@ async def test_shell_direct_runtime_switch_reaches_executor(monkeypatch):
         _patch_run_shell_harness(monkeypatch, _direct_runtime_settings(direct=direct), captured)
         result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "npm install"})
         assert captured == [expected]
-        if not direct:
-            assert "run_script" in result.get("error", "") or result is not None
+        # 桩件在执行器入口抛 SandboxdUnavailable：调用确实到达执行器并以
+        # 失败收场，而不是在更早的策略层被拦截或静默返回 None。
+        assert result["ok"] is False
+        assert "测试桩到此为止" in result["error"]
 
 
 @pytest.mark.asyncio
