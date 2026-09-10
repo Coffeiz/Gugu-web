@@ -13,6 +13,7 @@ from app.services.files.browser import (
 )
 from app.services.filesystem_authorization import FilesystemPolicy, filesystem_location_can_write
 from app.services.projects import get_user_project
+from app.core.ownership import get_owned
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key
 from agent.tools.base import current_dispatch_session
@@ -36,8 +37,8 @@ async def _resolve_key(db, user_id, space, display_name, ext,
         from app.models import WorkspaceDirectory
         if workspace_directory_id is None:
             raise ValueError("workspace 空间需要 workspace_directory_id")
-        workspace_directory = await db.get(WorkspaceDirectory, workspace_directory_id)
-        if workspace_directory is None or workspace_directory.user_id != user_id:
+        workspace_directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, user_id)
+        if workspace_directory is None:
             raise ValueError("目标工作区目录不存在")
     if folder_id:
         resolved = await resolve_folder_path(

@@ -57,6 +57,10 @@ async def _read_execution_state(session_id: int) -> str | None:
     import app.db.session as _sess
     from app.models import ConversationSession
 
+    # 不能假设调用方已经初始化过引擎：web 后台生成在进入会话门前就会读执行
+    # 状态，那里是进程内第一个 DB 使用点；ensure_engine 同时负责跨事件循环
+    # 重建，避免复用到别的 loop 上缓存连接的旧池。
+    _sess.ensure_engine()
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id)
         return str(session.execution_state) if session is not None else None
