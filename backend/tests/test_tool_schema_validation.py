@@ -312,6 +312,24 @@ def test_schema_normalization_does_not_guess_required_empty_numbers():
     assert adaptations == ["include_content:empty_omitted", "types:item_wrapper_unwrapped"]
 
 
+def test_schema_normalization_converts_numbers_for_string_only_fields():
+    """string-only 字段收到 JSON number 时转成字符串（edit_file 的 target_lines
+    是 string+pattern 行号语法，实测模型连续多轮传 2 而非 "2"，纯类型门卡死）。
+    bool 是 int 子类必须排除：flag=true 转 "True" 会掩盖真实类型错误。"""
+    normalized, adaptations = normalize_input_by_schema({
+        "type": "object",
+        "properties": {
+            "target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"},
+            "note": {"type": "string"},
+            "flag": {"type": "string"},
+            "mixed": {"type": ["string", "integer"]},
+        },
+    }, {"target_lines": 2, "note": 7.5, "flag": True, "mixed": 3})
+
+    assert normalized == {"target_lines": "2", "note": "7.5", "flag": True, "mixed": 3}
+    assert adaptations == ["target_lines:number_to_string", "note:number_to_string"]
+
+
 def _create_file_like_schema():
     """create_file 的结构骨架：files 是 array-of-objects，target 是可选对象。"""
     return {

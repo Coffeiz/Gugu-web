@@ -126,8 +126,10 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
 
     模型常把 JSON Schema 中的原生标量序列化成字符串；可选字段还可能以空字符串
     表示“未填写”。这里只处理能从 Schema 唯一确定的转换，不把必填空值猜成
-    0/false，避免容错层掩盖真实参数错误。仅有的两类结构性修复都是模型侧稳定
-    形态：``{"item": [...]}`` 单键包装，以及数组 item 字段被拍平到顶层（见下）。
+    0/false，避免容错层掩盖真实参数错误。标量方向是双向的：字符串字段里的
+    数字文本转回 number，string-only 字段收到 JSON number 也转回字符串（见
+    ``normalize_value``）。仅有的两类结构性修复都是模型侧稳定形态：
+    ``{"item": [...]}`` 单键包装，以及数组 item 字段被拍平到顶层（见下）。
     """
     adaptations: list[str] = []
 
@@ -196,6 +198,19 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
                 adaptations.append(f"{path or 'args'}:item_wrapper_unwrapped")
                 item_schema = field_schema.get("items")
                 return [normalize_value(unwrapped, item_schema, f"{path}[0]", True)]
+
+        # 对称方向：模型会把纯数字形态的字段传成 JSON number（如 edit_file 的
+        # target_lines 是 string+pattern 的行号语法，实测连续多轮传 2 而非 "2"）。
+        # schema 在该位置只要 string 时数字→字符串无歧义；bool 是 int 子类必须
+        # 排除，否则 true→"True" 会把真实类型错误吞掉。
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and "string" in types
+            and types.isdisjoint({"integer", "number", "boolean"})
+        ):
+            adaptations.append(f"{path or 'args'}:number_to_string")
+            return str(value)
 
         if not isinstance(value, str):
             return value

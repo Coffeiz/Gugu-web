@@ -58,6 +58,33 @@ async def test_put_preserves_existing_file_metadata(tmp_path):
     assert await storage.get("u/workspace/doc.txt") == b"new"
 
 
+async def test_put_chown_denied_falls_back_to_replace(tmp_path, monkeypatch):
+    """非 root 进程改不出沙盒映射 UID 的属主：chown EPERM 不能让 put 整体失败。
+
+    沙盒建的文件（宿主属主是 rootless 容器映射身份）此前会让 edit_file 等所有
+    覆盖写 EPERM 报错。降级语义 = 跳过属主保留继续替换，mode/ACL/xattr 由
+    copystat 保留，写入内容生效。
+    """
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put("u/workspace/box.py", b"old")
+    path = tmp_path / "u/workspace/box.py"
+    os.chmod(path, 0o640)
+    before = os.stat(path, follow_symlinks=False)
+
+    def denied_chown(_path, _uid, _gid):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(storage_module.os, "chown", denied_chown)
+
+    await storage.put("u/workspace/box.py", b"new")
+
+    after = os.stat(path, follow_symlinks=False)
+    assert await storage.get("u/workspace/box.py") == b"new"
+    assert stat.S_IMODE(after.st_mode) == stat.S_IMODE(before.st_mode)
+    assert after.st_uid == os.geteuid()
+    assert not list(path.parent.glob(".*.tmp"))
+
+
 async def test_put_updates_existing_file_mtime(tmp_path):
     storage = LocalStorageBackend(tmp_path)
     await storage.put("u/workspace/doc.txt", b"old")
