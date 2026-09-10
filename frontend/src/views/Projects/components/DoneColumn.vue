@@ -62,7 +62,7 @@ onUnmounted(() => {
 .done-col .col-dot { width:7px; height:7px; border-radius:50%; background:#5a9e88; flex-shrink:0; }
 .done-col .col-header-right { display:flex; align-items:center; gap:8px; }
 .done-col .col-count { font-size:11px; font-weight:700; color:#fff; background:rgba(123,127,178,.42); border-radius:20px; padding:1px 7px; min-width:22px; text-align:center; }
-.done-col .project-collection-entry-mini { display:flex; align-items:center; padding:2px 8px; border-radius:7px; border:1px solid var(--border-subtle); background:var(--surface-soft); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; transition:background .15s, color .15s; }
+.done-col .project-collection-entry-mini { display:flex; align-items:center; padding:2px 8px; border-radius:7px; border:1px solid var(--border-subtle); background:var(--surface-soft); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; transition:background .15s, color .15s, border-color .15s; }
 .done-col .project-collection-entry-mini:hover { background:var(--surface-soft-hover); color:var(--text-primary); }
 .done-col .archived-entry-mini {
   color:var(--control-fg);
