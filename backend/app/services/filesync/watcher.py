@@ -6,9 +6,12 @@ reconcile、journal/outbox 和优雅关闭。Shell 不参与文件刷新。
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from sqlalchemy import select
+
+logger = logging.getLogger(__name__)
 
 from app.db import session as db_session
 from app.models import FileSyncBinding, Workspace
@@ -171,8 +174,14 @@ class FileSyncWatcherManager:
                                     await db.commit()
                                 pending.discard(binding_id)
                             except Exception as exc:
+                                # rollback 会过期本轮余下的 binding ORM 对象，继续遍历
+                                # 只会连坐出 MissingGreenlet；中断本轮，下轮重查后再试。
                                 await db.rollback()
-                                print(f"[worker] 文件同步投影出错: {type(exc).__name__}", flush=True)
+                                logger.warning(
+                                    "[worker] 文件同步投影出错 binding=%s", binding_id,
+                                    exc_info=exc,
+                                )
+                                break
                         if force:
                             self._last_compensation = now
                 except FileSyncSidecarUnavailable:

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
-from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, User
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, User, WorkspaceDirectory
 from app.core.ownership import get_owned
 from app.services.filesync.protocol import (
     FILE_SYNC_PROTOCOL_VERSION,
@@ -28,7 +28,7 @@ from app.services.filesync.protocol import (
     record_change,
     validate_sync_path,
 )
-from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
+from app.services.workspaces import get_workspace, resolve_workspace_root, workspace_shell_supported
 from app.core.config import get_settings
 from app.services.filesync.snapshots import save_snapshot
 from app.services.storage.folders import folder_dir_key
@@ -122,9 +122,11 @@ async def _folder_for_path(
     space: str,
     project_id: int | None,
     folder_names: list[str],
+    workspace_directory_id: int | None = None,
 ) -> int | None:
     folder_id, _ = await _ensure_folder_path(
         db, user_id, space=space, project_id=project_id, folder_names=folder_names,
+        workspace_directory_id=workspace_directory_id,
     )
     return folder_id
 
@@ -136,19 +138,24 @@ async def _ensure_folder_path(
     space: str,
     project_id: int | None,
     folder_names: list[str],
+    workspace_directory_id: int | None = None,
 ) -> tuple[int | None, bool]:
+    # workspace 空间按 workspace_directory_id 隔离同名链；None 等价 IS NULL，
+    # 与既有个人/项目行为一致（它们永不携带 workspace_directory_id）。
     parent_id = None
     created = False
     for name in folder_names:
         query = select(Folder).where(
             Folder.user_id == user_id, Folder.project_id == project_id,
             Folder.parent_id == parent_id, Folder.name == name,
+            Folder.workspace_directory_id == workspace_directory_id,
             Folder.deleted_at.is_(None),
         )
         folder = (await db.execute(query)).scalar_one_or_none()
         if folder is None:
             folder = Folder(
                 user_id=user_id, project_id=project_id, parent_id=parent_id,
+                workspace_directory_id=workspace_directory_id,
                 name=name,
             )
             db.add(folder)
@@ -189,8 +196,35 @@ def _parse_directory_path(path: Path, user_root: Path) -> tuple[str, int | None,
     return None
 
 
-async def _classify_path(db: AsyncSession, user_id, path: Path, user_root: Path):
-    """把 canonical 本地路径解析为 File 的归属字段。"""
+async def _classify_path(
+    db: AsyncSession,
+    user_id,
+    path: Path,
+    user_root: Path,
+    *,
+    workspace_directory_id: int | None = None,
+    base: Path | None = None,
+):
+    """把 canonical 本地路径解析为 File 的归属字段。
+
+    directory 型工作区绑定例外：物理根就是工作区目录本身（workspace/、
+    workspace-<id>/），不在 canonical 前缀树下，按 base（绑定根）相对解析为
+    space=workspace。
+    """
+    if workspace_directory_id is not None:
+        parts = path.relative_to(base or user_root).parts
+        if not parts:
+            raise ValueError("同步文件缺少空间路径")
+        filename = parts[-1]
+        space = "workspace"
+        project_id = None
+        folder_names = list(parts[:-1])
+        display_name, ext = _file_name(Path(filename))
+        folder_id = await _folder_for_path(
+            db, user_id, space=space, project_id=project_id, folder_names=folder_names,
+            workspace_directory_id=workspace_directory_id,
+        )
+        return space, project_id, folder_id, display_name, ext, workspace_directory_id
     parts = path.relative_to(user_root).parts
     if len(parts) < 2:
         raise ValueError("同步文件缺少空间路径")
@@ -218,7 +252,7 @@ async def _classify_path(db: AsyncSession, user_id, path: Path, user_root: Path)
     folder_id = await _folder_for_path(
         db, user_id, space=space, project_id=project_id, folder_names=folder_names,
     )
-    return space, project_id, folder_id, display_name, ext
+    return space, project_id, folder_id, display_name, ext, None
 
 
 async def reconcile_local_directory(
@@ -258,6 +292,17 @@ async def reconcile_local_directory(
         return SyncSummary(rejected=1)
     if not root.exists() or not root.is_dir():
         return SyncSummary(rejected=1)
+
+    # directory 型工作区（WorkspaceDirectory）的绑定根就是工作区目录本身，
+    # 不在 canonical 个人/项目前缀树下；文件与目录都按 space=workspace 投影，
+    # 并挂到对应 workspace_directory_id，否则整棵树会被当作不支持路径拒绝。
+    workspace_directory_id: int | None = None
+    if workspace_id is not None:
+        ws_row = await get_workspace(db, user_id, workspace_id)
+        if ws_row is not None and ws_row.kind == "directory" and ws_row.directory_id is not None:
+            directory_row = await get_owned(db, WorkspaceDirectory, ws_row.directory_id, user_id)
+            if directory_row is not None and directory_row.deleted_at is None:
+                workspace_directory_id = directory_row.id
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     quota_settings = getattr(settings, "quota", None)
@@ -328,16 +373,21 @@ async def reconcile_local_directory(
 
     # 空目录没有 File 行可触发投影，也要补齐 Folder，便于 UI 与后续 Shell
     # 写入继续使用同一归属链；仅处理 canonical 个人/项目目录，跳过年月和项目容器。
+    # directory 型工作区例外：根下每一层都是工作区文件夹，直接按相对链补齐。
     for relative, directory in sorted(physical_folders.items(), key=lambda item: (item[0].count("/"), item[0])):
-        parsed = _parse_directory_path(directory, user_root)
-        if parsed is None:
-            continue
-        space, project_id, folder_names = parsed
+        if workspace_directory_id is not None:
+            space, project_id, folder_names = "workspace", None, list(directory.relative_to(root).parts)
+        else:
+            parsed = _parse_directory_path(directory, user_root)
+            if parsed is None:
+                continue
+            space, project_id, folder_names = parsed
         if project_id is not None and await get_owned(db, Project, project_id, user_id) is None:
             rejected += 1
             continue
         folder_id, was_created = await _ensure_folder_path(
             db, user_id, space=space, project_id=project_id, folder_names=folder_names,
+            workspace_directory_id=workspace_directory_id,
         )
         if folder_id is None:
             continue
@@ -418,8 +468,10 @@ async def reconcile_local_directory(
             continue
         try:
             validate_sync_path(root, relative)
-            space, project_id, folder_id, display_name, ext = await _classify_path(
+            space, project_id, folder_id, display_name, ext, file_ws_dir_id = await _classify_path(
                 db, user_id, path, user_root,
+                workspace_directory_id=workspace_directory_id,
+                base=root,
             )
             observed = _stable_fingerprint(path)
         except (OSError, ValueError):
@@ -448,6 +500,7 @@ async def reconcile_local_directory(
             candidate.space = space
             candidate.project_id = project_id
             candidate.folder_id = folder_id
+            candidate.workspace_directory_id = file_ws_dir_id
             candidate.size_bytes = path.stat().st_size
             candidate.size = str(path.stat().st_size)
             candidate.version = int(candidate.version or 1) + 1
@@ -461,7 +514,8 @@ async def reconcile_local_directory(
             stat = path.stat()
             candidate = File(
                 user_id=user_id, display_name=display_name, ext=ext, space=space,
-                project_id=project_id, folder_id=folder_id, stage_name="",
+                project_id=project_id, folder_id=folder_id,
+                workspace_directory_id=file_ws_dir_id, stage_name="",
                 storage_key=key, storage_backend="local", size=str(stat.st_size),
                 size_bytes=stat.st_size, mime_type=mimetypes.guess_type(path.name)[0],
             )
@@ -552,7 +606,13 @@ async def reconcile_local_directory(
         if row.id in consumed:
             continue
         relative = key.removeprefix(scope_prefix)
-        if key in ambiguous_missing_keys or relative in blocked_paths or not allow_delete:
+        # 存量脏 storage_key（如用户前缀后跟双斜杠）去前缀后仍是绝对路径，
+        # 不能让它抛异常中断整轮投影；当作 rejected 跳过，等数据修复后再同步。
+        if (
+            not relative or relative.startswith("/")
+            or key in ambiguous_missing_keys or relative in blocked_paths
+            or not allow_delete
+        ):
             rejected += 1
             continue
         row.deleted_at = now_utc()

@@ -226,6 +226,106 @@ async def test_local_reconcile_projects_create_update_move_and_delete(db, user_a
 
 
 @pytest.mark.asyncio
+async def test_local_reconcile_projects_directory_workspace_shell_files(db, user_a, monkeypatch, tmp_path):
+    """directory 型工作区绑定根即工作区目录：shell 产物按 space=workspace 投影。
+
+    真实故障：_classify_path/_parse_directory_path 只认个人/项目 canonical 前缀，
+    workspace/、workspace-<id>/ 下的 shell 产物（如 _tools/）整树被拒，文件库
+    永远看不到咕咕 shell 写入的文件夹。
+    """
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.workspaces as workspaces
+    from app.models import Folder, WorkspaceDirectory
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(workspaces, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(workspaces, "get_settings", lambda: settings)
+
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="探针工作区", directory_name="workspace-probe",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="目录工作区", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+
+    ws_root = tmp_path / str(user_a.id) / "workspace-probe"
+    tools_dir = ws_root / "_tools"
+    (tools_dir / "bin").mkdir(parents=True)
+    (tools_dir / "empty").mkdir()
+    (tools_dir / "bin" / "run.py").write_text("print('ok')", encoding="utf-8")
+    (ws_root / "_gen_weather.py").write_text("print('w')", encoding="utf-8")
+
+    summary = await reconcile.reconcile_local_directory(db, user_a.id, workspace_id=workspace.id)
+    await db.commit()
+
+    # shell 文件夹（含空目录）与文件都按 workspace 空间落库
+    assert summary.folders_created >= 2
+    assert summary.created >= 2
+    tools = (await db.scalars(select(Folder).where(
+        Folder.user_id == user_a.id, Folder.name == "_tools",
+        Folder.workspace_directory_id == directory.id,
+    ))).one()
+    assert tools.parent_id is None
+    bin_folder = (await db.scalars(select(Folder).where(
+        Folder.parent_id == tools.id, Folder.name == "bin",
+    ))).one()
+    assert bin_folder.workspace_directory_id == directory.id
+    gen_file = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.display_name == "_gen_weather",
+        File.ext == "py",
+    ))).one()
+    assert gen_file.space == "workspace"
+    assert gen_file.workspace_directory_id == directory.id
+    assert gen_file.folder_id is None
+
+
+@pytest.mark.asyncio
+async def test_local_reconcile_skips_dirty_storage_key_without_aborting(db, user_a, monkeypatch, tmp_path):
+    """存量双斜杠 storage_key 去前缀后仍是绝对路径，不能中断整轮投影。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path)))
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "kept.txt").write_text("kept", encoding="utf-8")
+    dirty = File(
+        user_id=user_a.id, display_name="dirty.txt", ext="txt", space="personal",
+        stage_name="", storage_key=f"{user_a.id}//dirty.txt",
+        storage_backend="local", size="4", size_bytes=4,
+    )
+    db.add(dirty)
+    await db.commit()
+
+    summary = await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+
+    # 脏行被当作 rejected 跳过，正常文件照常投影，不再抛 ValueError
+    assert summary.created == 1
+    assert summary.rejected >= 1
+    await db.refresh(dirty)
+    assert dirty.deleted_at is None
+
+
+@pytest.mark.asyncio
 async def test_phase3_binding_requires_dry_run_then_explicit_apply(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.bindings as bindings
     import app.services.filesync.reconcile as reconcile
