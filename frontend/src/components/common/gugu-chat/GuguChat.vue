@@ -832,6 +832,18 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: color-mix(in srgb, var(--gugu-chat-user-fg) 92%, transparent);
 }
 :deep(.msg-bubble.user-md pre code) { color: var(--text-primary); }
+/* 暗色下用户气泡代码块借用咕咕（assistant）气泡的面板契约：block 底=assistant
+   表面、边框=assistant 描边，header 交给 MarkdownView 的暗色白 5% 叠层，观感
+   与 AI 气泡里的代码块一致。近黑硬面板被否（用户反馈太暗、与气泡割裂）。
+   注意整个选择器必须 :global——html[data-theme] 前缀会让 scoped 属性落到
+   html 上导致规则永不匹配。 */
+:global(html[data-theme='dark'] div.msg-bubble.user-md pre) {
+  background: transparent;
+}
+:global(html[data-theme='dark'] div.msg-bubble.user-md .md-code-block) {
+  background: var(--gugu-chat-assistant-bg);
+  border-color: var(--gugu-chat-assistant-border);
+}
 :deep(.msg-speaker) {
   font-size: 11px; color: var(--text-secondary); margin: 0 2px 3px;
   font-weight: 600;
