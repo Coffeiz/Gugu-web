@@ -831,7 +831,9 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 :deep(.msg-bubble.user-md pre) {
   background: color-mix(in srgb, var(--gugu-chat-user-fg) 92%, transparent);
 }
-:deep(.msg-bubble.user-md pre code) { color: var(--text-primary); }
+/* 行内 code 的半透明底只能给行内用：这条若误伤 pre code，暗色下每行代码
+   都会拖一条「被选中」的浅色底条。 */
+:deep(.msg-bubble.user-md pre code) { background: none; color: var(--text-primary); }
 /* 暗色下用户气泡代码块借用咕咕（assistant）气泡的面板契约：block 底=assistant
    表面、边框=assistant 描边，header 交给 MarkdownView 的暗色白 5% 叠层，观感
    与 AI 气泡里的代码块一致。近黑硬面板被否（用户反馈太暗、与气泡割裂）。

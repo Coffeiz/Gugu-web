@@ -54,8 +54,12 @@ marked.use({
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
     r.del = (t: Tokens.Del) => (t && t.text) || ''
     r.code = ({ text, lang }: Tokens.Code) => {
-      const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-      const highlighted = hljs.highlight(text, { language }).value
+      // 没写语言或语言未注册时自动探测，而不是直接按 plaintext 放弃高亮；
+      // 探测失败 hljs 内部会退回纯文本，不会抛错。
+      const language = lang && hljs.getLanguage(lang) ? lang : 'auto'
+      const highlighted = language === 'auto'
+        ? hljs.highlightAuto(text).value
+        : hljs.highlight(text, { language }).value
       const label = lang || 'code'
       // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
       return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">${i18n.global.t('chatUi.copy')}</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
