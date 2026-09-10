@@ -102,6 +102,54 @@ async def _save_knowledge(db, user_id, args: dict):
     }
 
 
+async def _update_knowledge(db, user_id, args: dict):
+    from agent.knowledge.capture import build_entry, normalize_capture
+    from agent.knowledge.store import KnowledgeStore
+
+    entry_id = str(args.get("knowledge_id") or "").strip()
+    content = str(args.get("content") or "").strip()
+    if not entry_id:
+        return {"error": "需要提供 knowledge_id；先用 search_memory 查询获取"}
+    if not content:
+        return {"error": "需要提供 content；必须是合并旧内容后的完整正文"}
+    store = KnowledgeStore(user_id)
+    entries = await store.list(active_only=True)
+    old = next((item for item in entries if item.id == entry_id), None)
+    if old is None:
+        return {"error": "知识条目不存在或已删除；先用 search_memory 查询获取有效的 knowledge_id"}
+    keywords = args.get("keywords")
+    confidence = str(args.get("confidence") or old.confidence or "probable").strip().lower()
+    if confidence not in {"confirmed", "probable", "unverified"}:
+        confidence = "probable"
+    try:
+        values = normalize_capture(
+            args.get("title") or old.title, content,
+            topic=args.get("topic") or old.topic,
+            source_type=old.source.type, source_ref=old.source.ref, source_label=old.source.label,
+            confidence=confidence, capture_mode="explicit",
+            keywords=(
+                [item for item in keywords if isinstance(item, str)]
+                if isinstance(keywords, list) else list(old.keywords)
+            ),
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    entry = build_entry(user_id, values)
+    entry.id = entry_id
+    saved = await store.save(entry)
+    from agent.events import bus, types
+    bus.publish(types.RagIndexUpdated(
+        user_id=user_id, source_type="knowledge", source_id=saved.id, operation="upsert",
+    ))
+    return {
+        "success": True, "id": saved.id, "version": saved.version,
+        "title": saved.title, "keywords": saved.keywords,
+        "unchanged": saved.version == old.version,
+        "previous": {"version": old.version, "content": old.content[:300]},
+        "index_status": "queued",
+    }
+
+
 async def _delete_knowledge(db, user_id, args: dict):
     from agent.knowledge.store import KnowledgeStore
     from agent.security import confirm
@@ -159,6 +207,32 @@ class MemorySkill(BaseSkill):
             "required": ["title", "content"],
         },
         handler=_save_knowledge,
+        mutates=True,
+    ),
+    Tool(
+        name="update_knowledge", label="更新知识",
+        description_short='修正、刷新或合并一条已保存知识。',
+        description=(
+            "更新一条已存在的知识条目：修正记录错误、刷新过时内容或合并补充信息。"
+            "knowledge_id 必须来自 search_memory 的真实结果；先搜索取回旧正文，"
+            "content 必须是合并旧内容后的完整正文，不要只写新增或修改的部分。"
+            "title、topic、keywords 省略时保留原值，keywords 需要调整时给出完整新列表。"
+            "内容与关键词都没有变化时不产生新版本。"
+            "成功后检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "knowledge_id": {"type": "string"},
+                "content": {"type": "string", "maxLength": 3000},
+                "title": {"type": "string"},
+                "topic": {"type": "string"},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
+            },
+            "required": ["knowledge_id", "content"],
+        },
+        handler=_update_knowledge,
         mutates=True,
     ),
         Tool(

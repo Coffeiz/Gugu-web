@@ -384,3 +384,138 @@ def test_save_knowledge_schema_declares_keywords():
         "type": "array", "items": {"type": "string"},
     }
     assert "keywords" in tool.description
+
+
+@pytest.mark.asyncio
+async def test_store_save_hits_by_id_across_topic_change(knowledge_storage):
+    """显式传入已有 ID 时按 ID 直命中，topic 改名也不漏匹配、不打错条目。"""
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="部署流程", content="使用 v1 部署", topic="部署",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+    renamed = KnowledgeEntry.create(
+        title="部署流程", content="使用 v2 部署", topic="发布",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    renamed.id = original.id
+
+    saved = await store.save(renamed)
+
+    entries = await store.list()
+    assert len(entries) == 1
+    assert saved.id == original.id
+    assert saved.topic == "发布"
+    assert saved.version == 2
+
+
+@pytest.mark.asyncio
+async def test_store_save_rejects_update_on_deleted_entry(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="规则", content="内容", topic="规则",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+    await store.delete(original.id)
+    stale = KnowledgeEntry.create(
+        title="规则", content="新内容", topic="规则",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    stale.id = original.id
+
+    with pytest.raises(ValueError, match="已删除"):
+        await store.save(stale)
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_updates_version_and_inherits_omitted_fields(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    published = []
+    monkeypatch.setattr(events.bus, "publish", published.append)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="部署流程", content="使用 v1 部署", topic="部署",
+        keywords=["deploy", "v1"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id, "content": "使用 v2 部署，回滚用 v1 脚本",
+    })
+
+    assert result["success"] is True
+    assert result["unchanged"] is False
+    assert result["version"] == 2
+    assert result["previous"]["content"] == "使用 v1 部署"
+    saved = (await store.list())[0]
+    assert saved.id == original.id
+    assert saved.version == 2
+    # title/topic/keywords 省略时继承原值
+    assert saved.title == "部署流程"
+    assert saved.topic == "部署"
+    assert saved.keywords == ["deploy", "v1"]
+    assert len(saved.history) == 1
+    assert saved.history[0]["content"] == "使用 v1 部署"
+    assert len(published) == 1
+    assert published[0].operation == "upsert"
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_reports_unchanged_without_new_version(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="规则", content="只使用 Linux", topic="部署",
+        keywords=["linux"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id, "content": "只使用 Linux",
+    })
+
+    assert result["success"] is True
+    assert result["unchanged"] is True
+    assert result["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_rejects_unknown_or_deleted_id(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="规则", content="内容", topic="规则",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    missing = await _update_knowledge(None, "user-a", {
+        "knowledge_id": "knowledge-no-such", "content": "新正文",
+    })
+    assert "不存在" in missing["error"]
+
+    await store.delete(original.id)
+    deleted = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id, "content": "新正文",
+    })
+    assert "不存在" in deleted["error"]
+
+
+def test_update_knowledge_schema_requires_id_and_content():
+    from agent.tools import registry
+
+    tool = registry.get("update_knowledge")
+    assert tool.input_schema["required"] == ["knowledge_id", "content"]
+    assert tool.input_schema["properties"]["keywords"] == {"type": "array", "items": {"type": "string"}}
