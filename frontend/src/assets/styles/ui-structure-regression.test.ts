@@ -160,12 +160,15 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     const bubbleBlock = cssBlock(chatToolBubble, '.tool-event-bubble')
     const hoverLayerBlock = cssBlock(chatToolBubble, '.tool-event-bubble::after')
     expect(bubbleBlock).toContain('isolation: isolate;')
-    expect(bubbleBlock).toContain('transition: border-color var(--motion-hover-card)')
+    expect(bubbleBlock).toContain('transition: border-color var(--motion-hover-card) var(--motion-ease-standard), box-shadow var(--motion-hover-card) var(--motion-ease-standard)')
+    expect(bubbleBlock).not.toContain('inset 0 1px 0 var(--highlight-soft)')
     expect(bubbleBlock).not.toContain('background-color var(--motion-hover-card)')
-    expect(bubbleBlock).not.toContain('box-shadow var(--motion-hover-card)')
     expect(hoverLayerBlock).toContain('opacity: 0;')
     expect(hoverLayerBlock).toContain('transition: opacity var(--motion-hover-card)')
     expect(chatToolBubble).toContain('.tool-event-bubble:hover::after { opacity: 1; }')
+    expect(chatToolBubble).toContain("const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis)'")
+    expect(chatToolBubble).toContain("node.style.opacity = '1'")
+    expect(chatToolBubble).not.toContain('targetOpacity')
     expect(chatToolBubble).toContain('.tool-event-detail { position: relative; z-index: 1;')
   })
 
@@ -302,7 +305,8 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
   it('定时任务卡片启停状态由最终主题层平滑过渡', () => {
     const cardBlock = cssBlock(componentThemeRefinements, 'html[data-theme][data-family] .task-card')
-    expect(cardBlock).toContain('transition: var(--card-motion), opacity var(--hover-motion-control);')
+    expect(cardBlock).toContain('transition: var(--card-motion), box-shadow var(--motion-hover-card) ease, opacity var(--hover-motion-control);')
+    expect(cssBlock(componentThemeRefinements, 'html[data-theme][data-family] .task-card::after')).toContain('box-shadow: none !important;')
 
     const interactionCardBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .task-card')
     expect(interactionCardBlock).not.toContain('transition:')

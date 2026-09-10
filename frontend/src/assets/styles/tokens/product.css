@@ -38,14 +38,14 @@ html[data-theme][data-family] .sidebar .badge { background: color-mix(in srgb,va
    no scroll timeline or layout override is allowed here. */
 html[data-theme][data-family] .topbar {
   --gb-tint: var(--surface-glass);
-  /* 外框和卡片阴影已经提供唯一边界，GlassBg 不再重复画上沿/左沿高光。 */
+  /* Topbar 的外层卡片负责唯一高光；GlassBg 只负责背景填充，避免内外两层边缘叠成暗线。 */
   --gb-highlight-strong: transparent;
   --gb-highlight-side: transparent;
-  box-shadow: var(--topbar-shadow);
+  box-shadow: var(--glass-card-shadow);
 }
 html[data-theme][data-family] .topbar:hover {
   --gb-tint: var(--surface-glass-hover);
-  box-shadow: var(--topbar-shadow-hover);
+  box-shadow: var(--glass-card-shadow-hover);
 }
 html[data-theme][data-family] .files-toolbar {
   /* 文件工具栏与 topbar 使用同一条外框契约，避免 GlassBg 叠出错位的第二层边缘。 */

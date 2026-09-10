@@ -82,13 +82,13 @@ const displayResult = computed(() => resultDisplayTruncated.value
   ? `${formattedResult.value.slice(0, OUTPUT_DISPLAY_LIMIT)}\n…`
   : formattedResult.value)
 
-const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis), opacity var(--motion-hover-card) var(--motion-ease-standard)'
+const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis)'
 const detailTransitionCleanups = new WeakMap<HTMLElement, () => void>()
 
 function prepareDetailEnter(element: Element) {
   const node = element as HTMLElement
   node.style.height = '0px'
-  node.style.opacity = '0'
+  node.style.opacity = '1'
   node.style.overflow = 'hidden'
 }
 
@@ -99,7 +99,7 @@ function prepareDetailLeave(element: Element) {
   node.style.overflow = 'hidden'
 }
 
-function animateDetail(element: Element, targetHeight: string, targetOpacity: string, done: () => void) {
+function animateDetail(element: Element, targetHeight: string, done: () => void) {
   const node = element as HTMLElement
   detailTransitionCleanups.get(node)?.()
   let finished = false
@@ -120,7 +120,6 @@ function animateDetail(element: Element, targetHeight: string, targetOpacity: st
   requestAnimationFrame(() => {
     if (finished) return
     node.style.height = targetHeight
-    node.style.opacity = targetOpacity
   })
   timer = window.setTimeout(finish, 380)
   detailTransitionCleanups.set(node, () => {
@@ -134,11 +133,11 @@ function animateDetail(element: Element, targetHeight: string, targetOpacity: st
 
 function animateDetailEnter(element: Element, done: () => void) {
   const node = element as HTMLElement
-  animateDetail(node, `${node.scrollHeight}px`, '1', done)
+  animateDetail(node, `${node.scrollHeight}px`, done)
 }
 
 function animateDetailLeave(element: Element, done: () => void) {
-  animateDetail(element, '0px', '0', done)
+  animateDetail(element, '0px', done)
 }
 
 function cancelDetailTransition(element: Element) {
@@ -157,7 +156,7 @@ function cleanupDetailTransition(element: Element) {
 </script>
 
 <style scoped>
-.tool-event-bubble { position: relative; isolation: isolate; width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background-color: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); overflow: hidden; transition: border-color var(--motion-hover-card) var(--motion-ease-standard); }
+.tool-event-bubble { position: relative; isolation: isolate; width: min(360px, 88%); margin: 0; border: 1px solid var(--border-default); border-radius: var(--card-radius); background-color: var(--gugu-chat-assistant-bg); color: var(--content-secondary); box-shadow: var(--elevation-card); overflow: hidden; transition: border-color var(--motion-hover-card) var(--motion-ease-standard), box-shadow var(--motion-hover-card) var(--motion-ease-standard); }
 /* hover 高亮独立成 opacity 层：展开详情会改变父卡片高度，不能让背景色插值和这次重排互相打断。 */
 .tool-event-bubble::after { content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none; border-radius: inherit; background-color: var(--gugu-chat-tool-bubble-hover); opacity: 0; transition: opacity var(--motion-hover-card) var(--motion-ease-standard); }
 /* hover 底色走专用 token：亮色=主题玻璃 hover（白系提亮），暗色=气泡底色向白偏移

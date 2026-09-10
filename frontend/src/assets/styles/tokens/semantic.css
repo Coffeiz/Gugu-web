@@ -161,6 +161,18 @@
   --surface-sidebar: color-mix(in srgb, var(--theme-sidebar) 96%, #fff 4%);
 }
 
+/* Glass 的暗色导航也直接复用卡片表面，避免独立灰黑底色破坏玻璃层次。 */
+:root[data-family='glass'][data-theme='dark'],
+:root:not([data-family])[data-theme='dark'] {
+  --surface-sidebar: var(--surface-glass);
+}
+
+/* 亮色 Glass 的导航与卡片使用同一表面，避免左上角单独叠加白色高光后出现色温偏差。 */
+:root[data-family='glass'][data-theme='light'],
+:root:not([data-family])[data-theme='light'] {
+  --surface-sidebar: var(--surface-glass);
+}
+
 /* 文字选区暗色专用值：暗色底色深，半透明叠加明度差太小会与底色融合；
    改用不透明的饱和中深主色（VS Code 深色选区思路：靠色度差而不是明度差），
    近白文字在其上仍有足够对比。必须写成顶层规则——嵌套在 :root 里的 & 会被

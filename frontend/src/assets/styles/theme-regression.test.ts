@@ -51,6 +51,7 @@ const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sk
 }))
 const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
+const semanticCss = load('./tokens/semantic.css')
 const themeCss = [
   load('./tokens/themes/glass-light.css'),
   load('./tokens/themes/glass-dark.css'),
@@ -138,10 +139,14 @@ describe('主题 CSS 回归契约', () => {
     expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='light']")
     expect(materialCompositionCss).toContain('var(--palette-surface)')
     expect(materialCompositionCss).toContain('var(--palette-page-start)')
+    expect(materialCompositionCss).toContain('--theme-sidebar: var(--theme-glass);')
+    expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='dark']:not([data-palette='mist'])")
     expect(materialCompositionCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,color-mix(in srgb,var(--palette-surface) 60%,transparent));')
     expect(materialCompositionCss).toContain('--theme-glass-hover: color-mix(in srgb,var(--palette-surface) 75%,transparent);')
+    expect(themeCss).toContain('--theme-sidebar: var(--theme-glass);')
     expect(themeCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,rgba(255,255,255,.60));')
     expect(themeCss).toContain('--theme-glass-hover: rgba(255,255,255,.75);')
+    expect(semanticCss).toContain('--surface-sidebar: var(--surface-glass);')
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
     expect(materialCompositionCss).toContain(":not([data-palette='cafe'])")
@@ -503,6 +508,11 @@ describe('主题 CSS 回归契约', () => {
     expect(componentCss).toContain('--gb-highlight-side: transparent')
 
     const productCss = load('./tokens/product.css')
+    const topbarBlock = cssBlock(productCss, 'html[data-theme][data-family] .topbar')
+    expect(topbarBlock).toContain('--gb-highlight-strong: transparent')
+    expect(topbarBlock).toContain('--gb-highlight-side: transparent')
+    expect(topbarBlock).toContain('box-shadow: var(--glass-card-shadow)')
+    expect(cssBlock(productCss, 'html[data-theme][data-family] .topbar:hover')).toContain('box-shadow: var(--glass-card-shadow-hover)')
     const terminalBlock = cssBlock(productCss, 'html[data-theme][data-family] .terminal-main-head.glass-card')
     expect(terminalBlock).toContain('--glass-card-shadow: none')
     expect(terminalBlock).toContain('--glass-card-shadow-hover: none')

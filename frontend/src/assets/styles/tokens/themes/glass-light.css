@@ -4,7 +4,8 @@
 :root:not([data-family])[data-theme='light'] {
   color-scheme: light;
   --theme-page: linear-gradient(160deg,#e8e9ee 0%,#d8dae4 35%,#bfc4d2 65%,color-mix(in srgb,var(--theme-action-pressed) 15%,#cfd3dc) 100%);
-  --theme-sidebar: rgba(255,255,255,.42); --theme-base: rgba(238,240,246,.90);
+  /* 侧栏与 Glass 卡片共用同一材质颜色，避免左上角因独立白色透明层产生暖/冷偏差。 */
+  --theme-sidebar: var(--theme-glass); --theme-base: rgba(238,240,246,.90);
   --theme-chat-main-bg: #eef0f6;
   /* Glass 保持透明，但让当前配色有可辨识的轻微染色；页面底色仍由灰阶渐变负责。 */
   --theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,rgba(255,255,255,.60)); --theme-glass-hover: rgba(255,255,255,.75);
