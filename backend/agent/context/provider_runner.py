@@ -37,6 +37,11 @@ async def complete_messages(
     这样分支请求与主对话的最后一帧共享逐 token 前缀，才能命中会话内缓存。
     tools 同样要带上：provider 把工具声明算进可缓存前缀，缺了它命中率会从
     接近 100% 掉到一成出头。
+
+    anthropic 路由还要与主 run 逐参数对齐（thinking/generation 走同一个
+    adapter 构造）：请求参数也参与 provider 的缓存键，分支曾因手拼
+    ``thinking={"type": "adaptive"}``（主 run 根本不发这个参数）整段 miss，
+    实测 99.9% 命中的暖前缀分支只拿到 0.1%。
     """
     from agent.llm.llm_select import use_anthropic_for
     from agent.llm.modelctx import effective_ai
@@ -45,8 +50,9 @@ async def complete_messages(
     use_anthropic = use_anthropic_for(ai)
     thinking = getattr(ai, "thinking", None)
     if use_anthropic:
-        text = await _anthropic(sys, user, ai, max_tokens, thinking=thinking,
-                                settings=settings, history=history, tools=tools)
+        text = await _anthropic(sys, user, ai, max_tokens,
+                                settings=settings, history=history, tools=tools,
+                                align_with_main_run=True)
         return _parse_json(text) if json_mode else text
     text = await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
@@ -88,6 +94,7 @@ async def _anthropic(
     settings=None,
     history: list | None = None,
     tools: list | None = None,
+    align_with_main_run: bool = False,
 ) -> str:
     import httpx
     from agent import providers
@@ -121,7 +128,15 @@ async def _anthropic(
         # 不设 tool_choice——实测它会让命中失效（100% → 15%），改用末尾指令约束
         # 模型只输出摘要正文。
         kwargs["tools"] = tools
-    if thinking is not None:
+    if align_with_main_run:
+        # 与主 run 完全同源的参数构造；请求参数参与 provider 缓存键，
+        # 多发/少发一个 thinking 都会让整段前缀缓存失效。
+        from agent.providers import adapter_for
+
+        adapter = adapter_for(ai)
+        kwargs.update(adapter.build_anthropic_thinking_params(ai))
+        kwargs.update(adapter.build_anthropic_generation_params(ai))
+    elif thinking is not None:
         kwargs["thinking"] = {"type": thinking}
     resp = await client.messages.create(**kwargs)
     usage = getattr(resp, "usage", None)
