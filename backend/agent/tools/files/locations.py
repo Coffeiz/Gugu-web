@@ -20,8 +20,9 @@ from agent.tools.filesystem_policy import current_filesystem_policy, current_wor
 
 # ── 内部：按目标解析 storage_key（复刻 update_file/copy_file）──
 async def _resolve_key(db, user_id, space, display_name, ext,
-                       project_id=None, folder_id=None):
+                       project_id=None, folder_id=None, workspace_directory_id=None):
     project_name = project_year = project_month = folder_path = ""
+    workspace_directory = None
     if space == "project" and project_id:
         p = await get_user_project(db, user_id, project_id)
         if not p:
@@ -29,9 +30,20 @@ async def _resolve_key(db, user_id, space, display_name, ext,
         project_name = p.name
         date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
         project_year, project_month = date_str[:4], date_str[5:7]
+    if space == "workspace":
+        # workspace 文件落在绑定工作区目录下：key 前缀用 directory_name，
+        # 文件夹归属校验也必须带 directory id，否则 workspace 文件夹一律判不匹配。
+        from app.models import WorkspaceDirectory
+        if workspace_directory_id is None:
+            raise ValueError("workspace 空间需要 workspace_directory_id")
+        workspace_directory = await db.get(WorkspaceDirectory, workspace_directory_id)
+        if workspace_directory is None or workspace_directory.user_id != user_id:
+            raise ValueError("目标工作区目录不存在")
     if folder_id:
         resolved = await resolve_folder_path(
-            db, user_id, folder_id, project_id if space == "project" else None,
+            db, user_id, folder_id,
+            project_id if space == "project" else None,
+            workspace_directory.id if workspace_directory is not None else None,
         )
         if not resolved:
             raise ValueError("目标文件夹不存在，或不属于指定的项目/个人空间")
@@ -41,6 +53,7 @@ async def _resolve_key(db, user_id, space, display_name, ext,
         project_name=project_name, project_id=project_id or 0,
         project_year=project_year, project_month=project_month,
         folder_path=folder_path,
+        workspace_directory_name=workspace_directory.directory_name if workspace_directory is not None else "",
     )
     return key
 

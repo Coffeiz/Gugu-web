@@ -10,6 +10,8 @@ _resolve_* / 带归属校验的 handler。几乎所有按 id 操作的工具都�
 P0-2 的 CI 红线，scripts/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
 """
 import json
+import types
+
 from app.core.tz import now_utc
 
 from app.models import (
@@ -294,3 +296,40 @@ async def test_permanent_delete_folder_uses_folder_id_and_removes_folder(db, use
     assert result["success"] is True
     assert result["deleted_folder_id"] == folder.id
     assert await db.get(Folder, folder.id) is None
+
+
+async def test_resolve_key_supports_workspace_folder(db, user_a):
+    """rename 等 key 解析必须支持 workspace：文件夹校验带 directory id，
+    key 前缀带 directory_name——之前漏传导致 workspace 文件一改名就报
+    「目标文件夹不存在，或不属于指定的项目/个人空间」。"""
+    directory = await _mk(db, WorkspaceDirectory(user_id=user_a.id, name="测试工作区", directory_name="workspace-1"))
+    folder = await _mk(db, Folder(user_id=user_a.id, workspace_directory_id=directory.id, name="脚本"))
+    key = await _resolve_key(
+        db, user_a.id, "workspace", "天气周报v1", "py",
+        folder_id=folder.id, workspace_directory_id=directory.id,
+    )
+    assert key == f"{user_a.id}/workspace-1/脚本/天气周报v1.py"
+
+
+async def test_resolve_key_rejects_workspace_folder_with_wrong_directory(db, user_a):
+    directory = await _mk(db, WorkspaceDirectory(user_id=user_a.id, name="测试工作区", directory_name="workspace-1"))
+    folder = await _mk(db, Folder(user_id=user_a.id, workspace_directory_id=directory.id, name="脚本"))
+    import pytest
+    with pytest.raises(ValueError):
+        await _resolve_key(
+            db, user_a.id, "workspace", "天气周报v1", "py",
+            folder_id=folder.id, workspace_directory_id=None,
+        )
+
+
+async def test_rename_one_rejects_binary_to_text_format_change(db, user_a, monkeypatch):
+    """图片等二进制后缀（不在 _DOC_MIME）不允许借 rename 变成 .py 等文本格式——
+    改后缀不重写内容，只会产出内容对不上的坏文件。"""
+    from app.models import File as FileModel
+    from agent.tools.files import documents
+
+    f = await _mk(db, FileModel(user_id=user_a.id, display_name="weather_week_南京_2026-09-10",
+                                ext="png", mime_type="image/png", storage_key="k"))
+    monkeypatch.setattr(documents, "get_storage", lambda: types.SimpleNamespace(rename_file=None))
+    r = await documents._rename_one(db, user_a.id, f, "天气周报v1", "py")
+    assert r.get("error") and "跨文本/二进制" in r["error"]
