@@ -464,7 +464,11 @@ async def resolve_sync_conflict(
     candidate = root / conflict.relative_path
     observed = _fingerprint(candidate) if candidate.is_file() and not candidate.is_symlink() else None
     if resolution == "cancel":
+        # 只解除冲突标记，不动盘上文件；必须同样落 resolved，
+        # 否则冲突永远留在 pending 列表里（点「取消冲突」看起来毫无反应）。
+        conflict.status = "resolved"
         conflict.resolution = "cancel"
+        conflict.resolved_at = now_utc()
         conflict.updated_at = now_utc()
         await db.flush()
         return conflict

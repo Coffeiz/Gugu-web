@@ -829,3 +829,37 @@ async def test_pending_conflicts_skips_paths_covered_by_other_bindings(db, user_
     user_root = bindings._user_root(user_a.id)
     conflicts = await bindings._pending_conflicts(db, user_a.id, outer, user_root)
     assert conflicts == ()
+
+
+@pytest.mark.asyncio
+async def test_resolve_conflict_cancel_marks_resolved(db, user_a, monkeypatch, tmp_path):
+    """「取消冲突」必须把冲突落成 resolved：只改 resolution 不改 status 会让
+    冲突永远留在 pending 列表里，按钮看起来毫无反应。"""
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    from app.models import FileSyncConflict
+
+    monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+    ))
+
+    (tmp_path / str(user_a.id)).mkdir(parents=True)
+    conflict = FileSyncConflict(
+        binding_id=(await create_binding(
+            db, user_id=user_a.id, source="local_directory",
+            root_fingerprint="c"*64, root_path=".",
+        )).id,
+        user_id=user_a.id, relative_path="不存在的路径.txt",
+        status="pending",
+    )
+    db.add(conflict)
+    await db.flush()
+
+    row = await bindings.resolve_sync_conflict(db, user_a.id, conflict.id, "cancel")
+    await db.commit()
+    await db.refresh(row)
+    assert row.status == "resolved"
+    assert row.resolution == "cancel"
+    assert row.resolved_at is not None
