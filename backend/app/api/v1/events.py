@@ -145,7 +145,7 @@ async def delete_event(
     if not e or e.deleted_at is not None:
         raise HTTPException(404, "事件不存在")
     from app.models import ScheduledTask
-    tasks = (await db.execute(select(ScheduledTask).where(
+    tasks = (await db.execute(select(ScheduledTask).where(  # orm-exempt: 定时任务读取待 Service 收口（1.1.2 遗留）
         ScheduledTask.user_id == current_user.id, ScheduledTask.event_id == eid,
     ))).scalars().all()
     before_items = {domain_ref("event", e.id): event_snapshot(e)}

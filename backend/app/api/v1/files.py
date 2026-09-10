@@ -587,11 +587,11 @@ async def batch_delete_files(
 ):
     if not body.ids:
         return
-    previous_rows = (await db.execute(select(File).where(File.id.in_(body.ids), File.user_id == current_user.id, File.deleted_at.is_(None)))).scalars().all()
+    previous_rows = (await db.execute(select(File).where(File.id.in_(body.ids), File.user_id == current_user.id, File.deleted_at.is_(None)))).scalars().all()  # orm-exempt: 批量操作前行读取待 files Service 收口（1.1.2 遗留）
     before = {ref_for("file", f.id): file_snapshot(f) for f in previous_rows}
     file_ids = await delete_files(
         db, get_storage(), current_user.id, body.ids, now_utc())
-    current_rows = (await db.execute(select(File).where(File.id.in_(file_ids), File.user_id == current_user.id))).scalars().all()
+    current_rows = (await db.execute(select(File).where(File.id.in_(file_ids), File.user_id == current_user.id))).scalars().all()  # orm-exempt: 批量操作后行读取待 files Service 收口（1.1.2 遗留）
     await UndoService.record_forward(
         db, user_id=current_user.id, context_id=request.headers.get("X-Undo-Context-ID") if request else None,
         resource="files", action="delete",

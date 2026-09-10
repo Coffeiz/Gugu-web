@@ -504,8 +504,8 @@ async def get_usage(month: str | None = None, model: str | None = None,
 
     # 按场景分组（chat=主对话 / reflection=记忆反思 / compaction=压缩 / knowledge=知识反思）；
     # 2026-09-10 之前的存量行没有 scenario 标记，全部落在 chat 里。
-    scenario_rows = await db.execute(
-        select(
+    scenario_rows = await db.execute(  # orm-exempt: 用量场景统计读取待 Service 收口（1.1.2 新增）
+        select(  # orm-exempt: 同上，scenario_rows 查询待 Service 收口
             AgentUsage.scenario,
             func.count(AgentUsage.id),
             func.coalesce(func.sum(_effective_input_expr()), 0),

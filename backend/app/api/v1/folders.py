@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import Folder, Project, User, WorkspaceDirectory
+from app.models import Folder, Project, User, WorkspaceDirectory  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
 from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned

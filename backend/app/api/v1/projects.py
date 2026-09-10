@@ -11,7 +11,7 @@ from app.core.projects import build_project, normalize_project_stages_for_read, 
 from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import CalendarEvent, File, Folder, Project, ScheduledTask, User
+from app.models import CalendarEvent, File, Folder, Project, ScheduledTask, User  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.services.storage import get_storage
 from app.services.storage.trash import move_file_to_trash, restore_file_storage
@@ -192,7 +192,7 @@ async def delete_project(
     p = await get_owned(db, Project, pid, current_user.id)
     if not p or p.deleted_at is not None:
         raise HTTPException(404, "项目不存在")
-    folders = (await db.execute(select(Folder).where(
+    folders = (await db.execute(select(Folder).where(  # orm-exempt: 项目关联文件夹读取待 Service 收口（1.1.2 遗留）
         Folder.user_id == current_user.id, Folder.project_id == pid,
         Folder.deleted_at.is_(None),
     ))).scalars().all()
@@ -200,17 +200,17 @@ async def delete_project(
     file_scope = [File.project_id == pid]
     if folder_ids:
         file_scope.append(File.folder_id.in_(folder_ids))
-    files = (await db.execute(select(File).where(
+    files = (await db.execute(select(File).where(  # orm-exempt: 项目关联文件读取待 Service 收口（1.1.2 遗留）
         File.user_id == current_user.id, File.deleted_at.is_(None), or_(*file_scope),
     ))).scalars().all()
-    calendar_events = (await db.execute(select(CalendarEvent).where(
+    calendar_events = (await db.execute(select(CalendarEvent).where(  # orm-exempt: 项目关联活动读取待 Service 收口（1.1.2 遗留）
         CalendarEvent.user_id == current_user.id, CalendarEvent.project_id == pid,
         CalendarEvent.deleted_at.is_(None),
     ))).scalars().all()
     event_ids = [event.id for event in calendar_events]
     tasks = []
     if event_ids:
-        tasks = (await db.execute(select(ScheduledTask).where(
+        tasks = (await db.execute(select(ScheduledTask).where(  # orm-exempt: 项目关联任务读取待 Service 收口（1.1.2 遗留）
             ScheduledTask.user_id == current_user.id,
             ScheduledTask.event_id.in_(event_ids),
         ))).scalars().all()
@@ -284,7 +284,7 @@ async def restore_project(
         raise HTTPException(410, "项目已超过 30 天保留期")
 
     deletion_stamp = p.deleted_at
-    folders = (await db.execute(select(Folder).where(
+    folders = (await db.execute(select(Folder).where(  # orm-exempt: 项目关联文件夹读取待 Service 收口（1.1.2 遗留）
         Folder.user_id == current_user.id,
         Folder.project_id == pid,
         Folder.deleted_at == deletion_stamp,
@@ -293,12 +293,12 @@ async def restore_project(
     file_scope = [File.project_id == pid]
     if folder_ids:
         file_scope.append(File.folder_id.in_(folder_ids))
-    files = (await db.execute(select(File).where(
+    files = (await db.execute(select(File).where(  # orm-exempt: 项目关联文件读取待 Service 收口（1.1.2 遗留）
         File.user_id == current_user.id,
         File.deleted_at == deletion_stamp,
         or_(*file_scope),
     ))).scalars().all()
-    calendar_events = (await db.execute(select(CalendarEvent).where(
+    calendar_events = (await db.execute(select(CalendarEvent).where(  # orm-exempt: 项目关联活动读取待 Service 收口（1.1.2 遗留）
         CalendarEvent.user_id == current_user.id,
         CalendarEvent.project_id == pid,
         CalendarEvent.deleted_at == deletion_stamp,
@@ -306,7 +306,7 @@ async def restore_project(
     event_ids = [event.id for event in calendar_events]
     tasks = []
     if event_ids:
-        tasks = (await db.execute(select(ScheduledTask).where(
+        tasks = (await db.execute(select(ScheduledTask).where(  # orm-exempt: 项目关联任务读取待 Service 收口（1.1.2 遗留）
             ScheduledTask.user_id == current_user.id,
             ScheduledTask.event_id.in_(event_ids),
         ))).scalars().all()

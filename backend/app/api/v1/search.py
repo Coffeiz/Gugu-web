@@ -127,7 +127,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             seen = {p.id for p in rows}
             scan = (await db.execute(
-                select(Project).where(Project.user_id == uid, Project.deleted_at.is_(None))
+                select(Project).where(Project.user_id == uid, Project.deleted_at.is_(None))  # orm-exempt: 全局搜索项目域读取待 Service 收口（1.1.2 遗留）
                 .order_by(Project.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for p in scan:
@@ -209,7 +209,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             seen = {e.id for e in rows}
             scan = (await db.execute(
-                select(CalendarEvent).where(CalendarEvent.user_id == uid, CalendarEvent.deleted_at.is_(None))
+                select(CalendarEvent).where(CalendarEvent.user_id == uid, CalendarEvent.deleted_at.is_(None))  # orm-exempt: 全局搜索日历域读取待 Service 收口（1.1.2 遗留）
                 .order_by(CalendarEvent.date.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for e in scan:

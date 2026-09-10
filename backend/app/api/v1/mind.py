@@ -117,15 +117,15 @@ def _undo_context(request: Request | None) -> str | None:
 
 async def _canvas_undo_state(db: AsyncSession, user_id, canvas_id: int) -> dict:
     """读取包含软删子项的完整画布快照；仅供 mind 领域适配器解释。"""
-    canvas = await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))
-    items = (await db.execute(select(MindCanvasItem).where(
+    canvas = await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))  # orm-exempt: 画布读取待 Service 收口（1.1.2 遗留）
+    items = (await db.execute(select(MindCanvasItem).where(  # orm-exempt: 画布条目读取待 Service 收口（1.1.2 遗留）
         MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
     ))).scalars().all()
-    relations = (await db.execute(select(MindRelation).where(
+    relations = (await db.execute(select(MindRelation).where(  # orm-exempt: 画布连线读取待 Service 收口（1.1.2 遗留）
         MindRelation.canvas_id == canvas_id, MindRelation.user_id == user_id,
     ))).scalars().all()
     node_ids = {item.node_id for item in items}
-    nodes = (await db.execute(select(MindNode).where(
+    nodes = (await db.execute(select(MindNode).where(  # orm-exempt: 画布节点读取待 Service 收口（1.1.2 遗留）
         MindNode.id.in_(node_ids), MindNode.user_id == user_id,
     ))).scalars().all() if node_ids else []
     result = {}
@@ -138,7 +138,7 @@ async def _canvas_undo_state(db: AsyncSession, user_id, canvas_id: int) -> dict:
 
 
 async def _canvas_item_undo_state(db: AsyncSession, user_id, canvas_id: int) -> dict:
-    rows = (await db.execute(select(MindCanvasItem).where(
+    rows = (await db.execute(select(MindCanvasItem).where(  # orm-exempt: 画布条目读取待 Service 收口（1.1.2 遗留）
         MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
     ))).scalars().all()
     return state({ref("canvas_item", item.id): item_snapshot(item) for item in rows})
@@ -264,9 +264,9 @@ async def ref_suggest(
     if not q:
         # `@` 刚触发时展示用户最近使用/更新的对象，用户继续输入后再切换为搜索结果。
         recent: list[MindRefSuggestItem] = []
-        projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id, Project.deleted_at.is_(None)).order_by(Project.updated_at.desc()).limit(limit))).all()
+        projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id, Project.deleted_at.is_(None)).order_by(Project.updated_at.desc()).limit(limit))).all()  # orm-exempt: 概览项目读取待 Service 收口（1.1.2 遗留）
         files = (await db.scalars(select(File).where(File.user_id == current_user.id, File.deleted_at.is_(None)).order_by(File.updated_at.desc()).limit(limit))).all()
-        events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id, CalendarEvent.deleted_at.is_(None)).order_by(CalendarEvent.date.desc()).limit(limit))).all()
+        events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id, CalendarEvent.deleted_at.is_(None)).order_by(CalendarEvent.date.desc()).limit(limit))).all()  # orm-exempt: 概览活动读取待 Service 收口（1.1.2 遗留）
         recent.extend(MindRefSuggestItem(type="project", id=x.id, label=x.name, subtitle=x.client) for x in projects)
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
