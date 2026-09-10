@@ -772,3 +772,60 @@ async def test_tool_create_file_advances_baseline_without_conflict(db, user_a, m
     ).order_by(FileSyncJournal.id.desc()))).first()
     assert journal is not None
     assert journal.observed_fingerprint == hashlib.sha256(b"new-content").hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_pending_conflicts_skips_paths_covered_by_other_bindings(db, user_a, monkeypatch, tmp_path):
+    """重叠绑定误报回归：整根绑定（root="."）不得用自己过期的基线，
+    去判已被子绑定（root="个人文件"）正常推进的文件。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.statcache as statcache
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for mod in (reconcile, protocol, statcache, bindings):
+        monkeypatch.setattr(mod, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "doc.txt").write_text("v1", encoding="utf-8")
+
+    inner = await create_binding(
+        db, user_id=user_a.id, source="local_directory",
+        root_fingerprint="a"*64, root_path="个人文件",
+    )
+    outer = await create_binding(
+        db, user_id=user_a.id, source="local_directory",
+        root_fingerprint="b"*64, root_path=".",
+    )
+    await db.flush()
+
+    # 子绑定正常推进：对账留下新基线；整根绑定只留一条过期基线（历史遗留形态）。
+    await reconcile.reconcile_local_directory(db, user_a.id, binding=inner)
+    await db.commit()
+    await record_change(
+        db, binding=outer, user_id=user_a.id, source="local_directory",
+        operation="baseline", relative_path="个人文件/doc.txt",
+        idempotency_key=build_idempotency_key(
+            source="local_directory", operation="baseline",
+            relative_path="个人文件/doc.txt", fingerprint="stale",
+        ),
+        observed_fingerprint="stale", status="synced",
+    )
+    await db.commit()
+
+    # 咕咕更新文件（row + 盘上一起变），子绑定再次正常对账推进。
+    (root / "doc.txt").write_text("v2-longer", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id, binding=inner)
+    await db.commit()
+
+    user_root = bindings._user_root(user_a.id)
+    conflicts = await bindings._pending_conflicts(db, user_a.id, outer, user_root)
+    assert conflicts == ()

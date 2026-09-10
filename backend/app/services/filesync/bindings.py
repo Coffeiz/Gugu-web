@@ -103,6 +103,32 @@ async def _get_or_create_binding(
     return binding
 
 
+async def _other_binding_roots(
+    db: AsyncSession, user_id, binding: FileSyncBinding,
+) -> list[Path]:
+    """同一用户其他本地绑定覆盖的真实根目录，用于识别重叠绑定。"""
+    others = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_id,
+        FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
+        FileSyncBinding.status == "active",
+        FileSyncBinding.id != binding.id,
+    ))).all()
+    roots: list[Path] = []
+    for other in others:
+        if other.workspace_id is not None:
+            from app.services.workspaces import resolve_workspace_root
+
+            root = await resolve_workspace_root(db, user_id, other.workspace_id)
+        else:
+            try:
+                _, root = resolve_local_binding_root(user_id, other.root_path)
+            except (OSError, ValueError):
+                root = None
+        if root is not None:
+            roots.append(root)
+    return roots
+
+
 async def _pending_conflicts(
     db: AsyncSession,
     user_id,
@@ -115,6 +141,10 @@ async def _pending_conflicts(
     user_root = _user_root(user_id)
     prefix = root.relative_to(user_root).as_posix().rstrip("/")
     storage_prefix = f"{user_id}/{prefix}/" if prefix != "." else f"{user_id}/"
+    # 重叠绑定（如旧的整根 "." 绑定与按 workspace 拆分的绑定）各自持有 journal。
+    # 被其他绑定正常推进的文件不能拿本绑定的过期基线判冲突——那会把别的绑定
+    # 做完的正常投影误判成「两边都改过」，并把路径冻结在对账之外。
+    other_roots = await _other_binding_roots(db, user_id, binding)
     rows = (await db.scalars(select(File).where(
         File.user_id == user_id, File.deleted_at.is_(None),
         File.storage_key.like(f"{storage_prefix}%"),
@@ -132,6 +162,8 @@ async def _pending_conflicts(
         journal = latest.get(relative)
         path = root / relative
         if journal is None or not path.is_file() or path.is_symlink():
+            continue
+        if any(path.is_relative_to(other) for other in other_roots):
             continue
         try:
             local_fingerprint = _fingerprint(path)
