@@ -2,8 +2,8 @@
 
 三层验证（商用就绪评审 P0-3）：
 1. 全部 5 个 destructive 工具：不带 confirm 调用 → 返回 needs_confirm 拦截、资源原封不动；
-2. 单带 confirm=true 仍须拒绝；用户确认后（确认码兑换出服务端授权）不带任何凭证
-   重新调用即可执行——模型不携带、不复述凭证；
+2. 单带 confirm=true 仍须拒绝；用户确认（确认码兑换出服务端授权）后，运行侧按原参数
+   重投这次调用即可执行——模型不携带、不复述凭证，也不必自己再调用一次；
 3. dispatch 层绊线：假造一个漏接确认门的 destructive 工具，无 confirm 的调用返回了
    "成功执行" → 必须触发 confirm-gate.bypassed CRITICAL 日志（运行时兜底的行为契约）。
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
@@ -97,7 +97,7 @@ async def test_delete_client_executes_after_grant_without_credentials(db, user_a
     ttl = confirmations.redeem_confirmation(user_a.id, code)
     assert ttl is not None
 
-    # 模型不带任何凭证重新调用：授权命中自动注入 confirm 后放行。
+    # 运行侧按原参数重投这次调用：授权命中自动注入 confirm 后放行（模型不参与）。
     res = await _delete_client(db, user_a.id, {"client_id": c.id})
     assert isinstance(res, dict) and res.get("success")
     assert await db.get(Client, c.id) is None

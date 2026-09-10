@@ -16,7 +16,7 @@ import random
 import re as _re_mod
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import Any, AsyncGenerator, Awaitable, Callable
+from typing import Any, AsyncGenerator, Awaitable, Callable, NamedTuple
 
 from agent.llm import genstream
 from agent import loop_drivers
@@ -377,43 +377,70 @@ def _is_verify_placeholder(text: str) -> bool:
 
 
 def _replace_tool_result(messages, *, tool_call_id: str, result: dict) -> bool:
-    """更新当前 Run 内存中的 pending tool result，供交互恢复后的下一轮使用。"""
+    """更新当前 Run 内存中的 pending tool result，供交互恢复后的下一轮使用。
+
+    走容器自己的实现，保证活消息与尚未落库的 canonical 快照一起改（见
+    ``PromptMessages.replace_tool_result``）；普通 list 只出现在直接调用 runner
+    的测试里，那种场景没有 canonical 快照需要同步。
+    """
+    replace = getattr(messages, "replace_tool_result", None)
+    if callable(replace):
+        return replace(tool_call_id=tool_call_id, result=result)
+    from agent.context.assembly.messages import replace_tool_result_block
     for message in messages:
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role")
-        if role == "tool" and str(message.get("tool_call_id") or "") == tool_call_id:
-            message["content"] = json.dumps(result, ensure_ascii=False)
+        if replace_tool_result_block(message, tool_call_id=tool_call_id, result=result):
             return True
-        blocks = message.get("content")
-        if role != "user" or not isinstance(blocks, list):
-            continue
-        for block in blocks:
-            if not isinstance(block, dict) or block.get("type") != "tool_result":
-                continue
-            block_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
-            if block_id == tool_call_id:
-                block["content"] = json.dumps(result, ensure_ascii=False)
-                return True
     return False
 
 
-async def _dispatch_confirmed_tool(
-    user_id, ctx: dict, *, session_id, session, run_id, tool_snapshot, skill_state,
-):
-    """用户确认后，按原始参数重投被确认门拦截的工具调用。
+def _user_cancel(answer) -> bool:
+    """判断交互结果是否为「用户主动点取消」。
 
-    授权已由交互服务在消费确认动作时兑换（服务端 Redis，绑定操作摘要与身份），
-    这里用与首次 dispatch 完全相同的参数和 dispatch 会话上下文执行一次即可。
-    让模型重新调用会把一次确认变成额外模型往返，且模型会在正文里念出「重新调用」。
+    交互服务把用户点击的取消动作标成 ``option_id="cancel"``；IM 侧 cancel_check
+    关单不带 option_id，属于真正的异常终止。两者在调用方的收尾语义完全不同，
+    判定只此一处，避免三个 gate 各写一份后漂移。
+    """
+    return (
+        isinstance(answer, dict)
+        and answer.get("status") == "cancelled"
+        and answer.get("option_id") == "cancel"
+    )
+
+
+class _PendingInteraction(NamedTuple):
+    """等待用户交互时暂存的调用现场。
+
+    ``replay`` 只有破坏性工具的确认门会填：用户在界面上确认后，服务端按原参数
+    重投这次调用，模型不必也不应重新调用一次。提问、预算弹窗恢复后交给模型
+    继续走，没有需要重投的调用现场。
+    """
+    prompt_id: int
+    tool_call_id: str
+    tool_name: str
+    replay: dict | None = None
+
+
+def _dispatch_target_and_input(tc, adapter_target):
+    """算出这次工具调用真正要 dispatch 的目标与参数。
+
+    Adapter（``call_tool``）路允许模型用扁平参数，目标名与参数都取自入参。
+    """
+    if adapter_target is not None:
+        return adapter_target, _resolve_adapter_arguments(tc.input)
+    return tc.name, tc.input
+
+
+async def _dispatch_in_session(
+    user_id, target, dispatch_input, *, session_id, session, run_id, tool_snapshot, skill_state,
+):
+    """带 dispatch 会话上下文执行一次工具调用。
+
+    首次调用与用户确认后重投必须走同一条路径：确认门授权判定、身份绑定和技能
+    状态都取自 dispatch 会话上下文，两处各写一遍早晚会漂移（重投时参数、目标
+    与首次完全一致是这个不变量的前提）。
     """
     from agent.tools.base import set_dispatch_session, reset_dispatch_session
 
-    adapter_target = ctx.get("adapter_target")
-    target = adapter_target or ctx.get("name")
-    dispatch_input = ctx.get("input")
-    if adapter_target is not None:
-        dispatch_input = _resolve_adapter_arguments(dispatch_input)
     _dispatch_token = set_dispatch_session(
         session_id, session, run_id,
         tool_snapshot=tool_snapshot,
@@ -784,8 +811,8 @@ class LLMRunner:
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
         finalize_pending = False
-        # 破坏性工具的用户确认授权存在服务端（Redis），工具重新调用时由
-        # 确认门自动命中放行，运行时不再做任何凭证续接。
+        # 破坏性工具的用户确认授权存在服务端（Redis）：确认后运行侧按原参数重投，
+        # 确认门自动命中放行；运行时不做任何凭证续接，也不让模型再调用一次。
         total_in = total_out = total_cache = total_cache_write = 0
         # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
         # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
@@ -1005,12 +1032,12 @@ class LLMRunner:
                         heartbeat=lambda: genstream.touch(session_id),
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
+                    if _user_cancel(answer):
+                        # 用户在弹窗上主动点取消＝正常收尾：补一段收尾正文走正常
+                        # 持久化+done，不留 SSE 黑洞，也不把终止当异常。
+                        yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                        return
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
-                        if answer.get("option_id") == "cancel":
-                            # 用户在弹窗上主动点取消＝正常收尾：补一段收尾正文走正常
-                            # 持久化+done，不留 SSE 黑洞，也不把终止当异常。
-                            yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
-                            return
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
@@ -1068,11 +1095,11 @@ class LLMRunner:
                         heartbeat=lambda: genstream.touch(session_id),
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
+                    if _user_cancel(answer):
+                        # 用户主动点取消＝正常收尾：补收尾正文走正常持久化+done。
+                        yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                        return
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
-                        if answer.get("option_id") == "cancel":
-                            # 用户主动点取消＝正常收尾：补收尾正文走正常持久化+done。
-                            yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
-                            return
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
@@ -1355,7 +1382,7 @@ class LLMRunner:
                     if (
                         isinstance(answer, dict)
                         and answer.get("status") == "cancelled"
-                        and answer.get("option_id") != "cancel"
+                        and not _user_cancel(answer)
                     ):
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
@@ -1552,31 +1579,12 @@ class LLMRunner:
                         }, ensure_ascii=False)
                         artifact = None
                     else:
-                        dispatch_input = tc.input
-                        if adapter_target is not None:
-                            from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(
-                                session_id, session, run_id,
-                                tool_snapshot=tool_snapshot,
-                                skill_state=loaded_skill_slugs,
-                            )
-                            try:
-                                res, artifact = await registry.dispatch(
-                                    user_id, adapter_target, _resolve_adapter_arguments(dispatch_input)
-                                )
-                            finally:
-                                reset_dispatch_session(_dispatch_token)
-                        else:
-                            from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(
-                                session_id, session, run_id,
-                                tool_snapshot=tool_snapshot,
-                                skill_state=loaded_skill_slugs,
-                            )
-                            try:
-                                res, artifact = await registry.dispatch(user_id, tc.name, dispatch_input)
-                            finally:
-                                reset_dispatch_session(_dispatch_token)
+                        dispatch_target, dispatch_input = _dispatch_target_and_input(tc, adapter_target)
+                        res, artifact = await _dispatch_in_session(
+                            user_id, dispatch_target, dispatch_input,
+                            session_id=session_id, session=session, run_id=run_id,
+                            tool_snapshot=tool_snapshot, skill_state=loaded_skill_slugs,
+                        )
                         if skill_slug and _is_successful_tool_result(res):
                             try:
                                 payload = json.loads(res) if isinstance(res, str) else res
@@ -1617,7 +1625,9 @@ class LLMRunner:
                                 "prompt_id": prompt.id,
                             }, ensure_ascii=False)
                             dispatched.append((tc, pending_result))
-                            pending_interaction = (prompt.id, tool_call_id, effective_tool_name)
+                            pending_interaction = _PendingInteraction(
+                                prompt.id, tool_call_id, effective_tool_name,
+                            )
                             yield stream_event("tool_done", round_id=round_id,
                                                tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                                verify=verify_mode, status="waiting", result=pending_result)
@@ -1652,13 +1662,14 @@ class LLMRunner:
                         tool_call_id=tool_call_id, result=res,
                     )
                     if interaction:
-                        # 第 4 项是「确认后重投」所需的原始调用现场：用户确认时服务端
-                        # 直接按同样参数重新 dispatch，避免让模型为了执行再调用一次
-                        # （多一次模型往返，模型还会把「重新调用」念给用户听）。
-                        pending_interaction = (
+                        pending_interaction = _PendingInteraction(
                             interaction["prompt_id"], tool_call_id, effective_tool_name,
-                            {"name": effective_tool_name, "input": tc.input,
-                             "adapter_target": adapter_target, "label": label},
+                            {
+                                "name": effective_tool_name,
+                                "label": label,
+                                "target": adapter_target or tc.name,
+                                "input": _dispatch_target_and_input(tc, adapter_target)[1],
+                            },
                         )
                         dispatched.append((tc, res))
                         yield stream_event("interaction_required", round_id=round_id,
@@ -1803,32 +1814,32 @@ class LLMRunner:
                 messages.append_batch(batch)
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
-                    prompt_id, pending_tool_call_id = pending_interaction[:2]
+                    pending_tool_call_id = pending_interaction.tool_call_id
                     answer = await wait_for_resolution(
-                        user_id=user_id, prompt_id=prompt_id,
+                        user_id=user_id, prompt_id=pending_interaction.prompt_id,
                         heartbeat=lambda: genstream.touch(session_id),
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
+                    if _user_cancel(answer):
+                        # 用户在交互卡上主动点「取消」＝正常收尾，不是异常终止。只把
+                        # 取消结果落进本轮工具往返，再补一段收尾正文走正常持久化+done。
+                        # 直接 _cancelled 的话会话会残留一个「等待确认」的工具往返
+                        # （下一次 run 回放会把已取消的操作读成还在等），SSE 也因缺
+                        # 终态事件挂到 keepalive 兜底。
+                        if _replace_tool_result(
+                            messages,
+                            tool_call_id=pending_tool_call_id,
+                            result=answer,
+                        ):
+                            yield f"data: {json.dumps({'type': 'token', 'content': '好的，已取消这项操作，任务停在这里；前面完成的部分仍然有效，需要继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                        return
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
-                        if answer.get("option_id") == "cancel":
-                            # 用户在交互卡上主动点「取消」＝正常收尾，不是异常终止。
-                            # 只把取消结果落进本轮工具往返（consume_action 已同步改了
-                            # DB 侧），再补一段收尾正文走正常持久化+done。直接 _cancelled
-                            # 的话会话会残留 dangling 工具调用（模型下一轮把取消误读成
-                            # 失败又自动重试），SSE 也因缺终态事件挂到 keepalive 兜底。
-                            if _replace_tool_result(
-                                messages,
-                                tool_call_id=pending_tool_call_id,
-                                result=answer,
-                            ):
-                                yield f"data: {json.dumps({'type': 'token', 'content': '好的，已取消这项操作，任务停在这里；前面完成的部分仍然有效，需要继续随时说一声。'}, ensure_ascii=False)}\n\n"
-                            return
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return
-                    replay_ctx = pending_interaction[3] if len(pending_interaction) > 3 else None
+                    replay_ctx = pending_interaction.replay
                     if (
                         isinstance(answer, dict)
                         and answer.get("status") == "confirmed"
@@ -1840,8 +1851,8 @@ class LLMRunner:
                         # 模型因此只需要「汇报执行结果」，不必也不应再次调用该工具。
                         from agent.interactions.confirmations import is_block
                         try:
-                            executed, artifact = await _dispatch_confirmed_tool(
-                                user_id, replay_ctx,
+                            executed, artifact = await _dispatch_in_session(
+                                user_id, replay_ctx["target"], replay_ctx["input"],
                                 session_id=session_id, session=session, run_id=run_id,
                                 tool_snapshot=tool_snapshot, skill_state=loaded_skill_slugs,
                             )
@@ -1859,16 +1870,15 @@ class LLMRunner:
                             result=replay_payload,
                         )
                         replay_ok = _is_successful_tool_result(replay_payload)
-                        if replay_ctx.get("name") in _mutset and replay_ok:
+                        if replay_ctx["name"] in _mutset and replay_ok:
                             did_mutate = True   # 确认后真的改了数据 → 照常进入自我核实
                             if verify_mode:
                                 verify_fixed = True
-                        elif verify_mode and _is_read_tool(replay_ctx.get("name")):
+                        elif verify_mode and _is_read_tool(replay_ctx["name"]):
                             verify_queried = True
                         yield stream_event(
                             "tool_done", round_id=round_id, tool_call_id=pending_tool_call_id,
-                            name=replay_ctx.get("name") or effective_tool_name,
-                            label=replay_ctx.get("label") or effective_tool_name,
+                            name=replay_ctx["name"], label=replay_ctx["label"],
                             verify=verify_mode,
                             status="success" if replay_ok else "error", result=replay_payload,
                         )

@@ -307,25 +307,6 @@ async def wait_for_resolution(
     return None
 
 
-def _replace_pending_tool_result(message, *, tool_call_id: str, result: dict) -> bool:
-    source_blocks = message.content_json
-    if not isinstance(source_blocks, list):
-        return False
-    blocks = [dict(block) if isinstance(block, dict) else block for block in source_blocks]
-    changed = False
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("type") != "tool_result":
-            continue
-        current_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
-        if current_id == tool_call_id:
-            block["content"] = json.dumps(result, ensure_ascii=False)
-            block.pop("is_error", None)
-            changed = True
-    if changed:
-        message.content_json = blocks
-    return changed
-
-
 async def consume_action(
     db: AsyncSession,
     *,
@@ -473,15 +454,8 @@ async def consume_action(
                     )
         else:
             result.update({"status": "cancelled", "confirm": False})
-    tool_call_id = str(context.get("tool_call_id") or "")
-    if tool_call_id:
-        from app.models import ConversationMessage
-        rows = (await db.execute(
-            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
-        )).scalars().all()
-        for message in rows:
-            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
-                break
+    # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
+    # 用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上。
     prompt.schema_json = {**_schema_dict(prompt.schema_json), "resolved_result": result}
     await db.commit()
     return {
@@ -534,15 +508,8 @@ async def consume_text(
         "value": None,
         "text": text,
     }
-    tool_call_id = str(context.get("tool_call_id") or "")
-    if tool_call_id:
-        from app.models import ConversationMessage
-        rows = (await db.execute(
-            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
-        )).scalars().all()
-        for message in rows:
-            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
-                break
+    # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
+    # 用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上。
     prompt.status = "resolved"
     prompt.resolved_at = now
     prompt.schema_json = {**schema, "resolved_result": result}
@@ -651,15 +618,8 @@ async def consume_choice_text(
         "value": option_id,
         "text": str(selected.get("label") or option_id),
     }
-    tool_call_id = str(context.get("tool_call_id") or "")
-    if tool_call_id:
-        from app.models import ConversationMessage
-        rows = (await db.execute(
-            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
-        )).scalars().all()
-        for message in rows:
-            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
-                break
+    # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
+    # 用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上。
     prompt.schema_json = {**schema, "resolved_result": result}
     await db.commit()
     return {

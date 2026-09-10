@@ -200,7 +200,7 @@ async def _run_shell(db, user_id, args: dict):
             ttl_minutes=30 if shell_lease else 5,
             instruction=(
                 "这是当前会话的受限 Shell 操作授权，有效期 30 分钟；"
-                "请把授权范围告知用户，用户在界面确认后直接再次调用即可，无需携带凭证。"
+                "请把授权范围告知用户；用户确认后由服务端继续执行本次调用，你无需再次调用。"
                 if shell_lease else None
             ),
         )
@@ -540,7 +540,7 @@ async def _run_script(db, user_id, args: dict):
                 user_id,
                 identity=f"run-script:{current_dispatch_session_id()}:{root_name}",
                 ttl_minutes=5,
-                instruction="脚本可能修改沙盒文件；用户确认后才会执行。请直接重新调用本工具，无需携带确认凭证。",
+                instruction="脚本可能修改沙盒文件；用户确认后才会执行，届时服务端会继续执行本次调用，你无需再次调用本工具。",
             )
             if blocked is not None:
                 return {"error": blocked, "_audit_event": "confirmation_required"}

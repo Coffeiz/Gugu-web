@@ -2,9 +2,32 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Iterable
 
+from ..canonical_context import digest
 from .batch import NewMessageBatch
+
+
+def replace_tool_result_block(message, *, tool_call_id: str, result: dict) -> bool:
+    """把单条消息里匹配 ``tool_call_id`` 的工具结果替换成 ``result``。"""
+    if not isinstance(message, dict):
+        return False
+    role = message.get("role")
+    if role == "tool" and str(message.get("tool_call_id") or "") == tool_call_id:
+        message["content"] = json.dumps(result, ensure_ascii=False)
+        return True
+    blocks = message.get("content")
+    if role != "user" or not isinstance(blocks, list):
+        return False
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        block_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
+        if block_id == tool_call_id:
+            block["content"] = json.dumps(result, ensure_ascii=False)
+            return True
+    return False
 
 
 class PromptMessages(list):
@@ -72,6 +95,34 @@ class PromptMessages(list):
     def canonical_batches(self) -> tuple[dict, ...]:
         """返回本次容器提交过的 canonical 批次副本；dynamic tail 永不包含在内。"""
         return tuple(item for batch in self._canonical_batches for item in batch)
+
+    def replace_tool_result(self, *, tool_call_id: str, result: dict) -> bool:
+        """替换 pending 工具结果：活消息与已提交批次的 canonical 快照一起改。
+
+        ``append_batch`` 提交时会把 canonical 投影冻结成不可变快照，它才是落库与
+        历史回放的事实源；交互恢复（用户回答/确认/取消）只改活消息的话，历史里
+        留下的仍是「等待确认/等待输入」占位，下一次 run 回放会把已经执行过的
+        操作读成没执行。快照是不可变事实源，这里替换成改好的新副本并同步 digest。
+        """
+        replaced = False
+        for message in self:
+            if replace_tool_result_block(message, tool_call_id=tool_call_id, result=result):
+                replaced = True
+        for index, batch in enumerate(self._canonical_batches):
+            patched = [copy.deepcopy(message) for message in batch]
+            matched = False
+            for message in patched:
+                if replace_tool_result_block(message, tool_call_id=tool_call_id, result=result):
+                    matched = True
+            if not matched:
+                continue
+            self._canonical_batches[index] = tuple(patched)
+            self._canonical_batch_digests[index] = digest({
+                "messages": patched,
+                "metadata": self._canonical_batch_metadata[index],
+            })
+            replaced = True
+        return replaced
 
     @property
     def canonical_batch_digests(self) -> tuple[str, ...]:

@@ -146,8 +146,14 @@ async def _make_interaction_session(db, user):
     return session, pending_message
 
 
-async def test_ask_user_button_resolves_pending_tool_result(db, user_a):
-    session, pending_message = await _make_interaction_session(db, user_a)
+async def test_ask_user_button_result_is_stored_for_run_resume(db, user_a):
+    """按钮结果写进 resolved_result，运行侧据此恢复本轮工具往返。
+
+    工具往返不在这里改写：交互期间那一轮 batch 还没落库（只在 run 收尾时写），
+    用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上
+    （见 PromptMessages.replace_tool_result）。
+    """
+    session, _pending_message = await _make_interaction_session(db, user_a)
     prompt, actions = await create_prompt(
         db,
         user_id=user_a.id,
@@ -163,8 +169,8 @@ async def test_ask_user_button_resolves_pending_tool_result(db, user_a):
         db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-1"
     )
     assert result["result"]["option_id"] == "a"
-    await db.refresh(pending_message)
-    assert '"status": "selected"' in pending_message.content_json[0]["content"]
+    await db.refresh(prompt)
+    assert prompt.schema_json["resolved_result"]["option_id"] == "a"
 
 
 async def test_ask_user_tool_result_creates_waiting_prompt(db, user_a):
@@ -330,7 +336,7 @@ async def test_confirmation_button_grants_server_side_authorization(db, user_a):
     """确认按钮：确认码兑换服务端授权；结果里不再携带任何模型可复述的凭证。"""
     from agent.interactions import confirmations
 
-    session, pending_message = await _make_interaction_session(db, user_a)
+    session, _pending_message = await _make_interaction_session(db, user_a)
     code = confirmations.needs_confirmation({}, "将删除 2 个文件", user_a.id)
     code = json.loads(code)["confirm_code"]
     prompt, actions = await create_prompt(
@@ -350,11 +356,11 @@ async def test_confirmation_button_grants_server_side_authorization(db, user_a):
     assert result["result"]["status"] == "confirmed"
     assert result["result"]["confirm"] is True
     assert "confirm_token" not in result["result"]
-    await db.refresh(pending_message)
-    content = pending_message.content_json[0]["content"]
-    assert '"confirm": true' in content
-    # 授权记录只在服务端；写入对话的结果不应出现任何凭证。
-    assert "token" not in content
+    # 授权记录只在服务端；写入对话的结果不应出现任何凭证，也不再要求模型重新调用。
+    assert code not in json.dumps(result["result"], ensure_ascii=False)
+    assert "重新调用" not in result["result"]["text"]
+    await db.refresh(prompt)
+    assert prompt.schema_json["resolved_result"]["status"] == "confirmed"
     # 兑换后确认码一次性作废。
     assert confirmations.redeem_confirmation(user_a.id, code) is None
 

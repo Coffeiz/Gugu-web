@@ -594,6 +594,56 @@ async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monke
     assert not any("请直接重新调用" in (c or "") for c in tool_results)
 
 
+async def test_confirmed_replay_result_reaches_canonical_batch(monkeypatch, dispatched):
+    """确认后重投的真实结果必须落进 canonical 批次（落库与历史回放的事实源）。
+
+    只改活消息的话，落库的工具往返仍是「等待确认」占位：下一次 run 回放会把已经
+    执行过的破坏性操作读成没执行，用户看到的记录也和实际不符。
+    """
+    blocked = json.dumps({
+        "status": "waiting_confirmation", "needs_confirm": True,
+        "summary": "将发送邮件", "confirm_code": "abc123",
+    }, ensure_ascii=False)
+    calls: list[str] = []
+
+    async def fake_dispatch(_uid, name, _inp):
+        calls.append(name)
+        if len(calls) == 1:
+            return blocked, None          # 首次：被确认门拦截，未执行
+        return json.dumps({"status": "ok", "text": "邮件已发送"}, ensure_ascii=False), None
+
+    async def fake_create_tool_confirmation(**_kwargs):
+        return {
+            "prompt_id": 906, "kind": "confirm", "title": "任务已暂停 · 发送邮件",
+            "body": "确认后将继续执行当前任务。",
+            "options": [{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+            "task_paused": True,
+            "expires_at": "2026-09-10T21:00:00+08:00",
+        }
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return {"status": "confirmed", "option_id": "confirm", "confirm": True}
+
+    monkeypatch.setattr(core.registry, "dispatch", fake_dispatch)
+    monkeypatch.setattr("app.services.interactions.create_tool_confirmation", fake_create_tool_confirmation)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+
+    patch_anthropic(monkeypatch, [
+        msg([TU("send_email", "call-1", {})]),
+        msg([TX("邮件已经发送出去了 ✅")]),
+    ])
+    from agent.context.assembly import PromptMessages
+    messages = PromptMessages([{"role": "user", "content": "帮我发邮件"}])
+
+    _ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
+
+    assert "邮件已经发送出去了" in text
+    assert errors == []
+    persisted = json.dumps(messages.canonical_batch_records, ensure_ascii=False)
+    assert "邮件已发送" in persisted, "重投的真实结果必须写进 canonical 批次"
+    assert "waiting_confirmation" not in persisted, "落库的工具往返不能停在「等待确认」占位"
+
+
 async def test_tool_confirmation_state_survives_wait_but_replay_is_single_shot(monkeypatch, dispatched):
     """重投失败（授权未生效）时用错误结果收尾，不能把确认占位当成功结果发出。"""
     import json as _json

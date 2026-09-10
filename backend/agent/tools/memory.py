@@ -178,7 +178,8 @@ class MemorySkill(BaseSkill):
             description_short='删除已保存知识。',
             description=(
                 "删除一条已保存的知识条目并停止检索。首次调用会返回确认请求，"
-                "用户在界面确认后直接重新调用即可；历史版本不会被物理覆盖。"
+                "用户在界面确认后由服务端继续执行本次删除，无需再次调用；"
+                "历史版本不会被物理覆盖。"
             ),
             input_schema={
                 "type": "object",
