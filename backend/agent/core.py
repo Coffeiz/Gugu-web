@@ -1354,6 +1354,24 @@ class LLMRunner:
                     effective_tool_name = adapter_target or (
                         raw_call_name if isinstance(raw_call_name, str) else "invalid_tool_call"
                     )
+                    # 工具名污染全局兜底：模型偶发把 JSON 参数写成 XML 片段拼进工具名
+                    # （如 create_file"><target>…）。在名字定稿处统一抢救一次并回写
+                    # tc.name/adapter_target，前端工具卡、熔断计数、dispatch 和下一轮
+                    # canonical 历史回放全部看到干净名；dispatch 层另有同款兜底，覆盖
+                    # use_skill 委托等不经本循环的入口。
+                    if (
+                        effective_tool_name != "invalid_tool_call"
+                        and registry.get(effective_tool_name) is None
+                    ):
+                        from agent.tools.base import salvage_tool_name
+                        salvaged = salvage_tool_name(effective_tool_name)
+                        if salvaged is not None and registry.get(salvaged) is not None:
+                            _log.info("[core] 工具名污染兜底：%r → %r", effective_tool_name, salvaged)
+                            if adapter_target is not None:
+                                adapter_target = salvaged
+                            else:
+                                tc.name = salvaged
+                            effective_tool_name = salvaged
                     label = self._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label

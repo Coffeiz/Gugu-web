@@ -929,3 +929,40 @@ async def test_non_repeat_safe_call_resets_breaker_count(monkeypatch, dispatched
 
     assert dispatched == ["canvas_get"] * 3 + ["ask_user"] + ["canvas_get"], \
         "ask_user 重置连续计数，后续相同查询不被熔断"
+
+
+async def test_polluted_tool_name_salvaged_before_dispatch_and_events(monkeypatch):
+    """工具名被 XML 片段污染时（MiniMax 偶发），在循环名字定稿处全局抢救：
+    dispatch 收到、tool_call/tool_done 事件展示、写入下一轮 canonical 历史的
+    都是干净名，而不是把 XML 垃圾透传给用户和模型。"""
+    polluted = 'create_file"><target><space>personal</space></target>'
+    patch_anthropic(monkeypatch, [
+        msg([TU(polluted, "1", {"content": "x"})]),
+        msg([TX("文件已创建")]),
+    ])
+    _tool = SimpleNamespace(repeat_safe=False)
+    monkeypatch.setattr(registry, "get", lambda name: _tool if name == "create_file" else None)
+
+    calls: list[str] = []
+
+    async def fake_dispatch(uid, name, inp):
+        calls.append(name)
+        return (json.dumps({"ok": True}), None)
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    monkeypatch.setattr(registry, "anthropic_schemas", lambda names: [])
+    monkeypatch.setattr(registry, "openai_schemas", lambda names: [])
+    monkeypatch.setattr(registry, "labels", lambda: {})
+
+    events = []
+    async for chunk in make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "建文件"}], AI):
+        try:
+            d = json.loads(chunk[len("data: "):])
+        except Exception:
+            continue
+        if d.get("type") in ("tool_call", "tool_done"):
+            events.append((d["type"], d.get("name")))
+
+    assert calls == ["create_file"], f"dispatch 应收到干净名：{calls}"
+    assert events and all(name == "create_file" for _t, name in events), \
+        f"前端事件不应看到污染名：{events}"

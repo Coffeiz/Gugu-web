@@ -193,6 +193,27 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
     except Exception:
         pass
 
+
+def salvage_tool_name(name: Any) -> str | None:
+    """从被污染的工具名里抢救前缀，返回 None 表示放弃。
+
+    模型偶发把 JSON 参数写成 XML 片段直接拼进 name（如
+    ``create_file"><target><space>…``）。只按第一个协议字符截断，不做模糊
+    匹配；调用方必须自行用注册表/snapshot 验证候选名后才能采纳。
+    主循环（core.py 工具轮）在名字定稿处全局抢救一次，dispatch 保留同款
+    兜底覆盖 call_tool 等其他入口。
+    """
+    if not isinstance(name, str):
+        return None
+    cut = len(name)
+    for ch in ("<", ">", '"', "\n", "\\", "`"):
+        idx = name.find(ch)
+        if idx != -1:
+            cut = min(cut, idx)
+    candidate = name[:cut].strip()
+    return candidate if candidate and candidate != name else None
+
+
 async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     """IM 慢工具进度声明（见 docs/agent/proposals/IM慢工具进度声明-设计.md）：工具即将真正执行
     时，若登记了 start_message 就发一条声明给用户，让 IM 非流式的长时间沉默有个"人在动手"的信号。
@@ -478,24 +499,6 @@ class SkillRegistry:
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         t0 = time.monotonic()
-
-        def _salvage_tool_name(raw: str) -> str | None:
-            """从被污染的工具名里抢救前缀，返回 None 表示放弃。
-
-            模型偶发把 JSON 参数写成 XML 片段直接拼进 name（如
-            ``create_file"><target><space>…``）。只接受按第一个协议字符截断后
-            能精确命中注册表的结果，不做模糊匹配，避免吞掉真正的未知工具错误。
-            """
-            if not isinstance(raw, str):
-                return None
-            cut = len(raw)
-            for ch in ("<", ">", '"', "\\", "\n", "`"):
-                idx = raw.find(ch)
-                if idx != -1:
-                    cut = min(cut, idx)
-            candidate = raw[:cut].strip()
-            return candidate if candidate and candidate != raw else None
-
         from agent.im import imctx
         from agent.im.permissions import can_use_tool
         current_im = imctx.get_im()
@@ -511,7 +514,7 @@ class SkillRegistry:
 
         resolved_tool = _resolve_tool(name)
         if resolved_tool is None:
-            salvaged = _salvage_tool_name(name)
+            salvaged = salvage_tool_name(name)
             if salvaged is not None and _resolve_tool(salvaged) is not None:
                 _log.info("工具名污染兜底：%r → %r", name, salvaged)
                 name, resolved_tool = salvaged, _resolve_tool(salvaged)
