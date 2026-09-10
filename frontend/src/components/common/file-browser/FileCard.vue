@@ -159,7 +159,7 @@ const props = defineProps({
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-/* 展示态继续截断长文件名；只有进入重命名时临时放开裁切，让 input focus glow 完整溢出。 */
+/* 输入框宽度限制在名称栏内，但名称行允许 focus glow 绘制；卡片根节点仍负责最终裁切。 */
 .fc-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
 .fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
 

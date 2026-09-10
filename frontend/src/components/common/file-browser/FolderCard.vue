@@ -102,13 +102,13 @@ defineProps({
   mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
 }
-.fd-label { padding: 0 13px 13px; }
+.fd-label { padding: 0 13px 13px; min-width: 0; }
 .fd-name {
   font-size: 11.5px; font-weight: 600; color: var(--content-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-/* 展示态继续截断长文件夹名；重命名时放开裁切，让共享 input focus glow 不被名称行吃掉。 */
+/* 输入框宽度限制在名称栏内，但名称行允许 focus glow 绘制；卡片根节点仍负责最终裁切。 */
 .fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
 .fd-count { font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
 .fd-hover-actions {

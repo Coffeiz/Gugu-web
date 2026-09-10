@@ -1,7 +1,7 @@
 """思维画布 Agent/API 共用的主要写入边界。"""
 import json
 
-from sqlalchemy import and_, delete, false, func, or_, select, update
+from sqlalchemy import and_, false, func, or_, select, update
 
 from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation, validate_note_color
 from app.core.mind_canvas import get_or_create_reference_node, soft_delete_canvas_note
@@ -117,12 +117,21 @@ async def update_canvas(db, user_id, canvas_id, fields, *, commit=False):
 
 
 async def delete_canvas(db, user_id, canvas_id, *, commit=False):
-    """删除画布视图及画布记录，不删除全局节点/关系。"""
+    """软删画布及其视图/关系；全局节点正文保留，供撤销恢复。"""
     canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return False
-    await db.execute(delete(MindCanvasItem).where(MindCanvasItem.canvas_id == canvas_id))
-    await db.delete(canvas)
+    stamp = now_utc()
+    await db.execute(update(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+    ).values(deleted_at=stamp, updated_at=stamp))
+    await db.execute(update(MindRelation).where(
+        MindRelation.canvas_id == canvas_id,
+        MindRelation.user_id == user_id,
+        MindRelation.deleted_at.is_(None),
+    ).values(deleted_at=stamp, updated_at=stamp))
+    canvas.deleted_at = stamp
     if commit:
         await db.commit()
     else:
@@ -166,6 +175,16 @@ async def add_canvas_item(
         MindCanvasItem.user_id == user_id,
     ))
     if existing is not None:
+        if existing.deleted_at is not None:
+            existing.x, existing.y = x, y
+            existing.w, existing.h = w, h
+            existing.z, existing.collapsed = z, collapsed
+            existing.data_json = data_json or "{}"
+            existing.deleted_at = None
+            existing.updated_at = now_utc()
+            await db.flush()
+            await db.refresh(existing)
+            return existing, True
         await db.refresh(node)
         return existing, False
     item = MindCanvasItem(
@@ -187,6 +206,7 @@ async def get_canvas_item(db, user_id, canvas_id, item_id):
         MindCanvasItem.id == item_id,
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
+        MindCanvasItem.deleted_at.is_(None),
     ))
 
 
@@ -195,6 +215,7 @@ async def get_canvas_item_by_node(db, user_id, canvas_id, node_id):
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.node_id == node_id,
         MindCanvasItem.user_id == user_id,
+        MindCanvasItem.deleted_at.is_(None),
     ))
 
 
@@ -225,7 +246,7 @@ async def get_canvas_node(db, user_id, node_id, *, kind=None, deleted=None):
 
 async def get_canvas_relation(db, user_id, relation_id, canvas_id=None):
     relation = await get_owned(db, MindRelation, relation_id, user_id)
-    if relation is None or (canvas_id is not None and relation.canvas_id != canvas_id):
+    if relation is None or relation.deleted_at is not None or (canvas_id is not None and relation.canvas_id != canvas_id):
         return None
     return relation
 
@@ -260,7 +281,8 @@ async def remove_canvas_item(db, user_id, canvas_id, item_id, *, commit=False):
     canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is not None and relation_ids:
         _set_detached_relation_ids(canvas, _detached_relation_ids(canvas) | set(relation_ids))
-    await db.delete(item)
+    item.deleted_at = now_utc()
+    item.updated_at = now_utc()
     if commit:
         await db.commit()
     else:
@@ -293,6 +315,7 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
         MindCanvasItem.node_id.in_((source_id, target_id)),
+        MindCanvasItem.deleted_at.is_(None),
     ))).scalars().all()
     if {item.node_id for item in items} != {source_id, target_id}:
         return None, "两个节点都必须已经放在同一张画布上"
@@ -330,6 +353,7 @@ async def create_relation(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
         MindCanvasItem.node_id.in_((source_id, target_id)),
+        MindCanvasItem.deleted_at.is_(None),
     ))).scalars().all())
     if canvas_node_ids != {source_id, target_id}:
         return None, "两个节点都必须已经放在同一张画布上"
@@ -380,7 +404,8 @@ async def disconnect_node_relation(db, user_id, relation_id, *, canvas_id=None, 
     relation = await db.scalar(select(MindRelation).where(*conditions))
     if relation is None:
         return None
-    await db.delete(relation)
+    relation.deleted_at = now_utc()
+    relation.updated_at = now_utc()
     if commit:
         await db.commit()
     else:
@@ -393,7 +418,9 @@ async def get_or_create_reference(db, user_id, ref_type, ref_id):
 
 
 async def get_owned_canvas(db, user_id, canvas_id):
-    return await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))
+    return await db.scalar(select(MindMap).where(
+        MindMap.id == canvas_id, MindMap.user_id == user_id, MindMap.deleted_at.is_(None),
+    ))
 
 
 async def get_canvas_near_item(db, user_id, canvas_id, node_id):
@@ -401,6 +428,7 @@ async def get_canvas_near_item(db, user_id, canvas_id, node_id):
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
         MindCanvasItem.node_id == node_id,
+        MindCanvasItem.deleted_at.is_(None),
     ))
 
 
@@ -408,6 +436,7 @@ async def get_canvas_last_item(db, user_id, canvas_id):
     return (await db.execute(select(MindCanvasItem).where(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
+        MindCanvasItem.deleted_at.is_(None),
     ).order_by(MindCanvasItem.x.desc(), MindCanvasItem.id.desc()).limit(1))).scalars().first()
 
 
@@ -426,8 +455,8 @@ async def get_canvas_note(db, user_id, node_id):
 
 
 async def list_canvases(db, user_id, *, project_id=None, limit=20, offset=0):
-    stmt = select(MindMap).where(MindMap.user_id == user_id)
-    count_stmt = select(func.count()).select_from(MindMap).where(MindMap.user_id == user_id)
+    stmt = select(MindMap).where(MindMap.user_id == user_id, MindMap.deleted_at.is_(None))
+    count_stmt = select(func.count()).select_from(MindMap).where(MindMap.user_id == user_id, MindMap.deleted_at.is_(None))
     if isinstance(project_id, int):
         stmt = stmt.where(MindMap.project_id == project_id)
         count_stmt = count_stmt.where(MindMap.project_id == project_id)
@@ -439,7 +468,7 @@ async def list_canvases(db, user_id, *, project_id=None, limit=20, offset=0):
     if rows:
         count_rows = await db.execute(
             select(MindCanvasItem.canvas_id, func.count(MindCanvasItem.id))
-            .where(MindCanvasItem.user_id == user_id, MindCanvasItem.canvas_id.in_([row.id for row in rows]))
+            .where(MindCanvasItem.user_id == user_id, MindCanvasItem.canvas_id.in_([row.id for row in rows]), MindCanvasItem.deleted_at.is_(None))
             .group_by(MindCanvasItem.canvas_id)
         )
         counts = dict(count_rows.all())
@@ -453,6 +482,7 @@ async def count_canvas_nodes(db, user_id, canvas_id):
         .where(
             MindCanvasItem.canvas_id == canvas_id,
             MindCanvasItem.user_id == user_id,
+            MindCanvasItem.deleted_at.is_(None),
             MindNode.user_id == user_id,
             MindNode.kind.in_(("canvas_note", "ref")),
             MindNode.deleted_at.is_(None),
@@ -467,6 +497,7 @@ async def list_canvas_nodes(db, user_id, canvas_id, *, limit, offset=0):
         .where(
             MindCanvasItem.canvas_id == canvas_id,
             MindCanvasItem.user_id == user_id,
+            MindCanvasItem.deleted_at.is_(None),
             MindNode.user_id == user_id,
             MindNode.kind.in_(("canvas_note", "ref")),
             MindNode.deleted_at.is_(None),
@@ -485,6 +516,7 @@ async def list_canvas_relations(db, user_id, node_ids):
             MindRelation.user_id == user_id,
             MindRelation.src_node_id.in_(node_ids),
             MindRelation.dst_node_id.in_(node_ids),
+            MindRelation.deleted_at.is_(None),
         ).order_by(MindRelation.id)
     )).scalars().all()
 
@@ -502,6 +534,7 @@ async def list_canvas_relations_for_canvas(db, user_id, canvas_id):
         MindRelation.canvas_id == canvas_id,
         MindRelation.src_node_id.in_(canvas_node_ids),
         MindRelation.dst_node_id.in_(canvas_node_ids),
+        MindRelation.deleted_at.is_(None),
     )
     if detached_ids:
         query = query.where(MindRelation.id.not_in(detached_ids))
@@ -561,6 +594,7 @@ async def search_placeable_entities(db, user_id, selected, normalized, mode, lim
     if "project" in selected:
         rows = (await db.execute(select(Project).where(
             Project.user_id == user_id,
+            Project.deleted_at.is_(None),
             keyword_condition([Project.name, Project.client], normalized, mode),
         ).order_by(Project.updated_at.desc()).limit(limit))).scalars().all()
         matches.extend(("project", row) for row in rows)
@@ -574,6 +608,7 @@ async def search_placeable_entities(db, user_id, selected, normalized, mode, lim
     if "event" in selected and len(matches) < limit:
         rows = (await db.execute(select(CalendarEvent).where(
             CalendarEvent.user_id == user_id,
+            CalendarEvent.deleted_at.is_(None),
             keyword_condition([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client], normalized, mode),
         ).order_by(CalendarEvent.created_at.desc()).limit(limit))).scalars().all()
         matches.extend(("event", row) for row in rows)

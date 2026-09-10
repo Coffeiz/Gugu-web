@@ -29,6 +29,10 @@ from app.services.scheduled_tasks import (
     update_task,
     normalize_script_authorization,
 )
+from app.services.email.attachments import (
+    EmailAttachmentError,
+    validate_email_attachment_file_ids,
+)
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -122,6 +126,7 @@ def _to_dict(t: Any) -> dict:
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
         "delivery_targets": t.delivery_targets,
         "authorized_tools": t.authorized_tools or [],
+        "email_attachment_file_ids": getattr(t, "email_attachment_file_ids", None) or [],
         "workspace_id": getattr(t, "workspace_id", None) if workspace_shell_supported() else None,
         "filesystem_authorized": filesystem_authorization_enabled() and getattr(t, "filesystem_authorization_grant_id", None) is not None,
     }
@@ -272,6 +277,12 @@ async def _create_scheduled_task(db, user_id, args: dict):
     )
     if target_error:
         return target_error
+    try:
+        email_attachment_file_ids = await validate_email_attachment_file_ids(
+            db, user_id, args.get("email_attachment_file_ids"),
+        )
+    except EmailAttachmentError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
     t = await create_task(
         db, user_id, name=name,
         payload=(args.get("instruction") or "").strip(),
@@ -286,6 +297,7 @@ async def _create_scheduled_task(db, user_id, args: dict):
         authorized_tools=_authorized_tools(args.get("authorized_tools")),
         script_authorization=script_authorization,
         workspace_id=workspace_id,
+        email_attachment_file_ids=email_attachment_file_ids,
     )
     if args.get("filesystem_authorized") is True and args.get("enabled", True) is not False:
         from app.services.filesystem_authorization import grant_scheduled_task_filesystem_access
@@ -307,6 +319,7 @@ async def _update_scheduled_task(db, user_id, args: dict):
         "name", "instruction", "channels", "enabled", "delivery_mode", "authorized_tools",
         "workspace_id", "filesystem_authorized",
         "script_authorization",
+        "email_attachment_file_ids",
     }
     if not any(fld in args for fld in editable_fields):
         return json.dumps({"error": "没提供要修改的字段（调度、名称、指令、渠道、启停、工作区或完整沙箱授权），未改动。"}, ensure_ascii=False)
@@ -373,6 +386,13 @@ async def _update_scheduled_task(db, user_id, args: dict):
         fields["authorized_tools"] = _authorized_tools(args["authorized_tools"])
     elif any(field in args for field in ("instruction", "schedule_kind", "cron", "interval_minutes", "start_at", "end_at", "channels", "delivery_mode")):
         fields["authorized_tools"] = []
+    if "email_attachment_file_ids" in args:
+        try:
+            fields["email_attachment_file_ids"] = await validate_email_attachment_file_ids(
+                db, user_id, args["email_attachment_file_ids"],
+            )
+        except EmailAttachmentError as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
     if "workspace_id" in args:
         fields["workspace_id"] = workspace_id
     if "script_authorization" in args:
@@ -450,7 +470,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="create_scheduled_task", label="新建定时任务",
             description_short='创建定时任务；支持邮件、站内通知和 QQ 私聊或群聊投递。',
-            description="创建独立定时任务并按渠道投递。schedule_kind=once 时只传 start_at，在指定时间执行一次，成功投递后自动移除；schedule_kind=cron 时传合法 cron（Asia/Shanghai）；schedule_kind=interval 时只传 interval_minutes（1-60），间隔从 start_at 锚定，不按整点重新对齐。cron/interval 的 start_at/end_at 可分别省略，也可传 ISO 日期时间；end_at 含边界，任务到期后自动停用。可选 workspace_id 绑定用户自己的工作区；绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true 会单独请求确认，确认后任务才可读写 /personal 和 /project；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]，否则到点调用邮件工具仍需确认。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。工具成功回执中的 task_id、schedule_status 才是事实来源。",
+            description="创建独立定时任务并按渠道投递。schedule_kind=once 时只传 start_at，在指定时间执行一次，成功投递后自动移除；schedule_kind=cron 时传合法 cron（Asia/Shanghai）；schedule_kind=interval 时只传 interval_minutes（1-60），间隔从 start_at 锚定，不按整点重新对齐。cron/interval 的 start_at/end_at 可分别省略，也可传 ISO 日期时间；end_at 含边界，任务到期后自动停用。email_attachment_file_ids 可配置当前用户文件库中的附件（最多 5 个，单个不超过 10MB，总计不超过 25MB），只在 email 渠道发送，不要传路径。任务本轮调用 send_file 生成的文件也会自动附到 email。可选 workspace_id 绑定用户自己的工作区；绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true 会单独请求确认，确认后任务才可读写 /personal 和 /project；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]，否则到点调用邮件工具仍需确认。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。工具成功回执中的 task_id、schedule_status 才是事实来源。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -466,6 +486,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
                     "authorized_tools": {"type": "array", "items": {"type": "string", "enum": ["send_email"]}, "uniqueItems": True},
+                    "email_attachment_file_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 5, "uniqueItems": True},
                     "workspace_id": {"type": ["integer", "null"]},
                     "filesystem_authorized": {"type": "boolean"},
                     "script_authorization": {"type": ["object", "null"], "properties": {
@@ -482,7 +503,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="update_scheduled_task", label="更新定时任务",
             description_short='修改定时任务；可调整执行计划和 QQ 投递范围。',
-            description="修改定时任务内容、投递渠道、启停、调度窗口或 workspace；按 task_id 或 task 定位。修改调度类型时必须同时提供新类型所需字段。schedule_kind=once 时提供 start_at 并清除 end_at；schedule_kind=cron 时提供 cron；schedule_kind=interval 时提供 interval_minutes（1-60），间隔从 start_at 锚定。start_at/end_at 省略表示不修改，显式传 null 表示清除；workspace_id 显式传 null 会解除绑定，绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true/false 仅用于显式申请或撤销完整用户沙箱授权，true 必须经过确认；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]。",
+            description="修改定时任务内容、投递渠道、启停、调度窗口、workspace 或邮件附件；按 task_id 或 task 定位。email_attachment_file_ids 只接受当前用户文件库的 file_id 数组，最多 5 个，显式传空数组可清除。任务本轮调用 send_file 生成的文件仍会自动附到 email。修改调度类型时必须同时提供新类型所需字段。schedule_kind=once 时提供 start_at 并清除 end_at；schedule_kind=cron 时提供 cron；schedule_kind=interval 时提供 interval_minutes（1-60），间隔从 start_at 锚定。start_at/end_at 省略表示不修改，显式传 null 表示清除；workspace_id 显式传 null 会解除绑定，绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true/false 仅用于显式申请或撤销完整用户沙箱授权，true 必须经过确认；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -500,6 +521,7 @@ class ScheduledTasksSkill(BaseSkill):
                     "enabled":     {"type": "boolean"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
                     "authorized_tools": {"type": "array", "items": {"type": "string", "enum": ["send_email"]}, "uniqueItems": True},
+                    "email_attachment_file_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 5, "uniqueItems": True},
                     "workspace_id": {"type": ["integer", "null"]},
                     "filesystem_authorized": {"type": "boolean"},
                     "script_authorization": {"type": ["object", "null"], "properties": {

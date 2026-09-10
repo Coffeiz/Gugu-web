@@ -15,6 +15,11 @@ if [ "${GUGU_SINGLE_CONTAINER:-0}" = "1" ]; then
     if [ -z "${ADMIN_PASSWORD:-}" ]; then
         unset ADMIN_PASSWORD
     fi
+    # 镜像/Compose 会声明 SECRET_KEY="" 供面板识别变量；空环境变量会覆盖
+    # compose_bootstrap 写入的持久化值，因此交给 /app/.env 或 /data/.env 生效。
+    if [ -z "${SECRET_KEY:-}" ]; then
+        unset SECRET_KEY
+    fi
     python compose_bootstrap.py
 fi
 

@@ -72,8 +72,6 @@ async def finalize_run(
     cache_read: int = 0,
     cache_write: int = 0,
     tools_used: list[str] | None = None,
-    context_tokens: int | None = None,
-    actual_usage_tokens: int = 0,
     compaction_applied: bool = False,
     session_exists_required: bool = False,
     stance_text: str | None = None,
@@ -81,7 +79,7 @@ async def finalize_run(
     run_id: str | None = None,
     canonical_batches: list[dict] | tuple[dict, ...] | None = None,
 ) -> FinalizeResult:
-    """用一个契约完成 canonical turn、展示时间线、trim 与 baseline 调度。
+    """用一个契约完成 canonical turn、展示时间线、trim 与压缩边界持久化。
 
     Web/IM 只负责渠道事件和输出清洗；canonical history 与展示时间线分开保存，
     消息结构、配额封顶及 baseline 入口在这里保持一致。
@@ -99,12 +97,20 @@ async def finalize_run(
             session_alive = await db.get(ConversationSession, session_id) is not None
         if session_alive:
             stance_persisted = False
+            user_message = (
+                await db.get(ConversationMessage, user_message_id)
+                if user_message_id else None
+            )
+            rag_blocks = [
+                block for block in (rag_context or {}).get("blocks", [])
+                if isinstance(block, dict)
+            ]
             if stance_text and user_message_id:
-                user_message = await db.get(ConversationMessage, user_message_id)
                 if user_message is not None:
                     # 当前用户消息已在生成前写入；把姿态事件排在它之前，保持
                     # provider 首轮的「姿态 → 用户消息」顺序。每次变化都追加，
                     # 不按正文去重；下一轮从 canonical history 稳定恢复。
+                    stance_offset = len(rag_blocks) + 1
                     db.add(ConversationMessage(
                         session_id=session_id,
                         role="user",
@@ -114,7 +120,7 @@ async def finalize_run(
                             "digest": assembly.stance_digest(stance_text),
                             "text": f"[system-reminder]\n{stance_text}\n[/system-reminder]",
                         }],
-                        created_at=user_message.created_at - timedelta(microseconds=1),
+                        created_at=user_message.created_at - timedelta(microseconds=stance_offset),
                     ))
                     stance_persisted = True
             if stance_persisted:
@@ -123,8 +129,21 @@ async def finalize_run(
                     context = dict(session_row.session_context or {})
                     context["stance_digest"] = assembly.stance_digest(stance_text)
                     session_row.session_context = context
-            for block in (rag_context or {}).get("blocks", []):
-                db.add(ConversationMessage(session_id=session_id, role="user", content="", content_json=[block]))
+            # 当前用户行在生成前已经落库。RAG 需要在 provider 首轮和下一轮 history
+            # 中都出现在它前面；因此用用户行的时间作为锚点，不能让数据库默认的
+            # now_utc() 把 RAG 排到用户消息后面。多个块按原顺序占用连续微秒。
+            for index, block in enumerate(rag_blocks):
+                values = {
+                    "session_id": session_id,
+                    "role": "user",
+                    "content": "",
+                    "content_json": [block],
+                }
+                if user_message is not None:
+                    values["created_at"] = user_message.created_at - timedelta(
+                        microseconds=len(rag_blocks) - index,
+                    )
+                db.add(ConversationMessage(**values))
             if canonical_batches is None:
                 # 旧调用方/旧 worker 的过渡路径。新 runner 必须传入已封存的
                 # canonical batch，不能在这里从 provider wire 二次推导。
@@ -204,17 +223,12 @@ async def finalize_run(
         await db.commit()
 
     await trim_session_messages(session_id)
-    compress_conv.schedule_baseline_update(
-        session_id,
-        user_id,
-        settings,
-        int(context_tokens or getattr(model_cfg, "context_tokens", settings.ai.context_tokens)),
-        actual_usage_tokens=int(actual_usage_tokens or 0),
-        compaction_applied=bool(compaction_applied),
-    )
-    # baseline 只允许由 provider 实际上下文达到 90% 的路径推进。
-    # 这里不能在每个 run 收尾后按固定字符窗口再次压缩，否则下一次 run
-    # 会丢失上一 run 的完整前缀，也会绕过 ContextBudget 的真实 usage 判断。
+    # 只有当前 run 已经在 provider round 边界执行过 >=90% 压缩，才同步推进
+    # 持久 baseline。这里不再独立判断 token，也不再创建结束后的后台压缩任务。
+    if compaction_applied:
+        await compress_conv.compress_if_needed(
+            session_id, user_id, settings, force=False,
+        )
     return FinalizeResult(
         tokens_in=usage_result.tokens_in,
         tokens_out=usage_result.tokens_out,

@@ -534,8 +534,17 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         await _ack_qq_interaction(channel_id, interaction_id, code=3)
         # 交互回调的 event_id 不是 QQ 消息 msg_id，不能用于消息回复，否则会触发
         # 40034024（msg_id 无效或越权）。交互状态已经由上面的协议 ACK 确认，
-        # 这里发送独立的 C2C 提示，不绑定原消息。
-        await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", None)
+        # 这里发送独立的提示；如果按钮来自群聊，必须回到原群，不能误发到私聊。
+        error_chat_type = str(event.get("chat_type") or "c2c")
+        error_target_id = (
+            event.get("chat_id")
+            if error_chat_type == "group" and event.get("chat_id")
+            else event["platform_user_id"]
+        )
+        await _qq_ack(
+            channel_id, error_chat_type, error_target_id,
+            "这个操作已过期或已经处理过了。", None,
+        )
         return
     except Exception as exc:
         await _ack_qq_interaction(channel_id, interaction_id, code=1)
@@ -559,7 +568,7 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         chat_type,
         target_id,
         (
-            "已确认，继续处理。" if option_id == "confirm"
+            "已确认，任务继续执行。" if option_id == "confirm"
             else "已取消。" if option_id == "cancel"
             else f"已选择：{selected_text}，继续处理。"
         ),
@@ -996,6 +1005,17 @@ def _qq_msg_id_invalid(exc: Exception) -> bool:
     )
 
 
+def _qq_passive_reply_limited(exc: Exception) -> bool:
+    """QQ 被动回复时间或次数耗尽时，允许降级为主动消息。"""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        if body.get("code") == 40034128 or body.get("err_code") == 40034128:
+            return True
+        return "被动回复时间或者次数超过限制" in str(body.get("message") or "")
+    text = str(body) if body is not None else str(exc)
+    return "40034128" in text or "被动回复时间或者次数超过限制" in text
+
+
 def _format_group_mention(text: str, user_id: str | None) -> str:
     """把模型输出的当前群成员 ``@平台ID`` 转成 QQ 最新 mention 格式。
 
@@ -1201,8 +1221,8 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and _qq_msg_id_invalid(e):
-                _log.warning("[qq] C2C 被动回复 msg_id 已失效，降级为主动消息")
+            if msg_id and (_qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)):
+                _log.warning("[qq] C2C 被动回复受限，降级为主动消息")
                 try:
                     if message_format is None:
                         await _post(channel_id, openid, text, None)
@@ -1265,8 +1285,8 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "transient": _qq_is_transient(e),
                 "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
-            if msg_id and _qq_msg_id_invalid(e):
-                _log.warning("[qq] 群聊被动回复 msg_id 已失效，降级为主动消息")
+            if msg_id and (_qq_msg_id_invalid(e) or _qq_passive_reply_limited(e)):
+                _log.warning("[qq] 群聊被动回复受限，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
                         await _post_group(channel_id, group_openid, mention_text, None, "markdown")
@@ -1332,10 +1352,28 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
                 return False
             # 2) 发媒体消息（被动回复带 msg_id；文件用 content 让 QQ 显示文件名）
             msg_body = {"msg_type": 7, "media": {"file_info": file_info},
-                       "msg_id": msg_id, "msg_seq": await _next_seq(msg_id)}
+                       "msg_seq": await _next_seq(msg_id)}
+            if msg_id:
+                msg_body["msg_id"] = msg_id
             if not is_img:
                 msg_body["content"] = fname
-            await _qq_request(channel_id, "POST", f"/v2/{target}/{openid}/messages", json_body=msg_body)
+            message_path = f"/v2/{target}/{openid}/messages"
+            try:
+                await _qq_request(channel_id, "POST", message_path, json_body=msg_body)
+            except Exception as message_error:
+                # 群文件经常在模型生成期间跨过 QQ 的被动回复窗口；上传已经成功，
+                # 只去掉过期的 msg_id 重发同一个 file_info，避免重复上传和丢失附件。
+                if not (
+                    group
+                    and msg_id
+                    and (_qq_msg_id_invalid(message_error) or _qq_passive_reply_limited(message_error))
+                ):
+                    raise
+                _log.warning("[qq] 群文件被动回复受限，降级为主动消息")
+                active_body = dict(msg_body)
+                active_body.pop("msg_id", None)
+                active_body["msg_seq"] = await _next_seq(None)
+                await _qq_request(channel_id, "POST", message_path, json_body=active_body)
             return True
         except Exception as e:
             diag_log("agent.gateway.qq.send_file", e)

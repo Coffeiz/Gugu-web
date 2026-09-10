@@ -213,44 +213,6 @@
             <ToggleSwitch :model-value="agentDraft.im_progress_announce_enabled" :aria-label="t('adminRuntimeUi.toggleProgress')" @update:model-value="agentDraft.im_progress_announce_enabled = $event; saveBehavior()" />
           </div>
 
-          <div v-if="false" class="behavior-item">
-            <div class="behavior-label">
-              <span>Reflection 触发阈值</span>
-              <span class="behavior-desc">每隔多少条消息触发一次记忆整理</span>
-            </div>
-            <input
-              type="number"
-              class="behavior-input"
-              v-model.number="agentDraft.reflection_threshold"
-              min="1" max="100"
-            />
-          </div>
-
-          <div v-if="false" class="behavior-item">
-            <div class="behavior-label">
-              <span>Daily 记忆保留天数</span>
-              <span class="behavior-desc">超出后压缩进 Weekly</span>
-            </div>
-            <input
-              type="number"
-              class="behavior-input"
-              v-model.number="agentDraft.daily_retention_days"
-              min="1" max="90"
-            />
-          </div>
-
-          <div v-if="false" class="behavior-item">
-            <div class="behavior-label">
-              <span>Weekly 记忆保留周数</span>
-              <span class="behavior-desc">超出后提炼进 memory.md（长期记忆）</span>
-            </div>
-            <input
-              type="number"
-              class="behavior-input"
-              v-model.number="agentDraft.weekly_retention_weeks"
-              min="1" max="52"
-            />
-          </div>
         </div>
 
         <div class="card-actions">

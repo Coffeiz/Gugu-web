@@ -14,7 +14,8 @@ _REMINDER_CHANNELS = {"web", "feishu", "qq", "wechat"}
 
 
 async def create_event(db, user_id, *, title, date, time, end_time, event_type, project_id):
-    if project_id is not None and not await get_owned(db, Project, project_id, user_id):
+    project = await get_owned(db, Project, project_id, user_id) if project_id is not None else None
+    if project_id is not None and (project is None or project.deleted_at is not None):
         return None
     event = CalendarEvent(
         user_id=user_id,
@@ -31,7 +32,7 @@ async def create_event(db, user_id, *, title, date, time, end_time, event_type, 
 
 
 async def list_events_with_reminders(db, user_id, *, start=None, end=None, event_type=None, limit=50):
-    stmt = select(CalendarEvent).where(CalendarEvent.user_id == user_id)
+    stmt = select(CalendarEvent).where(CalendarEvent.user_id == user_id, CalendarEvent.deleted_at.is_(None))
     if start:
         stmt = stmt.where(CalendarEvent.date >= start)
     if end:
@@ -56,17 +57,20 @@ async def list_events_with_reminders(db, user_id, *, start=None, end=None, event
 
 
 async def get_event(db, user_id, event_id):
-    return await get_owned(db, CalendarEvent, event_id, user_id)
+    event = await get_owned(db, CalendarEvent, event_id, user_id)
+    return event if event and event.deleted_at is None else None
 
 
 async def get_project(db, user_id, project_id):
-    return await get_owned(db, Project, project_id, user_id)
+    project = await get_owned(db, Project, project_id, user_id)
+    return project if project and project.deleted_at is None else None
 
 
 async def find_events_by_title(db, user_id, title: str):
     rows = (await db.execute(
         select(CalendarEvent).where(
             CalendarEvent.user_id == user_id,
+            CalendarEvent.deleted_at.is_(None),
             CalendarEvent.title == title,
         )
     )).scalars().all()
@@ -74,6 +78,7 @@ async def find_events_by_title(db, user_id, title: str):
         rows = (await db.execute(
             select(CalendarEvent).where(
                 CalendarEvent.user_id == user_id,
+                CalendarEvent.deleted_at.is_(None),
                 CalendarEvent.title.ilike(f"%{title}%"),
             )
         )).scalars().all()

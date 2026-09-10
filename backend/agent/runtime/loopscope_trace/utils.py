@@ -164,7 +164,22 @@ def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[
     URL、图片或用户正文。诊断失败时返回空值，不影响模型请求。
     """
     try:
-        conversation = getattr(messages, "conversation", messages)
+        # 诊断必须和 driver 实际发送的 provider projection 使用同一份输入。
+        # 直接对 PromptMessages 的 canonical block 算 digest，会把 stance-context
+        # 和已渲染的 text、以及 provider 响应里的 null 元数据误判成前缀变化。
+        from agent.context.canonical_tool_history import render_events_for_provider
+        raw_conversation = getattr(messages, "conversation", messages)
+        # 兼容只在测试/旧调用方上提供 class-level conversation 的轻量容器；
+        # 真实 PromptMessages 仍要整体投影，以保留 dynamic tail 和 cache 元数据。
+        projection_source = (
+            raw_conversation
+            if isinstance(raw_conversation, list)
+            and not hasattr(messages, "fixed_prefix_size")
+            and raw_conversation is not messages
+            else messages
+        )
+        projected = render_events_for_provider(projection_source)
+        conversation = getattr(projected, "conversation", projected)
         if not isinstance(conversation, list):
             conversation = []
         from agent.loop_drivers import _history_cache_state

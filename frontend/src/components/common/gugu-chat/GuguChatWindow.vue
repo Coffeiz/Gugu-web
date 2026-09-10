@@ -92,6 +92,7 @@
         :pending-att="pendingAtt" :att-uploading="attUploading"
         :recording="recording" :record-secs="recordSecs"
         :expanded="expanded" :streaming="streaming" :vw="vw"
+        :unlimited-mode="unlimitedMode" :on-toggle-unlimited="onToggleUnlimited"
         :on-remove-att="onRemoveAtt"
         :on-start-record="onStartRecord" :on-cancel-record="onCancelRecord" :on-stop-record="onStopRecord"
         :on-file-picked="onFilePicked" :on-paste="onPaste"
@@ -127,6 +128,8 @@ const props = defineProps<{
   expanded: boolean
   resizing: boolean
   streaming: boolean
+  unlimitedMode: boolean
+  onToggleUnlimited: () => void
   isChatDragging: boolean
   currentSessionTitle: string
   currentSessionWorkspaceName: string | null
@@ -224,13 +227,11 @@ defineExpose({
   z-index: 100;
 }
 
-/* 主区域负责背景 blur */
+/* 主区域使用静态主题面，不采样页面背后的内容；聊天窗口覆盖项目页时避免大面积重绘。 */
 .chat-main {
-  background: var(--panel-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  /* 不在这里创建独立合成层：命令菜单的 backdrop-filter 需要采样 chat-main 内的消息内容。
-     transform/合成层会把消息和菜单隔离，菜单只剩半透明底色而不会真正模糊。 */
+  background: var(--gugu-chat-main-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* 只有用户主动大/小窗切换才做几何缓动；普通 viewport resize 直接同步 layout。 */

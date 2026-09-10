@@ -51,6 +51,7 @@ const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sk
 }))
 const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
+const semanticCss = load('./tokens/semantic.css')
 const themeCss = [
   load('./tokens/themes/glass-light.css'),
   load('./tokens/themes/glass-dark.css'),
@@ -78,6 +79,7 @@ const paletteTokens = [
   '--theme-scrollbar-thumb-hover',
 ]
 const notificationBubbleVue = load('../../components/common/feedback/NotificationBubble.vue')
+const guguChatToolBubbleVue = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
 const newProjectModalVue = load('../../views/Projects/components/NewProjectModal.vue')
 const appSidebarVue = load('../../components/common/layout/AppSidebar.vue')
 const themeRefinementsCss = load('./theme-refinements.css')
@@ -137,6 +139,14 @@ describe('主题 CSS 回归契约', () => {
     expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='light']")
     expect(materialCompositionCss).toContain('var(--palette-surface)')
     expect(materialCompositionCss).toContain('var(--palette-page-start)')
+    expect(materialCompositionCss).toContain('--theme-sidebar: var(--theme-glass);')
+    expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='dark']:not([data-palette='mist'])")
+    expect(materialCompositionCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,color-mix(in srgb,var(--palette-surface) 60%,transparent));')
+    expect(materialCompositionCss).toContain('--theme-glass-hover: color-mix(in srgb,var(--palette-surface) 75%,transparent);')
+    expect(themeCss).toContain('--theme-sidebar: var(--theme-glass);')
+    expect(themeCss).toContain('--theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,rgba(255,255,255,.60));')
+    expect(themeCss).toContain('--theme-glass-hover: rgba(255,255,255,.75);')
+    expect(semanticCss).toContain('--surface-sidebar: var(--surface-glass);')
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
     expect(materialCompositionCss).toContain(":not([data-palette='cafe'])")
@@ -256,6 +266,8 @@ describe('主题 CSS 回归契约', () => {
 
   it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
     expect(guguChatVue).toContain('background: var(--gugu-chat-user-bg)')
+    expect(guguChatVue).toContain('border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight)')
+    expect(guguChatVue).not.toContain('var(--gugu-chat-user-shadow)')
     expect(guguChatVue).toContain('background: var(--gugu-chat-voice-bg)')
     expect(guguChatVue).not.toMatch(/background:\s*(?:linear-gradient|rgba?\(|#[0-9a-f]{3,8})/i)
 
@@ -496,6 +508,11 @@ describe('主题 CSS 回归契约', () => {
     expect(componentCss).toContain('--gb-highlight-side: transparent')
 
     const productCss = load('./tokens/product.css')
+    const topbarBlock = cssBlock(productCss, 'html[data-theme][data-family] .topbar')
+    expect(topbarBlock).toContain('--gb-highlight-strong: transparent')
+    expect(topbarBlock).toContain('--gb-highlight-side: transparent')
+    expect(topbarBlock).toContain('box-shadow: var(--glass-card-shadow)')
+    expect(cssBlock(productCss, 'html[data-theme][data-family] .topbar:hover')).toContain('box-shadow: var(--glass-card-shadow-hover)')
     const terminalBlock = cssBlock(productCss, 'html[data-theme][data-family] .terminal-main-head.glass-card')
     expect(terminalBlock).toContain('--glass-card-shadow: none')
     expect(terminalBlock).toContain('--glass-card-shadow-hover: none')
@@ -519,10 +536,15 @@ describe('主题 CSS 回归契约', () => {
     expect(darkChatBlock).toContain('box-shadow: none')
   })
 
+  it('工具气泡内部内容分割线使用内容分隔色，避免亮色主题变成纯白', () => {
+    expect(guguChatToolBubbleVue).toContain('border-top: 1px solid var(--panel-divider)')
+    expect(guguChatToolBubbleVue).not.toContain('border-top: 1px solid var(--border-default)')
+  })
+
   it('咕咕聊天窗口离场时保留玻璃材质，避免 blur 先于淡出消失', () => {
     const leaveBlock = guguChatVue.match(/\.chat-open-leave-active\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-    expect(leaveBlock).toContain('backdrop-filter: var(--glass-blur)')
-    expect(leaveBlock).toContain('-webkit-backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).not.toContain('backdrop-filter: var(--glass-blur)')
+    expect(leaveBlock).not.toContain('-webkit-backdrop-filter: var(--glass-blur)')
     expect(leaveBlock).toContain('transition: opacity')
   })
 })

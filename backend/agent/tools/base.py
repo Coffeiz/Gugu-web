@@ -193,6 +193,27 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
     except Exception:
         pass
 
+
+def salvage_tool_name(name: Any) -> str | None:
+    """从被污染的工具名里抢救前缀，返回 None 表示放弃。
+
+    模型偶发把 JSON 参数写成 XML 片段直接拼进 name（如
+    ``create_file"><target><space>…``）。只按第一个协议字符截断，不做模糊
+    匹配；调用方必须自行用注册表/snapshot 验证候选名后才能采纳。
+    主循环（core.py 工具轮）在名字定稿处全局抢救一次，dispatch 保留同款
+    兜底覆盖 call_tool 等其他入口。
+    """
+    if not isinstance(name, str):
+        return None
+    cut = len(name)
+    for ch in ("<", ">", '"', "\n", "\\", "`"):
+        idx = name.find(ch)
+        if idx != -1:
+            cut = min(cut, idx)
+    candidate = name[:cut].strip()
+    return candidate if candidate and candidate != name else None
+
+
 async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     """IM 慢工具进度声明（见 docs/agent/proposals/IM慢工具进度声明-设计.md）：工具即将真正执行
     时，若登记了 start_message 就发一条声明给用户，让 IM 非流式的长时间沉默有个"人在动手"的信号。
@@ -370,7 +391,7 @@ class ToolRegistrySnapshot:
         return [self._tools[name].to_openai() for name in names if name in self._tools]
 
     def tools_of(self, skill_names: list[str]) -> list[str]:
-        """按冻结的工具组展开 Profile，避免组成员在进程内漂移。"""
+        """按冻结的工具组展开，避免组成员在进程内漂移。"""
         out: list[str] = []
         seen: set[str] = set()
         for skill_name in skill_names:
@@ -382,6 +403,10 @@ class ToolRegistrySnapshot:
 
     def known_skill_names(self) -> set[str]:
         return set(self._skills)
+
+    def all_tool_names(self) -> list[str]:
+        """返回快照中的全部系统工具名，保持注册顺序。"""
+        return list(self._tools)
 
 
 class BaseSkill:
@@ -440,11 +465,11 @@ class SkillRegistry:
         self._tools[tool.name] = tool
 
     def add_skill(self, name: str, tool_names: list[str]) -> None:
-        """记录一个 skill 包含的工具（按声明顺序），供 profile 按 skill 组合。"""
+        """记录一个 skill 包含的工具（按声明顺序），供注册表查询。"""
         self._skills[name] = list(tool_names)
 
     def tools_of(self, skill_names: list[str]) -> list[str]:
-        """把若干 skill 展开为有序、去重的工具名列表（profile.tool_names 据此派生）。"""
+        """把若干 skill 展开为有序、去重的工具名列表。"""
         return self.snapshot().tools_of(skill_names)
 
     def get(self, name: str) -> Tool | None:
@@ -453,6 +478,10 @@ class SkillRegistry:
     def known_skill_names(self) -> set[str]:
         """返回已注册的 skill 组名，供能力目录和注册数据校验使用。"""
         return self.snapshot().known_skill_names()
+
+    def all_tool_names(self) -> list[str]:
+        """返回全部已注册的系统工具名，保持注册顺序。"""
+        return self.snapshot().all_tool_names()
 
     def labels(self) -> dict[str, str]:
         return self.snapshot().labels()
@@ -474,17 +503,27 @@ class SkillRegistry:
         from agent.im.permissions import can_use_tool
         current_im = imctx.get_im()
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
+        snapshot = current_dispatch_tool_snapshot()
+
+        def _resolve_tool(n: str):
+            return (
+                snapshot.get(n)
+                if snapshot is not None and getattr(snapshot, "source", None) is self
+                else self._tools.get(n)
+            )
+
+        resolved_tool = _resolve_tool(name)
+        if resolved_tool is None:
+            salvaged = salvage_tool_name(name)
+            if salvaged is not None and _resolve_tool(salvaged) is not None:
+                _log.info("工具名污染兜底：%r → %r", name, salvaged)
+                name, resolved_tool = salvaged, _resolve_tool(salvaged)
         if not can_use_tool(name, allowed_tool_names):
             _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
             payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})
             return json.dumps(payload, ensure_ascii=False), None
 
-        snapshot = current_dispatch_tool_snapshot()
-        tool = (
-            snapshot.get(name)
-            if snapshot is not None and getattr(snapshot, "source", None) is self
-            else self._tools.get(name)
-        )
+        tool = resolved_tool
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             payload = enrich_tool_error(name, {"error": f"未知工具: {name}"})

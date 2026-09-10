@@ -1,13 +1,17 @@
 """把业务主数据投影为统一知识索引 chunk。"""
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections import defaultdict
+
 from sqlalchemy import select
 
 from app.core.chat_attach import TEXT_EXTS
 from app.services.storage import get_storage
 from agent.rag.adapters.memory import MemoryAdapter
+from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.adapters.projects import ProjectAdapter
-from agent.rag.chunking import split_text, text_version
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import replace_source_documents
 from app.models import (
@@ -24,6 +28,8 @@ from app.models import (
 
 
 FILE_TEXT_MAX_BYTES = 1 * 1024 * 1024
+FILE_DOCUMENT_LOAD_CONCURRENCY = 8
+CONVERSATION_CONTEXT_MAX_CHARS = 600
 
 
 async def _extract_file_text(row: File) -> str:
@@ -42,6 +48,11 @@ async def _extract_file_text(row: File) -> str:
         return ""
 
 
+async def _extract_file_text_bounded(row: File, semaphore: asyncio.Semaphore) -> str:
+    async with semaphore:
+        return await _extract_file_text(row)
+
+
 def _scope(owner_user_id: object, session=None) -> Scope:
     if session is not None and session.chat_type == "group" and session.chat_id:
         return Scope(
@@ -55,94 +66,130 @@ def _scope(owner_user_id: object, session=None) -> Scope:
     return Scope(owner_user_id=str(owner_user_id), scope_type="owner")
 
 
-def _documents(
-    *,
-    owner_user_id: object,
-    source_type: str,
-    source_id: str,
-    title: str,
-    text: str,
-    scope: Scope,
-    version_parts: tuple[object, ...],
-    updated_at: str | None = None,
-    metadata: dict | None = None,
-    max_chars: int = 1400,
-) -> list[IndexDocument]:
-    text = (text or "").strip()
-    pieces = split_text(text, max_chars=max_chars)
-    if not pieces:
-        return []
-    document_id = f"{source_type}:{source_id}"
-    version = text_version(text, *version_parts)
-    return [IndexDocument(
-        document_id=document_id,
-        parent_document_id=document_id,
-        source_type=source_type,
-        source_id=source_id,
-        scope=scope,
-        title=title or "未命名",
-        summary=text[:240],
-        content=piece,
-        version=version,
-        chunk_index=index,
-        chunk_count=len(pieces),
-        updated_at=updated_at,
-        metadata=metadata or {},
-    ) for index, piece in enumerate(pieces)]
+def _iso_or_none(value) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
-async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
-    """构建一个来源，查询仅限 owner；不在日志中输出正文。"""
+def _version_parts(*parts) -> list[str]:
+    """版本输入字段统一序列化为字符串（datetime 用 isoformat），与 TS 适配器逐位对齐。"""
+    return [part.isoformat() if hasattr(part, "isoformat") else str(part or "") for part in parts]
+
+
+def file_record(row, body: str) -> dict:
+    return {
+        "source_type": "file", "id": str(row.id), "title": row.display_name,
+        "ext": row.ext or "", "mime_type": row.mime_type or "",
+        "project_id": str(row.project_id or ""), "folder_id": str(row.folder_id or ""),
+        "space": row.space or "", "stage_name": row.stage_name or "",
+        "content": body or "",
+        "version_parts": _version_parts(row.id, row.version, row.updated_at),
+        "updated_at": _iso_or_none(row.updated_at),
+    }
+
+
+def note_record(row) -> dict:
+    return {
+        "source_type": "note", "id": str(row.id), "title": row.title or "",
+        "content_plain": row.content_plain or "", "content_md": row.content_md or "",
+        "kind": row.kind,
+        "version_parts": _version_parts(row.id, row.version, row.indexed_hash or ""),
+        "updated_at": _iso_or_none(row.updated_at),
+    }
+
+
+def canvas_record(item, canvas, node, *, relation_summary: str, group_path: str) -> dict:
+    return {
+        "source_type": "canvas", "id": str(item.id),
+        "canvas_id": str(canvas.id), "canvas_title": canvas.title or "",
+        "node_id": str(node.id), "node_title": node.title or "",
+        "node_type": node.kind,
+        "content": node.content_plain or node.content_md or "",
+        "group_path": group_path, "relation_summary": relation_summary,
+        "project_id": str(canvas.project_id or ""),
+        "version_parts": _version_parts(item.id, item.updated_at, node.version),
+        "updated_at": _iso_or_none(item.updated_at),
+    }
+
+
+def calendar_record(row) -> dict:
+    return {
+        "source_type": "calendar", "id": str(row.id), "title": row.title,
+        "date": row.date, "time": row.time or "", "description": row.description or "",
+        "project_id": str(row.project_id or ""),
+        "version_parts": _version_parts(row.id, row.version, row.date, row.description or ""),
+    }
+
+
+def scheduled_task_record(row) -> dict:
+    return {
+        "source_type": "scheduled_task", "id": str(row.id), "name": row.name,
+        "cron": row.cron, "enabled": bool(row.enabled), "payload": row.payload or "",
+        "version_parts": _version_parts(row.id, row.updated_at, row.cron, row.payload or ""),
+    }
+
+
+def conversation_summary_record(session) -> dict:
+    return {
+        "source_type": "conversation", "kind": "summary", "id": f"{session.id}:summary",
+        "session_id": str(session.id),
+        "title": session.title or "", "summary": session.summary or "",
+        "session_source": session.source or "",
+        "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
+        "version_parts": _version_parts(session.id, session.updated_at, session.summary),
+        "updated_at": _iso_or_none(session.updated_at),
+    }
+
+
+def _conversation_context_line(row) -> str:
+    content = str(row.content or "").strip()
+    if row.role not in {"user", "assistant"} or not content:
+        return ""
+    return f"{row.role}：{content[:CONVERSATION_CONTEXT_MAX_CHARS]}"
+
+
+def conversation_message_record(
+    session, row, *, context_before: str = "", context_after: str = "",
+) -> dict:
+    return {
+        "source_type": "conversation", "kind": "message", "id": str(row.id),
+        "session_id": str(session.id),
+        "title": session.title or "", "role": row.role, "content": row.content or "",
+        "session_source": session.source or "",
+        "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
+        "context_before": context_before,
+        "context_after": context_after,
+        "version_parts": _version_parts(
+            row.id, row.created_at, row.content, context_before, context_after,
+        ),
+        "updated_at": (row.sent_at or row.created_at).isoformat() if (row.sent_at or row.created_at) else None,
+    }
+
+
+async def build_source_records(db, owner_user_id: object, source_type: str) -> list[tuple[dict, Scope]] | None:
+    """构建一个来源的统一 source record（各记录携带自己的 Scope）；无 record 管线的来源返回 None。"""
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
     if source_type == "memory":
-        return await MemoryAdapter(owner_user_id).build_documents(scope=owner_scope)
+        return await MemoryAdapter(owner_user_id).build_source_records(scope=owner_scope)
+    if source_type == "knowledge":
+        return await KnowledgeAdapter(owner_user_id).build_source_records()
     if source_type == "project":
-        return await ProjectAdapter(owner_user_id, db=db).build_documents(scope=owner_scope)
+        return await ProjectAdapter(owner_user_id, db=db).build_source_records(scope=owner_scope)
     if source_type == "file":
         rows = (await db.execute(select(File).where(
             File.user_id == owner_user_id, File.deleted_at.is_(None),
         ).order_by(File.updated_at.desc(), File.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            body = await _extract_file_text(row)
-            text = "\n".join(filter(None, [
-                f"文件：{row.display_name}",
-                f"类型：{row.ext}" if row.ext else "",
-                f"空间：{row.space}" if row.space else "",
-                f"阶段：{row.stage_name}" if row.stage_name else "",
-                body,
-            ]))
-            documents.extend(_documents(
-                owner_user_id=owner_user_id, source_type="file", source_id=str(row.id),
-                title=row.display_name, text=text, scope=owner_scope,
-                version_parts=(row.id, row.version, row.updated_at),
-                updated_at=row.updated_at.isoformat() if row.updated_at else None,
-                metadata={
-                    "file_id": str(row.id),
-                    "mime_type": row.mime_type or "",
-                    "project_id": str(row.project_id or ""),
-                    "folder_id": str(row.folder_id or ""),
-                    "space": row.space or "",
-                },
-            ))
-        return documents
+        semaphore = asyncio.Semaphore(FILE_DOCUMENT_LOAD_CONCURRENCY)
+        bodies = await asyncio.gather(*(
+            _extract_file_text_bounded(row, semaphore) for row in rows
+        ))
+        return [(file_record(row, body), owner_scope) for row, body in zip(rows, bodies, strict=True)]
     if source_type == "note":
         rows = (await db.execute(select(MindNode).where(
             MindNode.user_id == owner_user_id,
             MindNode.deleted_at.is_(None),
             MindNode.kind.in_(["note", "suggestion"]),
         ).order_by(MindNode.updated_at.desc(), MindNode.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            text = "\n".join(filter(None, [row.title or "", row.content_plain or row.content_md or ""]))
-            documents.extend(_documents(
-                owner_user_id=owner_user_id, source_type="note", source_id=str(row.id),
-                title=row.title or "便签", text=text, scope=owner_scope,
-                version_parts=(row.id, row.version, row.indexed_hash or ""),
-                updated_at=row.updated_at.isoformat() if row.updated_at else None,
-                metadata={"node_id": str(row.id), "kind": row.kind},
-            ))
-        return documents
+        return [(note_record(row), owner_scope) for row in rows]
     if source_type == "canvas":
         rows = (await db.execute(
             select(MindCanvasItem, MindMap, MindNode)
@@ -171,7 +218,7 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
             if left and right:
                 relation_by_node.setdefault(relation.src_node_id, []).append(f"{left} → {right}")
                 relation_by_node.setdefault(relation.dst_node_id, []).append(f"{left} ← {right}")
-        documents = []
+        records = []
         for item, canvas, node in rows:
             relation_summary = "；".join(relation_by_node.get(node.id, [])[:8])
             group_path = ""
@@ -181,107 +228,98 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
                 group_path = str(view.get("group_path") or view.get("groupPath") or "")
             except (TypeError, ValueError):
                 group_path = ""
-            text = "\n".join(filter(None, [
-                f"画布：{canvas.title or '未命名画布'}",
-                f"节点：{node.title or '未命名节点'}",
-                f"类型：{node.kind}",
-                f"分组：{group_path}" if group_path else "",
-                f"关系：{relation_summary}" if relation_summary else "",
-                node.content_plain or node.content_md or "",
-            ]))
-            documents.extend(_documents(
-                owner_user_id=owner_user_id, source_type="canvas", source_id=str(item.id),
-                title=f"{canvas.title or '未命名画布'} · {node.title or '未命名节点'}",
-                text=text, scope=owner_scope,
-                version_parts=(item.id, item.updated_at, node.version),
-                updated_at=item.updated_at.isoformat() if item.updated_at else None,
-                metadata={
-                    "canvas_id": str(canvas.id),
-                    "node_id": str(node.id),
-                    "node_type": node.kind,
-                    "group_path": group_path,
-                    "project_id": str(canvas.project_id or ""),
-                    "relation_summary": relation_summary,
-                },
-            ))
-        return documents
+            records.append((canvas_record(
+                item, canvas, node, relation_summary=relation_summary, group_path=group_path,
+            ), owner_scope))
+        return records
     if source_type == "calendar":
         rows = (await db.execute(select(CalendarEvent).where(
             CalendarEvent.user_id == owner_user_id,
+            CalendarEvent.deleted_at.is_(None),
         ).order_by(CalendarEvent.created_at.desc(), CalendarEvent.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            text = "\n".join(filter(None, [
-                f"活动：{row.title}", f"日期：{row.date}",
-                f"时间：{row.time or '全天'}", row.description or "",
-            ]))
-            documents.extend(_documents(
-                owner_user_id=owner_user_id, source_type="calendar", source_id=str(row.id),
-                title=row.title, text=text, scope=owner_scope,
-                version_parts=(row.id, row.version, row.date, row.description or ""),
-                metadata={"event_id": str(row.id), "project_id": str(row.project_id or "")},
-            ))
-        return documents
+        return [(calendar_record(row), owner_scope) for row in rows]
     if source_type == "scheduled_task":
         rows = (await db.execute(select(ScheduledTask).where(
             ScheduledTask.user_id == owner_user_id,
         ).order_by(ScheduledTask.updated_at.desc(), ScheduledTask.id.desc()))).scalars().all()
-        documents = []
-        for row in rows:
-            payload = row.payload or ""
-            text = f"定时任务：{row.name}\n计划：{row.cron}\n状态：{'启用' if row.enabled else '停用'}\n{payload}"
-            documents.extend(_documents(
-                owner_user_id=owner_user_id, source_type="scheduled_task", source_id=str(row.id),
-                title=row.name, text=text, scope=owner_scope,
-                version_parts=(row.id, row.updated_at, row.cron, payload),
-                metadata={"task_id": str(row.id), "enabled": row.enabled},
-            ))
-        return documents
+        return [(scheduled_task_record(row), owner_scope) for row in rows]
     if source_type == "conversation":
         sessions = (await db.execute(select(ConversationSession).where(
             ConversationSession.user_id == owner_user_id,
         ).order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc()))).scalars().all()
-        documents = []
+        messages_by_session: defaultdict[int, list[ConversationMessage]] = defaultdict(list)
+        if sessions:
+            session_ids = [session.id for session in sessions]
+            message_rows = (await db.execute(
+                select(ConversationMessage)
+                .where(ConversationMessage.session_id.in_(session_ids))
+                .order_by(ConversationMessage.session_id.asc(), ConversationMessage.id.asc())
+            )).scalars().all()
+            for row in message_rows:
+                messages_by_session[row.session_id].append(row)
+        records = []
         for session in sessions:
             session_scope = _scope(owner_user_id, session)
             if (session.summary or "").strip():
-                documents.extend(_documents(
-                    owner_user_id=owner_user_id, source_type="conversation",
-                    source_id=f"{session.id}:summary", title=session.title,
-                    text=f"会话摘要：{session.summary}", scope=session_scope,
-                    version_parts=(session.id, session.updated_at, session.summary),
-                    updated_at=session.updated_at.isoformat() if session.updated_at else None,
-                    metadata={
-                        "session_id": str(session.id), "kind": "summary",
-                        "session_source": session.source or "",
-                        "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
-                    },
-                ))
-            messages = (await db.execute(select(ConversationMessage).where(
-                ConversationMessage.session_id == session.id,
-                ConversationMessage.id > (session.baseline_message_id or 0),
-            ).order_by(ConversationMessage.id.asc()))).scalars().all()
-            for row in messages:
-                if row.role not in {"user", "assistant"} or not (row.content or "").strip():
-                    continue
-                text = f"{row.role}：{row.content}"
-                documents.extend(_documents(
-                    owner_user_id=owner_user_id, source_type="conversation",
-                    source_id=str(row.id), title=session.title, text=text,
-                    scope=session_scope, version_parts=(row.id, row.created_at, row.content),
-                    updated_at=(row.sent_at or row.created_at).isoformat(),
-                    metadata={
-                        "session_id": str(session.id), "role": row.role, "kind": "message",
-                        "session_source": session.source or "",
-                        "session_updated_at": session.updated_at.isoformat() if session.updated_at else "",
-                    },
-                ))
-        return documents
+                records.append((conversation_summary_record(session), session_scope))
+            eligible_messages = [
+                row for row in messages_by_session.get(session.id, ())
+                if row.id > (session.baseline_message_id or 0)
+                and row.role in {"user", "assistant"}
+                and (row.content or "").strip()
+            ]
+            for index, row in enumerate(eligible_messages):
+                before = _conversation_context_line(eligible_messages[index - 1]) if index else ""
+                after = _conversation_context_line(eligible_messages[index + 1]) if index + 1 < len(eligible_messages) else ""
+                records.append((conversation_message_record(
+                    session, row, context_before=before, context_after=after,
+                ), session_scope))
+        return records
     raise ValueError(f"不支持的知识索引来源：{source_type}")
 
 
+async def records_to_write_documents(
+    owner_user_id: object,
+    source_type: str,
+    records: list[tuple[dict, Scope]],
+    *,
+    settings=None,
+) -> list[IndexDocument]:
+    """把授权 source record 经 TS canonical projection 转为持久化文档。"""
+    from app.core.config import get_settings
+
+    settings = settings or get_settings()
+    import time
+
+    from agent.rag.index_cache import index_dir_for_owner
+    from agent.rag.ts_sidecar import get_lexical_client, scope_to_wire, wire_document_to_persistent
+
+    started = time.monotonic()
+    client = await get_lexical_client(
+        owner_user_id,
+        command=settings.search.ts_sidecar_command,
+        index_dir=index_dir_for_owner(owner_user_id),
+    )
+    payload = [{**record, "scope": scope_to_wire(scope)} for record, scope in records]
+    wire_documents = await client.adapt_records(source_type, payload)
+    documents = [wire_document_to_persistent(raw, owner_user_id) for raw in wire_documents]
+    logging.getLogger("agent.rag.index_builder").info(
+        "RAG 写库投影 engine=ts source=%s records=%s chunks=%s elapsed_ms=%s",
+        source_type, len(records), len(documents), int((time.monotonic() - started) * 1000),
+    )
+    return documents
+
+
+async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
+    """兼容旧调用方：读取 canonical source record 后统一交给 TS 投影。"""
+    records = await build_source_records(db, owner_user_id, source_type)
+    if records is None:
+        raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
+    return await records_to_write_documents(owner_user_id, source_type, records)
+
+
 INDEX_SOURCE_TYPES = (
-    "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
 
 
@@ -290,10 +328,19 @@ async def rebuild_knowledge_index(db, owner_user_id: object, source_types=None) 
     selected = tuple(source_types or INDEX_SOURCE_TYPES)
     counts: dict[str, int] = {}
     for source_type in selected:
-        documents = await build_source_documents(db, owner_user_id, source_type)
+        records = await build_source_records(db, owner_user_id, source_type)
+        if records is None:
+            raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
+        documents = await records_to_write_documents(owner_user_id, source_type, records)
         counts[source_type] = await replace_source_documents(db, owner_user_id, source_type, documents)
     await db.commit()
     return counts
 
 
-__all__ = ["INDEX_SOURCE_TYPES", "build_source_documents", "rebuild_knowledge_index"]
+__all__ = [
+    "INDEX_SOURCE_TYPES",
+    "build_source_documents",
+    "build_source_records",
+    "records_to_write_documents",
+    "rebuild_knowledge_index",
+]

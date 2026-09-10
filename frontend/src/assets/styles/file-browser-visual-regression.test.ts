@@ -14,6 +14,7 @@ function cssBlock(css: string, selectorNeedle: string) {
 }
 
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
+const folderPresentation = load('../../composables/files/useFileLibraryFolderPresentation.ts')
 const fileCard = load('../../components/common/file-browser/FileCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
 const componentRefinements = load('./component-theme-refinements.css')
@@ -25,6 +26,9 @@ const projectAdoption = load('./adoption/project.css')
 const runtimeAdoption = load('./adoption/runtime.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
+const renameInput = load('../../components/common/file-browser/RenameInput.vue')
+const filesGridView = load('../../views/Files/components/FilesGridView.vue')
+const filesCss = load('./components/files.css')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const filesListView = load('../../views/Files/components/FilesListView.vue')
 const filesListRows = load('./filesListRows.css')
@@ -36,6 +40,19 @@ const runtimeSetup = load('../../interaction/runtime/setup.ts')
 const mindRuntimeObject = load('../../composables/mind/useMindRuntimeObject.ts')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
+  it('网格重命名输入可选中文本，透明悬浮层不会抢占文件名点击区域', () => {
+    expect(renameInput).toContain('@pointerdown.stop @mousedown.stop @click.stop')
+    expect(filesGridView).toContain('<RenameInput v-if="renamingFileId === f.id"')
+    expect(filesCss).toContain('user-select: text;')
+    expect(filesCss).toContain('.fc-name:has(.rename-input-inline) .rename-sizer')
+    expect(filesGridView).toContain('top:8px; right:8px;')
+    expect(filesGridView).toContain('pointer-events:none;')
+    expect(filesGridView).toContain('pointer-events:auto;')
+    expect(filesCss).toContain('.fc-name:has(.rename-input-inline),\n.fd-name:has(.rename-input-inline) { overflow: visible; text-overflow: clip; }')
+    expect(filesCss).toContain('display: block; width: 100%; max-width: 100%; min-width: 0; z-index: 3;')
+    expect(filesCss).not.toContain('width: calc(100% + 13px)')
+  })
+
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
     expect(browserPanel).toContain('height: 52px;')
     expect(browserPanel).toContain('padding: 0 16px;')
@@ -84,6 +101,12 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).not.toContain('.folder-card.pre-selected {')
   })
 
+  it('普通文件夹图标跟随当前主题操作色，语义目录继续保留专属颜色', () => {
+    expect(folderPresentation).toContain("return 'var(--action-primary)'")
+    expect(folderPresentation).toContain("if (folder.type === 'trash') return '#987070'")
+    expect(folderPresentation).toContain("if (folder.type === 'status') return STATUS_COLOR")
+  })
+
   it('文件卡 hover/图片预框选不会覆盖 selected，亮色 full-card preview 由 FileCard 自己统一拥有', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
@@ -98,9 +121,15 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).toContain('background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid));')
   })
 
+  it('亮色文件卡 hover 使用高光覆盖，不被调色板主色压暗', () => {
+    expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--theme-highlight-hover) 16%,transparent);')
+    expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--action-primary) 6%,transparent);')
+  })
+
   it('20.4 selected ring 在 hover 时保持，generic hover utility 不再拥有 File/FolderCard shadow/transition', () => {
     expect(fileCard).toContain('.fc-card.selected {')
     expect(fileCard).toContain('box-shadow: var(--file-card-shadow-selected);')
+    expect(filesGridView).not.toContain('class="hover-card-fx"')
     expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):hover')
     expect(productCss).not.toContain('html[data-theme][data-family] .hover-card-fx:hover { box-shadow:')
     expect(componentRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card),')

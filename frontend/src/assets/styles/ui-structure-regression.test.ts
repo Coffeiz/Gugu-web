@@ -37,6 +37,7 @@ const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
 const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
 const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
 const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
+const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
 const trashView = load('../../views/Files/components/FilesTrashView.vue')
@@ -54,6 +55,8 @@ const eventEditModal = load('../../components/events/EventEditModal.vue')
 const contextMenu = load('../../components/common/overlays/ContextMenu.vue')
 const dateSpanPicker = load('../../components/common/controls/DateSpanPicker.vue')
 const projectCard = load('../../views/Projects/components/ProjectCard.vue')
+const projectStagesPanel = load('../../views/Projects/components/ProjectStagesPanel.vue')
+const projectTodosPanel = load('../../views/Projects/components/ProjectTodosPanel.vue')
 const sortMenu = load('../../components/common/controls/SortMenu.vue')
 const datePicker = load('../../components/common/controls/DatePicker.vue')
 const adminDatePicker = load('../../components/AdminDatePicker.vue')
@@ -68,8 +71,20 @@ const terminalPty = load('../../views/Terminals/components/InteractivePtyTermina
 const profileWorkspacesPane = load('../../components/common/profile/ProfileWorkspacesPane.vue')
 const overlayScrollbars = load('../../utils/overlayScrollbars.ts')
 const notificationBubble = load('../../components/common/feedback/NotificationBubble.vue')
+const chatToolBubble = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
+const globalStyles = load('./global.css')
+const componentTokens = load('./tokens/components.css')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('卡片 hover 不常驻合成层，且不连续插值阴影，避免快速移动时反复 paint', () => {
+    const hoverCard = cssBlock(globalStyles, '.hover-card-fx')
+    expect(hoverCard).not.toContain('will-change: transform')
+    expect(hoverCard).toContain('transition: transform var(--motion-hover-card)')
+    expect(hoverCard).not.toContain('box-shadow var(--motion-hover-card)')
+    expect(componentTokens).toContain('--card-motion: transform var(--motion-hover-card)')
+    expect(componentTokens).not.toContain('box-shadow var(--motion-hover-card) ease')
+  })
+
   it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
     expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup')
     expect(overlayScrollbars).toContain("thumb.classList.add('overlay-scrollbar--notif')")
@@ -105,9 +120,79 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatComposer).toContain('.chat-input-row > .att-btn,')
     expect(chatComposer).toContain('.chat-input-row > .send-btn { align-self: center; }')
     expect(chatComposer).toContain('display: flex; align-items: center; gap: 8px;')
+    expect(chatComposer).toContain(":name=\"unlimitedMode ? 'action.speed-fill' : 'action.speed'\"")
+    expect(chatComposer).not.toContain('action.infinity')
     expect(chatWindow).not.toContain('chat-main:not(.is-expanded) :deep(.chat-input-row)')
     expect(chatWindow).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
+  })
+
+  it('GuguChat 主体使用静态背景，关闭窗口时也不恢复 backdrop-filter', () => {
+    const chatMainStart = chatWindow.indexOf('.chat-main {')
+    const chatMainBlock = chatWindow.slice(chatMainStart, chatWindow.indexOf('}', chatMainStart))
+    const chatLeaveBlock = cssBlock(guguChat, '.chat-open-leave-active')
+    expect(chatMainBlock).toContain('background: var(--gugu-chat-main-bg);')
+    expect(chatMainBlock).toContain('backdrop-filter: none;')
+    expect(chatMainBlock).toContain('-webkit-backdrop-filter: none;')
+    expect(chatLeaveBlock).not.toContain('backdrop-filter:')
+    expect(chatLeaveBlock).not.toContain('-webkit-backdrop-filter:')
+  })
+
+  it('GuguChat 主体背景使用各主题的实色 token，避免页面内容透出', () => {
+    const components = load('./tokens/components.css')
+    const themeFiles = [
+      load('./tokens/themes/glass-light.css'),
+      load('./tokens/themes/glass-dark.css'),
+      load('./tokens/themes/mono-light.css'),
+      load('./tokens/themes/mono-dark.css'),
+      load('./tokens/themes/material-composition.css'),
+    ]
+    expect(components).toContain('--gugu-chat-main-bg: var(--theme-chat-main-bg);')
+    for (const theme of themeFiles) expect(theme).toContain('--theme-chat-main-bg:')
+  })
+
+  it('工具事件卡片点击后不把焦点误当成持续 hover', () => {
+    expect(chatToolBubble).toContain('.tool-event-bubble:hover {')
+    expect(chatToolBubble).toContain('.tool-event-head:focus-visible')
+    expect(chatToolBubble).not.toContain('.tool-event-bubble:focus-within')
+  })
+
+  it('工具卡片展开后仍通过独立 opacity 层过渡 hover，避免高度重排打断高亮', () => {
+    const bubbleBlock = cssBlock(chatToolBubble, '.tool-event-bubble')
+    const hoverLayerBlock = cssBlock(chatToolBubble, '.tool-event-bubble::after')
+    expect(bubbleBlock).toContain('isolation: isolate;')
+    expect(bubbleBlock).toContain('transition: border-color var(--motion-hover-card) var(--motion-ease-standard), box-shadow var(--motion-hover-card) var(--motion-ease-standard)')
+    expect(bubbleBlock).not.toContain('inset 0 1px 0 var(--highlight-soft)')
+    expect(bubbleBlock).not.toContain('background-color var(--motion-hover-card)')
+    expect(hoverLayerBlock).toContain('opacity: 0;')
+    expect(hoverLayerBlock).toContain('transition: opacity var(--motion-hover-card)')
+    expect(chatToolBubble).toContain('.tool-event-bubble:hover::after { opacity: 1; }')
+    expect(chatToolBubble).toContain("const detailTransition = 'height var(--motion-hover-card) var(--motion-ease-emphasis)'")
+    expect(chatToolBubble).toContain("node.style.opacity = '1'")
+    expect(chatToolBubble).not.toContain('targetOpacity')
+    expect(chatToolBubble).toContain('.tool-event-detail { position: relative; z-index: 1;')
+  })
+
+  it('聊天附件和语音 hover 不连续插值阴影，避免快速移动时触发密集 paint', () => {
+    const chatActionBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card))')
+    const chatFileBlock = cssBlock(guguChat, ':deep(.msg-file)')
+    const chatVoiceBlock = cssBlock(guguChat, ':deep(.msg-voice)')
+    expect(chatActionBlock).not.toContain('box-shadow var(--motion-hover-control)')
+    expect(chatFileBlock).not.toContain('box-shadow 0.25s')
+    expect(chatVoiceBlock).not.toContain('box-shadow 0.15s')
+  })
+
+  it('交互消费失败时进入终态，避免重复提交已消费 token', () => {
+    const handlerStart = guguChat.indexOf('async function onInteractionSelect')
+    const endpointStart = guguChat.indexOf('const endpoint =', handlerStart)
+    const failureStart = guguChat.indexOf('if (!res.ok) {', endpointStart)
+    const failureEnd = guguChat.indexOf('  } catch {', failureStart)
+    const failureBranch = guguChat.slice(failureStart, failureEnd)
+
+    expect(failureBranch).toContain('res.status === 409 || res.status === 404')
+    expect(failureBranch).toContain('_msg.interaction.resolved = true')
+    expect(failureBranch).toContain('_msg.interaction.responseText')
+    expect(failureBranch).not.toContain('_msg.interaction.resolved = false')
   })
 
   it('画布列表使用与项目抽屉一致的 Runtime 布局契约', () => {
@@ -153,6 +238,21 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(projectCard).not.toContain('v-for="(t, i) in currentTodos"')
     expect(projectCard).toContain('v-for="(todo, i) in currentTodos"')
     expect(projectCard).toContain(':placeholder="t(\'projects.todoPlaceholder\')"')
+  })
+
+  it('项目阶段和待办删除操作保持可见且具备可访问名称', () => {
+    expect(projectStagesPanel).toContain(':aria-label="t(\'common.actions.delete\')"')
+    expect(projectStagesPanel).toContain(':size="12"')
+    expect(projectStagesPanel).toContain('width: 24px; height: 24px;')
+    expect(projectStagesPanel).toContain('color: var(--danger-button-fg); opacity: 0; pointer-events: none;')
+    expect(projectStagesPanel).toContain('.node-row:hover .del-stage')
+    expect(projectTodosPanel).toContain(':aria-label="t(\'common.actions.delete\')"')
+    expect(projectTodosPanel).toContain(':size="12"')
+    expect(projectTodosPanel).toContain('width: 24px; height: 24px;')
+    expect(projectTodosPanel).toContain('color: var(--danger-button-fg); opacity: 0; pointer-events: none;')
+    expect(projectTodosPanel).toContain('.todo-item:hover .todo-del')
+    expect(projectTodosPanel).toContain('.todo-item { display: flex; align-items: center;')
+    expect(projectTodosPanel).toContain('.todo-check, .todo-del { margin-top: 0; }')
   })
 
   it('Admin field-input 使用完整实线边框，避免回落到浏览器原生双层描边', () => {
@@ -206,10 +306,17 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
   it('定时任务卡片启停状态由最终主题层平滑过渡', () => {
     const cardBlock = cssBlock(componentThemeRefinements, 'html[data-theme][data-family] .task-card')
-    expect(cardBlock).toContain('transition: var(--card-motion), opacity var(--hover-motion-control);')
+    expect(cardBlock).toContain('transition: var(--card-motion), box-shadow var(--motion-hover-card) ease, opacity var(--hover-motion-control);')
+    expect(cssBlock(componentThemeRefinements, 'html[data-theme][data-family] .task-card::after')).toContain('box-shadow: none !important;')
 
     const interactionCardBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .task-card')
     expect(interactionCardBlock).not.toContain('transition:')
+  })
+
+  it('公共操作按钮的 secondary hover 滤镜平滑过渡', () => {
+    const buttonBlock = cssBlock(actionButton, '.app-action-button')
+    expect(buttonBlock).toContain('filter var(--motion-hover-control) var(--motion-ease-standard)')
+    expect(actionButton).toContain('filter: brightness(1.04);')
   })
 
   it('非 Runtime 主题层不接管 Runtime 的 motion 属性', () => {
@@ -437,16 +544,34 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(guide).toContain('background:var(--done-group-border)')
   })
 
+  it('项目已完成列的归档入口使用明亮控制色，删除入口保留危险色', () => {
+    expect(doneColumn).toContain('class="project-collection-entry-mini archived-entry-mini"')
+    const archived = cssBlock(doneColumn, '.done-col .archived-entry-mini {')
+    expect(archived).toContain('color:var(--control-fg)')
+    expect(archived).toContain('border-color:var(--input-border)')
+    expect(archived).toContain('background:var(--control-bg)')
+
+    const archivedHover = cssBlock(doneColumn, '.done-col .archived-entry-mini:hover {')
+    expect(archivedHover).toContain('color:var(--control-fg-strong)')
+    expect(archivedHover).toContain('border-color:var(--input-border-hover)')
+    expect(archivedHover).toContain('background:var(--control-bg-hover)')
+
+    const deleted = cssBlock(doneColumn, '.done-col .deleted-entry-mini {')
+    expect(deleted).toContain('color:var(--status-danger)')
+    expect(deleted).toContain('background:var(--status-danger-bg)')
+  })
+
   it('内容 disclosure 统一为收起向右、展开向下', () => {
     // 已完成年组与月组统一使用 FlipChevron 组件。
     expect(doneGroup).toContain('FlipChevron :open="group.open"')
     expect(doneGroup).toContain('FlipChevron :open="isUndatedOpen"')
     expect(doneGroup).toContain('FlipChevron :open="group.open" :size="8"')
-    // FlipChevron 自带旋转动画，DoneColumn 不再有 .year-chev/.month-chev CSS。
-
-    expect(archivedProjects).toContain('transform: rotate(-90deg);')
-    expect(archivedProjects).toContain('.year-chev.open { transform: rotate(0deg); }')
-    expect(archivedProjects).toContain('.month-chev.open { transform: rotate(0deg); }')
+    // 归档与已删除弹窗共用 FlipChevron，旋转动画由公共组件统一负责。
+    expect(archivedProjects).toContain("import FlipChevron from '@/components/common/controls/FlipChevron.vue'")
+    expect(archivedProjects).toContain('<FlipChevron :open="openYears.has(yg.year)" />')
+    expect(archivedProjects).toContain('<FlipChevron :open="openMonths.has(yg.year + mg.month)" :size="8" />')
+    expect(archivedProjects).not.toContain('.year-chev')
+    expect(archivedProjects).not.toContain('.month-chev')
 
     expect(uploadModal).toContain('.toggle-chev, .year-chev, .month-chev')
     expect(uploadModal).toContain('transform:rotate(-90deg)')

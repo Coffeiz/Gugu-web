@@ -211,17 +211,32 @@ def test_catalog_routes_user_skill_creation_to_create_skill():
     assert "related_tools 使用空数组 []" in block
 
 
-def test_skill_management_tools_are_registered_on_demand_not_in_meta_or_profile():
+def test_skill_management_tools_are_registered_on_demand_not_in_meta_schema():
     from agent.tools.meta import MetaSkill
     from agent.tools import registry
-    from agent.profiles.default import DefaultProfile
-
     meta_tools = {tool.name: tool for tool in MetaSkill.tools}
-    profile_tools = set(DefaultProfile().tool_names)
+    from agent.capabilities.defaults import all_system_tool_names
+    resident_tools = set(all_system_tool_names())
     for name in ("create_skill", "update_skill", "delete_skill"):
         assert name not in meta_tools
-        assert name not in profile_tools
+        assert name not in resident_tools
         assert registry.snapshot().get(name) is not None
+
+
+def test_default_capabilities_include_registered_system_tools_and_builtin_skill_index():
+    from agent.capabilities.defaults import all_system_tool_names
+    from agent.context import builder
+    from agent.tools import registry
+
+    resident_tools = set(all_system_tool_names())
+    registered_tools = set(registry.all_tool_names())
+    static, _, _ = builder.build_split("default", "测试用户", [], [])
+
+    assert "send_email" in resident_tools
+    assert resident_tools <= registered_tools
+    assert "create_skill" not in resident_tools
+    assert "email" in static
+    assert "邮件" in static
 
 
 def test_skill_management_is_discoverable_without_being_a_provider_tool():

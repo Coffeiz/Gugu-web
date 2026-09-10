@@ -6,8 +6,8 @@ import time
 from dataclasses import dataclass
 
 from agent.memory import store
-from agent.rag.chunking import split_sections, split_text, text_version
 from agent.rag.models import IndexDocument, Scope
+from agent.rag.source_text import split_sections
 from agent.memory.scopes import MemoryScope, split_member_scope_id
 from agent.memory.scope_lifecycle import preview_scope
 
@@ -142,27 +142,41 @@ class MemoryAdapter:
             return "\n".join(parts)
         return str(value or "").strip()
 
-    async def build_documents(self, *, scope: Scope) -> list[IndexDocument]:
+    def _make_source_record(
+        self, scope: Scope, source_id: str, text: str, title: str, index: int,
+        stable_id: object = None,
+    ) -> tuple[dict, Scope] | None:
+        text = text.strip()
+        if not text:
+            return None
+        source_key = str(stable_id or f"{source_id}:{index}")
+        parent = f"memory:{source_id}:{source_key}"
+        return ({
+            "source_type": "memory", "id": source_key, "source_id": source_id,
+            "parent_id": parent, "title": title, "summary": text[:240],
+            "content": text, "version_parts": [source_id, source_key],
+            "updated_at": None,
+            "metadata": {"vector_key": source_key if source_id == "pattern" else ""},
+        }, scope)
+
+    async def build_source_records(self, *, scope: Scope) -> list[tuple[dict, Scope]]:
+        """构建未切块的 canonical Memory record，由 TS 负责切块和版本投影。"""
         if scope.owner_user_id != str(self.user_id):
             return []
+        records: list[tuple[dict, Scope]] = []
         if scope.scope_type in {"group", "member"}:
             scope_id = scope.scope_id
             if scope.scope_type == "member":
                 group_id, member_id = split_member_scope_id(scope.scope_id)
                 if group_id != scope.group_id or not member_id:
                     return []
-                # 成员 scope 沿用 IM-3 的 group_id:platform_user_id 绑定，避免把
-                # 一个群里的成员事件泄漏到另一个群；profile/pattern/summary/memory
-                # 使用同一物理 scope，不能只取裸 member_id。
             memory_scope = MemoryScope(
                 self.user_id, scope.platform, scope.bot_id,
-                "group" if scope.scope_type == "group" else "platform-user",
-                scope_id,
+                "group" if scope.scope_type == "group" else "platform-user", scope_id,
             )
             data = await preview_scope(memory_scope)
             if not isinstance(data, dict):
                 return []
-            documents: list[IndexDocument] = []
             sources = (
                 (("summary", "群组摘要"), ("profile", "群组资料"),
                  ("daily", "群组近期记忆"), ("memory", "群组长期记忆"))
@@ -170,36 +184,64 @@ class MemoryAdapter:
                 (("summary", "群友摘要"), ("profile", "群友资料"),
                  ("pattern", "群友行为模式"), ("memory", "群友事件记忆"))
             )
-            for source_id, title in sources:
-                value = data.get(source_id)
-                text = self._scope_value_text(value)
-                documents.extend(self._make_chunks(scope, source_id, text, title, 0))
-            return documents
+            for index, (source_id, title) in enumerate(sources):
+                record = self._make_source_record(
+                    scope, source_id, self._scope_value_text(data.get(source_id)), title, index,
+                )
+                if record:
+                    records.append(record)
+            return records
+
         profile = await store.read_profile_list(self.user_id)
         patterns = await store.read_pattern_list(self.user_id)
         daily = await store.read_daily_lines(self.user_id)
         memory = await store.read_memory_doc(self.user_id)
-        documents: list[IndexDocument] = []
         for index, item in enumerate(profile):
-            documents.extend(self._make_chunks(scope, "profile", str(item.get("text") or ""), "用户画像", index))
+            record = self._make_source_record(
+                scope, "profile", str(item.get("text") or ""), "用户画像", index,
+            )
+            if record:
+                records.append(record)
         for index, item in enumerate(patterns):
-            documents.extend(self._make_chunks(scope, "pattern", str(item.get("text") or ""), "行为模式", index, item.get("id")))
+            record = self._make_source_record(
+                scope, "pattern", str(item.get("text") or ""), "行为模式", index, item.get("id"),
+            )
+            if record:
+                records.append(record)
         for index, line in enumerate(daily):
-            documents.extend(self._make_chunks(scope, "daily", line, "近期记忆", index))
+            record = self._make_source_record(scope, "daily", line, "近期记忆", index)
+            if record:
+                records.append(record)
         for index, (title, section) in enumerate(split_sections(memory)):
             text = f"{title}\n{section}".strip() if title else section
-            documents.extend(self._make_chunks(scope, "memory", text, title or "长期记忆", index))
-        return documents
+            record = self._make_source_record(scope, "memory", text, title or "长期记忆", index)
+            if record:
+                records.append(record)
+        return records
+
+    async def build_documents(self, *, scope: Scope) -> list[IndexDocument]:
+        from agent.rag.index_builder import records_to_write_documents
+
+        records = await self.build_source_records(scope=scope)
+        return await records_to_write_documents(self.user_id, self.source_type, records)
 
     async def build_daily_documents(self, *, scope: Scope) -> list[IndexDocument]:
         """只构建 owner 的 daily 投影，供持久索引竞态时做轻量新鲜度修复。"""
+        from agent.rag.index_builder import records_to_write_documents
+
+        records = await self._build_daily_source_records(scope=scope)
+        return await records_to_write_documents(self.user_id, self.source_type, records)
+
+    async def _build_daily_source_records(self, *, scope: Scope) -> list[tuple[dict, Scope]]:
         if scope.owner_user_id != str(self.user_id) or scope.scope_type != "owner":
             return []
         daily = await store.read_daily_lines(self.user_id)
-        documents: list[IndexDocument] = []
+        records = []
         for index, line in enumerate(daily):
-            documents.extend(self._make_chunks(scope, "daily", line, "近期记忆", index))
-        return documents
+            record = self._make_source_record(scope, "daily", line, "近期记忆", index)
+            if record:
+                records.append(record)
+        return records
 
     async def build_cached_daily_documents(self, *, scope: Scope) -> tuple[list[IndexDocument], str]:
         """在同一 snapshot baseline 内复用 daily 投影，revision 变化时重建。"""
@@ -225,10 +267,7 @@ class MemoryAdapter:
             if entry is not None and now - entry.last_access <= SCOPE_DOCUMENT_CACHE_TTL_SECONDS:
                 entry.last_access = now
                 return entry.documents, f"daily-cache:{entry.baseline_revision}"
-            daily = await store.read_daily_lines(self.user_id)
-            documents: list[IndexDocument] = []
-            for index, line in enumerate(daily):
-                documents.extend(self._make_chunks(scope, "daily", line, "近期记忆", index))
+            documents = await self.build_daily_documents(scope=scope)
             self._daily_cache[key] = _DailyDocumentCacheEntry(
                 documents, baseline_revision, time.monotonic(),
             )
@@ -290,28 +329,3 @@ class MemoryAdapter:
                 documents, baseline_revision, time.monotonic(),
             )
             return documents, f"owner-refresh:{source}"
-
-    def _make_chunks(
-        self, scope: Scope, source_id: str, text: str, title: str, index: int, stable_id: object = None,
-    ) -> list[IndexDocument]:
-        text = text.strip()
-        if not text:
-            return []
-        source_key = str(stable_id or f"{source_id}:{index}")
-        version = text_version(text, source_id, source_key)
-        pieces = split_text(text)
-        parent = f"memory:{source_id}:{source_key}"
-        return [IndexDocument(
-            document_id=parent,
-            parent_document_id=parent,
-            source_type="memory",
-            source_id=source_id,
-            scope=scope,
-            title=title,
-            summary=text[:240],
-            content=piece,
-            version=version,
-            chunk_index=position,
-            chunk_count=len(pieces),
-            metadata={"vector_key": source_key if source_id == "pattern" else store._chunk_key(piece)},
-        ) for position, piece in enumerate(pieces)]

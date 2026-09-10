@@ -87,6 +87,44 @@ async def test_admin_status_hides_local_sync_records_in_oss_mode(db, user_a, tmp
 
 
 @pytest.mark.asyncio
+async def test_admin_status_closes_conflicts_for_missing_local_and_file_objects(
+    db, user_a, tmp_path, monkeypatch,
+):
+    import app.services.filesync.admin as admin
+    import app.services.filesync.bindings as bindings
+
+    settings = _local_settings(tmp_path)
+    monkeypatch.setattr(admin, "get_settings", lambda: settings)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+    monkeypatch.setattr(admin, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(admin, "is_file_sync_enabled", lambda: True)
+
+    (tmp_path / str(user_a.id)).mkdir()
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        root_path=".", root_fingerprint="a" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+    conflict = FileSyncConflict(
+        binding_id=binding.id, user_id=user_a.id,
+        relative_path="个人文件/已经删除.txt", source="local_directory",
+        status="pending", baseline_fingerprint="a" * 64,
+        local_fingerprint="b" * 64, remote_fingerprint="c" * 64,
+    )
+    db.add(conflict)
+    await db.commit()
+
+    result = await admin.get_admin_sync_status(db, user_id=user_a.id)
+
+    assert result["totals"]["pendingConflicts"] == 0
+    assert result["conflicts"] == []
+    await db.refresh(conflict)
+    assert conflict.status == "resolved"
+    assert conflict.resolution == "stale"
+
+
+@pytest.mark.asyncio
 async def test_admin_reconcile_requires_explicit_confirmation(db):
     with pytest.raises(HTTPException) as exc:
         await binding_reconcile(1, BindingActionRequest(confirm=False), db=db)

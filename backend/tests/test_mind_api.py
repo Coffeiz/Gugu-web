@@ -348,7 +348,8 @@ async def test_canvas_item_keeps_note_global_and_duplicate_add_is_idempotent(db,
     assert (await _row(db, note.id)).content_md.startswith("# 保留原文")
 
     await remove_canvas_item(canvas.id, first.id, request=None, current_user=user_a, db=db)
-    assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 0
+    removed_row = await db.scalar(select(MindCanvasItem).where(MindCanvasItem.id == first.id))
+    assert removed_row is not None and removed_row.deleted_at is not None
     assert await _row(db, note.id) is not None  # 移出画布绝不删除原记录
 
 
@@ -420,7 +421,8 @@ async def test_delete_canvas_cascades_items_but_keeps_nodes(db, user_a):
 
     await delete_canvas(canvas.id, current_user=user_a, db=db)
 
-    assert await db.scalar(select(func.count()).select_from(MindCanvasItem)) == 0   # 视图项级联删掉
+    deleted_item = await db.scalar(select(MindCanvasItem).where(MindCanvasItem.canvas_id == canvas.id))
+    assert deleted_item is not None and deleted_item.deleted_at is not None  # 软删除，供整图恢复
     assert await _row(db, note.id) is not None                                      # 节点原文不受影响
     remaining = await list_canvases(project_id=None, current_user=user_a, db=db)
     assert canvas.id not in {c.id for c in remaining}

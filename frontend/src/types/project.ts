@@ -6,7 +6,12 @@
 // 下划线前缀（_savedDone / _stageBeforeDone）= 纯前端瞬态，不落库，仅供乐观更新/还原逻辑用。
 import type { components } from '@/types/api'
 
-type ProjectWire = components['schemas']['ProjectResponse']
+// 生成的 API 类型可能落后于当前后端 schema；在这里保留删除时间的边界字段，
+// 同时兼容旧实例偶尔返回的 snake_case 字段，避免回收站把普通项目当成已删除项目。
+type ProjectWire = components['schemas']['ProjectResponse'] & {
+  deletedAt?: string | null
+  deleted_at?: string | null
+}
 
 export type ProjectStatus = 'pending' | 'active' | 'done'
 
@@ -29,6 +34,8 @@ export interface ProjectStage {
 export interface Project extends Omit<ProjectWire, 'status' | 'stages'> {
   status: ProjectStatus
   stages: ProjectStage[]
+  /** 仅已删除项目返回，用于回收站分组与 30 天保留提示。 */
+  deletedAt?: string | null
   /** 拖入「已完成」前的当前阶段，拖回进行中时还原（纯前端瞬态） */
   _stageBeforeDone?: string | null
 }
@@ -63,5 +70,10 @@ export function mapProjectResponse(wire: ProjectWire): Project {
   if (!isProjectStatus(wire.status) || !Array.isArray(wire.stages)) {
     throw new Error('项目数据格式异常')
   }
-  return { ...wire, status: wire.status, stages: wire.stages.map(mapStage) }
+  return {
+    ...wire,
+    deletedAt: wire.deletedAt ?? wire.deleted_at ?? null,
+    status: wire.status,
+    stages: wire.stages.map(mapStage),
+  }
 }

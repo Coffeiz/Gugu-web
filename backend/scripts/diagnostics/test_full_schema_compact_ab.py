@@ -351,10 +351,10 @@ async def run_continuous_case(
 ) -> dict[str, Any]:
     """在同一个 PromptMessages 中连续调用工具，真实覆盖缓存与工具续轮。"""
     from agent.core import LLMRunner
-    from agent.profiles import DefaultProfile
+    from agent.capabilities.defaults import all_system_tool_names
 
     system = _test_system(tool_name)
-    runner = LLMRunner(list(DefaultProfile().tool_names), settings)
+    runner = LLMRunner(all_system_tool_names(), settings)
     initial = [{"role": "user", "content": prompt}]
     if anthropic:
         messages = PromptMessages(initial)
@@ -438,12 +438,12 @@ async def run_continuous_sequence(
 ) -> dict[str, Any]:
     """一个策略只创建一个会话：warmup 后依次输入 case1、case2...。"""
     from agent.core import LLMRunner
-    from agent.profiles import DefaultProfile
+    from agent.capabilities.defaults import all_system_tool_names
 
     if not cases:
         return {"warmup": None, "cases": []}
     system = _test_system("当前 case 指定的工具")
-    tool_names = list(tool_names or DefaultProfile().tool_names)
+    tool_names = list(tool_names or all_system_tool_names())
     capability_context = None
     if description_mode:
         from agent.capabilities.injector import build_fixed_adapter_context, catalog_block
@@ -564,7 +564,7 @@ async def run_continuous_sequence(
 async def run_case(settings, model_cfg, anthropic: bool, tool_name: str, prompt: str, expected: dict[str, Any]) -> dict[str, Any]:
     from agent.core import LLMRunner
     from agent.context import builder
-    from agent.profiles import DefaultProfile
+    from agent.capabilities.defaults import all_system_tool_names
 
     static, dynamic, _ = builder.build_split(
         "default", "Schema 测试用户", [], [], {}, None,
@@ -573,7 +573,7 @@ async def run_case(settings, model_cfg, anthropic: bool, tool_name: str, prompt:
     )
     system = "\n\n---\n\n".join(part for part in (static, dynamic) if part)
     system += f"\n\n## 测试约束\n只调用一次 `{tool_name}`，不要调用其它工具。完成后停止。工具调用参数必须严格符合用户要求；不要猜测缺失信息。"
-    runner = LLMRunner(list(DefaultProfile().tool_names), settings)
+    runner = LLMRunner(all_system_tool_names(), settings)
     messages = [{"role": "user", "content": prompt}]
     generation = runner.run(_UID, system if anthropic else None, messages if anthropic else [{"role": "system", "content": system}, *messages], anthropic, model_cfg)
     calls: list[dict[str, Any]] = []
@@ -620,7 +620,7 @@ async def run_case(settings, model_cfg, anthropic: bool, tool_name: str, prompt:
 async def main_async(args: argparse.Namespace) -> int:
     from agent.tools import registry
     from agent.tools.base import Tool
-    from agent.profiles import DefaultProfile
+    from agent.capabilities.defaults import all_system_tool_names
 
     settings = get_settings()
     model_cfg = select_model(settings, args.preset)
@@ -652,7 +652,7 @@ async def main_async(args: argparse.Namespace) -> int:
             Tool.to_anthropic = anthropic_schema
             metrics: dict[str, Any] = {}
             try:
-                tool_names = list(DefaultProfile().tool_names)
+                tool_names = all_system_tool_names()
                 metrics = schema_metrics(
                     registry, tool_names, anthropic, getattr(model_cfg, "model", ""),
                     description_mode=label == "description", settings=settings,

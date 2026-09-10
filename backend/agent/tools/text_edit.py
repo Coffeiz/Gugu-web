@@ -32,6 +32,25 @@ def numbered_lines(text: str) -> str:
     return "\n".join(f"{index}: {line}" for index, line in enumerate(lines, 1))
 
 
+def select_numbered_lines(text: str, target_lines: str = "all") -> tuple[str, str, tuple[int, int]]:
+    """按统一的 ``target_lines`` 语法截取正文，并保留原始物理行号。
+
+    ``read_file`` 和 ``edit_file`` 共用这套 1-based 行号规则。读取时不做
+    ``expected`` 校验，只返回选中的正文和绝对行号，避免模型把截取后的首行
+    误当成整篇文件的第 1 行。
+    """
+    lines = text.splitlines(keepends=True)
+    if not lines and str(target_lines).strip().lower() == "all":
+        return text, "", (0, 0)
+    start, end = _parse_target(target_lines, len(lines))
+    selected = text if str(target_lines).strip().lower() == "all" else "".join(lines[start - 1:end])
+    numbered = "\n".join(
+        f"{index}: {lines[index - 1].rstrip(chr(10) + chr(13))}"
+        for index in range(start, end + 1)
+    )
+    return selected, numbered, (start, end)
+
+
 def _normalise_expected(value: str) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
 

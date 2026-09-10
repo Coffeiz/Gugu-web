@@ -78,6 +78,8 @@ import { replaceOrAppendTerminalEvent, type TerminalEventView } from './terminal
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { upsertById } from '@/utils/reconcileById'
 import { useI18n } from 'vue-i18n'
 import router from '@/router'
 
@@ -191,6 +193,7 @@ function handlePtyExit(terminalId: string) {
 // 终端输出优先消费统一业务事件；切换终端和断线时仍用 sequence API 补拉，避免 Redis pub/sub 丢消息。
 watch(() => live.resourceEvent, (event) => {
   if (!event || event.resource !== 'terminals') return
+  if (InteractionSync.isOwnEvent(event.origin)) return
   const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
   const terminalId = String(event.entity_id ?? payload?.terminal_id ?? '')
   if (event.operation === 'refresh') {
@@ -275,7 +278,12 @@ async function cancelEvent(event: TerminalEventView) {
   }
 }
 async function createTerminal() {
-  try { const item = await terminalsApi.create({ name: t('terminalUi.defaultName', { number: terminals.value.length + 1 }), mode: 'interactive-pty' }); terminals.value.unshift(item); select(item.id) } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminalUi.createError') }
+  try {
+    const item = await terminalsApi.create({ name: t('terminalUi.defaultName', { number: terminals.value.length + 1 }), mode: 'interactive-pty' })
+    // 兼容实时事件先于 HTTP 响应到达的顺序，按服务端 id 做最终幂等对账。
+    terminals.value = upsertById(terminals.value, item)
+    select(item.id)
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('terminalUi.createError') }
 }
 async function terminate() { if (selected.value) { await terminalsApi.terminate(selected.value.id); await load() } }
 async function reopenTerminal() {

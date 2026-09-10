@@ -56,7 +56,13 @@ def ensure_engine():
     loop 的引擎，避免把仍持有连接的旧池直接交给垃圾回收。"""
     global _engine, _SessionLocal, _engine_loop
     current = _current_loop()
-    if _engine is not None and current is not None and _engine_loop is not None and current is not _engine_loop:
+    if (
+        _engine is not None
+        and hasattr(_engine, "dispose")
+        and current is not None
+        and _engine_loop is not None
+        and current is not _engine_loop
+    ):
         old_engine = _engine
         _engine = None
         _SessionLocal = None

@@ -42,6 +42,18 @@
     <button v-if="!recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
     </button>
+    <button
+      v-if="!recording"
+      class="att-btn unlimited-btn"
+      :class="{ active: unlimitedMode }"
+      type="button"
+      :title="unlimitedMode ? t('chat.unlimitedOn') : t('chat.unlimitedOff')"
+      :aria-label="unlimitedMode ? t('chat.unlimitedOn') : t('chat.unlimitedOff')"
+      :aria-pressed="unlimitedMode"
+      @click="onToggleUnlimited"
+    >
+      <Icon :name="unlimitedMode ? 'action.speed-fill' : 'action.speed'" :size="16" />
+    </button>
     <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
     <div v-if="!recording" class="chat-input-editor">
       <EditorContent v-if="chatEditor" :editor="chatEditor" />
@@ -90,6 +102,7 @@ const props = defineProps<{
   expanded: boolean
   ownerZ: number
   streaming: boolean
+  unlimitedMode: boolean
   vw: number
   onRemoveAtt: (a: ChatFile) => void
   onStartRecord: () => void
@@ -99,6 +112,7 @@ const props = defineProps<{
   onPaste: (e: ClipboardEvent) => void
   onSend: () => void
   onStopStreaming: () => void
+  onToggleUnlimited: () => void
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:references': [value: ChatReference[]] }>()
@@ -361,6 +375,7 @@ defineExpose({
   display: flex; align-items: center; justify-content: center; height: 28px; padding: 0;
   opacity: 0.7; transition: opacity 0.15s, color 0.15s; }   /* 与发送按钮(28)等高，底对齐时中心也对齐 */
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
+.unlimited-btn.active { color: var(--color-primary); opacity: 1; }
 .chat-input-row > .att-btn,
 .chat-input-row > .send-btn { align-self: center; }
 .chat-input-row {

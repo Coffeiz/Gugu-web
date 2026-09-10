@@ -6020,6 +6020,8 @@ export interface components {
              * @default false
              */
             shellAutopilotEnabled: boolean;
+            /** Unlimitedmode */
+            unlimitedMode: boolean;
             /**
              * Showtoolinteractions
              * @default false
@@ -6089,6 +6091,8 @@ export interface components {
             shellDangerousEnabled?: boolean | null;
             /** Shellautopilotenabled */
             shellAutopilotEnabled?: boolean | null;
+            /** Unlimitedmode */
+            unlimitedMode?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
             /** Toolinjectionmode */
@@ -6626,6 +6630,8 @@ export interface components {
             event_id?: number | null;
             /** Authorized Tools */
             authorized_tools?: string[];
+            /** Email Attachment File Ids */
+            email_attachment_file_ids?: number[];
             /** Workspace Id */
             workspace_id?: number | null;
         };
@@ -6656,6 +6662,8 @@ export interface components {
             enabled?: boolean | null;
             /** Authorized Tools */
             authorized_tools?: string[] | null;
+            /** Email Attachment File Ids */
+            email_attachment_file_ids?: number[] | null;
             /** Workspace Id */
             workspace_id?: number | null;
         };

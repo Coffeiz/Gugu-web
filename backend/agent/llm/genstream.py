@@ -262,6 +262,36 @@ async def snapshot(session_id) -> dict | None:
         return None
 
 
+async def probe(session_id) -> dict:
+    """检查生成状态，区分 Redis 故障和确实没有生成状态。
+
+    ``snapshot()`` 为了兼容现有调用方会把 Redis 异常折叠成 ``None``，但孤儿
+    run 回收不能使用这个语义：Redis 暂时不可用时，不能把数据库里的正常
+    ``running`` 会话清成 ``idle``。这里同时检查快照、任务 owner 和 lease，
+    只有三者都不存在时才报告确实没有活跃生成。
+    """
+    try:
+        redis = get_redis()
+        raw = await redis.get(_state_key(session_id))
+        state = json.loads(raw) if raw else None
+        has_owner = bool(await redis.exists(_owner_key(session_id)))
+        has_lease = bool(await redis.exists(_lease_key(session_id)))
+    except Exception:
+        return {"redis_ok": False, "active": None, "state": None}
+
+    # done 快照仍可能处于 end() 的终态保留窗口；owner/lease 存在时不要在
+    # 收口竞态中抢先回收。state 缺失且三类 Redis 状态都没有，才是进程退出
+    # 后 finally 未执行留下的孤儿 run。
+    active = bool((state and not state.get("done")) or has_owner or has_lease)
+    return {
+        "redis_ok": True,
+        "active": active,
+        "state": state,
+        "has_owner": has_owner,
+        "has_lease": has_lease,
+    }
+
+
 async def claim_lease(session_id, run_id: str) -> None:
     """把会话生成归属到已取得 session gate 的后台任务。"""
     try:

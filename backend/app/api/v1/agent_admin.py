@@ -179,7 +179,6 @@ PLACEHOLDERS = [
     {"key": "{profile}",     "desc": "咕咕对用户的稳定画像（profile.json 导出）"},
     {"key": "{preferences}", "desc": "咕咕对用户偏好的理解（preferences.md）"},
     {"key": "{memory}",      "desc": "长期认知积累（memory.md）"},
-    {"key": "{weekly}",      "desc": "本周记忆摘要"},
     {"key": "{daily}",       "desc": "近期每日记录"},
     {"key": "{projects}",    "desc": "用户当前项目列表"},
     {"key": "{calendar}",    "desc": "近期日历事件"},
@@ -503,6 +502,30 @@ async def get_usage(month: str | None = None, model: str | None = None,
         for r in model_rows.all()
     ]
 
+    # 按场景分组（chat=主对话 / reflection=记忆反思 / compaction=压缩 / knowledge=知识反思）；
+    # 2026-09-10 之前的存量行没有 scenario 标记，全部落在 chat 里。
+    scenario_rows = await db.execute(  # orm-exempt: 用量场景统计读取待 Service 收口（1.1.2 新增）
+        select(  # orm-exempt: 同上，scenario_rows 查询待 Service 收口
+            AgentUsage.scenario,
+            func.count(AgentUsage.id),
+            func.coalesce(func.sum(_effective_input_expr()), 0),
+            func.coalesce(func.sum(AgentUsage.tokens_out), 0),
+            func.coalesce(func.sum(AgentUsage.cache_read), 0),
+            func.coalesce(func.sum(AgentUsage.cache_write), 0),
+        ).where(AgentUsage.is_byok.is_(False))
+        .group_by(AgentUsage.scenario)
+        .order_by(func.count(AgentUsage.id).desc())
+    )
+    by_scenario = [
+        {
+            "scenario": r[0] or "chat",
+            "calls": r[1], "tokens_in": r[2], "tokens_out": r[3],
+            "cache_read": r[4], "cache_write": r[5],
+            "cache_ratio": round(r[4] / r[2], 6) if r[2] else 0,
+        }
+        for r in scenario_rows.all()
+    ]
+
     # 有数据的月份列表（最近 12 个月）
     months_rows = await db.execute(
         text(f"""
@@ -611,6 +634,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "total":   {"calls": total_calls, "tokens_in": total_in, "tokens_out": total_out, "cache_read": total_cache_read, "cache_write": total_cache_write, "cache_ratio": round(total_cache_read / total_in, 6) if total_in else 0},
         "today":   {"calls": today_calls, "tokens_in": today_in, "tokens_out": today_out, "cache_read": today_cache_read, "cache_write": today_cache_write, "cache_ratio": round(today_cache_read / today_in, 6) if today_in else 0},
         "by_model": by_model,
+        "by_scenario": by_scenario,
         "active_model": model,
         "months":   available_months,
         "month":    target_month,

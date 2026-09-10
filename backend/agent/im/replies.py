@@ -25,6 +25,20 @@ _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
+_QQ_PASSIVE_REPLY_USED = "_qq_passive_reply_used"
+
+
+def _qq_reply_message_id(payload: dict, reply: PlatformReply) -> str | None:
+    """按一次入站消息的出站预算决定是否继续使用 QQ 被动回复。"""
+    if payload.get("platform") != "qq" or payload.get(_QQ_PASSIVE_REPLY_USED):
+        return None
+    return reply.reply_to_message_id
+
+
+def _mark_qq_passive_reply_used(payload: dict, message_id: str | None) -> None:
+    """记录本次入站消息已经消费过唯一的 QQ 被动回复机会。"""
+    if payload.get("platform") == "qq" and message_id:
+        payload[_QQ_PASSIVE_REPLY_USED] = True
 
 
 async def _close_async_iterator(iterator) -> None:
@@ -122,6 +136,10 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
     if platform != "qq":
         return await send_text(payload, format_text_fallback(prompt, platform=platform))
 
+    # 交互提示可能在多轮工具调用后才产生，此时 QQ 的被动回复窗口或次数经常已经
+    # 用尽。交互本身不需要绑定原消息，改发主动消息，避免 40034128/40034031
+    # 让 Web 有提示但群聊看不到，也避免模型 run 长时间等待不可见的选择。
+    interaction_payload = {**payload, "message_id": None}
     text = format_text_fallback(prompt)
     if prompt.get("options"):
         from agent.gateway import qq
@@ -140,11 +158,11 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
             format_text_fallback(keyboard_prompt),
             keyboard_prompt,
             channel_id=payload.get("channel_id") or "",
-            msg_id=payload.get("message_id"),
+            msg_id=None,
             group=payload.get("chat_type") == "group",
         ):
             return True
-    return await send_text(payload, text)
+    return await send_text(interaction_payload, text)
 
 
 def _tool_result_summary(result: object, limit: int = 320) -> str:
@@ -188,7 +206,7 @@ def format_tool_event(event: dict, *, markdown: bool = True) -> str:
         if status in {"success", "ok"}:
             return f"✅ {label}完成"
         if status == "waiting":
-            return f"⏳ {label}等待确认"
+            return f"⏸️ {label}：任务已暂停，等待确认"
         return f"⚠️ {label}未完成"
 
     title = f"### 🔧 {label}"
@@ -198,7 +216,7 @@ def format_tool_event(event: dict, *, markdown: bool = True) -> str:
             body.extend(("**输入**", _tool_code_block(event.get("input"))))
         return "\n\n".join(body)
     if status == "waiting":
-        return f"{title}\n\n**状态**：等待确认"
+        return f"{title}\n\n**状态**：任务已暂停，等待确认"
     status_text = "已完成" if status in {"success", "ok"} else "未完成"
     body = [title, f"**状态**：{status_text}"]
     if event.get("result") is not None:
@@ -216,7 +234,13 @@ async def send_tool_event(payload: dict, event: dict) -> bool:
     text = format_tool_event(event, markdown=not is_qq_plain)
     if not text:
         return True
-    return await send_text(payload, sanitize_outbound(text))
+    # 工具状态是过程消息，不应消耗入站消息唯一的 QQ 被动回复机会。
+    event_payload = (
+        {**payload, "message_id": None}
+        if payload.get("platform") == "qq"
+        else payload
+    )
+    return await send_text(event_payload, sanitize_outbound(text))
 
 
 async def send_reply(payload: dict, reply: PlatformReply) -> bool:
@@ -239,25 +263,31 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         return result is not False
     elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
+        reply_message_id = _qq_reply_message_id(payload, reply)
         if reply.target.type == "group":
             mention_user_id = payload.get("platform_user_id")
             args = (
                 reply.target.id,
                 text,
-                reply.reply_to_message_id,
+                reply_message_id,
                 payload.get("channel_id"),
                 payload.get("message_format"),
             )
             if mention_user_id:
-                return await qq.send_group(*args, mention_user_id)
-            return await qq.send_group(*args)
-        return await qq.send_c2c(
-            reply.target.id,
-            text,
-            reply.reply_to_message_id,
-            payload.get("channel_id"),
-            payload.get("message_format"),
-        )
+                result = await qq.send_group(*args, mention_user_id)
+            else:
+                result = await qq.send_group(*args)
+        else:
+            result = await qq.send_c2c(
+                reply.target.id,
+                text,
+                reply_message_id,
+                payload.get("channel_id"),
+                payload.get("message_format"),
+            )
+        if result:
+            _mark_qq_passive_reply_used(payload, reply_message_id)
+        return result
     elif platform == "wechat" and reply.target.id:
         from agent.gateway import wechat
         result = await wechat.send_text(
@@ -362,10 +392,13 @@ async def _send_file_qq(
     data = await storage.get(storage_key)
     if len(data) > _QQ_FILE_MAX:
         return False
+    file_message_id = None if payload.get(_QQ_PASSIVE_REPLY_USED) else payload.get("message_id")
     ok = await qq.send_file(
         openid, data, display_name, ext, payload.get("channel_id"),
-        payload.get("message_id"), group=is_group,
+        file_message_id, group=is_group,
     )
+    if ok:
+        _mark_qq_passive_reply_used(payload, file_message_id)
     return ok
 
 
@@ -403,12 +436,12 @@ async def send_agent_response(
             for text in (response.round_texts or [])
             if str(text or "").strip()
         ]
-        if not texts:
-            fallback = _fix_loose_bold(response.text or "")
-            texts = [fallback] if fallback.strip() else (["给你～"] if response.files else ["嗯~在的，你说～"])
+        response_text = _fix_loose_bold(response.text or "").strip()
+        if not texts and not response.errored:
+            texts = [response_text] if response_text else (["给你～"] if response.files else ["嗯~在的，你说～"])
 
     # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
-    last_text = texts[-1]
+    last_text = texts[-1] if texts else ""
     if isinstance(already_sent_rounds, int):
         sent_indices = set(range(max(0, already_sent_rounds)))
     else:
@@ -418,4 +451,14 @@ async def send_agent_response(
             continue
         if not await send_text(payload, text):
             return None
+
+    # 生成失败时，response.text 是新的错误提示，而 round_texts 只是失败前已经
+    # 生成的正文。它们属于两个不同的出站消息域：即使所有正文 round 都已发送，
+    # 也必须单独把错误提示发出去，不能被 round 去重吞掉。
+    if response.errored:
+        if response_text and response_text != last_text:
+            if not await send_text(payload, response_text):
+                return None
+            return response_text
+        return response_text or last_text or None
     return last_text

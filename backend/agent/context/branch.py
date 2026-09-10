@@ -46,48 +46,61 @@ class ContextBranch:
                     diag_log("agent.context.branch.state_boundary", exc)
         user = assemble_branch_user_input(branch_input)
         input_fp = _fingerprint(f"{branch_input.stable_system}\n{user}")
+        # 分支调用的用量按场景落库（reflection/compaction/knowledge）：
+        # 临时改写 usage context 的 scenario，分支退出后还原，主链路仍是 chat。
+        from agent.llm import modelctx as _modelctx
+        _prev_usage_ctx = _modelctx.get_usage_context()
+        if _prev_usage_ctx is not None and _prev_usage_ctx.scenario != policy.name:
+            _modelctx.set_usage_context(
+                _prev_usage_ctx.user_id, _prev_usage_ctx.session_id, scenario=policy.name)
         attempts = 0
         output: Any = None
         reason = "provider_error"
         validated_ok = False
         error_type = "-"
         error_status = "-"
-        for attempts in range(1, max(0, policy.max_retries) + 2):
-            call_failed = False
-            try:
-                if policy.output_mode == "text":
-                    call = runner or provider_runner.complete_text
-                    output = await call(
-                        branch_input.stable_system, user, settings, policy.max_tokens)
-                    ok = bool(str(output or "").strip())
-                else:
-                    call = runner or provider_runner.complete_json
-                    output = await call(
-                        branch_input.stable_system, user, settings,
-                        max_tokens=policy.max_tokens,
-                        thinking=policy.thinking,
+        try:
+            for attempts in range(1, max(0, policy.max_retries) + 2):
+                call_failed = False
+                try:
+                    if policy.output_mode == "text":
+                        call = runner or provider_runner.complete_text
+                        output = await call(
+                            branch_input.stable_system, user, settings, policy.max_tokens)
+                        ok = bool(str(output or "").strip())
+                    else:
+                        call = runner or provider_runner.complete_json
+                        output = await call(
+                            branch_input.stable_system, user, settings,
+                            max_tokens=policy.max_tokens,
+                            thinking=policy.thinking,
+                        )
+                        ok = isinstance(output, dict) and bool(output)
+                except Exception as exc:
+                    output = None
+                    ok = False
+                    call_failed = True
+                    reason = "provider_error"
+                    error_type = type(exc).__name__
+                    response = getattr(exc, "response", None)
+                    status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
+                    error_status = str(status) if isinstance(status, int) else "-"
+                    diag_log("agent.context.branch.provider", exc)
+                validated_ok = ok
+                if ok:
+                    reason = "completed"
+                    break
+                if not call_failed:
+                    reason = (
+                        "output_empty"
+                        if output is None or output == "" or output == {}
+                        else "schema_invalid"
                     )
-                    ok = isinstance(output, dict) and bool(output)
-            except Exception as exc:
-                output = None
-                ok = False
-                call_failed = True
-                reason = "provider_error"
-                error_type = type(exc).__name__
-                response = getattr(exc, "response", None)
-                status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
-                error_status = str(status) if isinstance(status, int) else "-"
-                diag_log("agent.context.branch.provider", exc)
-            validated_ok = ok
-            if ok:
-                reason = "completed"
-                break
-            if not call_failed:
-                reason = (
-                    "output_empty"
-                    if output is None or output == "" or output == {}
-                    else "schema_invalid"
-                )
+        finally:
+            if _prev_usage_ctx is not None and _prev_usage_ctx.scenario != policy.name:
+                _modelctx.set_usage_context(
+                    _prev_usage_ctx.user_id, _prev_usage_ctx.session_id,
+                    scenario=_prev_usage_ctx.scenario)
 
         output_fp = _fingerprint(output) if output else None
         result = BranchResult(

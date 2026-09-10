@@ -3,11 +3,21 @@ import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import { useEmbeddingRebuild } from '../runtime-config/useEmbeddingRebuild'
 
+// 自动召回来源白名单（与后端 SearchSettings.rag_auto_sources 的 Literal 集合一致）。
+export const RAG_SOURCE_KEYS = [
+  'memory', 'knowledge', 'project', 'file', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation',
+] as const
+
 export function useMemoryRecallConfig() {
   const configStore = useConfigStore()
   const adminStore = useAdminStore()
   const embeddingDraft = reactive({ ...configStore.cfg.embedding })
   const ragEnabled = ref(Boolean(configStore.cfg.search.rag_enabled))
+  const storedSources = Array.isArray(configStore.cfg.search.rag_auto_sources)
+    ? configStore.cfg.search.rag_auto_sources.map(String)
+    : [...RAG_SOURCE_KEYS]
+  const ragAutoSources = ref<string[]>(storedSources.filter(item =>
+    (RAG_SOURCE_KEYS as readonly string[]).includes(item)))
   const capabilityRagEnabled = ref(Boolean(configStore.cfg.search.capability_rag_enabled))
   const capabilityRagShadow = ref(Boolean(configStore.cfg.search.capability_rag_shadow ?? true))
   const capabilityRagLimit = ref(Number(configStore.cfg.search.capability_rag_limit || 5))
@@ -23,9 +33,19 @@ export function useMemoryRecallConfig() {
   function resetEmbedding() { Object.assign(embeddingDraft, configStore.cfg.embedding) }
   function resetRag() {
     ragEnabled.value = Boolean(configStore.cfg.search.rag_enabled)
+    const stored = Array.isArray(configStore.cfg.search.rag_auto_sources)
+      ? configStore.cfg.search.rag_auto_sources.map(String)
+      : [...RAG_SOURCE_KEYS]
+    ragAutoSources.value = stored.filter(item => (RAG_SOURCE_KEYS as readonly string[]).includes(item))
     capabilityRagEnabled.value = Boolean(configStore.cfg.search.capability_rag_enabled)
     capabilityRagShadow.value = Boolean(configStore.cfg.search.capability_rag_shadow ?? true)
     capabilityRagLimit.value = Number(configStore.cfg.search.capability_rag_limit || 5)
+  }
+  function toggleRagSource(key: string, checked: boolean) {
+    const set = new Set(ragAutoSources.value)
+    if (checked) set.add(key)
+    else set.delete(key)
+    ragAutoSources.value = RAG_SOURCE_KEYS.filter(item => set.has(item))
   }
   function syncFromStore() {
     Object.assign(embeddingDraft, configStore.cfg.embedding)
@@ -50,7 +70,7 @@ export function useMemoryRecallConfig() {
     ragSaved.value = false
     ragError.value = ''
     try {
-      await configStore.saveConfig({ search: { rag_enabled: ragEnabled.value } })
+      await configStore.saveConfig({ search: { rag_enabled: ragEnabled.value, rag_auto_sources: [...ragAutoSources.value] } })
       ragSaved.value = true
       resetRag()
       setTimeout(() => { ragSaved.value = false }, 3000)
@@ -69,6 +89,7 @@ export function useMemoryRecallConfig() {
       await configStore.saveConfig({
         search: {
           rag_enabled: ragEnabled.value,
+          rag_auto_sources: [...ragAutoSources.value],
           capability_rag_enabled: capabilityRagEnabled.value,
           capability_rag_shadow: capabilityRagShadow.value,
           capability_rag_limit: Math.max(1, Math.min(20, Number(capabilityRagLimit.value) || 5)),
@@ -111,9 +132,9 @@ export function useMemoryRecallConfig() {
   }
 
   return {
-    configStore, embeddingDraft, ragEnabled, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit,
+    configStore, embeddingDraft, ragEnabled, ragAutoSources, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit,
     embeddingSaving, embeddingSaved, embeddingError,
     ragSaving, ragSaved, ragError, embTest, rebuild, pollRebuild, startRebuild,
-    resetEmbedding, resetRag, syncFromStore, saveEmbedding, saveRag, saveAll, testEmbedding,
+    resetEmbedding, resetRag, toggleRagSource, syncFromStore, saveEmbedding, saveRag, saveAll, testEmbedding,
   }
 }

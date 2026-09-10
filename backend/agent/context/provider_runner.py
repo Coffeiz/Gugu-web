@@ -63,10 +63,16 @@ async def _anthropic(
     # Anthropic API 必填 max_tokens，无法真正不限；None 时给高预算。
     if max_tokens is None:
         max_tokens = 32768
+    # 与主对话一致的主动缓存：稳定 system 前缀打 ephemeral 断点（分支的 user
+    # 消息带时间戳每轮必变，只有 system 前缀能命中）。
+    from agent.llm.llm_select import supports_anthropic_active_cache
+    system = sys
+    if supports_anthropic_active_cache(ai):
+        system = [{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}]
     # temperature 已全局下线（anthropic SDK 1.x 不再接受该参数）。
     kwargs = dict(
         model=ai.model,
-        system=sys,
+        system=system,
         messages=[{"role": "user", "content": user}],
         max_tokens=max_tokens,
     )
@@ -101,6 +107,11 @@ async def _openai(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     adapter = providers.adapter_for(ai)
+    # 与主对话一致：仅对验证过显式锚点行为的 provider 给稳定 system 前缀打
+    # cache_control（DeepSeek 走服务端自动缓存，不打锚点）。
+    if adapter.supports_explicit_cache(getattr(ai, "model", "") or ""):
+        from agent.providers.message_utils import _with_system_cache_control
+        kwargs["messages"] = _with_system_cache_control(kwargs["messages"])
     if json_mode:
         kwargs.update(adapter.build_structured_output(ai))
     if thinking is not None:

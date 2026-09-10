@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.capabilities.errors import CapabilityRegistrationError
 from agent.capabilities.skill_registry import SkillCapabilityRegistry
-from agent.profiles.default import DefaultProfile
 from agent.capabilities.tool_registry import ToolCapabilityRegistry
+from agent.capabilities.defaults import all_system_tool_names
 from agent.tools import registry as tool_registry
 from app.core.security import get_current_user
 from app.db.session import get_db
@@ -42,7 +42,7 @@ class UserSkillPatch(BaseModel):
 
 
 def _allowed_tools() -> list[str]:
-    return DefaultProfile().tool_names
+    return all_system_tool_names()
 
 
 def _serialize(row: UserSkill) -> dict:

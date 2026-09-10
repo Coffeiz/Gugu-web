@@ -3,21 +3,14 @@ from __future__ import annotations
 
 import re
 import time
-import uuid
 import hashlib
-from dataclasses import replace
 
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.projects import ProjectAdapter
-from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
 from agent.rag.context import get_snapshot_context
 from agent.rag.diagnostics import record_recall
-from agent.rag.hybrid import hybrid_results
 from agent.rag.models import RecallCandidate, RecallResult, Scope
-from agent.rag.persistent_store import load_index_documents, replace_source_documents, search_persistent_index
-from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
-from agent.rag.index_cache import search_documents_with_cache
 from agent.rag.ts_sidecar import (
     TsSidecarUnavailable,
     rank_candidates_with_cache,
@@ -99,8 +92,42 @@ async def _load_memory_documents(user_id, query_scope):
     return await MemoryAdapter(user_id).build_cached_owner_documents(scope=query_scope)
 
 
+async def _memory_recall_documents(user_id, scope, source_filter) -> tuple[list, str, int]:
+    """加载并过滤 Memory 候选文档；legacy 与 batch 共用同一语料口径。
+
+    返回 (documents, index_source, document_load_ms)：已按来源过滤、scope 过滤
+    和 snapshot 去重收口，直接可作为 worker 瞬态语料的输入。
+    """
+    import asyncio
+
+    query_scopes = normalize_memory_scopes(user_id, scope)
+    document_load_started = time.monotonic()
+    loaded = await asyncio.gather(*[
+        _load_memory_documents(user_id, query_scope)
+        for query_scope in query_scopes
+    ])
+    document_load_ms = int((time.monotonic() - document_load_started) * 1000)
+    documents = [document for docs, _ in loaded for document in docs]
+    index_source = ",".join(sorted({source for _, source in loaded}))
+    allowed_sources = {"profile", "pattern", "daily", "memory"}
+    if source_filter != "all":
+        allowed_sources &= {source_filter}
+    documents = [
+        doc for doc in documents
+        if doc.source_id in allowed_sources
+        and matches_any_scope(doc, query_scopes)
+    ]
+    snapshot_text = get_snapshot_context()
+    if snapshot_text:
+        documents = [
+            doc for doc in documents
+            if not _snapshot_covers_document(doc.content, snapshot_text)
+        ]
+    return documents, index_source, document_load_ms
+
+
 class MemoryRetriever:
-    """Memory 来源的候选召回器；最终结果预算由 UnifiedRecallService 负责。"""
+    """Memory 来源载体：统一查询链按 source_filter 装载瞬态语料，交付由 TS worker 完成。"""
 
     source_type = "memory"
 
@@ -108,216 +135,138 @@ class MemoryRetriever:
         self.user_id = user_id
         self.source_filter = source_filter
 
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        scope,
-        strategy: str,
-        candidate_limit: int,
-    ) -> RetrievalBatch:
-        query_scopes = normalize_memory_scopes(self.user_id, scope)
-        import asyncio
-        document_load_started = time.monotonic()
-        loaded = await asyncio.gather(*[
-            _load_memory_documents(self.user_id, query_scope)
-            for query_scope in query_scopes
-        ])
-        document_load_ms = int((time.monotonic() - document_load_started) * 1000)
-        documents = [document for docs, _ in loaded for document in docs]
-        index_source = ",".join(sorted({source for _, source in loaded}))
-        allowed_sources = {"profile", "pattern", "daily", "memory"}
-        if self.source_filter != "all":
-            allowed_sources &= {self.source_filter}
-        documents = [
-            doc for doc in documents
-            if doc.source_id in allowed_sources
-            and matches_any_scope(doc, query_scopes)
-        ]
-        snapshot_text = get_snapshot_context()
-        if snapshot_text:
-            documents = [
-                doc for doc in documents
-                if not _snapshot_covers_document(doc.content, snapshot_text)
-            ]
-
-        search_metadata: dict[str, object] = {}
-        try:
-            lexical = await search_documents_with_cache(
-                self.user_id, documents, query, limit=candidate_limit,
-                source_types={"memory"},
-                diagnostics=search_metadata,
-            )
-        except TsSidecarUnavailable:
-            lexical = []
-            search_metadata.update({"engine": "unavailable", "cache_hit": False,
-                                    "fallback": "lexical_worker_unavailable"})
-        final: list[RecallResult] = lexical
-        fusion = "bm25"
-        fallback_reason = "embedding_disabled"
-        if not lexical:
-            fallback_reason = "lexical_empty"
-        if strategy in {"auto", "embedding"}:
-            from agent.memory import embedding
-
-            if embedding.is_enabled():
-                query_vector = await embedding.embed(query)
-                vector_map = await _load_cached_vectors(self.user_id, documents)
-                final, fallback_reason = hybrid_results(
-                    lexical, documents, query_vector, vector_map, limit=candidate_limit
-                )
-                if fallback_reason is None:
-                    fusion = "hybrid-rrf"
-            elif strategy == "embedding":
-                fallback_reason = "embedding_disabled"
-        if strategy not in {"auto", "bm25", "embedding"}:
-            raise ValueError("strategy 只能是 auto、bm25 或 embedding")
-        return RetrievalBatch(
-            source_type=self.source_type,
-            results=tuple(final),
-            index_source=index_source,
-            fallback_reason=fallback_reason,
-            candidate_count=len(documents),
-            metadata={
-                **{key: str(value) for key, value in search_metadata.items()},
-                "document_load_ms": str(document_load_ms),
-                "fusion": fusion,
-            },
-        )
-
 
 class ProjectRetriever:
-    """Project 来源候选召回器；词法检索由 TypeScript worker 执行。"""
+    """Project 来源载体：持有 adapter 的会话工厂，交付由 TS worker 统一查询完成。"""
 
     source_type = "project"
 
     def __init__(self, user_id, *, db=None, db_factory=None):
         self.adapter = ProjectAdapter(user_id, db=db, db_factory=db_factory)
 
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        scope,
-        strategy: str,
-        candidate_limit: int,
-    ) -> RetrievalBatch:
-        query_scopes = normalize_memory_scopes(self.adapter.user_id, scope)
-        query_scope = next(
-            (item for item in query_scopes if item.scope_type == "owner"),
-            None,
-        )
-        if query_scope is None:
-            return RetrievalBatch(
-                source_type=self.source_type,
-                index_source="projects-db" if self.adapter._db is not None else "projects-store",
-                fallback_reason="scope_not_supported",
-                candidate_count=0,
-            )
-        if strategy not in {"auto", "bm25", "embedding"}:
-            raise ValueError("strategy 只能是 auto、bm25 或 embedding")
-        if self.adapter._db is not None:
-            search_metadata: dict[str, object] = {}
-            results = await self._search_db(
-                self.adapter._db, query, query_scope, candidate_limit,
-                diagnostics=search_metadata,
-            )
-            candidate_count = int(search_metadata.get("document_count", 0) or 0)
-            return RetrievalBatch(
-                source_type=self.source_type,
-                results=tuple(results),
-                index_source="knowledge-index-db",
-                fallback_reason="embedding_disabled",
-                candidate_count=candidate_count,
-                metadata={
-                    **{key: str(value) for key, value in search_metadata.items()},
-                    "fusion": "bm25",
-                },
-            )
-        from agent.rag.index_cache import get_index_cache
-        load_started = time.monotonic()
-        documents = await get_index_cache().get_snapshot_documents(
-            self.adapter.user_id,
-            f"project:{query_scope.key()}",
-            lambda: self.adapter.build_documents(scope=query_scope),
-        )
-        document_load_ms = int((time.monotonic() - load_started) * 1000)
-        search_metadata = {}
-        try:
-            results = await search_documents_with_cache(
-                self.adapter.user_id, documents, query, limit=candidate_limit,
-                source_types={"project"}, scope=query_scope,
-                diagnostics=search_metadata,
-            )
-        except TsSidecarUnavailable:
-            results = []
-            search_metadata.update({"engine": "unavailable", "cache_hit": False,
-                                    "fallback": "lexical_worker_unavailable"})
-        return RetrievalBatch(
-            source_type=self.source_type,
-            results=tuple(results),
-            index_source="projects-db",
-            fallback_reason="embedding_disabled",
-            candidate_count=len(documents),
-            metadata={
-                **{key: str(value) for key, value in search_metadata.items()},
-                "document_load_ms": str(document_load_ms),
-                "fusion": "bm25",
-            },
-        )
-
-    async def _search_db(self, db, query: str, scope, limit: int,
-                         diagnostics: dict[str, object] | None = None):
-        from agent.rag.context import get_snapshot_revision
-
-        # snapshot-bound index 已经固定了文档集合；不要每轮再次读取整张索引表。
-        # 只有首次发现索引为空时，才走一次原有的构建路径。
-        if get_snapshot_revision():
-            results = await search_persistent_index(
-                db, self.adapter.user_id, query,
-                source_types={self.source_type}, scope=scope, limit=limit,
-                diagnostics=diagnostics,
-            )
-            if int((diagnostics or {}).get("document_count", 0) or 0) > 0:
-                return results
-            documents = await self.adapter.build_documents(scope=scope)
-            if documents:
-                await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
-                await db.commit()
-                return await search_persistent_index(
-                    db, self.adapter.user_id, query,
-                    source_types={self.source_type}, scope=scope, limit=limit,
-                    diagnostics=diagnostics,
-                )
-            return results
-
-        documents = await load_index_documents(
-            db, self.adapter.user_id, source_types={self.source_type},
-        )
-        if diagnostics is not None:
-            diagnostics["document_count"] = len(documents)
-        if not documents:
-            documents = await self.adapter.build_documents(scope=scope)
-            await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
-            await db.commit()
-        try:
-            return await search_persistent_index(
-                db, self.adapter.user_id, query,
-                source_types={self.source_type}, scope=scope, limit=limit,
-                diagnostics=diagnostics,
-            )
-        except TsSidecarUnavailable:
-            if diagnostics is not None:
-                diagnostics.update({"engine": "unavailable", "cache_hit": False,
-                                    "fallback": "lexical_worker_unavailable"})
-            return []
-
 
 class UnifiedRecallService:
     """跨来源召回编排：scope-first、去重、引用和最终上下文预算只做一份。"""
 
-    def __init__(self, retriever: UnifiedRetriever):
+    def __init__(self, retriever):
+        # retriever：UnifiedQueryRetriever（统一查询主链）或单来源 adapter
+        # （ConversationAdapter，历史会话工具专用语义）。
         self.retriever = retriever
+
+    def _assemble_pre_ranked(self, query, batches, pre_ranked, scope, mode) -> dict:
+        """Phase 5 统一查询组装：worker 已完成融合与排序，Python 只做权限复核与装配。
+
+        与正常路径的顺序差异（如实记录）：权限复核在排序之后执行——search 阶段的
+        逐 spec scope 过滤仍是第一道边界，这里保留统一校验作为第二道防线；被拒
+        候选从交付行中剔除并计数，不再回补预算。
+        """
+        permission_rejected = 0
+        rank_rows = list(pre_ranked.rank_rows)
+        if isinstance(scope, Scope) or isinstance(scope, (list, tuple)):
+            query_scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
+            # 整个三元组一起过滤：candidate 与正文/citation/score 行是按位置
+            # 配对的，绝不能只过滤 candidate 再和原 rank_rows 从头 zip——
+            # 那会把越权候选的正文和分数拼到合法候选上。
+            authorized_rows = []
+            for candidate, text, row in rank_rows:
+                if matches_any_scope(candidate.document, query_scopes):
+                    authorized_rows.append((candidate, text, row))
+                else:
+                    permission_rejected += 1
+            rank_rows = authorized_rows
+        ranked_candidates = [
+            (candidate, str(text), dict(row))
+            for candidate, text, row in rank_rows
+        ]
+        rank_stats = dict(pre_ranked.rank_stats or {})
+        selected: list[dict] = []
+        rank_details: list[dict] = []
+        for candidate, selected_text, rank_item in ranked_candidates:
+            rank_details.append({
+                "rank": len(rank_details) + 1,
+                "source_type": candidate.source_type,
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
+                "query_idf_baseline": rank_item.get("query_idf_baseline"),
+                "contributions": rank_item.get("rank_contributions") or [],
+            })
+            public_item = candidate.as_public()
+            public_item.update({
+                "text": selected_text,
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "source_quality": round(float(rank_item.get("source_quality") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
+            })
+            public_item["citation"] = rank_item.get("citation") or public_item["citation"]
+            public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
+            selected.append(public_item)
+        fallback_reasons = [batch.fallback_reason for batch in batches if batch.fallback_reason]
+        engines = {batch.metadata.get("engine") for batch in batches if batch.metadata.get("engine")}
+        cache_values = [batch.metadata.get("cache_hit") == "True" for batch in batches
+                        if "cache_hit" in batch.metadata]
+        # 统一主链 strategy 按融合事实判定：worker 完成了向量融合就是 hybrid。
+        strategy = "hybrid" if any(batch.metadata.get("fusion") == "hybrid-rrf"
+                                   for batch in batches) else "bm25"
+        stage_ms: dict[str, int] = {}
+        for batch in batches:
+            for key, value in batch.metadata.items():
+                if key.endswith("_ms"):
+                    try:
+                        stage_ms[f"{batch.source_type}.{key}"] = int(float(value))
+                    except (TypeError, ValueError):
+                        continue
+        ranked_source_diagnostics = rank_stats.get("source_diagnostics") or {}
+        source_diagnostics = {}
+        for batch in batches:
+            source_diagnostics[batch.source_type] = {
+                **(ranked_source_diagnostics.get(batch.source_type) or {}),
+                "candidate_count": batch.candidate_count,
+                "hit_count": len(batch.results),
+                **batch.metadata,
+            }
+        return {
+            "query": query,
+            "results": selected,
+            "has_more": int(rank_stats.get("candidate_count", len(ranked_candidates)) or 0) > len(selected),
+            "strategy": strategy,
+            "fallback_reason": fallback_reasons[0] if fallback_reasons else None,
+            "index_source": ",".join(sorted({batch.index_source for batch in batches})),
+            "sources": sorted({batch.source_type for batch in batches}),
+            "candidate_count": sum(batch.candidate_count for batch in batches),
+            "permission_rejected": permission_rejected,
+            "rejected_low_score": rank_stats.get("rejected_low_score", 0),
+            "rejected_not_preferred": rank_stats.get("rejected_not_preferred", 0),
+            "rejected_duplicate": rank_stats.get("rejected_duplicate", 0),
+            "rejected_parent": rank_stats.get("rejected_parent", 0),
+            "rejected_source": rank_stats.get("rejected_source", 0),
+            "rejected_diversity": rank_stats.get("rejected_similarity", 0),
+            "accepted_count": len(selected),
+            "top_confidence": rank_stats.get("top_confidence", 0),
+            "confidence_threshold": rank_stats.get("threshold", 0.35),
+            "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
+            "selection_mode": rank_stats.get("selection_mode", "confidence"),
+            "scoring_version": rank_stats.get("scoring_version", "confidence-v4"),
+            "rescore_version": rank_stats.get("rescore_version", "disabled"),
+            "idf_source": rank_stats.get("idf_source", "none"),
+            "contribution_exponent": rank_stats.get("contribution_exponent"),
+            "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
+            "cache_hit": bool(cache_values) and all(cache_values),
+            "cache_entries": 1,
+            "cache_miss_reasons": [],
+            "sidecar_reused": None,
+            "index_sync": None,
+            "upsert_count": 0,
+            "delete_count": 0,
+            "rank_candidates_ms": int(rank_stats.get("elapsed_ms", 0) or 0),
+            "stage_ms": stage_ms,
+            "source_diagnostics": source_diagnostics,
+            "scope_diagnostics": [],
+            "_rank_details": rank_details,
+        }
 
     async def search(
         self,
@@ -335,21 +284,38 @@ class UnifiedRecallService:
             get_snapshot_revision, reset_shared_index_key, set_shared_index_key,
         )
         snapshot_revision = get_snapshot_revision()
-        shared_key = (
-            f"snapshot:{snapshot_revision}"
-            if snapshot_revision != "" else f"request:{uuid.uuid4().hex}"
-        )
-        shared_token = set_shared_index_key(shared_key)
+        # 没有 snapshot 时保持普通 owner/revision 缓存路径。随机 request key 会让
+        # 每次召回都绕过 revision cache，导致 persistent sidecar 也无法稳定复用。
+        shared_key = f"snapshot:{snapshot_revision}" if snapshot_revision != "" else ""
+        shared_token = set_shared_index_key(shared_key) if shared_key else None
         try:
-            batches = await self.retriever.retrieve(
-                query,
-                source=source,
-                scope=scope,
-                strategy=strategy,
-                candidate_limit=20,
-            )
+            if getattr(self.retriever, "source_type", None):
+                # 单来源 adapter（如 ConversationAdapter）：自带检索语义，直接取回唯一批次。
+                batches = [await self.retriever.retrieve(
+                    query, scope=scope, strategy=strategy, candidate_limit=20,
+                )]
+            else:
+                retrieve_kwargs = dict(source=source, scope=scope, strategy=strategy, candidate_limit=20)
+                from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+                if isinstance(self.retriever, UnifiedQueryRetriever):
+                    # 统一查询主链：排序参数必须在 IPC 前下传，召回+融合+排序一次完成。
+                    retrieve_kwargs["rank_options"] = {
+                        "limit": requested_limit,
+                        "max_chars": MAX_OUTPUT_CHARS,
+                        "max_per_source": MAX_PER_SOURCE,
+                        "max_per_parent": 3,
+                        "selection_mode": "top_k" if mode == "tool" else "confidence",
+                        "exclude_content_hashes": sorted(exclude_content_hashes or set()),
+                    }
+                batches = await self.retriever.retrieve(query, **retrieve_kwargs)
         finally:
-            reset_shared_index_key(shared_token)
+            if shared_token is not None:
+                reset_shared_index_key(shared_token)
+        pre_ranked = next((batch for batch in batches if batch.source_type == "unified"
+                           and batch.rank_stats is not None), None)
+        if pre_ranked is not None and len(batches) == 1:
+            return self._assemble_pre_ranked(query, batches, pre_ranked, scope, mode)
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
@@ -410,7 +376,18 @@ class UnifiedRecallService:
             }
 
         selected: list[dict] = []
+        rank_details: list[dict] = []
         for candidate, selected_text, rank_item in ranked_candidates:
+            rank_details.append({
+                "rank": len(rank_details) + 1,
+                "source_type": candidate.source_type,
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
+                "query_idf_baseline": rank_item.get("query_idf_baseline"),
+                "contributions": rank_item.get("rank_contributions") or [],
+            })
             public_item = candidate.as_public()
             public_item.update({
                 "text": selected_text,
@@ -418,6 +395,7 @@ class UnifiedRecallService:
                 "source_quality": round(float(rank_item.get("source_quality") or 0), 6),
                 "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
                 "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+                "rank_score": round(float(rank_item.get("rank_score") or 0), 6),
             })
             public_item["citation"] = rank_item.get("citation") or public_item["citation"]
             public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
@@ -458,14 +436,18 @@ class UnifiedRecallService:
                     except (TypeError, ValueError):
                         continue
         stage_ms["rank_candidates_ms"] = int(rank_stats.get("elapsed_ms", 0) or 0)
-        source_diagnostics = rank_stats.get("source_diagnostics") or {
-            batch.source_type: {
+        # TS ranker 的 source_diagnostics 只描述候选选择，不一定带来源索引的
+        # cache/document 元数据。以来源批次为基准合并，避免诊断字段在有排序统计时
+        # 被整块覆盖。
+        ranked_source_diagnostics = rank_stats.get("source_diagnostics") or {}
+        source_diagnostics = {}
+        for batch in batches:
+            source_diagnostics[batch.source_type] = {
+                **(ranked_source_diagnostics.get(batch.source_type) or {}),
                 "candidate_count": batch.candidate_count,
                 "hit_count": len(batch.results),
                 **batch.metadata,
             }
-            for batch in batches
-        }
         return {
             "query": query,
             "results": selected,
@@ -487,7 +469,10 @@ class UnifiedRecallService:
             "confidence_threshold": rank_stats.get("threshold", 0.35),
             "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
             "selection_mode": rank_stats.get("selection_mode", "confidence"),
-            "scoring_version": rank_stats.get("scoring_version", "confidence-v1"),
+            "scoring_version": rank_stats.get("scoring_version", "confidence-v4"),
+            "rescore_version": rank_stats.get("rescore_version", "disabled"),
+            "idf_source": rank_stats.get("idf_source", "none"),
+            "contribution_exponent": rank_stats.get("contribution_exponent"),
             "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
             "cache_hit": bool(cache_values) and all(cache_values),
             "cache_entries": (
@@ -506,6 +491,7 @@ class UnifiedRecallService:
             "stage_ms": stage_ms,
             "source_diagnostics": source_diagnostics,
             "scope_diagnostics": scope_details,
+            "_rank_details": rank_details,
         }
 
 
@@ -520,12 +506,23 @@ async def search_memory(
     query_scopes = await resolve_memory_query_scopes(
         user_id, scope, im_context=im_context, db=db,
     )
-    retrievers = []
-    if source in {"all", "profile", "pattern", "daily", "memory"}:
-        retrievers.append(MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all"))
-    if source in {"all", "knowledge"}:
-        retrievers.append(KnowledgeAdapter(user_id))
-    service = UnifiedRecallService(UnifiedRetriever(retrievers))
+    # 统一查询链需要 DB 会话托管索引缓存；没有显式 db 时现场取全局工厂。
+    session_factory = None
+    if db is None:
+        import app.db.session as db_session
+
+        db_session.ensure_engine()
+        session_factory = db_session._SessionLocal
+        if session_factory is None:
+            raise RuntimeError("RAG 数据库会话工厂未初始化")
+    retrievers = [MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all")]
+    if source in {"all", "knowledge"} and db is not None:
+        retrievers.append(IndexedSourceRetriever(user_id, db=db, source_type="knowledge"))
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    service = UnifiedRecallService(UnifiedQueryRetriever(
+        retrievers, session=db, session_factory=session_factory,
+    ))
     result = await service.search(
         query, source="all" if source == "all" else source,
         scope=query_scopes,
@@ -534,6 +531,7 @@ async def search_memory(
         mode=mode,
     )
     scope_type, scope_key = _scope_record_fields(query_scopes)
+    rank_details = result.pop("_rank_details", [])
     record_recall(
         namespace="knowledge",
         source_type="memory",
@@ -554,13 +552,15 @@ async def search_memory(
         source_diagnostics=result.get("source_diagnostics"),
         scope_details=result.get("scope_diagnostics"),
         sidecar_reused=result.get("sidecar_reused"),
+        rank_details=rank_details,
         quality={
             key: result.get(key)
             for key in (
                 "accepted_count", "rejected_low_score", "rejected_not_preferred",
                 "rejected_duplicate", "rejected_parent", "rejected_source",
                 "rejected_diversity", "top_confidence", "confidence_threshold",
-                "preferred_confidence_threshold", "scoring_version",
+                "preferred_confidence_threshold", "scoring_version", "rescore_version",
+                "idf_source", "contribution_exponent",
             )
             if result.get(key) is not None
         },
@@ -600,24 +600,33 @@ async def search_knowledge(
         db_factory = session_factory
     retrievers = [
         MemoryRetriever(user_id),
-        KnowledgeAdapter(user_id),
+        IndexedSourceRetriever(user_id, db=db, source_type="knowledge"),
         ProjectRetriever(user_id, db=db, db_factory=db_factory),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="file"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="note"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="calendar"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="scheduled_task"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="conversation"),
     ]
     if mode == "automatic" and source == "all":
         from app.core.config import get_settings
         enabled = set(get_settings().search.rag_auto_sources)
         retrievers = [item for item in retrievers if item.source_type in enabled]
-    service = UnifiedRecallService(UnifiedRetriever(retrievers))
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    # 旧 rag_query_mode 灰度档（legacy/batch/batch_shadow/unified_shadow）已随
+    # legacy 查询链删除；统一 TS 查询是唯一交付链（2026-09-09 清理）。
+    service = UnifiedRecallService(UnifiedQueryRetriever(
+        retrievers, session=db, session_factory=db_factory,
+    ))
     result = await service.search(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
         exclude_content_hashes=exclude_content_hashes,
         mode=mode,
     )
     scope_type, scope_key = _scope_record_fields(scope)
+    rank_details = result.pop("_rank_details", [])
     record_recall(
         namespace="knowledge", source_type="all" if source == "all" else source,
         candidate_count=result.get("candidate_count", 0), hit_count=len(result["results"]),
@@ -633,14 +642,17 @@ async def search_knowledge(
         cache_miss_reasons=result.get("cache_miss_reasons"),
         stages=result.get("stage_ms"),
         sidecar_reused=result.get("sidecar_reused"),
+        source_diagnostics=result.get("source_diagnostics"),
         scope_details=result.get("scope_diagnostics"),
+        rank_details=rank_details,
         quality={
             key: result.get(key)
             for key in (
                 "accepted_count", "rejected_low_score", "rejected_not_preferred",
                 "rejected_duplicate", "rejected_parent", "rejected_source",
                 "rejected_diversity", "top_confidence", "confidence_threshold",
-                "preferred_confidence_threshold", "scoring_version",
+                "preferred_confidence_threshold", "scoring_version", "rescore_version",
+                "idf_source", "contribution_exponent",
             )
             if result.get(key) is not None
         },
@@ -657,9 +669,9 @@ async def search_conversations(
     from agent.rag.scope import owner_scope
     from agent.rag.adapters.conversations import ConversationAdapter
 
-    service = UnifiedRecallService(UnifiedRetriever([
+    service = UnifiedRecallService(
         ConversationAdapter(user_id, db=db, queries=queries, mode=match_mode),
-    ]))
+    )
     result = await service.search(
         query,
         source="conversation",
@@ -668,7 +680,9 @@ async def search_conversations(
         limit=max(1, min(int(limit or 6), 20)),
         mode=mode,
     )
+    rank_details = result.pop("_rank_details", [])
     record_recall(
+        rank_details=rank_details,
         namespace="conversation", source_type="conversation",
         candidate_count=result.get("candidate_count", 0),
         hit_count=len(result.get("results", [])),
@@ -684,7 +698,8 @@ async def search_conversations(
                 "accepted_count", "rejected_low_score", "rejected_not_preferred",
                 "rejected_duplicate", "rejected_parent", "rejected_source",
                 "rejected_diversity", "top_confidence", "confidence_threshold",
-                "preferred_confidence_threshold", "scoring_version",
+                "preferred_confidence_threshold", "scoring_version", "rescore_version",
+                "idf_source", "contribution_exponent",
             )
             if result.get(key) is not None
         },

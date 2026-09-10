@@ -532,7 +532,7 @@ def _row_to_meta(row) -> dict:
     if row.extra:
         meta.update(row.extra)
     if row.state == "draft":
-        # `_ttl`：给 `_fmt_age()`（agent/tools/files.py）估算"大约存了多久"用，
+        # `_ttl`：给 `_fmt_age()`（agent/tools/files）估算"大约存了多久"用，
         # 语义从"Redis 剩余 TTL"改成"按 DRAFT_TTL 倒推的剩余额度"，效果一致。
         elapsed = max(0.0, (now_utc() - row.created_at).total_seconds())
         meta["_ttl"] = max(0, int(DRAFT_TTL - elapsed))

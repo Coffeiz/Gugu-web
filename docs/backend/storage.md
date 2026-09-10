@@ -75,7 +75,7 @@ Gugu-data/users/
 
 **项目目录带 `#{id}` 的原因：** 项目改名时目录同步重命名，`#{id}` 不变，未来桌面客户端可通过 ID 定位关联，不依赖名称匹配。
 
-**storage_key 构造函数：** `_build_key()`（`backend/app/api/v1/files.py`）和 Agent 工具侧的 `_resolve_key()`（`backend/agent/tools/files.py`）各自实现了一遍同样的路径拼接规则，两处需保持一致。
+**storage_key 构造函数：** `_build_key()`（`backend/app/api/v1/files.py`）和 Agent 工具侧的 `_resolve_key()`（`backend/agent/tools/files/locations.py`）各自实现了一遍同样的路径拼接规则，两处需保持一致。
 
 ### 2.2 数据库表
 

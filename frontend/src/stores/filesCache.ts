@@ -35,12 +35,14 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const loading    = ref(false)
 
   // ── 索引 ──────────────────────────────────────────────────────────────────
-  // files key: folderId (int) | 'proj:{id}' | 'personal'
+  // files key: folderId (int) | 'workspace:{directoryId}' | 'proj:{id}' | 'personal'
   const _fileIdx = computed(() => {
     const m = new Map<number | string, FileMeta[]>()
     for (const f of allFiles.value) {
       const key = f.folderId != null
         ? f.folderId
+        : f.workspaceDirectoryId != null || f.space === 'workspace'
+          ? `workspace:${f.workspaceDirectoryId ?? 'unknown'}`
         : f.projectId != null ? `proj:${f.projectId}` : 'personal'
       if (!m.has(key)) m.set(key, [])
       m.get(key)!.push(f)
@@ -48,12 +50,14 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return m
   })
 
-  // folders key: 'personal' | 'proj:{id}' | 'sub:{parentId}'
+  // folders key: 'personal' | 'workspace:{directoryId}' | 'proj:{id}' | 'sub:{parentId}'
   const _folderIdx = computed(() => {
     const m = new Map<string, FolderMeta[]>()
     for (const f of allFolders.value) {
       const key = f.parentId != null
         ? `sub:${f.parentId}`
+        : f.workspaceDirectoryId != null
+          ? `workspace:${f.workspaceDirectoryId}`
         : f.projectId != null ? `proj:${f.projectId}` : 'personal'
       if (!m.has(key)) m.set(key, [])
       m.get(key)!.push(f)
@@ -65,10 +69,21 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const getPersonalRootFiles   = ()          => _fileIdx.value.get('personal')            ?? []
   const getProjectRootFiles    = (projectId: number) => _fileIdx.value.get(`proj:${projectId}`)   ?? []
   const getFolderFiles         = (folderId: number)  => _fileIdx.value.get(folderId)               ?? []
+  const getWorkspaceFiles      = (workspaceDirectoryId: number, folderId: number | null = null) =>
+    allFiles.value.filter(file =>
+      file.space === 'workspace' &&
+      file.workspaceDirectoryId === workspaceDirectoryId &&
+      (file.folderId ?? null) === folderId,
+    )
 
   const getPersonalRootFolders = ()          => _folderIdx.value.get('personal')           ?? []
   const getProjectRootFolders  = (projectId: number) => _folderIdx.value.get(`proj:${projectId}`)  ?? []
   const getSubFolders          = (parentId: number)  => _folderIdx.value.get(`sub:${parentId}`)    ?? []
+  const getWorkspaceFolders    = (workspaceDirectoryId: number, parentId: number | null = null) =>
+    allFolders.value.filter(folder =>
+      folder.workspaceDirectoryId === workspaceDirectoryId &&
+      (folder.parentId ?? null) === parentId,
+    )
 
   // ── 加载 ──────────────────────────────────────────────────────────────────
   async function load() {
@@ -244,7 +259,8 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     allFiles, allFolders, loaded, loading,
     load, refresh, resetAccountState,
     getPersonalRootFiles, getProjectRootFiles, getFolderFiles,
-    getPersonalRootFolders, getProjectRootFolders, getSubFolders,
+    getWorkspaceFiles,
+    getPersonalRootFolders, getProjectRootFolders, getSubFolders, getWorkspaceFolders,
     addFile, removeFile, removeFiles, updateFile, getFile,
     addFolder, removeFolder, updateFolder, getFolder,
   }

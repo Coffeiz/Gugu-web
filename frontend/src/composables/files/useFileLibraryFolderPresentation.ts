@@ -50,7 +50,8 @@ export function useFileLibraryFolderPresentation() {
     if (folder.type === 'year') return '#508878'
     if (folder.type === 'month') return '#5878a8'
     if (folder.color) return folder.color
-    return '#8888a8'
+    // 普通用户文件夹没有固定语义色，跟随当前主题的操作色；状态/系统目录仍保留各自的语义色。
+    return 'var(--action-primary)'
   }
 
   return { folderIconStyle, folderListIcon, folderAccentColor }

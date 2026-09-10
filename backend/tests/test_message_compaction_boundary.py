@@ -52,7 +52,7 @@ def test_openai_provider_render_keeps_snapshot_prefix():
     assert outbound[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
 
 
-def test_rag_tail_is_stable_conversation_after_current_user():
+def test_rag_context_precedes_current_user_and_keeps_time_after_rag():
     messages = assemble(
         fixed_parts=[{"role": "user", "content": "固定 session info"}],
         history=[{"role": "assistant", "content": "上一轮回复"}],
@@ -65,7 +65,7 @@ def test_rag_tail_is_stable_conversation_after_current_user():
     messages.append_batch(batch)
 
     assert [item["content"] for item in messages.conversation] == [
-        "固定 session info", "上一轮回复", "当前问题", "[group-rag]\n稳定知识",
+        "固定 session info", "上一轮回复", "[group-rag]\n稳定知识", "当前问题",
         [{"type": "time-context", "text": "[system-reminder]\n当前时间：当前时间\n[/system-reminder]"}],
     ]
     assert messages[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")

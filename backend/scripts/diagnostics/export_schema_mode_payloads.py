@@ -6,13 +6,13 @@ import json
 from pathlib import Path
 
 from agent.capabilities.injector import FIXED_ADAPTER_TOOL_NAMES, build_fixed_adapter_context, catalog_block
-from agent.profiles import DefaultProfile
+from agent.capabilities.defaults import all_system_tool_names
 from agent.runtime.loopscope_trace.utils import _estimate_tokens
 from agent.tools import registry
 
 
 def _payload(mode: str) -> dict:
-    all_names = list(DefaultProfile().tool_names)
+    all_names = all_system_tool_names()
     names = list(FIXED_ADAPTER_TOOL_NAMES) if mode == "description" else all_names
     openai_tools = registry.openai_schemas(names)
     anthropic_tools = registry.anthropic_schemas(names)

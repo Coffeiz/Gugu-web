@@ -49,6 +49,10 @@
         <ToggleSwitch :model-value="status.code_execution_enabled" :disabled="codeExecutionSaving" :aria-label="t('adminSandbox.codeExecution')" @update:model-value="toggleCodeExecution" />
       </div>
       <div class="config-row config-row-switch">
+        <div class="config-row-copy"><span>{{ t('adminSandbox.shellDirectRuntime') }}</span><small>{{ t('adminSandbox.shellDirectRuntimeHint') }}</small></div>
+        <ToggleSwitch :model-value="status.shell_direct_runtime_enabled" :disabled="shellDirectRuntimeSaving" :aria-label="t('adminSandbox.shellDirectRuntime')" @update:model-value="toggleShellDirectRuntime" />
+      </div>
+      <div class="config-row config-row-switch">
         <div class="config-row-copy"><span>{{ t('adminSandbox.filesystemAuthorization') }}</span><small>{{ t('adminSandbox.filesystemAuthorizationHint') }}</small></div>
         <ToggleSwitch :model-value="status.filesystem_authorization_enabled" :disabled="filesystemAuthorizationSaving" :aria-label="t('adminSandbox.filesystemAuthorization')" @update:model-value="toggleFilesystemAuthorization" />
       </div>
@@ -107,6 +111,7 @@ type SandboxStatus = {
   enabled: boolean
   filesystem_authorization_enabled: boolean
   code_execution_enabled: boolean
+  shell_direct_runtime_enabled: boolean
   terminal_mode: 'auto' | 'pty_disabled' | 'entry_disabled'
   terminal_entry_enabled: boolean
   pty_enabled: boolean
@@ -136,13 +141,14 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ enabled: false, filesystem_authorization_enabled: false, code_execution_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ enabled: false, filesystem_authorization_enabled: false, code_execution_enabled: true, shell_direct_runtime_enabled: false, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
 const quotaError = ref(false)
 const filesystemAuthorizationSaving = ref(false)
 const codeExecutionSaving = ref(false)
+const shellDirectRuntimeSaving = ref(false)
 const terminalModeSaving = ref(false)
 const terminalModeDraft = ref<SandboxStatus['terminal_mode']>('auto')
 const terminalModeOptions = computed(() => [
@@ -225,6 +231,22 @@ async function toggleCodeExecution(enabled: boolean) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     codeExecutionSaving.value = false
+  }
+}
+
+async function toggleShellDirectRuntime(enabled: boolean) {
+  const previousValue = status.shell_direct_runtime_enabled
+  status.shell_direct_runtime_enabled = enabled
+  shellDirectRuntimeSaving.value = true
+  try {
+    await configStore.saveConfig({ sandbox: { shell_direct_runtime_enabled: enabled } })
+    if (configStore.saveError) throw new Error(configStore.saveError)
+    await loadStatus()
+  } catch (cause) {
+    status.shell_direct_runtime_enabled = previousValue
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    shellDirectRuntimeSaving.value = false
   }
 }
 

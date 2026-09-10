@@ -16,7 +16,7 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     assert messages[0] == {"role": "system", "content": "稳定系统"}
     assert "小北的计划" in messages[1]["content"]
     assert messages[2]["role"] == "user"
-    assert "默认相处姿态" in messages[2]["content"]
+    assert "以下是仅供你内部遵循的回应规则" in messages[2]["content"]
     assert messages[3] == {"role": "user", "content": "执行任务"}
     assert sum("小北的计划" in item["content"] for item in messages) == 1
     assert messages[-1]["content"][0]["type"] == "time-context"
@@ -394,7 +394,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     会无条件覆盖手动标题。
     """
     from app.models import ConversationSession
-    from agent.conversation import lifecycle
+    from agent.conversation import session_metadata
 
     sess = ConversationSession(
         user_id=user_a.id, title="临时标题", source="web",
@@ -405,16 +405,16 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     await db.refresh(sess)
 
     # mock LLM：返回会自动覆盖的标题
-    async def fake_generate_title(user_msg, ai_reply, settings, use_anthropic):
+    async def fake_generate_title(user_msg, ai_reply, settings, use_anthropic, *, locale=None):
         return "自动生成的标题"
 
     # 模拟"先生成标题，但 LLM 还在跑"：suspend 生成以确保 rename 先完成
     title_started = Mock()
     generated_title = "LLM_自动生成标题"
-    async def slow_generate(user_msg, ai_reply, settings, use_anthropic):
+    async def slow_generate(user_msg, ai_reply, settings, use_anthropic, *, locale=None):
         title_started()
         return generated_title
-    monkeypatch.setattr("agent.conversation.lifecycle.generate_title", slow_generate)
+    monkeypatch.setattr("agent.conversation.session_metadata.generate_title", slow_generate)
 
     # 先模拟用户手动 rename（title_locked=True）
     sess.title = "用户手动改的标题"
@@ -424,7 +424,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     # 然后 _gen_title_bg 跑
     from app.core.config import get_settings
     settings = get_settings()
-    await lifecycle.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+    await session_metadata.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
 
     # 验证：自动标题没覆盖手动标题
     await db.refresh(sess)
@@ -432,7 +432,7 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
     assert sess.title_locked is True
 
     # 再跑一次也仍不覆盖（title_locked 永久生效）
-    await lifecycle.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+    await session_metadata.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
     await db.refresh(sess)
     assert sess.title == "用户手动改的标题"
 
@@ -452,7 +452,7 @@ async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch,
     import asyncio
     from app.models import ConversationSession
     from app.api.v1.agent import rename_session, RenameSessionRequest
-    from agent.conversation import lifecycle
+    from agent.conversation import session_metadata
     from app.core.config import get_settings
 
     sess = ConversationSession(
@@ -464,9 +464,9 @@ async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch,
     await db.refresh(sess)
 
     # mock LLM：返回会自动覆盖的标题
-    async def slow_generate(user_msg, ai_reply, settings, use_anthropic):
+    async def slow_generate(user_msg, ai_reply, settings, use_anthropic, *, locale=None):
         return "LLM_自动生成标题"
-    monkeypatch.setattr("agent.conversation.lifecycle.generate_title", slow_generate)
+    monkeypatch.setattr("agent.conversation.session_metadata.generate_title", slow_generate)
 
     settings = get_settings()
 
@@ -474,7 +474,7 @@ async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch,
         await rename_session(sess.id, RenameSessionRequest(title="用户并发改名"), user_a, db)
 
     async def do_auto():
-        await lifecycle.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+        await session_metadata.generate_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
 
     # 并发跑：无论谁先谁后，最终 title 都必须是用户改的
     await asyncio.gather(do_rename(), do_auto())
@@ -560,7 +560,6 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     import app.db.session as db_session
     import agent.scheduled_execution as runner
     from agent.llm.llm_select import ModelRunConfig
-    from agent.profiles import DefaultProfile
     from app.core.config import AIPresetItem
 
     class _DbContext:
@@ -606,7 +605,7 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     monkeypatch.setattr("agent.scheduled.ScheduledLLMRunner", _FakeRunner)
 
     text, errored, meta = await runner.run_scheduled_once(
-        "user-byok", "小北", "执行任务", DefaultProfile(), SimpleNamespace(),
+        "user-byok", "小北", "执行任务", SimpleNamespace(),
         include_meta=True, minimal_context=True,
     )
 

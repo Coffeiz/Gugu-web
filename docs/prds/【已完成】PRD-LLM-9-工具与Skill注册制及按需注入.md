@@ -40,24 +40,24 @@
 
 ### 0.1 现状审查结论（2026-08-22）
 
-本次审查覆盖工具注册、Skill 加载、Profile、Prompt 组装、Provider Driver、权限过滤、LoopScope 和现有测试。结论如下：
+本次审查覆盖工具注册、Skill 加载、历史能力配置、Prompt 组装、Provider Driver、权限过滤、LoopScope 和现有测试。结论如下：
 
 | 领域 | 当前实际状态 | 对本 PRD 的影响 |
 |---|---|---|
 | 工具注册 | `agent.tools.base.SkillRegistry` 已能注册 `Tool`、按领域 Skill 聚合、校验 JSON Schema、生成 OpenAI/Anthropic Schema、统一 dispatch。 | 可以复用执行注册表，但它目前只是工具执行 registry，不是统一 Capability Registry。 |
 | 工具 metadata | `Tool` 已提供短描述、category、source、权限和关联 Skill metadata；category 缺省时由现有工具组派生。 | 继续由注册 adapter 校验，不复制 89 个工具名称清单。 |
-| 默认工具规模 | `DefaultProfile` 当前启用 17 个工具组，共 89 个工具；OpenAI Schema 序列化约 62,178 字符，Anthropic 约 59,626 字符。 | “每轮减少 80k 字符”不能作为固定承诺；可确认的是当前每轮会重复注入约 60k 字符的工具 Schema，另有消息、记忆和 Skill 文案。 |
+| 默认工具规模 | 系统工具注册表当前提供全部已注册业务工具；Skill 生命周期工具仍仅通过固定 Adapter 按需发现，不进入常驻 Provider Schema。 | 工具 Schema 是否常驻由固定 Adapter 与 Provider 注入策略决定。 |
 | Skill 注册 | `agent/skills/*.md` 通过 frontmatter 扫描，`skills_index()` 返回 `slug/name/description_short/description_long/emoji`；`use_skill` 按需加载正文。 | 注册表负责目录发现和关联校验，常驻提示词不再复制普通 Skill 触发指针。 |
-| Skill 规模 | 默认 Profile 启用 10 个 Markdown Skill；短描述均已控制在 100 个 Unicode 字符以内，长触发说明迁移到 `description_long`。 | 注册期校验短描述；正文和长说明不进入首轮能力目录。 |
-| Profile | `BaseProfile.tool_names` 通过工具组展开；`skills` 是独立 slug 列表。 | 当前存在两套能力声明，Phase 1 要增加 adapter，而不是立即删除 Profile。 |
+| Skill 规模 | 所有内置 Markdown Skill 默认进入静态索引；短描述均已控制在 100 个 Unicode 字符以内，长触发说明迁移到 `description_long`。 | 注册期校验短描述；正文和长说明不进入首轮能力目录。 |
+| 默认能力 | 系统工具由全局注册表统一提供，内置 Skill 由 Skill 注册表统一提供；IM 白名单、沙盒状态和确认门仍在运行时收窄。 | 不再维护独立能力白名单；用户 Skill 仅由 enabled/归属控制。 |
 | Prompt 组装 | `builder._skills_index_block()` 会把注册 Skill 的短描述索引放进静态 Prompt；常驻 `prompts/skills.md` 只保留全局行为协议和少量高优先级例外；完整工具 Schema 不由 builder 生成。 | Skill metadata、常驻协议和工具 Schema 各自负责目录发现、全局约束与执行契约，避免重复描述。 |
-| Schema 注入 | `AnthropicDriver`、`OpenAIDriver`、`OllamaDriver` 都调用 `registry.*_schemas(tool_names)`；`tool_names` 来自 Profile 加 IM 白名单和 shell 过滤，没有 Capability RAG。 | Phase 3 的真正改造点在 runner/driver 之间的调用契约，不是只改 Prompt builder。 |
+| Schema 注入 | `AnthropicDriver`、`OpenAIDriver`、`OllamaDriver` 都调用 `registry.*_schemas(tool_names)`；`tool_names` 来自系统注册表，再经过 IM 白名单和 shell 过滤，没有 Capability RAG。 | Phase 3 的真正改造点在 runner/driver 之间的调用契约，不是只改 Prompt builder。 |
 | 权限 | IM 入口通过 `filter_tool_names()` 做模型可见工具裁剪，dispatch 再通过 `can_use_tool()` 做第二道检查；shell 还有工作区过滤。 | Capability RAG 查询必须复用现有权限结果，不能自行复制权限逻辑或仅靠隐藏目录实现安全控制。 |
 | Skill 与工具关联 | Skill frontmatter 通过 `related_tools` 声明关联工具；工具 registry 与 Capability Index 负责校验，Skill 正文负责具体做法。 | 不再在 `skills.md` 维护普通技能指针；仅保留图片识别等不能依赖普通索引显著性的高优先级例外。 |
 | LoopScope | 已有 `LLM round` 的 `tool_count`、Schema 字节数、估算 token 和 digest；另有独立的 `Tool schemas injected` context span。 | 观测层已有基础，但它记录的是当前全量 Schema，不代表“已筛选”；Phase 4 需要新增 catalog/selected/omitted 指标。 |
 | 测试 | 已覆盖 Tool JSON Schema 注册/dispatch、Provider Schema 保持不变、Capability Registry、selector、按需注入和 Skill 使用标记回归。 | Phase 4 继续补齐 Provider parity、权限和 emergency switch；RAG 召回质量归 Phase 6。 |
 
-因此，当前已落地的最小路线不是一次性替换 Profile，而是先完成注册与注入基础设施；RAG 召回暂不接入生产请求：
+因此，当前已落地的路线是以注册表作为系统能力单一来源；用户 Skill 由 enabled/归属控制，RAG 召回仍按独立开关接入：
 
 ```text
 现有 Tool/Skill → Capability Adapter → 统一快照
@@ -77,7 +77,7 @@
 - 工具由 `BaseSkill` 聚合，工具实例进入全局 `SkillRegistry`，并能生成 Anthropic/OpenAI 两种 Schema。
 - Skill 是 `backend/agent/skills/*.md`，通过 frontmatter 解析 `name`、`description_short`、`description_long` 等注册 metadata，由 `skills_index()` 提供索引，再通过 `use_skill` 加载正文。
 - `builder.py` 会把常驻提示词、Skill 索引和动态上下文组装到 Agent 上下文。
-- 当前完整工具 Schema 会按 profile 组合后进入模型请求。工具 Schema 数量较多时，每轮都会重复传输大量参数定义。
+- 当前完整工具 Schema 会按注册表、请求权限和执行策略组合后进入模型请求。工具 Schema 数量较多时，每轮都会重复传输大量参数定义。
 
 这带来几个问题：
 
@@ -142,7 +142,7 @@ Capability 是模型可以发现或调用的一项能力，分为两类：
 - `SkillRegistry` 的原子项是一个 `SkillDefinition`，例如 `web-search`、`image-analysis`。
 - `CapabilityIndex` 只负责合并、查询和生成不可变快照，不复制 handler、Schema 或 Skill 正文。
 - 一个工具可以关联多个 Skill；一个 Skill 可以关联多个工具；关联只影响发现和注入，不改变工具权限。
-- 工具组、领域模块和 Profile 是筛选输入，不是能力注册项。
+- 工具组、领域模块和请求权限是筛选输入，不是能力注册项。
 
 现有 `BaseSkill` 的最终定位：
 
@@ -693,8 +693,7 @@ backend/agent/capabilities/
 | `backend/agent/tools/__init__.py` | Phase 1 | 只负责导入受信任的内置工具模块以触发自注册，不维护工具名称清单；能力快照由 CapabilityIndex 统一构建。 |
 | `backend/agent/skills/__init__.py` | Phase 1 / Phase 4 | 已统一解析 `description_short`、`description_long` 等 metadata，已删除旧 `description/when` 读取兼容。 |
 | `backend/agent/skills/*.md` | Phase 1 | 为 10 个内置 Skill 补齐短描述、类别、来源和关联工具；长触发说明已迁移。 |
-| `backend/agent/profiles/base.py` | Phase 1～2 | 保留旧 `tools/skills` 配置作为输入适配；增加从 Profile 生成授权 Capability 视图的入口，避免立即删除存量配置。 |
-| `backend/agent/profiles/default.py` | Phase 1～2 | 补充默认 Profile 的能力类别/上下文声明；不再新增扁平工具名清单。 |
+| `backend/agent/capabilities/defaults.py` | Phase 1～6 | 提供系统能力默认入口和非驻留生命周期工具边界；工具名由全局注册表派生，不维护场景白名单。 |
 | `backend/agent/context/builder.py` | Phase 2～3 | 移除或收敛独立 Skill 目录拼装，改调用 Capability Injector；保留 persona、policy、记忆和业务上下文职责。 |
 | `backend/agent/prompts/skills.md` | Phase 2～4 | 保留少量不可遗漏的行为规则；删除与注册 metadata 重复的能力目录描述，避免短描述、主动指针和 Skill 索引三处漂移。 |
 | `backend/agent/tools/meta.py` | Phase 2～3 | 让 `use_skill` 从 Capability Registry 校验和加载 Skill，保留正文返回格式和错误语义。 |

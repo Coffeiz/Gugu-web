@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.rag.hybrid import hybrid_results
 from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 from agent.rag.scope import matches_scope
 
@@ -51,6 +52,12 @@ def index_dir_for_owner(owner_user_id: object) -> str:
 
 
 SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
+# 索引构建类 op（replace/patch/build_and_index/replace_transient）的等待上限：
+# 全量语料装载远超 500ms 搜索超时，且不在用户等待路径上（ping 预热同理单独放宽）。
+BUILD_TIMEOUT_SECONDS = 30.0
+# 批量查询响应把多来源候选连同原文聚合在一条 JSONL 里，64KB 默认流上限会被
+# readline 以 "chunk is longer than limit" 打断，放宽到 32MB。
+SIDECAR_STREAM_LIMIT_BYTES = 32 * 1024 * 1024
 SIDE_CAR_REAPER_INTERVAL_SECONDS = 60
 
 
@@ -65,9 +72,22 @@ class TsSidecarClient:
         self._lock = asyncio.Lock()
         self._revision: str | None = None
         self._document_count = 0
+        # 瞬态语料（Memory 快照）驻留在 worker 内存里：记录加载时的进程代数与指纹，
+        # worker 重启后代数变化会自动重传，不依赖已失效的进程内状态。
+        self._transient_revision: str | None = None
+        self._transient_generation = -1
+        self._process_generation = 0
+        # worker 进程启动时从磁盘恢复索引的结局（version_mismatch/corrupt）；
+        # None 表示恢复健康或尚无索引文件。重建成功后双向清空。
+        self._restore_error: str | None = None
         self.last_search_diagnostics: dict[str, Any] = {}
         self._last_used_at = asyncio.get_running_loop().time()
         self._active_requests = 0
+
+    @property
+    def restore_error(self) -> str | None:
+        """启动恢复失败类别；供查询诊断显式报告损坏索引并调度重建。"""
+        return self._restore_error
 
     def touch(self) -> None:
         """刷新 worker 空闲 TTL；TTL 不会打断正在执行的请求。"""
@@ -77,26 +97,46 @@ class TsSidecarClient:
         current = now if now is not None else asyncio.get_running_loop().time()
         return self._active_requests == 0 and current - self._last_used_at >= SIDE_CAR_IDLE_TTL_SECONDS
 
-    async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
-        result = await self._request({
+    async def replace(
+        self,
+        documents: list[IndexDocument],
+        revision: str | None,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
+    ) -> None:
+        # 索引构建不是用户等待的搜索路径，全量 replace 可能远超 500ms 搜索超时。
+        payload: dict[str, Any] = {
             "op": "replace",
             "revision": revision or "",
             "documents": [_wire_document(document) for document in documents],
-        })
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
+        self._restore_error = None
 
     async def build_documents(self, batch: dict[str, list[dict]]) -> list[dict]:
         """让 TS builder 从统一 source batch 生成 canonical 文档；不读取业务数据库。"""
         response = (await self._request({"op": "build_documents", "batch": batch})).response
         return list(response.get("documents") or [])
 
+    async def adapt_records(self, source_type: str, records: list[dict]) -> list[dict]:
+        """TS 来源适配器投影：统一 source record → wire 文档；只做投影，不触碰索引。"""
+        result = await self._request({
+            "op": "adapt", "source_type": source_type, "records": records,
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        return list(result.response.get("documents") or [])
+
     async def build_and_index(self, batch: dict[str, list[dict]], revision: str) -> dict:
         """在 TS worker 内完成 source projection、分块和索引更新，避免回传完整文档。"""
         return (await self._request({
             "op": "build_and_index", "revision": revision, "batch": batch,
-        })).response
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
 
     async def patch(
         self,
@@ -104,18 +144,116 @@ class TsSidecarClient:
         deletes: list[str],
         revision: str | None,
         base_revision: str | None,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
     ) -> None:
-        """只同步发生变化的 chunk，保持 worker 的 revision 原子推进。"""
-        result = await self._request({
+        """只同步发生变化的 chunk，保持 worker 的 revision 原子推进。
+
+        vectors 与 replace 同语义：整表搭载当前持久向量映射，worker 整表覆盖。
+        """
+        payload: dict[str, Any] = {
             "op": "patch",
             "revision": revision or "",
             "base_revision": base_revision or "",
             "upserts": [_wire_document(document) for document in upserts],
             "deletes": list(deletes),
-        })
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or 0)
+        self._restore_error = None
+
+    async def replace_transient(
+        self,
+        documents: list[IndexDocument],
+        revision: str,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
+    ) -> None:
+        """把 Memory 快照语料装入 worker 的瞬态槽；指纹未变且进程未重启时零 IPC。
+
+        vectors 按 worker 文档键驻留瞬态槽（随语料上传，不随查询重复传输）；
+        revision 必须耦合 embedding 模型版本戳，换模型时必然重传。
+        """
+        generation = self._process_generation
+        if self._process is None or self._process.returncode is not None:
+            # 进程已死亡：_ensure_process 重启时会递增代数并清空瞬态状态。
+            # 短路判断必须先按新代数失效，否则残留的旧 revision 会误判「已加载」
+            # 跳过重传，worker 新进程瞬态槽为空，下一次查询报版本不一致。
+            self._transient_revision = None
+            generation += 1
+        if self._transient_revision == revision and self._transient_generation == generation:
+            return
+        payload: dict[str, Any] = {
+            "op": "replace_transient", "revision": revision,
+            "documents": [_wire_document(document) for document in documents],
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        self._transient_revision = str(result.response.get("revision") or revision)
+        self._transient_generation = generation
+
+    async def hybrid_fuse(
+        self,
+        hits: list[RecallResult],
+        *,
+        query_vector: list[float] | None,
+        vector_map: dict[str, list[float]],
+        limit: int,
+        lexical_weight: float,
+        vector_weight: float,
+        rrf_k: int,
+        vector_version: str,
+    ) -> tuple[list[RecallResult], str | None, dict]:
+        """Phase 3：把 BM25 与 embedding 的 RRF 融合交给 TS worker 执行。
+
+        hits 即词法候选（顺序即词法名次）；只回传候选命中的向量。返回
+        (结果, fallback_reason, 诊断)；语义与 Python ``hybrid_results`` 逐位一致。
+        """
+        if not query_vector or not vector_map or not any(
+                vector_map.get(item.document.chunk_id) for item in hits):
+            # 退化输入：无查询向量/空缓存 → 透传；缓存存在但命中均无可用向量 →
+            # 纯词法 RRF 重打分。与 Python hybrid_results 逐位一致，也避免
+            # 把整份向量表搬进 IPC（此时 vector_scores 必为空，documents 无关）。
+            final, fallback = hybrid_results(hits, [], query_vector, vector_map, limit=limit)
+            return final, fallback, {
+                "fusion": "bm25", "vector_doc_count": 0, "vector_version": vector_version,
+            }
+        payload_vectors = {
+            item.document.chunk_id: vector_map[item.document.chunk_id]
+            for item in hits
+            if vector_map.get(item.document.chunk_id)
+        }
+        response = (await self._request({
+            "op": "hybrid_fuse",
+            "hits": [{"chunk_id": item.document.chunk_id, "score": item.score} for item in hits],
+            "query_vector": list(query_vector or []),
+            "vectors": payload_vectors,
+            "limit": max(1, int(limit)),
+            "lexical_weight": lexical_weight,
+            "vector_weight": vector_weight,
+            "rrf_k": rrf_k,
+            "vector_version": vector_version,
+        }, timeout_seconds=_timeout_seconds())).response
+        results_by_key = {item.document.chunk_id: item for item in hits}
+        ordered = []
+        for row in response.get("results") or []:
+            item = results_by_key.get(str(row.get("chunk_id") or ""))
+            if item is not None:
+                ordered.append(RecallResult(item.document, float(row.get("score") or 0.0)))
+        return ordered, response.get("fallback"), {
+            "fusion": str(response.get("fusion") or ""),
+            "vector_doc_count": str(int(response.get("vector_doc_count") or 0)),
+            "vector_version": str(response.get("vector_version") or ""),
+        }
 
     async def reuse_if_current(self, revision: str | None) -> bool:
         self.touch()
@@ -192,6 +330,8 @@ class TsSidecarClient:
         max_chars: int, max_per_source: int, max_per_parent: int,
         exclude_content_hashes: set[str] | None = None,
         selection_mode: str = "confidence",
+        scoring_version: str = "confidence-v4",
+        corpus_documents: list[dict] | None = None,
     ) -> tuple[list[dict], dict]:
         """调用 TS 完成来源归一化、confidence 过滤和统一预算。"""
         response = (await self._request({
@@ -204,6 +344,8 @@ class TsSidecarClient:
             "max_per_parent": max(1, int(max_per_parent)),
             "exclude_content_hashes": sorted(exclude_content_hashes or set()),
             "selection_mode": selection_mode,
+            "scoring_version": scoring_version,
+            **({"corpus_documents": corpus_documents} if corpus_documents is not None else {}),
         })).response
         return list(response.get("selected") or []), dict(response.get("stats") or {})
 
@@ -220,7 +362,7 @@ class TsSidecarClient:
                 process.kill()
                 await process.wait()
 
-    async def _request(self, payload: dict) -> SidecarRequestResult:
+    async def _request(self, payload: dict, *, timeout_seconds: float | None = None) -> SidecarRequestResult:
         queued_at = asyncio.get_running_loop().time()
         async with self._lock:
             request_started = asyncio.get_running_loop().time()
@@ -229,10 +371,10 @@ class TsSidecarClient:
             self._active_requests += 1
             try:
                 await self._ensure_process()
-                response = await self._request_unlocked(payload)
+                response = await self._request_unlocked(payload, timeout_seconds=timeout_seconds)
                 query_ms = int(
                     (asyncio.get_running_loop().time() - request_started) * 1000
-                ) if payload.get("op") == "search" else 0
+                ) if payload.get("op") in {"search", "batch_search"} else 0
                 return SidecarRequestResult(
                     response=response,
                     timing=SidecarRequestTiming(queue_wait_ms=queue_wait_ms, query_ms=query_ms),
@@ -254,12 +396,18 @@ class TsSidecarClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=os.environ.copy(),
+                # 批量查询的 JSONL 响应聚合多来源候选原文，单行远超默认 64KB。
+                limit=SIDECAR_STREAM_LIMIT_BYTES,
             )
+            # 新进程里瞬态语料为空：递增代数让下次 replace_transient 必然重传。
+            self._process_generation += 1
+            self._transient_revision = None
             # 原生 Jieba 首次加载词典可能超过查询超时；启动探活使用独立上限，
             # 避免 worker 已启动但被 500ms 查询超时误判为不可用。
             response = await self._request_unlocked({"op": "ping"}, timeout_seconds=5.0)
             self._revision = response.get("revision") or self._revision
             self._document_count = int(response.get("document_count") or 0)
+            self._restore_error = response.get("restore_error") or None
         except (OSError, asyncio.TimeoutError, TsSidecarUnavailable) as error:
             await self.close()
             if isinstance(error, TsSidecarUnavailable):
@@ -276,7 +424,12 @@ class TsSidecarClient:
                 self._process.stdout.readline(),
                 timeout=timeout_seconds if timeout_seconds is not None else _timeout_seconds(),
             )
-        except (BrokenPipeError, ConnectionError, asyncio.TimeoutError) as error:
+        except (BrokenPipeError, ConnectionError, ValueError, asyncio.TimeoutError,
+                RuntimeError) as error:
+            # ValueError 是 readline 的流上限保护：半行残留会让后续响应错位。
+            # RuntimeError 是 wait_for 取消 readline 后流读取者残留的竞态
+            # （readuntil already waiting）。两者都意味着这条连接的响应流已不可信，
+            # 必须整条连接关闭重来，不能当作单次失败吞掉。
             await self.close()
             raise TsSidecarUnavailable("TypeScript RAG worker 请求失败") from error
         if not line:
@@ -305,6 +458,103 @@ class TsLexicalIndex:
         """返回 TS worker 中的实际文档数；冷恢复时 Python 不必保留全量文档。"""
         return self.client._document_count if not self.documents else len(self.documents)
 
+    async def batch_search(self, query: str, searches: list[dict], extra_documents: dict[str, IndexDocument] | None = None):
+        """一次 IPC 返回逐来源候选，按每项 scope 再次校验。
+
+        searches 项可带 ``corpus: "transient"`` 指向 Memory 快照语料槽；
+        BM25 统计在 worker 内按语料槽独立计算，Memory 的候选分数与独立索引完全一致。
+        """
+        extra_documents = extra_documents or {}
+        requests = []
+        for position, item in enumerate(searches):
+            scope = item.get("scope")
+            requests.append({
+                "id": str(position), "limit": item.get("limit", 20),
+                "source_types": sorted(item.get("source_types", ())),
+                **({"corpus": "transient"} if item.get("corpus") == "transient" else {}),
+                **({"scope": {key: getattr(scope, key) for key in
+                              ("platform", "bot_id", "group_id", "scope_type", "scope_id")}}
+                   if scope is not None else {}),
+            })
+        response = await self.client._request({
+            "op": "batch_search", "revision": self.revision or "", "query": query,
+            **({"transient_revision": self.client._transient_revision or ""}
+               if any(item.get("corpus") == "transient" for item in searches) else {}),
+            "searches": requests,
+        })
+        raw_batches = response.response.get("batches", [])
+        if [batch.get("id") for batch in raw_batches] != [item["id"] for item in requests]:
+            raise TsSidecarUnavailable("TS 批量查询返回的来源标识不匹配")
+        batches = []
+        for spec, batch in zip(searches, raw_batches):
+            results = []
+            for raw in batch.get("results", []):
+                document = self.documents_by_id.get(str(raw.get("id")))
+                if document is None:
+                    document = extra_documents.get(str(raw.get("id")))
+                if document is None and isinstance(raw.get("document"), dict):
+                    document = _from_wire_document(raw["document"], self.client.owner_user_id)
+                if document is None or document.source_type not in spec["source_types"]:
+                    continue
+                if spec.get("scope") is not None and not matches_scope(document, spec["scope"]):
+                    continue
+                results.append(RecallResult(document, float(raw.get("score") or 0)))
+            batches.append((results, batch.get("diagnostics", {})))
+        return batches, response.response.get("document_counts", {}), response.timing
+
+    async def unified_query(
+        self,
+        query: str,
+        *,
+        searches: list[dict],
+        query_vector: list[float] | None,
+        source_order: list[str],
+        candidate_limit: int,
+        rank_options: dict,
+        before_message_id: int | None = None,
+        vector_version: str | None = None,
+    ) -> dict:
+        """Phase 5 统一查询：一次 IPC 完成召回、聚合、水位、Memory 融合与排序。
+
+        返回 worker 响应（selected/stats/fusion/document_counts/source_groups）；
+        权限复核与注入组装仍由 Python 收口。vector_version 是 Python 当前生效的
+        embedding 模型版本戳，worker 用它校验持久向量表是否同版，不匹配则非
+        memory 组降级纯词法。
+        """
+        requests = []
+        for position, item in enumerate(searches):
+            scope = item.get("scope")
+            requests.append({
+                "id": str(position), "limit": candidate_limit,
+                "source_types": sorted(item.get("source_types", ())),
+                **({"corpus": "transient"} if item.get("corpus") == "transient" else {}),
+                **({"scope": {key: getattr(scope, key) for key in
+                              ("platform", "bot_id", "group_id", "scope_type", "scope_id")}}
+                   if scope is not None else {}),
+            })
+        payload: dict[str, Any] = {
+            "op": "unified_query", "revision": self.revision or "", "query": query,
+            "query_vector": list(query_vector or []),
+            "before_message_id": before_message_id,
+            "source_order": list(source_order),
+            "searches": requests,
+            "candidate_limit": max(1, int(candidate_limit)),
+            "rank": {
+                "limit": int(rank_options["limit"]),
+                "max_chars": int(rank_options["max_chars"]),
+                "max_per_source": int(rank_options["max_per_source"]),
+                "max_per_parent": int(rank_options["max_per_parent"]),
+                "selection_mode": rank_options.get("selection_mode", "confidence"),
+                "exclude_content_hashes": sorted(rank_options.get("exclude_content_hashes") or ()),
+            },
+        }
+        if any(item.get("corpus") == "transient" for item in searches):
+            payload["transient_revision"] = self.client._transient_revision or ""
+        if vector_version:
+            payload["vector_version"] = vector_version
+        response = await self.client._request(payload)
+        return dict(response.response)
+
     async def search(
         self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
     ) -> list[RecallResult]:
@@ -322,12 +572,16 @@ class TsLexicalIndex:
 
 
 def _wire_document(document: IndexDocument) -> dict[str, Any]:
-    return {
+    text_parts = [document.title]
+    if document.summary:
+        text_parts.append(document.summary)
+    text_parts.append(document.content)
+    wire = {
         # worker 内部使用稳定的 chunk slot；版本变化只更新同一 slot 的内容，
         # 避免一个文档改动后把所有未变化 chunk 当成删除再新增。
         "id": _worker_document_key(document),
         # 保留原文，避免 Python 侧预分词导致 TS/Python 两套语义漂移。
-        "text": "\n".join((document.title, document.summary, document.content)),
+        "text": "\n".join(text_parts),
         "source_id": document.source_id,
         "title": document.title,
         "summary": document.summary,
@@ -345,6 +599,14 @@ def _wire_document(document: IndexDocument) -> dict[str, Any]:
         "updated_at": document.updated_at,
         "metadata": document.metadata,
     }
+    if document.source_type == "conversation":
+        # 会话标题只用于展示；词法召回与重排只使用当前消息/摘要正文。
+        wire["ranking_text"] = document.content
+    if document.source_type == "conversation" and document.metadata.get("kind") == "message":
+        context_text = document.contextual_content()
+        if context_text:
+            wire["context_text"] = context_text
+    return wire
 
 
 def _from_wire_document(raw: dict[str, Any], owner_user_id: str) -> IndexDocument | None:
@@ -381,17 +643,70 @@ def _worker_document_key(document: IndexDocument) -> str:
     return f"{document.source_type}:{parent}:{document.chunk_index}"
 
 
+def scope_to_wire(scope: Scope) -> dict:
+    """Scope → TS 适配器消费的 wire scope（空值统一为空串，与现网口径一致）。"""
+    return {
+        "scope_type": scope.scope_type or "owner",
+        "scope_id": scope.scope_id or "",
+        "platform": scope.platform or "",
+        "bot_id": scope.bot_id or "",
+        "group_id": scope.group_id or "",
+    }
+
+
+def wire_document_to_persistent(raw: dict[str, Any], owner_user_id: object) -> IndexDocument:
+    """TS ``adapt`` wire 文档 → 持久 IndexDocument（写库通道，第③步）。
+
+    与 ``_from_wire_document``（查询命中恢复，宽松）不同：写库通道对结构缺陷
+    显式失败，不静默丢弃 chunk。document_id 取 ``parent_id``（单前缀持久口径），
+    wire id（``_worker_document_key``）由 parent_id + chunk_index 可完整重建，
+    模式切换不改变持久行身份。
+    """
+    parent = str(raw.get("parent_id") or "")
+    if not parent:
+        raise ValueError(f"TS 投影 wire 文档缺少 parent_id：{raw.get('id')}")
+    content = raw.get("content")
+    if content is None:
+        raise ValueError(f"TS 投影 wire 文档缺少 content：{raw.get('id')}")
+    metadata = raw.get("metadata")
+    return IndexDocument(
+        document_id=parent,
+        source_type=str(raw.get("source_type") or ""),
+        source_id=str(raw.get("source_id") or ""),
+        scope=Scope(
+            owner_user_id=str(owner_user_id),
+            platform=str(raw.get("platform") or ""),
+            bot_id=str(raw.get("bot_id") or ""),
+            group_id=str(raw.get("group_id") or ""),
+            scope_type=str(raw.get("scope_type") or "owner"),
+            scope_id=str(raw.get("scope_id") or ""),
+        ),
+        title=str(raw.get("title") or ""),
+        summary=str(raw.get("summary") or ""),
+        content=str(content),
+        version=str(raw.get("document_version") or ""),
+        chunk_index=int(raw.get("chunk_index") or 0),
+        chunk_count=int(raw.get("chunk_count") or 1),
+        parent_document_id=parent,
+        updated_at=str(raw.get("updated_at")) if raw.get("updated_at") is not None else None,
+        metadata=dict(metadata) if isinstance(metadata, dict) else {},
+    )
+
+
 _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, TsSidecarClient]] = weakref.WeakKeyDictionary()
 
 
 def _index_document_digest(document: IndexDocument) -> str:
-    """只计算影响词法索引的字段，版本变化不应触发无意义 upsert。"""
+    """计算词法索引字段及召回展示上下文的摘要。"""
+    context = document.contextual_content() if document.source_type == "conversation" else ""
     payload = "\x1f".join((
         _worker_document_key(document),
         document.source_type,
         document.title,
         document.summary,
         document.content,
+        context,
+        "conversation-ranking-v1" if document.source_type == "conversation" else "",
     ))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -424,6 +739,7 @@ async def rank_candidates_with_cache(
     max_per_parent: int,
     exclude_content_hashes: set[str] | None = None,
     selection_mode: str = "confidence",
+    corpus_documents: list[IndexDocument] | None = None,
 ) -> tuple[list[tuple[RecallCandidate, str, dict]], dict]:
     """调用 TS 完成完整的候选评分、过滤、去重和预算。"""
     if not candidates:
@@ -435,7 +751,7 @@ async def rank_candidates_with_cache(
             "rejected_not_preferred": 0, "top_confidence": 0.0,
             "threshold": 0.35, "preferred_threshold": 0.55,
             "selection_mode": selection_mode,
-            "scoring_version": "confidence-v1",
+            "scoring_version": _expected_scoring_version(),
         }
     from app.core.config import get_settings
 
@@ -454,38 +770,60 @@ async def rank_candidates_with_cache(
         candidate_id = f"{candidate.source_type}:{candidate.document.chunk_id}:{index}"
         by_id[candidate_id] = candidate
         document = candidate.document
+        rank_document = {
+            "id": candidate_id,
+            # 与持久化 TS 索引保持同一评分文本（标题/摘要/正文），避免独立
+            # 候选排序链再次退回到与持久化索引不同的口径。
+            "text": "\n".join(part for part in (document.title, document.summary, document.content) if part),
+            # 跨轮排除使用 IndexDocument.content_hash；独立 rank 路径也必须
+            # 把 canonical 正文传给 TS，不能只传用于 BM25 的拼接 text。
+            "content": document.content,
+            "source_type": document.source_type,
+            "title": document.title,
+            "summary": document.summary,
+            "scope_type": document.scope.scope_type,
+            "scope_id": document.scope.scope_id,
+            "platform": document.scope.platform,
+            "bot_id": document.scope.bot_id,
+            "group_id": document.scope.group_id,
+            "document_version": document.version,
+            "parent_id": document.parent_document_id or document.document_id,
+            "chunk_index": document.chunk_index,
+            "chunk_count": document.chunk_count,
+            "updated_at": document.updated_at,
+            "metadata": document.metadata,
+        }
+        if document.source_type == "conversation":
+            # 与 lexical worker 一致：自动会话标题不参与候选重排。
+            rank_document["ranking_text"] = document.content
+        if document.source_type == "conversation" and document.metadata.get("kind") == "message":
+            context_text = document.contextual_content()
+            if context_text:
+                rank_document["context_text"] = context_text
         payload.append({
             "id": candidate_id,
             "source_type": candidate.source_type,
             "raw_score": candidate.raw_score,
-            "rank": candidate.rank,
             "fusion": "hybrid-rrf" if candidate.fused_score else "bm25",
             "fused_score": candidate.fused_score if candidate.fused_score else None,
-            "document": {
-                "id": candidate_id,
-                "text": document.content,
-                "source_type": document.source_type,
-                "title": document.title,
-                "summary": document.summary,
-                "scope_type": document.scope.scope_type,
-                "scope_id": document.scope.scope_id,
-                "platform": document.scope.platform,
-                "bot_id": document.scope.bot_id,
-                "group_id": document.scope.group_id,
-                "document_version": document.version,
-                "parent_id": document.parent_document_id or document.document_id,
-                "chunk_index": document.chunk_index,
-                "chunk_count": document.chunk_count,
-                "updated_at": document.updated_at,
-                "metadata": document.metadata,
-            },
+            "document": rank_document,
         })
+    scoring_version = _expected_scoring_version()
     selected, stats = await client.rank_candidates(
         query, payload, limit=limit, max_chars=max_chars,
         max_per_source=max_per_source, max_per_parent=max_per_parent,
         exclude_content_hashes=exclude_content_hashes,
         selection_mode=selection_mode,
+        scoring_version=scoring_version,
+        corpus_documents=([_wire_document(document) for document in corpus_documents]
+                          if corpus_documents is not None else None),
     )
+    # 冻结契约：TS 评分版本必须与配置一致；版本漂移说明出现了第二套评分
+    # 或新旧实现混跑，显式失败而不是静默接受结果差异。
+    version = str(stats.get("scoring_version") or "")
+    if version != scoring_version:
+        raise TsSidecarUnavailable(
+            f"TS 评分器版本与 Python 契约不一致：{version or '缺失'} ≠ {scoring_version}")
     output = []
     for item in selected:
         candidate = by_id.get(str(item.get("id") or ""))
@@ -594,16 +932,30 @@ def active_index_dirs() -> set[Path]:
     return active
 
 
+# 冻结的统一评分契约版本（见 docs/prds/PRD-RAG-7 Phase 2）；与
+# ts/workers/rag/src/service.ts 的 scoring_version 必须同步演进。
+RANK_SCORING_VERSION = "confidence-v4"
+
+
+def _expected_scoring_version() -> str:
+    """回滚开关：search.ts_rank_scoring_version 决定期望的 TS 评分版本。"""
+    from app.core.config import get_settings
+    return str(getattr(get_settings().search, "ts_rank_scoring_version", "") or RANK_SCORING_VERSION)
+
+
 def _timeout_seconds() -> float:
     from app.core.config import get_settings
 
-    value = getattr(get_settings().search, "ts_sidecar_timeout_ms", 500)
+    value = getattr(get_settings().search, "ts_sidecar_timeout_ms", 5000)
     return max(0.05, min(int(value), 30_000) / 1000)
 
 
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
     "rank_candidates_with_cache",
+    "RANK_SCORING_VERSION",
     "SIDE_CAR_IDLE_TTL_SECONDS",
+    "BUILD_TIMEOUT_SECONDS",
+    "SIDECAR_STREAM_LIMIT_BYTES",
     "get_lexical_client", "close_lexical_clients", "close_rank_clients", "index_dir_for_owner",
 ]

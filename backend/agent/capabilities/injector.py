@@ -15,7 +15,7 @@ ON_DEMAND_TOOL_NAMES = ("create_skill", "update_skill", "delete_skill")
 
 
 def _capability_tool_names(tool_names: list[str]) -> list[str]:
-    """构建能力快照可见工具名；保持 Profile 工具名与 Provider 工具名分离。"""
+    """构建能力快照可见工具名；保持常驻工具与按需 Adapter 工具分离。"""
     return list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES, *ON_DEMAND_TOOL_NAMES]))
 
 

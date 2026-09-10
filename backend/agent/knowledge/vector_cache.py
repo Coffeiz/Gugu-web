@@ -81,12 +81,15 @@ async def sync_vectors(
             if not key or key in seen:
                 continue
             seen.add(key)
+            content_hash = document.content_hash
             current = vectors.get(key)
-            if not force and current and current.get("t") == tag:
+            if (not force and current
+                    and current.get("t") == tag
+                    and current.get("h") == content_hash):
                 continue
             vector = await embedding.embed(document.content)
             if vector:
-                vectors[key] = {"v": vector, "t": tag}
+                vectors[key] = {"v": vector, "t": tag, "h": content_hash}
                 changed = True
                 written += 1
             elif strict:

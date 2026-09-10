@@ -139,3 +139,82 @@ async def test_session_gate_skips_release_after_lock_lease_is_lost(db, user_a, m
         await asyncio.sleep(0)
 
     assert fake_redis.lock_instance.release_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_clears_running_state_when_redis_state_is_gone(
+    db, user_a, monkeypatch,
+):
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="孤儿生成测试",
+        source="web",
+        execution_state="running",
+        active_run_id="run-dead-worker",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is True
+
+    await db.refresh(session)
+    assert session.execution_state == "idle"
+    assert session.active_run_id is None
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_keeps_running_state_when_generation_is_alive(
+    db, user_a, monkeypatch,
+):
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="活跃生成测试",
+        source="web",
+        execution_state="running",
+        active_run_id="run-live",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    fake_redis = _FakeRedis()
+    fake_redis.values["genstream:state:%s" % session.id] = '{"done": false}'
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is False
+
+    await db.refresh(session)
+    assert session.execution_state == "running"
+    assert session.active_run_id == "run-live"
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_does_not_clear_state_when_redis_is_unavailable(
+    db, user_a, monkeypatch,
+):
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="Redis 故障测试",
+        source="web",
+        execution_state="running",
+        active_run_id="run-redis-outage",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    class _UnavailableRedis:
+        async def get(self, _key):
+            raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: _UnavailableRedis())
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is False
+
+    await db.refresh(session)
+    assert session.execution_state == "running"
+    assert session.active_run_id == "run-redis-outage"

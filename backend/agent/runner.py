@@ -14,11 +14,11 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system
+from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system, compress_conv
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
-from agent.conversation.lifecycle import schedule_summary, schedule_title
+from agent.conversation.session_metadata import schedule_summary, schedule_title
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
 from agent.im.context_runtime import (
@@ -32,7 +32,7 @@ from agent.im.permissions import filter_tool_names
 from agent.im.session import get_or_create_session
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user, release as _release_model
 from agent.models import AgentRequest, AgentResponse
-from agent.profiles import DefaultProfile
+from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 
 def _session_user_skill_metadata(session):
     """读取当前会话冻结的用户 Skill 目录；缺失时返回 None，允许首次建立。"""
@@ -179,7 +179,6 @@ async def _run_collect_unlocked(
 ) -> AgentResponse:
     """找/建会话 + 读历史 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     user_id = req.user_id
-    profile = DefaultProfile()
     settings = get_settings()
     # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
     from agent.llm import modelctx
@@ -214,13 +213,13 @@ async def _run_collect_unlocked(
 
         async def _load_snapshot():
             data = await load_context_data(
-                db, user_id, req, profile.memory_enabled, req.message, context_policy
+                db, user_id, req, SYSTEM_MEMORY_ENABLED, req.message, context_policy
             )
             static_prompt, snapshot_context, _ = builder.build_split(
-                profile.prompt_file.removesuffix(".md"), req.user_name,
+                DEFAULT_PROMPT_NAME, req.user_name,
                 data.projects, data.events, data.memory, data.files_overview,
                 notes=data.notes,
-                skills=profile.skills, style_prefs=data.style_prefs,
+                style_prefs=data.style_prefs,
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
@@ -236,7 +235,7 @@ async def _run_collect_unlocked(
                 "system_prompt": static_prompt,
                 "snapshot_context": snapshot_context,
                 "session_info": {"user_name": req.user_name, "source": req.source,
-                                  "chat_id": req.chat_id, "profile": profile.prompt_file},
+                                  "chat_id": req.chat_id, "prompt": f"{DEFAULT_PROMPT_NAME}.md"},
                 "user_tz": data.user_tz,
                 "im_channels": data.im_channels,
                 # 共享 snapshot 只保存当前群公开记忆；成员个人记忆按请求动态读取。
@@ -247,8 +246,8 @@ async def _run_collect_unlocked(
         async def _load_system_prompt(current_user_tz):
             style_prefs = await loaders.load_style_prefs(db, user_id)
             return builder.build_static_prompt(
-                profile.prompt_file.removesuffix(".md"), req.user_name,
-                skills=profile.skills, style_prefs=style_prefs,
+                DEFAULT_PROMPT_NAME, req.user_name,
+                style_prefs=style_prefs,
                 current_date=session_snapshot.current_date_text(current_user_tz),
             )
 
@@ -369,7 +368,7 @@ async def _run_collect_unlocked(
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
     stance_text = builder.stance_block(
-        await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
+        await loaders.load_dynamic_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
     )
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
@@ -396,7 +395,7 @@ async def _run_collect_unlocked(
         _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
     use_anthropic = run_config.use_anthropic
-    tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
+    tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     user_skill_metadata = _session_user_skill_metadata(session)
     # 这里同样使用短事务。工具组装可能触发数据库查询，不能把前面已关闭的
     # session 传入，否则 AsyncSession 会在上下文外重新 checkout 连接并由 GC 回收。
@@ -524,15 +523,16 @@ async def _run_collect_unlocked(
             tokens_out=tout,
             cache_read=cache_read,
             cache_write=cache_write,
-            context_tokens=run_config.context_tokens,
-            actual_usage_tokens=int(meta.get("context_input", tin) or 0),
             compaction_applied=bool(meta.get("compaction_applied", False)),
         )
 
         # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
         # 闲置后「重新聊天」=新会话，原来要在回复后再串行等一次 LLM 起标题才返回 → 慢一倍，这里去掉。
         if is_new_session and text:
-            schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+            schedule_title(
+                user_id, session_id, req.message, text, settings, use_anthropic,
+                locale=req.locale or (snapshot or {}).get("locale"),
+            )
         # 会话「一句话总结」：新会话先出一版，之后每 ~6 条刷新（跟着话题走）；供 search_conversations + 续接桥
         if text:
             schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
@@ -565,7 +565,7 @@ async def _run_collect_unlocked(
 
         # 对话后反思（fire-and-forget）。IM 用「工具轮次让 anthr_messages 变长」当「咕咕动作了」代理，
         # 这样「嗯」确认后真建改东西的轮也会反思（openai 路径无此代理、回落到 user_msg 判，可接受）。
-        if profile.memory_enabled and text and context_policy.allow_memory_reflection:
+        if SYSTEM_MEMORY_ENABLED and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
             reflect_message, reflect_reply = build_reflection_input(
@@ -578,7 +578,7 @@ async def _run_collect_unlocked(
 
     return AgentResponse(text=text, round_texts=list(meta.get("round_texts") or []), session_id=session_id, tokens_in=tin, tokens_out=tout,
                          cache_read=cache_read, cache_write=cache_write,
-                         files=sent_files, used_tools=im_used_tools,
+                         files=sent_files, errored=errored, used_tools=im_used_tools,
                          interactions=meta.get("interactions", []),
                          tool_events=meta.get("tool_events", []),
                          compaction_applied=bool(meta.get("compaction_applied", False)))
@@ -588,14 +588,11 @@ async def run_collect(
     req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
 ) -> AgentResponse:
     """同一 session 串行生成；不同 session 仍可并行。"""
-    from agent.context import compress_conv
-
     async with compress_conv.session_run_gate(req):
-        response = await _run_collect_unlocked(
+        return await _run_collect_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
             on_round=on_round,
         )
-        return response
 
 
 async def _notify_tool_event(callback, event: dict) -> None:
@@ -640,7 +637,6 @@ async def _run_stream_unlocked(
 ) -> AsyncIterator[tuple[str, object]]:
     """run_collect 的流式版本：逐字 yield token + 末尾 yield AgentResponse。"""
     user_id = req.user_id
-    profile = DefaultProfile()
     settings = get_settings()
     # 用户链路标记：modelctx 兜底哨兵从此生效，后台派生任务不得静默烧平台配额
     from agent.llm import modelctx
@@ -673,13 +669,13 @@ async def _run_stream_unlocked(
 
         async def _load_snapshot():
             data = await load_context_data(
-                db, user_id, req, profile.memory_enabled, req.message, context_policy
+                db, user_id, req, SYSTEM_MEMORY_ENABLED, req.message, context_policy
             )
             static_prompt, snapshot_context, _ = builder.build_split(
-                profile.prompt_file.removesuffix(".md"), req.user_name,
+                DEFAULT_PROMPT_NAME, req.user_name,
                 data.projects, data.events, data.memory, data.files_overview,
                 notes=data.notes,
-                skills=profile.skills, style_prefs=data.style_prefs,
+                style_prefs=data.style_prefs,
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
@@ -693,7 +689,7 @@ async def _run_stream_unlocked(
                 snapshot_context = "\n\n---\n\n".join((snapshot_context, workspace_block))
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": req.source,
-                                      "chat_id": req.chat_id, "profile": profile.prompt_file},
+                                      "chat_id": req.chat_id, "prompt": f"{DEFAULT_PROMPT_NAME}.md"},
                     "user_tz": data.user_tz, "im_channels": data.im_channels,
                     "im_memory": snapshot_im_memory,
                     "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory)}
@@ -701,8 +697,8 @@ async def _run_stream_unlocked(
         async def _load_system_prompt(current_user_tz):
             style_prefs = await loaders.load_style_prefs(db, user_id)
             return builder.build_static_prompt(
-                profile.prompt_file.removesuffix(".md"), req.user_name,
-                skills=profile.skills, style_prefs=style_prefs,
+                DEFAULT_PROMPT_NAME, req.user_name,
+                style_prefs=style_prefs,
                 current_date=session_snapshot.current_date_text(current_user_tz),
             )
 
@@ -808,7 +804,7 @@ async def _run_stream_unlocked(
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
     stance_text = builder.stance_block(
-        await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
+        await loaders.load_dynamic_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
     )
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
@@ -835,7 +831,7 @@ async def _run_stream_unlocked(
         _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
     use_anthropic = run_config.use_anthropic
-    tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
+    tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as tool_db:
         tool_names = await _filter_shell_tool(
@@ -1029,13 +1025,14 @@ async def _run_stream_unlocked(
             tokens_out=tout,
             cache_read=cache_read,
             cache_write=cache_write,
-            context_tokens=run_config.context_tokens,
-            actual_usage_tokens=int(context_input or tin),
             compaction_applied=compaction_applied,
         )
 
         if is_new_session and text:
-            schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)
+            schedule_title(
+                user_id, session_id, req.message, text, settings, use_anthropic,
+                locale=req.locale or (snapshot or {}).get("locale"),
+            )
         if text:
             schedule_summary(user_id, session_id, is_new_session, settings, use_anthropic)
 
@@ -1051,7 +1048,7 @@ async def _run_stream_unlocked(
         except Exception:
             pass
 
-        if profile.memory_enabled and text and context_policy.allow_memory_reflection:
+        if SYSTEM_MEMORY_ENABLED and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
             reflect_message, reflect_reply = build_reflection_input(
@@ -1064,7 +1061,7 @@ async def _run_stream_unlocked(
 
     yield ("final", AgentResponse(text=text, round_texts=[r.strip() for r in rounds if r.strip()],
                                   session_id=session_id, tokens_in=tin,
-                                  tokens_out=tout, files=files, cancelled=False,
+                                  tokens_out=tout, files=files, cancelled=False, errored=errored,
                                   used_tools=im_used_tools, interactions=interactions,
                                   tool_events=tool_events))
 
@@ -1076,14 +1073,11 @@ async def run_stream(
     on_tool_event=None,
 ) -> AsyncIterator[tuple[str, object]]:
     """流式生成也复用同一 session gate，避免和普通生成并行。"""
-    from agent.context import compress_conv
-
     async with compress_conv.session_run_gate(req):
         async for item in _run_stream_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
         ):
             yield item
-        await compress_conv.wait_for_baseline_update(req.session_id)
 
 
 async def _collect(

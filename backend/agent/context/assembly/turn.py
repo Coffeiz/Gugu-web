@@ -58,14 +58,17 @@ def assemble_turn(*, stance: str | None = None,
         messages.append(reminder(stance))
     # 姿态在收尾时会单独持久化到用户消息之前；message_time 由用户消息 sent_at
     # 重建，因此二者都不重复写入本 batch 的 canonical 投影。
+    # RAG 必须位于当前用户问题之前；下一轮 history 会按同样的
+    # canonical 顺序恢复。message_time 不持久化，因此放在 RAG 后、用户正文前，
+    # 才能与 build_history_parts() 的恢复顺序一致。
+    tail_messages = [dict(item) for item in conversation_tail]
+    messages.extend(tail_messages)
+    canonical_source.extend(tail_messages)
+
     if message_time:
         messages.append(_time_context(message_time))
     if current_user is not None:
         messages.append(current_user)
-
-    tail_messages = [dict(item) for item in conversation_tail]
-    messages.extend(tail_messages)
-    canonical_source.extend(tail_messages)
 
     if extra_reminder:
         # Provider 继续看到原来的普通 reminder 形状；canonical history 使用

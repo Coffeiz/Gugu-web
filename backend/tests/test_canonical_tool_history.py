@@ -119,6 +119,28 @@ def test_time_context_wrapper_regression_guard_keeps_legacy_and_canonical_wire_e
     assert legacy_wire == canonical_wire
 
 
+def test_provider_projection_drops_null_metadata_and_normalizes_stance_wrapper():
+    """跨 run 的同一语义不能因响应元数据或 stance block 类型变化而断缓存。"""
+    stance_text = "[system-reminder]\n## 本轮相处方式：查询\n[/system-reminder]"
+    legacy = [{
+        "role": "user",
+        "content": [{
+            "type": "text",
+            "text": stance_text,
+            "citations": None,
+            "parsed_output": None,
+            "caller": None,
+            "toolset_name": None,
+        }],
+    }]
+    canonical = [{
+        "role": "user",
+        "content": [{"type": "stance-context", "digest": "old", "text": stance_text}],
+    }]
+
+    assert render_events_for_provider(legacy) == render_events_for_provider(canonical)
+
+
 def test_schema_event_never_shares_tool_result_message_boundary():
     messages = [{
         "role": "user",

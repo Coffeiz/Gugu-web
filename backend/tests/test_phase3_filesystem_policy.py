@@ -2,6 +2,7 @@
 
 import pytest
 from pathlib import PurePosixPath
+from sqlalchemy import select
 
 from app.models import ConversationSession, File, Folder, Workspace
 from app.services.filesystem_authorization import (
@@ -77,21 +78,101 @@ async def test_full_grant_allows_personal_and_project_file_writes(db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_agent_file_create_is_read_only_without_session_grant(db, user_a):
+async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_grant(db, user_a):
     from agent.tools import files as agent_files
     from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    from app.services.workspaces import ensure_default_workspace_directory
 
+    default_directory = await ensure_default_workspace_directory(db, user_a.id)
     session = await _persist(db, ConversationSession(user_id=user_a.id, title="Phase3 测试"))
     token = set_dispatch_session(session.id, session, "phase3-test")
     try:
         result = await agent_files._create_file(
-            db, user_a.id, {"files": [{"name": "禁止写入.md", "content": "正文"}]},
+            db, user_a.id, {"files": [{"name": "默认工作区.md", "content": "正文"}]},
         )
+        assert result["created_count"] == 1
+        assert result["failed_count"] == 0
+        assert result["created"][0]["space"] == "workspace"
+        assert result["created"][0]["file_id"]
+        created = await db.get(File, result["created"][0]["file_id"])
+        assert created.workspace_directory_id == default_directory.id
+
+        folder_result = await agent_files._create_folder(
+            db, user_a.id, {"name": "默认目录"},
+        )
+        assert folder_result["success"] is True
+        folder = await db.get(Folder, folder_result["folder_id"])
+        assert folder.workspace_directory_id == default_directory.id
+
+        listed = await agent_files._list_folders(db, user_a.id, {})
+        assert any(item["id"] == folder.id for item in listed)
     finally:
         reset_dispatch_session(token)
 
-    assert result["failed_count"] == 1
-    assert result["failed"][0]["error"].startswith("当前文件系统权限只允许读取")
+
+@pytest.mark.asyncio
+async def test_agent_copy_keeps_bound_directory_workspace_as_default_with_full_grant(
+    db, user_a, tmp_path, monkeypatch, enable_filesystem_authorization,
+):
+    """完整授权不能把独立 Workspace 的默认复制落点降级到个人文件根目录。"""
+    from app.core.config import get_settings
+    from agent.tools import files as agent_files
+    from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    from app.services.filesystem_authorization import grant_session_filesystem_access
+    from app.services.storage import LocalStorageBackend
+    from app.services.storage.file_service import FileService
+    from app.services.workspaces import create_workspace_directory
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+
+    directory = await create_workspace_directory(db, user_a.id, name="F1 独立工作区")
+    binding = await db.scalar(select(Workspace).where(
+        Workspace.user_id == user_a.id,
+        Workspace.directory_id == directory.id,
+        Workspace.enabled.is_(True),
+    ))
+    assert binding is not None
+    session = await _persist(db, ConversationSession(
+        user_id=user_a.id, title="独立 Workspace 复制测试", workspace_id=binding.id,
+    ))
+    await grant_session_filesystem_access(db, user_a.id, session.id)
+    await db.commit()
+
+    source_service = FileService(db, storage=LocalStorageBackend(tmp_path))
+    source = await source_service.create_file(
+        user_a.id, space="personal", project_id=None, folder_id=None,
+        stage_name="", mind_map_id=None, display_name="F1 图表", ext="png",
+        mime_type="image/png", data=b"image",
+    )
+    await db.commit()
+
+    token = set_dispatch_session(session.id, session, "phase3-independent-workspace-copy")
+    try:
+        result = await agent_files._copy_file(db, user_a.id, {"file_id": source.file.id})
+    finally:
+        reset_dispatch_session(token)
+
+    assert result["success"] is True
+    copied = await db.get(File, result["file_id"])
+    assert copied is not None
+    assert copied.space == "workspace"
+    assert copied.workspace_directory_id == directory.id
+    assert copied.storage_key != source.file.storage_key
+    assert f"/{directory.directory_name}/" in f"/{copied.storage_key}/"
+    assert "个人文件" not in copied.storage_key
+
+    # 删除个人源文件只能移动源文件自己的 key，不能把 Workspace 副本一起移走。
+    token = set_dispatch_session(session.id, session, "phase3-independent-workspace-delete")
+    try:
+        deleted = await agent_files._delete_file(db, user_a.id, {"file_id": source.file.id})
+    finally:
+        reset_dispatch_session(token)
+    assert deleted["success"] is True
+    await db.refresh(copied)
+    assert copied.deleted_at is None
+    assert await source_service.storage.exists(copied.storage_key)
 
 
 @pytest.mark.asyncio

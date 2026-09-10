@@ -4,7 +4,7 @@
     <div class="interaction-body">{{ msg.interaction?.body }}</div>
     <div class="interaction-actions">
       <ActionButton v-for="option in displayOptions" :key="option.id" fit
-                    :disabled="resolved || expired" @click="selectOption(option)">
+                    :disabled="resolved || submitting || expired" @click="selectOption(option)">
         {{ option.label }}
       </ActionButton>
     </div>
@@ -12,7 +12,14 @@
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
       {{ msg.interaction.responseText }}
     </div>
-    <div v-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
+    <div v-if="submitting" class="interaction-resolved">{{ t('chatUi.confirmationSubmitting') }}</div>
+    <div v-else-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
+    <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'confirm'" class="interaction-resolved">
+      {{ t('chatUi.confirmationConfirmed') }}
+    </div>
+    <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'cancel'" class="interaction-resolved">
+      {{ t('chatUi.confirmationCancelled') }}
+    </div>
     <div v-else-if="resolved" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
   </div>
 </template>
@@ -26,6 +33,7 @@ import { CUSTOM_REPLY_OPTION_ID, type ChatMessage } from './chatTypes'
 
 const props = defineProps<{ msg: ChatMessage }>()
 const resolved = ref(Boolean(props.msg.interaction?.resolved))
+const submitting = ref(Boolean(props.msg.interaction?.submitting))
 const initiallyExpired = Boolean(
   props.msg.interaction?.expired
   || (!props.msg.interaction?.selectedOptionId
@@ -35,6 +43,10 @@ const initiallyExpired = Boolean(
 const expired = ref(initiallyExpired)
 let expiryTimer: ReturnType<typeof setTimeout> | undefined
 const customInputActive = computed(() => Boolean(props.msg.interaction?.customInputActive))
+const isPausedConfirmation = computed(() => Boolean(
+  props.msg.interaction?.taskPaused
+  || (props.msg.interaction?.kind === 'confirm' && props.msg.interaction?.toolCallId),
+))
 const displayOptions = computed(() => (props.msg.interaction?.options || [])
   .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && customInputActive.value))
   .map(option => option.id === CUSTOM_REPLY_OPTION_ID
@@ -44,7 +56,9 @@ const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
 }>()
 function selectOption(option: { id: string; label: string; token: string }) {
-  if (resolved.value || expired.value) return
+  if (resolved.value || submitting.value || expired.value) return
+  submitting.value = true
+  if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('select', props.msg, option)
 }
 function markExpired() {
@@ -67,6 +81,9 @@ function scheduleExpiry() {
 watch(() => props.msg.interaction?.resolved, (value) => {
   resolved.value = Boolean(value)
   scheduleExpiry()
+})
+watch(() => props.msg.interaction?.submitting, (value) => {
+  submitting.value = Boolean(value)
 })
 watch(() => props.msg.interaction?.expiresAt, scheduleExpiry)
 onMounted(scheduleExpiry)

@@ -5,13 +5,9 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import select
-
-from app.models import ConversationMessage, ConversationSession
 from app.search.query import normalize_queries
-from agent.rag.models import IndexDocument, Scope
+from agent.rag.models import Scope
 from agent.rag.retriever import RetrievalBatch
-from agent.rag.index_cache import search_documents_with_cache
 from agent.rag.persistent_store import search_persistent_index
 from agent.rag.ts_sidecar import TsSidecarUnavailable
 
@@ -24,42 +20,6 @@ class ConversationAdapter:
         self.db = db
         self.queries = list(queries or ())
         self.mode = mode
-
-    async def _build_documents(self, scope: Scope) -> list[IndexDocument]:
-        """索引尚未建立时只做来源投影，关键词检索仍统一交给 TS。"""
-        rows = (await self.db.execute(
-            select(ConversationMessage, ConversationSession)
-            .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-            .where(
-                ConversationSession.user_id == self.user_id,
-                ConversationMessage.content_json.is_(None),
-            )
-            .order_by(ConversationMessage.id.asc())
-        )).all()
-        documents: list[IndexDocument] = []
-        for message, session in rows:
-            content = (message.content or "").strip()
-            if not content:
-                continue
-            documents.append(IndexDocument(
-                document_id=f"conversation:{session.id}:{message.id}",
-                source_type=self.source_type,
-                source_id=str(session.id),
-                scope=scope,
-                title=session.title or "未命名对话",
-                summary=session.summary or "",
-                content=content[:1200],
-                version=str(message.id),
-                updated_at=message.created_at.isoformat() if message.created_at else None,
-                metadata={
-                    "session_id": session.id,
-                    "message_id": message.id,
-                    "role": message.role,
-                    "session_source": session.source,
-                    "session_updated_at": session.updated_at.isoformat() if session.updated_at else None,
-                },
-            ))
-        return documents
 
     async def retrieve(
         self, query: str, *, scope, strategy: str, candidate_limit: int,
@@ -88,14 +48,6 @@ class ConversationAdapter:
                 source_types={self.source_type}, scope=query_scope,
                 limit=candidate_limit, diagnostics=search_metadata,
             )
-            if not results and not int(search_metadata.get("document_count", 0) or 0):
-                documents = await self._build_documents(query_scope)
-                results = await search_documents_with_cache(
-                    self.user_id, documents, " ".join(queries),
-                    limit=candidate_limit, source_types={self.source_type},
-                    scope=query_scope, diagnostics=search_metadata,
-                )
-                search_metadata["document_count"] = len(documents)
         except TsSidecarUnavailable:
             results = []
             search_metadata["fallback"] = "lexical_worker_unavailable"

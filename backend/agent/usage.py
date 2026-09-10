@@ -54,6 +54,7 @@ async def record_usage(
     cache_write: int = 0,
     session_id: int | None = None,
     tools_used: list[str] | None = None,
+    scenario: str = "chat",
     db=None,
 ) -> UsageResult:
     """把一次实际 provider 调用写入 AgentUsage，并沿用平台配额封顶规则。"""
@@ -86,6 +87,7 @@ async def record_usage(
             provider=str(getattr(model_cfg, "provider", "")),
             is_byok=bool(getattr(model_cfg, "is_byok", False)),
             tools_used=tools_used or None,
+            scenario=scenario or "chat",
         ))
         return UsageResult(tokens_in=capped_in, tokens_out=capped_out)
 
@@ -117,4 +119,5 @@ async def record_current_usage(settings, model_cfg, usage: dict) -> None:
         cache_read=usage.get("cache_read", 0),
         cache_write=usage.get("cache_write", 0),
         session_id=context.session_id,
+        scenario=getattr(context, "scenario", "chat") or "chat",
     )

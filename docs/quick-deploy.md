@@ -20,10 +20,10 @@ cp .env.example .env
 mkdir -p backend && touch backend/.env
 ```
 
-编辑根目录 `.env`，至少修改 `SECRET_KEY` 和 `GUGU_DB_PASSWORD`：
+编辑根目录 `.env`，至少修改 `GUGU_DB_PASSWORD`；`SECRET_KEY` 可以留空，首次启动会自动生成并持久化：
 
 ```dotenv
-SECRET_KEY=请替换为随机长字符串
+# SECRET_KEY 可省略；首次启动自动生成并保存到 backend/.env
 GUGU_DB_PASSWORD=请替换为数据库密码
 ```
 
@@ -57,12 +57,13 @@ docker run -d --name gugu \
   -p 9595:9595 \
   -v /你的数据目录:/data \
   -v /你的配置目录:/config \
-  -e SECRET_KEY=请替换为随机长字符串 \
   -e GUGU_DB_PASSWORD=请替换为数据库密码 \
   coffeiz/gugu-web:latest
 ```
 
 打开 <http://localhost:9595> 即可使用。
+
+不设置 `SECRET_KEY` 时，镜像会在首次启动生成高强度随机密钥并保存到持久化配置文件；后续重启和升级会复用原密钥。未显式绑定 `/data` 和 `/config` 时，Docker 会自动创建匿名卷，但生产环境建议明确绑定宿主机目录，便于备份和迁移。
 
 **管理员密码不设默认值**：启动时不设置 `ADMIN_PASSWORD`，首次启动会自动生成随机密码写入数据卷内的 `.env`（`/data/.env`）并在容器日志打印一次（`docker logs gugu` 查看），重建容器不丢失；也可以在启动时用 `-e ADMIN_USERNAME=... -e ADMIN_PASSWORD=...` 直接指定。公网部署务必使用自己的强密码。
 

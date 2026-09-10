@@ -12,20 +12,43 @@ import asyncio
 _background_tasks: set[asyncio.Task] = set()
 
 
-def build_title_prompt(user_msg: str, ai_reply: str) -> str:
-    """构造新会话标题提示词，标题语言跟随当前对话语言。"""
+_TITLE_LANGUAGE_NAMES = {
+    "zh-CN": "简体中文",
+    "ja-JP": "日本語",
+    "en-US": "English",
+}
+
+
+def build_title_prompt(user_msg: str, ai_reply: str, locale: str | None = None) -> str:
+    """构造新会话标题提示词，优先使用用户当前选择的语言。"""
+    language = _TITLE_LANGUAGE_NAMES.get(locale or "")
+    language_instruction = (
+        f"用户当前选择的界面语言是「{language}」（{locale}）。标题必须使用该语言输出，"
+        "不要根据本提示词或对话中的其他语言改用别的语言。"
+        if language
+        else (
+            "标题必须使用与用户和咕咕交流相同的语言；如果对话主要使用英文，就用英文输出；"
+            "如果主要使用日文，就用日文输出。不要因为本提示词使用中文而输出中文。"
+        )
+    )
     return (
         "根据下面这段对话，用一句话起一个简短的标题（10字以内，不含引号和标点符号）。"
-        "标题必须使用与用户和咕咕交流相同的语言；如果对话主要使用英文，就用英文输出；"
-        "如果主要使用日文，就用日文输出。不要因为本提示词使用中文而输出中文。"
+        f"{language_instruction}"
         "只输出标题本身，不要任何解释。\n"
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
 
 
-async def generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
+async def generate_title(
+    user_msg: str,
+    ai_reply: str,
+    settings,
+    use_anthropic: bool,
+    ai=None,
+    locale: str | None = None,
+) -> str:
     """用 LLM 为新对话起标题；失败时回退到截断用户消息。"""
-    prompt = build_title_prompt(user_msg, ai_reply)
+    prompt = build_title_prompt(user_msg, ai_reply, locale)
     from agent import providers
     from agent.llm.modelctx import effective_ai
 
@@ -118,10 +141,13 @@ def schedule_title(
     reply_text: str,
     settings,
     use_anthropic: bool,
+    locale: str | None = None,
 ) -> None:
     """异步生成新会话标题，不阻塞主回复。"""
     task = asyncio.create_task(
-        generate_title_bg(user_id, session_id, user_msg, reply_text, settings, use_anthropic)
+        generate_title_bg(
+            user_id, session_id, user_msg, reply_text, settings, use_anthropic, locale=locale,
+        )
     )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
@@ -134,10 +160,13 @@ async def generate_title_bg(
     reply_text: str,
     settings,
     use_anthropic: bool,
+    locale: str | None = None,
 ) -> None:
     """生成标题并以原子条件更新落库，手动改名永远优先。"""
     try:
-        new_title = await generate_title(user_msg, reply_text, settings, use_anthropic)
+        new_title = await generate_title(
+            user_msg, reply_text, settings, use_anthropic, locale=locale,
+        )
         if not new_title:
             return
 

@@ -82,23 +82,23 @@ function fmtDateTime(iso: string) {
 <style scoped>
 .task-card {
   position: relative;
-  background: rgba(255,255,255,0.56); border: 1px solid rgba(255,255,255,0.72);
+  background: var(--surface-card); border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  box-shadow: var(--card-shadow);
   padding: 13px 15px; display: flex; flex-direction: column; gap: 7px;
   height: 100%; min-height: 154px; box-sizing: border-box;
   overflow: hidden;
-  transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.3s ease, background 0.25s ease-out;
+  transition: var(--card-motion), box-shadow var(--motion-hover-card) ease, opacity var(--hover-motion-control);
 }
 .task-card::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(to top, rgba(255,255,255,0.08), transparent 50%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
-  transition: background 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events: none;
+  background: var(--card-hover-overlay);
+  box-shadow: none;
+  opacity: 0; transition: opacity var(--card-overlay-motion); pointer-events: none;
 }
 .task-card > * { position: relative; z-index: 1; }
-.task-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
-.task-card:hover::after { background: rgba(255,255,255,0.2); }
+.task-card:hover { box-shadow: var(--card-shadow-hover); }
+.task-card:hover::after { opacity: 1; }
 .task-card.off { opacity: 0.5; }
 .tc-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tc-name { min-width: 0; font-size: 13px; line-height: 19px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

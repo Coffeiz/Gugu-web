@@ -20,6 +20,16 @@ _CONTEXT_RESOURCES = {"projects", "calendar", "files", "memory"}
 # snapshot 新鲜度覆盖的输入比前端 SSE 资源集合更大。
 _CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im_channels"}
 _DATA_RUNTIME_RESOURCES = {"projects", "files", "sessions", "conversation"}
+_RAG_SOURCES_BY_RESOURCE: dict[str, tuple[str, ...]] = {
+    "projects": ("project",),
+    "files": ("file",),
+    "sessions": ("conversation",),
+    "conversation": ("conversation",),
+    "calendar": ("calendar",),
+    "scheduled_tasks": ("scheduled_task",),
+    "mind": ("note", "canvas"),
+    "knowledge": ("knowledge",),
+}
 
 # 改动型工具 → 受影响的前端资源。只列「会变数据」的工具（list_/get_/read_ 等只读不列）。
 # 新增改动型工具时记得在这里登记，否则网页不会实时刷新。
@@ -108,6 +118,24 @@ async def publish_data_runtime_invalidation(user_id, resource: str,
         await redis.publish(f"data-runtime:invalidate:{user_id}", json.dumps(payload, ensure_ascii=False))
     except Exception:
         pass
+
+
+def _publish_rag_index_events(user_id, resources: list[str], operation: str) -> None:
+    """把已提交的业务资源变更转成异步索引更新事件。"""
+    from agent.events.bus import publish as publish_agent_event
+    from agent.events.types import RagIndexUpdated
+
+    seen: set[str] = set()
+    for resource in resources:
+        for source_type in _RAG_SOURCES_BY_RESOURCE.get(resource, ()):
+            if source_type in seen:
+                continue
+            seen.add(source_type)
+            publish_agent_event(RagIndexUpdated(
+                user_id=user_id,
+                source_type=source_type,
+                operation=operation,
+            ))
 
 async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, operation: str | None = None,
@@ -198,6 +226,8 @@ async def publish(user_id, *resources: str, origin: str | None = None,
         payload["notification"] = notification
     if not payload:
         return False
+    if res:
+        _publish_rag_index_events(user_id, res, inferred_operation)
     try:
         await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
     except Exception:

@@ -18,7 +18,8 @@
           @keydown.esc="emit('finish-edit')" @keydown.backspace="!todo.text && emit('remove', stage, todo.id)" />
         <span v-else class="todo-name" :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
           @click.stop="emit('start-edit', todo.id)">{{ todo.text || t('projects.todo') }}</span>
-        <button class="todo-del" @click.stop="emit('remove', stage, todo.id)"><Icon name="action.close" :size="8" /></button>
+        <button class="todo-del" :aria-label="t('common.actions.delete')" :title="t('common.actions.delete')"
+          @click.stop="emit('remove', stage, todo.id)"><Icon name="action.close" :size="12" /></button>
       </div>
     </TransitionGroup>
     <button class="todo-add-btn" @click.stop="emit('add', stage)">＋ {{ t('projects.addTodo') }}</button>
@@ -60,9 +61,9 @@ const emit = defineEmits<{
 }
 .todo-list.is-last { background-image: none; }
 .todo-items { display: flex; flex-direction: column; gap: 3px; }
-.todo-item { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
+.todo-item { display: flex; align-items: center; gap: 6px; min-height: 24px; }
 .todo-item + .todo-item { border-top: 1px solid var(--panel-divider); }
-.todo-check, .todo-del { margin-top: 4px; }
+.todo-check, .todo-del { margin-top: 0; }
 .todo-name {
   flex: 1; min-width: 0; padding: 2px 0; cursor: grab;
   font-size: 12px; line-height: 1.5; color: var(--content-primary);
@@ -86,12 +87,19 @@ const emit = defineEmits<{
 .todo-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .todo-input::placeholder { color: var(--input-placeholder); }
 .todo-del {
-  display: flex; align-items: center; flex-shrink: 0; padding: 2px;
-  background: none; border: none; cursor: pointer; color: var(--content-tertiary); opacity: 0;
-  transition: opacity var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; padding: 0; border-radius: var(--danger-button-radius);
+  background: transparent; border: 1px solid transparent; cursor: pointer;
+  color: var(--danger-button-fg); opacity: 0; pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.todo-item:hover .todo-del { opacity: .4; }
-.todo-del:hover { opacity: 1 !important; color: var(--danger-button-fg); }
+.todo-item:hover .todo-del,
+.todo-del:focus-visible { opacity: .72; pointer-events: auto; }
+.todo-del:hover { opacity: 1; background: var(--danger-button-bg); border-color: var(--danger-button-border); }
+.todo-del:focus-visible { opacity: 1; outline: none; box-shadow: var(--control-focus-shadow); }
 .todo-add-btn {
   display: flex; align-items: center; gap: 4px; height: 24px; margin-top: 2px; margin-right: 18px;
   padding: 0 10px; border-radius: var(--radius-xs); border: 1px dashed var(--option-border);

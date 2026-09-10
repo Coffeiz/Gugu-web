@@ -1,6 +1,6 @@
 """对话默认问候生成：组装精简记忆上下文 + 轻量 LLM 直连。
 
-不走完整 agent 循环（复用 conversation.lifecycle.generate_title）；模型走 BYOK 覆盖链路（modelctx 绑定）。
+不走完整 agent 循环（复用 conversation.session_metadata.generate_title）；模型走 BYOK 覆盖链路（modelctx 绑定）。
 **不计入精力/配额**：本调用不经 web.stream / runner 那条记 AgentUsage 的路，token 不写 AgentUsage、不扣配额。
 同一用户同一语言十分钟内复用 Redis 中的结果，并发请求合并；失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。
 问候**不自我介绍、不报功能菜单、emoji 极简**。
@@ -117,7 +117,7 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
     try:
         rows = (await db.execute(
             select(Project)
-            .where(Project.user_id == user_id, Project.archived.is_(False),
+            .where(Project.user_id == user_id, Project.deleted_at.is_(None), Project.archived.is_(False),
                    Project.status.in_(("pending", "active"))))).scalars().all()
         grouped = {"pending": [], "active": []}
         for project in rows:

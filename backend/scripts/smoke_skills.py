@@ -7,8 +7,8 @@
   · skills 加载器：frontmatter 解析、按 slug / name 取正文、未知返回 None
   · use_skill 工具：拉到正文 / 未知技能报 error（经真实 registry.dispatch）
   · http_get：SSRF 闸门（公网放行、私网/环回/链路本地拦截）+ 一次实网抓 wttr.in
-  · builder：传 skills 才注入「## 可用技能」索引
-  · profile 接线：DefaultProfile 启用 web/meta，tool_names 含 http_get/use_skill
+  · builder：默认注入全部内置 Skill 索引，空列表可显式关闭
+  · 系统能力接线：注册表中的全部工具都可进入能力目录
 """
 import asyncio
 import json
@@ -22,7 +22,7 @@ from agent.tools import registry
 from agent.tools.web import _host_allowed
 from agent import skills
 from agent.context import builder
-from agent.profiles.default import DefaultProfile
+from agent.capabilities.defaults import all_system_tool_names
 
 PASS, FAIL = [], []
 
@@ -60,17 +60,17 @@ async def main():
 
     print("【3】builder 注入「可用技能」索引")
     sp_on = build_prompt("default", "测试", [], [], {}, None, skills=["weather"])
-    sp_off = build_prompt("default", "测试", [], [], {}, None)
+    sp_off = build_prompt("default", "测试", [], [], {}, None, skills=[])
     check("传 skills → 含『## 可用技能』", "## 可用技能" in sp_on)
     check("索引含 weather slug", "`weather`" in sp_on)
     check("不传 skills → 不注入", "## 可用技能" not in sp_off)
 
-    print("【4】profile 接线")
-    names = DefaultProfile().tool_names
-    check("工具集启用 web/meta", "web" in DefaultProfile.tools and "meta" in DefaultProfile.tools)
+    print("【4】系统能力接线")
+    names = all_system_tool_names()
     check("tool_names 含 http_get", "http_get" in names)
     check("tool_names 含 use_skill", "use_skill" in names)
-    check("DefaultProfile.skills 含 weather", "weather" in DefaultProfile.skills)
+    check("tool_names 含 send_email", "send_email" in names)
+    check("默认索引含 email", "`email`" in build_prompt("default", "测试", [], [], {}, None))
 
     print("【5】use_skill 工具（真实 dispatch）")
     out, _ = await registry.dispatch(_UID, "use_skill", {"name": "weather"})
@@ -90,10 +90,10 @@ async def main():
     check("http_get 内网被拦", '"error"' in bad, bad[:120])
 
     print("【7】搜索工具：web_search(SearXNG) / deep_research(Tavily)")
-    names = DefaultProfile().tool_names
+    names = all_system_tool_names()
     check("web_search 注册（SearXNG）", "web_search" in names)
     check("deep_research 注册（Tavily）", "deep_research" in names)
-    check("news skill 已移除", "news" not in DefaultProfile.skills and skills.load_skill("news") is None)
+    check("news skill 已移除", skills.load_skill("news") is None)
     # web_search：配了 searxng_url 就实搜，没配则应给「改用 deep_research」的友好降级
     from app.core.config import get_settings
     ws, _ = await registry.dispatch(_UID, "web_search", {"query": "Vue3 文档"})

@@ -25,6 +25,8 @@ x-app-environment: &app-environment
   GUGU_ENABLE_GATEWAY: "1"
   GUGU_ENV_FILE: /app/.env
   GUGU_DATA_DIR: /data
+  # 用于启动失败时生成宿主机侧可执行的目录修复提示；实际挂载仍由 x-gugu-data-mount 控制。
+  GUGU_DATA_HOST_DIR: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}
   SECRET_KEY: ${SECRET_KEY:-}
   GUGU_DB_PASSWORD: ${GUGU_DB_PASSWORD:-}
   DB__PASSWORD: ${GUGU_DB_PASSWORD:-}
@@ -117,7 +119,7 @@ services:
       - "${GUGU_HTTP_PORT:-9595}:9595"
     environment: *app-environment
     # 首次使用前创建宿主配置文件：mkdir -p backend && touch backend/.env
-    # 该文件只保存随机管理员密码；应用镜像本身不携带用户配置。
+    # 该文件保存首次启动生成的密钥和管理员密码；应用镜像本身不携带用户配置。
     volumes:
       - ./backend/.env:/app/.env
       - *gugu-data-mount

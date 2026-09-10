@@ -28,7 +28,7 @@ def _use_fake_sidecar(monkeypatch):
         def __init__(self, *_args, **_kwargs):
             pass
 
-        async def replace(self, _documents, _revision):
+        async def replace(self, _documents, _revision, *, vectors=None, vector_version=""):
             return None
 
         async def reuse_if_current(self, _revision):
@@ -220,7 +220,7 @@ async def test_cache_build_reuses_persistent_sidecar_revision(monkeypatch):
             calls["reuse"] += 1
             return revision == "v1"
 
-        async def replace(self, _documents, _revision):
+        async def replace(self, _documents, _revision, *, vectors=None, vector_version=""):
             calls["replace"] += 1
 
         async def search(self, query, *, documents, **_kwargs):

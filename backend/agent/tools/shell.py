@@ -150,6 +150,10 @@ async def _run_shell(db, user_id, args: dict):
     if network_profile not in {"none", "egress"}:
         return {"error": "后台沙盒网络策略无效", "_audit_event": "denied"}
     script_authorized = args.get("_script_authorized") is True
+    # 自部署便捷开关：管理员放行普通 Shell 直接执行运行时。只放宽执行器的
+    # 解释器限制，不等价于 run_script 的确认门授权——定时任务「仅免确认
+    # 命令」的拦截仍按 script_authorized 判定，不能被本开关绕过。
+    direct_runtime_allowed = bool(getattr(sandbox_settings, "shell_direct_runtime_enabled", False))
     # Autopilot 是服务端确认门授权，不是模型传入的 confirm。提前记录这份
     # 授权事实，确保危险命令即使没有进入 needs_confirmation 分支，返回到
     # dispatch 时也不会被运行时绊线误记为 bypassed。
@@ -310,7 +314,7 @@ async def _run_shell(db, user_id, args: dict):
                         project_root=str(project_root) if project_root else None,
                         personal_read_only=not decision.full_user_sandbox_write,
                         project_read_only=not decision.full_user_sandbox_write,
-                        allow_script_execution=script_authorized,
+                        allow_script_execution=script_authorized or direct_runtime_allowed,
                         environment=args.get("_environment"),
                     ), on_output=on_output,
                 )
@@ -332,7 +336,7 @@ async def _run_shell(db, user_id, args: dict):
                 max_output_chars=args.get("max_output_chars", 12_000),
                 authorization_check=authorization_check,
                 on_output=on_output,
-                allow_script_execution=script_authorized,
+                allow_script_execution=script_authorized or direct_runtime_allowed,
                 environment=args.get("_environment"),
             )
     except SandboxdUnavailable as exc:

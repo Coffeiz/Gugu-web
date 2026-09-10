@@ -38,6 +38,8 @@
 
 - 每个用户至少有一个默认 Workspace。
 - 未绑定 Session 或定时任务时，Shell 默认进入默认 Workspace。
+- 未绑定 Session 或定时任务时，文件工具省略目标位置也默认读写默认 Workspace。
+- 该默认落点不等同于完整用户沙箱授权；`/personal` 和 `/project` 仍按只读策略处理。
 - 默认 Workspace 物理目录与其他顶层空间平级。
 - Shell 关闭不隐藏该目录；文件库仍可查看其中内容。
 
@@ -131,7 +133,7 @@ Workspace 删除、批量覆盖和跨空间移动必须经过统一确认与所�
 
 ### Phase 5：验收与发布
 
-- [ ] 未绑定 Session 默认进入默认 Workspace。
+- [x] 未绑定 Session 默认进入默认 Workspace。
 - [ ] 绑定顶层 Workspace 后，Shell 文件写入正确目录。
 - [ ] 绑定 personal/project 目录的历史行为不回归。
 - [ ] 删除未绑定 Workspace 成功，文件和目录按确认范围清理。

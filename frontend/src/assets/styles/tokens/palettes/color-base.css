@@ -1,8 +1,9 @@
 /* Palette owns hue and color bases; family themes own opacity, blur, gradients and shadows. */
 :root[data-theme='light'][data-palette] {
-  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 5%, #ffffff);
-  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 3%, #eef0f6);
-  --palette-page-end: color-mix(in srgb, var(--theme-action-primary) 7%, #c7cbd8);
+  /* 页面底色保持中性灰；品牌色只用于操作、选中态和强调，不再染脏整页背景。 */
+  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 3%, #fafbfc);
+  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 5%, #f0f1f4);
+  --palette-page-end: color-mix(in srgb, var(--theme-action-pressed) 15%, #cfd3dc);
   --palette-surface: color-mix(in srgb, var(--theme-action-primary) 3%, #ffffff);
   --palette-surface-strong: color-mix(in srgb, var(--theme-action-primary) 5%, #ffffff);
   --palette-surface-raised: color-mix(in srgb, var(--theme-action-primary) 4%, #ffffff);
@@ -18,9 +19,9 @@
 
 /* 非 Aero 亮色配色使用更沉的页面底色，避免背景过白导致玻璃面板失去层次。 */
 :root[data-theme='light'][data-palette]:not([data-palette='mist']) {
-  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 5%, #eef0f5);
-  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 4%, #e2e4ec);
-  --palette-page-end: color-mix(in srgb, var(--theme-action-primary) 8%, #b9bfcd);
+  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 3%, #f7f8fa);
+  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 5%, #eceef2);
+  --palette-page-end: color-mix(in srgb, var(--theme-action-pressed) 15%, #c9ced8);
 }
 
 :root[data-theme='dark'][data-palette] {

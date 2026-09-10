@@ -1,5 +1,5 @@
 <template>
-  <span class="rename-sizer" @click.stop>
+  <span class="rename-sizer" @pointerdown.stop @mousedown.stop @click.stop>
     <span class="rename-ghost">{{ modelValue || ' ' }}</span>
     <input
       class="rename-input-inline"

@@ -23,7 +23,7 @@ from app.core.chat_attach import build_user_content
 from agent.context import builder, loaders
 from agent.core import LLMRunner
 from agent.llm.llm_select import pick_model, release as _release_model
-from agent.profiles import DefaultProfile
+from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.runner import _collect
 from agent.security.sanitize import strip_disallowed_emoji
 import app.db.session as _sess
@@ -73,7 +73,6 @@ def build_prompt(*args, **kwargs):
 
 
 async def _run(prompt, style_prefs):
-    profile = DefaultProfile()
     settings = get_settings()
     model_cfg = pick_model(settings, None)
     if _sess._engine is None:
@@ -82,14 +81,14 @@ async def _run(prompt, style_prefs):
         projects = await loaders.load_projects(db, _UID)
         events = await loaders.load_events(db, _UID)
         files_overview = await loaders.load_files_overview(db, _UID)
-    memory = await loaders.load_memory(_UID) if profile.memory_enabled else {}
-    prompt_name = profile.prompt_file.removesuffix(".md")
+    memory = await loaders.load_memory(_UID) if SYSTEM_MEMORY_ENABLED else {}
+    prompt_name = DEFAULT_PROMPT_NAME
     system_prompt = build_prompt(
         prompt_name, _UNAME, projects, events, memory, files_overview,
-        skills=profile.skills, style_prefs=style_prefs,
+        style_prefs=style_prefs,
     )
     use_anthropic = (model_cfg.provider == "minimax" or "anthropic" in (model_cfg.base_url or "").lower())
-    runner = LLMRunner(profile.tool_names, settings)
+    runner = LLMRunner(all_system_tool_names(), settings)
     if use_anthropic:
         messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
         gen = runner.run(_UID, system_prompt, messages, use_anthropic=True, model_cfg=model_cfg)

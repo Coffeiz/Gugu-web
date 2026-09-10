@@ -44,3 +44,33 @@ async def test_project_update_publishes_projects_event_for_other_tabs(db, user_a
     assert kwargs["operation"] == "update"
     assert kwargs["entity_id"] == project.id
     assert kwargs["event_payload"]["id"] == project.id
+
+
+@pytest.mark.asyncio
+async def test_project_update_refreshes_after_atomic_update_before_undo_snapshot(db, user_a, monkeypatch):
+    project = Project(
+        user_id=user_a.id,
+        name="项目",
+        stages_json="[]",
+        version=1,
+        done_at=None,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    async def publish(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(projects.events, "publish", publish)
+
+    response = await projects.update_project(
+        project.id,
+        _request("tab-a"),
+        ProjectUpdate(color=PROJECT_COLOR_PRESETS[1], version=1),
+        user_a,
+        db,
+    )
+
+    assert response.version == 2
+    assert response.color == PROJECT_COLOR_PRESETS[1]

@@ -1,6 +1,7 @@
 /* Mono / Mono dark values. */
 :root[data-family='mono'][data-theme='dark'] {
   color-scheme: dark;
+  --theme-chat-main-bg: #201d25;
   --theme-page: radial-gradient(900px 560px at 80% -10%,rgba(130,116,180,.115),transparent 62%),radial-gradient(760px 480px at 16% 110%,rgba(88,133,143,.09),transparent 66%),linear-gradient(180deg,#1c1921,#17151b);
   --theme-auth-page: linear-gradient(180deg,#1c1921 0%,#19171f 52%,#17151b 100%);
   --theme-sidebar: rgba(25,23,30,.92); --theme-base: #201d25; --theme-glass: rgba(34,31,40,.78); --theme-glass-hover: rgba(43,39,49,.94); --theme-card-solid: #24212a;

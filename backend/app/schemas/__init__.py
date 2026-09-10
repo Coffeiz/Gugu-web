@@ -274,6 +274,7 @@ class ProjectResponse(CamelModel):
     version: int = 1
     done_at: Optional[str] = None
     updated_at: Optional[str] = None
+    deleted_at: Optional[str] = None
     created_at: str = ""
     file_count: int = 0
 
@@ -634,6 +635,7 @@ class PreferencesResponse(CamelModel):
     shellSystemEnabled: bool = False           # 用户级系统范围 Shell 开关
     shellDangerousEnabled: bool = False       # 用户级全部 Shell 命令权限，危险操作仍需确认
     shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
+    unlimitedMode: bool = False               # 用户级无限工具调用模式
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
     toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量
     personalityPreference: Optional[str] = None
@@ -698,6 +700,7 @@ class PreferencesUpdate(CamelModel):
     shellSystemEnabled: Optional[bool] = None
     shellDangerousEnabled: Optional[bool] = None
     shellAutopilotEnabled: Optional[bool] = None
+    unlimitedMode: Optional[bool] = None
     showToolInteractions: Optional[bool] = None
     toolInjectionMode: Optional[str] = None
     personalityPreference: Optional[str] = Field(default=None, max_length=10000)

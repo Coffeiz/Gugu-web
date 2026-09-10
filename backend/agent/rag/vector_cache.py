@@ -16,10 +16,16 @@ RAG_VECTOR_PREFIX = "rag:"
 
 
 def cache_key(document: IndexDocument) -> str | None:
-    """返回按最终 chunk 正文生成的稳定 key，跨 scope 也不会发生内容错配。"""
+    """返回按 chunk 身份生成的稳定 key，写侧与召回侧必然同键。
+
+    chunk_id 由 parent/version/chunk_index 组成，不含正文；内容更新会随版本
+    变化换 key，旧 key 由 sync 的 alive 集清理。不要把 content_hash 揉进 key：
+    knowledge 召回侧的 content 是 TS 排名文本（title+summary+content 拼接），
+    与写侧正文的 hash 永远不一致，key 会静默失配。
+    """
     if not document.content.strip() or document.source_id == "pattern":
         return None
-    return f"{RAG_VECTOR_PREFIX}{document.source_id}:{document.content_hash}"
+    return f"{RAG_VECTOR_PREFIX}{document.chunk_id}"
 
 
 async def sync_memory_index_vectors(
@@ -60,12 +66,15 @@ async def sync_memory_index_vectors(
             if not key or key in seen:
                 continue
             seen.add(key)
+            content_hash = document.content_hash
             current = vecs.get(key)
-            if not force and current and current.get("t") == tag:
+            if (not force and current
+                    and current.get("t") == tag
+                    and current.get("h") == content_hash):
                 continue
             vector = await embedding.embed(document.content)
             if vector:
-                vecs[key] = {"v": vector, "t": tag}
+                vecs[key] = {"v": vector, "t": tag, "h": content_hash}
                 changed = True
                 written += 1
             elif strict:

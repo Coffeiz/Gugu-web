@@ -2,41 +2,75 @@ import type { RagDocument, RagSearchScope } from "../../../../packages/contracts
 import { buildDocuments, type SourceAdapter, validScope } from "./base.ts";
 
 export type ConversationSourceRecord = {
+  /** 与 Python record 协议一致：summary="<会话id>:summary"，message="<消息id>"。 */
+  id: string | number;
+  kind: "summary" | "message";
   session_id: string | number;
-  message_id: string | number;
-  title?: string;
+  role?: string;
+  /** summary 专用：会话摘要正文。 */
   summary?: string;
-  role: string;
+  /** message 专用：消息正文。 */
   content?: string;
-  platform?: string;
-  message_start?: string;
-  message_end?: string;
-  document_version: string;
+  context_before?: string;
+  context_after?: string;
+  title?: string;
+  session_source?: string;
+  session_updated_at?: string;
+  document_version?: string;
+  /** 稳定版本输入：summary=(会话id, 更新时间, 摘要)；message=(消息id, 创建时间, 正文)。 */
+  version_parts?: (string | number)[];
   updated_at?: string;
   scope: RagSearchScope;
 };
 
-/** 对话适配器只接收摘要或稳定消息切片，完整会话仍由 read_conversation 读取。 */
+const buildMetadata = (record: ConversationSourceRecord): Record<string, string | number> => {
+  const metadata: Record<string, string | number> = {
+    session_id: String(record.session_id),
+    kind: record.kind,
+    session_source: record.session_source || "",
+    session_updated_at: record.session_updated_at || "",
+  };
+  if (record.kind === "message") {
+    metadata.message_id = String(record.id);
+    metadata.role = record.role ?? "";
+    metadata.context_before = record.context_before ?? "";
+    metadata.context_after = record.context_after ?? "";
+    // 每个 chunk 的 context_text 都引用完整当前消息；持久化 metadata 也要
+    // 保留它，避免 Python 从 TS 写入结果恢复时退回到 chunk 正文。
+    metadata.context_current = `${record.role ?? ""}：${record.content ?? ""}`;
+  }
+  return metadata;
+};
+
+/** 对话适配器：会话摘要与会话消息两种文档；baseline/角色过滤由收集器完成。 */
 export const conversationAdapter: SourceAdapter<ConversationSourceRecord> = {
   sourceType: "conversation",
   toDocuments(records): RagDocument[] {
     return records.flatMap((record) => {
-      if (record.session_id === null || record.session_id === undefined || record.message_id === null || record.message_id === undefined || !record.content || !validScope(record.scope)) return [];
-      const text = `${record.role}：${record.content}`;
+      if (record.id === null || record.id === undefined || !validScope(record.scope)) return [];
+      const body = record.kind === "summary"
+        ? (record.summary ?? "")
+        : (record.content ?? "");
+      if (!body.trim()) return [];
+      if (record.kind === "message" && !record.role) return [];
+      const currentContent = record.kind === "summary" ? `会话摘要：${body}` : `${record.role}：${body}`;
+      const contextText = record.kind === "message"
+        ? [record.context_before, currentContent, record.context_after]
+          .filter((part) => String(part || "").trim())
+          .join("\n")
+        : "";
       return buildDocuments({
-        id: `${record.session_id}:${record.message_id}`,
-        source_type: "conversation", scope: record.scope,
-        title: record.title || "未命名对话", summary: record.summary,
-        content: text, document_version: record.document_version,
+        id: String(record.id), source_type: "conversation", scope: record.scope,
+        title: record.title || "未命名",
+        summary: record.kind === "message" ? "" : undefined,
+        content: currentContent,
+        // 会话标题是展示元数据，不参与 conversation 的词法召回与重排。
+        ranking_text: currentContent,
+        ...(contextText ? { context_text: contextText } : {}),
+        document_version: record.document_version ?? "",
+        version_parts: record.version_parts,
         updated_at: record.updated_at,
-        metadata: {
-          session_id: String(record.session_id),
-          message_id: String(record.message_id),
-          role: record.role,
-          platform: record.platform || "",
-          message_start: record.message_start || "",
-          message_end: record.message_end || "",
-        },
+        metadata: buildMetadata(record),
       });
     });
   },

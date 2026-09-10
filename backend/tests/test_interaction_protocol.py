@@ -21,6 +21,7 @@ from app.services.interactions import (
     create_tool_budget_prompt,
     create_prompt,
     CUSTOM_REPLY_OPTION_ID,
+    list_history,
     wait_for_resolution,
 )
 
@@ -378,7 +379,12 @@ async def test_create_skill_confirmation_is_bridged_to_web_and_im_prompt(db, use
     )
     assert interaction is not None
     assert interaction["kind"] == "confirm"
+    assert interaction["task_paused"] is True
+    assert interaction["title"].startswith("任务已暂停 · ")
+    assert "确认后将继续执行当前任务" in interaction["body"]
     assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
+    history = await list_history(db, user_id=user_a.id, session_id=session.id)
+    assert history[-1]["task_paused"] is True
 
 
 async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):

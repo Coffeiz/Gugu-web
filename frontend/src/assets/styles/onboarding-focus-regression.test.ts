@@ -165,7 +165,7 @@ describe('onboarding 与重命名 focus 视觉回归', () => {
     expect(onboarding).not.toContain(':disabled="saving ||')
   })
 
-  it('文件和文件夹只在重命名态放开名称行裁切', () => {
+  it('文件和文件夹重命名输入限制宽度但保留 focus glow', () => {
     expect(fileCard).toContain('.fc-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }')
     expect(folderCard).toContain('.fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }')
   })

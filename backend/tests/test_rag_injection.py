@@ -1,12 +1,17 @@
 import pytest
 from types import SimpleNamespace
 
+from agent.rag import injection
 from agent.rag.injection import (
     build_history_message,
     build_passive_history_message,
     render_history_context,
     should_passively_recall,
 )
+
+
+def test_automatic_recall_default_timeout_is_five_seconds():
+    assert injection.AUTO_RECALL_TIMEOUT_SECONDS == 5.0
 
 
 @pytest.mark.asyncio

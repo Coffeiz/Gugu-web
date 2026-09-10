@@ -1,7 +1,7 @@
 """数据读取层：从 DB 取项目 / 事件，从用户 .agent/ 取记忆。
 
-Phase 1：记忆文件尚未实装，`load_memory` 返回全空占位，保证 builder 中
-`{summary}{profile}{pattern}{preferences}{memory}{weekly}{daily}` 仍填空串、行为不变。
+记忆读取统一返回 profile/pattern/daily/memory/summary；缺失文件填空串，
+由 builder 负责按当前上下文策略注入，不再保留已取消的 weekly 层占位。
 """
 from datetime import datetime, timedelta
 
@@ -37,7 +37,7 @@ async def load_projects(db, user_id) -> list:
     result = await db.execute(
         select(Project)
         .options(selectinload(Project.folders))
-        .where(Project.user_id == user_id, Project.archived == False)
+        .where(Project.user_id == user_id, Project.deleted_at.is_(None), Project.archived == False)
     )
     grouped = {status: [] for status in PROJECT_CONTEXT_LIMITS}
     for project in result.scalars().all():
@@ -61,7 +61,7 @@ async def load_events(db, user_id, limit: int = 10, tz=None) -> list:
     today = today_str(tz)
     result = await db.execute(
         select(CalendarEvent)
-        .where(CalendarEvent.user_id == user_id, CalendarEvent.date >= today)
+        .where(CalendarEvent.user_id == user_id, CalendarEvent.deleted_at.is_(None), CalendarEvent.date >= today)
         .order_by(CalendarEvent.date).limit(limit)
     )
     return result.scalars().all()

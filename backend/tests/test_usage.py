@@ -34,6 +34,7 @@ async def test_record_current_usage_uses_user_context(monkeypatch):
             "cache_read": 2,
             "cache_write": 1,
             "session_id": 17,
+            "scenario": "chat",
         },
     }
 

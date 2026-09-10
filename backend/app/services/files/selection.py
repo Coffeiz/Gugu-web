@@ -92,6 +92,7 @@ async def move_files_to_trash(
     for file in rows:
         await move_file_to_trash(storage, file)
         file.deleted_at = deleted_at
+        file.version = int(file.version or 1) + 1
     return [file.id for file in rows]
 
 
@@ -108,4 +109,5 @@ async def move_file_to_trash_by_id(
         return False
     await move_file_to_trash(storage, file)
     file.deleted_at = deleted_at
+    file.version = int(file.version or 1) + 1
     return True

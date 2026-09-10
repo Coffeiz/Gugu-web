@@ -47,6 +47,35 @@ def test_platform_user_scope_includes_event_memory_file():
     assert scope.key("memory.md").endswith("/platform-users/member-1/memory.md")
 
 
+def test_reflection_failure_diagnostic_keeps_scope_id_out_of_visible_log(monkeypatch, caplog):
+    from agent.memory import im_reflection
+
+    captured = []
+    monkeypatch.setattr(
+        "app.core.redaction.diag_log",
+        lambda where, exc: captured.append((where, exc)),
+    )
+    job = SimpleNamespace(
+        id=17,
+        scope_type="group",
+        scope_id="private-group-name",
+        platform="qq",
+        task_type="group",
+    )
+
+    with caplog.at_level("ERROR", logger="agent.memory.reflection"):
+        im_reflection._log_reflection_failure(
+            job,
+            phase="load_messages",
+            exc=RuntimeError("database unavailable"),
+        )
+
+    assert captured[0][0] == "agent.memory.im_reflection.load_messages"
+    assert isinstance(captured[0][1], RuntimeError)
+    assert "private-group-name" not in caplog.text
+    assert "error=RuntimeError" in caplog.text
+
+
 def test_format_im_memory_keeps_member_scope_separate():
     from agent.im.context_loader import format_im_memory
 
@@ -132,6 +161,23 @@ def test_group_daily_policy_and_markdown_roundtrip():
     assert GROUP_DAILY_KEEP_RECENT == 100
     assert GROUP_DAILY_HARD_CAP == 300
     assert GROUP_DAILY_KEEP_RECENT < GROUP_DAILY_COMPACT_AT < GROUP_DAILY_HARD_CAP
+
+
+def test_group_daily_string_is_one_entry_not_one_entry_per_character():
+    from agent.memory.im_reflection import _daily_items, _render_daily
+
+    items = _daily_items("群反思返回的单条记录")
+
+    assert items == ["群反思返回的单条记录"]
+    assert _render_daily([("2026-09-09", item) for item in items]) == (
+        "## 2026-09-09\n- 群反思返回的单条记录\n"
+    )
+
+
+def test_group_daily_discards_non_string_items():
+    from agent.memory.im_reflection import _daily_items
+
+    assert _daily_items(["有效记录", 123, {"text": "不应写入"}, "  "]) == ["有效记录"]
 
 
 def test_group_memory_compaction_preserves_dates_and_has_large_budget():

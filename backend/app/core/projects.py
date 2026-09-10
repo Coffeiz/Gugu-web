@@ -319,6 +319,7 @@ async def update_project_atomic(
         .where(
             Project.id == project_id,
             Project.user_id == user_id,
+            Project.deleted_at.is_(None),
             Project.version == client_version,
         )
         .values(**values)

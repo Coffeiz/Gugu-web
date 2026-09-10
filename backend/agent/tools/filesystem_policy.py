@@ -44,9 +44,14 @@ async def current_filesystem_policy(db, user_id) -> FilesystemPolicy | None:
 
 
 async def current_workspace_target(db, user_id, policy: FilesystemPolicy | None = None):
-    """返回当前主体的 workspace 文件库落点；完整授权时不限制到 workspace。"""
+    """返回当前主体的 workspace 文件库落点。
+
+    完整用户沙箱授权只扩大显式 ``/personal``/``/project`` 的写权限，不能
+    抹掉已绑定 Workspace 作为文件工具默认落点的语义。权限判断仍由
+    ``filesystem_location_can_write`` 负责，这里只解析默认位置。
+    """
     policy = policy or await current_filesystem_policy(db, user_id)
-    if policy is None or policy.full_user_sandbox or policy.workspace_id is None:
+    if policy is None or policy.workspace_id is None:
         return None
     from app.services.workspaces import resolve_workspace_target
     return await resolve_workspace_target(db, user_id, policy.workspace_id)
@@ -77,3 +82,18 @@ async def file_write_access_error(db, user_id, file, *, policy: FilesystemPolicy
         project_id=file.project_id if file.space == "project" else None,
         folder_id=file.folder_id, policy=policy,
     )
+
+
+def folder_write_space(folder) -> str:
+    """文件夹的三值空间：project / workspace / personal。
+
+    曾经到处内联「project_id 有无」的二值判断，工作区文件夹（project_id 为空、
+    workspace_directory_id 非空）被误判成 personal，删除/重命名/移动/恢复全部被
+    权限检查拒掉（_location_is_in_workspace 对 directory 型绑定只认 space="workspace"）。
+    文件侧一直用 file.space 真值没这问题，这里把文件夹对齐。
+    """
+    if folder.project_id is not None:
+        return "project"
+    if getattr(folder, "workspace_directory_id", None) is not None:
+        return "workspace"
+    return "personal"
