@@ -478,21 +478,49 @@ class SkillRegistry:
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         t0 = time.monotonic()
+
+        def _salvage_tool_name(raw: str) -> str | None:
+            """从被污染的工具名里抢救前缀，返回 None 表示放弃。
+
+            模型偶发把 JSON 参数写成 XML 片段直接拼进 name（如
+            ``create_file"><target><space>…``）。只接受按第一个协议字符截断后
+            能精确命中注册表的结果，不做模糊匹配，避免吞掉真正的未知工具错误。
+            """
+            if not isinstance(raw, str):
+                return None
+            cut = len(raw)
+            for ch in ("<", ">", '"', "\\", "\n", "`"):
+                idx = raw.find(ch)
+                if idx != -1:
+                    cut = min(cut, idx)
+            candidate = raw[:cut].strip()
+            return candidate if candidate and candidate != raw else None
+
         from agent.im import imctx
         from agent.im.permissions import can_use_tool
         current_im = imctx.get_im()
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
+        snapshot = current_dispatch_tool_snapshot()
+
+        def _resolve_tool(n: str):
+            return (
+                snapshot.get(n)
+                if snapshot is not None and getattr(snapshot, "source", None) is self
+                else self._tools.get(n)
+            )
+
+        resolved_tool = _resolve_tool(name)
+        if resolved_tool is None:
+            salvaged = _salvage_tool_name(name)
+            if salvaged is not None and _resolve_tool(salvaged) is not None:
+                _log.info("工具名污染兜底：%r → %r", name, salvaged)
+                name, resolved_tool = salvaged, _resolve_tool(salvaged)
         if not can_use_tool(name, allowed_tool_names):
             _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
             payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})
             return json.dumps(payload, ensure_ascii=False), None
 
-        snapshot = current_dispatch_tool_snapshot()
-        tool = (
-            snapshot.get(name)
-            if snapshot is not None and getattr(snapshot, "source", None) is self
-            else self._tools.get(name)
-        )
+        tool = resolved_tool
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             payload = enrich_tool_error(name, {"error": f"未知工具: {name}"})

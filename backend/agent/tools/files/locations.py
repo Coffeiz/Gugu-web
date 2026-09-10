@@ -213,11 +213,28 @@ async def _resolve_create_location(db, user_id, args: dict):
         )
         if error:
             return None, None, None, None, error
+        workspace_directory_id = None
+        if space == "workspace":
+            # 显式 workspace = 「当前绑定的工作区」；文件工具不暴露跨工作区写入，
+            # directory id 一律取绑定落点，权限面与省略目标参数完全一致。
+            workspace_directory_id = target.get("workspace_directory_id")
+            if workspace_directory_id is None:
+                return None, None, None, None, json.dumps({
+                    "error": "当前会话绑定的工作区没有可写入的文件目录（绑定的是项目或文件夹）。",
+                    "expected": {k: target.get(k) for k in ("space", "project_id", "folder_id")},
+                    "hint": "省略目标位置参数即可写入当前工作区落点。",
+                }, ensure_ascii=False)
         if not await _location_matches(db, user_id, space, project_id, folder_id, target):
             return None, None, None, None, _workspace_conflict(target)
-        return space, project_id, folder_id, None, None
+        return space, project_id, folder_id, workspace_directory_id, None
     space = args.get("space", "personal")
     space, project_id, folder_id, error = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    if not error and space == "workspace":
+        # 未绑定会话没有 directory 落点可回退；显式放行会在 service 层炸出难懂的
+        # 「Workspace 不存在」，这里提前给出可行动的错误。
+        return None, None, None, None, json.dumps({
+            "error": "space=workspace 需要会话绑定工作区；未绑定会话请使用 personal/project。",
+        }, ensure_ascii=False)
     return space, project_id, folder_id, None, error
 
 
