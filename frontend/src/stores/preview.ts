@@ -36,6 +36,9 @@ export function isTextMime(mime?: string | null) {
     || value.endsWith('+json') || value.endsWith('+xml')
 }
 export function isTextExt(ext?: string | null, mime?: string | null) {
+  // 图片身份优先：image/svg+xml 以 +xml 结尾会被 MIME 启发式误判成文本，
+  // 导致 SVG 预览走文本分支开窗（44%×86% 竖长窗）和文本下载路径。
+  if (isImageExt(ext)) return false
   return TEXT_EXTS.has((ext ?? '').toUpperCase()) || isTextMime(mime)
 }
 export function isVideoExt(ext?: string | null)  { return VIDEO_EXTS.has((ext ?? '').toUpperCase()) }
