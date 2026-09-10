@@ -455,8 +455,8 @@ async def consume_action(
                 "status": "confirmed",
                 "confirm": True,
             })
-            # 工具确认门桥：用短确认码在服务端兑换授权；模型重新调用工具时
-            # 授权命中自动放行，全程不经过模型复述凭证。
+            # 工具确认门桥：用短确认码在服务端兑换授权；运行侧拿到 confirmed 结果后
+            # 在本轮内直接重放这次工具调用，授权命中即放行，全程不经过模型复述凭证。
             if context.get("confirm_code"):
                 from agent.interactions.confirmations import redeem_confirmation
                 ttl = redeem_confirmation(user_id, str(context["confirm_code"]))
@@ -469,7 +469,7 @@ async def consume_action(
                 else:
                     result["text"] = (
                         f"{result_text}（用户已确认，授权 {ttl} 分钟内有效；"
-                        "请直接重新调用该工具完成操作。）"
+                        "本次操作会按原请求继续执行。）"
                     )
         else:
             result.update({"status": "cancelled", "confirm": False})

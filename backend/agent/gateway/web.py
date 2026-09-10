@@ -638,6 +638,12 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             await genstream.publish(session_id, evt)
 
         if cancelled or generation_failed:
+            # _cancelled 是内部事件，订阅转发只认 done/error 终态；取消收尾不补发
+            # done 的话，这条 SSE 会挂到 20s keepalive 兜底才结束，前端一直显示
+            # 「输出中」，生成期间排队的消息也发不出去。error 事件本身就会让订阅
+            # 者退出，无需重复补发。
+            if cancelled:
+                await genstream.publish(session_id, {"type": "done", "cancelled": True})
             return
 
         # 冲洗清洗器残留（未触发截断时的尾部）

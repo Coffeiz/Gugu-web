@@ -304,16 +304,24 @@ def _mutating_tools(tool_names) -> set:
     return by_name | set(RESOURCE_BY_TOOL)
 
 
-def _is_successful_tool_result(result: str) -> bool:
-    """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。"""
+def _is_successful_tool_result(result) -> bool:
+    """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。
+
+    入参既可能是工具返回的 JSON 字符串，也可能是已经解析好的 dict（确认后重投
+    的结果），两条路径必须给出一致的判定——否则 dict 会被 json.loads 的 TypeError
+    吞掉、把失败结果判成成功。
+    """
     from agent.interactions.confirmations import confirmation_payload
 
     if confirmation_payload(result) is not None:
         return False
-    try:
-        payload = json.loads(result)
-    except (TypeError, json.JSONDecodeError):
-        return True
+    if isinstance(result, dict):
+        payload = result
+    else:
+        try:
+            payload = json.loads(result)
+        except (TypeError, json.JSONDecodeError):
+            return True
     if not isinstance(payload, dict):
         return True
     return not payload.get("error") and payload.get("status") != "failed"
@@ -388,6 +396,51 @@ def _replace_tool_result(messages, *, tool_call_id: str, result: dict) -> bool:
                 block["content"] = json.dumps(result, ensure_ascii=False)
                 return True
     return False
+
+
+async def _dispatch_confirmed_tool(
+    user_id, ctx: dict, *, session_id, session, run_id, tool_snapshot, skill_state,
+):
+    """用户确认后，按原始参数重投被确认门拦截的工具调用。
+
+    授权已由交互服务在消费确认动作时兑换（服务端 Redis，绑定操作摘要与身份），
+    这里用与首次 dispatch 完全相同的参数和 dispatch 会话上下文执行一次即可。
+    让模型重新调用会把一次确认变成额外模型往返，且模型会在正文里念出「重新调用」。
+    """
+    from agent.tools.base import set_dispatch_session, reset_dispatch_session
+
+    adapter_target = ctx.get("adapter_target")
+    target = adapter_target or ctx.get("name")
+    dispatch_input = ctx.get("input")
+    if adapter_target is not None:
+        dispatch_input = _resolve_adapter_arguments(dispatch_input)
+    _dispatch_token = set_dispatch_session(
+        session_id, session, run_id,
+        tool_snapshot=tool_snapshot,
+        skill_state=skill_state,
+    )
+    try:
+        return await registry.dispatch(user_id, target, dispatch_input)
+    finally:
+        reset_dispatch_session(_dispatch_token)
+
+
+def _tool_result_payload(result) -> dict:
+    """把 dispatch 返回值规范成可写入 tool_result 的 dict。
+
+    registry.dispatch 返回的是 JSON 字符串（少数工具返回 dict），而
+    ``_replace_tool_result`` 会对入参再做一次 json.dumps——直接把字符串塞进去
+    会把整段 JSON 变成带引号的字符串字面量，provider 侧工具回合就非法了。
+    """
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except (TypeError, ValueError):
+            return {"text": result}
+        return parsed if isinstance(parsed, dict) else {"result": parsed}
+    return {"result": result}
 
 
 def _is_read_tool(name: str) -> bool:
@@ -953,6 +1006,11 @@ class LLMRunner:
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        if answer.get("option_id") == "cancel":
+                            # 用户在弹窗上主动点取消＝正常收尾：补一段收尾正文走正常
+                            # 持久化+done，不留 SSE 黑洞，也不把终止当异常。
+                            yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                            return
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
@@ -1011,6 +1069,10 @@ class LLMRunner:
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        if answer.get("option_id") == "cancel":
+                            # 用户主动点取消＝正常收尾：补收尾正文走正常持久化+done。
+                            yield f"data: {json.dumps({'type': 'token', 'content': '好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                            return
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
@@ -1590,7 +1652,14 @@ class LLMRunner:
                         tool_call_id=tool_call_id, result=res,
                     )
                     if interaction:
-                        pending_interaction = (interaction["prompt_id"], tool_call_id, effective_tool_name)
+                        # 第 4 项是「确认后重投」所需的原始调用现场：用户确认时服务端
+                        # 直接按同样参数重新 dispatch，避免让模型为了执行再调用一次
+                        # （多一次模型往返，模型还会把「重新调用」念给用户听）。
+                        pending_interaction = (
+                            interaction["prompt_id"], tool_call_id, effective_tool_name,
+                            {"name": effective_tool_name, "input": tc.input,
+                             "adapter_target": adapter_target, "label": label},
+                        )
                         dispatched.append((tc, res))
                         yield stream_event("interaction_required", round_id=round_id,
                                            tool_call_id=tool_call_id, **interaction)
@@ -1741,11 +1810,72 @@ class LLMRunner:
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
                     if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        if answer.get("option_id") == "cancel":
+                            # 用户在交互卡上主动点「取消」＝正常收尾，不是异常终止。
+                            # 只把取消结果落进本轮工具往返（consume_action 已同步改了
+                            # DB 侧），再补一段收尾正文走正常持久化+done。直接 _cancelled
+                            # 的话会话会残留 dangling 工具调用（模型下一轮把取消误读成
+                            # 失败又自动重试），SSE 也因缺终态事件挂到 keepalive 兜底。
+                            if _replace_tool_result(
+                                messages,
+                                tool_call_id=pending_tool_call_id,
+                                result=answer,
+                            ):
+                                yield f"data: {json.dumps({'type': 'token', 'content': '好的，已取消这项操作，任务停在这里；前面完成的部分仍然有效，需要继续随时说一声。'}, ensure_ascii=False)}\n\n"
+                            return
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
                     if answer is None:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return
+                    replay_ctx = pending_interaction[3] if len(pending_interaction) > 3 else None
+                    if (
+                        isinstance(answer, dict)
+                        and answer.get("status") == "confirmed"
+                        and isinstance(replay_ctx, dict)
+                    ):
+                        # 用户确认破坏性操作：服务端按原参数直接执行这一次工具调用
+                        # （授权已在消费确认动作时兑换到 Redis，覆盖同一操作摘要与
+                        # 身份范围），把真实执行结果写回本轮工具往返后进入下一轮。
+                        # 模型因此只需要「汇报执行结果」，不必也不应再次调用该工具。
+                        from agent.interactions.confirmations import is_block
+                        try:
+                            executed, artifact = await _dispatch_confirmed_tool(
+                                user_id, replay_ctx,
+                                session_id=session_id, session=session, run_id=run_id,
+                                tool_snapshot=tool_snapshot, skill_state=loaded_skill_slugs,
+                            )
+                        except Exception as exc:
+                            diag_log("agent.core.confirm_replay", exc)
+                            executed, artifact = {"status": "error", "text": "确认后执行失败，请重新发起操作。"}, None
+                        if is_block(executed):
+                            # 授权没兑换成功（Redis 异常等）。占位确认结果不能当工具
+                            # 结果发出去，否则模型会以为操作已执行。
+                            executed, artifact = {"status": "error", "text": "确认未生效，请重新发起操作。"}, None
+                        replay_payload = _tool_result_payload(executed)
+                        _replace_tool_result(
+                            messages,
+                            tool_call_id=pending_tool_call_id,
+                            result=replay_payload,
+                        )
+                        replay_ok = _is_successful_tool_result(replay_payload)
+                        if replay_ctx.get("name") in _mutset and replay_ok:
+                            did_mutate = True   # 确认后真的改了数据 → 照常进入自我核实
+                            if verify_mode:
+                                verify_fixed = True
+                        elif verify_mode and _is_read_tool(replay_ctx.get("name")):
+                            verify_queried = True
+                        yield stream_event(
+                            "tool_done", round_id=round_id, tool_call_id=pending_tool_call_id,
+                            name=replay_ctx.get("name") or effective_tool_name,
+                            label=replay_ctx.get("label") or effective_tool_name,
+                            verify=verify_mode,
+                            status="success" if replay_ok else "error", result=replay_payload,
+                        )
+                        if artifact:
+                            yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
+                        yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                        continue
                     replaced = _replace_tool_result(
                         messages,
                         tool_call_id=pending_tool_call_id,

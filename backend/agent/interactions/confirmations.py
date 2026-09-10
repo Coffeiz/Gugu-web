@@ -5,7 +5,11 @@
 
 1. 工具调用未命中授权 → 返回 waiting_confirmation，内含服务端签发的短确认码；
 2. 用户在网页/IM/终端点击确认 → 交互服务用确认码兑换授权（写入 Redis）；
-3. 模型直接重新调用同一工具 → 命中授权，服务端自动注入 confirm 后放行。
+3. 运行侧（agent/core.py）拿授权在**本轮内直接重放这次工具调用**，命中授权即自动注入
+   confirm 放行，模型不必也不应该重新发起同一个调用。
+
+第 3 步保留「模型自己重新调用」这条路径仅为兜底（例如运行中断后用户重新发起），
+正常确认不会让模型多跑一轮，也不会让它复述「请重新调用」。
 
 ``agent.security.confirm`` 仅作为旧导入路径的兼容入口。
 """
@@ -200,8 +204,8 @@ def needs_confirmation(
         "needs_confirm": True,
         "summary": summary,
         "instruction": instruction or (
-            "这是不可逆操作。请把上述影响转达用户；用户在界面点击确认后，"
-            "直接重新调用本工具即可，无需携带任何确认凭证。"
+            "这是不可逆操作。请把上述影响转达用户；用户确认后服务端会按原请求"
+            "继续执行本次操作，你无需重新调用本工具。"
         ),
         **({"authorization_ttl_minutes": ttl_minutes} if ttl_minutes != _TOKEN_TTL_MINUTES else {}),
     }
