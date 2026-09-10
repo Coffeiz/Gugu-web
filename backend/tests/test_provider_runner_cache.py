@@ -158,6 +158,18 @@ async def test_branch_without_tools_stays_unchanged(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_anthropic_branch_omits_empty_system(monkeypatch):
+    """空 system 不发该参数（手动 /compact 的追加式调用没有主 run 的 system）。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(supports_active_cache=lambda model: True))
+    await provider_runner._anthropic("", "user", _anthropic_ai(), 100)
+    assert "system" not in fake.kwargs
+
+
+@pytest.mark.asyncio
 async def test_complete_messages_omits_thinking_like_main_run(monkeypatch):
     """追加式分支与主 run 逐参数对齐：主 run 不发 thinking（adapter 返回空），
     分支也不得手拼 thinking 参数，否则 provider 缓存键不同整段 miss。"""

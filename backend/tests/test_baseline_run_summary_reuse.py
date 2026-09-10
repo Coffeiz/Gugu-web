@@ -55,7 +55,7 @@ async def test_compress_if_needed_reuses_run_summary_without_llm(db, user_a, mon
         return "不应调用"
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
-    monkeypatch.setattr(compress_conv, "_call_llm", no_llm)
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", no_llm)
     monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
 
     ok = await compress_conv.compress_if_needed(
@@ -109,7 +109,8 @@ async def test_compress_if_needed_reuse_replaces_previous_summary_and_advances(d
     await db.commit()
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
-    monkeypatch.setattr(compress_conv, "_call_llm", lambda *a, **k: "不应调用")
+    monkeypatch.setattr(
+        "agent.context.compaction._generate_append_summary", lambda *a, **k: "不应调用")
     monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
 
     ok = await compress_conv.compress_if_needed(
@@ -150,7 +151,7 @@ async def test_compress_if_needed_reuse_without_compressible_history_is_noop(db,
         return "不应调用"
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
-    monkeypatch.setattr(compress_conv, "_call_llm", no_llm)
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", no_llm)
 
     ok = await compress_conv.compress_if_needed(
         session.id, user_a.id, SimpleNamespace(),
@@ -162,3 +163,54 @@ async def test_compress_if_needed_reuse_without_compressible_history_is_noop(db,
     assert llm_calls == []
     await db.refresh(session)
     assert int(session.baseline_message_id or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_compress_if_needed_force_replays_history_through_append_summary(db, user_a, monkeypatch):
+    """/compact（force、无 run 摘要可复用）从 DB 行重建角色序列走追加式摘要。"""
+    from agent.context import compress_conv
+
+    session = ConversationSession(user_id=user_a.id, title="手动压缩", source="web")
+    db.add(session)
+    await db.flush()
+    for index in range(3):
+        db.add(ConversationMessage(
+            session_id=session.id,
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"历史消息{index}：" + "细节" * 6000,
+        ))
+    await db.commit()
+
+    captured: dict = {}
+
+    async def fake_summary(history, previous, *, model_cfg):
+        captured["history"] = [dict(m) for m in history]
+        captured["previous"] = previous
+        return "追加式生成的摘要"
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
+
+    ok = await compress_conv.compress_if_needed(
+        session.id, user_a.id,
+        SimpleNamespace(ai=SimpleNamespace(context_tokens=120_000, max_tokens=8_000)),
+        force=True,
+    )
+
+    assert ok is True
+    # 保留窗口（1.5 万字符）之外的历史按角色重建进追加式请求：
+    # 最新 1 条保留，前 2 条以 user/assistant 序列进入摘要请求。
+    roles = [m["role"] for m in captured["history"]]
+    assert roles == ["user", "assistant"]
+    assert captured["history"][0]["content"].startswith("历史消息0")
+    assert captured["history"][1]["content"].startswith("历史消息1")
+    assert captured["previous"] is None
+    await db.refresh(session)
+    assert int(session.baseline_message_id or 0) > 0
+    summaries = (await db.execute(
+        select(ConversationMessage).where(
+            ConversationMessage.session_id == session.id,
+            ConversationMessage.role == "summary",
+        ))).scalars().all()
+    assert [s.content for s in summaries] == ["追加式生成的摘要"]

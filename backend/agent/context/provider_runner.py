@@ -119,10 +119,13 @@ async def _anthropic(
     # temperature 已全局下线（anthropic SDK 1.x 不再接受该参数）。
     kwargs = dict(
         model=ai.model,
-        system=system,
         messages=messages,
         max_tokens=max_tokens,
     )
+    if system:
+        # 空 system 不发（如手动 /compact 的追加式调用没有主 run 的 system），
+        # anthropic 兼容端点对空字符串 system 会报错。
+        kwargs["system"] = system
     if tools:
         # 与主 run 一致：工具声明一起发，provider 才算得出同一份可缓存前缀。
         # 不设 tool_choice——实测它会让命中失效（100% → 15%），改用末尾指令约束

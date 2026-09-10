@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from uuid import uuid4
 
 from redis.exceptions import LockNotOwnedError
@@ -32,11 +31,7 @@ logger = logging.getLogger(__name__)
 # provider 实际上下文达到该比例后，由 agent.core 在当前 round 内触发压缩。
 AUTO_COMPACTION_RATIO = 0.90
 _RECENT_HISTORY_KEEP_CHARS = 20_000
-# 在模型预算允许时，优先从当前 session history 分支出一次摘要请求，保持稳定
-# provider 前缀；超出该上限才退回分块滚动，避免一次摘要输入超过 provider 硬限制。
 _COMPRESS_LOCK_TIMEOUT = 300
-
-_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
 _SESSION_RUN_LOCK_TIMEOUT = 300
 _SESSION_RUN_HEARTBEAT_INTERVAL = 15
 _BASELINE_WAIT_INTERVAL = 0.1
@@ -475,21 +470,24 @@ async def _compress_if_needed_unlocked(
         return False
 
     # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
-    # 分支/滚动边界由 compaction.generate_compact_summary 统一管理。
+    # content_items 给本地有界兜底用；history_messages 重建出角色序列给追加式摘要用。
     content_items: list[str] = []
+    history_messages: list[dict] = []
     for m in to_compress:
         raw = m.content_json if m.content_json is not None else m.content
         text = content_text(raw).strip()
         if not text:
             continue
         content_items.append(f"{'用户' if m.role == 'user' else '咕咕'}：{text}")
+        history_messages.append(
+            {"role": "user" if m.role == "user" else "assistant", "content": text})
     if not content_items:
         return False
 
-    # 分支式候选只读取 history 快照，不持有数据库事务；共享策略超限时自动
-    # 使用滚动 fallback，结果仍需在下方按 baseline hash 做 CAS 后才能写回。
+    # 摘要候选只读取 history 快照，不持有数据库事务；结果仍需在下方按
+    # baseline hash 做 CAS 后才能写回。
     from agent.context.compaction import (
-        generate_compact_summary,
+        _generate_append_summary,
         resolve_compaction_limits,
     )
     from agent.llm.modelctx import effective_ai
@@ -498,27 +496,18 @@ async def _compress_if_needed_unlocked(
     limits = resolve_compaction_limits(model_cfg=model_cfg)
     if reuse_summary:
         # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
-        # 不再用摊平文本重放一遍——那条路结构上不可能共享前缀，每次都是
-        # 全冷的 3 万 token 调用。水位边界仍按上面的保留窗口规则计算。
+        # 不再重放一遍。水位边界仍按上面的保留窗口规则计算。
         summary = reuse_summary
         compression_mode = "run-reuse"
     else:
-        async def call_once(items, previous):
-            return await _call_llm(
-                "\n\n".join(items), previous, settings, model_cfg=model_cfg,
-            )
-
-        summary = await generate_compact_summary(
-            content_items,
-            prev_summary,
-            call_once,
-            model_cfg=model_cfg,
+        # 手动 /compact 等无 run 摘要可复用的场景：从 DB 行重建消息序列走追加式，
+        # 与 run 内压缩同一条摘要生成路径（超预算自动分块滚动）。该请求不带
+        # 主 run 的 system/工具声明，不指望命中前缀缓存——冷是已知边界，
+        # 换来的是全站只剩一条摘要生成路径。
+        summary = await _generate_append_summary(
+            history_messages, prev_summary, model_cfg=model_cfg,
         )
-        compression_mode = (
-            "branch"
-            if estimate_tokens("\n".join(content_items)) + estimate_tokens(prev_summary or "") <= limits.input_tokens
-            else "rolling-fallback"
-        )
+        compression_mode = "append-replay"
     from agent.context.compaction import validate_compact_summary
 
     summary_ok, summary_reason = validate_compact_summary(
@@ -619,36 +608,3 @@ async def _compress_if_needed_unlocked(
                 session_id, len(to_compress), len(summary),
                 "滚动合并" if prev_summary else "首次", compression_mode)
     return True
-
-
-async def _call_llm(
-    conv_text: str,
-    prev_summary: str | None,
-    settings,
-    *,
-    model_cfg,
-) -> str:
-    """通过 ContextBranch 生成/合并摘要，保持与反思相同的 provider 路由。"""
-    from agent.context.branch import ContextBranch
-    from agent.context.branch_types import BranchInput, BranchPolicy
-    from agent.context.compaction import resolve_compaction_limits
-    try:
-        sys_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
-    except Exception:
-        sys_prompt = "请将以下对话压缩为简洁摘要，保留关键决定、事实和用户偏好，控制在300字以内："
-    if prev_summary:
-        user_text = (f"【已有摘要（更早的对话，需与下面新增内容合并、保留全部关键信息）】\n{prev_summary}\n\n"
-                     f"【新增对话】\n{conv_text}")
-    else:
-        user_text = conv_text
-    result = await ContextBranch().run(
-        BranchInput(stable_system=sys_prompt, delta=user_text, scope="conversation-compaction"),
-        BranchPolicy(
-            name="compaction",
-            output_mode="text",
-            max_tokens=resolve_compaction_limits(model_cfg=model_cfg).output_tokens,
-            max_retries=0,
-        ),
-        settings,
-    )
-    return str(result.output or "").strip() if result.ok else ""
