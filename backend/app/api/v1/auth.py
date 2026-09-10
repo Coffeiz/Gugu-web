@@ -466,8 +466,8 @@ async def get_quota(
     async def _byok_stats(since: datetime) -> dict[str, int]:
         return await byok_usage_stats(db, current_user.id, since)
 
-    byok_today = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
-    byok_month = {"tokens": 0, "tokens_in": 0, "cache_read": 0}
+    byok_today = {"tokens": 0, "tokens_in": 0, "cache_read": 0, "cache_write": 0}
+    byok_month = {"tokens": 0, "tokens_in": 0, "cache_read": 0, "cache_write": 0}
     if has_byok:
         # 今日/本月边界按用户时区算，而不是服务器 LOCAL_TZ：海外用户的「今天」
         # 与服务器时区可能差出整天。
