@@ -118,6 +118,7 @@ async def compact_context(
     *,
     model_cfg,
     system_text: str | None = None,
+    branch_tools: list | None = None,
 ) -> CompactionResult:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
@@ -264,10 +265,11 @@ async def compact_context(
     # 调用 LLM 生成压缩摘要
     logger.info("[compaction] 调用 LLM 生成摘要（追加式），compressible=%d 条", len(compressible_msgs))
     compact_summary = await _generate_append_summary(
-        compressible_msgs,
+        _branch_prefix_history(messages, fixed_prefix_size, message_history, compressible_msgs, model_cfg),
         summary_msg.get("content", "") if summary_msg else None,
         model_cfg=model_cfg,
         append_system=append_system,
+        tools=branch_tools,
     )
 
     if not compact_summary.strip():
@@ -493,6 +495,65 @@ _COMPRESS_PROMPT_FALLBACK = (
 )
 
 
+def _branch_prefix_history(
+    messages: list,
+    fixed_prefix_size: int,
+    message_history: list,
+    compressible_msgs: list,
+    model_cfg,
+) -> list:
+    """给追加式压缩构造「从对话头开始」的连续前缀，而不是只给待压缩的中间片段。
+
+    只发中间片段时，分支请求的第一条消息就是对话中段，与主 run 刚发过的请求
+    从第一个 token 起就不一致——MiniMax 这类前缀缓存必然全 miss（实测压缩场景
+    命中率 0.1%）。这里改成「固定前缀 + 待压缩区间之前的完整历史」：发出去的内容
+    与主 run 的请求逐 token 同前缀，被压缩区间之后的近期窗口不参与本次摘要、
+    直接截掉，不影响摘要语义。
+
+    切片必须按 ``message_history`` 的位置拼，不能拿它的下标去切 ``messages``：
+    ``_drop_orphan_tool_results`` 会 ``dict(message)`` 浅拷贝、必要时还会丢消息，
+    两个列表长度未必相等，用下标跨列表定位会在清理过孤儿结果时切偏（把不该进
+    摘要的近期窗口带进来）。``compressible_msgs`` 就是 ``message_history`` 里的
+    对象，身份匹配只在 ``message_history`` 内成立；没有消息被丢弃时
+    ``message_history[i]`` 与 ``messages[fixed_prefix_size + i]`` 逐字段相同，
+    渲染结果与主 run 发过的请求一致，前缀缓存才能命中。
+
+    已压缩过的旧摘要（role=summary）若落在 cut 之前会自然包含进来，保持与主 run
+    序列一致；渲染口径也复用主 run 的 render_history，避免 canonical block 形状
+    差异再次破坏前缀。
+    """
+    if not compressible_msgs:
+        return []
+    compressible_ids = {id(msg) for msg in compressible_msgs}
+    last_index = -1
+    for index, msg in enumerate(message_history):
+        if id(msg) in compressible_ids:
+            last_index = index
+    if last_index < 0:   # 调用方传入了非同一批对象：退回旧行为，不猜切片
+        return list(compressible_msgs)
+    prefix = list(messages[:fixed_prefix_size]) + list(message_history[:last_index + 1])
+    try:
+        from agent.providers import adapter_for
+
+        adapter = adapter_for(model_cfg)
+        rendered = list(adapter.render_history(prefix))
+        # anthropic 路由的主 run 在 render_history 之后还会把「消息级 system」投影成
+        # user（见 loop_drivers.AnthropicDriver.run_round）。少了这一步，快照那类
+        # system 消息的角色就和主 run 发过的不一致，前缀从那条消息起整段失配——
+        # 实测同一前缀只换角色：cache_read 3840 → 384。
+        from agent.llm.llm_select import use_anthropic_for
+
+        if use_anthropic_for(model_cfg):
+            from agent.context.provider_history import render_anthropic_message_roles
+
+            rendered = list(render_anthropic_message_roles(rendered, adapter))
+        return rendered
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.context.compaction.branch_prefix", exc)
+        return prefix
+
+
 def _load_compress_prompt() -> str:
     prompt_path = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
     try:
@@ -507,9 +568,11 @@ async def _generate_append_summary(
     *,
     model_cfg,
     append_system: str = "",
+    tools: list | None = None,
 ) -> str:
     """追加式压缩：复用主会话 canonical 消息序列，压缩指令只出现在末尾追加的
-    user 消息里，保证分支请求与主对话最后一帧共享前缀（含 run 的 system）。
+    user 消息里，保证分支请求与主对话最后一帧共享前缀（含 run 的 system 与工具
+    声明）。
 
     超出单请求输入预算时按预算把 canonical 消息分块，逐块滚动合并摘要；
     任一块失败返回空串，由调用方落到本地有界摘要。
@@ -546,11 +609,12 @@ async def _generate_append_summary(
                 "\n\n【已有摘要（更早的对话，需与上面历史合并、保留全部关键信息）】\n"
                 f"{summary}"
             )
-        delta += "\n\n只输出摘要正文，不要添加前缀或解释。"
+        delta += "\n\n只输出摘要正文，不要添加前缀或解释，也不要调用任何工具。"
         try:
             result = await ContextBranch().run(
                 BranchInput(stable_system=append_system, delta=delta,
-                            history_messages=tuple(chunk)),
+                            history_messages=tuple(chunk),
+                            tools=tuple(tools or ())),
                 BranchPolicy(
                     name="compaction",
                     output_mode="text",

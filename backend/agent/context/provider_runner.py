@@ -29,11 +29,14 @@ async def complete_messages(
     settings,
     max_tokens: int | None = 800,
     json_mode: bool = False,
+    tools: list | None = None,
 ) -> str:
     """追加式分支：复用主会话的 canonical 消息序列，delta 作为末尾 user 消息追加。
 
     history 必须与主 run 发给 provider 的消息同构（同一路由的同一种格式），
     这样分支请求与主对话的最后一帧共享逐 token 前缀，才能命中会话内缓存。
+    tools 同样要带上：provider 把工具声明算进可缓存前缀，缺了它命中率会从
+    接近 100% 掉到一成出头。
     """
     from agent.llm.llm_select import use_anthropic_for
     from agent.llm.modelctx import effective_ai
@@ -43,10 +46,11 @@ async def complete_messages(
     thinking = getattr(ai, "thinking", None)
     if use_anthropic:
         text = await _anthropic(sys, user, ai, max_tokens, thinking=thinking,
-                                settings=settings, history=history)
+                                settings=settings, history=history, tools=tools)
         return _parse_json(text) if json_mode else text
     text = await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
-                         thinking=thinking, settings=settings, history=history)
+                         thinking=thinking, settings=settings, history=history,
+                         tools=tools)
     return _parse_json(text) if json_mode else text
 
 
@@ -83,6 +87,7 @@ async def _anthropic(
     thinking: str | None = None,
     settings=None,
     history: list | None = None,
+    tools: list | None = None,
 ) -> str:
     import httpx
     from agent import providers
@@ -111,6 +116,11 @@ async def _anthropic(
         messages=messages,
         max_tokens=max_tokens,
     )
+    if tools:
+        # 与主 run 一致：工具声明一起发，provider 才算得出同一份可缓存前缀。
+        # 不设 tool_choice——实测它会让命中失效（100% → 15%），改用末尾指令约束
+        # 模型只输出摘要正文。
+        kwargs["tools"] = tools
     if thinking is not None:
         kwargs["thinking"] = {"type": thinking}
     resp = await client.messages.create(**kwargs)
@@ -142,6 +152,7 @@ async def _openai(
     thinking: str | None = None,
     settings=None,
     history: list | None = None,
+    tools: list | None = None,
 ) -> str:
     import httpx
     from agent import providers
@@ -159,6 +170,9 @@ async def _openai(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     adapter = providers.adapter_for(ai)
+    if tools:
+        # 与主 run 同款：OpenAI 兼容端要把工具声明一起发，才能命中同一份前缀缓存。
+        kwargs.update(adapter.build_tool_params(ai, tools))
     # 与主对话一致：仅对验证过显式锚点行为的 provider 给稳定 system 前缀打
     # cache_control（DeepSeek 走服务端自动缓存，不打锚点）。
     if adapter.supports_explicit_cache(getattr(ai, "model", "") or ""):

@@ -45,6 +45,7 @@ class _FakeBranch:
             "history": [dict(m) for m in branch_input.history_messages],
             "stable_system": branch_input.stable_system,
             "delta": branch_input.delta,
+            "tools": branch_input.tools,
             "policy": policy,
         })
         if self._fail:
@@ -81,6 +82,47 @@ class TestCompactionBudget:
 
         assert result == "追加摘要"
         assert calls[0]["policy"].max_tokens == 8_000
+
+    def test_append_summary_forwards_run_tools(self, monkeypatch):
+        """分支必须带上主 run 的工具声明，否则 provider 算不出同一份可缓存前缀。"""
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls),
+        )
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        tools = [{"name": "read_file", "description": "读文件", "input_schema": {}}]
+        asyncio.get_event_loop().run_until_complete(
+            _generate_append_summary(
+                [{"role": "user", "content": "测试压缩"}],
+                model_cfg=_model_cfg(120_000, 8_000), tools=tools,
+            )
+        )
+
+        assert calls[0]["tools"] == tuple(tools)
+        # 带了工具就要在指令里明确不许调用，避免摘要变成一次工具调用。
+        assert "不要调用" in calls[0]["delta"]
+
+    def test_compact_context_forwards_branch_tools(self, monkeypatch):
+        seen: dict = {}
+
+        async def fake_summary(_history, _previous=None, **kwargs):
+            seen.update(kwargs)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", f"历史{i}" * 40) for i in range(6)]
+            + [_make_msg("assistant", "最新回复")]
+        )
+        branch_tools = [{"name": "read_file"}]
+        asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, fixed_prefix_size=1, model_cfg=_model_cfg(60),
+                            branch_tools=branch_tools)
+        )
+
+        assert seen.get("tools") == branch_tools
 
     def test_compaction_limits_follow_model_config(self):
         limits = resolve_compaction_limits(
@@ -663,3 +705,101 @@ class TestCompleteMessagesShape:
         # 末尾历史消息被打上会话内缓存断点
         tail = msgs[1]["content"]
         assert isinstance(tail, list) and tail[-1].get("cache_control")
+
+
+class TestBranchPrefixHistory:
+    """追加式压缩必须发「从对话头开始的连续前缀」，否则 provider 前缀缓存全 miss。"""
+
+    def _run(self, monkeypatch, msgs, cfg):
+        captured = []
+
+        async def fake_summary(items, previous=None, **_kwargs):
+            captured.extend(items)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, fixed_prefix_size=1, model_cfg=cfg)
+        )
+        return captured
+
+    def test_prefix_history_is_contiguous_from_head(self, monkeypatch):
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", f"历史{i}" * 40) for i in range(6)]
+            + [_make_msg("assistant", "最新回复")]
+        )
+        captured = self._run(monkeypatch, msgs, _model_cfg(60))
+
+        assert captured, "应把历史交给分支"
+        # 第一条必须是 run 的系统消息（对话头），不能从中段开始
+        assert message_text(captured[0]) == "系统提示"
+        # 且与原始序列逐条同前缀
+        assert [message_text(m) for m in captured] == [
+            message_text(m) for m in msgs[:len(captured)]
+        ]
+
+    def test_prefix_history_excludes_kept_recent_tail(self, monkeypatch):
+        """保留窗口里的近期消息不能进摘要请求：它要原样留在上下文里。"""
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", f"历史{i}" * 40) for i in range(6)]
+            + [_make_msg("assistant", "最近的回复XYZ")]
+        )
+        captured = self._run(monkeypatch, msgs, _model_cfg(60))
+
+        joined = "\n".join(message_text(m) for m in captured)
+        assert "历史0" in joined
+        assert "最近的回复XYZ" not in joined
+
+    def test_prefix_history_projects_system_roles_for_anthropic_route(self, monkeypatch):
+        """anthropic 路由的主 run 会把消息级 system 投影成 user，分支必须跟上。
+
+        角色不投影时，前缀从那条 system 消息起整段失配（实测同一前缀只换角色：
+        cache_read 3840 → 384），所以这里锁住投影；openai 路由保持原角色。
+        """
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", "历史" * 40)]
+            + [_make_msg("system", "[system-reminder] 快照")]
+            + [_make_msg("user", "历史" * 40)]
+            + [_make_msg("assistant", "最新回复")]
+        )
+        anthropic_cfg = SimpleNamespace(
+            context_tokens=60, max_tokens=8000, api_format="anthropic",
+        )
+        anthropic_captured = self._run(monkeypatch, msgs, anthropic_cfg)
+        assert [m.get("role") for m in anthropic_captured][2] == "user"
+
+        openai_captured = self._run(monkeypatch, msgs, _model_cfg(60))
+        assert [m.get("role") for m in openai_captured][2] == "system"
+
+    def test_prefix_history_falls_back_when_messages_are_not_same_objects(self):
+        """拿不到可定位的对象时退回旧行为，不猜切片。"""
+        from agent.context.compaction import _branch_prefix_history
+
+        history = [_make_msg("user", f"历史{i}") for i in range(6)]
+        compressible = [dict(m) for m in history[:3]]   # 与 history 不同一批对象
+        out = _branch_prefix_history(
+            history, 0, history, compressible, _model_cfg(60),
+        )
+        assert [message_text(m) for m in out] == [message_text(m) for m in compressible]
+
+    def test_prefix_history_is_head_anchored_for_copied_history(self):
+        """生产形态：`_drop_orphan_tool_results` 会浅拷贝，前缀仍须从对话头开始。"""
+        from agent.context.compaction import (
+            _branch_prefix_history,
+            _drop_orphan_tool_results,
+        )
+
+        msgs = [_make_msg("system", "系统提示")] + [
+            _make_msg("user", f"历史{i}") for i in range(6)
+        ]
+        message_history = _drop_orphan_tool_results(list(msgs[1:]))
+        assert message_history[0] is not msgs[1], "前提：清理会换对象"
+        out = _branch_prefix_history(
+            msgs, 1, message_history, message_history[:4], _model_cfg(60),
+        )
+        assert [message_text(m) for m in out] == [
+            "系统提示", "历史0", "历史1", "历史2", "历史3",
+        ]

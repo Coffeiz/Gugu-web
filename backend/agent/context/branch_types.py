@@ -31,6 +31,10 @@ class BranchInput:
     scope_owner_id: str | int | None = None
     run_id: str | None = None
     history_messages: tuple[Any, ...] = ()
+    # 追加式分支必须带上主 run 的同款工具声明：provider 把 tools 一并算进可缓存
+    # 前缀，缺了它连消息部分都命中不了（实测 100% → 15%）。分支只输出文本、不消费
+    # 工具调用，也不要设置 tool_choice——实测那同样会让命中失效。
+    tools: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -109,3 +109,49 @@ async def test_openai_branch_plain_messages_without_explicit_cache(monkeypatch):
         {"role": "system", "content": "stable system"},
         {"role": "user", "content": "user"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_branch_forwards_tools_without_tool_choice(monkeypatch):
+    """工具声明要跟着分支一起发，但不能设 tool_choice——那会让前缀缓存失效。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(supports_active_cache=lambda model: True))
+    tools = [{"name": "read_file", "description": "读文件", "input_schema": {}}]
+    await provider_runner._anthropic("stable system", "user", _anthropic_ai(), 100,
+                                     tools=tools)
+    assert fake.kwargs["tools"] == tools
+    assert "tool_choice" not in fake.kwargs
+
+
+@pytest.mark.asyncio
+async def test_openai_branch_forwards_tools_like_main_run(monkeypatch):
+    """OpenAI 兼容端沿用主 run 的 build_tool_params 形状，前缀才能对上。"""
+    fake = _FakeOpenAI()
+    monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: fake)
+    tools = [{"type": "function", "function": {"name": "read_file"}}]
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            supports_explicit_cache=lambda model: False,
+            build_structured_output=lambda ai: {},
+            build_openai_thinking_kwargs=lambda ai, thinking=None: {},
+            build_tool_params=lambda ai, items: {"tools": items, "tool_choice": "auto"},
+        ))
+    await provider_runner._openai("stable system", "user", _openai_ai(), 100, tools=tools)
+    assert fake.kwargs["tools"] == tools
+    assert fake.kwargs["tool_choice"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_branch_without_tools_stays_unchanged(monkeypatch):
+    """没有工具声明的分支（反思/知识）不受影响，不额外加 tools 参数。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(supports_active_cache=lambda model: True))
+    await provider_runner._anthropic("stable system", "user", _anthropic_ai(), 100)
+    assert "tools" not in fake.kwargs

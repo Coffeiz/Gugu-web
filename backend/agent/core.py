@@ -915,6 +915,9 @@ class LLMRunner:
                         protected_from=protected_from,
                         model_cfg=ai,
                         system_text=system_text,
+                        # 分支要带上本 run 的工具声明，provider 才算得出同一份可缓存
+                        # 前缀（详见 compaction._generate_append_summary）。
+                        branch_tools=getattr(ctx, "tools", None),
                     )
                 except Exception as exc:
                     # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成

@@ -71,6 +71,7 @@ class ContextBranch:
                             user, settings,
                             max_tokens=policy.max_tokens,
                             json_mode=policy.output_mode != "text",
+                            tools=list(branch_input.tools) or None,
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))
