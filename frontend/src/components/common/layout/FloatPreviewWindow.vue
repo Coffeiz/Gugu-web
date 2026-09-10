@@ -288,9 +288,10 @@ function onInfoDragUp() {
 
 // 矢量图（无尺寸 SVG 的 natural 只是浏览器折算的默认对象尺寸，如 300×150）开窗时
 // 按比例放大到「恰好 contain 进视口舒适区」，只放大不缩小（大尺寸 SVG 仍按原逻辑
-// 由 fitWindow 缩到视口内），避免矢量文件以缩略图大小开窗。
-const COMFORT_W_RATIO = 0.44
-const COMFORT_H_RATIO = 0.7
+// 由 fitWindow 缩到视口内），避免矢量文件以缩略图大小开窗。矢量放大无损，
+// 舒适区直接贴近视口（90% 宽 × 78% 高），默认打开即适配浏览器。
+const COMFORT_W_RATIO = 0.9
+const COMFORT_H_RATIO = 0.78
 function vectorWindowScale(nw: number, nh: number) {
   const comfortW = window.innerWidth * COMFORT_W_RATIO
   const comfortH = window.innerHeight * COMFORT_H_RATIO
