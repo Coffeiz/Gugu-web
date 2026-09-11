@@ -11,7 +11,7 @@
       @remove="removeItem"
       @return-to-drawer="returnProjectToDrawer"
       @remove-relation="removeRelation"
-      @link-nodes="linkNodes"
+      @link-nodes="onLinkNodes"
       @open-ref="openRef"
       @item-moved="onItemMoved"
       @view-change="onViewChange"
@@ -360,6 +360,19 @@ async function removeRelation(id: number) {
   }
 }
 /** 贴纸边缘圆点拖到另一张贴纸上松手时触发，见 MindCanvas.vue 的 onConnectDragStart。 */
+async function onLinkNodes(
+  srcNodeId: number,
+  dstNodeId: number,
+  sides: RelationAnchorSides,
+  runtimeConnection: NodeConnectionEndpoint,
+) {
+  // linkNodes 失败会回滚乐观连线；此前没人接住 reject，线悄悄消失让用户以为连上了。
+  try {
+    await linkNodes(srcNodeId, dstNodeId, sides, runtimeConnection)
+  } catch {
+    showAppError(t('mindUi.linkFailed'))
+  }
+}
 async function linkNodes(
   srcNodeId: number,
   dstNodeId: number,

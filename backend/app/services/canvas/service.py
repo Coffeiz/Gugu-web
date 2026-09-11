@@ -220,6 +220,9 @@ async def get_canvas_item_by_node(db, user_id, canvas_id, node_id):
 
 
 async def list_canvas_items(db, user_id, canvas_id):
+    # 软删过滤必须与 create_relation 的连线校验同口径：这里曾漏掉 deleted_at 条件，
+    # 已从画布移除的项仍被下发光栅渲染成「幽灵卡」，连线时被后端 422 打回、前端静默
+    # 回滚，表现为「连上之后连接线自动消失」。节点软删同样过滤，避免引用死节点。
     return (await db.execute(
         select(MindCanvasItem, MindNode)
         .join(MindNode, MindNode.id == MindCanvasItem.node_id)
@@ -227,6 +230,8 @@ async def list_canvas_items(db, user_id, canvas_id):
             MindCanvasItem.canvas_id == canvas_id,
             MindCanvasItem.user_id == user_id,
             MindNode.user_id == user_id,
+            MindCanvasItem.deleted_at.is_(None),
+            MindNode.deleted_at.is_(None),
         )
         .order_by(MindCanvasItem.z, MindCanvasItem.id)
     )).all()
