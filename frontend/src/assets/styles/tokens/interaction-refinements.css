@@ -13,10 +13,6 @@
 }
 
 :root[data-theme='dark'] {
-  /* Dark topbar / toolbar shells stay visually still. Child controls remain interactive. */
-  --topbar-bg-hover: var(--topbar-bg);
-  --topbar-shadow-hover: var(--topbar-shadow);
-
   /* Selected pills need to read as selected against dark tracks. */
   --segmented-pill-bg: color-mix(in srgb,var(--surface-raised) 78%,var(--action-primary) 22%);
   --segmented-pill-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 2px 8px rgba(0,0,0,.24);
