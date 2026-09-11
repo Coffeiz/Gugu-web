@@ -1,11 +1,12 @@
 """项目域的 ORM 查询与跨表写入编排。"""
 from datetime import timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, or_
 
 from app.core.tz import now_utc
-from app.models import File, Project
+from app.models import CalendarEvent, File, Folder, Project, ScheduledTask
 from app.core.ownership import get_owned
+from app.services.storage.trash import move_file_to_trash
 
 PROJECT_TRASH_DAYS = 30
 
@@ -63,17 +64,6 @@ async def count_project_files(db, user_id, project_id: int) -> int:
     )).scalar_one()
 
 
-async def soft_delete_project_files(db, user_id, project_id: int, deleted_at):
-    """将项目内存活文件批量移入回收站。"""
-    await db.execute(
-        update(File)
-        .where(
-            File.project_id == project_id,
-            File.user_id == user_id,
-            File.deleted_at.is_(None),
-        )
-        .values(deleted_at=deleted_at)
-    )
 
 
 async def list_agent_projects(db, user_id, *, archived: bool):
@@ -114,6 +104,53 @@ async def get_user_project(db, user_id, project_id):
     return project if project and project.deleted_at is None else None
 
 
-async def delete_project(db, user_id, project, deleted_at):
-    await soft_delete_project_files(db, user_id, project.id, deleted_at)
-    await db.delete(project)
+async def soft_delete_project_full(db, storage, user_id, project, deleted_at):
+    """项目完整软删（网页与咕咕工具共用）：文件进回收站，文件夹/活动软删，
+    活动联动的定时任务停用，项目行保留 deleted_at（30 天回收站可恢复）。
+    全部行使用同一个 deleted_at 时间戳，恢复路由靠它精确圈定本次删除的行。
+    返回 (files, folders, calendar_events, tasks) 供撤销快照/事件通知使用。"""
+    folders = (await db.execute(
+        select(Folder).where(
+            Folder.user_id == user_id, Folder.project_id == project.id,
+            Folder.deleted_at.is_(None),
+        )
+    )).scalars().all()
+    file_scope = [File.project_id == project.id]
+    if folders:
+        file_scope.append(File.folder_id.in_([folder.id for folder in folders]))
+    files = (await db.execute(
+        select(File).where(
+            File.user_id == user_id, File.deleted_at.is_(None), or_(*file_scope),
+        )
+    )).scalars().all()
+    calendar_events = (await db.execute(
+        select(CalendarEvent).where(
+            CalendarEvent.user_id == user_id, CalendarEvent.project_id == project.id,
+            CalendarEvent.deleted_at.is_(None),
+        )
+    )).scalars().all()
+    tasks = []
+    if calendar_events:
+        tasks = (await db.execute(
+            select(ScheduledTask).where(
+                ScheduledTask.user_id == user_id,
+                ScheduledTask.event_id.in_([event.id for event in calendar_events]),
+            )
+        )).scalars().all()
+
+    for row in files:
+        await move_file_to_trash(storage, row)
+        row.deleted_at = deleted_at
+        row.version = int(row.version or 1) + 1
+    for row in folders:
+        row.deleted_at = deleted_at
+        row.version = int(row.version or 1) + 1
+    for row in calendar_events:
+        row.deleted_at = deleted_at
+        row.version = int(row.version or 1) + 1
+    for row in tasks:
+        row.enabled = False
+    project.deleted_at = deleted_at
+    project.version = int(project.version or 1) + 1
+    await db.flush()
+    return files, folders, calendar_events, tasks

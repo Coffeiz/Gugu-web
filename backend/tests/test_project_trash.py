@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.api.v1 import projects as projects_api
 from app.api.v1 import trash as trash_api
 from app.core.tz import now_utc
-from app.models import CalendarEvent, Project, ScheduledTask
+from app.models import CalendarEvent, File, Folder, Project, ScheduledTask
 from app.services.projects import list_project_rows
 
 
@@ -97,3 +97,48 @@ async def test_cleanup_expired_projects_removes_project_rows(db, user_a, monkeyp
     assert await db.get(Project, project.id) is None
     assert await db.get(CalendarEvent, event.id) is None
     assert await db.get(ScheduledTask, task.id) is None
+
+@pytest.mark.asyncio
+async def test_agent_delete_project_soft_deletes_like_web(db, user_a, monkeypatch):
+    """咕咕删除项目工具与网页同口径：项目行保留（软删），文件进回收站，
+    文件夹/活动软删、联动任务停用，并广播 delete 实时事件。"""
+    import agent.tools.projects as agent_projects
+
+    project = await _save(db, Project(user_id=user_a.id, name="咕咕要删的项目"))
+    folder = await _save(db, Folder(user_id=user_a.id, project_id=project.id, name="成果目录"))
+    file = await _save(db, File(
+        user_id=user_a.id, project_id=project.id, display_name="成果图", ext="png",
+        storage_key=f"{user_a.id}/project/a.png",
+    ))
+    event = await _save(db, CalendarEvent(
+        user_id=user_a.id, project_id=project.id, title="节点", date="2026-09-20",
+    ))
+    task = await _save(db, ScheduledTask(
+        user_id=user_a.id, event_id=event.id, name="节点提醒", payload="提醒",
+        cron="@once:2026-09-20T08:00:00+00:00", schedule_kind="once", enabled=True,
+    ))
+
+    class FakeStorage:
+        async def move_to_trash(self, key, trash_key):
+            return trash_key
+
+    monkeypatch.setattr(agent_projects, "get_storage", lambda: FakeStorage())
+    monkeypatch.setattr(agent_projects.confirm, "needs_confirmation", lambda *a, **k: None)
+    published = []
+
+    async def publish(*args, **kwargs):
+        published.append(kwargs.get("entity_id"))
+
+    monkeypatch.setattr(agent_projects.events, "publish", publish)
+
+    from agent.tools.projects import _delete_project
+    res = await _delete_project(db, user_a.id, {"project_id": project.id})
+    assert res.get("success") is True
+
+    row = await db.get(Project, project.id)
+    assert row is not None and row.deleted_at is not None           # 项目行保留（软删）
+    assert (await db.get(File, file.id)).deleted_at is not None     # 文件进回收站
+    assert (await db.get(Folder, folder.id)).deleted_at is not None
+    assert (await db.get(CalendarEvent, event.id)).deleted_at is not None
+    assert (await db.get(ScheduledTask, task.id)).enabled is False
+    assert published == [project.id]
