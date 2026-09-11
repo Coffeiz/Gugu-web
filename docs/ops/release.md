@@ -89,10 +89,15 @@ docker tag docker.io/coffeiz/gugu-web-backend:v1.0.x   gugu-web-backend:prod
 docker tag docker.io/coffeiz/gugu-web-frontend:v1.0.x  gugu-web-frontend:prod
 cd /opt/Gugu-web-main && docker compose -p gugu-web-main -f docker-compose.prod.yml up -d
 docker compose -p gugu-web-main -f docker-compose.prod.yml up -d --force-recreate sandboxd
+docker restart gugu-web-main-nginx-1
 ```
 
 - compose 项目名必须 `-p gugu-web-main`；`backend/.env`、`config.override.json` 属用户数据，流程中只读。
 - sandboxd 与 backend 共用镜像 tag，`up -d` 检测不到 tag 底层镜像变化，必须 `--force-recreate`。
+- **最后一步 `docker restart nginx-1` 不能省**（v1.1.4 教训）：`up -d` 重建 backend/frontend 后
+  容器 IP 会变，nginx 只在启动时解析上游地址，不重启就继续连旧 IP，公网整站 502
+  （日志特征 `connect() failed (111: Connection refused)`、upstream 指向失效的 172.21.0.x）。
+  重启后必须 curl 公网域名确认 200 再收工。
 
 ### Shell 沙盒前置（首次部署或迁移时）
 
