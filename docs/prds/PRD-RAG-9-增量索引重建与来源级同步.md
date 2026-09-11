@@ -360,11 +360,11 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 ### Phase 1：Knowledge 文档级增量
 
-- [ ] 实现 Knowledge 单条读取和单条 canonical projection。
-- [ ] 实现单 `source_id` chunk projection 增量写入。
-- [ ] 接入 TS worker patch，并保留 mismatch 来源级 replace 回退。
-- [ ] 接入 Knowledge 向量 upsert/delete。
-- [ ] `save_knowledge`、`delete_knowledge` 和自动反思统一使用该事件链。
+- [x] 实现 Knowledge 单条读取和单条 canonical projection。
+- [x] 实现单 `source_id` chunk projection 增量写入。
+- [x] 接入 TS worker patch，并保留 mismatch 来源级 replace 回退。
+- [x] 接入 Knowledge 向量 upsert/delete。
+- [x] `save_knowledge`、`delete_knowledge` 和自动反思统一使用该事件链。
 
 验收：1000 条 Knowledge 中修改 1 条时，只读取和 patch 该条；正文修改、关键词修改、删除和恢复均无旧 chunk 残留。
 

@@ -143,7 +143,7 @@ async def reflect_if_candidate(
     )
     raw = branch.output if branch.ok else {}
     operations = normalize_operations(raw, save_mode=save_mode)
-    saved = 0
+    saved_ids: list[str] = []
     store = KnowledgeStore(user_id)
     for operation in operations[:3]:
         if operation["action"] == "ignore":
@@ -163,8 +163,9 @@ async def reflect_if_candidate(
         elif operation["target_id"]:
             entry.id = operation["target_id"]
         await store.save(entry)
-        saved += 1
-    return saved
+        saved_ids.append(entry.id)
+    # 返回保存的条目 id 列表：调用方据此发文档级 RagIndexUpdated（PRD-RAG-9）。
+    return saved_ids
 
 
 __all__ = [

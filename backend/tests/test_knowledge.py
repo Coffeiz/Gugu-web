@@ -278,7 +278,7 @@ async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automati
     saved = await reflect_if_candidate(
         "user-a", "请记住新规则", "收到", settings, "规则",
     )
-    assert saved == 1
+    assert len(saved) == 1
     entries = await KnowledgeStore("user-a").list()
     assert entries[0].confidence == "probable"
     assert entries[0].source.type == "conversation"

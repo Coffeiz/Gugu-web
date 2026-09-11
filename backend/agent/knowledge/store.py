@@ -141,6 +141,19 @@ class KnowledgeStore:
     def __init__(self, user_id: object):
         self.user_id = user_id
 
+    async def get(self, entry_id: str, *, active_only: bool = True) -> KnowledgeEntry | None:
+        """按 ID 直读单个条目，不遍历整个知识库（PRD-RAG-9 文档级增量入口）。"""
+        if not entry_id:
+            return None
+        storage = get_storage()
+        try:
+            entry = _parse(await storage.get(_path(self.user_id, str(entry_id))))
+        except (KeyError, TypeError, ValueError, OSError):
+            return None
+        if active_only and not entry.active:
+            return None
+        return entry
+
     async def list(self, *, scope: KnowledgeScope | None = None, active_only: bool = True) -> list[KnowledgeEntry]:
         storage = get_storage()
         try:

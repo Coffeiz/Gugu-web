@@ -495,9 +495,13 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
             )
             if saved:
                 from agent import events
-                events.publish(events.types.RagIndexUpdated(
-                    user_id=user_id, source_type="knowledge", source_id="", operation="upsert",
-                ))
+                # 每个保存条目发一条带 source_id 的文档级事件；空 source_id
+                # 会触发来源级全量重建，反思批量保存里只有部分条目真的变化。
+                for source_id in saved:
+                    events.publish(events.types.RagIndexUpdated(
+                        user_id=user_id, source_type="knowledge",
+                        source_id=str(source_id), operation="upsert",
+                    ))
     except Exception:
         _memdiff_log.debug("knowledge reflection skipped", exc_info=True)
 

@@ -20,6 +20,13 @@ class KnowledgeAdapter:
         records = await self.build_source_records(scope=scope)
         return await records_to_write_documents(self.user_id, self.source_type, records)
 
+    async def build_source_record_for(self, source_id: str) -> tuple[dict, Scope] | None:
+        """单条读取：只加载一个知识条目的 canonical record（文档级增量入口）。"""
+        entry = await KnowledgeStore(self.user_id).get(str(source_id))
+        if entry is None:
+            return None
+        return self._record(entry), self._entry_scope(entry)
+
     async def build_source_records(self, *, scope: Scope | None = None) -> list[tuple[dict, Scope]]:
         """构建未切块的 canonical Knowledge record，由 TS 负责投影。"""
         entries = await KnowledgeStore(self.user_id).list(
