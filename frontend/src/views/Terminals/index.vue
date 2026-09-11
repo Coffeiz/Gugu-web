@@ -372,7 +372,7 @@ onUnmounted(() => {
 .terminal-main { display:flex; flex-direction:column; min-width:0; min-height:0; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-card-solid); overflow:hidden; }
 .terminal-main.is-empty { border-color:transparent; background:transparent; }
 .terminal-main-head { flex:none; padding:13px 15px; border-bottom:1px solid var(--divider-line); }
-.terminal-main-head.glass-card { border:0; border-bottom:1px solid var(--divider-line); border-radius:0; }
+.terminal-main-head.glass-card { --glass-card-background-hover:var(--glass-card-background); --glass-card-shadow-hover:var(--glass-card-shadow); border:0; border-bottom:1px solid var(--divider-line); border-radius:0; }
 .terminal-main-head h2 { height:var(--control-height-sm); margin:0; font-size:14px; line-height:var(--control-height-sm); }
 .terminal-main-head span { display:block; margin-top:4px; color:var(--content-tertiary); font-size:10px; }
 .terminal-actions { display:flex; gap:8px; }
@@ -406,6 +406,8 @@ onUnmounted(() => {
 .terminal-add-card-text { font-size:12px; font-weight:600; }
 .terminal-associations { color:var(--content-tertiary); font-size:10px; }
 .terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
+/* scoped 背景优先级高于全局 .glass-card:hover，hover 必须在同源补齐标准 token（淡入淡出沿用全局过渡） */
+.terminals-panel.design-section:hover { background:var(--glass-card-background-hover); border-color:var(--glass-card-border-hover); }
 .terminal-list.semantic-group { padding:var(--space-lg); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; }
 .terminal-actions :deep(.app-action-button) { min-height:var(--control-height-sm); padding:0 var(--space-sm); border-color:transparent; background:transparent; color:var(--content-secondary); box-shadow:none; transform:none; }
 .terminal-actions :deep(.app-action-button:hover:not(:disabled)) { border-color:transparent; background:var(--surface-soft); color:var(--content-primary); box-shadow:none; transform:none; }
