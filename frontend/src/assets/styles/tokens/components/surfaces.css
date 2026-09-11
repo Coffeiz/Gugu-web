@@ -141,6 +141,7 @@
   --file-card-preselection-thumb-overlay: rgba(123,127,178,.16);
   --file-card-badge-bg: rgba(0,0,0,.04);
   --file-card-thumb-bg: rgba(0,0,0,.05);
+  --file-card-thumb-fade: #ffffff;
   --file-card-image-badge-bg: rgba(0,0,0,.32);
   --file-card-image-badge-fg: rgba(255,255,255,.92);
 
@@ -306,6 +307,7 @@ html[data-theme='light'][data-family='mono'] {
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --file-card-badge-bg: var(--surface-soft);
   --file-card-thumb-bg: var(--surface-soft);
+  --file-card-thumb-fade: var(--surface-card-solid);
   --file-card-image-badge-bg: rgba(0,0,0,.34);
   --file-card-image-badge-fg: var(--content-on-accent);
 
@@ -400,6 +402,7 @@ html[data-theme='dark'][data-family] {
   --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --file-card-badge-bg: var(--surface-soft);
   --file-card-thumb-bg: var(--surface-soft);
+  --file-card-thumb-fade: var(--surface-card-solid);
   --file-card-image-badge-bg: rgba(0,0,0,.42);
   --file-card-image-badge-fg: var(--content-primary);
 
