@@ -379,10 +379,10 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 ### Phase 3：剩余来源与 durable recovery
 
-- [ ] Calendar、Canvas、Note、Conversation、Memory 接入统一 delta contract。
-- [ ] 引入 dirty marker 或索引 outbox。
-- [ ] 启动恢复、失败重放和定期来源校准落地。
-- [ ] 统一事件合并、取消、重试和状态查询。
+- [x] Calendar、Canvas、Note、Conversation、Memory 接入统一 delta contract。
+- [x] 引入 dirty marker 或索引 outbox。
+- [x] 启动恢复、失败重放和定期来源校准落地。
+- [x] 统一事件合并、取消、重试和状态查询。
 
 验收：重启、重复事件、事件丢失模拟后，索引最终与主数据一致；无法恢复时有明确管理诊断。
 

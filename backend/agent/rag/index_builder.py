@@ -169,10 +169,11 @@ def conversation_message_record(
 async def build_single_source_record(
     db, owner_user_id: object, source_type: str, source_id: str,
 ) -> tuple[dict, Scope] | None:
-    """单对象读取：只加载一个 file/project 的 canonical record（PRD-RAG-9 文档级增量）。
+    """单对象读取：只加载一个对象的 canonical record（PRD-RAG-9 文档级增量）。
 
-    主数据不存在/已删除/不可索引时返回 None（调用方按删除收敛）。knowledge
-    走 KnowledgeAdapter.build_source_record_for（文件库存储，不需要 db）。
+    支持 file/project/calendar/note/canvas。主数据不存在/已删除/不可索引时
+    返回 None（调用方按删除收敛）。knowledge 走
+    KnowledgeAdapter.build_source_record_for（文件库存储，不需要 db）。
     """
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
     if source_type == "file":
@@ -206,6 +207,71 @@ async def build_single_source_record(
             "updated_at": _iso(row.updated_at),
             "metadata": {"project_id": str(row.id), "status": row.status or "pending"},
         }, owner_scope)
+    if source_type == "calendar":
+        row = (await db.execute(select(CalendarEvent).where(
+            CalendarEvent.user_id == owner_user_id,
+            CalendarEvent.id == int(source_id),
+            CalendarEvent.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        return calendar_record(row), owner_scope
+    if source_type == "note":
+        row = (await db.execute(select(MindNode).where(
+            MindNode.user_id == owner_user_id,
+            MindNode.id == int(source_id),
+            MindNode.deleted_at.is_(None),
+            MindNode.kind.in_(["note", "suggestion"]),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        return note_record(row), owner_scope
+    if source_type == "canvas":
+        row = (await db.execute(
+            select(MindCanvasItem, MindMap, MindNode)
+            .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
+            .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+            .where(
+                MindCanvasItem.id == int(source_id),
+                MindCanvasItem.user_id == owner_user_id,
+                MindMap.user_id == owner_user_id,
+                MindNode.user_id == owner_user_id,
+                MindNode.deleted_at.is_(None),
+            )
+        )).first()
+        if row is None:
+            return None
+        item, canvas, node = row
+        # 关系摘要与全量构建同源：关系变化影响两个端点节点的 record，
+        # 业务层事件须带受影响 item 的 id，否则回退来源级重建。
+        relation_rows = (await db.execute(select(MindRelation).where(
+            MindRelation.user_id == owner_user_id,
+            (MindRelation.src_node_id == node.id) | (MindRelation.dst_node_id == node.id),
+        ))).scalars().all()
+        related_node_ids = {rid for r in relation_rows for rid in (r.src_node_id, r.dst_node_id)}
+        title_rows = (await db.execute(select(MindNode.id, MindNode.title).where(
+            MindNode.user_id == owner_user_id,
+            MindNode.deleted_at.is_(None),
+            MindNode.id.in_(related_node_ids),
+        ))).all() if related_node_ids else []
+        node_titles = {nid: title or "未命名节点" for nid, title in title_rows}
+        related = []
+        for relation in relation_rows:
+            left = node_titles.get(relation.src_node_id)
+            right = node_titles.get(relation.dst_node_id)
+            if left and right:
+                related.append(f"{left} → {right}" if relation.src_node_id == node.id
+                               else f"{left} ← {right}")
+        relation_summary = "；".join(related[:8])
+        group_path = ""
+        try:
+            import json
+            view = json.loads(item.data_json or "{}")
+            group_path = str(view.get("group_path") or view.get("groupPath") or "")
+        except (TypeError, ValueError):
+            group_path = ""
+        return canvas_record(item, canvas, node, relation_summary=relation_summary,
+                             group_path=group_path), owner_scope
     raise ValueError(f"来源不支持单对象读取：{source_type}")
 
 

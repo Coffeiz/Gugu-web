@@ -164,7 +164,7 @@ async def _replace_worker_index(
         raise
 
 
-DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "file", "project"}
+DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "file", "project", "calendar", "note", "canvas"}
 
 
 async def update_knowledge_document(
