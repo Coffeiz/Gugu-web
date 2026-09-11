@@ -140,16 +140,15 @@ async def _update_knowledge(db, user_id, args: dict):
     from agent.knowledge.store import KnowledgeStore
 
     entry_id = str(args.get("knowledge_id") or "").strip()
-    content = str(args.get("content") or "").strip()
     if not entry_id:
         return {"error": "需要提供 knowledge_id；先用 search_memory 查询获取"}
-    if not content:
-        return {"error": "需要提供 content；必须是合并旧内容后的完整正文"}
     store = KnowledgeStore(user_id)
     entries = await store.list(active_only=True)
     old = next((item for item in entries if item.id == entry_id), None)
     if old is None:
         return {"error": "知识条目不存在或已删除；先用 search_memory 查询获取有效的 knowledge_id"}
+    # content 省略 = 部分更新（只调标题/主题/关键词等元数据），正文保持不变
+    content = str(args.get("content") or "").strip() or old.content
     keywords = args.get("keywords")
     confidence = str(args.get("confidence") or old.confidence or "probable").strip().lower()
     if confidence not in {"confirmed", "probable", "unverified"}:
@@ -161,7 +160,9 @@ async def _update_knowledge(db, user_id, args: dict):
             source_type=old.source.type, source_ref=old.source.ref, source_label=old.source.label,
             confidence=confidence, capture_mode="explicit",
             keywords=(
-                [item for item in keywords if isinstance(item, str)]
+                # 容忍模型混入数字等标量（如 2026），统一转字符串；复杂结构丢弃
+                [str(item).strip() for item in keywords
+                 if isinstance(item, (str, int, float)) and str(item).strip()]
                 if isinstance(keywords, list) else list(old.keywords)
             ),
         )
@@ -249,9 +250,11 @@ class MemorySkill(BaseSkill):
         description_short='修正、刷新或合并一条已保存知识。',
         description=(
             "更新一条已存在的知识条目：修正记录错误、刷新过时内容或合并补充信息。"
-            "knowledge_id 必须来自 search_memory 的真实结果；先搜索取回旧正文，"
-            "content 必须是合并旧内容后的完整正文，不要只写新增或修改的部分。"
-            "title、topic、keywords 省略时保留原值，keywords 需要调整时给出完整新列表。"
+            "knowledge_id 必须来自 search_memory 的真实结果。"
+            "content 省略时保留原正文，只调整标题、主题或关键词等字段；"
+            "提供 content 时必须是合并旧内容后的完整正文，不要只写新增或修改的部分。"
+            "title、topic、keywords 省略时保留原值，keywords 需要调整时给出完整新列表"
+            "（最多10个，非字符串元素自动转为字符串）。"
             "内容与关键词都没有变化时不产生新版本。"
             "成功后检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
         ),
@@ -265,7 +268,7 @@ class MemorySkill(BaseSkill):
                 "keywords": {"type": "array", "items": {"type": "string"}},
                 "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
             },
-            "required": ["knowledge_id", "content"],
+            "required": ["knowledge_id"],
         },
         handler=_update_knowledge,
         mutates=True,

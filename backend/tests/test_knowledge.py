@@ -521,5 +521,36 @@ def test_update_knowledge_schema_requires_id_and_content():
     from agent.tools import registry
 
     tool = registry.get("update_knowledge")
-    assert tool.input_schema["required"] == ["knowledge_id", "content"]
+    # content 可选：支持只调关键词/标题等元数据的部分更新
+    assert tool.input_schema["required"] == ["knowledge_id"]
     assert tool.input_schema["properties"]["keywords"] == {"type": "array", "items": {"type": "string"}}
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_supports_keywords_only_partial_update(knowledge_storage, monkeypatch):
+    """部分更新：省略 content 只调关键词，正文保持不变（真实案例：模型只提交 keywords）。"""
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="F1 赛历", content="2026 赛季共 24 站，支持冲刺周末。", topic="F1",
+        keywords=["F1"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id,
+        "keywords": ["F1", "Formula 1", "一级方程式", 2026, "大奖赛", {"nested": True}],
+    })
+
+    assert result["success"] is True
+    assert result["version"] == 2
+    saved = (await store.list())[0]
+    # 正文不变、版本照常推进（keywords 变了）
+    assert saved.content == "2026 赛季共 24 站，支持冲刺周末。"
+    assert saved.title == "F1 赛历"
+    # 数字标量转字符串保留意图，复杂结构丢弃，截断到 10 个
+    assert saved.keywords == ["F1", "Formula 1", "一级方程式", "2026", "大奖赛"]
