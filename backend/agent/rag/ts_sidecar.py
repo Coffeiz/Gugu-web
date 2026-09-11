@@ -659,8 +659,9 @@ def _from_wire_document(raw: dict[str, Any], owner_user_id: str) -> IndexDocumen
 
 
 def _worker_document_key(document: IndexDocument) -> str:
-    parent = document.parent_document_id or document.document_id
-    return f"{document.source_type}:{parent}:{document.chunk_index}"
+    """稳定 chunk 槽位；契约统一收口在 agent.rag.delta。"""
+    from agent.rag.delta import chunk_slot_key
+    return chunk_slot_key(document)
 
 
 def scope_to_wire(scope: Scope) -> dict:
@@ -717,18 +718,9 @@ _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str,
 
 
 def _index_document_digest(document: IndexDocument) -> str:
-    """计算词法索引字段及召回展示上下文的摘要。"""
-    context = document.contextual_content() if document.source_type == "conversation" else ""
-    payload = "\x1f".join((
-        _worker_document_key(document),
-        document.source_type,
-        document.title,
-        document.summary,
-        document.content,
-        context,
-        "conversation-ranking-v1" if document.source_type == "conversation" else "",
-    ))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    """词法索引字段摘要；契约统一收口在 agent.rag.delta。"""
+    from agent.rag.delta import document_digest
+    return document_digest(document)
 
 
 async def get_lexical_client(owner_user_id: object, *, command: str, index_dir: str) -> TsSidecarClient:

@@ -76,8 +76,15 @@ async def replace_source_documents(
     owner_user_id: object,
     source_type: str,
     documents: list[IndexDocument],
+    *,
+    stats: dict[str, int] | None = None,
 ) -> int:
-    """按 chunk 增量替换一个来源，主数据不受影响。"""
+    """按 chunk 增量替换一个来源，主数据不受影响。
+
+    ``stats`` 传出诊断计数（inserted/updated/deleted），返回值保持来源 chunk 总数。
+    """
+    import time as _time
+    _started = _time.monotonic()
     rows = (await db.execute(select(KnowledgeIndexEntry).where(
         KnowledgeIndexEntry.owner_user_id == owner_user_id,
         KnowledgeIndexEntry.source_type == source_type,
@@ -86,6 +93,7 @@ async def replace_source_documents(
         (row.source_id, row.document_version, row.chunk_index): row
         for row in rows
     }
+    inserted = 0
     wanted: set[tuple[str, str, int]] = set()
     for document in documents:
         key = (document.source_id, document.version, document.chunk_index)
@@ -93,6 +101,7 @@ async def replace_source_documents(
         row = existing.get(key)
         if row is None:
             db.add(_to_row(document, owner_user_id))
+            inserted += 1
             continue
         replacement = _to_row(document, owner_user_id)
         for column in (
@@ -107,6 +116,11 @@ async def replace_source_documents(
     for row in stale:
         await db.delete(row)
     await db.flush()
+    if stats is not None:
+        stats["inserted"] = inserted
+        stats["updated"] = len(documents) - inserted
+        stats["deleted"] = len(stale)
+        stats["elapsed_ms"] = int((_time.monotonic() - _started) * 1000)
     # 本进程立即失效；其他 worker 会在下一次查询时用 indexed_at revision 检测。
     from agent.rag.index_cache import invalidate_index_cache
     await invalidate_index_cache(owner_user_id, source_type)

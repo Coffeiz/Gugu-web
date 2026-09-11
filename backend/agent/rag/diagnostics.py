@@ -143,17 +143,39 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
 
 
 def record_index_update(*, source_type: str, operation: str, document_count: int,
-                        attempt: int, success: bool, elapsed_ms: int) -> None:
-    """记录索引生命周期指标，不记录 owner、查询或正文。"""
+                        attempt: int, success: bool, elapsed_ms: int,
+                        mode: str = "source_replace",
+                        upsert_count: int | None = None,
+                        delete_count: int | None = None,
+                        projection_ms: int | None = None,
+                        status: str | None = None,
+                        base_revision_match: bool | None = None) -> None:
+    """记录索引生命周期指标（PRD-RAG-9 §9）；不记录 owner、查询或正文。
+
+    ``mode`` 区分 document_patch / source_replace；``status`` 使用 ready/failed/
+    revision_mismatch/no_change 等固定分类，不携带异常详情。
+    """
+    payload = {
+        "t": "rag_index",
+        "source_type": source_type,
+        "operation": operation,
+        "mode": mode,
+        "document_count": document_count,
+        "attempt": attempt,
+        "success": success,
+        "elapsed_ms": elapsed_ms,
+    }
+    if upsert_count is not None:
+        payload["upsert_count"] = upsert_count
+    if delete_count is not None:
+        payload["delete_count"] = delete_count
+    if projection_ms is not None:
+        payload["projection_ms"] = projection_ms
+    if status is not None:
+        payload["status"] = status
+    if base_revision_match is not None:
+        payload["base_revision_match"] = base_revision_match
     try:
-        _log.info(json.dumps({
-            "t": "rag_index",
-            "source_type": source_type,
-            "operation": operation,
-            "document_count": document_count,
-            "attempt": attempt,
-            "success": success,
-            "elapsed_ms": elapsed_ms,
-        }, ensure_ascii=False))
+        _log.info(json.dumps(payload, ensure_ascii=False))
     except Exception:
         pass

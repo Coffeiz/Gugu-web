@@ -60,12 +60,21 @@ async def handle_memory_index_event(event) -> bool:
                 attempt=attempt,
                 success=False,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
+                mode="source_replace",
+                status="failed",
             )
             return False
 
 
-async def rebuild_source_index(user_id: object, source_type: str, *, operation: str = "upsert") -> int:
-    """在索引更新事件中构建来源文档；召回阶段不再读取主数据正文。"""
+async def rebuild_source_index(
+    user_id: object, source_type: str, *, operation: str = "upsert",
+    stats_out: dict[str, object] | None = None,
+) -> int:
+    """在索引更新事件中构建来源文档；召回阶段不再读取主数据正文。
+
+    这是来源级全量重建（PRD-RAG-9 的 ``source_replace`` 回退/基线路径）：
+    读取来源全部对象并做来源内 chunk 对比替换。
+    """
     if source_type not in INDEX_EVENT_SOURCE_TYPES:
         raise ValueError(f"不支持的索引事件来源：{source_type}")
     key = f"{user_id}:{source_type}"
@@ -81,17 +90,27 @@ async def rebuild_source_index(user_id: object, source_type: str, *, operation: 
         engine = db_session.ensure_engine()
         if str(engine.url).startswith("sqlite") and engine.url.database is None:
             return 0
+        projection_started = time.monotonic()
         async with db_session._SessionLocal() as db:
             records = await build_source_records(db, user_id, source_type)
             if records is None:
                 raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
             documents = await records_to_write_documents(user_id, source_type, records)
-            count = await replace_source_documents(db, user_id, source_type, documents)
+            stats: dict[str, int] = {}
+            count = await replace_source_documents(db, user_id, source_type, documents, stats=stats)
             await db.commit()
+        projection_ms = int((time.monotonic() - projection_started) * 1000)
         if source_type == "knowledge":
             from agent.rag.vector_cache import sync_knowledge_index_vectors
 
             await sync_knowledge_index_vectors(user_id, documents)
+        if stats_out is not None:
+            stats_out.update({
+                "mode": "source_replace",
+                "upsert_count": stats.get("inserted", 0) + stats.get("updated", 0),
+                "delete_count": stats.get("deleted", 0),
+                "projection_ms": projection_ms,
+            })
         return count
 
 
@@ -100,9 +119,12 @@ async def handle_rag_index_event(event) -> bool:
     started = time.monotonic()
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            stats_out: dict[str, object] = {}
             count = await rebuild_source_index(
                 event.user_id, event.source_type, operation=event.operation,
+                stats_out=stats_out,
             )
+            stats = stats_out
             record_index_update(
                 source_type=event.source_type,
                 operation=event.operation,
@@ -110,6 +132,11 @@ async def handle_rag_index_event(event) -> bool:
                 attempt=attempt,
                 success=True,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
+                mode="source_replace",
+                upsert_count=stats.get("upsert_count"),
+                delete_count=stats.get("delete_count"),
+                projection_ms=stats.get("projection_ms"),
+                status="ready",
             )
             return True
         except Exception:

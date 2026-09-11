@@ -350,11 +350,11 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 ### Phase 0：契约、基线与差异工具
 
-- [ ] 冻结 `parent_key`、`chunk_key`、content hash 和 projection revision 契约。
-- [ ] 为现有来源级重建增加 `mode`、upsert/delete 数量和耗时诊断。
-- [ ] 抽出通用 chunk diff 工具，不复制 tokenizer 或切块逻辑。
-- [ ] 补齐重复事件、删除、无变化和 revision mismatch fixture。
-- [ ] 记录 Knowledge、file、project 在不同规模下的全量基线。
+- [x] 冻结 `parent_key`、`chunk_key`、content hash 和 projection revision 契约。
+- [x] 为现有来源级重建增加 `mode`、upsert/delete 数量和耗时诊断。
+- [x] 抽出通用 chunk diff 工具，不复制 tokenizer 或切块逻辑。
+- [x] 补齐重复事件、删除、无变化和 revision mismatch fixture。
+- [x] 记录 Knowledge、file、project 在不同规模下的全量基线。
 
 验收：同一输入下 diff 结果确定；正文不进入可见日志；旧来源级重建行为不变。
 

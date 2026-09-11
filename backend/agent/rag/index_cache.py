@@ -14,7 +14,6 @@ from agent.rag.models import Scope
 from agent.rag.ts_sidecar import (
     TsLexicalIndex,
     TsSidecarUnavailable,
-    _index_document_digest,
     get_lexical_client,
     index_dir_for_owner,
 )
@@ -46,9 +45,9 @@ def estimate_index_bytes(documents: list[IndexDocument], index) -> int:
 
 
 def _worker_document_key(document: IndexDocument) -> str:
-    """返回 sidecar 使用的稳定 chunk slot，不包含可变的文档版本。"""
-    parent = document.parent_document_id or document.document_id
-    return f"{document.source_type}:{parent}:{document.chunk_index}"
+    """稳定 chunk 槽位；契约统一收口在 agent.rag.delta。"""
+    from agent.rag.delta import chunk_slot_key
+    return chunk_slot_key(document)
 
 
 async def _persistent_vectors(
@@ -352,16 +351,11 @@ class KnowledgeIndexCache:
                         and getattr(client, "_revision", None) == previous_revision
                     )
                     if can_patch:
-                        previous = {_worker_document_key(document): document for document in previous_documents}
-                        current = {_worker_document_key(document): document for document in documents}
-                        upserts = [
-                            document for key, document in current.items()
-                            if key not in previous or _index_document_digest(previous[key]) != _index_document_digest(document)
-                        ]
-                        deletes = [
-                            _worker_document_key(document) for key, document in previous.items()
-                            if key not in current
-                        ]
+                        from agent.rag.delta import compute_chunk_delta
+
+                        delta = compute_chunk_delta(previous_documents, documents)
+                        upserts = list(delta.upserts)
+                        deletes = list(delta.deletes)
                         await client.patch(
                             upserts, deletes, revision, previous_revision,
                             vectors=vectors, vector_version=vector_tag,
