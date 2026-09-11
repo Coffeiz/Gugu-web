@@ -53,8 +53,8 @@ def _stamped_version(index_file: Path) -> str | None:
     return match.group(1).decode("utf-8", "replace") if match else None
 
 
-def _is_newer_version(stamped: str, current: str) -> bool:
-    """stamped 是否严格新于 current；任一侧解析不出数字段就返回 False（按「不比当前新」处理）。
+def _is_newer_version(stamped: str, current: str) -> bool | None:
+    """stamped 是否严格新于 current；任一侧解析不出数字段返回 None（无法比较）。
 
     保护回滚场景：制品降级后不该把新版本写下的索引当旧数据清掉——它们是未来升级回去
     时仍然有效的缓存，删了只会让所有活跃用户重来一次冷重建。
@@ -66,7 +66,9 @@ def _is_newer_version(stamped: str, current: str) -> bool:
             return None
 
     left, right = parts(stamped), parts(current)
-    return left is not None and right is not None and left > right
+    if left is None or right is None:
+        return None
+    return left > right
 
 
 def _is_stale_index_dir(
@@ -85,10 +87,11 @@ def _is_stale_index_dir(
             return False
         # 旧制品写下的索引，当前 worker 恢复时会判 version_mismatch 直接丢弃重建，
         # 内容确定不会被复用，属于死数据，不必再等 TTL 到期（「重建完成后清理旧版本」）。
-        # 只清严格更旧的版本：比当前新的留着，回滚后再升回去还是有效缓存。
+        # 只清确定严格更旧的版本：比当前新的（回滚后仍是有效缓存）或无法比较的
+        # （版本串解析不出数字段，按未知处理）都不动，留给 TTL。
         stamped = _stamped_version(index_file)
         if current_version and stamped and stamped != current_version:
-            if not _is_newer_version(stamped, current_version):
+            if _is_newer_version(stamped, current_version) is False:
                 return True
         return index_file.stat().st_mtime < cutoff
     except OSError:

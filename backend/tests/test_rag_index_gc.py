@@ -110,12 +110,41 @@ async def test_sweep_keeps_newer_version_index_after_downgrade(tmp_path, monkeyp
 
 
 def test_version_ordering_guard_falls_back_when_unparseable():
-    """版本串解析不出数字段时不能猜大小，按「不比当前新」处理（宁可留给 TTL）。"""
+    """三态比较：True=更新、False=更旧、None=无法比较（不能猜大小）。"""
     assert rag_index_gc._is_newer_version("0.4.0", "0.3.3") is True
     assert rag_index_gc._is_newer_version("0.3.10", "0.3.9") is True
     assert rag_index_gc._is_newer_version("0.2.0", "0.3.3") is False
-    assert rag_index_gc._is_newer_version("nightly", "0.3.3") is False
+    assert rag_index_gc._is_newer_version("nightly", "0.3.3") is None
+    assert rag_index_gc._is_newer_version("0.3.3", "nightly") is None
     assert rag_index_gc._is_newer_version("0.3.3", "0.3.3") is False
+
+
+@pytest.mark.asyncio
+async def test_sweep_keeps_unparseable_version_index(tmp_path, monkeypatch):
+    """版本串解析不了的索引按未知处理：不因比对不了就删，留给 TTL。"""
+    root = tmp_path / "rag-index"
+    unknown = root / ("b" * 32)
+    unknown.mkdir(parents=True)
+    (unknown / "index.json").write_text('{"version": "nightly", "revision": "r"}')
+
+    monkeypatch.setattr(rag_index_gc, "_index_roots", lambda: [root])
+    monkeypatch.setattr(rag_index_gc, "_configured_ttl", lambda: 30 * 24 * 3600)
+    monkeypatch.setattr("agent.rag.ts_sidecar.active_index_dirs", lambda: set())
+    monkeypatch.setattr("agent.rag.ts_sidecar.worker_artifact_version", lambda: "0.3.3")
+
+    class Lock:
+        async def acquire(self, blocking=False):
+            return True
+        async def release(self):
+            return None
+
+    class Redis:
+        def lock(self, *args, **kwargs):
+            return Lock()
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: Redis())
+    assert await rag_index_gc.sweep_ts_index_cache() == 0
+    assert unknown.exists()
 
 
 @pytest.mark.asyncio

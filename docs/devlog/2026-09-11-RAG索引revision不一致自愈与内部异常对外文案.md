@@ -45,20 +45,22 @@ devserver 磁盘证据：
 ### 三、重建/升级后清理旧版本索引
 
 `rag_index_gc` 原先只按 30 天 TTL 清理。现在 `_is_stale_index_dir` 追加版本戳判定：读 `index.json`
-头部 8 KB（`version` 是 `JSON.stringify` 的第一个字段，不能为了取版本戳解析几十 MB 文件），
-比当前制品版本**严格更旧**即视为死数据直接删——旧制品写下的索引当前 worker 恢复时会判
-`version_mismatch` 丢弃重建，不会再有复用价值。只清更旧的版本而不清「不同」：制品回滚时新版本
-写下的索引仍然有效，删掉只会让升级回去时所有活跃用户冷重建。取不到制品版本、索引无版本戳，
-或版本串解析不出数字段时一律按「未知」处理，只走 TTL，不因比对不了就删数据；
-active 目录、`index.json.tmp` 仍受保护。
+头部 8 KB（`version` 是 `JSON.stringify` 的第一个字段，不能为了取版本戳解析几十 MB 文件），与
+`worker_artifact_version()`（读打包制品里的 `RAG_WORKER_VERSION`）做**三态**比较——比当前制品
+**严格更旧**才删（旧制品写下的索引恢复时必判 `version_mismatch` 丢弃重建，属死数据，不必等 TTL）；
+**比当前新**的留着（回滚时仍是有效缓存，删了升级回去全部冷重建）；**无法比较**（任一侧解析不出
+数字段，如 `nightly`）按未知处理、只走 TTL。评审曾抓到第一版把「解析失败」折叠成 `False` 导致
+`nightly` 会被误删（P1），已改 `_is_newer_version() -> bool | None` 并补 GC 层不删未知版本的回归。
+取不到制品版本或索引无版本戳同样只走 TTL；active 目录、`index.json.tmp` 仍受保护。
 
 ## 验证
 
 - 单元测试：worker error 响应带 `code`（无 `code` 时为 None）、瞬态响应不覆盖 `_revision`、
   `replace_transient(force=True)` 跳过指纹短路、`worker_artifact_version` 读制品/回退/未知三态、
   resync+retry 只重试一次（第二次仍失败原样抛出、非 revision 错误不重同步）、GC 旧版本删除与
-  未知版本/更高版本保留、版本串不可解析时不猜大小、`internal_error_text` 映射与 dispatch 边界的对外文案。
-- 后端全量 `2516 passed`。
+  未知版本/更高版本保留、三态版本比较（解析失败=None 不删）、`internal_error_text` 映射与
+  dispatch 边界的对外文案。
+- 后端全量 `2519 passed`。
 - devserver 真机：对受影响用户走完整 `search_knowledge`（46 MB 索引）返回 2/3 条结果，engine=typescript，
   无 `TsSidecarUnavailable`。
 - devserver 真机探针（临时目录，用后已删）：先用 `rev-A` 建索引再推进到 `rev-B`，拿 `rev-A` 的索引对象查询
