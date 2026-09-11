@@ -1,6 +1,6 @@
 <template>
   <div class="terminals-page">
-    <section class="terminals-panel glass-card design-section">
+    <section class="terminals-panel glass-card">
       <div v-if="error && !selected" class="terminal-page-error" role="alert">{{ error }}</div>
       <div v-if="!enabled" class="terminal-empty">{{ t('terminals.unavailable') }}</div>
       <div v-else class="terminal-layout">
@@ -405,7 +405,6 @@ onUnmounted(() => {
 .terminal-add-card:disabled { cursor:not-allowed; opacity:.5; }
 .terminal-add-card-text { font-size:12px; font-weight:600; }
 .terminal-associations { color:var(--content-tertiary); font-size:10px; }
-.terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
 
 .terminal-list.semantic-group { padding:var(--space-lg); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; }
 .terminal-actions :deep(.app-action-button) { min-height:var(--control-height-sm); padding:0 var(--space-sm); border-color:transparent; background:transparent; color:var(--content-secondary); box-shadow:none; transform:none; }
