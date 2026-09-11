@@ -199,7 +199,10 @@ const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
 // 可编辑 = 后端认得的文本类扩展名 + 真实文件（md 走「编辑」按钮切换态用得到；txt/代码类扩展名
 // 不看这个——它们不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
-const isTextDocument = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) || isTextMime(props.fileContext?.mimeType))
+// 无扩展名文件（.gitignore/.env 等点文件）同属纯文本：没有 ext 也没有 MIME 可判，直接放行。
+const isTextDocument = computed(() =>
+  !(props.ext || '').trim() ||
+  EDITABLE_EXTS.has((props.ext || '').toLowerCase()) || isTextMime(props.fileContext?.mimeType))
 const editable = computed(() => isTextDocument.value && isEditableDocument.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
 // 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到

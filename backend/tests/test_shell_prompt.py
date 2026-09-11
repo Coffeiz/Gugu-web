@@ -16,6 +16,9 @@ def test_shell_prompt_only_appends_for_registered_shell_tool():
     assert "`/personal`：当前用户文件库的个人文件空间" in with_shell
     assert "`/project`：当前用户文件库的项目空间" in with_shell
     assert "Workspace 只决定默认目录" in with_shell
+    # 绑定/授权只约束 Shell，文件工具不受位置写权限拦截（2026-09-11 产品定案）
+    assert "不限制文件库工具" in with_shell
+    assert "绑定只决定它们省略目标时的默认落点" in with_shell
 
 
 def test_shell_prompt_is_idempotent():

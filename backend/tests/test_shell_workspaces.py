@@ -98,8 +98,9 @@ async def test_workspace_can_be_renamed_disabled_and_deleted_without_deleting_pr
 
 
 @pytest.mark.asyncio
-async def test_bound_workspace_resolves_file_target_and_rejects_other_project(db, user_a):
-    """绑定个人文件夹时，文件工具默认落到该文件夹，不能被同值项目 id 带偏。"""
+async def test_bound_workspace_resolves_file_target_and_allows_other_project(db, user_a):
+    """绑定个人文件夹时，文件工具默认落到该文件夹；显式其它项目按参数使用
+    （围栏只约束 Shell，2026-09-11 产品定案）。"""
     personal = Folder(user_id=user_a.id, name="工作区文件夹", project_id=None)
     project = Project(user_id=user_a.id, name="另一个项目")
     db.add_all([personal, project])
@@ -120,9 +121,9 @@ async def test_bound_workspace_resolves_file_target_and_rejects_other_project(db
         assert await _resolve_create_location(db, user_a.id, {}) == (
             "personal", None, personal.id, None, None,
         )
-        conflict = await _resolve_create_location(
+        resolved = await _resolve_create_location(
             db, user_a.id, {"space": "project", "project_id": project.id},
         )
-        assert "不能写入其它项目或文件夹" in conflict[4]
+        assert resolved == ("project", project.id, None, None, None)
     finally:
         reset_dispatch_session(token)

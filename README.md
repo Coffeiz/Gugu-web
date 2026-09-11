@@ -563,6 +563,6 @@ Bug 修复应尽量补充对应的 regression test；报告问题时请提供复
 
 问题反馈和合作联系请优先使用 GitHub [Issues](https://github.com/Coffeiz/Gugu-web/issues)。
 
-- Email：<mailto:coffeiz216@gmail.com>
+- Email：<coffeiz216@gmail.com>
 - 个人主页：[coffeiz.space](https://coffeiz.space)
 - QQ 群：`929152357`

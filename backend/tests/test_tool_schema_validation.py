@@ -488,6 +488,49 @@ async def test_dispatch_rolls_back_failed_task_transaction(db, user_a):
     assert persisted is None
 
 
+def test_internal_error_text_only_maps_registered_types():
+    """已登记的内部异常给人话；未登记返回 None，让调用方按原格式透出类名。"""
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+    from agent.tools.tool_contract import internal_error_text
+
+    assert internal_error_text(TsSidecarUnavailable("boom")) == (
+        "知识检索索引正在重建，暂时不可用；请稍后重试，不要重复提交同一查询。"
+    )
+    assert internal_error_text(RuntimeError("boom")) is None
+
+
+async def test_dispatch_hides_registered_internal_exception_from_model(monkeypatch):
+    """注册过的内部异常：模型/用户只看到人话，类名与原始消息只进 gugu-diag.log。"""
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    diag: list[tuple] = []
+    monkeypatch.setattr(tool_base, "diag_log", lambda *args: diag.append(args))
+
+    async def handler(db, user_id, args):
+        raise TsSidecarUnavailable("TS 统一查询索引版本不一致", code="revision_mismatch")
+
+    reg, _ = _make_registry({"type": "object"}, handler)
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {})
+    payload = json.loads(raw)
+
+    assert "TsSidecarUnavailable" not in payload["error"]
+    assert payload["error"].startswith("知识检索索引正在重建")
+    assert payload["usage_hint"] and payload["next_action"]
+    # 原始异常仍完整落进受限诊断出口。
+    assert diag and isinstance(diag[0][1], TsSidecarUnavailable)
+
+
+async def test_dispatch_keeps_class_name_for_unregistered_exception(db, user_a):
+    """未登记异常保持原格式：类名是模型判断「改参数还是等恢复」的唯一线索。"""
+
+    async def handler(db, user_id, args):
+        raise RuntimeError("测试事务失败")
+
+    reg, _ = _make_registry({"type": "object"}, handler)
+    raw, _ = await reg.dispatch(user_a.id, "schema_test_tool", {})
+    assert "RuntimeError" in json.loads(raw)["error"]
+
+
 async def test_explicit_additional_properties_false_rejected():
     reg, _ = _make_registry({
         "type": "object",

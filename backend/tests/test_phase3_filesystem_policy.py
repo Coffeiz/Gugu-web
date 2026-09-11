@@ -1,14 +1,14 @@
-"""PRD-SHELL-4 Phase 3：文件工具策略复用与显式脚本边界。"""
+"""PRD-SHELL-4 Phase 3：文件工具与 policy 的边界。
+
+2026-09-11 产品定案：workspace 绑定与完整沙箱授权只约束 Shell，文件工具不再
+按绑定拦截；绑定只作为省略目标时的默认落点。本文件覆盖该边界。
+"""
 
 import pytest
 from pathlib import PurePosixPath
 from sqlalchemy import select
 
 from app.models import ConversationSession, File, Folder, Workspace
-from app.services.filesystem_authorization import (
-    FilesystemPolicy,
-    filesystem_location_can_write,
-)
 
 
 async def _persist(db, row):
@@ -19,62 +19,35 @@ async def _persist(db, row):
 
 
 @pytest.mark.asyncio
-async def test_workspace_policy_allows_only_workspace_folder_subtree(db, user_a):
-    root = await _persist(db, Folder(user_id=user_a.id, name="脚本根"))
-    child = await _persist(db, Folder(user_id=user_a.id, parent_id=root.id, name="jobs"))
-    other = await _persist(db, Folder(user_id=user_a.id, name="其它"))
+async def test_bound_session_explicit_targets_are_honored(db, user_a):
+    """绑定工作区只提供默认落点；显式 personal/project 目标按参数使用（2026-09-11 产品定案：
+    沙箱/工作区围栏只约束 Shell，文件工具不再按绑定拦截）。"""
+    personal = await _persist(db, Folder(user_id=user_a.id, name="个人夹"))
+    project = await _persist(db, __import__("app.models", fromlist=["Project"]).Project(user_id=user_a.id, name="测试项目"))
     workspace = await _persist(db, Workspace(
-        user_id=user_a.id, name="脚本工作区", kind="folder", folder_id=root.id,
+        user_id=user_a.id, name="绑定工作区", kind="folder", folder_id=personal.id,
         enabled=True,
     ))
-    policy = FilesystemPolicy(workspace_id=workspace.id)
+    session = await _persist(db, ConversationSession(user_id=user_a.id, title="绑定会话", source="web"))
+    session.workspace_id = workspace.id
+    await db.commit()
 
-    assert await filesystem_location_can_write(
-        db, user_a.id, policy, space="personal", folder_id=root.id,
-    )
-    assert await filesystem_location_can_write(
-        db, user_a.id, policy, space="personal", folder_id=child.id,
-    )
-    assert not await filesystem_location_can_write(
-        db, user_a.id, policy, space="personal", folder_id=other.id,
-    )
-    assert not await filesystem_location_can_write(
-        db, user_a.id, policy, space="personal", folder_id=None,
-    )
+    from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    from agent.tools.files import _resolve_create_location
 
-
-@pytest.mark.asyncio
-async def test_agent_file_target_accepts_workspace_descendant_folder(db, user_a):
-    """move/copy 目标应遵循统一策略，不能把 workspace 根误当成唯一目录。"""
-    from agent.tools.files import _location_matches
-
-    root = await _persist(db, Folder(user_id=user_a.id, name="移动根"))
-    child = await _persist(db, Folder(user_id=user_a.id, parent_id=root.id, name="图表"))
-    other = await _persist(db, Folder(user_id=user_a.id, name="其它位置"))
-    workspace = await _persist(db, Workspace(
-        user_id=user_a.id, name="移动工作区", kind="folder", folder_id=root.id,
-        enabled=True,
-    ))
-    target = {"workspace_id": workspace.id}
-
-    assert await _location_matches(
-        db, user_a.id, "personal", None, child.id, target,
-    )
-    assert not await _location_matches(
-        db, user_a.id, "personal", None, other.id, target,
-    )
-
-
-@pytest.mark.asyncio
-async def test_full_grant_allows_personal_and_project_file_writes(db, user_a):
-    policy = FilesystemPolicy(personal_read_only=False, project_read_only=False)
-
-    assert await filesystem_location_can_write(
-        db, user_a.id, policy, space="personal", folder_id=None,
-    )
-    assert await filesystem_location_can_write(
-        db, user_a.id, policy, space="project", project_id=999, folder_id=None,
-    )
+    token = set_dispatch_session(session.id, session, "test-explicit-target")
+    try:
+        assert await _resolve_create_location(db, user_a.id, {}) == (
+            "personal", None, personal.id, None, None,
+        )
+        assert await _resolve_create_location(
+            db, user_a.id, {"space": "project", "project_id": project.id},
+        ) == ("project", project.id, None, None, None)
+        assert await _resolve_create_location(
+            db, user_a.id, {"folder_id": personal.id},
+        ) == ("personal", None, personal.id, None, None)
+    finally:
+        reset_dispatch_session(token)
 
 
 @pytest.mark.asyncio
@@ -176,7 +149,9 @@ async def test_agent_copy_keeps_bound_directory_workspace_as_default_with_full_g
 
 
 @pytest.mark.asyncio
-async def test_web_download_checks_write_policy_before_fetching(db, user_a):
+async def test_web_download_not_blocked_by_workspace_binding(db, user_a):
+    """下载落库属于文件工具，不再按 workspace 绑定拦截：没有完整沙箱授权的会话
+    也应把请求发出去（2026-09-11 产品定案，围栏只约束 Shell）。"""
     from unittest.mock import AsyncMock, patch
 
     from agent.tools import web
@@ -184,7 +159,7 @@ async def test_web_download_checks_write_policy_before_fetching(db, user_a):
 
     session = await _persist(db, ConversationSession(user_id=user_a.id, title="Phase3 下载测试"))
     token = set_dispatch_session(session.id, session, "phase3-web-download")
-    fetch = AsyncMock()
+    fetch = AsyncMock(return_value=(500, {}, b""))
     try:
         with patch.object(web, "_download_bytes", new=fetch):
             result = await web._web_download(
@@ -193,33 +168,52 @@ async def test_web_download_checks_write_policy_before_fetching(db, user_a):
     finally:
         reset_dispatch_session(token)
 
-    assert result["error"].startswith("当前文件系统权限只允许读取")
-    fetch.assert_not_awaited()
+    fetch.assert_awaited()
+    assert result["error"].startswith("下载失败")
 
 
 @pytest.mark.asyncio
-async def test_scheduled_task_file_policy_uses_task_subject(db, user_a):
-    from agent.tools.base import (
-        reset_dispatch_filesystem_subject,
-        set_dispatch_filesystem_subject,
-    )
-    from agent.tools.filesystem_policy import write_access_error
-    from app.models import ScheduledTask
+async def test_bound_session_writes_outside_workspace(db, user_a, tmp_path, monkeypatch):
+    """绑定 workspace 的会话仍可 create/delete 个人空间文件——绑定只给默认落点。"""
+    from app.core.config import get_settings
+    from agent.tools import files as agent_files
+    from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    from app.services.storage import LocalStorageBackend
+    from app.services.storage.file_service import FileService
 
-    task = await _persist(db, ScheduledTask(
-        user_id=user_a.id, name="Phase3 任务", payload="", cron="0 9 * * *",
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+
+    own = await _persist(db, Folder(user_id=user_a.id, name="个人根夹"))
+    workspace = await _persist(db, Workspace(
+        user_id=user_a.id, name="绑定工作区", kind="folder", folder_id=own.id,
+        enabled=True,
     ))
-    token = set_dispatch_filesystem_subject({
-        "subject_type": "scheduled_task", "subject_id": task.id,
-    })
-    try:
-        error = await write_access_error(
-            db, user_a.id, space="personal", folder_id=None,
-        )
-    finally:
-        reset_dispatch_filesystem_subject(token)
+    session = await _persist(db, ConversationSession(user_id=user_a.id, title="越界写测试"))
+    session.workspace_id = workspace.id
+    await db.commit()
 
-    assert error is not None and error.startswith("当前文件系统权限只允许读取")
+    outside_service = FileService(db, storage=LocalStorageBackend(tmp_path))
+    outside = await outside_service.create_file(
+        user_a.id, space="personal", project_id=None, folder_id=None,
+        stage_name="", mind_map_id=None, display_name="绑定外文件", ext="md",
+        mime_type="text/markdown", data="正文".encode(),
+    )
+    await db.commit()
+
+    token = set_dispatch_session(session.id, session, "phase3-bound-outside-write")
+    try:
+        renamed = await agent_files._rename_file(
+            db, user_a.id, {"file_id": outside.file.id, "new_name": "绑定外改名"},
+        )
+        assert renamed.get("success") is True, renamed
+        deleted = await agent_files._delete_file(db, user_a.id, {"file_id": outside.file.id})
+        assert deleted.get("success") is True, deleted
+    finally:
+        reset_dispatch_session(token)
+    await db.refresh(outside.file)
+    assert outside.file.deleted_at is not None
 
 
 def test_script_path_rejects_absolute_traversal_and_platform_separators():

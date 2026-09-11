@@ -13,10 +13,9 @@ from app.services.files.browser import (
 )
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import resolve_folder_path
-from agent.tools.filesystem_policy import file_write_access_error, folder_write_space, write_access_error
 from .locations import (
-    _bound_workspace_target, _coerce_loc, _folder_by_name, _location_matches,
-    _norm_target, _resolve_file, _target_loc, _workspace_conflict,
+    _bound_workspace_target, _coerce_loc, _folder_by_name,
+    _norm_target, _resolve_file, _target_loc,
 )
 
 async def _move_one(db, user_id, f, target: dict) -> dict:
@@ -27,9 +26,6 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
         return loc_err
-    source_error = await file_write_access_error(db, user_id, f)
-    if source_error:
-        return {"error": source_error, "name": f"{f.display_name}.{f.ext}"}
 
     # 支持按文件夹「名称」移动（agent 通常不知道 folder_id）
     fname = target.get("folder")
@@ -62,12 +58,6 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
         return json.dumps({"error": "未指定有效目标或文件已在该位置，未移动。"
                                     "请用 target.folder 指定目标文件夹名，或先用 list_folders 确认。",
                            "current_folder_id": f.folder_id})
-
-    target_error = await write_access_error(
-        db, user_id, space=space, project_id=new_pid, folder_id=folder_id,
-    )
-    if target_error:
-        return {"error": target_error, "name": f"{f.display_name}.{f.ext}"}
 
     try:
         result = await FileService(db).update_file(
@@ -167,17 +157,6 @@ async def _resolve_target(db, user_id, target: dict):
 async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id, t_workspace_id=None) -> dict:
     """委托 FileService 搬文件夹树，并同步重建所有后代文件的物理路径。"""
     name = folder.name
-    source_error = await write_access_error(
-        db, user_id, space=folder_write_space(folder),
-        project_id=folder.project_id, folder_id=folder.id,
-    )
-    if source_error:
-        return {"error": source_error, "folder": name}
-    target_error = await write_access_error(
-        db, user_id, space=t_space, project_id=t_pid, folder_id=t_parent_id,
-    )
-    if target_error:
-        return {"error": target_error, "folder": name}
     sub_ids = await _descendant_folder_ids(db, user_id, folder.id)
     try:
         await FileService(db).move_folder(
@@ -207,10 +186,6 @@ async def _move_items(db, user_id, args: dict):
     t_space, t_pid, t_folder_id, t_workspace_id, terr = await _resolve_target(db, user_id, target)
     if terr:
         return terr
-    if workspace_target is not None and not await _location_matches(
-        db, user_id, t_space, t_pid, t_folder_id, workspace_target,
-    ):
-        return _workspace_conflict(workspace_target)
     file_target = {
         "space": t_space,
         "project_id": t_pid,
@@ -258,41 +233,37 @@ async def _move_items(db, user_id, args: dict):
 
 
 async def _create_folder(db, user_id, args: dict):
+    """绑定工作区只提供省略目标时的默认落点；显式 project_id/parent_id 按参数
+    使用（围栏只约束 Shell，文件工具不受会话绑定限制）。"""
     workspace_target = await _bound_workspace_target(db, user_id)
     project_id = args.get("project_id")
     parent_id = args.get("parent_id")
     workspace_directory_id = None
-    if workspace_target is not None:
-        try:
-            explicit_project_id = int(project_id) if project_id not in (None, "") else None
-            explicit_parent_id = int(parent_id) if parent_id not in (None, "") else None
-        except (TypeError, ValueError):
-            return _workspace_conflict(workspace_target)
-        if explicit_project_id is not None and explicit_project_id != workspace_target.get("project_id"):
-            return _workspace_conflict(workspace_target)
-        project_id = workspace_target.get("project_id")
-        workspace_directory_id = workspace_target.get("workspace_directory_id")
-        if explicit_parent_id is None:
-            parent_id = workspace_target.get("folder_id")
-        else:
-            parent = await get_user_folder(db, user_id, explicit_parent_id)
-            if (
-                not parent
-                or parent.project_id != workspace_target.get("project_id")
-                or parent.workspace_directory_id != workspace_target.get("workspace_directory_id")
-            ):
-                return _workspace_conflict(workspace_target)
-            if workspace_target.get("folder_id") is not None and explicit_parent_id != workspace_target["folder_id"]:
-                return _workspace_conflict(workspace_target)
-            parent_id = explicit_parent_id
-    access_error = await write_access_error(
-        db, user_id,
-        space=(workspace_target.get("space") if workspace_target
-               else ("project" if project_id is not None else "personal")),
-        project_id=project_id, folder_id=parent_id,
+    explicit_location = any(
+        value not in (None, "") for value in (project_id, parent_id, args.get("space"))
     )
-    if access_error:
-        return {"error": access_error}
+    if workspace_target is not None and not explicit_location:
+        project_id = workspace_target.get("project_id")
+        parent_id = workspace_target.get("folder_id")
+        workspace_directory_id = workspace_target.get("workspace_directory_id")
+    else:
+        if parent_id not in (None, ""):
+            try:
+                parent_id = int(parent_id)
+            except (TypeError, ValueError):
+                return {"error": "parent_id 必须是文件夹 id"}
+            parent = await get_user_folder(db, user_id, parent_id)
+            if not parent:
+                return {"error": "目标父文件夹不存在"}
+            # 空间跟随父文件夹：项目文件夹→项目空间，工作区文件夹→工作区空间
+            if project_id in (None, ""):
+                project_id = parent.project_id
+                workspace_directory_id = parent.workspace_directory_id
+        elif project_id in (None, "") and workspace_target is not None:
+            # 只给了 name：绑定会话仍默认落绑定工作区
+            project_id = workspace_target.get("project_id")
+            parent_id = workspace_target.get("folder_id")
+            workspace_directory_id = workspace_target.get("workspace_directory_id")
     try:
         fo = await FileService(db).create_folder(
             user_id, name=args["name"], parent_id=parent_id,
@@ -368,12 +339,6 @@ async def _rename_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
-    access_error = await write_access_error(
-        db, user_id, space=folder_write_space(fo),
-        project_id=fo.project_id, folder_id=fo.id,
-    )
-    if access_error:
-        return {"error": access_error}
     try:
         fo = await FileService(db).rename_folder(
             user_id, fo.id, args["new_name"], client_version=fo.version,
@@ -394,12 +359,6 @@ async def _delete_folder(db, user_id, args: dict):
             folder = await _find_folder(db, user_id, {"folder_id": folder_id})
             if isinstance(folder, str):
                 return folder
-            access_error = await write_access_error(
-                db, user_id, space=folder_write_space(folder),
-                project_id=folder.project_id, folder_id=folder.id,
-            )
-            if access_error:
-                return {"error": access_error}
             folders.append(folder)
         results = []
         try:
@@ -414,12 +373,6 @@ async def _delete_folder(db, user_id, args: dict):
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
-    access_error = await write_access_error(
-        db, user_id, space=folder_write_space(fo),
-        project_id=fo.project_id, folder_id=fo.id,
-    )
-    if access_error:
-        return {"error": access_error}
     fid = fo.id
     fname = fo.name
     try:

@@ -351,6 +351,20 @@ async def build_dynamic_prompt(
         db, user_id, session=session, workspace_id=workspace_id,
     )
     lines.append(f"- 当前工作目录映射：/workspace → {cwd_mapping}；/workspace 不是独立的隐藏文件区。")
+    # /personal、/project 的挂载与可写性由完整用户沙箱授权决定；这里必须显式声明，
+    # 否则静态 shell.md 要求模型「以本轮权限状态为准」，但状态里从没写过这两件事，
+    # 模型只能靠用户的话猜自己有没有写权限（2026-09-11 修复）。
+    if getattr(getattr(settings, "storage", None), "backend", "local") != "oss":
+        if safe.full_user_sandbox_write:
+            lines.append(
+                "- /personal、/project：本轮已按可读写挂载（完整用户沙箱授权生效），"
+                "可直接在其中创建、修改和删除文件。"
+            )
+        else:
+            lines.append(
+                "- /personal、/project：本轮以只读方式挂载。要写入（新建、修改、删除）需先获得"
+                "本轮完整用户沙箱授权；未授权时不要反复重试同一写入命令，也不要换路径或换工具绕过只读。"
+            )
     if dangerous_enabled:
         lines.append(
             "- 全部 Shell 命令：已开放，但不是预授权；删除、覆盖、移动、提权、服务控制、"
