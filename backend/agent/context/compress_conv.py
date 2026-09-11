@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from uuid import uuid4
 
 from redis.exceptions import LockNotOwnedError
@@ -32,11 +31,7 @@ logger = logging.getLogger(__name__)
 # provider 实际上下文达到该比例后，由 agent.core 在当前 round 内触发压缩。
 AUTO_COMPACTION_RATIO = 0.90
 _RECENT_HISTORY_KEEP_CHARS = 20_000
-# 在模型预算允许时，优先从当前 session history 分支出一次摘要请求，保持稳定
-# provider 前缀；超出该上限才退回分块滚动，避免一次摘要输入超过 provider 硬限制。
 _COMPRESS_LOCK_TIMEOUT = 300
-
-_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
 _SESSION_RUN_LOCK_TIMEOUT = 300
 _SESSION_RUN_HEARTBEAT_INTERVAL = 15
 _BASELINE_WAIT_INTERVAL = 0.1
@@ -62,31 +57,58 @@ async def _read_execution_state(session_id: int) -> str | None:
     import app.db.session as _sess
     from app.models import ConversationSession
 
+    # 不能假设调用方已经初始化过引擎：web 后台生成在进入会话门前就会读执行
+    # 状态，那里是进程内第一个 DB 使用点；ensure_engine 同时负责跨事件循环
+    # 重建，避免复用到别的 loop 上缓存连接的旧池。
+    _sess.ensure_engine()
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id)
         return str(session.execution_state) if session is not None else None
 
 
 async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
-    """回收进程退出后遗留的 ``running`` 会话状态。
+    """回收进程退出后遗留的 ``running`` / ``baseline_updating`` 会话状态。
 
     生成任务正常结束会在 genstream 和会话行上分别收口；worker 被杀死或重启
-    时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。只有在
-    Redis 明确可用且生成快照、owner、lease 全部消失时才允许修复，Redis 故障
-    或 baseline 压缩状态都不会被误判。
+    时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。两种情况
+    允许修复：① Redis 明确可用且生成快照、owner、lease 全部消失；② 快照仍在
+    但 run 进程心跳已断（probe.stale，crash 后 TTL 内的僵尸快照）——此时同时
+    清掉 Redis 残留，否则 is_active 会在整个 TTL 窗口内挡住新消息、让终止按钮
+    和续看全部空转。``baseline_updating`` 是基线提交被打断后的孤儿态：只有
+    压缩锁（带 TTL）也已消失时才认定写进程不在了，锁还在就仍在提交中。
     """
     from agent.llm import genstream
     from app.models import ConversationSession
     import app.db.session as _sess
 
     status = await genstream.probe(session_id)
-    if not status.get("redis_ok") or status.get("active"):
+    if not status.get("redis_ok") or (status.get("active") and not status.get("stale")):
         return False
+    if status.get("stale"):
+        await genstream.reap(session_id)
 
+    baseline_stuck = False
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id, with_for_update=True)
-        if session is None or session.execution_state != "running":
+        if session is None or session.execution_state not in {"running", "baseline_updating"}:
             return False
+        if user_id is not None and session.user_id != user_id:
+            return False
+        if session.execution_state == "baseline_updating":
+            # 压缩锁在 baseline_updating 之前取得（见 compress_session），锁消失
+            # 才能证明写进程已不在；锁有 TTL，崩溃后最多 _COMPRESS_LOCK_TIMEOUT 秒。
+            from app.core import redis as redis_core
+            try:
+                baseline_stuck = not await redis_core.get_redis().exists(
+                    f"agent:context:compress:{session_id}"
+                )
+            except Exception:
+                return False
+            if not baseline_stuck:
+                return False
+        session.execution_state = "idle"
+        session.active_run_id = None
+        await db.commit()
         if user_id is not None and session.user_id != user_id:
             return False
         session.execution_state = "idle"
@@ -98,13 +120,28 @@ async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
 
 
 async def _wait_for_baseline_idle(session_id: int) -> None:
-    """等待持久化 baseline 更新结束，而不是只看当前进程的 Task。"""
+    """等待持久化 baseline 更新结束，而不是只看当前进程的 Task。
+
+    等待期间顺带做孤儿检测：基线提交进程崩溃后 ``baseline_updating`` 没人
+    收口（写进程的 finally 不会执行），新消息会一直干等到超时。recover 的
+    判据自带压缩锁检查，误伤面为零；这里按低频节流调用即可。
+    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _COMPRESS_LOCK_TIMEOUT
+    next_recover_at = 0.0
     while True:
         state = await _read_execution_state(session_id)
         if state != "baseline_updating":
             return
+        now = loop.time()
+        if now >= next_recover_at:
+            next_recover_at = now + 5.0
+            try:
+                await recover_orphaned_session(session_id)
+            except Exception:
+                logger.debug("[compress_conv] session=%s baseline 孤儿检测失败", session_id, exc_info=True)
+                await asyncio.sleep(_BASELINE_WAIT_INTERVAL)
+                continue
         remaining = deadline - loop.time()
         if remaining <= 0:
             raise TimeoutError(f"session {session_id} baseline 更新等待超时")
@@ -317,8 +354,18 @@ async def compress_if_needed(
     settings,
     *,
     force: bool = False,
+    reuse_summary: str | None = None,
+    reuse_before_message_id: int | None = None,
 ) -> bool:
-    """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。"""
+    """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。
+
+    ``reuse_summary``：本 run 刚在 provider round 边界生成的压缩摘要。run 内压缩
+    的分支请求已与主对话共享前缀（能命中缓存），baseline 再用摊平文本重放一次
+    是一次结构性全冷的 3 万 token 调用，因此 run 收尾时直接复用该摘要，只重算
+    baseline 水位。``reuse_before_message_id``（通常是本轮用户消息 id）用来把
+    可压缩范围限制在本 run 开始之前——run 内摘要不覆盖本轮自身的消息，复用时
+    水位绝不能推进到它们之上。
+    """
     from app.core import redis as redis_core
 
     lock = redis_core.get_redis().lock(
@@ -335,6 +382,8 @@ async def compress_if_needed(
     try:
         result = await _compress_if_needed_unlocked(
             session_id, user_id, settings, force=force,
+            reuse_summary=reuse_summary,
+            reuse_before_message_id=reuse_before_message_id,
         )
         persisted = bool(result)
         return result
@@ -370,6 +419,8 @@ async def _compress_if_needed_unlocked(
     settings,
     *,
     force: bool = False,
+    reuse_summary: str | None = None,
+    reuse_before_message_id: int | None = None,
 ) -> bool:
     """检查并执行压缩，返回是否实际执行了压缩。
 
@@ -393,10 +444,20 @@ async def _compress_if_needed_unlocked(
     baseline_id = int(getattr(session, "baseline_message_id", 0) or 0)
     baseline_hash_before = str(getattr(session, "baseline_message_hash", "") or "")
     all_msgs = [m for m in rows if m.role != "summary" and m.id > baseline_id]
+    if reuse_before_message_id:
+        # 复用 run 内摘要时，可压缩范围只允许覆盖本 run 开始之前的历史：run 内
+        # 压缩把本轮消息整体保护，不会写进摘要；水位若推进到它们之上会丢上下文。
+        # 本 run 的消息（含 RAG/姿态注入）都在 finalize 里才拿到 id，因此必然
+        # 落在 ``>= reuse_before_message_id`` 一侧，被这条过滤整体排除。
+        all_msgs = [m for m in all_msgs if m.id < reuse_before_message_id]
     if not all_msgs:
         return False
 
     # 不把本地 token 估算用于决定哪些 history 被保留；保留窗口采用字符硬上限。
+    # 复用 run 内摘要时这条规则同时保证水位安全：run 内的保留窗口不超过
+    # RECENT_HISTORY_KEEP_CHARS 且按工具单元（更粗的粒度）回退，这里的 20k
+    # 按单条消息回退、只会保留得更多，因此水位最多推进到 run 内摘要已覆盖的
+    # 位置，不会越过被压缩内容。
     target_keep_chars = _RECENT_HISTORY_KEEP_CHARS
     tail_chars = 0
     split_idx = 0
@@ -413,43 +474,44 @@ async def _compress_if_needed_unlocked(
         return False
 
     # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
-    # 分支/滚动边界由 compaction.generate_compact_summary 统一管理。
+    # content_items 给本地有界兜底用；history_messages 重建出角色序列给追加式摘要用。
     content_items: list[str] = []
+    history_messages: list[dict] = []
     for m in to_compress:
         raw = m.content_json if m.content_json is not None else m.content
         text = content_text(raw).strip()
         if not text:
             continue
         content_items.append(f"{'用户' if m.role == 'user' else '咕咕'}：{text}")
+        history_messages.append(
+            {"role": "user" if m.role == "user" else "assistant", "content": text})
     if not content_items:
         return False
 
-    # 分支式候选只读取 history 快照，不持有数据库事务；共享策略超限时自动
-    # 使用滚动 fallback，结果仍需在下方按 baseline hash 做 CAS 后才能写回。
+    # 摘要候选只读取 history 快照，不持有数据库事务；结果仍需在下方按
+    # baseline hash 做 CAS 后才能写回。
     from agent.context.compaction import (
-        generate_compact_summary,
+        _generate_append_summary,
         resolve_compaction_limits,
     )
     from agent.llm.modelctx import effective_ai
     model_cfg = effective_ai(settings)
 
-    async def call_once(items, previous):
-        return await _call_llm(
-            "\n\n".join(items), previous, settings, model_cfg=model_cfg,
-        )
-
-    summary = await generate_compact_summary(
-        content_items,
-        prev_summary,
-        call_once,
-        model_cfg=model_cfg,
-    )
     limits = resolve_compaction_limits(model_cfg=model_cfg)
-    compression_mode = (
-        "branch"
-        if estimate_tokens("\n".join(content_items)) + estimate_tokens(prev_summary or "") <= limits.input_tokens
-        else "rolling-fallback"
-    )
+    if reuse_summary:
+        # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
+        # 不再重放一遍。水位边界仍按上面的保留窗口规则计算。
+        summary = reuse_summary
+        compression_mode = "run-reuse"
+    else:
+        # 手动 /compact 等无 run 摘要可复用的场景：从 DB 行重建消息序列走追加式，
+        # 与 run 内压缩同一条摘要生成路径（超预算自动分块滚动）。该请求不带
+        # 主 run 的 system/工具声明，不指望命中前缀缓存——冷是已知边界，
+        # 换来的是全站只剩一条摘要生成路径。
+        summary = await _generate_append_summary(
+            history_messages, prev_summary, model_cfg=model_cfg,
+        )
+        compression_mode = "append-replay"
     from agent.context.compaction import validate_compact_summary
 
     summary_ok, summary_reason = validate_compact_summary(
@@ -525,7 +587,7 @@ async def _compress_if_needed_unlocked(
         source="persistent_baseline_update",
         old=prev_summary,
         new=summary,
-        trigger="force" if force else "budget",
+        trigger="force" if force else ("run_reuse" if reuse_summary else "budget"),
         baseline_before=baseline_id,
         baseline_after=to_compress[-1].id,
         compressed_messages=len(to_compress),
@@ -550,36 +612,3 @@ async def _compress_if_needed_unlocked(
                 session_id, len(to_compress), len(summary),
                 "滚动合并" if prev_summary else "首次", compression_mode)
     return True
-
-
-async def _call_llm(
-    conv_text: str,
-    prev_summary: str | None,
-    settings,
-    *,
-    model_cfg,
-) -> str:
-    """通过 ContextBranch 生成/合并摘要，保持与反思相同的 provider 路由。"""
-    from agent.context.branch import ContextBranch
-    from agent.context.branch_types import BranchInput, BranchPolicy
-    from agent.context.compaction import resolve_compaction_limits
-    try:
-        sys_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
-    except Exception:
-        sys_prompt = "请将以下对话压缩为简洁摘要，保留关键决定、事实和用户偏好，控制在300字以内："
-    if prev_summary:
-        user_text = (f"【已有摘要（更早的对话，需与下面新增内容合并、保留全部关键信息）】\n{prev_summary}\n\n"
-                     f"【新增对话】\n{conv_text}")
-    else:
-        user_text = conv_text
-    result = await ContextBranch().run(
-        BranchInput(stable_system=sys_prompt, delta=user_text, scope="conversation-compaction"),
-        BranchPolicy(
-            name="compaction",
-            output_mode="text",
-            max_tokens=resolve_compaction_limits(model_cfg=model_cfg).output_tokens,
-            max_retries=0,
-        ),
-        settings,
-    )
-    return str(result.output or "").strip() if result.ok else ""

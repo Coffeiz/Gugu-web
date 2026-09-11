@@ -6,7 +6,8 @@ from collections.abc import Iterable
 from sqlalchemy import delete, select
 
 from app.core import chat_attach
-from app.models import ChatAttachment, ConversationMessage
+from app.core.tz import now_utc
+from app.models import ChatAttachment, ConversationMessage, TerminalSessionRecord
 
 
 StorageRef = tuple[object, str]
@@ -66,6 +67,15 @@ async def remove_session_with_attachments(db, session) -> None:
             )
         )).scalars().all()
     )
+    # 会话删掉后咕咕终端的 session_id 会被 ON DELETE SET NULL 置空，之后再也
+    # 没人设置 closed_at，成为永久残留；必须在删 session 行之前按 session_id
+    # 关闭（顺序陷阱同 workspaces 删除终端的处理）。只关 agent 终端，用户
+    # 自建终端仍由用户在终端页自行管理。
+    await db.execute(TerminalSessionRecord.__table__.update().where(
+        TerminalSessionRecord.session_id == session.id,
+        TerminalSessionRecord.source == "agent",
+        TerminalSessionRecord.closed_at.is_(None),
+    ).values(status="terminated", closed_at=now_utc(), updated_at=now_utc()))
     refs = await remove_messages_with_attachments(db, message_ids, commit=False)
     await db.delete(session)
     await db.commit()

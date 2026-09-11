@@ -33,13 +33,10 @@ html[data-theme][data-family] .task-card:hover::after {
 }
 html[data-theme][data-family] .task-card:hover { box-shadow: var(--card-shadow-hover) !important; }
 
-/* Dark mode removes surface brightening, while lift/shadow/controls remain interactive. File and
-   folder card paint remains component-owned; this only suppresses global.css's white hover veil. */
-html[data-theme='dark'][data-family] .glass-card:not(.topbar):not(.cal-toolbar):not(.files-toolbar):hover {
-  background: var(--glass-card-background);
-  border-color: var(--glass-card-border);
-}
-html[data-theme='dark'][data-family] .user-card:hover { background: var(--sidebar-user-bg); }
+/* 暗色 glass-card 的 hover 屏蔽已清理（用户拍板）：普通 glass 卡片恢复 global.css 的
+   标准 hover（背景/边框走 --glass-card-*-hover 语义 token），仿玻璃宿主走下方
+   .glass-card:hover .gb-tint 契约。此处的旧压制规则曾是「暗色不提亮」决策的实现，
+   现已整体移除，不要再往回加。 */
 /* .proj-card:hover::after 不再在此强灭：项目卡 sheen 已改为消费各主题令牌，
    暗色取主题自身定义的克制白（7.5~8%），明暗手感一致（2026-09-08）。 */
 html[data-theme='dark'][data-family] .sample-project-card:hover::after,
@@ -159,14 +156,24 @@ html[data-theme='dark'][data-family] .cal-page .wv-ev {
   color: var(--content-primary) !important;
 }
 
+/* ── 仿玻璃（GlassBg）宿主的 hover 契约 ────────────────────────────────────────────── */
+/* 仿玻璃卡片的可见面是 .gb-tint 子层（z-index:-1 盖在宿主自身背景之上），global.css 的
+   .glass-card:hover 改宿主 background 对它们无效。这里统一把 hover 时的 tint 切到
+   --surface-glass-hover，带 .gb-tint 自身的 0.25s 背景过渡（淡入淡出）。
+   注意：这条必须放在全局样式表——写在 GlassBg.vue 的 scoped style 里（含 :global
+   写法）会被编译器丢弃 .gb-tint 后代部分而静默失效。 */
+html[data-theme][data-family] .glass-card:hover .gb-tint {
+  background: var(--surface-glass-hover);
+}
+
 /* ── Calendar toolbar ───────────────────────────────────────────────────────────────── */
-/* 工具栏自身已经有唯一外框，GlassBg 只负责 tint，不再重复绘制上沿和侧沿高光。 */
+/* 工具栏自身已经有唯一外框，GlassBg 只负责 tint，不再重复绘制上沿和侧沿高光。
+   hover tint 由 GlassBg 的 .glass-card:hover 契约统一处理，不再单独写 :hover 规则。 */
 html[data-theme][data-family] .cal-toolbar {
   --gb-tint: var(--surface-glass);
   --gb-highlight-strong: transparent;
   --gb-highlight-side: transparent;
 }
-html[data-theme][data-family] .cal-toolbar:hover { --gb-tint: var(--surface-glass-hover); }
 html[data-theme][data-family] .cal-toolbar .nav-btn,
 html[data-theme][data-family] .cal-toolbar .period-btn {
   color: var(--control-fg);

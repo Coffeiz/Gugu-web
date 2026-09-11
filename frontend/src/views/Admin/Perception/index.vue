@@ -226,10 +226,10 @@ const excludeDev = ref(false)
 const localizedFlags = computed(() => {
   const items = data.value.flag_items || []
   if (items.length) return items.map(item => {
-    if (item.kind === 'intent') return t('perception.flagIntent', { intent: item.intent, rate: pct(item.rate), count: item.count })
-    if (item.kind === 'ambiguity') return t('perception.flagAmbiguity', { value: item.value })
-    if (item.kind === 'emotion_zero') return t('perception.flagEmotionZero')
-    return t('perception.flagModel', { model: item.model, rate: pct(item.rate), overall: pct(item.overall_rate) })
+    if (item.kind === 'intent') return t('perceptionUi.flagIntent', { intent: item.intent, rate: pct(item.rate), count: item.count })
+    if (item.kind === 'ambiguity') return t('perceptionUi.flagAmbiguity', { value: item.value })
+    if (item.kind === 'emotion_zero') return t('perceptionUi.flagEmotionZero')
+    return t('perceptionUi.flagModel', { model: item.model, rate: pct(item.rate), overall: pct(item.overall_rate) })
   })
   return data.value.flags || []
 })

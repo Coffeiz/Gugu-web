@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 import pytest_asyncio
 from types import SimpleNamespace
@@ -42,46 +44,44 @@ def pytest_collection_modifyitems(items):
 
 
 @pytest.fixture(autouse=True)
-def _fake_confirm_redis(monkeypatch):
-    """确认门授权存 Redis；测试替换为进程内假客户端，测试之间零残留。
+def _hermetic_redis(monkeypatch):
+    """测试默认使用进程内假 Redis；除非显式要求，绝不连真实 Redis。
 
-    不隔离的话，一条授权（TTL 分钟级）会泄漏进后续用例：同 user + 同摘要的
-    「缺 confirm 必拒」测试会因授权命中被放行。
+    只替换 ``_client`` / ``_sync_client`` 这两个模块级单例（而不是各处的
+    ``get_redis`` 名字）：懒加载函数读的就是这两个全局，所以不论调用方是
+    ``from app.core.redis import get_redis`` 还是 ``R.get_redis()``，拿到的都是
+    这个假客户端。async 与 sync 共用一份 FakeServer，语义等同「同一个 Redis」。
+
+    不隔离会出两类问题（都真实发生过）：
+    1. 配置来自开发者本机 ``.env`` / ``config.override.json``，本机跑测试会连上
+       共享开发机的 Redis——两个 pytest 进程（或测试与本地服务）抢同一把
+       ``scheduled:lock:<task_id>``，后到的直接返回「任务正在执行」，
+       表现为与顺序/时序相关的假失败；测试库里 task id 是小整数，撞上共享环境
+       里的真实任务时还会替真实任务抢锁。
+    2. 授权、``im:seen``、租约等键写进共享 Redis 后跨测试残留：同 user + 同摘要的
+       「缺 confirm 必拒」用例会因授权命中被放行。
+
+    需要真连 Redis 做集成验证时，设 ``GUGU_TEST_REAL_REDIS=1`` 显式退出该替身。
     """
-    class _FakeRedis:
-        def __init__(self):
-            self.store = {}
+    if os.environ.get("GUGU_TEST_REAL_REDIS") == "1":
+        yield None
+        return
 
-        def _expire_check(self, key):
-            import time
-            item = self.store.get(key)
-            if item is None:
-                return None
-            expires, value = item
-            if expires is not None and expires < time.time():
-                del self.store[key]
-                return None
-            return value
+    try:
+        import fakeredis
+        import fakeredis.aioredis as _fakeredis_async
+    except ImportError as e:  # 老 venv 没装测试依赖时给出可执行的提示
+        raise RuntimeError(
+            "测试依赖 fakeredis 缺失，先执行 pip install -r requirements-dev.txt；"
+            "只想临时跳过可设 GUGU_TEST_REAL_REDIS=1（会真连 .env 里的 Redis）。"
+        ) from e
 
-        def get(self, key):
-            return self._expire_check(key)
-
-        def exists(self, key):
-            return 1 if self._expire_check(key) is not None else 0
-
-        def setex(self, key, ttl, value):
-            import time
-            self.store[key] = (time.time() + ttl, value)
-
-        def delete(self, *keys):
-            for key in keys:
-                self.store.pop(key, None)
-
-    import agent.interactions.confirmations as _confirm
-
-    fake = _FakeRedis()
-    monkeypatch.setattr(_confirm, "get_redis_sync", lambda: fake)
-    yield fake
+    server = fakeredis.FakeServer()
+    async_client = _fakeredis_async.FakeRedis(server=server, decode_responses=True)
+    sync_client = fakeredis.FakeRedis(server=server, decode_responses=True)
+    monkeypatch.setattr(_redis, "_client", async_client)
+    monkeypatch.setattr(_redis, "_sync_client", sync_client)
+    yield async_client
 
 
 @pytest.fixture
@@ -96,13 +96,12 @@ def enable_filesystem_authorization(monkeypatch):
 async def _reset_redis_client():
     """每个测试结束后重置全局 Redis 客户端单例。
 
-    ``app.core.redis.get_redis()`` 懒加载缓存一个模块级客户端，一旦在某个
-    测试里被真正用到（不是靠 monkeypatch 绕过的），底层连接就绑死在那个
-    测试的事件循环上。pytest-asyncio 默认每个测试函数一个新事件循环，下一个
-    测试如果也真的调用 get_redis()，复用到的是上一个已关闭循环上的连接，
-    报 "Future attached to a different loop"。测试之间彼此不感知，只在特定
-    组合顺序下才触发，表现为跟顺序有关的 flaky。这里在每个测试后主动清空，
-    保证下个测试首次调用 get_redis() 时懒加载出一个绑在自己事件循环上的新连接。
+    默认路径下 Redis 已被 ``_hermetic_redis`` 换成每个测试一份的进程内假客户端，
+    这里主要是兜底：``GUGU_TEST_REAL_REDIS=1`` 真连 Redis 时，懒加载缓存的模块级
+    客户端会把连接绑死在当前测试的事件循环上。pytest-asyncio 默认每个测试函数一个
+    新事件循环，下一个测试如果复用这个连接，就会报 "Future attached to a different
+    loop"；测试之间彼此不感知，只在特定组合顺序下触发，表现为跟顺序有关的 flaky。
+    这里在每个测试后主动清空，保证下个测试首次调用 get_redis() 时重新懒加载。
     """
     yield
     await _redis.reset()

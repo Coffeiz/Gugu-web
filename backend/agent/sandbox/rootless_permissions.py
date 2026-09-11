@@ -6,11 +6,15 @@ Rootless 容器中的非 root UID/GID 会映射到宿主机的 subordinate UID/G
 """
 from __future__ import annotations
 
+import logging
 import os
+import pwd
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -89,12 +93,17 @@ def build_permission_plan(
     container_gid: int = 65532,
     mapped_uid: int | None = None,
     mapped_gid: int | None = None,
+    apply_ownership: bool = True,
 ) -> WorkspacePermissionPlan:
     """生成安全的 workspace ACL 初始化计划，不执行任何命令。
 
     Rootless Docker 使用 subordinate UID/GID 映射；rootful Docker 则直接使用
     容器 UID/GID。调用方可以显式传入已从目标 daemon 解析出的宿主 ID，避免把
     rootless 映射规则错误地应用到另一个 Docker daemon。
+
+    apply_ownership=False 适用于以部署用户（非 root）身份执行的运行时初始化：
+    chown/chgrp 到映射组需要 root，此时退化为仅 chmod + setfacl——沙盒映射身份
+    的访问由命名 ACL 条目和每级目录 default ACL 继承保证，不依赖文件属组。
     """
     resolved = Path(root).expanduser().resolve(strict=False)
     if not resolved.is_absolute() or resolved == Path("/"):
@@ -108,15 +117,24 @@ def build_permission_plan(
     # subordinate UID。若只给映射组权限，宿主 backend 无法在该目录创建原子
     # 替换文件，表现为 edit_file 的 PermissionError。login 可以是用户名，也
     # 可以是数字 UID；后者适用于权限初始化容器未携带宿主机 passwd 的情况。
-    commands = (
-        ("install", "-d", "-o", login, "-g", str(gid), "-m", "0770", str(resolved)),
+    if apply_ownership:
+        head = (("install", "-d", "-o", login, "-g", str(gid), "-m", "0770", str(resolved)),)
+    else:
+        head = (("chmod", "0770", str(resolved)),)
+    commands = head + (
         ("setfacl", "-m", f"u:{login}:rwx,g:{gid}:rwx", str(resolved)),
         ("setfacl", "-d", "-m", f"u::rwx,u:{login}:rwx,g::rwx,g:{gid}:rwx,m::rwx", str(resolved)),
-        ("setfacl", "-R", "-m", f"u:{login}:rwX,g:{gid}:rwX", str(resolved)),
+        # 递归只处理属于 login 的条目：沙盒映射身份在目录里创建的文件不归
+        # 部署用户所有，setfacl 会 EPERM 并中断整批；这些条目沙盒天然可读写，
+        # 无需补 ACL（find -user 接受数字 UID，兼容初始化容器无 passwd 的情况）。
+        (
+            "find", str(resolved), "-user", login, "-exec", "setfacl", "-m",
+            f"u:{login}:rwX,g:{gid}:rwX", "{}", "+",
+        ),
         # 仅给根目录设置 default ACL 不够：文件库里已经存在的子目录不会
         # 继承它。对每一级目录设置 default ACL，保证后续 mkdir/上传都可写。
         (
-            "find", str(resolved), "-type", "d", "-exec", "setfacl", "-m",
+            "find", str(resolved), "-type", "d", "-user", login, "-exec", "setfacl", "-m",
             f"u:{login}:rwx,g:{gid}:rwx,m::rwx,d:u:{login}:rwx,d:g:{gid}:rwx,d:m::rwx", "{}", "+",
         ),
     )
@@ -139,3 +157,48 @@ def default_permission_plan(root: str | Path, *, login: str | None = None) -> Wo
         subuid=read_subordinate_ranges("/etc/subuid", owner),
         subgid=read_subordinate_ranges("/etc/subgid", owner),
     )
+
+
+# 沙盒容器内业务进程的固定 UID/GID（与 prepare_rootless_storage.py 保持一致）。
+_CONTAINER_SANDBOX_UID = 65532
+_CONTAINER_SANDBOX_GID = 65532
+# 进程生命周期内的幂等缓存：每棵挂载根只需补一次 ACL，重复递归 setfacl 纯属浪费。
+_acl_ready_roots: set[str] = set()
+_acl_warned_roots: set[str] = set()
+
+
+def ensure_sandbox_acl(root: str | Path) -> bool:
+    """运行时为单棵沙盒挂载根补齐 rootless ACL；成功返回 True。
+
+    与 sandbox-bootstrap 一次性脚本（prepare_rootless_storage.py）使用同一套
+    权限计划，差别只在身份来源：脚本运行在 bootstrap 容器里，需要从 socket
+    属主和 /host/etc 推导登录用户；运行时调用方就是宿主部署用户进程，直接用
+    当前 uid 与 /etc/subuid、/etc/subgid。环境不满足（无 setfacl、无
+    subordinate 映射、命令执行失败，例如容器内 backend 以 root 运行）时返回
+    False，由调用方退回全员可写的 chmod 兜底，不阻塞业务请求。
+    """
+    resolved = str(Path(root).expanduser().resolve())
+    if resolved in _acl_ready_roots:
+        return True
+    try:
+        if not shutil.which("setfacl"):
+            raise RuntimeError("未安装 setfacl")
+        login = pwd.getpwuid(os.getuid()).pw_name
+        plan = build_permission_plan(
+            resolved,
+            login=login,
+            subuid=read_subordinate_ranges("/etc/subuid", login),
+            subgid=read_subordinate_ranges("/etc/subgid", login),
+            container_uid=_CONTAINER_SANDBOX_UID,
+            container_gid=_CONTAINER_SANDBOX_GID,
+            # 非 root 运行时无法 chgrp 到映射组（EPERM），只做 chmod + setfacl。
+            apply_ownership=os.geteuid() == 0,
+        )
+        apply_permission_plan(plan)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        if resolved not in _acl_warned_roots:
+            _acl_warned_roots.add(resolved)
+            _logger.warning("沙盒 ACL 初始化失败，降级为全员可写兜底（%s）：%s", resolved, exc)
+        return False
+    _acl_ready_roots.add(resolved)
+    return True

@@ -538,7 +538,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
             description_short='删除定时任务。',
-            description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。确认后直接再次调用即可，无需携带凭证。",
+            description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。用户确认后由服务端继续执行本次删除，无需再次调用。",
             input_schema={
                 "type": "object",
                 "properties": {

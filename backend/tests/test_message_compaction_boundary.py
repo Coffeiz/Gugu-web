@@ -75,7 +75,7 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
     async def fake_summary(content_list, prev_summary=None, **_kwargs):
         return "压缩摘要"
 
-    monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
     messages = [
         {"role": "system", "content": "固定系统"},
         {"role": "user", "content": "固定 session info"},
@@ -191,7 +191,7 @@ def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch
     async def fake_summary(_items, _previous=None, **_kwargs):
         return "稳定摘要"
 
-    monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
     messages = [
         {"role": "system", "content": "固定系统"},
         {"role": "user", "content": "固定 snapshot"},

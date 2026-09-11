@@ -636,6 +636,26 @@ def _patch_run_shell_harness(monkeypatch, settings, captured):
     monkeypatch.setattr(shell_tool, "SandboxdClient", _FakeClient)
 
 
+def test_shell_meta_guard_waived_for_direct_runtime():
+    """直跑模式（allow_script_execution=True）跳过元字符预检：执行器按 argv
+    直跑不经过 /bin/sh，`-c` 代码里的 ; | 等只是普通字符，再拦只剩误伤；
+    普通模式维持原拒，防模型误写 bash 管道。"""
+    from agent.sandbox.local_executor import LocalWorkspaceExecutor
+
+    inline = 'python3 -c "import shutil; shutil.copy(\'/workspace/a.py\', \'/workspace/b.py\'); print(\'ok\')"'
+    argv = LocalWorkspaceExecutor._parse_command(inline, allow_script_execution=True)
+    assert argv[0] == "python3" and argv[1] == "-c" and ";" in argv[2]
+
+    with pytest.raises(ValueError, match="管道、重定向或命令替换"):
+        LocalWorkspaceExecutor._parse_command(inline)
+
+    # 管道类元字符同样只在直跑模式放行
+    piped = "python3 -c \"print(1)\" | cat"
+    assert LocalWorkspaceExecutor._parse_command(piped, allow_script_execution=True)[0] == "python3"
+    with pytest.raises(ValueError, match="管道、重定向或命令替换"):
+        LocalWorkspaceExecutor._parse_command(piped)
+
+
 @pytest.mark.asyncio
 async def test_shell_direct_runtime_switch_reaches_executor(monkeypatch):
     """开关开启时，普通 Shell 的运行时命令直接带 allow_script_execution=True

@@ -335,7 +335,13 @@ describe('主题 CSS 回归契约', () => {
     ]) {
       expect(interactionCss, `interaction duplicate ${token}`).not.toContain(`${token}:`)
     }
-    expect(themeRefinementCss).toContain('--surface-hover-tint: transparent')
+    // 暗色 hover 屏蔽已清理：不允许再用 transparent / 同值自映射把
+    // surface/card/glass 的 hover 压平，暗色与亮色共用 :root 语义 hover token。
+    expect(themeRefinementCss).not.toContain('--surface-hover-tint: transparent')
+    expect(themeRefinementCss).not.toContain('--card-hover-overlay: transparent')
+    expect(themeRefinementCss).not.toContain('--surface-glass-hover: var(--surface-glass)')
+    expect(themeRefinementCss).not.toContain('--glass-card-background-hover: var(--glass-card-background)')
+    expect(themeRefinementCss).not.toContain('--gugu-chat-session-hover: transparent')
   })
 
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
@@ -512,15 +518,15 @@ describe('主题 CSS 回归契约', () => {
     expect(topbarBlock).toContain('--gb-highlight-strong: transparent')
     expect(topbarBlock).toContain('--gb-highlight-side: transparent')
     expect(topbarBlock).toContain('box-shadow: var(--glass-card-shadow)')
-    expect(cssBlock(productCss, 'html[data-theme][data-family] .topbar:hover')).toContain('box-shadow: var(--glass-card-shadow-hover)')
-    const terminalBlock = cssBlock(productCss, 'html[data-theme][data-family] .terminal-main-head.glass-card')
-    expect(terminalBlock).toContain('--glass-card-shadow: none')
-    expect(terminalBlock).toContain('--glass-card-shadow-hover: none')
-    expect(terminalBlock).toContain('box-shadow: none')
-
+    // topbar:hover 特例已清理：hover tint 由 GlassBg 的 .glass-card:hover 契约统一处理
+    expect(productCss).not.toContain('.topbar:hover')
+    // terminal-main-head 的 glass token 特例已清理：终端页与其他面板共用标准契约
+    expect(productCss).not.toContain('.terminal-main-head.glass-card')
+    // 终端面板已整体脱离 design-section 样式，与技能页共用标准 glass-card + column-bg
     const terminalsVue = load('../../views/Terminals/index.vue')
-    expect(terminalsVue).toContain('box-shadow:var(--design-section-shadow);')
-    expect(terminalsVue).not.toContain('box-shadow:var(--design-section-shadow), inset 0 1px 0 var(--design-section-highlight)')
+    expect(terminalsVue).not.toContain('design-section')
+    expect(terminalsVue).toContain('--glass-card-background:var(--column-bg)')
+    expect(terminalsVue).toContain('--glass-card-background-hover:var(--column-bg)')
   })
 
   it('咕咕聊天窗口不重复绘制外壳和输入区高光', () => {

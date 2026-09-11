@@ -22,6 +22,44 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int | None = 
     )
 
 
+async def complete_messages(
+    sys: str,
+    history: list,
+    user: str,
+    settings,
+    max_tokens: int | None = 800,
+    json_mode: bool = False,
+    tools: list | None = None,
+) -> str:
+    """追加式分支：复用主会话的 canonical 消息序列，delta 作为末尾 user 消息追加。
+
+    history 必须与主 run 发给 provider 的消息同构（同一路由的同一种格式），
+    这样分支请求与主对话的最后一帧共享逐 token 前缀，才能命中会话内缓存。
+    tools 同样要带上：provider 把工具声明算进可缓存前缀，缺了它命中率会从
+    接近 100% 掉到一成出头。
+
+    anthropic 路由还要与主 run 逐参数对齐（thinking/generation 走同一个
+    adapter 构造）：请求参数也参与 provider 的缓存键，分支曾因手拼
+    ``thinking={"type": "adaptive"}``（主 run 根本不发这个参数）整段 miss，
+    实测 99.9% 命中的暖前缀分支只拿到 0.1%。
+    """
+    from agent.llm.llm_select import use_anthropic_for
+    from agent.llm.modelctx import effective_ai
+
+    ai = effective_ai(settings)
+    use_anthropic = use_anthropic_for(ai)
+    thinking = getattr(ai, "thinking", None)
+    if use_anthropic:
+        text = await _anthropic(sys, user, ai, max_tokens,
+                                settings=settings, history=history, tools=tools,
+                                align_with_main_run=True)
+        return _parse_json(text) if json_mode else text
+    text = await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
+                         thinking=thinking, settings=settings, history=history,
+                         tools=tools)
+    return _parse_json(text) if json_mode else text
+
+
 async def complete_json(
     sys: str,
     user: str,
@@ -54,6 +92,9 @@ async def _anthropic(
     max_tokens: int | None,
     thinking: str | None = None,
     settings=None,
+    history: list | None = None,
+    tools: list | None = None,
+    align_with_main_run: bool = False,
 ) -> str:
     import httpx
     from agent import providers
@@ -67,22 +108,57 @@ async def _anthropic(
     # 消息带时间戳每轮必变，只有 system 前缀能命中）。
     from agent.llm.llm_select import supports_anthropic_active_cache
     system = sys
-    if supports_anthropic_active_cache(ai):
+    if supports_anthropic_active_cache(ai) and sys:
         system = [{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}]
+    messages = list(history or [])
+    if messages:
+        # 追加式分支在「历史末尾 + 追加指令之前」打第二个断点：与主 run 的
+        # 「固定前缀 + 末尾断点」口径一致，前缀部分才能整段命中。
+        messages[-1] = _with_trailing_cache_anchor(messages[-1])
+    messages.append({"role": "user", "content": user})
     # temperature 已全局下线（anthropic SDK 1.x 不再接受该参数）。
     kwargs = dict(
         model=ai.model,
-        system=system,
-        messages=[{"role": "user", "content": user}],
+        messages=messages,
         max_tokens=max_tokens,
     )
-    if thinking is not None:
+    if system:
+        # 空 system 不发（如手动 /compact 的追加式调用没有主 run 的 system），
+        # anthropic 兼容端点对空字符串 system 会报错。
+        kwargs["system"] = system
+    if tools:
+        # 与主 run 一致：工具声明一起发，provider 才算得出同一份可缓存前缀。
+        # 不设 tool_choice——实测它会让命中失效（100% → 15%），改用末尾指令约束
+        # 模型只输出摘要正文。
+        kwargs["tools"] = tools
+    if align_with_main_run:
+        # 与主 run 完全同源的参数构造；请求参数参与 provider 缓存键，
+        # 多发/少发一个 thinking 都会让整段前缀缓存失效。
+        from agent.providers import adapter_for
+
+        adapter = adapter_for(ai)
+        kwargs.update(adapter.build_anthropic_thinking_params(ai))
+        kwargs.update(adapter.build_anthropic_generation_params(ai))
+    elif thinking is not None:
         kwargs["thinking"] = {"type": thinking}
     resp = await client.messages.create(**kwargs)
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_anthropic_usage
     await _record_usage(settings, ai, normalize_anthropic_usage(usage))
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+
+
+def _with_trailing_cache_anchor(message: dict) -> dict:
+    """克隆消息并在内容末尾追加 ephemeral cache_control 断点（不改原消息）。"""
+    clone = dict(message)
+    content = clone.get("content")
+    if isinstance(content, list) and content:
+        clone["content"] = content[:-1] + [
+            {**content[-1], "cache_control": {"type": "ephemeral"}}]
+    elif isinstance(content, str) and content:
+        clone["content"] = [{"type": "text", "text": content,
+                             "cache_control": {"type": "ephemeral"}}]
+    return clone
 
 
 async def _openai(
@@ -93,6 +169,8 @@ async def _openai(
     json_mode: bool = False,
     thinking: str | None = None,
     settings=None,
+    history: list | None = None,
+    tools: list | None = None,
 ) -> str:
     import httpx
     from agent import providers
@@ -100,13 +178,19 @@ async def _openai(
     client = providers.build_openai_client(
         ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
     # max_tokens 为 None 表示不限制输出预算，交给 provider 使用模型默认上限。
+    # sys 为空 = 追加式分支且 run 的 system 已在 history 消息里，不再注入第二个 system。
+    _messages = ([{"role": "system", "content": sys}] if sys else []) + list(history or [])
+    _messages.append({"role": "user", "content": user})
     kwargs = dict(
         model=ai.model,
-        messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
+        messages=_messages,
     )
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     adapter = providers.adapter_for(ai)
+    if tools:
+        # 与主 run 同款：OpenAI 兼容端要把工具声明一起发，才能命中同一份前缀缓存。
+        kwargs.update(adapter.build_tool_params(ai, tools))
     # 与主对话一致：仅对验证过显式锚点行为的 provider 给稳定 system 前缀打
     # cache_control（DeepSeek 走服务端自动缓存，不打锚点）。
     if adapter.supports_explicit_cache(getattr(ai, "model", "") or ""):

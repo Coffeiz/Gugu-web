@@ -250,10 +250,10 @@ html[data-theme][data-family] .task-card:hover::after { background: var(--highli
 html[data-theme][data-family] .task-card .tc-name { color: var(--content-primary); }
 html[data-theme][data-family] .task-card .tc-when,
 html[data-theme][data-family] .task-card .tc-last,
-html[data-theme][data-family] .task-card .link { color: var(--content-secondary); }
+html[data-theme][data-family] .task-card .card-link-btn { color: var(--content-secondary); }
 html[data-theme][data-family] .task-card .tc-payload { color: var(--content-secondary); background: var(--surface-soft); }
-html[data-theme][data-family] .task-card .link:hover { color: var(--content-primary); }
-html[data-theme][data-family] .task-card .link.danger:hover { color: var(--status-danger); }
+html[data-theme][data-family] .task-card .card-link-btn:hover { color: var(--content-primary); }
+html[data-theme][data-family] .task-card .card-link-btn.danger:hover { color: var(--status-danger); }
 /* task-card 的 switch 轨道/滑块不再单独覆盖：--switch-track-bg/-thumb-bg token
    已按主题提供同值（亮色 surface-raised / 暗色 78% 提亮），单独写 border-strong
    反而在暗色下变成亮白轨道。 */
@@ -426,4 +426,19 @@ html[data-theme][data-family] .chat-window .chat-reference {
 html[data-theme][data-family] .chat-window .chat-reference:hover {
   background: var(--surface-raised);
   border-color: var(--action-primary);
+}
+/* chip 内部契约与输入框保持一致（GuguChatComposer.vue :deep 规则同款）：
+   聊天气泡里的 mind-ref 没有 Mind 视图 mind-content.css 的作用域覆盖，
+   label 无 nowrap 会在 22ch 上限内折两行，svg 无 flex-shrink:0 会被
+   flex 压缩到远小于 12px——都显式钉死。 */
+html[data-theme][data-family] .chat-window .chat-reference .mind-ref-icon {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+html[data-theme][data-family] .chat-window .chat-reference .mind-ref-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

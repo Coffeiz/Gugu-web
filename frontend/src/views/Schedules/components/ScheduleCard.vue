@@ -14,9 +14,9 @@
     <div class="tc-foot">
       <span class="tc-last">{{ props.task.last_run_at ? t('schedules.previousRun', { time: fmtTime(props.task.last_run_at) }) : t('schedules.neverRun') }}</span>
       <span class="tc-acts">
-        <button class="link" :disabled="props.busy || isEnded()" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
-        <button class="link" @click="$emit('edit', props.task)">{{ t('schedules.edit') }}</button>
-        <button class="link danger" @click="$emit('remove', props.task)">{{ t('schedules.delete') }}</button>
+        <button class="card-link-btn" :disabled="props.busy || isEnded()" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
+        <button class="card-link-btn" @click="$emit('edit', props.task)">{{ t('schedules.edit') }}</button>
+        <button class="card-link-btn danger" @click="$emit('remove', props.task)">{{ t('schedules.delete') }}</button>
       </span>
     </div>
   </div>
@@ -94,7 +94,7 @@ function fmtDateTime(iso: string) {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: var(--card-hover-overlay);
   box-shadow: none;
-  opacity: 0; transition: opacity var(--card-overlay-motion); pointer-events: none;
+  opacity: 0; transition: var(--card-overlay-motion); pointer-events: none;
 }
 .task-card > * { position: relative; z-index: 1; }
 .task-card:hover { box-shadow: var(--card-shadow-hover); }
@@ -111,8 +111,4 @@ function fmtDateTime(iso: string) {
 .tc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
 .tc-last { font-size: 11px; color: var(--text-secondary); opacity: 0.75; }
 .tc-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.link { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 2px 3px; font-family: var(--font-sans); }
-.link:hover { color: var(--text-primary); }
-.link.danger:hover { color: #d05a5a; }
-.link:disabled { opacity: 0.5; cursor: default; }
 </style>

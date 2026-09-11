@@ -8,6 +8,7 @@ from .rootless_permissions import (
     SubordinateRange,
     WorkspacePermissionPlan,
     build_permission_plan,
+    ensure_sandbox_acl,
     parse_subordinate_ranges,
 )
 from .quota import SandboxQuotaSnapshot, can_reserve, measure_directory, snapshot_quota
@@ -15,7 +16,7 @@ from .client import SandboxdClient, SandboxdUnavailable
 
 __all__ = [
     "DockerRuntimeStatus", "DockerSandboxExecutor", "LocalWorkspaceExecutor", "ShellResult",
-    "SubordinateRange", "WorkspacePermissionPlan", "build_permission_plan", "docker_environment", "image_available",
+    "SubordinateRange", "WorkspacePermissionPlan", "build_permission_plan", "docker_environment", "ensure_sandbox_acl", "image_available",
     "DockerPtyHandle", "parse_subordinate_ranges", "probe_docker", "sandbox_readiness", "valid_egress_network_name", "valid_image_digest",
     "SandboxQuotaSnapshot", "can_reserve", "measure_directory", "snapshot_quota",
     "SandboxdClient", "SandboxdUnavailable",

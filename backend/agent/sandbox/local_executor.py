@@ -163,11 +163,24 @@ class LocalWorkspaceExecutor:
         raise ValueError("普通 Shell 禁止直接执行代码运行时，请使用 run_script")
 
     @staticmethod
-    def _parse_command(command: str) -> list[str]:
+    def _has_shell_meta(command: str) -> bool:
+        """原始命令串是否含 shell 复合/管道/重定向/替换元字符。
+
+        有意不解析引号：引号里的元字符按元字符对待只会多走 sh -c 包装，
+        不会错杀（sh 会正确处理引号），宁滥勿缺。
+        """
+        return any(char in (command or "") for char in _SHELL_META)
+
+    @staticmethod
+    def _parse_command(command: str, *, allow_script_execution: bool = False) -> list[str]:
         text = (command or "").strip()
         if not text:
             raise ValueError("command 不能为空")
-        if any(char in text for char in _SHELL_META):
+        # 元字符守卫只针对未经同意的普通 Shell：执行器按 argv 直跑、不经过
+        # /bin/sh，引号内的 ; | > 等只是普通字符，本无注入面；而解释器 -c 的
+        # 代码几乎必然含这些字符，直跑模式下再拦只剩误伤（确认门与 workspace
+        # 路径校验才是真正的边界）。
+        if not allow_script_execution and LocalWorkspaceExecutor._has_shell_meta(text):
             raise ValueError("当前执行器不支持管道、重定向或命令替换")
         try:
             argv = shlex.split(text, posix=True)
@@ -189,7 +202,7 @@ class LocalWorkspaceExecutor:
         allow_script_execution: bool = False,
         environment: dict[str, str] | None = None,
     ) -> ShellResult:
-        argv = self._parse_command(command)
+        argv = self._parse_command(command, allow_script_execution=allow_script_execution)
         workdir = self._resolve_cwd(cwd)
         self._validate_workspace_argv(argv, workdir, allow_script_execution=allow_script_execution)
         timeout = max(0.1, min(float(timeout), _MAX_TIMEOUT))

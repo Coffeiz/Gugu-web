@@ -340,3 +340,217 @@ async def test_knowledge_reflection_conflict_keeps_parent_and_new_id(monkeypatch
     conflict = next(item for item in entries if item.parent_id == original.id)
     assert conflict.id != original.id
     assert conflict.confidence == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_save_knowledge_tool_persists_and_normalizes_keywords(knowledge_storage, monkeypatch):
+    """save_knowledge 工具路径必须把 keywords 落库（此前 schema 没有该字段，恒为空）。"""
+    from agent import events
+    from agent.tools.memory import _save_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    result = await _save_knowledge(None, "user-a", {
+        "title": "部署规则", "content": "只使用 Linux 部署", "topic": "部署",
+        "keywords": [" deploy ", "Deploy", "linux", *[f"词{i}" for i in range(12)]],
+    })
+
+    assert result["success"] is True
+    saved = (await KnowledgeStore("user-a").list())[0]
+    # 去重（casefold）+ 超限静默截断到 10 个，与反思路径同一套 normalize_capture。
+    assert saved.keywords == ["deploy", "linux", *[f"词{i}" for i in range(8)]]
+
+
+@pytest.mark.asyncio
+async def test_save_knowledge_tool_drops_non_list_keywords(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _save_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    result = await _save_knowledge(None, "user-a", {
+        "title": "检索规则", "content": "关键词必须是数组", "topic": "检索",
+        "keywords": "deploy",
+    })
+
+    assert result["success"] is True
+    saved = (await KnowledgeStore("user-a").list())[0]
+    assert saved.keywords == []
+
+
+def test_save_knowledge_schema_declares_keywords():
+    from agent.tools import registry
+
+    tool = registry.get("save_knowledge")
+    assert tool.input_schema["properties"]["keywords"] == {
+        "type": "array", "items": {"type": "string"},
+    }
+    assert "keywords" in tool.description
+    # 先查再合：同主题已有条目时必须引导改用 update_knowledge，防止整段覆盖
+    assert "search_memory" in tool.description
+    assert "update_knowledge" in tool.description
+    assert "整段替换" in tool.description
+
+
+@pytest.mark.asyncio
+async def test_store_save_hits_by_id_across_topic_change(knowledge_storage):
+    """显式传入已有 ID 时按 ID 直命中，topic 改名也不漏匹配、不打错条目。"""
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="部署流程", content="使用 v1 部署", topic="部署",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+    renamed = KnowledgeEntry.create(
+        title="部署流程", content="使用 v2 部署", topic="发布",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    renamed.id = original.id
+
+    saved = await store.save(renamed)
+
+    entries = await store.list()
+    assert len(entries) == 1
+    assert saved.id == original.id
+    assert saved.topic == "发布"
+    assert saved.version == 2
+
+
+@pytest.mark.asyncio
+async def test_store_save_rejects_update_on_deleted_entry(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="规则", content="内容", topic="规则",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+    await store.delete(original.id)
+    stale = KnowledgeEntry.create(
+        title="规则", content="新内容", topic="规则",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    stale.id = original.id
+
+    with pytest.raises(ValueError, match="已删除"):
+        await store.save(stale)
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_updates_version_and_inherits_omitted_fields(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    published = []
+    monkeypatch.setattr(events.bus, "publish", published.append)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="部署流程", content="使用 v1 部署", topic="部署",
+        keywords=["deploy", "v1"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id, "content": "使用 v2 部署，回滚用 v1 脚本",
+    })
+
+    assert result["success"] is True
+    assert result["unchanged"] is False
+    assert result["version"] == 2
+    assert result["previous"]["content"] == "使用 v1 部署"
+    saved = (await store.list())[0]
+    assert saved.id == original.id
+    assert saved.version == 2
+    # title/topic/keywords 省略时继承原值
+    assert saved.title == "部署流程"
+    assert saved.topic == "部署"
+    assert saved.keywords == ["deploy", "v1"]
+    assert len(saved.history) == 1
+    assert saved.history[0]["content"] == "使用 v1 部署"
+    assert len(published) == 1
+    assert published[0].operation == "upsert"
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_reports_unchanged_without_new_version(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="规则", content="只使用 Linux", topic="部署",
+        keywords=["linux"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id, "content": "只使用 Linux",
+    })
+
+    assert result["success"] is True
+    assert result["unchanged"] is True
+    assert result["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_rejects_unknown_or_deleted_id(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="规则", content="内容", topic="规则",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    missing = await _update_knowledge(None, "user-a", {
+        "knowledge_id": "knowledge-no-such", "content": "新正文",
+    })
+    assert "不存在" in missing["error"]
+
+    await store.delete(original.id)
+    deleted = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id, "content": "新正文",
+    })
+    assert "不存在" in deleted["error"]
+
+
+def test_update_knowledge_schema_requires_id_and_content():
+    from agent.tools import registry
+
+    tool = registry.get("update_knowledge")
+    # content 可选：支持只调关键词/标题等元数据的部分更新
+    assert tool.input_schema["required"] == ["knowledge_id"]
+    assert tool.input_schema["properties"]["keywords"] == {"type": "array", "items": {"type": "string"}}
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_supports_keywords_only_partial_update(knowledge_storage, monkeypatch):
+    """部分更新：省略 content 只调关键词，正文保持不变（真实案例：模型只提交 keywords）。"""
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="F1 赛历", content="2026 赛季共 24 站，支持冲刺周末。", topic="F1",
+        keywords=["F1"],
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id,
+        "keywords": ["F1", "Formula 1", "一级方程式", 2026, "大奖赛", {"nested": True}],
+    })
+
+    assert result["success"] is True
+    assert result["version"] == 2
+    saved = (await store.list())[0]
+    # 正文不变、版本照常推进（keywords 变了）
+    assert saved.content == "2026 赛季共 24 站，支持冲刺周末。"
+    assert saved.title == "F1 赛历"
+    # 数字标量转字符串保留意图，复杂结构丢弃，截断到 10 个
+    assert saved.keywords == ["F1", "Formula 1", "一级方程式", "2026", "大奖赛"]

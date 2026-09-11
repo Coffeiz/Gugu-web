@@ -26,6 +26,11 @@ description: devserver 部署与运维。Mutagen 同步、SSH 连接、systemd �
 - 启动/重启后需确认三个服务均为 `active`
 - 修改网关适配器时只重启对应平台子进程，不重启整个 gateway
 
+devserver 上共四个单元：`gugu-sandboxd`、`gugu-backend`、`gugu-worker`、`gugu-gateway`（sudo 精准重启白名单见 local skill）。改动代码后按涉及面重启：
+
+- 普通 backend / agent 代码 → `gugu-backend`，涉及异步任务再加 `gugu-worker`
+- **`agent/sandbox/**`（沙盒执行器、命令解析与校验）→ 必须 `gugu-backend` + `gugu-sandboxd` 一起重启**：shell 命令的 argv 解析、元字符/解释器校验发生在 sandboxd 进程内，只重启 backend 会出现「backend 已放行、sandboxd 仍按旧代码拦截」的半新半旧状态（2026-09-10 直跑运行时元字符放行首次踩中，症状是开关生效但 `python3 -c` 带 `;` 仍报「不支持管道」）
+
 ## 前端 Dev Server
 
 启动 loopscope 前端：

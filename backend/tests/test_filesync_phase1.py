@@ -1,3 +1,5 @@
+import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -223,6 +225,106 @@ async def test_local_reconcile_projects_create_update_move_and_delete(db, user_a
     await db.commit()
     assert fourth.deleted == 1
     assert file_row.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_local_reconcile_projects_directory_workspace_shell_files(db, user_a, monkeypatch, tmp_path):
+    """directory 型工作区绑定根即工作区目录：shell 产物按 space=workspace 投影。
+
+    真实故障：_classify_path/_parse_directory_path 只认个人/项目 canonical 前缀，
+    workspace/、workspace-<id>/ 下的 shell 产物（如 _tools/）整树被拒，文件库
+    永远看不到咕咕 shell 写入的文件夹。
+    """
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.workspaces as workspaces
+    from app.models import Folder, WorkspaceDirectory
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(workspaces, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(workspaces, "get_settings", lambda: settings)
+
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="探针工作区", directory_name="workspace-probe",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="目录工作区", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+
+    ws_root = tmp_path / str(user_a.id) / "workspace-probe"
+    tools_dir = ws_root / "_tools"
+    (tools_dir / "bin").mkdir(parents=True)
+    (tools_dir / "empty").mkdir()
+    (tools_dir / "bin" / "run.py").write_text("print('ok')", encoding="utf-8")
+    (ws_root / "_gen_weather.py").write_text("print('w')", encoding="utf-8")
+
+    summary = await reconcile.reconcile_local_directory(db, user_a.id, workspace_id=workspace.id)
+    await db.commit()
+
+    # shell 文件夹（含空目录）与文件都按 workspace 空间落库
+    assert summary.folders_created >= 2
+    assert summary.created >= 2
+    tools = (await db.scalars(select(Folder).where(
+        Folder.user_id == user_a.id, Folder.name == "_tools",
+        Folder.workspace_directory_id == directory.id,
+    ))).one()
+    assert tools.parent_id is None
+    bin_folder = (await db.scalars(select(Folder).where(
+        Folder.parent_id == tools.id, Folder.name == "bin",
+    ))).one()
+    assert bin_folder.workspace_directory_id == directory.id
+    gen_file = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.display_name == "_gen_weather",
+        File.ext == "py",
+    ))).one()
+    assert gen_file.space == "workspace"
+    assert gen_file.workspace_directory_id == directory.id
+    assert gen_file.folder_id is None
+
+
+@pytest.mark.asyncio
+async def test_local_reconcile_skips_dirty_storage_key_without_aborting(db, user_a, monkeypatch, tmp_path):
+    """存量双斜杠 storage_key 去前缀后仍是绝对路径，不能中断整轮投影。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path)))
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "kept.txt").write_text("kept", encoding="utf-8")
+    dirty = File(
+        user_id=user_a.id, display_name="dirty.txt", ext="txt", space="personal",
+        stage_name="", storage_key=f"{user_a.id}//dirty.txt",
+        storage_backend="local", size="4", size_bytes=4,
+    )
+    db.add(dirty)
+    await db.commit()
+
+    summary = await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+
+    # 脏行被当作 rejected 跳过，正常文件照常投影，不再抛 ValueError
+    assert summary.created == 1
+    assert summary.rejected >= 1
+    await db.refresh(dirty)
+    assert dirty.deleted_at is None
 
 
 @pytest.mark.asyncio
@@ -475,3 +577,432 @@ async def test_filesync_event_outbox_retries_and_preserves_event_id(db, user_a, 
     assert published[0][1]["event_id"] == row.event_id
     assert published[0][1]["entity_ids"] == [7]
     assert published[0][1]["source"] == "local_directory"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stat_cache_skips_rehash(db, user_a, monkeypatch, tmp_path):
+    """size+mtime 未变的已知文件走快路径，不重复整文件哈希；强制关闭时恢复全量哈希。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.statcache as statcache
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(statcache, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "kept.txt").write_text("kept", encoding="utf-8")
+
+    first = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=True)
+    await db.commit()
+    assert first.created == 1
+
+    calls = {"count": 0}
+    real_fingerprint = reconcile._fingerprint
+
+    def counting_fingerprint(path):
+        calls["count"] += 1
+        return real_fingerprint(path)
+
+    monkeypatch.setattr(reconcile, "_fingerprint", counting_fingerprint)
+    second = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=True)
+    await db.commit()
+    assert second.created == 0 and second.updated == 0
+    assert calls["count"] == 0  # 快路径命中，未重新哈希
+
+    forced = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=False)
+    await db.commit()
+    assert forced.created == 0 and forced.updated == 0
+    assert calls["count"] >= 1  # 日级兜底强制全量哈希
+
+
+@pytest.mark.asyncio
+async def test_targeted_projection_handles_create_update_move_delete(db, user_a, monkeypatch, tmp_path):
+    """sidecar 精确事件按路径单点投影：创建/更新/移动重挂/软删除/空目录。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.statcache as statcache
+    import app.services.filesync.targeted as targeted
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(statcache, "get_settings", lambda: settings)
+    monkeypatch.setattr(targeted, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "base.txt").write_text("base", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+    ))).one()
+
+    # 创建
+    (root / "new.txt").write_text("v1", encoding="utf-8")
+    batch = targeted.PathEventBatch(changed={"new.txt"})
+    summary = await targeted.project_path_events(db, user_a.id, binding, root, batch)
+    await db.commit()
+    assert summary.created == 1
+    created = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.display_name == "new", File.ext == "txt",
+        File.deleted_at.is_(None),
+    ))).one()
+    original_id = created.id
+
+    # 更新
+    (root / "new.txt").write_text("v2-longer", encoding="utf-8")
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"new.txt"}),
+    )
+    await db.commit()
+    assert summary.updated == 1
+    updated = await db.get(File, original_id)
+    await db.refresh(updated)
+    assert updated.size_bytes == len("v2-longer")
+
+    # 改名 = unlink+add：同指纹且原路径已消失 → 移动重挂，不删旧建新
+    (root / "new.txt").rename(root / "moved.txt")
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(changed={"moved.txt"}, deleted={"new.txt"}),
+    )
+    await db.commit()
+    assert summary.moved == 1 and summary.deleted == 0 and summary.created == 0
+    moved = await db.get(File, original_id)
+    await db.refresh(moved)
+    assert moved.storage_key.endswith("moved.txt")
+
+    # 软删除
+    (root / "moved.txt").unlink()
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(deleted={"moved.txt"}),
+    )
+    await db.commit()
+    assert summary.deleted == 1
+    deleted = await db.get(File, original_id)
+    await db.refresh(deleted)
+    assert deleted.deleted_at is not None
+
+    # 空目录：创建 → 删除
+    (root / "sub").mkdir()
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(folders_created={"sub"}),
+    )
+    await db.commit()
+    assert summary.folders_created == 1
+    (root / "sub").rmdir()
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(folders_deleted={"sub"}),
+    )
+    await db.commit()
+    assert summary.folders_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_create_file_advances_baseline_without_conflict(db, user_a, monkeypatch, tmp_path):
+    """工具新建文件必须推进同步基线：同路径历史 journal（已删除旧版）不能让
+    双向冲突检测把「工具单写两边」误判成两边都改过（咕咕天气产物误报案例）。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.statcache as statcache
+    from app.services.storage import LocalStorageBackend
+    from app.services.storage.file_service import FileService
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for mod in (reconcile, protocol, statcache, bindings):
+        monkeypatch.setattr(mod, "get_settings", lambda: settings)
+
+    storage = LocalStorageBackend(Path(tmp_path))
+    monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+
+    # 第一版：直接落盘 + 对账，建立基线 journal；再删掉，留下 DELETE journal。
+    (root / "doc.txt").write_text("old", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+    (root / "doc.txt").unlink()
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+        FileSyncBinding.workspace_id.is_(None),
+    ))).one()
+
+    # 工具新建同名文件：修复前 latest journal 是 DELETE（obs=None），
+    # row.updated 更新且盘上指纹 != None → 误报冲突。
+    svc = FileService(db)
+    await svc.create_file(
+        user_a.id, space="personal", project_id=None, folder_id=None, stage_name="",
+        mind_map_id=None, display_name="doc", ext="txt", mime_type="text/plain",
+        data=b"new-content",
+    )
+    await db.commit()
+
+    conflict_ids = await bindings._pending_conflicts(db, user_a.id, binding, root)
+    assert conflict_ids == ()
+    journal = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.source == "file_api",
+    ).order_by(FileSyncJournal.id.desc()))).first()
+    assert journal is not None
+    assert journal.observed_fingerprint == hashlib.sha256(b"new-content").hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_pending_conflicts_skips_paths_covered_by_other_bindings(db, user_a, monkeypatch, tmp_path):
+    """重叠绑定误报回归：整根绑定（root="."）不得用自己过期的基线，
+    去判已被子绑定（root="个人文件"）正常推进的文件。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.statcache as statcache
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for mod in (reconcile, protocol, statcache, bindings):
+        monkeypatch.setattr(mod, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "doc.txt").write_text("v1", encoding="utf-8")
+
+    inner = await create_binding(
+        db, user_id=user_a.id, source="local_directory",
+        root_fingerprint="a"*64, root_path="个人文件",
+    )
+    outer = await create_binding(
+        db, user_id=user_a.id, source="local_directory",
+        root_fingerprint="b"*64, root_path=".",
+    )
+    await db.flush()
+
+    # 子绑定正常推进：对账留下新基线；整根绑定只留一条过期基线（历史遗留形态）。
+    await reconcile.reconcile_local_directory(db, user_a.id, binding=inner)
+    await db.commit()
+    await record_change(
+        db, binding=outer, user_id=user_a.id, source="local_directory",
+        operation="baseline", relative_path="个人文件/doc.txt",
+        idempotency_key=build_idempotency_key(
+            source="local_directory", operation="baseline",
+            relative_path="个人文件/doc.txt", fingerprint="stale",
+        ),
+        observed_fingerprint="stale", status="synced",
+    )
+    await db.commit()
+
+    # 咕咕更新文件（row + 盘上一起变），子绑定再次正常对账推进。
+    (root / "doc.txt").write_text("v2-longer", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id, binding=inner)
+    await db.commit()
+
+    user_root = bindings._user_root(user_a.id)
+    conflicts = await bindings._pending_conflicts(db, user_a.id, outer, user_root)
+    assert conflicts == ()
+
+
+@pytest.mark.asyncio
+async def test_resolve_conflict_cancel_marks_resolved(db, user_a, monkeypatch, tmp_path):
+    """「取消冲突」必须把冲突落成 resolved：只改 resolution 不改 status 会让
+    冲突永远留在 pending 列表里，按钮看起来毫无反应。"""
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    from app.models import FileSyncConflict
+
+    monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+    ))
+
+    (tmp_path / str(user_a.id)).mkdir(parents=True)
+    conflict = FileSyncConflict(
+        binding_id=(await create_binding(
+            db, user_id=user_a.id, source="local_directory",
+            root_fingerprint="c"*64, root_path=".",
+        )).id,
+        user_id=user_a.id, relative_path="不存在的路径.txt",
+        status="pending",
+    )
+    db.add(conflict)
+    await db.flush()
+
+    row = await bindings.resolve_sync_conflict(db, user_a.id, conflict.id, "cancel")
+    await db.commit()
+    await db.refresh(row)
+    assert row.status == "resolved"
+    assert row.resolution == "cancel"
+    assert row.resolved_at is not None
+
+
+@pytest.mark.asyncio
+async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, user_b, monkeypatch, tmp_path):
+    """架构约束：活跃用户挂监听吃实时事件；不活跃用户不占监听、由日级强制补偿覆盖。
+
+    回归钉子：补偿调度一旦把「可补偿全集」误当「挂监听子集」（targets 与
+    watched 求交），不活跃绑定将永远失去日级对账，外部改动静默失联。
+    """
+    import asyncio
+    from datetime import timedelta
+
+    from app.core.tz import now_utc
+
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.statcache as statcache
+    import app.services.filesync.targeted as targeted
+    import app.services.filesync.watcher as watcher
+
+    for module in (reconcile, protocol, targeted, watcher):
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    for module in (reconcile, targeted, watcher):
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(
+            enabled=True, active_window_days=7, compensation_interval_seconds=86400,
+        ),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for module in (reconcile, statcache, targeted, watcher, bindings):
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+
+    roots = {}
+    probes = {user_a: "late-a", user_b: "late-b"}
+    for user, probe in probes.items():
+        root = tmp_path / str(user.id) / "个人文件"
+        root.mkdir(parents=True)
+        (root / "seed.txt").write_text("seed", encoding="utf-8")
+        await reconcile.reconcile_local_directory(db, user.id)
+        # 监听启动前只存在于磁盘的新文件：A 靠监听首轮 reconcile，B 只能靠日级补偿
+        (root / f"{probe}.txt").write_text(probe, encoding="utf-8")
+        roots[user.id] = root
+    user_a.is_active = True
+    user_a.last_active_at = now_utc()
+    user_b.is_active = True
+    user_b.last_active_at = now_utc() - timedelta(days=30)
+    await db.commit()
+
+    bindings = {b.user_id: b for b in (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.source == protocol.FileSyncSource.LOCAL_DIRECTORY,
+    ))).all()}
+
+    class FakeSidecar:
+        def __init__(self):
+            self.watched = {}
+
+        async def start(self):
+            return None
+
+        async def watch(self, binding_id, root):
+            self.watched[binding_id] = root
+
+        async def unwatch(self, binding_id):
+            self.watched.pop(binding_id, None)
+
+        async def next_event(self):
+            return None
+
+        async def close(self):
+            return None
+
+    sidecar = FakeSidecar()
+    manager = watcher.FileSyncWatcherManager(
+        refresh_interval=0.0, compensation_interval=0.0, sidecar=sidecar,
+    )
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(manager.run(stop_event))
+    try:
+        await asyncio.sleep(1.2)
+    finally:
+        stop_event.set()
+        await asyncio.wait_for(task, timeout=5.0)
+
+    # 只有活跃用户占监听；不活跃绑定不占 inotify 资源
+    assert set(sidecar.watched) == {bindings[user_a.id].id}
+    # 两个用户的监听期外新文件都被投影；B 无监听，只能来自日级强制补偿
+    for user, probe in probes.items():
+        row = (await db.scalars(select(File).where(
+            File.user_id == user.id, File.display_name == probe,
+            File.deleted_at.is_(None),
+        ))).one()
+        assert row.size_bytes == len(probe)
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_targeted_batch_quota_headroom_accumulates_across_creates(db, user_a, monkeypatch, tmp_path):
+    """同批多个新建文件共享同一份配额余量：逐个扣减，不允许批量突破存储配额。"""
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.targeted as targeted
+
+    for module in (reconcile, protocol, targeted):
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    for module in (reconcile, targeted):
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(targeted, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "seed.txt").write_text("seed", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+
+    # 活量 4 字节，上限 100 → 批次起始余量 96
+    user_a.storage_limit_bytes = 100
+    await db.commit()
+
+    (root / "a.bin").write_bytes(b"x" * 60)
+    (root / "b.bin").write_bytes(b"y" * 60)
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+    ))).one()
+
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"a.bin", "b.bin"}),
+    )
+    await db.commit()
+
+    # a(60) 放行并扣减余量；b(60) > 剩余 36 → 拒绝，不能各自拿同一份余量
+    assert summary.created == 1
+    assert summary.rejected == 1
+    names = sorted((await db.scalars(select(File.display_name).where(
+        File.user_id == user_a.id, File.deleted_at.is_(None),
+    ))).all())
+    assert names == ["a", "seed"]
