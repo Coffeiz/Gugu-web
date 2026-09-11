@@ -350,7 +350,7 @@ onUnmounted(() => {
 
 <style scoped>
 .terminals-page { height:100%; min-height:0; font-family:var(--font-sans); }
-.terminals-panel { position:relative; height:100%; box-sizing:border-box; display:flex; flex-direction:column; padding:22px 24px; }
+.terminals-panel { position:relative; height:100%; box-sizing:border-box; display:flex; flex-direction:column; padding:22px 24px; --glass-card-background:var(--column-bg); --glass-card-background-hover:var(--column-bg); }
 .terminals-header,.terminal-main-head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .terminals-header { margin-bottom:18px; }
 .terminals-header h1,.terminal-main-head h2 { margin:0; color:var(--content-primary); }
@@ -406,8 +406,7 @@ onUnmounted(() => {
 .terminal-add-card-text { font-size:12px; font-weight:600; }
 .terminal-associations { color:var(--content-tertiary); font-size:10px; }
 .terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
-/* scoped 背景优先级高于全局 .glass-card:hover，hover 必须在同源补齐标准 token（淡入淡出沿用全局过渡） */
-.terminals-panel.design-section:hover { background:var(--glass-card-background-hover); border-color:var(--glass-card-border-hover); }
+
 .terminal-list.semantic-group { padding:var(--space-lg); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; }
 .terminal-actions :deep(.app-action-button) { min-height:var(--control-height-sm); padding:0 var(--space-sm); border-color:transparent; background:transparent; color:var(--content-secondary); box-shadow:none; transform:none; }
 .terminal-actions :deep(.app-action-button:hover:not(:disabled)) { border-color:transparent; background:var(--surface-soft); color:var(--content-primary); box-shadow:none; transform:none; }
