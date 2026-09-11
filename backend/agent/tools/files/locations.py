@@ -11,7 +11,6 @@ from app.services.files.browser import (
     get_user_folder,
     list_user_folders,
 )
-from app.services.filesystem_authorization import FilesystemPolicy, filesystem_location_can_write
 from app.services.projects import get_user_project
 from app.core.ownership import get_owned
 from app.services.storage.folders import resolve_folder_path
@@ -171,38 +170,13 @@ def _workspace_location(target: dict) -> tuple[str, int | None, int | None, int 
     return target["space"], target.get("project_id"), target.get("folder_id"), target.get("workspace_directory_id")
 
 
-async def _location_matches(db, user_id, space, project_id, folder_id, target: dict) -> bool:
-    """复用统一 workspace 权限，允许根目录下的子文件夹。"""
-    policy = await current_filesystem_policy(db, user_id)
-    # 直接调用 handler 的测试没有 dispatch policy；不同主体的 workspace
-    # 也不能复用当前 policy。真实完整授权则保留其跨 personal/project 的
-    # 写权限，但默认落点仍由 target 指定的 workspace 决定。
-    if policy is None or (
-        not policy.full_user_sandbox
-        and policy.workspace_id != target["workspace_id"]
-    ):
-        policy = FilesystemPolicy(workspace_id=target["workspace_id"])
-    return await filesystem_location_can_write(
-        db,
-        user_id,
-        policy,
-        space=space,
-        project_id=project_id,
-        folder_id=folder_id,
-    )
-
-
-def _workspace_conflict(target: dict) -> str:
-    location = target.get("workspace_name") or f"工作区 {target['workspace_id']}"
-    return json.dumps({
-        "error": f"当前会话已绑定工作区「{location}」，不能写入其它项目或文件夹。",
-        "workspace_id": target["workspace_id"],
-        "expected": {k: target.get(k) for k in ("space", "project_id", "folder_id")},
-        "hint": "省略目标位置参数即可使用当前工作区；workspace_id 不能当作 project_id 使用。",
-    }, ensure_ascii=False)
-
-
 async def _resolve_create_location(db, user_id, args: dict):
+    """解析创建/写入目标。
+
+    绑定工作区只提供「省略目标时的默认落点」；显式给出的 personal/project
+    目标按参数使用（围栏只约束 Shell，文件工具不受会话绑定限制——
+    所有权由 get_owned 与文件服务层保证）。
+    """
     target = await _bound_workspace_target(db, user_id)
     explicit = any(args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id"))
     if target is not None:
@@ -216,11 +190,10 @@ async def _resolve_create_location(db, user_id, args: dict):
             except (TypeError, ValueError):
                 folder = None
             if folder is not None:
+                if folder.workspace_directory_id is not None:
+                    return ("workspace", folder.project_id, folder.id, folder.workspace_directory_id, None)
                 inferred_space = "project" if folder.project_id is not None else "personal"
-                if await _location_matches(
-                    db, user_id, inferred_space, folder.project_id, folder.id, target,
-                ):
-                    return inferred_space, folder.project_id, folder.id, None
+                return inferred_space, folder.project_id, folder.id, None, None
         space, project_id, folder_id, error = _coerce_loc(
             args.get("space") or ("project" if args.get("project_id") else "personal"),
             args.get("project_id"), args.get("folder_id"),
@@ -238,8 +211,6 @@ async def _resolve_create_location(db, user_id, args: dict):
                     "expected": {k: target.get(k) for k in ("space", "project_id", "folder_id")},
                     "hint": "省略目标位置参数即可写入当前工作区落点。",
                 }, ensure_ascii=False)
-        if not await _location_matches(db, user_id, space, project_id, folder_id, target):
-            return None, None, None, None, _workspace_conflict(target)
         return space, project_id, folder_id, workspace_directory_id, None
     space = args.get("space", "personal")
     space, project_id, folder_id, error = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
@@ -266,16 +237,20 @@ async def _resolve_file(db, user_id, args):
         name = str(name).strip()
         base = name.rsplit(".", 1)[0] if "." in name else name
         workspace_target = await _bound_workspace_target(db, user_id)
-        rows = await find_user_files_by_name(
-            db, user_id, base,
-            **({
+        scoped = {}
+        if workspace_target:
+            scoped = {
                 "space": workspace_target["space"],
                 "project_id": workspace_target.get("project_id"),
                 "folder_id": workspace_target.get("folder_id"),
                 "workspace_directory_id": workspace_target.get("workspace_directory_id"),
                 "root": workspace_target.get("kind") == "project",
-            } if workspace_target else {}),
-        )
+            }
+        rows = await find_user_files_by_name(db, user_id, base, **scoped)
+        if not rows and scoped:
+            # 绑定围栏只约束 Shell；按名查找在绑定落点找不到时放宽到全库，
+            # 让绑定会话也能按名操作个人/项目空间的文件（重名仍要求指明 id）。
+            rows = await find_user_files_by_name(db, user_id, base)
         if not rows:
             return None, json.dumps({"error": f"未找到文件「{name}」"})
         if len(rows) > 1:
