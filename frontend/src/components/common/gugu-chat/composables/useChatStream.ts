@@ -17,6 +17,8 @@ interface QueuedMessage {
   references: ChatReference[]
   sessionId: number | null
   viewGeneration: number
+  // 入队时展示的 pending 气泡 id；排水真正发送时转正为普通气泡。
+  bubbleId: number | null
 }
 
 /**
@@ -73,7 +75,9 @@ export function useChatStream(options: {
   function resetSessionTurn() { _sessionTurn = 0 }
 
   function stopStreaming() {
-    pendingQueue.value = []   // 停止=放弃排队中的消息
+    // 停止=取消当前 run；排队中的消息保留，当前流收尾后由 finally 里的
+    // drainPendingQueue 立即接续第一条（用户预期：停的是「正在说的这句」，
+    // 排队的照样发，而不是一起被丢掉）。
     const id = activeSessionId ?? sessionId.value
     abortCtrl.value?.abort()
     if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
@@ -90,10 +94,25 @@ export function useChatStream(options: {
       const sameSession = next.sessionId == null || next.sessionId === sessionId.value
       pendingQueue.value.shift()
       if (!sameView || !sameSession) continue
+      // pending 气泡转正：这条消息现在真的发给后端了。气泡如果在视图重载中
+      // 丢了（罕见），补一条普通用户气泡，避免发出的消息没有自己的气泡。
+      const bubble = next.bubbleId != null
+        ? messages.value.find(m => m.id === next.bubbleId)
+        : undefined
+      if (bubble) {
+        bubble.pending = false
+      } else {
+        messages.value.push({
+          id: mkid(), role: 'user', text: next.text, time: now(),
+          references: next.references.length ? next.references : undefined,
+          files: next.attachments.length ? next.attachments.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
+        })
+      }
       // 在前一条流的 finally 与下一条 POST 之间也保持思考态；否则排队消息
       // 已经在消息列表里，但状态气泡会短暂消失，看起来像“没有收到”。
       options.clearStatus()
       options.setStatus(options.thinkingItem())
+      await options.scrollBottom()
       await send(next.text, next.attachments, next.references)
       break
     }
@@ -466,11 +485,15 @@ export function useChatStream(options: {
       options.refreshAfterTools(r.usedTools)
     } catch { /* 续看失败/被切走中断都不打扰 */ }
     finally {
+      const ownsResumedView = viewGeneration === options.getViewGeneration() && sessionId.value === id
       // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
-      if (viewGeneration === options.getViewGeneration() && sessionId.value === id) {
+      if (ownsResumedView) {
         options.clearStatus(); streaming.value = false; abortCtrl.value = null
       }
       if (activeSessionId === id) activeSessionId = null
+      // 续看期间排队的消息必须在这里接续发送：之前漏了这一步，续看流结束后
+      // 队列永远无人消费，排队的消息显示着「已发出」却从未 POST（2026-09-11 修复）。
+      if (ownsResumedView) await drainPendingQueue()
     }
   }
 
@@ -501,6 +524,7 @@ export function useChatStream(options: {
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
     if (!text && !atts.length) return
+    let queuedBubbleId: number | null = null
     if (fromInput) {
       const isNewCommand = /^\/new\s*$/i.test(text)
       _sessionTurn++
@@ -509,9 +533,14 @@ export function useChatStream(options: {
         messages.value = []
         options.onContentReset?.()
       } else {
-        messages.value.push({ id: mkid(), role: 'user', text, time: now(),
+        // 生成中发的消息以 pending 形态先上屏（视觉上「排队中」），排水真正
+        // 发送时转正为普通气泡（见 drainPendingQueue）。
+        const willQueue = streaming.value
+        const bubbleId = mkid()
+        messages.value.push({ id: bubbleId, role: 'user', text, time: now(), pending: willQueue,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
+        if (willQueue) queuedBubbleId = bubbleId
       }
       options.inputText.value = ''
       options.inputReferences.value = []
@@ -527,8 +556,15 @@ export function useChatStream(options: {
       pendingQueue.value.push({
         text, attachments: atts, references: refs,
         sessionId: sessionId.value, viewGeneration: options.getViewGeneration(),
+        bubbleId: queuedBubbleId,
       })
       return
+    }
+    // reconcile 把僵尸流态复位了：刚才按「会排队」预标的 pending 气泡现在
+    // 直接进入发送，转正为普通气泡。
+    if (queuedBubbleId != null) {
+      const bubble = messages.value.find(m => m.id === queuedBubbleId)
+      if (bubble) bubble.pending = false
     }
 
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())

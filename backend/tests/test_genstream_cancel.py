@@ -224,8 +224,9 @@ async def test_cancel_local_generation_cancels_registered_task(monkeypatch):
 
     task = asyncio.create_task(_never_ends())
     await started.wait()
-    web_gateway._session_gen_tasks[499] = task
+    web_gateway._session_gen_tasks[499] = {"run-499": task}
     try:
+        # 未指定 owner 时取消该会话全部存活任务（旧行为语义）。
         assert web_gateway.cancel_local_generation(499) is True
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(asyncio.shield(task), timeout=2)
@@ -233,6 +234,42 @@ async def test_cancel_local_generation_cancels_registered_task(monkeypatch):
         web_gateway._session_gen_tasks.pop(499, None)
         if not task.done():
             task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cancel_local_generation_targets_owner_run_only():
+    """排队场景：同一会话存在「在跑 + 排队」两个任务，按 owner 精确取消。
+
+    终止端点从快照读 owner_run_id 传入，必须只杀正在跑的 run——
+    杀错成排队任务会让排队消息静默消失、真正要停的 run 继续占着门。
+    """
+    from agent.gateway import web as web_gateway
+
+    started = asyncio.Event()
+
+    async def _never_ends():
+        started.set()
+        await asyncio.sleep(3600)
+
+    running = asyncio.create_task(_never_ends())
+    queued = asyncio.create_task(_never_ends())
+    await started.wait()
+    web_gateway._session_gen_tasks[500] = {"run-active": running, "run-queued": queued}
+    try:
+        assert web_gateway.cancel_local_generation(500, "run-active") is True
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(running), timeout=2)
+        # 排队任务不受影响，且按未知 owner 取消返回 False、不误伤。
+        assert web_gateway.cancel_local_generation(500, "run-other") is False
+        assert not queued.done()
+        assert web_gateway.cancel_local_generation(500, "run-queued") is True
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(queued), timeout=2)
+    finally:
+        web_gateway._session_gen_tasks.pop(500, None)
+        for task in (running, queued):
+            if not task.done():
+                task.cancel()
 
 
 @pytest.mark.asyncio

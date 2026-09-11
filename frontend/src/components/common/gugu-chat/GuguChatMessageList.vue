@@ -10,8 +10,8 @@
       <div v-for="{ row, msg } in rowsWithMsg" :key="String(row.key)" :data-index="row.index" :ref="measureRow"
            :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
            :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
-        <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-           v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.references, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.interaction?.resolved, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+        <div :class="['msg', msg.role, { 'is-pending': msg.pending }]" :data-db-id="msg.dbId || ''"
+           v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.pending, msg.references, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.interaction?.resolved, msg.interaction?.selectedOptionId, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
           <GuguChatMessageRow
             :msg="msg" :is-group-session="isGroupSession"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId"

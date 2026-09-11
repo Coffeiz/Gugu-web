@@ -396,9 +396,9 @@ async def cancel_stream(
 ):
     """终止该用户会话的后台 Web 生成。
 
-    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务直接
-    cancel（立即生效）；跨 worker / 任务未登记时退回 Redis 取消标记，由 run
-    心跳在 5s 内自取消。
+    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务按
+    快照 owner_run_id 精确 cancel（立即生效）；跨 worker / 任务未登记时退回
+    Redis 取消标记，由 run 心跳在 5s 内自取消。
     """
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
@@ -408,8 +408,13 @@ async def cancel_stream(
     active = await genstream.is_active(session_id)
     cancelled_locally = False
     if active:
+        # 排队引入后同一会话可能有多个后台任务（一个在跑、其余在门上排队）。
+        # 必须按快照的 owner_run_id 精确取消「正在跑的这个」，否则会杀掉排队
+        # 任务而真正在跑的 run 继续；本进程没有该任务时回退取消标记（跨 worker）。
+        snap = await genstream.snapshot(session_id)
+        owner_run_id = str((snap or {}).get("owner_run_id") or "")
         from agent.gateway.web import cancel_local_generation
-        cancelled_locally = cancel_local_generation(session_id)
+        cancelled_locally = cancel_local_generation(session_id, owner_run_id or None)
         if not cancelled_locally:
             await genstream.request_cancel(session_id)
     return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
