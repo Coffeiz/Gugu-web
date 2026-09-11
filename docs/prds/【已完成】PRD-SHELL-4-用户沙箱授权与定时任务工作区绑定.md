@@ -20,6 +20,7 @@
 | 文件工具写入围栏 | ✅ 已移除（2026-09-11） | 绑定 workspace 只作为省略目标时的默认落点，不再限制 create/edit/rename/move/copy/delete/回收站/下载落库；沙箱与工作区限制只约束 Shell |
 | 授权审计、指标与灰度开关 | ✅ 已完成（Phase 4 代码） | 默认关闭；授权生命周期写入脱敏 SecurityEvent，Redis 仅聚合固定枚举指标 |
 | 会话/任务权限摘要与公共弹窗 | ✅ 已完成（Phase 4 代码） | GuguChat 会话标题栏和定时任务表单共用独立公共授权组件 |
+| 模型侧权限状态声明 | ✅ 已完成（2026-09-11） | Shell 动态提示词按 `full_user_sandbox_write` 声明 `/personal`、`/project` 本轮只读或可读写，模型不再靠用户的话猜授权是否生效 |
 
 Phase 1 的 `/workspace god` 和 askuser 授权复用现有 GuguChat 交互卡；Phase 4 的 Shell 权限按钮与定时任务表单都使用独立公共组件 `FilesystemAuthorizationDialog.vue`。GuguChat 只承载入口和状态，不拥有授权事实或确认逻辑。
 
