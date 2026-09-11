@@ -863,3 +863,146 @@ async def test_resolve_conflict_cancel_marks_resolved(db, user_a, monkeypatch, t
     assert row.status == "resolved"
     assert row.resolution == "cancel"
     assert row.resolved_at is not None
+
+
+@pytest.mark.asyncio
+async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, user_b, monkeypatch, tmp_path):
+    """架构约束：活跃用户挂监听吃实时事件；不活跃用户不占监听、由日级强制补偿覆盖。
+
+    回归钉子：补偿调度一旦把「可补偿全集」误当「挂监听子集」（targets 与
+    watched 求交），不活跃绑定将永远失去日级对账，外部改动静默失联。
+    """
+    import asyncio
+    from datetime import timedelta
+
+    from app.core.tz import now_utc
+
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.statcache as statcache
+    import app.services.filesync.targeted as targeted
+    import app.services.filesync.watcher as watcher
+
+    for module in (reconcile, protocol, targeted, watcher):
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    for module in (reconcile, targeted, watcher):
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(
+            enabled=True, active_window_days=7, compensation_interval_seconds=86400,
+        ),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for module in (reconcile, statcache, targeted, watcher, bindings):
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+
+    roots = {}
+    probes = {user_a: "late-a", user_b: "late-b"}
+    for user, probe in probes.items():
+        root = tmp_path / str(user.id) / "个人文件"
+        root.mkdir(parents=True)
+        (root / "seed.txt").write_text("seed", encoding="utf-8")
+        await reconcile.reconcile_local_directory(db, user.id)
+        # 监听启动前只存在于磁盘的新文件：A 靠监听首轮 reconcile，B 只能靠日级补偿
+        (root / f"{probe}.txt").write_text(probe, encoding="utf-8")
+        roots[user.id] = root
+    user_a.is_active = True
+    user_a.last_active_at = now_utc()
+    user_b.is_active = True
+    user_b.last_active_at = now_utc() - timedelta(days=30)
+    await db.commit()
+
+    bindings = {b.user_id: b for b in (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.source == protocol.FileSyncSource.LOCAL_DIRECTORY,
+    ))).all()}
+
+    class FakeSidecar:
+        def __init__(self):
+            self.watched = {}
+
+        async def start(self):
+            return None
+
+        async def watch(self, binding_id, root):
+            self.watched[binding_id] = root
+
+        async def unwatch(self, binding_id):
+            self.watched.pop(binding_id, None)
+
+        async def next_event(self):
+            return None
+
+        async def close(self):
+            return None
+
+    sidecar = FakeSidecar()
+    manager = watcher.FileSyncWatcherManager(
+        refresh_interval=0.0, compensation_interval=0.0, sidecar=sidecar,
+    )
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(manager.run(stop_event))
+    try:
+        await asyncio.sleep(1.2)
+    finally:
+        stop_event.set()
+        await asyncio.wait_for(task, timeout=5.0)
+
+    # 只有活跃用户占监听；不活跃绑定不占 inotify 资源
+    assert set(sidecar.watched) == {bindings[user_a.id].id}
+    # 两个用户的监听期外新文件都被投影；B 无监听，只能来自日级强制补偿
+    for user, probe in probes.items():
+        row = (await db.scalars(select(File).where(
+            File.user_id == user.id, File.display_name == probe,
+            File.deleted_at.is_(None),
+        ))).one()
+        assert row.size_bytes == len(probe)
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_targeted_batch_quota_headroom_accumulates_across_creates(db, user_a, monkeypatch, tmp_path):
+    """同批多个新建文件共享同一份配额余量：逐个扣减，不允许批量突破存储配额。"""
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.targeted as targeted
+
+    for module in (reconcile, protocol, targeted):
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    for module in (reconcile, targeted):
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(targeted, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "seed.txt").write_text("seed", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+
+    # 活量 4 字节，上限 100 → 批次起始余量 96
+    user_a.storage_limit_bytes = 100
+    await db.commit()
+
+    (root / "a.bin").write_bytes(b"x" * 60)
+    (root / "b.bin").write_bytes(b"y" * 60)
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+    ))).one()
+
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"a.bin", "b.bin"}),
+    )
+    await db.commit()
+
+    # a(60) 放行并扣减余量；b(60) > 剩余 36 → 拒绝，不能各自拿同一份余量
+    assert summary.created == 1
+    assert summary.rejected == 1
+    names = sorted((await db.scalars(select(File.display_name).where(
+        File.user_id == user_a.id, File.deleted_at.is_(None),
+    ))).all())
+    assert names == ["a", "seed"]

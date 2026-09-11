@@ -167,7 +167,7 @@ class FileSyncWatcherManager:
             self._path_events.pop(binding_id, None)
         return current, watched
 
-    async def _drain_events(self, pending: set[int], active_ids: set[int]) -> None:
+    async def _drain_events(self, pending: set[int], compensable_ids: set[int]) -> None:
         while True:
             event = await self._sidecar.next_event()
             if event is None:
@@ -178,7 +178,9 @@ class FileSyncWatcherManager:
                 if isinstance(binding_id, int):
                     pending.add(binding_id)
                 else:
-                    pending.update(active_ids)
+                    # 无 id 的全局信号：sidecar 只监听活跃绑定，但按可补偿全集
+                    # 自愈不会漏掉任何绑定，代价只是多几次低频对账。
+                    pending.update(compensable_ids)
                 continue
             if kind == "change" and isinstance(binding_id, int):
                 relative = event.get("relative_path")
@@ -256,15 +258,17 @@ class FileSyncWatcherManager:
                                 FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
                                 FileSyncBinding.status == "active",
                             ))).all())
-                        current, _watched = await self._refresh_sidecar_bindings(db, bindings, pending)
-                        active_ids = set(current)
-                        await self._drain_events(pending, active_ids)
+                        current, watched = await self._refresh_sidecar_bindings(db, bindings, pending)
+                        # 可补偿全集 = root 有效的全部绑定（含未挂监听的不活跃用户），
+                        # 不是 watched 子集。日级兜底必须覆盖它，否则长期不活跃用户
+                        # 的外部改动静默失联。
+                        compensable_ids = set(current)
+                        await self._drain_events(pending, compensable_ids)
                         targets = pending | self._pending_fallback
                         if force:
-                            # 日级兜底：覆盖全部绑定（含未挂监听的不活跃用户），
-                            # 并强制全量哈希，自愈 stat 缓存的统计漂移。
-                            targets = targets | active_ids
-                        for binding_id in targets & active_ids:
+                            # 日级兜底：并入可补偿全集并强制全量哈希，自愈 stat 缓存的统计漂移。
+                            targets = targets | compensable_ids
+                        for binding_id in targets & compensable_ids:
                             binding, root = current[binding_id]
                             try:
                                 event = await self._project(

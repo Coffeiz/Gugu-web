@@ -137,13 +137,20 @@ async def _project_changed_file(
     stat_cache: StatCache | None,
     quota_headroom: int,
     summary_inout: dict,
-) -> bool:
-    """单文件 create/update 投影；返回是否产生了可见变更。"""
+) -> int:
+    """单文件 create/update 投影；返回新建文件占用的字节数（未新建返回 0）。
+
+    调用方必须按返回值在循环内逐个扣减批次 quota headroom：headroom 在批次
+    开始时只算一次，若不随新建扣减，同批多个大文件会各自拿同一份余量、批量
+    突破存储配额。同批的删除文件不回补余量（删除投影排在创建之后，按不回补
+    处理方向保守，不会超卖配额）。
+    """
     path = root / relative
     key = scope_prefix + relative
+    created_bytes = 0
     try:
         if _is_sync_temporary(path):
-            return False
+            return 0
         validate_sync_path(root, relative)
         _safe_storage_key(storage_root, path)
         space, project_id, folder_id, display_name, ext, file_ws_dir_id = await _classify_path(
@@ -157,7 +164,7 @@ async def _project_changed_file(
                 stat_cache.store(relative, path, observed)
     except (OSError, ValueError):
         summary_inout["rejected"] += 1
-        return False
+        return 0
 
     row = (await db.execute(select(File).where(
         File.user_id == user_id, File.storage_key == key, File.deleted_at.is_(None),
@@ -170,7 +177,7 @@ async def _project_changed_file(
     if row is not None and source is None:
         previous = latest.get(("file", relative))
         if previous is not None and previous.observed_fingerprint == observed:
-            return False
+            return 0
         row.size_bytes = path.stat().st_size
         row.size = str(path.stat().st_size)
         row.display_name = display_name
@@ -207,8 +214,9 @@ async def _project_changed_file(
     else:
         if path.stat().st_size > quota_headroom:
             summary_inout["rejected"] += 1
-            return False
+            return 0
         stat = path.stat()
+        created_bytes = stat.st_size
         row = File(
             user_id=user_id, display_name=display_name, ext=ext, space=space,
             project_id=project_id, folder_id=folder_id,
@@ -238,7 +246,7 @@ async def _project_changed_file(
         save_snapshot(user_id, binding.id, relative, path)
     except OSError:
         summary_inout["rejected"] += 1
-    return True
+    return created_bytes
 
 
 async def _project_deleted_file(
@@ -429,7 +437,8 @@ async def project_path_events(
         )
     quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
     for relative in sorted(batch.changed):
-        await _project_changed_file(
+        # 新建文件逐个扣减余量：同批文件共享同一份额度，不扣减会批量突破配额
+        quota_headroom -= await _project_changed_file(
             db, user_id, binding, root, storage_root, scope_prefix, user_root,
             workspace_directory_id, relative, latest, stat_cache,
             quota_headroom, summary_inout,
