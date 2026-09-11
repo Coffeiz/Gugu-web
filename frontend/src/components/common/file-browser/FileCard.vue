@@ -100,8 +100,7 @@ const props = defineProps({
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移。 */
 .fc-card.no-lift:hover { transform: none; }
-/* 0.20.4 的选中层级：::before 覆盖整张卡，图片缩略图区再叠一层更深的 ::after。
-   ::after(z4) 必须压过底部淡出层(::before, z3)，选中 tint 才能盖住淡出带。 */
+/* 0.20.4 的选中层级：::before 覆盖整张卡，图片缩略图区再叠一层更深的 ::after。 */
 .fc-card.selected::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
@@ -109,7 +108,7 @@ const props = defineProps({
 }
 .fc-card.selected .fc-thumb-area::after,
 .fc-card.pre-selected:not(.selected) .fc-thumb-area::after {
-  content: ''; position: absolute; inset: 0; z-index: 4;
+  content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none;
 }
 .fc-card.selected .fc-thumb-area::after { background: var(--file-card-selection-thumb-overlay); }
@@ -142,14 +141,8 @@ const props = defineProps({
   position: relative; height: var(--fc-area-h, 90px); flex-shrink: 0; overflow: hidden;
   border-radius: 14px 14px 0 0;
   background: var(--file-card-thumb-bg);
-}
-/* 底部淡出用 painted 渐变而不是 mask-image：ZCode 内置浏览器的合成器在
-   transform/缩放层（拖拽代理落地）上对 mask 的渲染不稳定，渐隐会整段消失；
-   普通背景渐变走基础绘制路径，全环境一致。终点色跟卡片本体表面。
-   层级必须在 fc-thumb-full(z2) 之上、选中 tint(::after) 之下。 */
-.fc-thumb-area::before {
-  content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none;
-  background: linear-gradient(to bottom, transparent 0%, transparent 72%, var(--file-card-thumb-fade, #ffffff) 100%);
+  mask-image: linear-gradient(to bottom, black 72%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 72%, transparent 100%);
 }
 .fc-thumb-area :deep(img) {
   position: absolute; inset: 0; width: 100%; height: 100%;
