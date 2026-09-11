@@ -17,6 +17,10 @@ _LOCK_KEY = "rag:ts-index:gc:lock"
 _LOCK_TIMEOUT = 1800
 _OWNER_DIR = re.compile(r"^[0-9a-f]{32}$")
 _USER_DIR = re.compile(r"^[0-9a-f-]{36}$", re.IGNORECASE)
+# index.json 由 worker 以 JSON.stringify 写出，version 是第一个字段，读头部即可；
+# 文件可能几十 MB，不能为了取一个版本戳整文件解析。
+_INDEX_VERSION_RE = re.compile(rb'"version"\s*:\s*"([^"]*)"')
+_INDEX_HEADER_BYTES = 8192
 
 
 def _index_roots() -> list[Path]:
@@ -38,7 +42,38 @@ def _index_roots() -> list[Path]:
     return roots
 
 
-def _is_stale_index_dir(path: Path, *, cutoff: float, active_dirs: set[Path]) -> bool:
+def _stamped_version(index_file: Path) -> str | None:
+    """读索引文件头部的制品版本戳；读不到或格式不符返回 None（按未知处理）。"""
+    try:
+        with index_file.open("rb") as handle:
+            head = handle.read(_INDEX_HEADER_BYTES)
+    except OSError:
+        return None
+    match = _INDEX_VERSION_RE.search(head)
+    return match.group(1).decode("utf-8", "replace") if match else None
+
+
+def _is_newer_version(stamped: str, current: str) -> bool | None:
+    """stamped 是否严格新于 current；任一侧解析不出数字段返回 None（无法比较）。
+
+    保护回滚场景：制品降级后不该把新版本写下的索引当旧数据清掉——它们是未来升级回去
+    时仍然有效的缓存，删了只会让所有活跃用户重来一次冷重建。
+    """
+    def parts(value: str) -> list[int] | None:
+        try:
+            return [int(piece) for piece in value.split(".")]
+        except (TypeError, ValueError):
+            return None
+
+    left, right = parts(stamped), parts(current)
+    if left is None or right is None:
+        return None
+    return left > right
+
+
+def _is_stale_index_dir(
+    path: Path, *, cutoff: float, active_dirs: set[Path], current_version: str | None,
+) -> bool:
     if not path.is_dir() or path.is_symlink() or not _OWNER_DIR.fullmatch(path.name):
         return False
     if path.resolve() in active_dirs:
@@ -50,6 +85,14 @@ def _is_stale_index_dir(path: Path, *, cutoff: float, active_dirs: set[Path]) ->
         # TS worker 使用临时文件 + rename；存在临时文件时视为正在写入，留到下一轮。
         if (path / "index.json.tmp").exists():
             return False
+        # 旧制品写下的索引，当前 worker 恢复时会判 version_mismatch 直接丢弃重建，
+        # 内容确定不会被复用，属于死数据，不必再等 TTL 到期（「重建完成后清理旧版本」）。
+        # 只清确定严格更旧的版本：比当前新的（回滚后仍是有效缓存）或无法比较的
+        # （版本串解析不出数字段，按未知处理）都不动，留给 TTL。
+        stamped = _stamped_version(index_file)
+        if current_version and stamped and stamped != current_version:
+            if _is_newer_version(stamped, current_version) is False:
+                return True
         return index_file.stat().st_mtime < cutoff
     except OSError:
         return False
@@ -64,7 +107,7 @@ def _configured_ttl() -> int:
 async def sweep_ts_index_cache() -> int:
     """删除过期的 owner 索引目录，返回删除目录数量。"""
     from app.core import redis as R
-    from agent.rag.ts_sidecar import active_index_dirs
+    from agent.rag.ts_sidecar import active_index_dirs, worker_artifact_version
 
     roots = [root for root in _index_roots() if root.is_dir() and not root.is_symlink()]
     if not roots:
@@ -76,9 +119,13 @@ async def sweep_ts_index_cache() -> int:
     try:
         cutoff = now_utc().timestamp() - _configured_ttl()
         protected = {path.resolve() for path in active_index_dirs()}
+        # 制品版本取不到时按未知处理：只按 TTL 清理，绝不因为「比对不了」删数据。
+        current_version = worker_artifact_version()
         for root in roots:
             for child in root.iterdir():
-                if not _is_stale_index_dir(child, cutoff=cutoff, active_dirs=protected):
+                if not _is_stale_index_dir(
+                    child, cutoff=cutoff, active_dirs=protected, current_version=current_version,
+                ):
                     continue
                 try:
                     shutil.rmtree(child)

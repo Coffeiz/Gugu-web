@@ -1,15 +1,11 @@
 """PRD-SHELL-4 Phase 4：授权开关、审计和拒绝指标。"""
 
-from unittest.mock import Mock
-
 import pytest
 from sqlalchemy import select
 
 from app.core.config import SandboxSettings
 from app.models import ConversationSession, FilesystemAuthorizationGrant, SecurityEvent
 from app.services.filesystem_authorization import (
-    FilesystemPolicy,
-    filesystem_write_error,
     grant_session_filesystem_access,
     resolve_filesystem_policy,
     revoke_session_filesystem_access,
@@ -98,21 +94,3 @@ async def test_session_grant_remains_effective_without_session_link_field(
 
     assert policy.full_user_sandbox is True
     assert policy.grant_id == grant.id
-
-
-@pytest.mark.asyncio
-async def test_denied_write_records_only_aggregate_metrics(db, user_a, monkeypatch):
-    import app.core.opsmetrics as opsmetrics
-
-    record_security = Mock()
-    record_filesystem = Mock()
-    monkeypatch.setattr(opsmetrics, "record_security", record_security)
-    monkeypatch.setattr(opsmetrics, "record_filesystem_authorization", record_filesystem)
-
-    error = await filesystem_write_error(
-        db, user_a.id, FilesystemPolicy(), space="personal", folder_id=None,
-    )
-
-    assert error is not None and error.startswith("当前文件系统权限只允许读取")
-    record_security.assert_called_once_with("filesystem.authorization.denied")
-    record_filesystem.assert_called_once_with("denied", "session")

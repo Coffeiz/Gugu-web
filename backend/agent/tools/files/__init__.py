@@ -3,9 +3,9 @@
 from app.services.storage import get_storage
 
 from .locations import (
-    _bound_workspace_target, _coerce_loc, _folder_by_name, _location_matches,
+    _bound_workspace_target, _coerce_loc, _folder_by_name,
     _location_receipt, _norm_target, _resolve_create_location, _resolve_file,
-    _resolve_key, _target_loc, _workspace_conflict,
+    _resolve_key, _target_loc,
 )
 from .documents import (
     TEXT_EXTS, READ_MAX_BYTES, _DOC_MIME, _DOC_EXT, _DOC_EXT_ALIASES,

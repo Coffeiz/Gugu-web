@@ -109,8 +109,14 @@ class KnowledgeIndexCache:
         self, db, owner_user_id: object, source_type: str, scope: Scope | None = None,
         diagnostics: dict[str, object] | None = None,
         baseline_revision: str | None = None,
+        force: bool = False,
     ):
-        """返回 owner 级 lexical index，TypeScript/Python 共用缓存生命周期。"""
+        """返回 owner 级 lexical index，TypeScript/Python 共用缓存生命周期。
+
+        ``force=True`` 跳过全部复用捷径（快照快路径、磁盘恢复、revision 复用）并按
+        当前 revision 全量 replace 一次；只给 revision 不一致后的自愈重试用，正常
+        查询走缓存与增量 patch。
+        """
         from app.core.config import get_settings
 
         search_settings = get_settings().search
@@ -129,7 +135,8 @@ class KnowledgeIndexCache:
         )
         key = (owner_key, backend, cache_scope)
         entry = self._entries.get(key)
-        if shared_key and entry is not None and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend):
+        if (not force and shared_key and entry is not None
+                and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend)):
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
@@ -138,7 +145,7 @@ class KnowledgeIndexCache:
             return entry.index
         revision = baseline_revision or await self._revision(db, owner_user_id)
         entry = self._entries.get(key)
-        if entry is not None and self._valid(entry, revision, backend) and not shared_key:
+        if not force and entry is not None and self._valid(entry, revision, backend) and not shared_key:
             self._touch(key, entry)
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
@@ -156,14 +163,15 @@ class KnowledgeIndexCache:
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             entry = self._entries.get(key)
-            if shared_key and entry is not None and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend):
+            if (not force and shared_key and entry is not None
+                    and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend)):
                 self._touch(key, entry)
                 if diagnostics is not None:
                     diagnostics.update(cache_hit=True, shared_index=True, snapshot_reused=True,
                                        cache_miss_reason="", document_count=_index_document_count(entry.index))
                 return entry.index
             revision = baseline_revision or await self._revision(db, owner_user_id)
-            if entry is not None and self._valid(entry, revision, backend) and not shared_key:
+            if not force and entry is not None and self._valid(entry, revision, backend) and not shared_key:
                 self._touch(key, entry)
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
@@ -172,7 +180,7 @@ class KnowledgeIndexCache:
                 return entry.index
             # 冷启动优先让 TS worker 从持久化索引恢复。只有索引不存在、版本不匹配或
             # revision 变化时才读取完整 DB 文档并重建，避免每次进程重启都拉全量正文。
-            if backend == "typescript" and not shared_key:
+            if backend == "typescript" and not shared_key and not force:
                 restored = await self._build_index(
                     backend, owner_user_id, None, revision, search_settings, diagnostics,
                 )
@@ -188,14 +196,15 @@ class KnowledgeIndexCache:
                     return restored
             documents = await load_index_documents(db, owner_user_id)
             index_documents = list(documents)
-            base_entry = entry or self._latest_snapshot_entry(owner_key, backend, key)
+            # force 是「不信任何缓存状态」的全量重同步：不借旧条目做增量，直接 replace。
+            base_entry = None if force else (entry or self._latest_snapshot_entry(owner_key, backend, key))
             if entry is None and shared_key and base_entry is not None:
                 current_sources = {document.source_type for document in documents}
                 index_documents = [
                     document for document in getattr(base_entry.index, "documents", ())
                     if document.source_type not in current_sources
                 ] + index_documents
-            if entry is not None and shared_key:
+            if entry is not None and shared_key and not force:
                 previous = {
                     _document_key(document): document
                     for document in getattr(entry.index, "documents", ())
@@ -394,19 +403,43 @@ class KnowledgeIndexCache:
         )
         return f"{TOKENIZER_VERSION}:{RAG_PROJECTION_VERSION}:{revisions}"
 
-    def invalidate(self, owner_user_id: object, source_type: str | None = None) -> int:
+    def invalidate(
+        self, owner_user_id: object, source_type: str | None = None, *,
+        include_snapshot: bool = False,
+    ) -> int:
         owner_key = str(owner_user_id)
         # snapshot-bound index 要保持到对应 session snapshot 结束；业务 mutation
         # 只让后续 snapshot 使用新 baseline，不破坏当前对话的稳定前缀。
+        # include_snapshot 只给 revision 不一致的自愈重试用：快照条目正是可能冻结了
+        # 旧 revision 的那一类，不清掉就永远走快路径继续被 worker 拒绝。
         keys = [
             key for key in self._entries
-            if key[0] == owner_key and not key[2].startswith("shared:snapshot:")
+            if key[0] == owner_key
+            and (include_snapshot or not key[2].startswith("shared:snapshot:"))
         ]
         for key in keys:
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._dispose(entry)
         return len(keys)
+
+    async def resync(
+        self, db, owner_user_id: object, source_type: str, scope: Scope | None = None, *,
+        diagnostics: dict[str, object] | None = None,
+        baseline_revision: str | None = None,
+    ):
+        """作废 owner 全部缓存条目并按当前 revision 全量重同步，返回新的索引。
+
+        worker 的 ``state.revision`` 是 per-owner 单槽，被另一个 revision 命名空间
+        （快照版 vs DB 投影版）推着走过以后，缓存里冻结了旧 revision 的索引对象会被
+        worker 以 ``revision_mismatch`` 拒绝。只有重新装载文档并 replace 才能让 worker
+        状态对齐本轮 revision，所以这里必然全量重同步一次。
+        """
+        self.invalidate(owner_user_id, include_snapshot=True)
+        return await self.get(
+            db, owner_user_id, source_type, scope,
+            diagnostics=diagnostics, baseline_revision=baseline_revision, force=True,
+        )
 
     def clear(self) -> None:
         for entry in self._entries.values():

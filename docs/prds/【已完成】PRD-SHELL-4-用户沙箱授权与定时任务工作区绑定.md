@@ -1,8 +1,8 @@
 # PRD-SHELL-4：用户沙箱授权与定时任务工作区绑定
 
-> 状态：Phase 1、Phase 2、Phase 3、Phase 4（代码部分）已完成；devserver/生产手工验收待执行
+> 状态：Phase 1、Phase 2、Phase 3、Phase 4（代码部分）已完成；devserver/生产手工验收待执行。2026-09-11 产品定案：workspace 绑定与完整沙箱授权只约束 Shell，文件工具不再按绑定拦截（见 §0「文件工具写入围栏」）
 > 创建：2026-09-05
-> 最近更新：2026-09-06
+> 最近更新：2026-09-11
 > 关联模块：`backend/app/services/filesystem_authorization.py`、`backend/app/security/events.py`、`backend/app/core/opsmetrics.py`、`backend/agent/commands/workspace.py`、`backend/agent/tools/shell.py`、`backend/agent/sandbox/`、`backend/app/api/v1/agent.py`、`backend/app/api/v1/scheduled_tasks.py`、`frontend/src/components/common/filesystem/`、`frontend/src/components/common/gugu-chat/`、`frontend/src/views/Schedules/`
 > 背景参考：`docs/prds/README.md`、`PRD-SHELL-1-工作区Shell沙盒`、`PRD-SCHEDULE-1-定时任务完整AgentLoop执行`
 
@@ -16,9 +16,11 @@
 | Session 完整沙箱授权 | ✅ 已完成（Phase 1） | `filesystem_authorization_grants` 记录当前 Session；`/workspace god` 必须经过统一交互确认 |
 | 定时任务 workspace 绑定 | ✅ 已完成（Phase 2） | ScheduledTask 绑定用户 workspace，绑定后覆盖整个 workspace，并在触发前校验归属、启用状态和可用根目录 |
 | 定时任务完整沙箱读写授权 | ✅ 已完成（Phase 2） | 任务主体独立授权、确认、撤销和停用失效已接入 |
-| 工具统一权限策略 | ✅ 已完成（Phase 3） | Shell、PTY、Docker sandbox、scheduler、文件工具、回收站与脚本入口均复用统一 policy |
+| 工具统一权限策略 | 🟡 部分完成（Phase 3，2026-09-11 收窄） | Shell、PTY、Docker sandbox、scheduler 与脚本入口复用统一 policy；文件工具与回收站不再按 policy 拦截 |
+| 文件工具写入围栏 | ✅ 已移除（2026-09-11） | 绑定 workspace 只作为省略目标时的默认落点，不再限制 create/edit/rename/move/copy/delete/回收站/下载落库；沙箱与工作区限制只约束 Shell |
 | 授权审计、指标与灰度开关 | ✅ 已完成（Phase 4 代码） | 默认关闭；授权生命周期写入脱敏 SecurityEvent，Redis 仅聚合固定枚举指标 |
 | 会话/任务权限摘要与公共弹窗 | ✅ 已完成（Phase 4 代码） | GuguChat 会话标题栏和定时任务表单共用独立公共授权组件 |
+| 模型侧权限状态声明 | ✅ 已完成（2026-09-11） | Shell 动态提示词按 `full_user_sandbox_write` 声明 `/personal`、`/project` 本轮只读或可读写，模型不再靠用户的话猜授权是否生效 |
 
 Phase 1 的 `/workspace god` 和 askuser 授权复用现有 GuguChat 交互卡；Phase 4 的 Shell 权限按钮与定时任务表单都使用独立公共组件 `FilesystemAuthorizationDialog.vue`。GuguChat 只承载入口和状态，不拥有授权事实或确认逻辑。
 
@@ -145,7 +147,7 @@ Agent 因默认只读策略无法完成用户明确要求的写操作时，可�
 ```
 
 - workspace 必须属于当前用户；
-- 绑定 workspace 后，任务 Shell、文件工具和脚本入口统一从 workspace 根目录执行，并覆盖 workspace 全部内容；
+- 绑定 workspace 后，任务 Shell 从 workspace 根目录执行，并覆盖 workspace 全部内容；文件工具把该 workspace 作为省略目标时的默认落点（2026-09-11 起不再据此拦截写入）；
 - workspace 重命名不影响绑定；
 - workspace 删除或失去归属时任务进入“工作区不可用”并跳过执行；
 - 不保存宿主机绝对路径。
@@ -246,7 +248,7 @@ filesystem_authorization_grant_id: nullable
 /project    read-write
 ```
 
-Shell、文件工具和脚本执行器都从同一个 policy 生成挂载、workspace 根目录和路径检查参数。完整授权不改变 Docker 非 root、只读 rootfs、网络 profile、资源限制、destructive 确认和 ownership 校验。
+Shell、PTY、Docker sandbox 和脚本执行器都从同一个 policy 生成挂载、workspace 根目录和路径检查参数（2026-09-11 起文件工具不再消费 policy 的位置写权限）。完整授权不改变 Docker 非 root、只读 rootfs、网络 profile、资源限制、destructive 确认和 ownership 校验。
 
 ### 3.5 定时任务执行
 
@@ -284,9 +286,9 @@ Gugu-web/
 │  │  ├─ tools/
 │  │  │  ├─ meta.py                   【修改】askuser 授权请求
 │  │  │  ├─ shell.py                   【修改】权限校验
-│  │  │  ├─ filesystem_policy.py       【新增】Agent 主体策略适配
-│  │  │  ├─ files.py                   【修改】文件写操作策略检查
-│  │  │  ├─ trash.py                   【修改】回收站写操作策略检查
+│  │  │  ├─ filesystem_policy.py       【新增】Agent 主体策略适配（2026-09-11 起只解析默认落点）
+│  │  │  ├─ files.py                   【修改】文件写操作策略检查（2026-09-11 移除）
+│  │  │  ├─ trash.py                   【修改】回收站写操作策略检查（2026-09-11 移除）
 │  │  │  ├─ scheduled_tasks.py         【修改】任务 Schema
 │  │  │  └─ base.py                    【修改】统一 dispatch 边界
 │  │  └─ skills/scheduled-tasks.md     【修改】任务绑定和授权规则
@@ -326,8 +328,8 @@ Gugu-web/
 
 职责边界：
 
-- 授权 service 是 grant 和 policy 的唯一事实源；已接入 Shell、PTY、Docker sandbox、scheduler、文件工具和脚本入口；
-- `agent/tools/filesystem_policy.py` 只适配当前 dispatch 主体，不保存第二份权限事实；`files.py`、`trash.py` 和 `web_download` 共用它；
+- 授权 service 是 grant 和 policy 的唯一事实源；已接入 Shell、PTY、Docker sandbox、scheduler 和脚本入口；
+- `agent/tools/filesystem_policy.py` 只适配当前 dispatch 主体，不保存第二份权限事实；文件工具只用它解析默认落点，不再做写入拦截；
 - sandbox 只把 policy 转换为执行参数，不自行授予权限；
 - scheduler 负责任务生命周期，不复制路径权限判断；
 - `FilesystemAuthorizationDialog.vue` 是独立的公共授权组件，负责授权范围展示和确认交互，不绑定具体业务页面；
@@ -374,7 +376,7 @@ Gugu-web/
 | 完整权限被误用 | 修改或删除用户文件 | 显性确认；destructive 操作继续确认 |
 | grant 主体混淆 | 跨 Session/任务/用户越权 | grant 绑定 user、subject_type、subject_id |
 | workspace 与权限混淆 | 访问范围错误 | workspace 覆盖整个 workspace，完整沙箱授权单独控制 personal/project |
-| 只改 Shell | 文件工具行为分叉 | 所有入口统一调用 policy |
+| 文件工具被绑定误伤 | 咕咕连普通文件操作都做不了 | 2026-09-11 定案：文件工具一律不做位置写权限拦截，围栏只留 Shell；绑定只提供默认落点 |
 | workspace 删除 | 任务写入错误目录 | 触发前校验，失效后跳过并通知 |
 | 前端伪造授权 | 未授权写入 | 仅后端确认凭证可创建 grant |
 | 任务运行时无人确认 | 任务卡住 | 创建/编辑时完成任务级授权 |
@@ -410,9 +412,12 @@ Phase 2 验证：后端定时任务工作区/授权、scheduler、Shell policy�
 ### Phase 3：文件工具与脚本边界（已完成）
 
 - [x] `SHELL4-010` 让文件工具、回收站和 `web_download` 写操作复用统一 filesystem policy；未授权的 personal/project 仅可读，workspace 子树可写，完整授权解除该位置限制。
+      🟡 2026-09-11 产品定案推翻：文件工具、回收站和 `web_download` 一律不再按 policy 拦截位置写入（绑定只作为默认落点），沙箱与工作区限制只约束 Shell。对应实现：删除 `filesystem_location_can_write`/`filesystem_write_error` 及 `agent/tools/filesystem_policy.py` 的写权限包装，文件/文件夹/回收站工具移除 `write_access_error` 调用。
 - [x] `SHELL4-011` 增加 `run_script` 明确入口，仅允许 python3/node/bash 与沙箱内相对脚本路径，拒绝软链接、硬链接、路径穿越和 Shell 控制字符。
 
 Phase 3 验证：Phase 3 专项、下载写入边界、Shell/Docker、工具 Schema 共 `145 passed, 2 warnings`；受影响的 Shell、PTY、定时任务、文件、回收站回归共 `146 passed, 2 warnings`；Python compileall、`git diff --check` 通过。Schema audit 仍报告已有 note/web 工具描述长度提示，未由本阶段引入。
+
+Phase 3 收窄验证（2026-09-11）：移除文件库写入围栏后，后端全量 pytest `2503 passed`；其中 Phase 3/4 授权与文件工具、Shell、回收站、文件夹工作区、发送路径专项 `126 passed`。绑定会话越界写（个人空间改名/删除）新增回归 `test_bound_session_writes_outside_workspace` 覆盖。
 
 ### Phase 4：观测与灰度
 

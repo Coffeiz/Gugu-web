@@ -2,14 +2,14 @@
 
 权限事实只在 ``app.services.filesystem_authorization``；本模块只负责把当前
 Agent dispatch 主体解析出来，避免 files/trash 各自复制 Session/定时任务判断。
+
+2026-09-11 产品定案：workspace 绑定与完整沙箱授权只约束 Shell（挂载哪些根、
+哪个根可写），文件库工具（create/edit/rename/move/copy/delete/回收站/下载落库）
+一律不再按 policy 拦截；绑定只作为省略目标时的默认落点。
 """
 from __future__ import annotations
 
-from app.services.filesystem_authorization import (
-    FilesystemPolicy,
-    filesystem_write_error,
-    resolve_filesystem_policy,
-)
+from app.services.filesystem_authorization import FilesystemPolicy, resolve_filesystem_policy
 from agent.tools.base import (
     current_dispatch_filesystem_subject,
     current_dispatch_session,
@@ -44,12 +44,7 @@ async def current_filesystem_policy(db, user_id) -> FilesystemPolicy | None:
 
 
 async def current_workspace_target(db, user_id, policy: FilesystemPolicy | None = None):
-    """返回当前主体的 workspace 文件库落点。
-
-    完整用户沙箱授权只扩大显式 ``/personal``/``/project`` 的写权限，不能
-    抹掉已绑定 Workspace 作为文件工具默认落点的语义。权限判断仍由
-    ``filesystem_location_can_write`` 负责，这里只解析默认位置。
-    """
+    """返回当前主体的 workspace 文件库落点（绑定只决定默认位置，不做写入拦截）。"""
     policy = policy or await current_filesystem_policy(db, user_id)
     if policy is None or policy.workspace_id is None:
         return None
@@ -57,41 +52,8 @@ async def current_workspace_target(db, user_id, policy: FilesystemPolicy | None 
     return await resolve_workspace_target(db, user_id, policy.workspace_id)
 
 
-async def write_access_error(
-    db,
-    user_id,
-    *,
-    space: str,
-    project_id: int | None = None,
-    folder_id: int | None = None,
-    policy: FilesystemPolicy | None = None,
-) -> str | None:
-    """检查文件库写入权限；无 dispatch 上下文时不改变内部 handler 行为。"""
-    policy = policy or await current_filesystem_policy(db, user_id)
-    if policy is None:
-        return None
-    return await filesystem_write_error(
-        db, user_id, policy,
-        space=space, project_id=project_id, folder_id=folder_id,
-    )
-
-
-async def file_write_access_error(db, user_id, file, *, policy: FilesystemPolicy | None = None):
-    return await write_access_error(
-        db, user_id, space=file.space,
-        project_id=file.project_id if file.space == "project" else None,
-        folder_id=file.folder_id, policy=policy,
-    )
-
-
 def folder_write_space(folder) -> str:
-    """文件夹的三值空间：project / workspace / personal。
-
-    曾经到处内联「project_id 有无」的二值判断，工作区文件夹（project_id 为空、
-    workspace_directory_id 非空）被误判成 personal，删除/重命名/移动/恢复全部被
-    权限检查拒掉（_location_is_in_workspace 对 directory 型绑定只认 space="workspace"）。
-    文件侧一直用 file.space 真值没这问题，这里把文件夹对齐。
-    """
+    """文件夹的三值空间：project / workspace / personal（仅用于展示落点）。"""
     if folder.project_id is not None:
         return "project"
     if getattr(folder, "workspace_directory_id", None) is not None:

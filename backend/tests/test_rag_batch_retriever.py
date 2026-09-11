@@ -125,3 +125,98 @@ async def test_unknown_source_returns_empty_batches():
     """未知 source 值与旧交付路径同口径：返回空结果，不报错。"""
     retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
     assert await retriever.retrieve("缓存", source="daily") == []
+
+
+def _revision_mismatch_harness(monkeypatch, *, error_codes: list[str | None], calls: dict):
+    """搭一个 memory-only 统一查询环境：worker 按 error_codes 依次失败/成功。"""
+    from agent.rag import batch_retriever as br
+    from agent.rag.models import IndexDocument
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    scope = Scope("synthetic-owner")
+    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
+
+    async def fake_load_memory(self, memory, inner_scope):
+        return [memory_doc], "daily", {}
+
+    @asynccontextmanager
+    async def session_scope(self):
+        yield object()
+
+    async def replace_transient(documents, revision, *, vectors=None, vector_version="", force=False):
+        calls.setdefault("transient_forces", []).append(force)
+
+    async def unified_query(query, **kwargs):
+        calls["query"] = calls.get("query", 0) + 1
+        code = error_codes[calls["query"] - 1] if calls["query"] <= len(error_codes) else None
+        if code is not None:
+            raise TsSidecarUnavailable("统一查询失败", code=code)
+        return {
+            "selected": [], "stats": {}, "fusion": {"fusion": "bm25"},
+            "document_counts": {"memory": 1},
+            "source_groups": {"memory": {"candidate_count": 1, "hit_count": 1}},
+        }
+
+    def make_index():
+        return SimpleNamespace(
+            client=SimpleNamespace(replace_transient=replace_transient),
+            unified_query=unified_query, documents_by_id={},
+        )
+
+    first, second = make_index(), make_index()
+
+    async def get(*args, **kwargs):
+        return first
+
+    async def resync(*args, **kwargs):
+        calls["resync"] = calls.get("resync", 0) + 1
+        return second
+
+    monkeypatch.setattr(UnifiedQueryRetriever, "_load_memory", fake_load_memory)
+    monkeypatch.setattr(IndexedSourceRetriever, "session_scope", session_scope)
+    monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get, resync=resync))
+    return scope
+
+
+@pytest.mark.asyncio
+async def test_revision_mismatch_resyncs_and_retries_once(monkeypatch):
+    """worker 报 revision_mismatch 时作废缓存重同步并按原参数重试一次，用户看不到这个错。"""
+    calls: dict = {}
+    scope = _revision_mismatch_harness(monkeypatch, error_codes=["revision_mismatch"], calls=calls)
+
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
+    batches = await retriever.retrieve("缓存", scope=scope, strategy="bm25")
+    assert calls["resync"] == 1
+    assert calls["query"] == 2
+    # 首次是普通上传，重试必须强制重传瞬态语料（进程内残留不可信）。
+    assert calls["transient_forces"] == [False, True]
+    assert len(batches) == 1 and batches[0].metadata["revision_resync"] == "True"
+
+
+@pytest.mark.asyncio
+async def test_unmapped_worker_error_does_not_resync(monkeypatch):
+    """非 revision 类失败保持原样抛出：真实故障不能被重试掩盖。"""
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    calls: dict = {}
+    scope = _revision_mismatch_harness(monkeypatch, error_codes=["worker_crashed"], calls=calls)
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
+    with pytest.raises(TsSidecarUnavailable):
+        await retriever.retrieve("缓存", scope=scope, strategy="bm25")
+    assert calls.get("resync") is None
+    assert calls["query"] == 1
+
+
+@pytest.mark.asyncio
+async def test_second_revision_mismatch_propagates(monkeypatch):
+    """重试仍不一致就抛出去：只重试一次，不把重试变成风暴。"""
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    calls: dict = {}
+    scope = _revision_mismatch_harness(
+        monkeypatch, error_codes=["revision_mismatch", "revision_mismatch"], calls=calls)
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
+    with pytest.raises(TsSidecarUnavailable):
+        await retriever.retrieve("缓存", scope=scope, strategy="bm25")
+    assert calls["resync"] == 1
+    assert calls["query"] == 2

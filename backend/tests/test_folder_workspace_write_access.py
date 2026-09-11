@@ -1,11 +1,10 @@
-"""工作区文件夹的写权限与显式 workspace 目标回归。
+"""工作区文件夹的写入与显式 workspace 目标回归。
 
-真实故障链：文件夹侧权限检查把空间算成「project|personal」二值，工作区文件夹
+历史故障链：文件夹侧权限检查把空间算成「project|personal」二值，工作区文件夹
 （project_id=None、workspace_directory_id 非空）被当成 personal，而 directory 型
 工作区绑定的规范 space 是 "workspace" → 删除/重命名/移动/恢复工作区文件夹全部被
-_location_is_in_workspace 误判拒绝。move_items/copy_file 的 target.space enum 也
-缺 "workspace"，schema 与 handler 能力脱节（_resolve_target 一直读
-workspace_directory_id，但模型传不进来）。
+误判拒绝。2026-09-11 产品定案后文件库写入围栏已整体移除（只约束 Shell），
+本文件保留工作区文件夹的删除/重命名/移动与 target.space="workspace" 行为回归。
 """
 import json
 

@@ -189,6 +189,45 @@ async def test_dynamic_shell_prompt_reports_confirmation_and_autopilot(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_dynamic_shell_prompt_reports_personal_project_write_state(monkeypatch):
+    """完整用户沙箱授权必须体现在本轮提示词里：授权前声明只读，授权后声明可写。
+
+    否则模型没有依据判断自己能否写 /personal、/project，只能靠用户的话猜。
+    """
+    from app.services.filesystem_authorization import FilesystemPolicy
+
+    db = _PolicyDB()
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True, dangerous=True))
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _true())
+    # evaluate 用 hasattr(db, "execute") 判断是否去解析 policy；给出该属性即可走到授权分支。
+    db.execute = lambda *_args, **_kwargs: None
+
+    async def readonly_policy(_db, _user_id, *, subject_type="session", subject_id=None):
+        return FilesystemPolicy(subject_type=subject_type, subject_id=str(subject_id))
+
+    monkeypatch.setattr(shell_policy, "resolve_filesystem_policy", readonly_policy)
+    readonly = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert readonly is not None
+    assert "/personal、/project：本轮以只读方式挂载" in readonly
+    assert "需先获得本轮完整用户沙箱授权" in readonly
+
+    async def granted_policy(_db, _user_id, *, subject_type="session", subject_id=None):
+        return FilesystemPolicy(
+            subject_type=subject_type, subject_id=str(subject_id),
+            personal_read_only=False, project_read_only=False,
+        )
+
+    monkeypatch.setattr(shell_policy, "resolve_filesystem_policy", granted_policy)
+    writable = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+
+    assert writable is not None
+    assert "已按可读写挂载（完整用户沙箱授权生效）" in writable
+    assert "只读方式挂载" not in writable
+
+
+@pytest.mark.asyncio
 async def test_dynamic_shell_prompt_is_absent_when_shell_is_not_authorized(monkeypatch):
     db = _PolicyDB()
     monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=False))

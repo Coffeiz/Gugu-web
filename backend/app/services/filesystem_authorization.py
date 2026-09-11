@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import ConversationSession, FilesystemAuthorizationGrant, Folder, ScheduledTask, TerminalSessionRecord
+from app.models import ConversationSession, FilesystemAuthorizationGrant, ScheduledTask, TerminalSessionRecord
 
 SUBJECT_SESSION = "session"
 SUBJECT_SCHEDULED_TASK = "scheduled_task"
@@ -61,93 +61,6 @@ class FilesystemPolicy:
     @property
     def full_user_sandbox(self) -> bool:
         return not self.personal_read_only and not self.project_read_only
-
-
-async def _location_is_in_workspace(
-    db: AsyncSession,
-    user_id,
-    workspace_id: int,
-    *,
-    space: str,
-    project_id: int | None,
-    folder_id: int | None,
-) -> bool:
-    """判断文件库位置是否位于 workspace 根或其子树内。"""
-    from app.services.workspaces import resolve_workspace_target
-
-    target = await resolve_workspace_target(db, user_id, workspace_id)
-    if target is None or space not in {"personal", "project"}:
-        return False
-    if target["kind"] == "project":
-        return space == "project" and project_id == target.get("project_id")
-    if space != target.get("space") or project_id != target.get("project_id"):
-        return False
-    target_folder_id = target.get("folder_id")
-    if target_folder_id is None or folder_id is None:
-        return folder_id is None and target_folder_id is None
-
-    current_id = folder_id
-    visited: set[int] = set()
-    while current_id is not None and current_id not in visited:
-        visited.add(current_id)
-        if current_id == target_folder_id:
-            return True
-        folder = await get_owned(db, Folder, current_id, user_id)
-        if folder is None or folder.deleted_at is not None:
-            return False
-        current_id = folder.parent_id
-    return False
-
-
-async def filesystem_location_can_write(
-    db: AsyncSession,
-    user_id,
-    policy: FilesystemPolicy,
-    *,
-    space: str,
-    project_id: int | None = None,
-    folder_id: int | None = None,
-) -> bool:
-    """按统一 policy 判断文件库位置是否允许写入。
-
-    mind/asset 不属于沙箱的 ``/personal``/``/project`` 挂载，因此仍由其领域
-    服务自己的 ownership 和确认门负责；本函数只约束用户沙箱两类文件空间。
-    """
-    if space not in {"personal", "project"}:
-        return True
-    try:
-        project_id = int(project_id) if project_id is not None else None
-        folder_id = int(folder_id) if folder_id is not None else None
-    except (TypeError, ValueError):
-        return False
-    if policy.full_user_sandbox:
-        return True
-    if policy.workspace_id is None:
-        return False
-    return await _location_is_in_workspace(
-        db, user_id, policy.workspace_id,
-        space=space, project_id=project_id, folder_id=folder_id,
-    )
-
-
-async def filesystem_write_error(
-    db: AsyncSession,
-    user_id,
-    policy: FilesystemPolicy,
-    *,
-    space: str,
-    project_id: int | None = None,
-    folder_id: int | None = None,
-) -> str | None:
-    """返回稳定的只读错误；允许时返回 ``None``。"""
-    if await filesystem_location_can_write(
-        db, user_id, policy, space=space, project_id=project_id, folder_id=folder_id,
-    ):
-        return None
-    from app.core import opsmetrics
-    opsmetrics.record_security("filesystem.authorization.denied")
-    opsmetrics.record_filesystem_authorization("denied", policy.subject_type)
-    return "当前文件系统权限只允许读取该个人/项目位置；请绑定对应 workspace，或先显式授权完整用户沙箱读写权限。"
 
 
 def record_filesystem_authorization_request(

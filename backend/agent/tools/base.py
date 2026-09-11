@@ -23,6 +23,7 @@ from agent.tools.tool_contract import (
     SchemaError,
     build_validator,
     enrich_tool_error,
+    internal_error_text,
     invalid_input_payload,
     normalize_legacy_input,
     normalize_input_by_schema,
@@ -595,6 +596,8 @@ class SkillRegistry:
         # 工具异常不能冲垮整个对话：捕获后当作错误结果回给 LLM（它可解释/换路）。
         # 双出口（P2-b §4-B）：原始 traceback 只进受限诊断出口（不进 gugu.log/Debug 面板）；
         # 可见日志只留脱敏摘要 + 异常类型名；外发给模型/用户/轨迹的也只有脱敏版。
+        # 已登记的内部异常（见 tool_contract.internal_error_text）例外：对模型和用户
+        # 只说人话，类名与原始消息只留在 gugu-diag.log。
         try:
             async with _sess._SessionLocal() as db:
                 handler_args = args
@@ -625,9 +628,16 @@ class SkillRegistry:
         except Exception as e:
             diag_log(f"agent.tools.dispatch.{name}", e)          # 原始 → 受限诊断出口
             _safe = sanitize_error(f"{type(e).__name__}: {e}")
-            _log.error("工具 %s 执行出错：%s", name, _safe)        # 可见日志只给脱敏摘要
-            _log_traj(name, user_id, args, False, _safe, t0)
-            payload = enrich_tool_error(name, {"error": f"工具 {name} 执行出错：{_safe}"})
+            # 已登记的内部异常：模型和用户只看到人话，实现细节（类名、原始消息）
+            # 只留在 diag 出口。未登记的仍透出脱敏摘要，类名是模型判断是否重试的线索。
+            _visible = internal_error_text(e)
+            if _visible is None:
+                _visible = f"工具 {name} 执行出错：{_safe}"
+                _log.error("工具 %s 执行出错：%s", name, _safe)    # 可见日志只给脱敏摘要
+            else:
+                _log.error("工具 %s 执行出错：%s", name, _visible)
+            _log_traj(name, user_id, args, False, _visible, t0)
+            payload = enrich_tool_error(name, {"error": _visible})
             return json.dumps(payload, ensure_ascii=False), None
 
         # 脱敏工具自己返回的 error 字段（如 files.py 的 `{"error": f"…{str(e)}"}`）：只动 error、不碰正常内容；

@@ -515,6 +515,20 @@ def invalid_tool_call_payload(
     }
 
 
+# 已知内部异常的对外人话。类名和原始消息是纯实现细节，模型看不懂也解释不清，
+# 却会照抄给用户（2026-09-11 真实事故：用户收到「TsSidecarUnavailable」）。
+# 未登记的类型不在这里兜底改名：未知异常的类型名是模型判断「该改参数」还是
+# 「该等恢复」的唯一线索，抹掉会让它只能瞎猜。
+_INTERNAL_ERROR_TEXT = {
+    "TsSidecarUnavailable": "知识检索索引正在重建，暂时不可用；请稍后重试，不要重复提交同一查询。",
+}
+
+
+def internal_error_text(exc: BaseException) -> str | None:
+    """已登记内部异常的对外文案；未登记返回 None，由调用方按原格式透出。"""
+    return _INTERNAL_ERROR_TEXT.get(type(exc).__name__)
+
+
 def enrich_tool_error(tool_name: str, result: Any) -> Any:
     """给 handler 的业务错误补统一使用规范，保持原返回类型和业务字段。"""
     def _enrich(payload: dict[str, Any]) -> dict[str, Any]:
@@ -549,6 +563,7 @@ __all__ = [
     "build_validator",
     "invalid_input_payload",
     "enrich_tool_error",
+    "internal_error_text",
     "normalize_legacy_input",
     "normalize_input_by_schema",
     "validate_input",

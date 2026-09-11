@@ -433,6 +433,42 @@ async def test_delete_canvas_cascades_items_but_keeps_nodes(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_soft_deleted_canvas_item_is_hidden_and_blocks_relations(db, user_a):
+    """幽灵卡防线：软删的画布项不再下发；对它的连线保持 422，重加画布后恢复。"""
+    canvas = await create_canvas(MindCanvasCreate(title="幽灵卡"), current_user=user_a, db=db)
+    a = await _new_note(db, user_a, content="A")
+    b = await _new_note(db, user_a, content="B")
+    item_a = await add_canvas_item(
+        canvas.id, MindCanvasItemCreate(node_id=a.id), request=None, current_user=user_a, db=db,
+    )
+    await add_canvas_item(canvas.id, MindCanvasItemCreate(node_id=b.id), request=None, current_user=user_a, db=db)
+
+    await remove_canvas_item(canvas.id, item_a.id, request=None, current_user=user_a, db=db)
+
+    listed = await list_canvas_items(canvas.id, current_user=user_a, db=db)
+    assert [row.node_id for row in listed] == [b.id]
+
+    with pytest.raises(HTTPException, match="两个节点都必须已经放在同一张画布上"):
+        await create_relation(
+            MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db,
+        )
+
+    await add_canvas_item(
+        canvas.id, MindCanvasItemCreate(node_id=a.id), request=None, current_user=user_a, db=db,
+    )
+    row = await db.scalar(
+        select(MindCanvasItem).where(
+            MindCanvasItem.canvas_id == canvas.id, MindCanvasItem.node_id == a.id,
+        )
+    )
+    assert row is not None and row.deleted_at is None
+    relation = await create_relation(
+        MindRelationCreate(canvas_id=canvas.id, src_node_id=a.id, dst_node_id=b.id), current_user=user_a, db=db,
+    )
+    assert {relation.src_node_id, relation.dst_node_id} == {a.id, b.id}
+
+
+@pytest.mark.asyncio
 async def test_delete_canvas_rejects_other_users_canvas(db, user_a, user_b):
     canvas = await create_canvas(MindCanvasCreate(title="别人的画布"), current_user=user_a, db=db)
     with pytest.raises(HTTPException) as e:

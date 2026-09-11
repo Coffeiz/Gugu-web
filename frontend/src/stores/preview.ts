@@ -36,19 +36,27 @@ export function isTextMime(mime?: string | null) {
   return TEXT_MIME_PREFIXES.some(prefix => value.startsWith(prefix)) || TEXT_MIMES.has(value)
     || value.endsWith('+json') || value.endsWith('+xml')
 }
+function isMediaMime(mime?: string | null) {
+  const value = (mime ?? '').toLowerCase()
+  return value.startsWith('image/') || value.startsWith('video/') || value.startsWith('audio/')
+}
 export function isTextExt(ext?: string | null, mime?: string | null) {
   // 图片身份优先：image/svg+xml 以 +xml 结尾会被 MIME 启发式误判成文本，
   // 导致 SVG 预览走文本分支开窗（44%×86% 竖长窗）和文本下载路径。
   // ext 缺失时 MIME 本身也可能说明是图片（如聊天附件只带 image/svg+xml）。
   if (isImageExt(ext) || isSvgMime(mime)) return false
-  return TEXT_EXTS.has((ext ?? '').toUpperCase()) || isTextMime(mime)
+  if (TEXT_EXTS.has((ext ?? '').toUpperCase()) || isTextMime(mime)) return true
+  // 无扩展名（.gitignore/.env 等点文件与裸文件名）且无媒体身份 → 默认按文本打开：
+  // 这类文件几乎都是文本，MIME 常为空或 octet-stream；带媒体 MIME 的无 ext 附件
+  // （聊天里的 image/* 等）仍走媒体分支，不落到文本。
+  return !ext && !isMediaMime(mime)
 }
 export function isVideoExt(ext?: string | null)  { return VIDEO_EXTS.has((ext ?? '').toUpperCase()) }
 export function isOfficeExt(ext?: string | null) { return OFFICE_EXTS.has((ext ?? '').toUpperCase()) }
 export function isAudioExt(ext?: string | null)  { return AUDIO_EXTS.has((ext ?? '').toUpperCase()) }
 
 export function isPreviewable(ext?: string | null, mime?: string | null) {
-  return PREVIEWABLE.has((ext ?? '').toUpperCase()) || isTextMime(mime)
+  return PREVIEWABLE.has((ext ?? '').toUpperCase()) || isTextMime(mime) || isTextExt(ext, mime)
 }
 
 export const usePreviewStore = defineStore('preview', () => {

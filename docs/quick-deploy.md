@@ -110,7 +110,7 @@ GUGU_SANDBOX_NETWORK_PROFILE=egress
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 ```
 
-生产 Compose 仍要求填写 `GUGU_BACKEND_IMAGE`、`GUGU_FRONTEND_IMAGE` 和 `GUGU_DB_PASSWORD`。需要从源码启动并热更新时使用 Dev Compose。
+默认 Compose（一体化）只用 `GUGU_WEB_IMAGE` 和 `GUGU_DB_PASSWORD`；只有需要分别管理前后端（拆分场景，参见「生产启动」节）时才使用 `docker-compose.prod.yml`，那时要再设 `GUGU_BACKEND_IMAGE` 和 `GUGU_FRONTEND_IMAGE`。需要从源码启动并热更新时使用 Dev Compose。
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
 
@@ -133,24 +133,42 @@ docker compose --profile sandbox up -d
 常用配置文件：
 
 - `backend/.env`：部署环境变量和敏感配置
-- `docker-compose.yml`：默认单容器一键部署入口
+- `docker-compose.yml`：默认单容器（一体化镜像）一键部署入口，推荐用于绝大多数部署
 - `docker-compose.dev.yml`：源码开发 Compose 服务
-- `docker-compose.prod.yml`：生产构建物 Compose 服务
+- `docker-compose.prod.yml`：拆分场景备选（分别管理前后端镜像，参见「生产启动」节）
 
 不要把真实密码、Token 或 API Key 提交到 Git。
 
 ## 生产启动
 
-正式生产环境使用构建产物和统一的 `9595` 入口：
+> **推荐：一体化镜像**。绝大多数生产部署使用默认 Compose（`docker compose up -d`）即可，统一的 `9595` 入口覆盖前端、后端、worker、IM gateway：
 
 ```bash
-export GUGU_BACKEND_IMAGE='请填写后端镜像地址:latest'
-export GUGU_FRONTEND_IMAGE='请填写前端镜像地址:latest'
+export GUGU_WEB_IMAGE='coffeiz/gugu-web:v1.x.y'   # 固定版本，禁用 latest
 export GUGU_DB_PASSWORD='请设置数据库密码'
-docker compose -f docker-compose.prod.yml up -d
+docker compose up -d
 ```
 
 数据库、镜像地址和标签等 Compose 变量可以写入项目根目录的 `.env`，管理员密码仍只写入 `backend/.env`。
+
+需要 Shell 沙盒时：
+
+```bash
+docker compose --profile sandbox up -d
+```
+
+生产部署前请准备持久化数据卷，并备份数据库和用户文件。**正式部署请使用固定版本或 digest，不要依赖 `latest`**。
+
+### 拆分场景（备选）
+
+需要分别管理后端与前端镜像（自托管私有仓库按服务拆分、独立扩缩容、灰度发布、自定义反向代理等）时，可改用 `docker-compose.prod.yml`，分别消费 `coffeiz/gugu-web-backend:<tag>` 与 `coffeiz/gugu-web-frontend:<tag>`：
+
+```bash
+export GUGU_BACKEND_IMAGE='coffeiz/gugu-web-backend:v1.x.y'
+export GUGU_FRONTEND_IMAGE='coffeiz/gugu-web-frontend:v1.x.y'
+export GUGU_DB_PASSWORD='请设置数据库密码'
+docker compose -f docker-compose.prod.yml up -d
+```
 
 需要沙盒时：
 
@@ -158,7 +176,7 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml --profile sandbox up -d
 ```
 
-生产部署前请准备持久化数据卷，并备份数据库和用户文件。正式部署请使用固定版本或 digest，不要依赖 `latest`。
+拆分路径与一体化镜像共享同一份数据卷和 `backend/.env`，可在两种部署间互切（前提是同一版本号）。
 
 如需把用户数据放到其他宿主机目录，在项目根目录 `.env` 设置绝对路径；默认、Dev、Prod
 三份 Compose 都使用同一个变量：

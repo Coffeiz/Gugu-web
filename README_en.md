@@ -539,5 +539,5 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 For issues and collaboration, please use GitHub [Issues](https://github.com/Coffeiz/Gugu-web/issues).
 
-- Email: <mailto:coffeiz216@gmail.com>
+- Email: <coffeiz216@gmail.com>
 - Website: [coffeiz.space](https://coffeiz.space)

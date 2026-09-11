@@ -5,6 +5,7 @@
 """
 import asyncio
 import time
+from dataclasses import dataclass
 
 from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
 from agent.rag.context import get_conversation_before_message_id, get_snapshot_revision
@@ -12,7 +13,17 @@ from agent.rag.index_cache import _documents_fingerprint, get_index_cache
 from agent.rag.models import Scope
 from agent.rag.observation import progress
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
-from agent.rag.ts_sidecar import _worker_document_key
+from agent.rag.ts_sidecar import TsSidecarUnavailable, _worker_document_key
+
+
+@dataclass(frozen=True)
+class _TransientCorpus:
+    """Memory 快照语料与它的上传参数，重试时按同一指纹强制重传。"""
+
+    documents: list
+    revision: str
+    vectors: dict[str, list[float]] | None
+    vector_version: str
 
 
 class UnifiedQueryRetriever(UnifiedRetriever):
@@ -85,26 +96,32 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                 prepare_ms = int((time.monotonic() - started) * 1000)
                 for item in persistent:
                     progress(item.source_type, "sidecar_search", index_prepare_ms=prepare_ms)
+                # 指纹耦合 embedding 模型版本戳：换模型必然重传语料与向量。参数留到
+                # 重试时复用，revision 不一致重试要按同一指纹强制重传。
+                transient: _TransientCorpus | None = None
                 if memory_documents is not None:
-                    # 指纹耦合 embedding 模型版本戳：换模型必然重传语料与向量。
                     vectors: dict[str, list[float]] | None = None
                     vector_version = ""
                     if embedding_enabled and memory_documents:
                         vectors = await self._memory_vectors(owner, memory_documents)
                         vector_version = embedding.model_tag()
-                    revision = f"{_documents_fingerprint(memory_documents)}:{vector_version}"
+                    transient = _TransientCorpus(
+                        documents=memory_documents,
+                        revision=f"{_documents_fingerprint(memory_documents)}:{vector_version}",
+                        vectors=vectors, vector_version=vector_version,
+                    )
                     await index.client.replace_transient(
-                        memory_documents, revision, vectors=vectors, vector_version=vector_version)
+                        transient.documents, transient.revision,
+                        vectors=transient.vectors, vector_version=transient.vector_version)
                 ts_index = index
                 query_vector = list(await embedding.embed(query) or []) if embedding_enabled else []
-                response = await index.unified_query(
-                    query,
-                    searches=specs,
-                    query_vector=query_vector,
-                    source_order=[name for name in self.SOURCE_ORDER
-                                  if name in {item.source_type for item in selected}],
-                    candidate_limit=candidate_limit,
-                    rank_options={
+                query_kwargs = {
+                    "searches": specs,
+                    "query_vector": query_vector,
+                    "source_order": [name for name in self.SOURCE_ORDER
+                                     if name in {item.source_type for item in selected}],
+                    "candidate_limit": candidate_limit,
+                    "rank_options": {
                         "limit": int(rank_options.get("limit") or 5),
                         "max_chars": int(rank_options.get("max_chars") or 3000),
                         "max_per_source": int(rank_options.get("max_per_source") or 3),
@@ -112,11 +129,19 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         "selection_mode": rank_options.get("selection_mode") or "confidence",
                         "exclude_content_hashes": rank_options.get("exclude_content_hashes") or (),
                     },
-                    before_message_id=get_conversation_before_message_id(),
+                    "before_message_id": get_conversation_before_message_id(),
                     # 持久向量表（knowledge 等）按此版本戳校验：worker 驻留表不同版
                     # （换模型窗口）时非 memory 组自动降级纯词法。
-                    vector_version=embedding.model_tag() if embedding_enabled else None,
-                )
+                    "vector_version": embedding.model_tag() if embedding_enabled else None,
+                }
+                try:
+                    response = await index.unified_query(query, **query_kwargs)
+                except TsSidecarUnavailable as exc:
+                    index, response = await self._resync_and_retry(
+                        exc, query=query, query_kwargs=query_kwargs, db=db, owner=owner,
+                        scope=scope, transient=transient, metadata=metadata,
+                    )
+                    ts_index = index
         except BaseException as exc:
             for item in selected:
                 progress(item.source_type, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
@@ -148,6 +173,34 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             rank_rows=self._resolve_rank_rows(ts_index, response, memory_documents),
             rank_stats=stats,
         )]
+
+    async def _resync_and_retry(
+        self, exc: TsSidecarUnavailable, *, query: str, query_kwargs: dict, db,
+        owner, scope, transient: "_TransientCorpus | None", metadata: dict,
+    ):
+        """revision 不一致时作废缓存、全量重同步并按同参数重试一次。
+
+        worker 的 ``state.revision`` 是 per-owner 单槽，被另一个 revision 命名空间
+        （会话快照版 / DB 投影版）推着走过之后，缓存里冻结了旧 revision 的索引对象会
+        被 worker 拒绝（``revision_mismatch``）。重同步能把 worker 拉回本轮 revision，
+        这属于可自愈的缓存一致性问题，不该变成模型与用户看到的故障。
+
+        只重试一次：第二次仍失败按原错误抛出，不把真实故障吞成重试风暴。
+        """
+        if getattr(exc, "code", None) != "revision_mismatch":
+            raise exc
+        metadata["revision_resync"] = "True"
+        index = await get_index_cache().resync(
+            db, owner, "all", scope, diagnostics=metadata,
+            baseline_revision=get_snapshot_revision() or None,
+        )
+        if transient is not None:
+            # 强制重传：瞬时槽的短路判断依据的是进程内状态，此刻不能信。
+            await index.client.replace_transient(
+                transient.documents, transient.revision,
+                vectors=transient.vectors, vector_version=transient.vector_version, force=True,
+            )
+        return index, await index.unified_query(query, **query_kwargs)
 
     def _memory_session_owner(self, memory):
         """Memory-only 查询的 IPC 宿主：只借用会话与索引缓存，不注册持久化来源。"""

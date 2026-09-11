@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -279,3 +280,126 @@ async def test_stream_reader_race_closes_connection_and_raises_unavailable(monke
     with pytest.raises(TsSidecarUnavailable, match="请求失败"):
         await client._request({"op": "search", "revision": "r1", "query": "查询"})
     assert client._process is None
+
+
+class _WritableStdin:
+    def write(self, data):
+        pass
+
+    async def drain(self):
+        return None
+
+
+class _OneLineStdout:
+    def __init__(self, payload: dict):
+        self._line = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
+
+    async def readline(self):
+        return self._line
+
+
+async def _no_process_start(self):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_worker_error_response_carries_machine_readable_code(monkeypatch):
+    """worker 的 error 响应必须把 code 带进异常，调用方才能区分可自愈故障与真不可用。"""
+    from types import SimpleNamespace
+
+    from agent.rag.ts_sidecar import TsSidecarUnavailable
+
+    monkeypatch.setattr(TsSidecarClient, "_ensure_process", _no_process_start)
+    client = TsSidecarClient("test-owner", command="")
+    client._process = SimpleNamespace(
+        stdin=_WritableStdin(),
+        stdout=_OneLineStdout({
+            "status": "error", "code": "revision_mismatch",
+            "message": "TS 统一查询索引版本不一致",
+        }),
+        returncode=0,
+    )
+    with pytest.raises(TsSidecarUnavailable) as caught:
+        await client._request({"op": "unified_query", "revision": "r1", "query": "查询"})
+    assert caught.value.code == "revision_mismatch"
+
+    # 没有 code 的失败是「真不可用」：code 必须为 None，调用方不能误判成可自愈。
+    client._process = SimpleNamespace(
+        stdin=_WritableStdin(),
+        stdout=_OneLineStdout({"status": "error", "message": "worker 内部错误"}),
+        returncode=0,
+    )
+    with pytest.raises(TsSidecarUnavailable) as caught_plain:
+        await client._request({"op": "search", "revision": "r1", "query": "查询"})
+    assert caught_plain.value.code is None
+
+
+@pytest.mark.asyncio
+async def test_transient_response_does_not_overwrite_persistent_revision(monkeypatch):
+    """replace_transient 回的是瞬态槽指纹；写进 _revision 会让后续查询误判持久索引已同步。"""
+    from agent.rag import ts_sidecar as ts
+
+    async def fake_request_unlocked(self, payload, *, timeout_seconds=None):
+        if payload.get("op") == "replace_transient":
+            return {"status": "ok", "revision": "transient-fingerprint"}
+        return {"status": "ok", "revision": "persistent-revision", "document_count": 1}
+
+    monkeypatch.setattr(ts.TsSidecarClient, "_request_unlocked", fake_request_unlocked)
+    monkeypatch.setattr(ts.TsSidecarClient, "_ensure_process", _no_process_start)
+    client = ts.TsSidecarClient("test-owner", command="")
+    document = IndexDocument("file:1", "file", "1", Scope("test-owner"), "文件", "", "缓存", "1")
+
+    await client.replace([document], "persistent-revision")
+    assert client._revision == "persistent-revision"
+    await client.replace_transient([document], "transient-fingerprint")
+    assert client._revision == "persistent-revision"
+
+
+@pytest.mark.asyncio
+async def test_replace_transient_force_skips_fingerprint_shortcut(monkeypatch):
+    """revision 不一致重试必须能强制重传，不能信进程内残留的指纹短路。"""
+    from types import SimpleNamespace
+
+    from agent.rag import ts_sidecar as ts
+
+    client = ts.TsSidecarClient("owner-force", command="")
+    client._process = SimpleNamespace(returncode=None)
+    client._process_generation = 2
+    client._transient_generation = 2
+    client._transient_revision = "same-revision"
+    sent: list[str] = []
+
+    async def fake_request(payload, *, timeout_seconds=None):
+        sent.append(payload["op"])
+        return SimpleNamespace(response={"revision": payload.get("revision", "")})
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    # 指纹与代数都未变：默认走零 IPC 短路。
+    await client.replace_transient([], "same-revision")
+    assert sent == []
+    await client.replace_transient([], "same-revision", force=True)
+    assert sent == ["replace_transient"]
+
+
+def test_worker_artifact_version_reads_configured_artifact(monkeypatch, tmp_path):
+    """GC 靠制品版本戳识别旧版本索引；读不到必须返回 None（按未知处理，不能当成要删）。"""
+    from types import SimpleNamespace
+
+    from agent.rag.ts_sidecar import worker_artifact_version
+
+    artifact = tmp_path / "worker.mjs"
+    artifact.write_bytes(b'const x = 1;\nvar RAG_WORKER_VERSION = "9.9.9";\n')
+    monkeypatch.setattr("app.core.config.get_settings", lambda: SimpleNamespace(
+        search=SimpleNamespace(ts_sidecar_command=f"node {artifact} --index-dir /tmp/x")))
+    assert worker_artifact_version() == "9.9.9"
+
+    fallback = tmp_path / "fallback.mjs"
+    fallback.write_bytes(b'RAG_WORKER_VERSION = "0.0.0-fallback";')
+    monkeypatch.setattr("agent.rag.ts_sidecar._default_artifact", lambda: fallback)
+    missing = tmp_path / "missing.mjs"
+    monkeypatch.setattr("app.core.config.get_settings", lambda: SimpleNamespace(
+        search=SimpleNamespace(ts_sidecar_command=f"node {missing}")))
+    assert worker_artifact_version() == "0.0.0-fallback"
+
+    monkeypatch.setattr("agent.rag.ts_sidecar._default_artifact", lambda: missing)
+    assert worker_artifact_version() is None

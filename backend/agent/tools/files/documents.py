@@ -29,24 +29,14 @@ from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
-from app.services.filesystem_authorization import (
-    FilesystemPolicy,
-    filesystem_location_can_write,
-)
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool, current_dispatch_session
-from agent.tools.filesystem_policy import (
-    current_filesystem_policy,
-    current_workspace_target,
-    file_write_access_error,
-    write_access_error,
-)
 from agent.tools.text_edit import apply_line_edits, select_numbered_lines
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name,
-    _location_matches, _location_receipt, _norm_target,
+    _location_receipt, _norm_target,
     _resolve_create_location, _resolve_file as _locations_resolve_file, _resolve_key,
-    _target_loc, _workspace_conflict,
+    _target_loc,
 )
 from .folders import (
     _create_folder, _delete_folder, _find_folder, _list_folders,
@@ -289,9 +279,6 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     """对已解析的 File f 应用一次编辑（mode + content/find/replace），各自 commit。返回结果 dict。
     供单个与批量 edit 共用。"""
     nm = f"{f.display_name}.{f.ext}"
-    access_error = await file_write_access_error(db, user_id, f)
-    if access_error:
-        return {"error": access_error, "name": nm}
     if not _is_text_file_record(f):
         return {"error": f"不支持修改该类型（{f.ext}），仅支持文本类文件", "name": nm}
     if (f.size_bytes or 0) > READ_MAX_BYTES:
@@ -426,12 +413,6 @@ async def _create_file(db, user_id, args: dict):
         if space not in _CREATE_SPACES:
             failed.append({"index": index, "name": name, "error": "create_file 只支持 personal/project/workspace 空间"})
             continue
-        access_error = await write_access_error(
-            db, user_id, space=space, project_id=project_id, folder_id=folder_id,
-        )
-        if access_error:
-            failed.append({"index": index, "name": name, "error": access_error})
-            continue
 
         try:
             result = await service.create_file(
@@ -475,11 +456,6 @@ async def _create_file(db, user_id, args: dict):
 
 async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder_id, workspace_directory_id=None):
     """把一个已解析好的暂存附件 meta 落成文件库记录，返回 (ok, item)。供单个/批量 save 共用。"""
-    access_error = await write_access_error(
-        db, user_id, space=space, project_id=project_id, folder_id=folder_id,
-    )
-    if access_error:
-        return False, {"error": access_error}
     from app.core import chat_attach
     ext = meta.get("ext") or "bin"
     display_name = meta.get("name") or "上传文件"
@@ -569,9 +545,6 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
     而不是把 rename 当成转换工具。
     """
     old_ext = f.ext
-    access_error = await file_write_access_error(db, user_id, f)
-    if access_error:
-        return {"error": access_error, "name": f"{f.display_name}.{f.ext}"}
     if new_fmt is not None:
         fmt = new_fmt.lower()
         if fmt not in _DOC_MIME:
@@ -653,9 +626,6 @@ async def _delete_file(db, user_id, args: dict):
             file, error = await _resolve_file(db, user_id, {"file_id": file_id})
             if error:
                 return error
-            access_error = await file_write_access_error(db, user_id, file)
-            if access_error:
-                return {"error": access_error}
             files.append(file)
         results = []
         for file in files:
@@ -668,9 +638,6 @@ async def _delete_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
-    access_error = await file_write_access_error(db, user_id, f)
-    if access_error:
-        return {"error": access_error}
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
     await delete_file_action(db, get_storage(), user_id, f.id, now_utc())
     await db.commit()
@@ -718,15 +685,6 @@ async def _copy_file(db, user_id, args: dict):
                 project_id = fo.project_id
                 space = "project"
             workspace_directory_id = fo.workspace_directory_id
-    if workspace_target is not None and not await _location_matches(
-        db, user_id, space, project_id, folder_id, workspace_target,
-    ):
-        return _workspace_conflict(workspace_target)
-    target_error = await write_access_error(
-        db, user_id, space=space, project_id=project_id, folder_id=folder_id,
-    )
-    if target_error:
-        return {"error": target_error, "name": f"{f.display_name}.{f.ext}"}
     try:
         result = await FileService(db).copy_file(
             user_id, f.id, folder_id=folder_id,
