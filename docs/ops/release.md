@@ -62,7 +62,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   备份/基线等非版本用途的 tag 用 `backup/…`、`baseline-…` 命名，不会触发发布流水线。
 - tag 打在 **main 的合并提交**上，附注 tag。**发布命名口径**：
   - **tag 附注**：单行简式 `vx.y.z：一句话摘要`（v1.1.1 样式），不写完整更新内容；
-  - **GitHub Release**：标题纯 `vx.y.z`，正文放 CHANGELOG 对应版本小节全文（v1.1.0 范式）。
+  - **GitHub Release**：标题纯 `vx.y.z`，正文放 CHANGELOG 对应版本小节全文（v1.1.0 范式），
+    **未来发布正文双语：English 在前、中文在后**（v1.1.3 起的中文版不追溯）。
     流水线默认 `--generate-notes`，发布绿后用
     `gh release edit vx.y.z --title vx.y.z --notes-file <对应 CHANGELOG 小节>` 覆写。
 
