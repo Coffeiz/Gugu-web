@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shlex
 import weakref
 from collections.abc import Iterable
@@ -18,7 +19,16 @@ from agent.rag.scope import matches_scope
 
 
 class TsSidecarUnavailable(RuntimeError):
-    """TS worker 未配置、启动失败或协议请求失败。"""
+    """TS worker 未配置、启动失败或协议请求失败。
+
+    ``code`` 保留 worker 返回的机器可读错误码（如 ``revision_mismatch``）。调用方
+    靠它区分「索引 revision 与 worker 当前状态不一致」这类可自愈故障和真正的
+    不可用，而不是去匹配中文文案。
+    """
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -59,6 +69,8 @@ BUILD_TIMEOUT_SECONDS = 30.0
 # readline 以 "chunk is longer than limit" 打断，放宽到 32MB。
 SIDECAR_STREAM_LIMIT_BYTES = 32 * 1024 * 1024
 SIDE_CAR_REAPER_INTERVAL_SECONDS = 60
+# esbuild 单文件制品保留的版本常量，用于识别旧制品写下的过期索引目录。
+_ARTIFACT_VERSION_RE = re.compile(rb'RAG_WORKER_VERSION\s*=\s*"([^"]+)"')
 
 
 class TsSidecarClient:
@@ -175,11 +187,13 @@ class TsSidecarClient:
         *,
         vectors: dict[str, list[float]] | None = None,
         vector_version: str = "",
+        force: bool = False,
     ) -> None:
         """把 Memory 快照语料装入 worker 的瞬态槽；指纹未变且进程未重启时零 IPC。
 
         vectors 按 worker 文档键驻留瞬态槽（随语料上传，不随查询重复传输）；
-        revision 必须耦合 embedding 模型版本戳，换模型时必然重传。
+        revision 必须耦合 embedding 模型版本戳，换模型时必然重传。``force=True``
+        跳过「指纹未变」短路，用于 revision 不一致重试时不信任进程内残留状态。
         """
         generation = self._process_generation
         if self._process is None or self._process.returncode is not None:
@@ -188,7 +202,7 @@ class TsSidecarClient:
             # 跳过重传，worker 新进程瞬态槽为空，下一次查询报版本不一致。
             self._transient_revision = None
             generation += 1
-        if self._transient_revision == revision and self._transient_generation == generation:
+        if not force and self._transient_revision == revision and self._transient_generation == generation:
             return
         payload: dict[str, Any] = {
             "op": "replace_transient", "revision": revision,
@@ -440,8 +454,14 @@ class TsSidecarClient:
         except json.JSONDecodeError as error:
             raise TsSidecarUnavailable("TypeScript RAG worker 返回无效 JSON") from error
         if response.get("status") == "error":
-            raise TsSidecarUnavailable(str(response.get("message") or response.get("code") or "worker error"))
-        if response.get("revision") is not None:
+            raise TsSidecarUnavailable(
+                str(response.get("message") or response.get("code") or "worker error"),
+                code=str(response.get("code") or "") or None,
+            )
+        # 只有持久索引类响应才代表 worker 的 state.revision。replace_transient 回的是
+        # 瞬态槽指纹，写进 _revision 会让 reuse_if_current 误判持久索引已同步、把
+        # 后续每次查询退化成全量重建（2026-09-11 修）。
+        if response.get("revision") is not None and payload.get("op") != "replace_transient":
             self._revision = response.get("revision")
         return response
 
@@ -909,10 +929,53 @@ async def _stop_sidecar_reaper_if_empty() -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
+def _default_artifact() -> Path:
+    """打包制品路径：运行环境只消费 bin 下的固定构建物（见 backend/ts/README.md）。"""
+    return Path(__file__).resolve().parents[2] / "bin" / "gugu-rag-ts-worker.mjs"
+
+
+def _resolve_artifact(command: str) -> Path | None:
+    """从 worker 启动命令里取制品文件；未配置命令时用打包默认制品。
+
+    命令形如 ``node <artifact> [args...]``，逐个 token 找第一个真实存在的文件，
+    这样制品后面再挂参数也能定位；都不存在返回 None。
+    """
+    parts = shlex.split(command.strip()) if command.strip() else []
+    for part in parts:
+        candidate = Path(part).expanduser()
+        if candidate.is_file():
+            return candidate
+    fallback = _default_artifact()
+    return fallback if fallback.is_file() else None
+
+
+def worker_artifact_version() -> str | None:
+    """读当前 worker 制品的版本戳，供磁盘索引的旧版本清理比对。
+
+    运行时并不逐次校验这个版本（逐次校验的是评分契约 scoring_version），这里只
+    用于识别「旧制品写下的、当前 worker 已经会丢弃重建的」索引目录。取不到返回
+    None，调用方必须按「未知」处理，不能当成需要删除。
+    """
+    from app.core.config import get_settings
+
+    configured = str(getattr(get_settings().search, "ts_sidecar_command", "") or "")
+    artifact = _resolve_artifact(configured)
+    if artifact is None:
+        return None
+    try:
+        # 制品是 esbuild 单文件产物，版本常量在文件头部；只读前几 KB。
+        with artifact.open("rb") as handle:
+            head = handle.read(8192)
+    except OSError:
+        return None
+    match = _ARTIFACT_VERSION_RE.search(head)
+    return match.group(1).decode("utf-8", "replace") if match else None
+
+
 def _worker_command(command: str, index_dir: str, owner_user_id: str) -> list[str]:
     configured = command.strip()
     if not configured:
-        packaged = Path(__file__).resolve().parents[2] / "bin" / "gugu-rag-ts-worker.mjs"
+        packaged = _default_artifact()
         configured = f"node {shlex.quote(str(packaged))}" if packaged.is_file() else ""
     parts = shlex.split(configured) if configured else []
     if index_dir:
@@ -958,4 +1021,5 @@ __all__ = [
     "BUILD_TIMEOUT_SECONDS",
     "SIDECAR_STREAM_LIMIT_BYTES",
     "get_lexical_client", "close_lexical_clients", "close_rank_clients", "index_dir_for_owner",
+    "worker_artifact_version",
 ]
