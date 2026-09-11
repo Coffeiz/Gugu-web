@@ -413,7 +413,7 @@ export function useChatConversation(options: {
     resolveSpeaker, bumpViewGeneration, getViewGeneration,
     composerRef: options.composerRef,
     abortCtrl, streaming, resumeStream, resetSessionTurn, clearPendingQueue,
-    clearStatus,
+    clearStatus, setStatus, contextCompactingItem: _contextCompactingItem,
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,

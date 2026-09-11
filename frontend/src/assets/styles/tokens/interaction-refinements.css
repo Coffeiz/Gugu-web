@@ -13,10 +13,6 @@
 }
 
 :root[data-theme='dark'] {
-  /* Dark topbar / toolbar shells stay visually still. Child controls remain interactive. */
-  --topbar-bg-hover: var(--topbar-bg);
-  --topbar-shadow-hover: var(--topbar-shadow);
-
   /* Selected pills need to read as selected against dark tracks. */
   --segmented-pill-bg: color-mix(in srgb,var(--surface-raised) 78%,var(--action-primary) 22%);
   --segmented-pill-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 2px 8px rgba(0,0,0,.24);
@@ -156,7 +152,7 @@ html[data-theme][data-family] .cal-sidebar .cal-done:hover {
   opacity: .72;
 }
 
-/* ── Schedules ── */
+/* ── Schedules / Skills 卡片面 ── */
 html[data-theme][data-family] .task-card {
   background: color-mix(in srgb,var(--surface-raised) 78%,transparent);
   border-color: var(--border-default);
@@ -168,14 +164,20 @@ html[data-theme][data-family] .task-card::after {
   box-shadow: inset 0 1px 0 var(--border-highlight);
   transition: opacity var(--hover-motion-card);
 }
-html[data-theme][data-family] .task-card:hover {
+/* 卡片 hover 提亮（--surface-card → --surface-raised）是两类卡片共用的契约：技能卡只在
+   组件内写了静止面，不会自动继承这一层，必须与本规则同列，否则技能卡 hover 毫无变化
+   （暗色下 --card-shadow-hover 与 --card-hover-overlay 都被主题置成 inert，只剩背景这一路）。 */
+html[data-theme][data-family] .task-card:hover,
+html[data-theme][data-family] .skill-card:hover {
   background: var(--surface-raised);
   border-color: var(--border-hover);
   box-shadow: var(--elevation-card-hover);
 }
 html[data-theme][data-family] .task-card:hover::after { opacity: 1; }
-html[data-theme][data-family] .task-card .link {
-  transition: color var(--hover-motion-control), opacity var(--hover-motion-control);
+html[data-theme][data-family] .task-card .card-link-btn {
+  /* 页脚文字操作（含测试执行/编辑/删除）在本层收口过渡：hover 的 --action-soft 药丸底
+     与文字色一起淡入，与技能卡共用 components/card-actions.css 的同一份 hover 表现。 */
+  transition: color var(--hover-motion-control), background-color var(--hover-motion-control), opacity var(--hover-motion-control);
 }
 html[data-theme][data-family] .sched-page .btn-primary {
   transition:

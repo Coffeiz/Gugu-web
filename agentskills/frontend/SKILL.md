@@ -40,6 +40,12 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 - Chromium 可能在 transform 合成期间暂时停止子 surface 的 `backdrop-filter`；需要毛玻璃从第一帧跟随动画时，在 enter/leave active 阶段由动画宿主临时保留同值 blur，动画结束后仍由内部 surface 负责最终材质。
 - 复用 `PopupMenu` 时使用其透明宿主模式承载自定义 surface；自定义 Teleport 弹窗也必须遵循同样的“透明宿主 + 单一 surface”边界，并为 active 阶段的 blur 行为补充回归检查。
 
+## 玻璃表面两种实现与 hover 契约
+
+- 标准 `.glass-card`（backdrop-filter 真磨砂）用于内容可灵活调整/交互的面板；`GlassBg` 仿玻璃（`.glass-bg > .gb-tint`，无 backdrop-filter）用于固定内容为主或浮在会动内容之上的面板（backdrop-filter 在动内容上会边缘白带）。以视觉体感为主选型；**项目页是例外**（动内容上仍用标准玻璃）。
+- 仿玻璃宿主的 hover tint 规则只能放全局样式表（component-theme-refinements.css 的 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`）；写在组件 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。
+- 不想要 hover 的面板用 opt-out 契约：`--glass-card-background-hover` / `--glass-card-shadow-hover` 自映射回静止值（技能页、终端页先例）；禁止恢复主题层「暗色一刀切 hover 屏蔽」。暗色 hover 高亮幅度在 theme-refinements.css 暗色段标定（现 7% 白）。
+
 ## HTML 与组件边界
 
 - 不可信 HTML 必须经过 `frontend/src/utils/markdown.ts` 的消毒函数，禁止直接使用 `v-html`。

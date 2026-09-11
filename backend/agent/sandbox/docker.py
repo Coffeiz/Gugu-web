@@ -1,8 +1,9 @@
 """Rootless Docker 沙盒执行器。
 
-Docker 是普通用户 Shell 的真正隔离边界。本模块只接受单条 argv 命令，
-并在每次执行时固定写入容器安全参数；业务参数不能覆盖网络、挂载、用户和
-Linux capability 配置。
+Docker 是普通用户 Shell 的真正隔离边界。单条 argv 命令按参数直跑；含
+shell 元字符的复合命令整体交给容器内 /bin/sh -c 解释（跳过逐参数路径
+预检，由容器边界兜底）。每次执行时固定写入容器安全参数；业务参数不能
+覆盖网络、挂载、用户和 Linux capability 配置。
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import fcntl
 import os
 import pty
 import signal
+import shlex
 import shutil
 import struct
 import termios
@@ -185,19 +187,42 @@ class DockerSandboxExecutor:
         allow_script_execution: bool = False,
         environment: dict[str, str] | None = None,
     ) -> list[str]:
-        argv = LocalWorkspaceExecutor._parse_command(command)
+        text = (command or "").strip()
+        if not text:
+            raise ValueError("command 不能为空")
+        # 含 shell 元字符的复合命令交给容器内 /bin/sh 解释：沙盒本身有 OS 级
+        # 边界（只读 root、绑定挂载、cap 全关、断网/受控 egress、非特权用户），
+        # 复合命令、管道与用户在终端输入的语义一致，也和 run_script 的脚本
+        # 执行同级。风险分类在 shell_policy 按整条命令串完成；重定向与命令
+        # 替换本就被归类 dangerous 走确认门。-c 载荷对逐参数路径预检不透明
+        # （整体当成一个 token 会把 `cd ..` 之类误判为路径越界），跳过该预检，
+        # 由容器边界兜底。普通模式仍禁止代码运行时，检查对象换成 -c 载荷的
+        # 内层 token，防止 `echo x && python3 y` 绕过运行时门。
+        shell_wrapped = LocalWorkspaceExecutor._has_shell_meta(text)
+        if shell_wrapped:
+            argv = ["/bin/sh", "-c", text]
+        else:
+            argv = LocalWorkspaceExecutor._parse_command(text, allow_script_execution=allow_script_execution)
         workdir = self._resolve_cwd(cwd)
-        self._validate_container_interpreter_inputs(argv, allow_script_execution=allow_script_execution)
-        LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
-            argv, workdir,
-            allowed_absolute_paths=tuple(
-                path for path, mounted in (
-                    ("/workspace", self.root), ("/personal", self.personal_root),
-                    ("/project", self.project_root),
-                ) if mounted
-            ),
-            allow_script_execution=allow_script_execution,
-        )
+        if shell_wrapped:
+            if not allow_script_execution:
+                try:
+                    inner_argv = shlex.split(text, posix=True)
+                except ValueError as exc:
+                    raise ValueError("command 引号格式无效") from exc
+                self._validate_container_interpreter_inputs(inner_argv, allow_script_execution=False)
+        else:
+            self._validate_container_interpreter_inputs(argv, allow_script_execution=allow_script_execution)
+            LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
+                argv, workdir,
+                allowed_absolute_paths=tuple(
+                    path for path, mounted in (
+                        ("/workspace", self.root), ("/personal", self.personal_root),
+                        ("/project", self.project_root),
+                    ) if mounted
+                ),
+                allow_script_execution=allow_script_execution,
+            )
         profile = network_profile or self.settings.network_profile
         if profile not in ("none", "egress"):
             raise ValueError("当前 Shell 沙盒网络策略无效")

@@ -18,6 +18,7 @@ from app.models import (
 from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.core.tz import now_utc
+from agent.sandbox.rootless_permissions import ensure_sandbox_acl
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import RESERVED_USER_ROOTS, _safe_name, compose_logical_path
 from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT, DEFAULT_WORKSPACE_FOLDER_NAME
@@ -40,13 +41,18 @@ def _workspace_directory_root(user_id, directory_name: str) -> Path:
 
 
 def _prepare_workspace_root(root: Path) -> None:
-    """创建工作区目录并保证沙盒容器进程可写。
+    """创建工作区目录并保证沙盒容器进程可读写。
 
-    rootless docker 下沙盒进程映射 uid 与宿主机部署用户不同，默认 755 会让
-    沙盒内在 /workspace 写文件直接 PermissionError；与 ensure_sandbox_root
-    保持同一套全员可写的兼容性取舍（见其注释），目录内条目仍受容器权限约束。
+    rootless docker 下沙盒进程映射 uid 与宿主机部署用户不同，仅 chmod 0777 只
+    解决「写」：文件库侧写入的 0660 文件（other 位为 0）沙盒仍读不到。这里
+    优先套用与一次性 sandbox-bootstrap 相同的 ACL 授权（含递归补齐存量文件、
+    每级目录 default ACL，后续新建文件自动继承），让沙盒映射身份获得读写；
+    环境不支持时（无 setfacl / subordinate 映射，如容器内 backend）退回与
+    ensure_sandbox_root 一致的全员可写兼容取舍，目录内条目仍受容器权限约束。
     """
     root.mkdir(parents=True, exist_ok=True)
+    if ensure_sandbox_acl(root):
+        return
     root.chmod(0o777)
 
 
@@ -58,12 +64,13 @@ async def list_workspace_directories(db: AsyncSession, user_id) -> list[Workspac
         WorkspaceDirectory.deleted_at.is_(None),
     ).order_by(WorkspaceDirectory.is_default.desc(), WorkspaceDirectory.name))
     rows = list(result.scalars().all())
-    # 顺带自愈历史目录的沙盒可写权限（只 chmod 已存在的目录，不创建任何东西）。
+    # 顺带自愈历史目录的沙盒访问权限（已过滤 exists，ensure 内部的 mkdir 不会
+    # 创建缺失目录；ACL 已就绪时为进程内缓存命中，几乎零开销）。
     if get_settings().storage.backend == "local":
         for row in rows:
             root = _workspace_directory_root(user_id, row.directory_name)
             if root.exists():
-                root.chmod(0o777)
+                _prepare_workspace_root(root)
     return rows
 
 

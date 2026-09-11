@@ -196,6 +196,12 @@ class FileOps:
         )
         self.db.add(db_file)
         await self.db.flush()
+        # 新建也要推进同步基线：该路径可能存在历史 journal（旧版本已删除），
+        # 缺这条记录会让双向冲突检测把「工具单写两边」误判成两边都改过。
+        await record_canonical_file_change(
+            self.db, user_id=user_id, storage_key=db_file.storage_key,
+            observed_fingerprint=hashlib.sha256(data).hexdigest(),
+        )
         await record_usage(
             self.db, user_id, category=FILE_LIBRARY, delta_bytes=size_bytes,
             operation=ledger_operation, resource_type="file", resource_id=db_file.id,
@@ -331,6 +337,10 @@ class FileOps:
         )
         self.db.add(new_file)
         await self.db.flush()
+        await record_canonical_file_change(
+            self.db, user_id=user_id, storage_key=new_file.storage_key,
+            observed_fingerprint=hashlib.sha256(data).hexdigest(),
+        )
         await record_usage(
             self.db, user_id, category=FILE_LIBRARY, delta_bytes=new_file.size_bytes,
             operation="file_copy", resource_type="file", resource_id=new_file.id,

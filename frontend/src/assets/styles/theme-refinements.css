@@ -33,27 +33,15 @@ html[data-family='mono'] {
   --chrome-glass-blur: var(--glass-blur);
 }
 
-/* Dark surfaces do not brighten on hover. Interactive controls still use control/action hover
-   tokens, so disabling surface highlight does not remove affordance from buttons or inputs. */
 html[data-theme='dark'][data-family] {
-  --surface-hover-tint: transparent;
-  /* 日历条/chip 是小组件级交互目标，hover 反馈必须可感知，不能跟着 surface 级
-     「暗色不提亮」一起变全透明；从主题自身的 highlight-hover 派生一层薄高光。 */
+  /* 暗色 glass hover 高亮按暗色标定：theme-glass-hover（玻璃族 9% 白）用户实测偏亮，
+     统一压到 7% 白；亮色不受影响。 */
+  --surface-glass-hover: color-mix(in srgb, white 7%, transparent);
+  /* 日历 chip/capsule 的 hover 高光按暗色标定（5% 白，与项目卡 sheen 同惯例）。
+     其余 surface/card/glass 的 hover 中性化覆盖（transparent/同值自映射）已清理：
+     暗色与亮色共用 :root 语义 hover token，普通 glass 卡片恢复标准 hover。 */
   --calendar-chip-hover-overlay: color-mix(in srgb, white 5%, transparent);
   --calendar-capsule-hover-overlay: color-mix(in srgb, white 5%, transparent);
-  --surface-glass-hover: var(--surface-glass);
-  --elevation-card-hover: var(--elevation-card);
-  --card-hover-overlay: transparent;
-  --card-surface-bg-hover: var(--surface-card-solid);
-  --card-surface-border-hover: var(--border-strong);
-  --card-shadow-hover: var(--card-shadow);
-  --glass-card-background-hover: var(--glass-card-background);
-  --glass-card-border-hover: var(--glass-card-border);
-  --glass-card-shadow-hover: var(--glass-card-shadow);
-  --sidebar-user-bg-hover: var(--sidebar-user-bg);
-  --topbar-bg-hover: var(--topbar-bg);
-  --topbar-shadow-hover: var(--topbar-shadow);
-  --gugu-chat-session-hover: transparent;
 
   /* Dark primary fills remain quieter than the foreground accent while retaining the shared gradient. */
   --action-primary-fill: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));

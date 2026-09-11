@@ -1,7 +1,7 @@
 <template>
       <Teleport to="body">
         <Transition name="admin-modal" appear @after-leave="$emit('after-close')">
-        <div v-if="visible && draft" class="modal-mask" @click.self="$emit('close')">
+        <div v-if="visible && draft" class="modal-mask" @mousedown="onMaskMouseDown" @click="onMaskClick">
           <div class="modal-box">
             <h4 class="modal-title">{{ isNew ? t('adminLlmUi.newPreset') : t('adminLlmUi.editPreset') }}</h4>
 
@@ -238,6 +238,16 @@ const $emit = defineEmits<{
   (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
   (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-vision', id: string | number | undefined, dim: string): void
 }>()
+// 拖选文本时在弹窗外松开会把 click 派发到按下/释放目标的公共祖先（即遮罩），
+// 单看 click.self 会误关；只有按下也从遮罩开始才视为点外关闭。
+let maskPressStarted = false
+function onMaskMouseDown(event: MouseEvent) {
+  maskPressStarted = event.target === event.currentTarget
+}
+function onMaskClick(event: MouseEvent) {
+  if (maskPressStarted && event.target === event.currentTarget) $emit('close')
+  maskPressStarted = false
+}
 function forwardCapabilityOverride(key: string, enabled: boolean) {
   $emit('set-capability-override', key, enabled)
 }

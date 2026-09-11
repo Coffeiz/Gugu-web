@@ -21,7 +21,7 @@
  * 竖线后的显示名只作展示，后端抽 content_plain 时会保留它，便签才能按名字被搜到。
  * UI 触发键是 `@`（原 `[[`，2026-07-10 改），只是触发键，写进存储的仍是 `[[...]]`。
  */
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Extension, Node, mergeAttributes } from '@tiptap/core'
 import { Blockquote } from '@tiptap/extension-blockquote'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import ListItem from '@tiptap/extension-list-item'
@@ -647,6 +647,29 @@ export function toggleTaskInMd(md: string, idx: number): string {
 }
 
 // ── 编辑器扩展：把不要的块全关掉，只留窄口径这几种 ───────────────────────────
+// 撤销/重做必须永远被编辑器消费：StarterKit 的 UndoRedo 在历史栈为空时
+// 返回 false 不拦截 Ctrl/Cmd+Z，事件落回浏览器文档级 undo 栈，会把同文档里
+// 其他原生输入框（项目/文件库重命名等）更早的编辑一并回退（2026-09-10 用户
+// 实测：对话里按 Ctrl+Z 把项目和文件库的内容也撤回了）。这里镜像 UndoRedo
+// 的全部键位并无条件消费——栈空时 undo/redo 命令本身是安全 no-op。
+const ScopedHistory = Extension.create({
+  name: 'scopedHistory',
+  addKeyboardShortcuts() {
+    return {
+      'Mod-z': ({ editor }) => { editor.commands.undo(); return true },
+      'Shift-Mod-z': ({ editor }) => { editor.commands.redo(); return true },
+      'Mod-y': ({ editor }) => { editor.commands.redo(); return true },
+      'Mod-я': ({ editor }) => { editor.commands.undo(); return true },
+      'Shift-Mod-я': ({ editor }) => { editor.commands.redo(); return true },
+      // Mac 上字面 Ctrl+Z 是独立键名（Mod-z 只展开成 Cmd-z），同样要消费，
+      // 否则 Mac 用户按 Ctrl+Z 仍会触发浏览器文档级 undo。
+      'Ctrl-z': ({ editor }) => { editor.commands.undo(); return true },
+      'Shift-Ctrl-z': ({ editor }) => { editor.commands.redo(); return true },
+      'Ctrl-y': ({ editor }) => { editor.commands.redo(); return true },
+    }
+  },
+})
+
 export function mindExtensions(placeholder = '写点什么…') {
   return [
     StarterKit.configure({
@@ -670,5 +693,6 @@ export function mindExtensions(placeholder = '写点什么…') {
     TaskItem.configure({ nested: false }),
     MindRef,
     Placeholder.configure({ placeholder }),
+    ScopedHistory,
   ]
 }

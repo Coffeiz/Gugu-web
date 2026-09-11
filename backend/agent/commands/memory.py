@@ -54,6 +54,9 @@ async def forget(user_id, arg: str, locale: str | None = None) -> str:
         await store.write_profile_list(user_id, keep_profile)
     if len(keep_patterns) != len(patterns):
         await store.write_pattern_list(user_id, keep_patterns)
+        # 已删 pattern 的向量缓存靠 sync 的存活集 GC 回收；不主动同步会把
+        # 删除动作拖到下一次新增 pattern 才生效，期间检索仍可能命中幽灵向量。
+        await store.sync_pattern_vecs(user_id, keep_patterns)
     from agent import events
     events.publish(events.types.MemoryUpdated(user_id=user_id, added=0, removed=removed, source="forget"))
     return f"好，我把和「{arg}」相关的 {removed} 条记忆忘掉了。"

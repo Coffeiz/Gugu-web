@@ -24,7 +24,9 @@ from agent.sandbox.rootless_permissions import (
 )
 
 
-_WRITABLE_ROOT_NAMES = ("shell", "个人文件", "项目文件")
+# workspace 是默认工作区目录；用户自建工作区目录名是动态的，由运行时
+# workspaces._prepare_workspace_root → ensure_sandbox_acl 负责补齐。
+_WRITABLE_ROOT_NAMES = ("shell", "个人文件", "项目文件", "workspace")
 _CONTAINER_UID = 65532
 _CONTAINER_GID = 65532
 

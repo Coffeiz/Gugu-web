@@ -214,20 +214,28 @@ class LocalStorageBackend(StorageBackend):
             if existing_stat is not None:
                 # replace 会换掉 inode，因此必须在换入前恢复旧文件的 owner、mode、时间戳
                 # 和 Linux extended attributes（其中包括 POSIX ACL）。
+                chown_preserved = True
                 if hasattr(os, "chown"):
                     try:
                         os.chown(temporary, existing_stat.st_uid, existing_stat.st_gid)
                     except PermissionError:
-                        effective_uid = getattr(os, "geteuid", os.getuid)()
-                        effective_gid = getattr(os, "getegid", os.getgid)()
-                        if (existing_stat.st_uid, existing_stat.st_gid) != (effective_uid, effective_gid):
-                            raise
+                        # 非 root 进程（部署用户）改不出沙盒映射 UID（rootless 容器
+                        # 身份）的属主——沙盒建的文件此前会让 edit_file 等 put 全部
+                        # EPERM 失败。属主改不成时降级为继续替换：copystat 仍会把
+                        # 旧文件的 mode/ACL/xattr 带到新 inode，沙盒经 ACL 条目保持
+                        # 访问；替换后补一次 _inherit_storage_access 兜底组权限。
+                        chown_preserved = False
+                        _log.info(
+                            "storage.put 跳过属主保留（key=%s old_uid=%s euid=%s）",
+                            key, existing_stat.st_uid,
+                            getattr(os, "geteuid", os.getuid)(),
+                        )
                 shutil.copystat(path, temporary, follow_symlinks=False)
                 # copystat 会复制旧 mtime，但覆盖写必须暴露本次写入时间，供 watcher、
                 # 增量备份和同步判断使用；权限、owner 与 ACL 仍保持旧文件语义。
                 os.utime(temporary, None, follow_symlinks=False)
             os.replace(temporary, path)
-            if existing_stat is None:
+            if existing_stat is None or not chown_preserved:
                 _inherit_storage_access(path)
             try:
                 directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

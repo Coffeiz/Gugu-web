@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access, pty_access
@@ -119,6 +119,32 @@ async def ensure_agent_terminal(db: AsyncSession, user_id, *, session_id: int, w
     return row
 
 
+async def _enforce_output_retention(db: AsyncSession, row: TerminalSessionRecord) -> None:
+    """输出累计超过保留上限时滚动删除最老事件，保证单终端体积有界。
+
+    只保留最新一条事件不删：保证回放游标（sequence > after）永远有落点，
+    也避免计数漂移时把终端清空。sequence 只增不减，裁剪不影响增量回放。
+    """
+    if row.output_chars <= TERMINAL_OUTPUT_RETENTION_CHARS:
+        return
+    result = await db.execute(
+        select(TerminalEventRecord).where(TerminalEventRecord.terminal_id == row.id)
+        .order_by(TerminalEventRecord.sequence.asc())
+    )
+    stale_ids: list[int] = []
+    removed_chars = 0
+    for event in result.scalars():
+        if row.output_chars - removed_chars <= TERMINAL_OUTPUT_RETENTION_CHARS:
+            break
+        if event.sequence == row.last_sequence:
+            break
+        stale_ids.append(event.id)
+        removed_chars += len(event.stdout or "") + len(event.stderr or "")
+    if stale_ids:
+        await db.execute(delete(TerminalEventRecord).where(TerminalEventRecord.id.in_(stale_ids)))
+        row.output_chars -= removed_chars
+
+
 async def append_shell_result(db: AsyncSession, row: TerminalSessionRecord, *, command: str,
                               stdout: str, stderr: str, exit_code: int | None,
                               ok: bool, source: str = TerminalSource.AGENT.value,
@@ -135,6 +161,7 @@ async def append_shell_result(db: AsyncSession, row: TerminalSessionRecord, *, c
     row.status = TerminalStatus.IDLE.value if ok else TerminalStatus.FAILED.value
     row.updated_at = now_utc()
     await db.flush()
+    await _enforce_output_retention(db, row)
 
 
 async def append_terminal_status(db: AsyncSession, row: TerminalSessionRecord, *, command: str,
@@ -197,12 +224,24 @@ async def delete_terminal(db: AsyncSession, row: TerminalSessionRecord) -> None:
 
 
 async def prune_terminals(db: AsyncSession, user_id, *, older_than_days: int = TERMINAL_RETENTION_DAYS) -> int:
-    """清理已关闭且超过保留期的终端，避免历史输出无限增长。"""
+    """清理超过保留期的终端，避免历史输出无限增长。
+
+    两类目标：① 已关闭且超过保留期的终端；② 孤儿 agent 终端——会话删除后
+    `session_id` 被 SET NULL 置空，`closed_at` 永远不会有人设置，若只按关闭
+    时间清理，这类终端和它的输出事件会永久残留。用户自建终端（source=user）
+    不受孤儿规则影响，生命周期仍由用户在终端页手动管理。
+    """
     cutoff = now_utc() - timedelta(days=max(1, older_than_days))
     result = await db.execute(select(TerminalSessionRecord).where(
         TerminalSessionRecord.owner_id == user_id,
-        TerminalSessionRecord.closed_at.is_not(None),
         TerminalSessionRecord.updated_at < cutoff,
+        or_(
+            TerminalSessionRecord.closed_at.is_not(None),
+            and_(
+                TerminalSessionRecord.source == TerminalSource.AGENT.value,
+                TerminalSessionRecord.session_id.is_(None),
+            ),
+        ),
     ))
     rows = list(result.scalars().all())
     for row in rows:

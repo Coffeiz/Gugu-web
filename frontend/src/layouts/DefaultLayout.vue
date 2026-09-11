@@ -214,11 +214,7 @@ const todayStr = computed(() => {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-.topbar:hover {
-  --gb-tint: var(--glass-bg-hover);
-  background: transparent;
-  box-shadow: var(--glass-shadow-lg);
-}
+/* topbar hover 的 tint/阴影统一走 GlassBg 的 .glass-card:hover 契约与语义 token。 */
 
 .topbar-title h1 {
   font-size: 20px;

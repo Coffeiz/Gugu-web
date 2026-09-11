@@ -577,8 +577,9 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
         if fmt not in _DOC_MIME:
             return {"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME), "name": f"{f.display_name}.{f.ext}"}
         new_ext = _DOC_EXT.get(fmt, fmt)
-        # 二进制格式必须显式同 ext 才允许（避免 rename 把 .md 文件"改名"成 .docx 但内容是 markdown）
-        if new_ext != old_ext and (new_ext in ("docx", "pdf", "xlsx") or old_ext in ("docx", "pdf", "xlsx")):
+        # 格式转换只在文本家族内允许：源是图片等二进制后缀（png/jpg…，不在 _DOC_MIME）
+        # 或目标是 docx/pdf/xlsx 时，改后缀只会产出内容对不上的坏文件，一律拒绝
+        if new_ext != old_ext and (old_ext not in _DOC_MIME or new_ext in ("docx", "pdf", "xlsx")):
             return {"error": f"rename 不能跨文本/二进制格式（{old_ext}→{new_ext}），请用 edit_file 走 LibreOffice 转换",
                     "name": f"{f.display_name}.{f.ext}"}
     else:
@@ -588,6 +589,7 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
         new_key = await _resolve_key(
             db, user_id, f.space, new_display, new_ext,
             project_id=f.project_id, folder_id=f.folder_id,
+            workspace_directory_id=getattr(f, "workspace_directory_id", None),
         )
     except ValueError as e:
         return {"error": str(e), "name": f"{f.display_name}.{f.ext}"}

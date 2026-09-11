@@ -44,4 +44,8 @@
     inset 0 1px 0 var(--gb-highlight-strong, var(--highlight-strong)),
     inset 1px 0 0 var(--gb-highlight-side, var(--highlight-side));
 }
+/* 标准 hover 契约：仿玻璃宿主的可见面在本子层（z-index:-1 盖在宿主自身背景之上），
+   global.css 的 .glass-card:hover 改宿主 background 对它无效。hover tint 切换规则
+   统一放在 component-theme-refinements.css（.glass-card:hover .gb-tint）——不要写在
+   本组件的 scoped style 里：:global 前缀会被编译器丢弃后代部分，规则静默失效。 */
 </style>

@@ -44,8 +44,18 @@
       <div v-if="status.ignoredBindingCount" class="fs-note">{{ t('filesyncAdmin.ignoredBindings', { count: status.ignoredBindingCount }) }}</div>
 
       <div v-if="status.bindings.length" class="fs-block">
-        <div class="fs-block-title">{{ t('filesyncAdmin.bindingList') }}</div>
-        <div v-for="binding in status.bindings" :key="binding.id" class="fs-row">
+        <div class="fs-block-head">
+          <div class="fs-block-title">{{ t('filesyncAdmin.bindingList') }}</div>
+          <div class="fs-block-tools">
+            <span class="fs-block-stats">{{ t('filesyncAdmin.bindingStats', { shown: visibleBindings.length, total: status.bindings.length }) }}</span>
+            <label class="fs-toggle">
+              <ToggleSwitch size="sm" :model-value="onlyIssues" :aria-label="t('filesyncAdmin.onlyIssues')" @update:model-value="onlyIssues = $event" />
+              <span>{{ t('filesyncAdmin.onlyIssues') }}</span>
+            </label>
+          </div>
+        </div>
+        <div v-if="!visibleBindings.length" class="fs-note">{{ t('filesyncAdmin.allHealthy') }}</div>
+        <div v-for="binding in visibleBindings" :key="binding.id" class="fs-row">
           <div class="fs-row-main">
             <strong>#{{ binding.id }} · {{ binding.mode }}</strong>
             <span>{{ binding.rootPath }} · {{ binding.userId }}</span>
@@ -99,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
@@ -122,6 +132,18 @@ const resolutions = [
   { value: 'keep_both' as const, label: 'filesyncAdmin.keepBoth' },
   { value: 'cancel' as const, label: 'filesyncAdmin.cancelConflict' },
 ]
+
+// 绑定随 workspace 自动登记，健康绑定（无待处理/失败 journal、无冲突）对排查没有
+// 信息量；默认只列出有异常的，全量列表留给开关。
+const onlyIssues = ref(true)
+const visibleBindings = computed(() => {
+  const all = status.value?.bindings ?? []
+  if (!onlyIssues.value) return all
+  return all.filter((binding) =>
+    binding.pendingJournal > 0 || binding.failedJournal > 0 ||
+    binding.rejectedJournal > 0 || binding.pendingConflicts > 0,
+  )
+})
 
 async function load() {
   if (loading.value) return
@@ -203,6 +225,10 @@ onMounted(load)
 .fs-note,.fs-footnote { color:var(--content-secondary); font-size:var(--font-size-xs); line-height:var(--line-height-body); }
 .fs-block { margin-top:14px; }
 .fs-block-title { font-size:var(--font-size-sm); font-weight:var(--font-weight-bold); margin-bottom:7px; }
+.fs-block-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:7px; }
+.fs-block-head .fs-block-title { margin-bottom:0; }
+.fs-block-tools { display:flex; align-items:center; gap:10px; font-size:var(--font-size-xs); color:var(--content-secondary); }
+.fs-toggle { display:flex; align-items:center; gap:6px; cursor:pointer; }
 .fs-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--border-subtle); }
 .fs-row-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; font-size:var(--font-size-sm); }
 .fs-row-main strong { overflow-wrap:anywhere; }
@@ -210,5 +236,5 @@ onMounted(load)
 .fs-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; flex:0 0 auto; }
 .fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
 .fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
-@media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } }
+@media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } .fs-block-head { flex-direction:column; align-items:flex-start; gap:4px; } }
 </style>

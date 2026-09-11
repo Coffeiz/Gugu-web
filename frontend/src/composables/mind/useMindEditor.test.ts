@@ -282,3 +282,35 @@ describe('splitMindTitleBody', () => {
     expect(splitMindTitleBody('- [ ] 想法')).toEqual({ titleRaw: '', body: '- [ ] 想法' })
   })
 })
+
+// 撤销/重做按键必须被编辑器无条件消费：UndoRedo 在历史栈为空时放行 Ctrl+Z，
+// 浏览器文档级 undo 会把同文档其他原生输入框（项目/文件库重命名等）更早的
+// 编辑一并回退（2026-09-10 用户实测：对话里按 Ctrl+Z 把项目和文件库也撤回了）。
+function dispatchKey(editor: Editor, init: KeyboardEventInit): boolean {
+  const event = new KeyboardEvent('keydown', { cancelable: true, bubbles: true, ...init })
+  editor.view.dom.dispatchEvent(event)
+  return event.defaultPrevented
+}
+
+describe('ScopedHistory：undo/redo 按键不泄漏到浏览器文档级 undo 栈', () => {
+  it('历史栈为空时 Ctrl+Z 也被消费且不改动文档', () => {
+    const editor = new Editor({ extensions: mindExtensions(), content: '普通一段' })
+    expect(editor.can().undo()).toBe(false)
+    expect(dispatchKey(editor, { key: 'z', ctrlKey: true })).toBe(true)
+    // jsdom 的 platform 非 Mac，prosemirror-keymap 只把 ctrlKey 归一化为 Mod-z；
+    // metaKey(Cmd-z) 仅在真 Mac 上构成同款键名，这里不覆盖。
+    expect(editor.getText()).toBe('普通一段')
+    editor.destroy()
+  })
+
+  it('有历史时 Ctrl+Z 正常撤销、Ctrl+Shift+Z 重做', () => {
+    const editor = new Editor({ extensions: mindExtensions(), content: '' })
+    editor.commands.insertContent('新输入')
+    expect(editor.can().undo()).toBe(true)
+    expect(dispatchKey(editor, { key: 'z', ctrlKey: true })).toBe(true)
+    expect(editor.getText()).not.toContain('新输入')
+    expect(dispatchKey(editor, { key: 'z', ctrlKey: true, shiftKey: true })).toBe(true)
+    expect(editor.getText()).toContain('新输入')
+    editor.destroy()
+  })
+})

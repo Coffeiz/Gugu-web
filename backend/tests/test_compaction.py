@@ -12,7 +12,7 @@ from agent.context.compaction import (
     _is_system_injection,
     _atomic_message_units,
     _drop_orphan_tool_results,
-    _generate_compact_summary,
+    _generate_append_summary,
     validate_compact_summary,
     resolve_compaction_limits,
 )
@@ -32,13 +32,34 @@ def _model_cfg(context_tokens: int = 256_000, max_tokens: int = 8_000):
     return SimpleNamespace(context_tokens=context_tokens, max_tokens=max_tokens)
 
 
+class _FakeBranch:
+    """替换 ContextBranch：记录每次分支请求，返回固定摘要。"""
+
+    def __init__(self, calls: list, output: str = "追加摘要", fail: bool = False):
+        self._calls = calls
+        self._output = output
+        self._fail = fail
+
+    async def run(self, branch_input, policy, settings):
+        self._calls.append({
+            "history": [dict(m) for m in branch_input.history_messages],
+            "stable_system": branch_input.stable_system,
+            "delta": branch_input.delta,
+            "tools": branch_input.tools,
+            "policy": policy,
+        })
+        if self._fail:
+            raise RuntimeError("provider down")
+        return SimpleNamespace(ok=True, output=self._output)
+
+
 @pytest.fixture(autouse=True)
 def _fake_summary(monkeypatch):
     """压缩单测只验证编排，不访问真实摘要模型。"""
-    async def fake_summary(_items, _previous=None, **_kwargs):
+    async def fake_summary(_history, _previous=None, **_kwargs):
         return "测试摘要"
 
-    monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
 
 
 class TestCompactionBudget:
@@ -46,27 +67,62 @@ class TestCompactionBudget:
         """90% 压缩触发时提示词路径解析不能因缺少标准库依赖而中断。"""
         assert compaction_module.Path("compress_conv.md").name == "compress_conv.md"
 
-    def test_compaction_summary_uses_model_output_budget(self, monkeypatch):
-        captured = {}
-
-        async def fake_complete_text(sys, user, settings, max_tokens):
-            captured["system_prompt"] = sys
-            captured["user_prompt"] = user
-            captured["max_tokens"] = max_tokens
-            return "压缩摘要"
-
+    def test_append_summary_uses_model_output_budget(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls),
+        )
         monkeypatch.setattr("app.core.config.get_settings", lambda: object())
-        monkeypatch.setattr("agent.context.provider_runner.complete_text", fake_complete_text)
         result = asyncio.get_event_loop().run_until_complete(
-            compaction_module._generate_compact_summary_once(
-                ["用户：测试压缩"], model_cfg=_model_cfg(120_000, 8_000),
+            _generate_append_summary(
+                [{"role": "user", "content": "测试压缩"}], model_cfg=_model_cfg(120_000, 8_000),
             )
         )
 
-        assert result == "压缩摘要"
-        assert "历史对话" in captured["system_prompt"]
-        assert captured["user_prompt"] == "用户：测试压缩"
-        assert captured["max_tokens"] == 8_000
+        assert result == "追加摘要"
+        assert calls[0]["policy"].max_tokens == 8_000
+
+    def test_append_summary_forwards_run_tools(self, monkeypatch):
+        """分支必须带上主 run 的工具声明，否则 provider 算不出同一份可缓存前缀。"""
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls),
+        )
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        tools = [{"name": "read_file", "description": "读文件", "input_schema": {}}]
+        asyncio.get_event_loop().run_until_complete(
+            _generate_append_summary(
+                [{"role": "user", "content": "测试压缩"}],
+                model_cfg=_model_cfg(120_000, 8_000), tools=tools,
+            )
+        )
+
+        assert calls[0]["tools"] == tuple(tools)
+        # 带了工具就要在指令里明确不许调用，避免摘要变成一次工具调用。
+        assert "不要调用" in calls[0]["delta"]
+
+    def test_compact_context_forwards_branch_tools(self, monkeypatch):
+        seen: dict = {}
+
+        async def fake_summary(_history, _previous=None, **kwargs):
+            seen.update(kwargs)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", f"历史{i}" * 40) for i in range(6)]
+            + [_make_msg("assistant", "最新回复")]
+        )
+        branch_tools = [{"name": "read_file"}]
+        asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, fixed_prefix_size=1, model_cfg=_model_cfg(60),
+                            branch_tools=branch_tools)
+        )
+
+        assert seen.get("tools") == branch_tools
 
     def test_compaction_limits_follow_model_config(self):
         limits = resolve_compaction_limits(
@@ -77,33 +133,14 @@ class TestCompactionBudget:
         assert limits.output_tokens == 8_000
         assert limits.input_tokens == 112_000
 
-    def test_summary_output_limit_follows_model_config(self, monkeypatch):
-        captured = {}
-
-        async def fake_complete_text(_sys, _user, _settings, max_tokens):
-            captured["max_tokens"] = max_tokens
-            return "压缩摘要"
-
-        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
-        monkeypatch.setattr("agent.context.provider_runner.complete_text", fake_complete_text)
-        result = asyncio.get_event_loop().run_until_complete(
-            compaction_module._generate_compact_summary_once(
-                ["用户：测试压缩"],
-                model_cfg=SimpleNamespace(context_tokens=120_000, max_tokens=8_000),
-            )
-        )
-
-        assert result == "压缩摘要"
-        assert captured["max_tokens"] == 8_000
-
     def test_wire_summary_is_not_compressed_as_normal_history(self, monkeypatch):
         captured = {}
 
-        async def fake_summary(_items, previous=None, **_kwargs):
+        async def fake_summary(_history, previous=None, **_kwargs):
             captured["previous"] = previous
             return "新摘要"
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
         messages = [
             _make_msg("user", "<compacted-summary>\n旧摘要\n</compacted-summary>"),
             *[_make_msg("user", "旧历史" * 20) for _ in range(40)],
@@ -116,25 +153,28 @@ class TestCompactionBudget:
         assert result.changed
         assert captured["previous"] == "<compacted-summary>\n旧摘要\n</compacted-summary>"
 
-    def test_summary_input_limit_follows_model_config(self, monkeypatch):
-        calls = []
-
-        async def fake_once(items, _previous=None, **_kwargs):
-            calls.append(items)
-            return "分块摘要"
-
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
-        items = ["用户：" + "内容" * 20 for _ in range(8)]
+    def test_summary_input_limit_chunks_canonical_history(self, monkeypatch):
+        """超出单请求输入预算时，canonical 消息按预算分块滚动，不再摊平。"""
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls, output="分块摘要"),
+        )
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        history = [
+            {"role": "user", "content": "用户：" + "内容" * 20} for _ in range(8)
+        ]
         result = asyncio.get_event_loop().run_until_complete(
-            _generate_compact_summary(
-                items,
-                model_cfg=SimpleNamespace(context_tokens=100, max_tokens=20),
+            _generate_append_summary(
+                history, model_cfg=SimpleNamespace(context_tokens=100, max_tokens=20),
             )
         )
 
         assert result == "分块摘要"
         assert len(calls) > 1
-        assert all(estimate_tokens("\n".join(chunk)) <= 80 for chunk in calls)
+        # 每块的 history 消息都来自 canonical 序列，按顺序切分
+        flat = [m for call in calls for m in call["history"]]
+        assert flat == history
 
 class TestIsSystemInjection:
     def test_project(self):
@@ -168,10 +208,10 @@ class TestCompactContext:
         )
 
     def test_invalid_summary_candidate_does_not_change_messages(self, monkeypatch):
-        async def oversized_summary(_items, _previous=None, **_kwargs):
+        async def oversized_summary(_history, _previous=None, **_kwargs):
             return "x" * 40_000
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", oversized_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", oversized_summary)
         messages = [_make_msg("user", "旧消息" * 100) for _ in range(50)]
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(
@@ -183,10 +223,10 @@ class TestCompactContext:
         assert result.messages == messages
 
     def test_empty_provider_summary_uses_bounded_local_fallback(self, monkeypatch):
-        async def empty_summary(_items, _previous=None, **_kwargs):
+        async def empty_summary(_history, _previous=None, **_kwargs):
             return ""
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", empty_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", empty_summary)
         messages = [_make_msg("user", "历史消息" * 100) for _ in range(50)]
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(messages, model_cfg=_model_cfg(1000, 80))
@@ -198,10 +238,10 @@ class TestCompactContext:
         assert "历史片段" in summary
 
     def test_local_fallback_unwraps_previous_compacted_summary(self, monkeypatch):
-        async def empty_summary(_items, _previous=None, **_kwargs):
+        async def empty_summary(_history, _previous=None, **_kwargs):
             return ""
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", empty_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", empty_summary)
         previous = "<compacted-summary>\n已有结论\n</compacted-summary>"
         messages = [_make_msg("user", "历史消息" * 100) for _ in range(50)]
         result = asyncio.get_event_loop().run_until_complete(
@@ -227,55 +267,45 @@ class TestCompactContext:
         assert "<compacted-summary>" not in candidate
         assert "</compacted-summary>" not in candidate
 
-    def test_small_history_uses_single_branch_summary_request(self, monkeypatch):
-        calls = []
-
-        async def fake_once(items, previous=None, **_kwargs):
-            calls.append((items, previous))
-            return "分支摘要"
-
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
+    def test_small_history_uses_single_append_request(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls),
+        )
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        history = [
+            {"role": "user", "content": "第一条"},
+            {"role": "assistant", "content": "第二条"},
+        ]
         result = asyncio.get_event_loop().run_until_complete(
-            _generate_compact_summary(
-                ["用户：第一条", "咕咕：第二条"], "旧摘要", model_cfg=_model_cfg(),
+            _generate_append_summary(
+                history, prev_summary="旧摘要", model_cfg=_model_cfg(),
+                append_system="主系统提示",
             )
         )
-        assert result == "分支摘要"
+        assert result == "追加摘要"
         assert len(calls) == 1
-        assert calls[0][1] == "旧摘要"
+        # canonical 消息原样透传，压缩指令只出现在追加的 delta 里
+        assert calls[0]["history"] == history
+        assert calls[0]["stable_system"] == "主系统提示"
+        assert "任务切换" in calls[0]["delta"]
+        assert "旧摘要" in calls[0]["delta"]
+        assert "对话摘要" in calls[0]["delta"]
 
-    def test_summary_provider_timeout_retries_once(self, monkeypatch):
-        calls = []
-
-        async def flaky_provider(_sys, user, _settings, _max_tokens):
-            calls.append(user)
-            if len(calls) == 1:
-                raise TimeoutError("provider timeout")
-            return "重试后的摘要"
-
+    def test_append_provider_failure_returns_empty_for_local_fallback(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls, fail=True),
+        )
         monkeypatch.setattr("app.core.config.get_settings", lambda: object())
-        monkeypatch.setattr("agent.context.provider_runner.complete_text", flaky_provider)
         result = asyncio.get_event_loop().run_until_complete(
-            _generate_compact_summary(["用户：需要压缩的历史"], model_cfg=_model_cfg())
+            _generate_append_summary(
+                [{"role": "user", "content": "你好"}], model_cfg=_model_cfg(),
+            )
         )
-        assert result == "重试后的摘要"
-        assert len(calls) == 2
-
-    def test_oversized_history_uses_rolling_fallback(self, monkeypatch):
-        calls = []
-
-        async def fake_once(items, previous=None, **_kwargs):
-            calls.append((items, previous))
-            return f"摘要{len(calls)}"
-
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
-        items = ["用户：" + "内容" * 30_000, "咕咕：" + "内容" * 30_000,
-                 "用户：" + "内容" * 30_000, "咕咕：" + "内容" * 30_000]
-        result = asyncio.get_event_loop().run_until_complete(
-            _generate_compact_summary(items, model_cfg=_model_cfg(100_000))
-        )
-        assert result == f"摘要{len(calls)}"
-        assert len(calls) > 1
+        assert result == ""
 
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
@@ -284,7 +314,7 @@ class TestCompactContext:
         # 简化测试：直接设置极小的 context_tokens
         msgs = [_make_msg("user", f"消息{i}" * 20) for i in range(100)]
         monkeypatch.setattr(
-            "agent.context.compaction._generate_compact_summary",
+            "agent.context.compaction._generate_append_summary",
             lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
         )
         result = asyncio.get_event_loop().run_until_complete(
@@ -295,7 +325,7 @@ class TestCompactContext:
     def test_preserves_system_injection(self, monkeypatch):
         """压缩时应保留系统上下文注入消息"""
         monkeypatch.setattr(
-            "agent.context.compaction._generate_compact_summary",
+            "agent.context.compaction._generate_append_summary",
             lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
         )
         msgs = [
@@ -315,7 +345,7 @@ class TestCompactContext:
     def test_preserves_compact_summary(self, monkeypatch):
         """压缩后应包含 compacted-summary"""
         monkeypatch.setattr(
-            "agent.context.compaction._generate_compact_summary",
+            "agent.context.compaction._generate_append_summary",
             lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
         )
         msgs = [_make_msg("user", "消息" * 100) for _ in range(50)]
@@ -334,10 +364,10 @@ class TestCompactContext:
         captured = []
 
         async def fake_summary(items, previous=None, **_kwargs):
-            captured.extend(items)
+            captured.extend(message_text(m) for m in items)
             return "测试摘要"
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
         msgs = [
             _make_msg("user", "历史一" * 40),
             _make_msg("user", "## 项目\n- 当前项目"),
@@ -359,10 +389,10 @@ class TestCompactContext:
         captured = []
 
         async def fake_summary(items, previous=None, **_kwargs):
-            captured.extend(items)
+            captured.extend(message_text(m) for m in items)
             return "测试摘要"
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
         tool_use = {
             "role": "assistant",
             "content": [{"type": "tool_use", "id": "call-1", "name": "calendar", "input": {}}],
@@ -389,10 +419,10 @@ class TestCompactContext:
         captured = []
 
         async def fake_summary(items, previous=None, **_kwargs):
-            captured.extend(items)
+            captured.extend(message_text(m) for m in items)
             return "历史摘要"
 
-        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
         current = _make_msg("user", "本轮问题")
         tool_use = {
             "role": "assistant",
@@ -549,3 +579,227 @@ class TestVerifyPrefixConsistency:
         ok, reason = validate_compacted_shape(new)
         assert not ok
         assert "最近消息" in reason
+
+
+class TestAppendModeCompaction:
+    """追加式压缩：复用主会话 canonical 消息序列，压缩指令只在末尾追加。"""
+
+    def test_append_summary_sends_history_with_trailing_instruction(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls),
+        )
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        history = [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "在的"},
+        ]
+        result = asyncio.get_event_loop().run_until_complete(
+            _generate_append_summary(
+                history, prev_summary="旧摘要", model_cfg=_model_cfg(),
+                append_system="主系统提示",
+            )
+        )
+
+        assert result == "追加摘要"
+        # 历史消息原样透传，不允许被改写（前缀一致性是命中的前提）
+        assert calls[0]["history"] == history
+        assert calls[0]["stable_system"] == "主系统提示"
+        # 压缩指令在追加的 delta 里，带任务切换前缀 + 旧摘要合并 + 排版要求
+        assert "任务切换" in calls[0]["delta"]
+        assert "旧摘要" in calls[0]["delta"]
+        assert "对话摘要" in calls[0]["delta"]
+
+    def test_append_provider_failure_returns_empty_for_local_fallback(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(
+            "agent.context.branch.ContextBranch",
+            lambda: _FakeBranch(calls, fail=True),
+        )
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        result = asyncio.get_event_loop().run_until_complete(
+            _generate_append_summary(
+                [{"role": "user", "content": "你好"}], model_cfg=_model_cfg(),
+            )
+        )
+
+        # 失败不再回退摊平路径，交给调用方落到本地有界摘要
+        assert result == ""
+
+    def test_compact_context_always_wires_append_mode(self, monkeypatch):
+        captured = {}
+
+        async def fake_summary(history, _previous=None, **kwargs):
+            captured["history_messages"] = history
+            captured.update(kwargs)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        messages = [
+            _make_msg("user", "旧历史" * 20) for _ in range(40)
+        ] + [_make_msg("user", "当前消息")]
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, model_cfg=_model_cfg(1000, 80), system_text="主系统")
+        )
+
+        assert result.changed
+        # 待压缩历史以 canonical 消息原样进入追加式分支
+        assert captured["history_messages"]
+        assert all(isinstance(m, dict) and m.get("role") for m in captured["history_messages"])
+        # openai 协议路由（默认）不注入分支 system，run 的 system 已在 history 前缀里
+        assert captured["append_system"] == ""
+
+
+class TestCompleteMessagesShape:
+    """complete_messages：追加式分支的消息形状与 system 缺省行为。"""
+
+    def test_anthropic_path_appends_history_and_trailing_anchor(self, monkeypatch):
+        import agent.context.provider_runner as pr
+
+        captured = {}
+
+        class _FakeResp:
+            class content:  # noqa: N801
+                text_blocks = [{"type": "text", "text": "ok"}]
+
+            usage = None
+
+        def _fake_client(ai, timeout):
+            class _Messages:
+                async def create(self, **kwargs):
+                    captured.update(kwargs)
+
+                    class _B:
+                        type = "text"
+                        text = "ok"
+
+                    class _Resp:
+                        content = [_B()]
+                        usage = None
+
+                    return _Resp()
+
+            class _Client:
+                messages = _Messages()
+
+            return _Client()
+
+        monkeypatch.setattr("agent.providers.build_anthropic_client", _fake_client)
+        fake_ai = SimpleNamespace(model="MiniMax-M3", thinking=None,
+                                  api_format="anthropic", base_url="")
+        history = [
+            {"role": "user", "content": "问题"},
+            {"role": "assistant", "content": "回答"},
+        ]
+        settings = SimpleNamespace(ai=fake_ai)
+        result = asyncio.get_event_loop().run_until_complete(
+            pr.complete_messages("主系统", history, "压缩指令",
+                                 settings, max_tokens=100)
+        )
+
+        assert result == "ok"
+        msgs = captured["messages"]
+        assert len(msgs) == 3 and msgs[-1]["content"] == "压缩指令"
+        assert msgs[0]["content"] == "问题"
+        # 末尾历史消息被打上会话内缓存断点
+        tail = msgs[1]["content"]
+        assert isinstance(tail, list) and tail[-1].get("cache_control")
+
+
+class TestBranchPrefixHistory:
+    """追加式压缩必须发「从对话头开始的连续前缀」，否则 provider 前缀缓存全 miss。"""
+
+    def _run(self, monkeypatch, msgs, cfg):
+        captured = []
+
+        async def fake_summary(items, previous=None, **_kwargs):
+            captured.extend(items)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, fixed_prefix_size=1, model_cfg=cfg)
+        )
+        return captured
+
+    def test_prefix_history_is_contiguous_from_head(self, monkeypatch):
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", f"历史{i}" * 40) for i in range(6)]
+            + [_make_msg("assistant", "最新回复")]
+        )
+        captured = self._run(monkeypatch, msgs, _model_cfg(60))
+
+        assert captured, "应把历史交给分支"
+        # 第一条必须是 run 的系统消息（对话头），不能从中段开始
+        assert message_text(captured[0]) == "系统提示"
+        # 且与原始序列逐条同前缀
+        assert [message_text(m) for m in captured] == [
+            message_text(m) for m in msgs[:len(captured)]
+        ]
+
+    def test_prefix_history_excludes_kept_recent_tail(self, monkeypatch):
+        """保留窗口里的近期消息不能进摘要请求：它要原样留在上下文里。"""
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", f"历史{i}" * 40) for i in range(6)]
+            + [_make_msg("assistant", "最近的回复XYZ")]
+        )
+        captured = self._run(monkeypatch, msgs, _model_cfg(60))
+
+        joined = "\n".join(message_text(m) for m in captured)
+        assert "历史0" in joined
+        assert "最近的回复XYZ" not in joined
+
+    def test_prefix_history_projects_system_roles_for_anthropic_route(self, monkeypatch):
+        """anthropic 路由的主 run 会把消息级 system 投影成 user，分支必须跟上。
+
+        角色不投影时，前缀从那条 system 消息起整段失配（实测同一前缀只换角色：
+        cache_read 3840 → 384），所以这里锁住投影；openai 路由保持原角色。
+        """
+        msgs = (
+            [_make_msg("system", "系统提示")]
+            + [_make_msg("user", "历史" * 40)]
+            + [_make_msg("system", "[system-reminder] 快照")]
+            + [_make_msg("user", "历史" * 40)]
+            + [_make_msg("assistant", "最新回复")]
+        )
+        anthropic_cfg = SimpleNamespace(
+            context_tokens=60, max_tokens=8000, api_format="anthropic",
+        )
+        anthropic_captured = self._run(monkeypatch, msgs, anthropic_cfg)
+        assert [m.get("role") for m in anthropic_captured][2] == "user"
+
+        openai_captured = self._run(monkeypatch, msgs, _model_cfg(60))
+        assert [m.get("role") for m in openai_captured][2] == "system"
+
+    def test_prefix_history_falls_back_when_messages_are_not_same_objects(self):
+        """拿不到可定位的对象时退回旧行为，不猜切片。"""
+        from agent.context.compaction import _branch_prefix_history
+
+        history = [_make_msg("user", f"历史{i}") for i in range(6)]
+        compressible = [dict(m) for m in history[:3]]   # 与 history 不同一批对象
+        out = _branch_prefix_history(
+            history, 0, history, compressible, _model_cfg(60),
+        )
+        assert [message_text(m) for m in out] == [message_text(m) for m in compressible]
+
+    def test_prefix_history_is_head_anchored_for_copied_history(self):
+        """生产形态：`_drop_orphan_tool_results` 会浅拷贝，前缀仍须从对话头开始。"""
+        from agent.context.compaction import (
+            _branch_prefix_history,
+            _drop_orphan_tool_results,
+        )
+
+        msgs = [_make_msg("system", "系统提示")] + [
+            _make_msg("user", f"历史{i}") for i in range(6)
+        ]
+        message_history = _drop_orphan_tool_results(list(msgs[1:]))
+        assert message_history[0] is not msgs[1], "前提：清理会换对象"
+        out = _branch_prefix_history(
+            msgs, 1, message_history, message_history[:4], _model_cfg(60),
+        )
+        assert [message_text(m) for m in out] == [
+            "系统提示", "历史0", "历史1", "历史2", "历史3",
+        ]

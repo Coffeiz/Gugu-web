@@ -62,7 +62,9 @@
             @update:model-value="setStartDate" />
           <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
           <button v-if="startDate || startTime" type="button" class="boundary-clear"
-            :aria-label="t('schedules.clearBoundary')" @click="clearStart">×</button>
+            :aria-label="t('schedules.clearBoundary')" @click="clearStart">
+            <Icon name="action.close" :size="20" />
+          </button>
         </div>
       </div>
 
@@ -78,7 +80,9 @@
               @update:model-value="setStartDate" />
             <TimeInput :model-value="startTime" @update:model-value="setStartTime" />
             <button v-if="startDate || startTime" type="button" class="boundary-clear"
-              :aria-label="t('schedules.clearBoundary')" @click="clearStart">×</button>
+              :aria-label="t('schedules.clearBoundary')" @click="clearStart">
+              <Icon name="action.close" :size="20" />
+            </button>
           </div>
         </div>
         <div class="boundary-row" data-testid="schedule-end-boundary">
@@ -88,7 +92,9 @@
               @update:model-value="setEndDate" />
             <TimeInput :model-value="endTime" @update:model-value="setEndTime" />
             <button v-if="endDate || endTime" type="button" class="boundary-clear"
-              :aria-label="t('schedules.clearBoundary')" @click="clearEnd">×</button>
+              :aria-label="t('schedules.clearBoundary')" @click="clearEnd">
+              <Icon name="action.close" :size="20" />
+            </button>
           </div>
         </div>
       </div>
@@ -124,6 +130,7 @@ import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import DatePicker from '@/components/common/controls/DatePicker.vue'
 import TimeInput from '@/components/common/controls/TimeInput.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import {
   buildCron,
@@ -369,8 +376,13 @@ function submit() {
 .boundary-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: 7px; padding-right: 7px; }
 .boundary-controls :deep(.dp-input span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .boundary-controls :deep(.time-input) { min-width: 0; }
-.boundary-clear { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--text-secondary); cursor: pointer; font-size: 17px; line-height: 1; }
-.boundary-clear:hover { background: var(--option-bg-hover); color: var(--text-primary); }
+/* 面与前景跟 DateSpanPicker 的清除键（adoption/date-picker.css 的 .drp-clear）同源
+   （--option-bg / --option-bg-hover + --content-*），过渡也要走 hover 时长令牌，否则
+   这一颗会瞬跳。清除符必须是居中盒里的 <Icon>：× 字形在当前字体的
+   ascent/descent 20/5 下，墨迹中心比 24px 盒中心高 2.4px，改 font-size/line-height
+   都对不齐。 */
+.boundary-clear { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--content-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color var(--hover-motion-control), background-color var(--hover-motion-control); }
+.boundary-clear:hover { background: var(--option-bg-hover); color: var(--content-primary); }
 .field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .field textarea { min-height: 96px; max-height: 160px; resize: none; line-height: 1.6; overflow-y: hidden; }
@@ -389,8 +401,6 @@ function submit() {
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 .modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
-.link { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 2px 3px; font-family: var(--font-sans); }
-.link:hover { color: var(--text-primary); }
 @media (max-width: 460px) {
   .sched-modal { padding-left: 12px; padding-right: 12px; }
   .boundary-row { grid-template-columns: 1fr; gap: 4px; }

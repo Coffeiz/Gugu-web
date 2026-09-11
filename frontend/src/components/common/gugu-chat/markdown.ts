@@ -54,9 +54,32 @@ marked.use({
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
     r.del = (t: Tokens.Del) => (t && t.text) || ''
     r.code = ({ text, lang }: Tokens.Code) => {
-      const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-      const highlighted = hljs.highlight(text, { language }).value
-      const label = lang || 'code'
+      // 没写语言或语言未注册时自动探测，而不是直接按 plaintext 放弃高亮；
+      // 探测失败 hljs 内部会退回纯文本，不会抛错。
+      // highlightAuto 是全语言扫描的主线程同步操作，超长代码块直接放弃探测，
+      // 避免卡住渲染帧。
+      const AUTO_DETECT_MAX_CHARS = 32_000
+      const registered = lang && hljs.getLanguage(lang) ? lang : ''
+      const canAutoDetect = !registered && text.length <= AUTO_DETECT_MAX_CHARS
+      let highlighted: string
+      let language: string
+      let label: string
+      if (registered) {
+        language = registered
+        label = registered
+        highlighted = hljs.highlight(text, { language }).value
+      } else if (canAutoDetect) {
+        const result = hljs.highlightAuto(text)
+        language = result.language || 'plaintext'
+        // 标签与实际高亮语言保持一致：未注册/未写的语言名不能照抄。
+        label = lang && result.language ? result.language : (lang || result.language || 'code')
+        highlighted = result.value
+      } else {
+        language = 'plaintext'
+        label = lang || 'code'
+        // 超长块不探测，但内容仍要按纯文本转义输出（置空会整块消失）。
+        highlighted = hljs.highlight(text, { language: 'plaintext' }).value
+      }
       // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
       return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">${i18n.global.t('chatUi.copy')}</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
     }

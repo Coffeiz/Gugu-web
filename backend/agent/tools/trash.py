@@ -247,7 +247,7 @@ class TrashSkill(BaseSkill):
         Tool(
             name="permanent_delete", label="永久删除",
             description_short='永久删除；清空回收站或删除目标前必须确认。',
-            description="永久删除回收站文件或顶层文件夹；必须先确认目标，用户在界面确认后重新调用即可执行。",
+            description="永久删除回收站文件或顶层文件夹；必须先确认目标，用户在界面确认后由服务端继续执行本次删除。",
             input_schema={
                 "type": "object",
                 "properties": {

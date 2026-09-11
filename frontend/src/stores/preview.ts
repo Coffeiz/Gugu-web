@@ -30,12 +30,17 @@ const TEXT_MIMES = new Set([
 ])
 
 export function isImageExt(ext?: string | null)  { return IMAGE_EXTS.has((ext ?? '').toUpperCase()) }
+export function isSvgMime(mime?: string | null)  { return (mime ?? '').toLowerCase() === 'image/svg+xml' }
 export function isTextMime(mime?: string | null) {
   const value = (mime ?? '').toLowerCase()
   return TEXT_MIME_PREFIXES.some(prefix => value.startsWith(prefix)) || TEXT_MIMES.has(value)
     || value.endsWith('+json') || value.endsWith('+xml')
 }
 export function isTextExt(ext?: string | null, mime?: string | null) {
+  // 图片身份优先：image/svg+xml 以 +xml 结尾会被 MIME 启发式误判成文本，
+  // 导致 SVG 预览走文本分支开窗（44%×86% 竖长窗）和文本下载路径。
+  // ext 缺失时 MIME 本身也可能说明是图片（如聊天附件只带 image/svg+xml）。
+  if (isImageExt(ext) || isSvgMime(mime)) return false
   return TEXT_EXTS.has((ext ?? '').toUpperCase()) || isTextMime(mime)
 }
 export function isVideoExt(ext?: string | null)  { return VIDEO_EXTS.has((ext ?? '').toUpperCase()) }
@@ -58,7 +63,7 @@ export const usePreviewStore = defineStore('preview', () => {
   // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
   // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。
   function open(f: PreviewFile, siblings: PreviewFile[] | null = null) {
-    if (isImageExt(f.ext) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType)) {
+    if (isImageExt(f.ext) || isSvgMime(f.mimeType) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType)) {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) { bringToFront(existing.id); return }
       const idx = windows.value.length
@@ -105,7 +110,7 @@ export const usePreviewStore = defineStore('preview', () => {
   function navigate(id: number, dir: number) {
     const w = windows.value.find(w => w.id === id)
     if (!w || !w.siblings?.length) return
-    const imgs = w.siblings.filter(f => isImageExt(f.ext))
+    const imgs = w.siblings.filter(f => isImageExt(f.ext) || isSvgMime(f.mimeType))
     const curIdx = imgs.findIndex(f => f.id === w.file.id)
     if (curIdx === -1 || imgs.length < 2) return
     w.file = imgs[(curIdx + dir + imgs.length) % imgs.length]

@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -28,9 +29,10 @@ class _FakeRedis:
             self.values.pop(key, None)
 
     async def eval(self, _script, numkeys, *args):
-        keys = args[:numkeys]
+        keys = list(args[:numkeys])
         requested_owner = str(args[numkeys])
-        state_key, cancel_key, lease_key, owner_key = keys
+        state_key, cancel_key, lease_key, owner_key = keys[:4]
+        beat_key = keys[4] if numkeys > 4 else None
         owner = self.values.get(owner_key)
         lease_owner = self.values.get(lease_key)
         if owner and str(owner) != requested_owner:
@@ -39,10 +41,11 @@ class _FakeRedis:
             return 0
         raw = self.values.get(state_key)
         state = json.loads(raw) if raw else None
+        extra = [beat_key] if beat_key else []
         if state and state.get("done"):
-            await self.delete(cancel_key, lease_key, owner_key)
+            await self.delete(cancel_key, lease_key, owner_key, *extra)
             return 1
-        await self.delete(state_key, cancel_key, lease_key, owner_key)
+        await self.delete(state_key, cancel_key, lease_key, owner_key, *extra)
         return 1
 
 
@@ -109,6 +112,25 @@ async def test_subscribe_finishes_when_no_generation_snapshot_exists(monkeypatch
     assert '"type": "done"' in line
     assert '"idle": true' in line
     await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_reaps_zombie_snapshot_and_finishes(monkeypatch):
+    """快照非 done 但进程心跳已断：续看流必须自行收口，不能无限等事件。"""
+    redis = _FakeRedisWithPubSub()
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+    redis.values[genstream._state_key(483)] = json.dumps({"done": False, "text": "半截"})
+    redis.values[genstream._owner_key(483)] = "run-dead"
+    # 没有 beat 键 = 心跳已断（crash 残留）
+
+    stream = genstream.subscribe(483)
+    line = await anext(stream)
+    assert '"type": "done"' in line
+    assert '"idle": true' in line
+    await stream.aclose()
+    # 僵尸快照被连带清掉，is_active 立即恢复 False
+    assert genstream._state_key(483) not in redis.values
+    assert not await genstream.is_active(483)
 
 
 @pytest.mark.asyncio
@@ -188,3 +210,33 @@ async def test_subscribe_replays_done_when_broadcast_was_missed(monkeypatch):
     line = await anext(stream)
     assert '"type": "done"' in line
     await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_local_generation_cancels_registered_task(monkeypatch):
+    from agent.gateway import web as web_gateway
+
+    started = asyncio.Event()
+
+    async def _never_ends():
+        started.set()
+        await asyncio.sleep(3600)
+
+    task = asyncio.create_task(_never_ends())
+    await started.wait()
+    web_gateway._session_gen_tasks[499] = task
+    try:
+        assert web_gateway.cancel_local_generation(499) is True
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=2)
+    finally:
+        web_gateway._session_gen_tasks.pop(499, None)
+        if not task.done():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cancel_local_generation_returns_false_for_unknown_session():
+    from agent.gateway import web as web_gateway
+
+    assert web_gateway.cancel_local_generation(12345) is False

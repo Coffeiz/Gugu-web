@@ -10,6 +10,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from .rootless_permissions import ensure_sandbox_acl
+
 
 @dataclass(frozen=True)
 class SandboxQuotaSnapshot:
@@ -85,11 +87,13 @@ def ensure_sandbox_root(root: str | Path) -> Path:
     base.mkdir(parents=True, exist_ok=True)
     # 生产部署中沙盒容器由 backend 通过 docker.sock 作为兄弟容器启动；rootless
     # docker 下沙盒进程映射到部署用户 uid，与 backend 容器的 root 不同，必须在
-    # 挂载根目录上有写权限。目录属主无法跨部署环境保证一致，这里统一放开为
-    # 全员可写——这是兼容性取舍：宿主机侧其他本地用户理论上可写此目录（专用
-    # 单用户部署可接受）；容器侧仍受 cap-drop、只读根和挂载范围限制。多用户
-    # 宿主机部署建议改用专用组/ACL 收紧。
-    base.chmod(0o777)
+    # 挂载根目录上有写权限。优先用 rootless ACL 收紧（沙盒映射身份可读写，还能
+    # 读到 backend 写入的 0660 文件）；环境不支持时（容器内 backend 无 setfacl
+    # 或 subordinate 映射）退回原来的全员可写兼容性取舍：宿主机侧其他本地用户
+    # 理论上可写此目录（专用单用户部署可接受）；容器侧仍受 cap-drop、只读根和
+    # 挂载范围限制。
+    if not ensure_sandbox_acl(base):
+        base.chmod(0o777)
     if not base.is_dir():
         raise ValueError("沙盒根目录不可用")
     return base

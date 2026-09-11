@@ -307,25 +307,6 @@ async def wait_for_resolution(
     return None
 
 
-def _replace_pending_tool_result(message, *, tool_call_id: str, result: dict) -> bool:
-    source_blocks = message.content_json
-    if not isinstance(source_blocks, list):
-        return False
-    blocks = [dict(block) if isinstance(block, dict) else block for block in source_blocks]
-    changed = False
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("type") != "tool_result":
-            continue
-        current_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
-        if current_id == tool_call_id:
-            block["content"] = json.dumps(result, ensure_ascii=False)
-            block.pop("is_error", None)
-            changed = True
-    if changed:
-        message.content_json = blocks
-    return changed
-
-
 async def consume_action(
     db: AsyncSession,
     *,
@@ -455,8 +436,8 @@ async def consume_action(
                 "status": "confirmed",
                 "confirm": True,
             })
-            # 工具确认门桥：用短确认码在服务端兑换授权；模型重新调用工具时
-            # 授权命中自动放行，全程不经过模型复述凭证。
+            # 工具确认门桥：用短确认码在服务端兑换授权；运行侧拿到 confirmed 结果后
+            # 在本轮内直接重放这次工具调用，授权命中即放行，全程不经过模型复述凭证。
             if context.get("confirm_code"):
                 from agent.interactions.confirmations import redeem_confirmation
                 ttl = redeem_confirmation(user_id, str(context["confirm_code"]))
@@ -467,21 +448,13 @@ async def consume_action(
                         "text": "确认已过期，请让助手重新发起操作。",
                     })
                 else:
-                    result["text"] = (
-                        f"{result_text}（用户已确认，授权 {ttl} 分钟内有效；"
-                        "请直接重新调用该工具完成操作。）"
-                    )
+                    # 只回真实结果，不写「授权 N 分钟内有效」这类内部机制：模型会把
+                    # 工具回执里的机制说明复述给用户（"系统判定""没走确认门"）。
+                    result["text"] = result_text
         else:
             result.update({"status": "cancelled", "confirm": False})
-    tool_call_id = str(context.get("tool_call_id") or "")
-    if tool_call_id:
-        from app.models import ConversationMessage
-        rows = (await db.execute(
-            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
-        )).scalars().all()
-        for message in rows:
-            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
-                break
+    # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
+    # 用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上。
     prompt.schema_json = {**_schema_dict(prompt.schema_json), "resolved_result": result}
     await db.commit()
     return {
@@ -534,15 +507,8 @@ async def consume_text(
         "value": None,
         "text": text,
     }
-    tool_call_id = str(context.get("tool_call_id") or "")
-    if tool_call_id:
-        from app.models import ConversationMessage
-        rows = (await db.execute(
-            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
-        )).scalars().all()
-        for message in rows:
-            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
-                break
+    # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
+    # 用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上。
     prompt.status = "resolved"
     prompt.resolved_at = now
     prompt.schema_json = {**schema, "resolved_result": result}
@@ -651,15 +617,8 @@ async def consume_choice_text(
         "value": option_id,
         "text": str(selected.get("label") or option_id),
     }
-    tool_call_id = str(context.get("tool_call_id") or "")
-    if tool_call_id:
-        from app.models import ConversationMessage
-        rows = (await db.execute(
-            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
-        )).scalars().all()
-        for message in rows:
-            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
-                break
+    # 这里不改工具往返：交互期间那一轮 batch 还没有落库（只在 run 收尾时写），
+    # 用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上。
     prompt.schema_json = {**schema, "resolved_result": result}
     await db.commit()
     return {

@@ -190,6 +190,14 @@ class FileSyncSettings(BaseModel):
         False,
         description="是否启用本地文件事实源自动同步（默认关闭）",
     )
+    active_window_days: int = Field(
+        7,
+        description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听，其余只走日级补偿扫描（0 表示全部监听）",
+    )
+    compensation_interval_seconds: float = Field(
+        86400.0,
+        description="全量补偿扫描间隔（秒）；事件路径失效时的兜底，默认一天一次",
+    )
 
 
 class AIPresetItem(BaseModel):

@@ -174,9 +174,19 @@ class KnowledgeStore:
         _validate(entry)
         entries = await self.list(active_only=False)
         same_scope = [item for item in entries if self.matches_scope(item.scope, entry.scope)]
+        # 显式传入已有 ID（update 工具、反思 update）时按 ID 直命中，不受 topic
+        # 相似门限制，否则改名/纠错场景会漏匹配、兜底打错条目。新写入的 id 是
+        # 新 uuid4，不会误撞已有条目。命中已删除条目直接拒绝，防止复活。
+        current = None
+        if entry.id:
+            current = next((item for item in same_scope if item.active and item.id == entry.id), None)
+            if current is None and any(
+                not item.active and item.id == entry.id for item in same_scope
+            ):
+                raise ValueError("目标知识条目已删除，不能按旧 ID 更新")
         candidates = [item for item in same_scope if item.active and item.topic and entry.topic and
                       _norm(item.topic) == _norm(entry.topic)]
-        current = next((item for item in candidates if item.id == entry.id), None)
+        current = current or next((item for item in candidates if item.id == entry.id), None)
         current = current or next((item for item in candidates if item.source.type == entry.source.type), None)
         current = current or (candidates[0] if candidates else None)
         if current is not None:

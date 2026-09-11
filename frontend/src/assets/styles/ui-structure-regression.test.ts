@@ -37,6 +37,7 @@ const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
 const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerContent.vue')
 const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
 const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
+const skillCard = load('../../views/Skills/components/SkillCard.vue')
 const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
@@ -311,6 +312,51 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
     const interactionCardBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .task-card')
     expect(interactionCardBlock).not.toContain('transition:')
+  })
+
+  it('技能卡与定时任务卡共用同一份卡片 hover 提亮', () => {
+    // hover 提亮由主题层收口：技能卡只在组件内写了静止面，漏掉这一层就完全没有 hover 反馈
+    //（暗色下 --card-shadow-hover 与 --card-hover-overlay 都被主题置成 inert，只剩背景这一路）。
+    expect(interactionRefinements).toContain(
+      'html[data-theme][data-family] .task-card:hover,\nhtml[data-theme][data-family] .skill-card:hover {',
+    )
+    const hoverBlock = cssBlock(interactionRefinements, 'html[data-theme][data-family] .skill-card:hover')
+    expect(hoverBlock).toContain('background: var(--surface-raised);')
+    expect(hoverBlock).toContain('border-color: var(--border-hover);')
+    expect(hoverBlock).toContain('box-shadow: var(--elevation-card-hover);')
+  })
+
+  it('卡片页脚文字操作共用 card-actions 契约，hover 表现不再各写一套', () => {
+    const cardActions = load('./components/card-actions.css')
+    expect(cardActions).toContain('.card-link-btn {')
+    expect(cardActions).toContain('.card-link-btn:not(:disabled):hover { color: var(--text-primary); background: var(--action-soft); }')
+    expect(cardActions).toContain('.card-link-btn.danger:not(:disabled):hover { color: var(--status-danger); background: var(--status-danger-bg); }')
+
+    // 两个卡片只消费共享类，不得再保留本地 .link 定义（历史漂移来源）
+    for (const card of [scheduleCard, skillCard]) {
+      expect(card).toContain('class="card-link-btn')
+      expect(card).not.toMatch(/^\.link[ {.:]/m)
+      expect(card).not.toContain('class="link')
+    }
+    // 主题层继续持有定时任务卡的最终 paint 与过渡（含新增的背景药丸）
+    expect(load('./theme-adoption.css')).toContain('html[data-theme][data-family] .task-card .card-link-btn { color: var(--content-secondary); }')
+    expect(interactionRefinements).toContain('background-color var(--hover-motion-control), opacity var(--hover-motion-control);')
+  })
+
+  it('定时任务清除边界按钮用居中图标，不回落字体字形', () => {
+    // × 字形的墨迹中心随字体 ascent/descent 漂移（当前字体 20/5，24px 盒里偏高 2.4px），
+    // 改 font-size/line-height 都对不齐；清除符统一走 action.close 图标 + flex 居中盒。
+    const clearBlock = cssBlock(scheduleFormModal, '.boundary-clear {')
+    expect(clearBlock).toContain('display: flex;')
+    expect(clearBlock).toContain('align-items: center;')
+    expect(clearBlock).toContain('justify-content: center;')
+    expect(clearBlock).not.toContain('font-size:')
+    expect(clearBlock).not.toContain('line-height:')
+    expect(clearBlock).toContain('transition: color var(--hover-motion-control), background-color var(--hover-motion-control);')
+    expect(cssBlock(scheduleFormModal, '.boundary-clear:hover')).toContain('background: var(--option-bg-hover);')
+
+    expect(scheduleFormModal).toContain('<Icon name="action.close" :size="20" />')
+    expect(scheduleFormModal).not.toMatch(/>×<\/button>/)
   })
 
   it('公共操作按钮的 secondary hover 滤镜平滑过渡', () => {

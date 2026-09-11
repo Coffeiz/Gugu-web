@@ -213,30 +213,33 @@ onBeforeUnmount(() => {
 .md-view :deep(.md-code-block) { margin: 8px 0; border: 1px solid rgba(123,127,178,0.22); border-radius: 8px; overflow: hidden; background: transparent; font-size: 0.9em; }
 .md-view :deep(.md-code-block pre) { margin: 0; background: none; border-radius: 0; }
 .md-view :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; min-height: 28px; box-sizing: border-box; padding: 5px 12px; background: rgba(123,127,178,0.1); border-bottom: 1px solid rgba(123,127,178,0.16); }
+html[data-theme='dark'] .md-view:deep(.md-code-header) { background: rgba(255,255,255,0.05); border-bottom-color: rgba(255,255,255,0.09); }
+html[data-theme='dark'] .md-view:deep(.md-code-block) { border-color: rgba(255,255,255,0.12); }
 .md-view :deep(.md-code-lang) { margin-right: auto; font-size: 10px; font-weight: 600; color: var(--color-primary); opacity: 0.85; text-transform: lowercase; letter-spacing: 0.04em; }
 .md-view :deep(.md-copy-btn) { font-size: 10px; font-weight: 600; color: var(--color-primary); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.7; transition: opacity 0.15s; }
 .md-view :deep(.md-copy-btn:hover) { opacity: 1; }
-/* token 配色：跟思维面板笔记（useMindEditor.ts + mind-content.css）用同一套，全站代码块
-   颜色统一。这里不需要 mind-content.css 里那套"重复 class 提高优先级"的技巧——那是
-   为了应付 @tiptap/extension-code-block-lowlight 用 ProseMirror decoration 画高亮、
-   把嵌套 token 拍扁成一个 class 列表的问题；GuguChat 是 hljs.highlight() 直接出的
-   真实嵌套 <span>，浏览器天然只认最内层，不会有那个问题。 */
+/* token 配色：跟思维面板笔记（mind-content.css）同一套主题变量映射，双主题通用——
+   之前这里是一套硬编码浅色 hex 的孤本，暗色下注释发灰、变量色 #1e2028 直接隐形。
+   不需要 mind-content.css 里那套"重复 class 提高优先级"的技巧——那是应付
+   @tiptap/extension-code-block-lowlight 用 ProseMirror decoration 画高亮、把嵌套
+   token 拍扁成一个 class 列表的问题；GuguChat 是 hljs.highlight() 直接出的真实
+   嵌套 <span>，浏览器天然只认最内层，不会有那个问题。 */
 .md-view :deep(.hljs-keyword), .md-view :deep(.hljs-literal),
-.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: #7b5cf0; font-weight: 600; }
+.md-view :deep(.hljs-selector-tag), .md-view :deep(.hljs-tag) { color: var(--action-primary-hover); font-weight: 600; }
 .md-view :deep(.hljs-string), .md-view :deep(.hljs-regexp),
 .md-view :deep(.hljs-symbol), .md-view :deep(.hljs-bullet),
-.md-view :deep(.hljs-addition) { color: #2d7a4f; }
+.md-view :deep(.hljs-addition) { color: var(--status-success); }
 .md-view :deep(.hljs-comment), .md-view :deep(.hljs-quote),
-.md-view :deep(.hljs-meta) { color: #9a9a9a; font-style: italic; }
+.md-view :deep(.hljs-meta) { color: var(--content-tertiary); font-style: italic; }
 .md-view :deep(.hljs-number), .md-view :deep(.hljs-attr),
-.md-view :deep(.hljs-attribute), .md-view :deep(.hljs-deletion) { color: #b07858; }
+.md-view :deep(.hljs-attribute), .md-view :deep(.hljs-deletion) { color: var(--status-warning); }
 .md-view :deep(.hljs-function), .md-view :deep(.hljs-name),
-.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: #4a7fb5; font-weight: 600; }
+.md-view :deep(.hljs-type), .md-view :deep(.hljs-params) { color: var(--status-info); font-weight: 600; }
 .md-view :deep(.hljs-title), .md-view :deep(.hljs-section),
-.md-view :deep(.hljs-selector-id), .md-view :deep(.hljs-selector-class) { color: #4a7fb5; font-weight: 600; }
+.md-view :deep(.hljs-selector-id), .md-view :deep(.hljs-selector-class) { color: var(--status-info); font-weight: 600; }
 .md-view :deep(.hljs-built_in), .md-view :deep(.hljs-builtin-name),
-.md-view :deep(.hljs-link) { color: #5a9e88; }
-.md-view :deep(.hljs-variable), .md-view :deep(.hljs-template-variable) { color: #1e2028; }
+.md-view :deep(.hljs-link) { color: var(--status-success); opacity: 0.9; }
+.md-view :deep(.hljs-variable), .md-view :deep(.hljs-template-variable) { color: var(--content-primary); }
 .md-view :deep(.hljs-emphasis) { font-style: italic; }
 .md-view :deep(.hljs-strong) { font-weight: 700; }
 </style>

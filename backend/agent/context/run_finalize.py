@@ -14,6 +14,45 @@ class FinalizeResult:
     tokens_out: int
 
 
+def _run_compaction_summary(
+    messages: Any,
+    model_cfg: Any,
+    user_message_id: int | None,
+) -> str | None:
+    """取出本 run 在 provider 边界生成的压缩摘要正文；取不到就退回旧的重生成。
+
+    run 内压缩的分支请求与主对话共享前缀、能命中缓存；run 收尾的 baseline
+    再用摊平文本把同一批历史送一遍，是结构性不可能共享前缀的全冷大输入调用。
+    复用必须确认候选确实是摘要（而不是正文里恰好带标记的用户消息）并仍然
+    通过输出预算校验，否则返回 None 让调用方走旧路径。
+    """
+    if not user_message_id:
+        return None
+    from agent.context.compaction import resolve_compaction_limits, validate_compact_summary
+    from agent.context.summary_format import SUMMARY_OPEN, unwrap_compacted_summary
+
+    conversation = list(getattr(messages, "conversation", messages) or [])
+    candidate = None
+    for item in conversation:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "")
+        # 摘要由组装器写成 <compacted-summary> 开头的 history 消息；run 内多次
+        # 压缩时取最后一条（最新一次已经把上一版滚动合并进去）。
+        if item.get("role") == "summary" or content.lstrip().startswith(SUMMARY_OPEN):
+            candidate = content
+    if not candidate:
+        return None
+    try:
+        limits = resolve_compaction_limits(model_cfg)
+    except Exception:
+        # 取不到输出预算就无法确认候选仍然可用，退回旧的重生成路径。
+        return None
+    text = unwrap_compacted_summary(candidate)
+    ok, _reason = validate_compact_summary(text, max_output_tokens=limits.output_tokens)
+    return text if ok else None
+
+
 async def _insert_or_get_batch(db, batch_model, values: dict[str, Any]):
     """原子写入 canonical batch，唯一键竞争时复用已有行。"""
     from sqlalchemy import select
@@ -226,8 +265,15 @@ async def finalize_run(
     # 只有当前 run 已经在 provider round 边界执行过 >=90% 压缩，才同步推进
     # 持久 baseline。这里不再独立判断 token，也不再创建结束后的后台压缩任务。
     if compaction_applied:
+        # run 内压缩已经在 provider 边界生成过摘要（那次分支请求与主对话共享
+        # 前缀、能命中缓存）。baseline 直接复用它并只重算水位，不再用摊平文本
+        # 重放一遍——那条路结构上不可能共享前缀，每次都是全冷的大输入调用。
+        # 摘要取不到时退回旧的重生成路径。
+        reuse_summary = _run_compaction_summary(messages, model_cfg, user_message_id)
         await compress_conv.compress_if_needed(
             session_id, user_id, settings, force=False,
+            reuse_summary=reuse_summary,
+            reuse_before_message_id=user_message_id if reuse_summary else None,
         )
     return FinalizeResult(
         tokens_in=usage_result.tokens_in,

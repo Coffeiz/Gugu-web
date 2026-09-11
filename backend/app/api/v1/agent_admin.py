@@ -504,27 +504,33 @@ async def get_usage(month: str | None = None, model: str | None = None,
 
     # 按场景分组（chat=主对话 / reflection=记忆反思 / compaction=压缩 / knowledge=知识反思）；
     # 2026-09-10 之前的存量行没有 scenario 标记，全部落在 chat 里。
-    scenario_rows = await db.execute(  # orm-exempt: 用量场景统计读取待 Service 收口（1.1.2 新增）
-        select(  # orm-exempt: 同上，scenario_rows 查询待 Service 收口
-            AgentUsage.scenario,
-            func.count(AgentUsage.id),
-            func.coalesce(func.sum(_effective_input_expr()), 0),
-            func.coalesce(func.sum(AgentUsage.tokens_out), 0),
-            func.coalesce(func.sum(AgentUsage.cache_read), 0),
-            func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.is_byok.is_(False))
-        .group_by(AgentUsage.scenario)
-        .order_by(func.count(AgentUsage.id).desc())
-    )
-    by_scenario = [
-        {
-            "scenario": r[0] or "chat",
-            "calls": r[1], "tokens_in": r[2], "tokens_out": r[3],
-            "cache_read": r[4], "cache_write": r[5],
-            "cache_ratio": round(r[4] / r[2], 6) if r[2] else 0,
-        }
-        for r in scenario_rows.all()
-    ]
+    # 返回今日与最近 7 天两套聚合，前端跟随「今日 / 最近」时段切换展示；
+    # 不提供全期口径，避免与顶部时段卡对不上。
+    async def _scenario_aggregate(since):
+        rows = await db.execute(  # orm-exempt: 用量场景统计读取待 Service 收口（1.1.2 新增）
+            select(  # orm-exempt: 同上，scenario 聚合查询待 Service 收口
+                AgentUsage.scenario,
+                func.count(AgentUsage.id),
+                func.coalesce(func.sum(_effective_input_expr()), 0),
+                func.coalesce(func.sum(AgentUsage.tokens_out), 0),
+                func.coalesce(func.sum(AgentUsage.cache_read), 0),
+                func.coalesce(func.sum(AgentUsage.cache_write), 0),
+            ).where(AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False))
+            .group_by(AgentUsage.scenario)
+            .order_by(func.count(AgentUsage.id).desc())
+        )
+        return [
+            {
+                "scenario": r[0] or "chat",
+                "calls": r[1], "tokens_in": r[2], "tokens_out": r[3],
+                "cache_read": r[4], "cache_write": r[5],
+                "cache_ratio": round(r[4] / r[2], 6) if r[2] else 0,
+            }
+            for r in rows.all()
+        ]
+
+    by_scenario = await _scenario_aggregate(today_start)
+    by_scenario_recent = await _scenario_aggregate(_utc_naive(today_start_local - timedelta(days=6)))
 
     # 有数据的月份列表（最近 12 个月）
     months_rows = await db.execute(
@@ -635,6 +641,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "today":   {"calls": today_calls, "tokens_in": today_in, "tokens_out": today_out, "cache_read": today_cache_read, "cache_write": today_cache_write, "cache_ratio": round(today_cache_read / today_in, 6) if today_in else 0},
         "by_model": by_model,
         "by_scenario": by_scenario,
+        "by_scenario_recent": by_scenario_recent,
         "active_model": model,
         "months":   available_months,
         "month":    target_month,

@@ -32,7 +32,7 @@ export interface ChatMessage {
   toolCallId?: string
   toolName?: string
   toolLabel?: string
-  toolStatus?: 'running' | 'waiting' | 'success' | 'error' | 'skipped'
+  toolStatus?: 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled'
   toolInput?: unknown
   toolResult?: unknown
   toolDurationMs?: number

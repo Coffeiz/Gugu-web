@@ -143,6 +143,10 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
     // mousedown preventDefault 会阻止焦点转移，否则点空白处退不出重命名。
     const active = document.activeElement
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+    // 同理放行 contenteditable（聊天输入框等 ProseMirror 根是 div[contenteditable]）：
+    // 不放行会把焦点钉在编辑器上，视觉选区还被下面 removeAllRanges 清空，看起来
+    // 像已失焦，实际键盘撤销等默认行为仍被编辑器拦截、页面侧完全收不到（2026-09-10）。
+    if (active instanceof HTMLElement && active.isContentEditable) return
     // 框选不是文本拖拽；在起点就阻止 Safari 建立选区，并清掉此前残留的文字选中态。
     e.preventDefault()
     window.getSelection()?.removeAllRanges()

@@ -109,3 +109,103 @@ async def test_openai_branch_plain_messages_without_explicit_cache(monkeypatch):
         {"role": "system", "content": "stable system"},
         {"role": "user", "content": "user"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_branch_forwards_tools_without_tool_choice(monkeypatch):
+    """工具声明要跟着分支一起发，但不能设 tool_choice——那会让前缀缓存失效。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(supports_active_cache=lambda model: True))
+    tools = [{"name": "read_file", "description": "读文件", "input_schema": {}}]
+    await provider_runner._anthropic("stable system", "user", _anthropic_ai(), 100,
+                                     tools=tools)
+    assert fake.kwargs["tools"] == tools
+    assert "tool_choice" not in fake.kwargs
+
+
+@pytest.mark.asyncio
+async def test_openai_branch_forwards_tools_like_main_run(monkeypatch):
+    """OpenAI 兼容端沿用主 run 的 build_tool_params 形状，前缀才能对上。"""
+    fake = _FakeOpenAI()
+    monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: fake)
+    tools = [{"type": "function", "function": {"name": "read_file"}}]
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            supports_explicit_cache=lambda model: False,
+            build_structured_output=lambda ai: {},
+            build_openai_thinking_kwargs=lambda ai, thinking=None: {},
+            build_tool_params=lambda ai, items: {"tools": items, "tool_choice": "auto"},
+        ))
+    await provider_runner._openai("stable system", "user", _openai_ai(), 100, tools=tools)
+    assert fake.kwargs["tools"] == tools
+    assert fake.kwargs["tool_choice"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_branch_without_tools_stays_unchanged(monkeypatch):
+    """没有工具声明的分支（反思/知识）不受影响，不额外加 tools 参数。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(supports_active_cache=lambda model: True))
+    await provider_runner._anthropic("stable system", "user", _anthropic_ai(), 100)
+    assert "tools" not in fake.kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_branch_omits_empty_system(monkeypatch):
+    """空 system 不发该参数（手动 /compact 的追加式调用没有主 run 的 system）。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(supports_active_cache=lambda model: True))
+    await provider_runner._anthropic("", "user", _anthropic_ai(), 100)
+    assert "system" not in fake.kwargs
+
+
+@pytest.mark.asyncio
+async def test_complete_messages_omits_thinking_like_main_run(monkeypatch):
+    """追加式分支与主 run 逐参数对齐：主 run 不发 thinking（adapter 返回空），
+    分支也不得手拼 thinking 参数，否则 provider 缓存键不同整段 miss。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            protocol_format=lambda ai: "anthropic",
+            supports_active_cache=lambda model: True,
+            build_anthropic_thinking_params=lambda ai: {},
+            build_anthropic_generation_params=lambda ai: {},
+        ))
+    ai = SimpleNamespace(model="MiniMax-M3", provider="minimax", thinking="adaptive")
+    await provider_runner.complete_messages(
+        "stable system", [{"role": "user", "content": "历史"}], "压缩指令",
+        settings=SimpleNamespace(ai=ai), tools=[{"name": "read_file"}])
+    assert "thinking" not in fake.kwargs
+
+
+@pytest.mark.asyncio
+async def test_complete_messages_merges_main_run_generation_params(monkeypatch):
+    """adapter 提供的 thinking/generation 参数必须原样带上，与主 run 同源。"""
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            protocol_format=lambda ai: "anthropic",
+            supports_active_cache=lambda model: True,
+            build_anthropic_thinking_params=lambda ai: {"thinking": {"type": "enabled"}},
+            build_anthropic_generation_params=lambda ai: {"metadata": {"x": 1}},
+        ))
+    ai = SimpleNamespace(model="m-test", provider="minimax", thinking="adaptive")
+    await provider_runner.complete_messages(
+        "stable system", [{"role": "user", "content": "历史"}], "压缩指令",
+        settings=SimpleNamespace(ai=ai))
+    assert fake.kwargs["thinking"] == {"type": "enabled"}
+    assert fake.kwargs["metadata"] == {"x": 1}

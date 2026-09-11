@@ -43,20 +43,12 @@ html[data-theme][data-family] .topbar {
   --gb-highlight-side: transparent;
   box-shadow: var(--glass-card-shadow);
 }
-html[data-theme][data-family] .topbar:hover {
-  --gb-tint: var(--surface-glass-hover);
-  box-shadow: var(--glass-card-shadow-hover);
-}
+/* topbar hover 的 tint/阴影不再单独写：统一走 GlassBg 的 .glass-card:hover 契约
+   （tint 切 --surface-glass-hover）与语义 --glass-card-shadow-hover。 */
 html[data-theme][data-family] .files-toolbar {
   /* 文件工具栏与 topbar 使用同一条外框契约，避免 GlassBg 叠出错位的第二层边缘。 */
   --gb-highlight-strong: transparent;
   --gb-highlight-side: transparent;
-}
-html[data-theme][data-family] .terminal-main-head.glass-card {
-  /* 终端顶部位于已有终端外框内，只保留底部分隔线，避免卡片阴影形成第二层边界。 */
-  --glass-card-shadow: none;
-  --glass-card-shadow-hover: none;
-  box-shadow: none;
 }
 html[data-theme][data-family] .topbar .topbar-title h1 { font-size: var(--topbar-title-size); }
 html[data-theme][data-family] .topbar .topbar-title p {

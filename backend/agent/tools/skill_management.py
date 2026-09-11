@@ -209,7 +209,7 @@ SKILL_MANAGEMENT_TOOLS = [
         description_short="删除已有咕咕技能；执行前需要确认",
         description=(
             "删除当前用户已有的 Prompt Skill。首次调用会返回确认请求，"
-            "用户确认后重新调用同一 slug 才会删除；系统 Skill 和其他用户的 Skill 不可删除。"
+            "用户确认后由服务端执行删除；系统 Skill 和其他用户的 Skill 不可删除。"
         ),
         input_schema={
             "type": "object",

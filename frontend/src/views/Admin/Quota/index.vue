@@ -196,7 +196,7 @@
     <Teleport to="body">
       <div v-if="editTarget" class="modal-mask" @mousedown.self="maskMousedownSelf = true" @mouseup.self="maskMousedownSelf && (editTarget = null); maskMousedownSelf = false">
         <div class="modal-box">
-          <p class="modal-title">{{ t('adminQuota.editTitle') }}</p>
+          <p class="modal-title">{{ t('adminQuota.editQuota') }}</p>
           <p class="modal-subtitle">{{ editTarget.display_name || editTarget.username }}</p>
 
           <div class="quota-fields quota-fields--single" style="margin-top:18px">

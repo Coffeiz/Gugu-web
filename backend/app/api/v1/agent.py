@@ -368,22 +368,51 @@ async def resume_stream(
     )
 
 
+@router.get("/sessions/{session_id}/state")
+async def get_session_state(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """会话执行状态的轻量快照，供前端在基线整理期间轮询收尾提示。"""
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
+        raise HTTPException(404, "对话不存在")
+    from agent.context.compress_conv import recover_orphaned_session
+    await recover_orphaned_session(session_id, user_id=current_user.id)
+    await db.refresh(session)
+    return {
+        "executionState": session.execution_state,
+        "pendingMessageCount": int(session.pending_message_count or 0),
+        "active": await genstream.is_active(session_id),
+    }
+
+
 @router.post("/sessions/{session_id}/cancel")
 async def cancel_stream(
     session_id: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """请求停止该用户会话的后台 Web 生成，取消在 Agent round/token 边界生效。"""
+    """终止该用户会话的后台 Web 生成。
+
+    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务直接
+    cancel（立即生效）；跨 worker / 任务未登记时退回 Redis 取消标记，由 run
+    心跳在 5s 内自取消。
+    """
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
         raise HTTPException(404, "会话不存在")
     from agent.context.compress_conv import recover_orphaned_session
-    await recover_orphaned_session(session_id, user_id=current_user.id)
+    recovered = await recover_orphaned_session(session_id, user_id=current_user.id)
     active = await genstream.is_active(session_id)
+    cancelled_locally = False
     if active:
-        await genstream.request_cancel(session_id)
-    return {"ok": True, "active": active}
+        from agent.gateway.web import cancel_local_generation
+        cancelled_locally = cancel_local_generation(session_id)
+        if not cancelled_locally:
+            await genstream.request_cancel(session_id)
+    return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
 
 
 @router.get("/sessions")
@@ -738,6 +767,9 @@ async def get_session_messages(
                     "goalActive": bool(session_context.get("goal_mode") and session_context.get("goal_text")),
                     "goalStatus": "paused" if session_context.get("goal_status") == "paused" and session_context.get("goal_text") else ("active" if session_context.get("goal_text") else None)},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
+        # 排队/基线整理是持久状态，刷新或切回会话后前端据此恢复「正在整理上下文」提示
+        "executionState": session.execution_state,
+        "pendingMessageCount": int(session.pending_message_count or 0),
         "pagination": {
             "limit": limit,
             "hasMore": has_more,

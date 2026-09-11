@@ -344,6 +344,8 @@ async def build_dynamic_prompt(
         "## 本轮 Shell 权限状态（动态）",
         "以下状态只代表本轮执行器返回的有效权限，下一轮必须重新读取，不能从历史消息推断。",
         "- Shell：已授权；本轮已注册 Shell 工具。",
+        "- 复合命令：`&&`、`||`、`;`、`|` 可直接使用；重定向（`>` `>>`）和命令替换"
+        "（`$(...)`、反引号）属于危险操作，必须确认后执行。",
     ]
     cwd_mapping = await shell_cwd_mapping(
         db, user_id, session=session, workspace_id=workspace_id,

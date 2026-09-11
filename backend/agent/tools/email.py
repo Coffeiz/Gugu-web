@@ -128,7 +128,7 @@ async def _send_email(db, user_id, args: dict):
                     "sha256": hashlib.sha256(attachment.content).hexdigest(),
                 } for attachment in attachments],
             ),
-            instruction="邮件发送不可撤回。请确认收件人、主题和正文后再次调用本工具执行，无需携带凭证。",
+            instruction="邮件发送不可撤回。请把收件人、主题和正文准确转达用户；用户确认后由服务端继续执行本次发送，你无需再次调用本工具。",
         )
         if blocked is not None:
             return blocked
