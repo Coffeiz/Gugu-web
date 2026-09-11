@@ -104,6 +104,25 @@ backend/
 | 小弹窗 | `--popup-blur`（variables.css） | `blur(12px)` | `.popup-menu`（右键/排序/表单）、日期选择器、活动添加/编辑弹窗、文件信息、通知中心、全局搜索下拉、月份选择、溢出弹窗 |
 | 拖拽克隆 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 卡片拖拽代理的材质和内容层由 runtime 生命周期统一协调，组件只提供自身视觉结构 |
 
+### 两种玻璃实现：标准 glass-card vs GlassBg 仿玻璃（按视觉体感选型）
+
+前台有两种玻璃实现，视觉相似、技术路径和 hover 机制完全不同：
+
+| | 标准 `.glass-card`（真磨砂） | `GlassBg` 仿玻璃（faux glass） |
+|---|---|---|
+| 绘制 | 宿主自身 `background` + `backdrop-filter` 真实模糊 | `.glass-bg > .gb-tint` 叠层（`z-index:-1`），无 backdrop-filter |
+| 适用 | 内容**可灵活调整/交互**的面板（列表、表单、可编辑内容） | 以**固定内容为主**的面板，或浮在会动内容之上（backdrop-filter 在动内容上会边缘白带） |
+| 现例 | 技能页、终端页、文件库主面板 | 顶栏、日历工具栏/主面板/侧栏、文件工具栏 |
+| hover | global.css `.glass-card:hover`，token `--glass-card-background-hover` | component-theme-refinements.css 契约规则 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`（带 0.25s 过渡） |
+
+选型以**视觉体感为主**：同一个页面里两种玻璃可以共存（如日历页工具栏是仿玻璃、弹层里的编辑卡是标准玻璃）。**例外：项目页**——项目列浮在可拖拽卡片之上（按「浮在动内容上」本该用仿玻璃），实际用的是标准 glass-card，体感成立就以它为准。
+
+实现红线（多次踩坑）：
+- 仿玻璃的 hover tint 规则**必须放全局样式表**（component-theme-refinements.css 的 `.glass-card:hover .gb-tint`）；写在 GlassBg.vue 或宿主的 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。
+- 不想要 hover 的面板用 opt-out 契约：`--glass-card-background-hover` / `--glass-card-shadow-hover` 自映射回静止值（技能页、终端页先例）。**禁止恢复主题层「暗色一刀切 hover 屏蔽」**（transparent/同值自映射批量压制已于 2026-09-11 清理）。
+- 暗色 glass hover 高亮幅度在 theme-refinements.css 暗色段标定（`--surface-glass-hover`，现为 7% 白，用户实测 9% 偏亮）；亮色直接走各主题 `--theme-glass-hover`。
+- 页面主面板把底色钉成 `--column-bg`（技能页/终端页做法）时，背景与 hover 两个 token 都要钉，只钉静止不钉 hover 会出现 hover 高亮突兀。
+
 ### 色彩
 
 | 用途 | 色值 |
