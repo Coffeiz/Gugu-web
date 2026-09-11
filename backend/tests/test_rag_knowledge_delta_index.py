@@ -280,7 +280,7 @@ async def test_handle_event_routes_by_source_id(monkeypatch, rag_env):
     owner_id, _worker, _sf = rag_env
     routed: list[tuple] = []
 
-    async def fake_doc_patch(user_id, source_id, *, operation="upsert", stats_out=None):
+    async def fake_doc_patch(user_id, source_type, source_id, *, operation="upsert", stats_out=None):
         routed.append((str(source_id), operation))
         if stats_out is not None:
             stats_out.update({"mode": "document_patch", "status": "ready"})
@@ -290,7 +290,7 @@ async def test_handle_event_routes_by_source_id(monkeypatch, rag_env):
         routed.append((str(source_type), operation))
         return 1
 
-    monkeypatch.setattr(pipeline, "update_knowledge_document", fake_doc_patch)
+    monkeypatch.setattr(pipeline, "update_document", fake_doc_patch)
     monkeypatch.setattr(pipeline, "rebuild_source_index", fake_source_rebuild)
 
     assert await pipeline.handle_rag_index_event(RagIndexUpdated(
@@ -299,7 +299,8 @@ async def test_handle_event_routes_by_source_id(monkeypatch, rag_env):
         user_id=owner_id, source_type="knowledge", source_id="", operation="upsert")) is True
     assert await pipeline.handle_rag_index_event(RagIndexUpdated(
         user_id=owner_id, source_type="file", source_id="f-1", operation="upsert")) is True
-    assert routed == [("k-9", "upsert"), ("knowledge", "upsert"), ("file", "upsert")]
+    # file 现在也带 id 走文档级（Phase 2）
+    assert routed == [("k-9", "upsert"), ("knowledge", "upsert"), ("f-1", "upsert")]
 
 
 @pytest.mark.asyncio

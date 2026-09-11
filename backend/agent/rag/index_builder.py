@@ -23,6 +23,7 @@ from app.models import (
     MindMap,
     MindNode,
     MindRelation,
+    Project,
     ScheduledTask,
 )
 
@@ -163,6 +164,49 @@ def conversation_message_record(
         ),
         "updated_at": (row.sent_at or row.created_at).isoformat() if (row.sent_at or row.created_at) else None,
     }
+
+
+async def build_single_source_record(
+    db, owner_user_id: object, source_type: str, source_id: str,
+) -> tuple[dict, Scope] | None:
+    """单对象读取：只加载一个 file/project 的 canonical record（PRD-RAG-9 文档级增量）。
+
+    主数据不存在/已删除/不可索引时返回 None（调用方按删除收敛）。knowledge
+    走 KnowledgeAdapter.build_source_record_for（文件库存储，不需要 db）。
+    """
+    owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
+    if source_type == "file":
+        row = (await db.execute(select(File).where(
+            File.user_id == owner_user_id,
+            File.id == int(source_id),
+            File.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        semaphore = asyncio.Semaphore(1)
+        return file_record(row, await _extract_file_text_bounded(row, semaphore)), owner_scope
+    if source_type == "project":
+        row = (await db.execute(select(Project).where(
+            Project.user_id == owner_user_id,
+            Project.id == int(source_id),
+            Project.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        from agent.rag.adapters.projects import _iso
+        text = ProjectAdapter._project_text(row)
+        if not text.strip():
+            return None
+        document_id = f"project:{row.id}"
+        return ({
+            "source_type": "project", "id": str(row.id),
+            "source_id": str(row.id), "parent_id": document_id,
+            "title": row.name or "未命名项目", "summary": text[:240],
+            "content": text, "version_parts": [row.id, row.version or 1],
+            "updated_at": _iso(row.updated_at),
+            "metadata": {"project_id": str(row.id), "status": row.status or "pending"},
+        }, owner_scope)
+    raise ValueError(f"来源不支持单对象读取：{source_type}")
 
 
 async def build_source_records(db, owner_user_id: object, source_type: str) -> list[tuple[dict, Scope]] | None:

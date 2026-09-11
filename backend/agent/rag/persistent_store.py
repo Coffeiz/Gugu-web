@@ -130,11 +130,15 @@ async def replace_source_documents(
 async def load_parent_documents(
     db, owner_user_id: object, source_type: str, source_id: str,
 ) -> list[IndexDocument]:
-    """读取一个父文档（单 source_id）的全部持久 chunk（文档级增量入口）。"""
+    """读取一个父文档（单 source_id）的全部持久 chunk（文档级增量入口）。
+
+    用 source_id 列定位：parent_document_id 的取值因来源而异（project 是
+    "project:<id>"，file/knowledge 是裸 id），source_id 恒为裸对象 id。
+    """
     rows = (await db.execute(select(KnowledgeIndexEntry).where(
         KnowledgeIndexEntry.owner_user_id == owner_user_id,
         KnowledgeIndexEntry.source_type == source_type,
-        KnowledgeIndexEntry.parent_document_id == str(source_id),
+        KnowledgeIndexEntry.source_id == str(source_id),
         KnowledgeIndexEntry.deleted_at.is_(None),
     ).order_by(KnowledgeIndexEntry.chunk_index.asc()))).scalars().all()
     return [_from_row(row) for row in rows]
@@ -162,7 +166,7 @@ async def apply_document_patch(
     rows = (await db.execute(select(KnowledgeIndexEntry).where(
         KnowledgeIndexEntry.owner_user_id == owner_user_id,
         KnowledgeIndexEntry.source_type == source_type,
-        KnowledgeIndexEntry.parent_document_id == str(source_id),
+        KnowledgeIndexEntry.source_id == str(source_id),
     ))).scalars().all()
     existing = {(row.source_id, row.document_version, row.chunk_index): row for row in rows}
     wanted: set[tuple[str, str, int]] = set()

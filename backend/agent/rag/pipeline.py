@@ -144,17 +144,17 @@ async def _knowledge_client(user_id: object):
 
 
 async def _replace_worker_index(
-    user_id: object, db, revision: str | None,
+    user_id: object, db, revision: str | None, *, source_type: str = "knowledge",
     diagnostics: dict[str, object] | None = None,
 ) -> None:
     """mismatch 回退：worker 侧整来源 replace（不动主数据库，DB 已是最新）。"""
     from agent.rag.index_cache import _persistent_vectors
     from agent.rag.ts_sidecar import TsSidecarUnavailable
 
-    records = await build_source_records(db, user_id, "knowledge")
+    records = await build_source_records(db, user_id, source_type)
     if records is None:
-        raise RuntimeError("来源未提供 canonical source record：knowledge")
-    documents = await records_to_write_documents(user_id, "knowledge", records)
+        raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
+    documents = await records_to_write_documents(user_id, source_type, records)
     vectors, vector_tag = await _persistent_vectors(user_id, documents, diagnostics)
     client = await _knowledge_client(user_id)
     try:
@@ -164,22 +164,36 @@ async def _replace_worker_index(
         raise
 
 
+DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "file", "project"}
+
+
 async def update_knowledge_document(
     user_id: object, source_id: str, *, operation: str = "upsert",
     stats_out: dict[str, object] | None = None,
 ) -> int:
-    """Knowledge 文档级增量：只读取/投影/写入发生变化的单条知识（PRD-RAG-9 Phase 1）。
+    """兼容别名：knowledge 文档级增量（PRD-RAG-9 Phase 1 入口）。"""
+    return await update_document(
+        user_id, "knowledge", source_id, operation=operation, stats_out=stats_out,
+    )
 
-    DB 持久索引按 chunk 增量替换；knowledge 向量做 upsert/delete；TS worker
-    patch 失败时回退来源级 replace（mode 显式记 source_replace）。
+
+async def update_document(
+    user_id: object, source_type: str, source_id: str, *, operation: str = "upsert",
+    stats_out: dict[str, object] | None = None,
+) -> int:
+    """文档级增量：只读取/投影/写入发生变化的单个对象（PRD-RAG-9）。
+
+    支持 knowledge/file/project（三者都有稳定的单对象 canonical record）。
+    DB 持久索引按 chunk 增量替换；knowledge 额外做向量 upsert/delete；
+    TS worker patch 失败时回退来源级 replace（mode 显式记 source_replace）。
     返回该文档当前 chunk 数。
     """
-    from agent.rag.delta import chunk_slot_key, compute_chunk_delta
+    if source_type not in DOCUMENT_PATCH_SOURCE_TYPES:
+        raise ValueError(f"来源不支持文档级增量：{source_type}")
+    from agent.rag.delta import compute_chunk_delta
     from agent.rag.ts_sidecar import TsSidecarUnavailable
-    from agent.rag.vector_cache import cache_key
-    from agent.knowledge.vector_cache import apply_vector_delta
 
-    key = f"{user_id}:knowledge:doc:{source_id}"
+    key = f"{user_id}:{source_type}:doc:{source_id}"
     async with _locks[key]:
         import app.db.session as db_session
 
@@ -192,15 +206,22 @@ async def update_knowledge_document(
             return 0
         started = time.monotonic()
         async with db_session._SessionLocal() as db:
-            old_documents = await load_parent_documents(db, user_id, "knowledge", str(source_id))
+            old_documents = await load_parent_documents(db, user_id, source_type, str(source_id))
             projection_started = time.monotonic()
             new_documents: list = []
             if operation != "delete":
-                from agent.rag.adapters.knowledge import KnowledgeAdapter
+                if source_type == "knowledge":
+                    from agent.rag.adapters.knowledge import KnowledgeAdapter
 
-                record = await KnowledgeAdapter(user_id).build_source_record_for(str(source_id))
+                    record = await KnowledgeAdapter(user_id).build_source_record_for(str(source_id))
+                else:
+                    from agent.rag.index_builder import build_single_source_record
+
+                    record = await build_single_source_record(
+                        db, user_id, source_type, str(source_id),
+                    )
                 if record is not None:
-                    new_documents = await records_to_write_documents(user_id, "knowledge", [record])
+                    new_documents = await records_to_write_documents(user_id, source_type, [record])
             delta = compute_chunk_delta(old_documents, new_documents)
             upserts = list(delta.upserts)
             delete_slots = list(delta.deletes)
@@ -216,19 +237,26 @@ async def update_knowledge_document(
                 if stats_out is not None:
                     stats_out["status"] = "no_change"
                 return len(old_documents)
-            # 向量删除键来自旧 chunk（cache_key 含 version，不能用 slot key）。
-            old_keys = {cache_key(doc) for doc in old_documents}
-            new_keys = {cache_key(doc) for doc in new_documents}
-            vector_delete_keys = {key for key in (old_keys - new_keys) if key}
+            # knowledge 向量删除键来自旧 chunk（cache_key 含 version，不能用 slot key）。
+            vector_delete_keys: set[str] = set()
+            if source_type == "knowledge":
+                from agent.rag.vector_cache import cache_key
+
+                old_keys = {cache_key(doc) for doc in old_documents}
+                new_keys = {cache_key(doc) for doc in new_documents}
+                vector_delete_keys = {key for key in (old_keys - new_keys) if key}
             # DB 侧是父文档作用域 replace：版本推进/收缩的旧行由键集差删除，
             # worker 侧 deletes 只需要消失的 slot（delta 契约）。
             await apply_document_patch(
-                db, user_id, "knowledge", str(source_id), upserts,
+                db, user_id, source_type, str(source_id), upserts,
             )
             revision = await _owner_revision(db, user_id)
             await db.commit()
-            all_documents = await load_index_documents(db, user_id, source_types={"knowledge"})
-        await apply_vector_delta(user_id, upserts, vector_delete_keys)
+            all_documents = await load_index_documents(db, user_id, source_types={source_type})
+        if source_type == "knowledge":
+            from agent.knowledge.vector_cache import apply_vector_delta
+
+            await apply_vector_delta(user_id, upserts, vector_delete_keys)
         patch_started = time.monotonic()
         status = "ready"
         base_revision_match: bool | None = None
@@ -248,7 +276,7 @@ async def update_knowledge_document(
                 base_revision_match = False
                 try:
                     async with db_session._SessionLocal() as db:
-                        await _replace_worker_index(user_id, db, revision)
+                        await _replace_worker_index(user_id, db, revision, source_type=source_type)
                 except TsSidecarUnavailable:
                     status = "worker_unavailable"
             else:
@@ -265,19 +293,20 @@ async def update_knowledge_document(
 async def handle_rag_index_event(event) -> bool:
     """处理非 Memory 来源索引事件，失败重试但不阻塞主业务写入。
 
-    knowledge 事件带 source_id 时走文档级增量；其余保持来源级全量重建。
+    knowledge/file/project 事件带 source_id 时走文档级增量；其余保持来源级
+    全量重建（无 id 的批量事件、管理端校准）。
     """
     started = time.monotonic()
     use_document_patch = (
-        event.source_type == "knowledge"
+        event.source_type in DOCUMENT_PATCH_SOURCE_TYPES
         and bool(str(getattr(event, "source_id", "") or "").strip())
     )
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             stats_out: dict[str, object] = {}
             if use_document_patch:
-                count = await update_knowledge_document(
-                    event.user_id, event.source_id,
+                count = await update_document(
+                    event.user_id, event.source_type, event.source_id,
                     operation=event.operation, stats_out=stats_out,
                 )
                 mode = str(stats_out.get("mode", "document_patch"))
