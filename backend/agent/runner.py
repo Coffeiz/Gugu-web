@@ -223,6 +223,7 @@ async def _run_collect_unlocked(
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
+                knowledge=data.knowledge,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
@@ -679,6 +680,7 @@ async def _run_stream_unlocked(
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
+                knowledge=data.knowledge,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
@@ -1105,6 +1107,19 @@ async def _collect(
     cancelled = False
     compaction_applied = False
     continuation_pending = False
+
+    async def flush_current_round() -> None:
+        """在轮次切换或交互暂停前先发送已生成的正文。"""
+        nonlocal cur, san
+        cur += san.flush()
+        rounds.append(cur)
+        if cur.strip():
+            from agent.outbound import sanitize_outbound
+            display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(cur)).strip()
+            await _notify_round(on_round, display_round)
+        cur = ""
+        san = sanitize.StreamSanitizer(adapter=provider_adapter)
+
     async for evt_str in gen:
         try:
             evt = json.loads(evt_str[6:])
@@ -1112,14 +1127,7 @@ async def _collect(
             continue
         t = evt.get("type")
         if t == "_new_round":
-            cur += san.flush()
-            rounds.append(cur)
-            if cur.strip():
-                from agent.outbound import sanitize_outbound
-                display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(cur)).strip()
-                await _notify_round(on_round, display_round)
-            cur = ""
-            san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置清洗器
+            await flush_current_round()
             continuation_pending = True
         elif t == "round_start":
             continuation_pending = False
@@ -1151,6 +1159,10 @@ async def _collect(
             if tool is not None and tool.mutates:
                 mutated = True
         elif t == "interaction_required":
+            # ask_user 的交互回调会在生成器产出此事件后展示选择卡，并等待用户输入。
+            # 若不先冲刷当前轮，前置说明会一直留在 cur，直到用户选择后核心循环才发
+            # `_new_round`，导致 QQ 先看到选择卡、选完后才看到这段说明。
+            await flush_current_round()
             # token 只在当前事件中短暂存在，不能写入日志或历史；平台 adapter 负责决定是否展示。
             interactions.append({
                 key: evt[key]

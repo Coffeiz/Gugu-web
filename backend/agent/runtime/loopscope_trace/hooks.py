@@ -407,9 +407,29 @@ def ensure_hooks() -> None:
                 application_layout = consume_context_layout_audit()
             except Exception:
                 application_layout = None
+            provider_layout_messages = messages
+            provider_history_sanitization = {
+                "applied": False,
+                "changed": False,
+                "removed_messages": 0,
+                "modified_messages": 0,
+                "first_changed_index": None,
+            }
+            if getattr(driver, "api_format", "") == "openai":
+                from agent.providers.message_utils import render_openai_request_history
+
+                provider_layout_messages, provider_history_sanitization = (
+                    render_openai_request_history(
+                        messages, _adapter, with_diagnostics=True,
+                    )
+                )
+            provider_layout_metadata = dict(application_layout or {})
+            provider_layout_metadata["provider_history_sanitization"] = (
+                provider_history_sanitization
+            )
             record_context_layout(
-                messages,
-                metadata=application_layout,
+                provider_layout_messages,
+                metadata=provider_layout_metadata,
                 system_text=effective_system,
                 parent_span_id=ctx_span.id,
             )
@@ -431,10 +451,25 @@ def ensure_hooks() -> None:
             # provider 实际收到的 projection；内部 canonical event 只用于
             # canonical_events 统计，不能混入跨 run 前缀比较。
             adapter = getattr(ctx, "adapter", None) or getattr(ctx, "_adapter", None)
-            round_wire_messages = (
-                adapter.render_history(round_messages)
-                if adapter is not None else round_messages
-            )
+            provider_history_sanitization = {
+                "applied": False,
+                "changed": False,
+                "removed_messages": 0,
+                "modified_messages": 0,
+                "first_changed_index": None,
+            }
+            if adapter is None:
+                round_wire_messages = round_messages
+            elif getattr(driver, "api_format", "") == "openai":
+                from agent.providers.message_utils import render_openai_request_history
+
+                round_wire_messages, provider_history_sanitization = (
+                    render_openai_request_history(
+                        round_messages, adapter, with_diagnostics=True,
+                    )
+                )
+            else:
+                round_wire_messages = adapter.render_history(round_messages)
             round_visible_messages = _trace_conversation_messages(
                 round_wire_messages, system_location,
             )
@@ -446,7 +481,9 @@ def ensure_hooks() -> None:
                 + _estimate_tokens(round_system, model_name)
             )
             growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
-            cache_diag = _cache_diagnostics(round_messages, ctx, model_name)
+            cache_diag = _cache_diagnostics(
+                round_wire_messages, ctx, model_name, provider_projected=True,
+            )
             from agent.context.canonical_tool_history import canonical_event_stats
             canonical_stats = canonical_event_stats(round_messages)
             from agent.context.context_diagnostics import request_diagnostics
@@ -538,6 +575,7 @@ def ensure_hooks() -> None:
                             "round": round_index,
                         },
                         "cache": cache_diag,
+                        "provider_history_sanitization": provider_history_sanitization,
                         "canonical_events": canonical_stats,
                         "adapter": {
                             "provider": getattr(ai, "provider", ""),

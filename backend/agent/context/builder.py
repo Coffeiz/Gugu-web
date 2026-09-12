@@ -3,14 +3,17 @@
 system prompt 的组装位于 ``session_system.py``；本模块只组装项目、日历、笔记、文件
 和消息格式等动态上下文。
 """
-from datetime import datetime
-from app.core.tz import LOCAL_TZ
-from agent.context.session_snapshot import current_date_text, date_boundary_note
+from agent.context.session_snapshot import current_date_text, current_time_text
 from agent.context.session_system import NON_STREAMING_BLOCK, build_static_prompt
 
 
 # 项目状态英文枚举 → 中文（注入上下文时翻好，免得咕咕照搬英文说给用户）
 _STATUS_ZH = {"pending": "待开始", "active": "进行中", "done": "已完成"}
+
+# 知识清单注入条数上限；清单取最新（loader 按 updated_at 倒序取前 N 条），
+# 旧知识被新知识自然挤出，越新的知识越重要。description 写入侧限 150 字符，
+# 单行长度有界，不再另设字节预算。
+_KNOWLEDGE_MANIFEST_MAX_ITEMS = 40
 
 
 def _files_block(fo: dict | None) -> str:
@@ -68,23 +71,21 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
                 include_projects: bool = True, include_calendar: bool = True,
                 include_files: bool = True, include_memory: bool = True,
                 user_tz=None, im_message_format: str | None = None,
-                notes: list[dict] | None = None) -> tuple[str, str, str]:
+                notes: list[dict] | None = None,
+                knowledge: list[dict] | None = None,
+                include_knowledge: bool = True) -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
     静态部分（每轮重建）：人格/基础 policy/政策/工具使用协议/风格/全部内置 Skill 索引
     动态部分（可能变化）：记忆/项目/笔记/文件/时间/消息格式
 
     返回 (static_text, dynamic_text, now_str)，调用方将静态部分放在 system，
-    动态部分放在 messages[0] 作为上下文注入，时间作为最后的独立消息。
+    动态部分放在 messages[0] 作为上下文注入，时间作为 provider-only dynamic tail。
 
     这样 system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存能命中。
     """
     memory = memory if (include_memory and memory) else {}
-    _now = datetime.now(user_tz or LOCAL_TZ)
-    today = _now.strftime("%Y-%m-%d")
-    _wd = "一二三四五六日"[_now.weekday()]
-    now_str = f"{today}（星期{_wd}）{_now.strftime('%H:%M')}"
-    now_str += date_boundary_note(_now.hour)
+    now_str = current_time_text(user_tz)
 
     # 稳定提示词每轮重建，使 persona/skills/policy 修改在下一轮生效；动态业务数据
     # 仍只在 snapshot 重建时读取。
@@ -131,6 +132,26 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
                    if include_files else "（本次任务不需要文件上下文，未加载）")
     dynamic_parts.append(f"## 文件\n{files_block}")
 
+    knowledge = knowledge if (include_knowledge and knowledge) else []
+    kx_lines: list[str] = []
+    for item in knowledge[:_KNOWLEDGE_MANIFEST_MAX_ITEMS]:
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        desc = str(item.get("description") or "").strip()
+        if not desc:
+            topic = str(item.get("topic") or "").strip()
+            desc = f"（{topic}）" if topic else ""
+        kx_lines.append(f"- {title}：{desc}" if desc else f"- {title}")
+    if include_knowledge:
+        kx_block = "\n".join(kx_lines) if kx_lines else "暂无已保存知识"
+    else:
+        kx_block = "（本次任务不需要知识上下文，未加载）"
+    dynamic_parts.append(
+        "## 知识\n以下是已保存的知识条目，仅供判断是否与当前任务相关；"
+        "需要全文时用 search_memory 检索，不要凭标题编造内容。\n" + kx_block
+    )
+
     src_block = _source_block(source, im_channels)
     if src_block:
         dynamic_parts.append(src_block)
@@ -138,9 +159,8 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
     if non_streaming:
         dynamic_parts.append(NON_STREAMING_BLOCK)
 
-    # 时间不放在 snapshot_context 中——它会变化导致 messages 前缀断裂。
-    # 时间由本轮 turn batch 追加；snapshot 生成的 memory/projects/calendar/files/source
-    # 作为固定前缀，避免每轮重新排列历史消息。
+    # 时间不放在 snapshot_context 中——它会变化导致稳定前缀断裂。调用方将 now_str
+    # 放入 provider-only dynamic tail；snapshot 的低频业务数据仍作为固定前缀。
 
     if im_message_format == "compat":
         from agent.im.message_format import compatibility_prompt

@@ -240,6 +240,18 @@ def test_knowledge_reflection_prompt_covers_tool_and_person_knowledge():
     assert "不同人物使用能区分主体的 `topic`" in prompt
     assert "高风险个人信息" in prompt
     assert '"keywords"' in prompt
+    assert '"description"' in prompt
+
+
+def test_knowledge_reflection_normalizes_description():
+    from agent.knowledge.reflection import normalize_operations
+
+    operations = normalize_operations({"operations": [{
+        "action": "create", "title": "规则", "topic": "规则", "content": "内容",
+        "description": "需要  规则\n时先读", "certainty": "probable",
+    }]})
+    # description 归一化为单行触发式描述（内部空白压成单空格）
+    assert operations[0]["description"] == "需要 规则 时先读"
 
 
 def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
@@ -278,7 +290,7 @@ async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automati
     saved = await reflect_if_candidate(
         "user-a", "请记住新规则", "收到", settings, "规则",
     )
-    assert saved == 1
+    assert len(saved) == 1
     entries = await KnowledgeStore("user-a").list()
     assert entries[0].confidence == "probable"
     assert entries[0].source.type == "conversation"
@@ -388,6 +400,9 @@ def test_save_knowledge_schema_declares_keywords():
     assert "search_memory" in tool.description
     assert "update_knowledge" in tool.description
     assert "整段替换" in tool.description
+    # description：触发式一句话描述，进 RAG 索引文本
+    assert tool.input_schema["properties"]["description"] == {"type": "string", "maxLength": 150}
+    assert "description" in tool.description
 
 
 @pytest.mark.asyncio
@@ -554,3 +569,119 @@ async def test_update_knowledge_tool_supports_keywords_only_partial_update(knowl
     assert saved.title == "F1 赛历"
     # 数字标量转字符串保留意图，复杂结构丢弃，截断到 10 个
     assert saved.keywords == ["F1", "Formula 1", "一级方程式", "2026", "大奖赛"]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_roundtrips_description_and_rejects_over_limit(knowledge_storage):
+    store = KnowledgeStore("user-a")
+    entry = KnowledgeEntry.create(
+        title="发布流程", content="使用 release 脚本发版。", topic="发布",
+        description="需要发版或回滚时先读这条。",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(entry)
+
+    saved = (await store.list())[0]
+    assert saved.description == "需要发版或回滚时先读这条。"
+    entry.description = "x" * 151
+    with pytest.raises(ValueError, match="description.*150"):
+        await store.save(entry)
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_bumps_version_on_description_only_change(knowledge_storage):
+    """只调 description 也要落盘升版本，不能被「无变化」检测吞掉。"""
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="部署规则", content="只使用 Linux", topic="部署",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+    described = KnowledgeEntry.create(
+        title="部署规则", content="只使用 Linux", topic="部署",
+        description="涉及部署、发布环境搭建时先读。",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    saved = await store.save(described)
+    assert saved.id == original.id
+    assert saved.version == 2
+    assert saved.description == "涉及部署、发布环境搭建时先读。"
+
+    unchanged = KnowledgeEntry.create(
+        title="部署规则", content="只使用 Linux", topic="部署",
+        description="涉及部署、发布环境搭建时先读。",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    assert (await store.save(unchanged)).version == 2
+
+
+def test_knowledge_adapter_description_enters_summary_metadata_and_version():
+    """description 进投影 summary（索引文本）、metadata 和版本戳。"""
+    import dataclasses
+
+    from agent.rag.adapters.knowledge import KnowledgeAdapter
+
+    entry = KnowledgeEntry.create(
+        title="部署规则", content="只使用 Linux", topic="部署",
+        keywords=["deploy"], description="需要发版时先读。",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    record = KnowledgeAdapter("user-a")._record(entry)
+    assert record["summary"].endswith("；需要发版时先读。")
+    assert record["metadata"]["description"] == "需要发版时先读。"
+    plain = dataclasses.replace(entry, description="")
+    assert KnowledgeAdapter("user-a")._record(plain)["document_version"] != record["document_version"]
+
+
+@pytest.mark.asyncio
+async def test_save_knowledge_tool_persists_description(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _save_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    result = await _save_knowledge(None, "user-a", {
+        "title": "发布流程", "content": "使用 release 脚本发版。", "topic": "发布",
+        "description": "需要  发版\n或回滚时先读。",
+    })
+
+    assert result["success"] is True
+    saved = (await KnowledgeStore("user-a").list())[0]
+    # 单行触发式描述：内部多余空白压成单空格
+    assert saved.description == "需要 发版 或回滚时先读。"
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_tool_supports_description_only_partial_update(knowledge_storage, monkeypatch):
+    from agent import events
+    from agent.tools.memory import _update_knowledge
+
+    monkeypatch.setattr(events.bus, "publish", lambda event: None)
+    store = KnowledgeStore("user-a")
+    original = KnowledgeEntry.create(
+        title="F1 赛历", content="2026 赛季共 24 站。", topic="F1",
+        scope=KnowledgeScope(owner_user_id="user-a"), source=KnowledgeSource("user"),
+    )
+    await store.save(original)
+
+    result = await _update_knowledge(None, "user-a", {
+        "knowledge_id": original.id,
+        "description": "查询 F1 赛程、冲刺周末规则时先读。",
+    })
+
+    assert result["success"] is True
+    assert result["version"] == 2
+    saved = (await store.list())[0]
+    assert saved.description == "查询 F1 赛程、冲刺周末规则时先读。"
+    # 正文、标题等其他字段保持不变
+    assert saved.content == "2026 赛季共 24 站。"
+    assert saved.title == "F1 赛历"
+
+
+def test_knowledge_writing_skill_covers_description():
+    """写入规范正文必须跟着 description 字段走，防止工具与技能文档漂移。"""
+    from agent.skills import load_skill
+
+    body = load_skill("knowledge-writing")
+    assert "`description`" in body
+    assert "150" in body
+    assert "触发式描述" in body

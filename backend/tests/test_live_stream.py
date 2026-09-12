@@ -26,6 +26,11 @@ def test_serialize_live_message_accepts_canonical_event_and_notification():
     assert frame.startswith("data: ")
     assert json.loads(frame.removeprefix("data: ").strip()) == _event()
 
+    queue_event = _event(resource="pending_queues", entity_id=388)
+    queue_frame = live._serialize_message(json.dumps(queue_event))
+    assert queue_frame is not None
+    assert json.loads(queue_frame.removeprefix("data: ").strip()) == queue_event
+
     notification = live._serialize_message(json.dumps({"notification": {"id": 1}}))
     assert notification is not None
 

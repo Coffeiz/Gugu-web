@@ -1,7 +1,7 @@
 """统一知识索引的数据库持久化存储。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 from sqlalchemy import delete, select
@@ -71,13 +71,40 @@ def _from_row(row: KnowledgeIndexEntry) -> IndexDocument:
     )
 
 
+# 软删墓碑保留期：worker 增量同步的水位只要落后不超过该视界就能看见删除；
+# 超过视界未同步的 worker 走全量 load 兜底。定期物理清理防表膨胀。
+TOMBSTONE_RETENTION = timedelta(days=30)
+
+
+async def _prune_tombstones(db, owner_user_id: object, source_type: str) -> int:
+    """物理清理超过保留期的软删墓碑行；顺路执行，失败不影响主写入。"""
+    try:
+        threshold = now_utc() - TOMBSTONE_RETENTION
+        result = await db.execute(delete(KnowledgeIndexEntry).where(
+            KnowledgeIndexEntry.owner_user_id == owner_user_id,
+            KnowledgeIndexEntry.source_type == source_type,
+            KnowledgeIndexEntry.deleted_at.is_not(None),
+            KnowledgeIndexEntry.deleted_at < threshold,
+        ))
+        return result.rowcount or 0
+    except Exception:
+        return 0
+
+
 async def replace_source_documents(
     db,
     owner_user_id: object,
     source_type: str,
     documents: list[IndexDocument],
+    *,
+    stats: dict[str, int] | None = None,
 ) -> int:
-    """按 chunk 增量替换一个来源，主数据不受影响。"""
+    """按 chunk 增量替换一个来源，主数据不受影响。
+
+    ``stats`` 传出诊断计数（inserted/updated/deleted），返回值保持来源 chunk 总数。
+    """
+    import time as _time
+    _started = _time.monotonic()
     rows = (await db.execute(select(KnowledgeIndexEntry).where(
         KnowledgeIndexEntry.owner_user_id == owner_user_id,
         KnowledgeIndexEntry.source_type == source_type,
@@ -86,6 +113,7 @@ async def replace_source_documents(
         (row.source_id, row.document_version, row.chunk_index): row
         for row in rows
     }
+    inserted = 0
     wanted: set[tuple[str, str, int]] = set()
     for document in documents:
         key = (document.source_id, document.version, document.chunk_index)
@@ -93,6 +121,7 @@ async def replace_source_documents(
         row = existing.get(key)
         if row is None:
             db.add(_to_row(document, owner_user_id))
+            inserted += 1
             continue
         replacement = _to_row(document, owner_user_id)
         for column in (
@@ -104,13 +133,104 @@ async def replace_source_documents(
         row.deleted_at = None
         row.indexed_at = now_utc()
     stale = [row for key, row in existing.items() if key not in wanted]
+    stamp = now_utc()
     for row in stale:
-        await db.delete(row)
+        # 软删墓碑：worker 增量同步靠 (owner, source, indexed_at > 水位) 才能看见删除。
+        # 已是墓碑的行不刷新时间戳（保留其原始删除时刻，GC 视界语义稳定）。
+        if row.deleted_at is None:
+            row.deleted_at = stamp
+            row.indexed_at = stamp
     await db.flush()
+    await _prune_tombstones(db, owner_user_id, source_type)
+    if stats is not None:
+        stats["inserted"] = inserted
+        stats["updated"] = len(documents) - inserted
+        stats["deleted"] = len(stale)
+        stats["elapsed_ms"] = int((_time.monotonic() - _started) * 1000)
     # 本进程立即失效；其他 worker 会在下一次查询时用 indexed_at revision 检测。
     from agent.rag.index_cache import invalidate_index_cache
     await invalidate_index_cache(owner_user_id, source_type)
     return len(documents)
+
+
+async def load_parent_documents(
+    db, owner_user_id: object, source_type: str, source_id: str,
+) -> list[IndexDocument]:
+    """读取一个父文档（单 source_id）的全部持久 chunk（文档级增量入口）。
+
+    用 source_id 列定位：parent_document_id 的取值因来源而异（project 是
+    "project:<id>"，file/knowledge 是裸 id），source_id 恒为裸对象 id。
+    """
+    rows = (await db.execute(select(KnowledgeIndexEntry).where(
+        KnowledgeIndexEntry.owner_user_id == owner_user_id,
+        KnowledgeIndexEntry.source_type == source_type,
+        KnowledgeIndexEntry.source_id == str(source_id),
+        KnowledgeIndexEntry.deleted_at.is_(None),
+    ).order_by(KnowledgeIndexEntry.chunk_index.asc()))).scalars().all()
+    return [_from_row(row) for row in rows]
+
+
+async def apply_document_patch(
+    db,
+    owner_user_id: object,
+    source_type: str,
+    source_id: str,
+    upserts: list[IndexDocument],
+) -> dict[str, int]:
+    """把单父文档的最新 chunk 集写入持久索引；只触碰该文档的行。
+
+    语义是「父文档作用域 replace」：该 parent 下不属于 upsert 键集的行打上
+    软删墓碑——主数据版本推进、chunk 收缩、正文改写都不会残留旧 chunk。
+    墓碑行带 deleted_at/indexed_at 双时间戳：worker 增量同步的单游标
+    （indexed_at > 水位）既能看见 upsert 也能看见删除，纯删除同样推进 revision，
+    因此不再需要旧协议的「整来源 bump indexed_at」（那是硬删不可见时代的补偿，
+    也是破坏增量读的元凶）。返回 inserted/updated/deleted 计数。
+    """
+    import time as _time
+
+    started = _time.monotonic()
+    stamp = now_utc()
+    rows = (await db.execute(select(KnowledgeIndexEntry).where(
+        KnowledgeIndexEntry.owner_user_id == owner_user_id,
+        KnowledgeIndexEntry.source_type == source_type,
+        KnowledgeIndexEntry.source_id == str(source_id),
+    ))).scalars().all()
+    existing = {(row.source_id, row.document_version, row.chunk_index): row for row in rows}
+    wanted: set[tuple[str, str, int]] = set()
+    inserted = 0
+    updated = 0
+    for document in upserts:
+        key = (document.source_id, document.version, document.chunk_index)
+        wanted.add(key)
+        row = existing.get(key)
+        if row is None:
+            db.add(_to_row(document, owner_user_id))
+            inserted += 1
+            continue
+        replacement = _to_row(document, owner_user_id)
+        for column in (
+            "scope_type", "scope_id", "platform", "bot_id", "group_id", "document_id",
+            "parent_document_id", "chunk_count", "title", "summary", "content",
+            "content_hash", "metadata_json", "source_updated_at",
+        ):
+            setattr(row, column, getattr(replacement, column))
+        row.deleted_at = None
+        row.indexed_at = stamp
+        updated += 1
+    deleted = 0
+    for key, row in existing.items():
+        if key not in wanted:
+            row.deleted_at = stamp
+            row.indexed_at = stamp
+            deleted += 1
+    await db.flush()
+    await _prune_tombstones(db, owner_user_id, source_type)
+    from agent.rag.index_cache import invalidate_index_cache
+    await invalidate_index_cache(owner_user_id, source_type)
+    return {
+        "inserted": inserted, "updated": updated, "deleted": deleted,
+        "elapsed_ms": int((_time.monotonic() - started) * 1000),
+    }
 
 
 async def load_index_documents(
@@ -235,8 +355,10 @@ async def search_persistent_index(
 
 
 __all__ = [
+    "apply_document_patch",
     "count_index_entries",
     "load_index_documents",
+    "load_parent_documents",
     "replace_source_documents",
     "search_persistent_index",
 ]

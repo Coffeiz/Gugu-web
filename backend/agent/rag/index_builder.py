@@ -23,6 +23,7 @@ from app.models import (
     MindMap,
     MindNode,
     MindRelation,
+    Project,
     ScheduledTask,
 )
 
@@ -165,6 +166,115 @@ def conversation_message_record(
     }
 
 
+async def build_single_source_record(
+    db, owner_user_id: object, source_type: str, source_id: str,
+) -> tuple[dict, Scope] | None:
+    """单对象读取：只加载一个对象的 canonical record（PRD-RAG-9 文档级增量）。
+
+    支持 file/project/calendar/note/canvas。主数据不存在/已删除/不可索引时
+    返回 None（调用方按删除收敛）。knowledge 走
+    KnowledgeAdapter.build_source_record_for（文件库存储，不需要 db）。
+    """
+    owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
+    if source_type == "file":
+        row = (await db.execute(select(File).where(
+            File.user_id == owner_user_id,
+            File.id == int(source_id),
+            File.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        semaphore = asyncio.Semaphore(1)
+        return file_record(row, await _extract_file_text_bounded(row, semaphore)), owner_scope
+    if source_type == "project":
+        row = (await db.execute(select(Project).where(
+            Project.user_id == owner_user_id,
+            Project.id == int(source_id),
+            Project.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        from agent.rag.adapters.projects import _iso
+        text = ProjectAdapter._project_text(row)
+        if not text.strip():
+            return None
+        document_id = f"project:{row.id}"
+        return ({
+            "source_type": "project", "id": str(row.id),
+            "source_id": str(row.id), "parent_id": document_id,
+            "title": row.name or "未命名项目", "summary": text[:240],
+            "content": text, "version_parts": [row.id, row.version or 1],
+            "updated_at": _iso(row.updated_at),
+            "metadata": {"project_id": str(row.id), "status": row.status or "pending"},
+        }, owner_scope)
+    if source_type == "calendar":
+        row = (await db.execute(select(CalendarEvent).where(
+            CalendarEvent.user_id == owner_user_id,
+            CalendarEvent.id == int(source_id),
+            CalendarEvent.deleted_at.is_(None),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        return calendar_record(row), owner_scope
+    if source_type == "note":
+        row = (await db.execute(select(MindNode).where(
+            MindNode.user_id == owner_user_id,
+            MindNode.id == int(source_id),
+            MindNode.deleted_at.is_(None),
+            MindNode.kind.in_(["note", "suggestion"]),
+        ))).scalar_one_or_none()
+        if row is None:
+            return None
+        return note_record(row), owner_scope
+    if source_type == "canvas":
+        row = (await db.execute(
+            select(MindCanvasItem, MindMap, MindNode)
+            .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
+            .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+            .where(
+                MindCanvasItem.id == int(source_id),
+                MindCanvasItem.user_id == owner_user_id,
+                MindMap.user_id == owner_user_id,
+                MindNode.user_id == owner_user_id,
+                MindNode.deleted_at.is_(None),
+            )
+        )).first()
+        if row is None:
+            return None
+        item, canvas, node = row
+        # 关系摘要与全量构建同源：关系变化影响两个端点节点的 record，
+        # 业务层事件须带受影响 item 的 id，否则回退来源级重建。
+        relation_rows = (await db.execute(select(MindRelation).where(
+            MindRelation.user_id == owner_user_id,
+            (MindRelation.src_node_id == node.id) | (MindRelation.dst_node_id == node.id),
+        ))).scalars().all()
+        related_node_ids = {rid for r in relation_rows for rid in (r.src_node_id, r.dst_node_id)}
+        title_rows = (await db.execute(select(MindNode.id, MindNode.title).where(
+            MindNode.user_id == owner_user_id,
+            MindNode.deleted_at.is_(None),
+            MindNode.id.in_(related_node_ids),
+        ))).all() if related_node_ids else []
+        node_titles = {nid: title or "未命名节点" for nid, title in title_rows}
+        related = []
+        for relation in relation_rows:
+            left = node_titles.get(relation.src_node_id)
+            right = node_titles.get(relation.dst_node_id)
+            if left and right:
+                related.append(f"{left} → {right}" if relation.src_node_id == node.id
+                               else f"{left} ← {right}")
+        relation_summary = "；".join(related[:8])
+        group_path = ""
+        try:
+            import json
+            view = json.loads(item.data_json or "{}")
+            group_path = str(view.get("group_path") or view.get("groupPath") or "")
+        except (TypeError, ValueError):
+            group_path = ""
+        return canvas_record(item, canvas, node, relation_summary=relation_summary,
+                             group_path=group_path), owner_scope
+    raise ValueError(f"来源不支持单对象读取：{source_type}")
+
+
 async def build_source_records(db, owner_user_id: object, source_type: str) -> list[tuple[dict, Scope]] | None:
     """构建一个来源的统一 source record（各记录携带自己的 Scope）；无 record 管线的来源返回 None。"""
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
@@ -285,7 +395,11 @@ async def records_to_write_documents(
     *,
     settings=None,
 ) -> list[IndexDocument]:
-    """把授权 source record 经 TS canonical projection 转为持久化文档。"""
+    """把授权 source record 经 TS canonical projection 转为持久化文档。
+
+    record 按条数与估算字节双阈值分块投递：整来源单行 JSONL 会超过 worker
+    流上限（32MB），file 语料涨过该线后来源级重建持续失败（09-10 起）。
+    """
     from app.core.config import get_settings
 
     settings = settings or get_settings()
@@ -301,13 +415,39 @@ async def records_to_write_documents(
         index_dir=index_dir_for_owner(owner_user_id),
     )
     payload = [{**record, "scope": scope_to_wire(scope)} for record, scope in records]
-    wire_documents = await client.adapt_records(source_type, payload)
+    wire_documents: list[dict] = []
+    for chunk in _chunk_projection_payload(payload):
+        wire_documents.extend(await client.adapt_records(source_type, chunk))
     documents = [wire_document_to_persistent(raw, owner_user_id) for raw in wire_documents]
     logging.getLogger("agent.rag.index_builder").info(
         "RAG 写库投影 engine=ts source=%s records=%s chunks=%s elapsed_ms=%s",
         source_type, len(records), len(documents), int((time.monotonic() - started) * 1000),
     )
     return documents
+
+
+ADAPT_CHUNK_MAX_RECORDS = 400
+ADAPT_CHUNK_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _chunk_projection_payload(payload: list[dict]) -> list[list[dict]]:
+    """按条数与估算字节把投影 payload 分块，单块远低于 worker 流上限。"""
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_bytes = 0
+    for item in payload:
+        size = len(item.get("content") or "") + len(item.get("title") or "") \
+            + len(item.get("summary") or "") + 512
+        if current and (len(current) >= ADAPT_CHUNK_MAX_RECORDS
+                        or current_bytes + size > ADAPT_CHUNK_MAX_BYTES):
+            chunks.append(current)
+            current = []
+            current_bytes = 0
+        current.append(item)
+        current_bytes += size
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:

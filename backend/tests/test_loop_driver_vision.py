@@ -1,5 +1,7 @@
+import asyncio
 from types import SimpleNamespace
 
+from agent.providers import adapter_for
 from agent.loop_drivers import (
     OpenAIDriver,
     OllamaDriver,
@@ -9,6 +11,12 @@ from agent.loop_drivers import (
     _collapse_volatile_messages,
     _contains_volatile_image,
     _with_history_cache,
+)
+from agent.context.assembly import PromptMessages
+from agent.providers.message_utils import (
+    render_openai_request_history,
+    sanitize_openai_tool_history,
+    _with_system_cache_control,
 )
 from agent.runtime.loopscope_trace.utils import _cache_diagnostics
 
@@ -110,6 +118,235 @@ def test_openai_tool_round_drops_images_for_text_only_model():
 
     assert len(messages) == 2
     assert messages[1]["content"] == "已读取候选图片。\n[图片结果已返回，但当前模型不支持视觉输入]"
+
+
+def test_deepseek_driver_keeps_system_message_plain_without_explicit_cache():
+    """DeepSeek 自动缓存可用，但出站 system 消息不能被改成 cache_control 内容块。"""
+    class _Stream:
+        async def __aiter__(self):
+            delta = SimpleNamespace(content="ok", reasoning_content=None, tool_calls=[])
+            yield SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=delta)])
+
+        async def close(self):
+            return None
+
+    class _Completions:
+        kwargs = None
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return _Stream()
+
+    completions = _Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    ai = SimpleNamespace(provider="deepseek", model="deepseek-flash", thinking="disabled")
+    adapter = adapter_for(ai)
+    ctx = SimpleNamespace(
+        adapter=adapter,
+        ai=ai,
+        model=ai.model,
+        tools=[],
+        max_tokens=1024,
+        think_kwargs=adapter.build_openai_thinking_kwargs(ai),
+        supports_active_cache=adapter.supports_active_cache(ai.model),
+        supports_explicit_cache=adapter.supports_explicit_cache(ai.model),
+    )
+    messages = [
+        {"role": "system", "content": "稳定系统提示"},
+        {"role": "user", "content": "你好"},
+    ]
+
+    async def _run():
+        return [item async for item in OpenAIDriver().run_round(client, ctx, messages)]
+
+    asyncio.run(_run())
+
+    sent_messages = completions.kwargs["messages"]
+    assert sent_messages == messages
+    assert all("cache_control" not in str(message) for message in sent_messages)
+
+
+def test_openai_history_removes_orphan_tool_result_and_preserves_valid_pair():
+    messages = [
+        {"role": "user", "content": "之前的问题"},
+        {"role": "tool", "tool_call_id": "orphan", "content": "旧结果"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "valid", "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"},
+        }]},
+        {"role": "tool", "tool_call_id": "valid", "content": "匹配结果"},
+        {"role": "user", "content": "继续"},
+    ]
+
+    cleaned = sanitize_openai_tool_history(messages)
+
+    assert cleaned == [messages[0], messages[2], messages[3], messages[4]]
+    assert messages[1]["tool_call_id"] == "orphan"  # 仅清理出站副本
+
+
+def test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_metadata():
+    messages = PromptMessages([
+        {"role": "system", "content": "固定前缀"},
+        {"role": "tool", "tool_call_id": "stale", "content": "旧结果"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "missing", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+            {"id": "present", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "present", "content": "匹配结果"},
+        {"role": "tool", "tool_call_id": "unrequested", "content": "另一个孤儿"},
+        {"role": "user", "content": "继续"},
+    ], fixed_prefix_size=1)
+    messages.remember_cache_anchor(5)
+
+    cleaned = sanitize_openai_tool_history(messages)
+
+    assert cleaned == [
+        messages[0],
+        {"role": "assistant", "content": None, "tool_calls": [messages[2]["tool_calls"][1]]},
+        messages[3],
+        messages[5],
+    ]
+    assert [call["id"] for call in cleaned[1]["tool_calls"]] == ["present"]
+    assert cleaned.fixed_prefix_size == 1
+    assert cleaned.cache_anchor_indices == [3]
+
+
+def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
+    ai = SimpleNamespace(provider="openai", api_format="openai", model="test-model")
+    adapter = adapter_for(ai)
+    messages = PromptMessages([
+        {"role": "system", "content": "稳定系统提示"},
+        {"role": "user", "content": "上一轮用户消息"},
+        {"role": "tool", "tool_call_id": "stale", "content": "孤儿结果"},
+        {"role": "user", "content": "本轮用户消息"},
+    ], fixed_prefix_size=1)
+
+    projected, sanitization = render_openai_request_history(
+        messages, adapter, with_diagnostics=True,
+    )
+
+    assert [message["role"] for message in projected] == ["system", "user", "user"]
+    assert sanitization == {
+        "applied": True,
+        "changed": True,
+        "removed_messages": 1,
+        "modified_messages": 0,
+        "first_changed_index": 2,
+    }
+    assert [message["role"] for message in messages] == ["system", "user", "tool", "user"]
+
+    cached = _with_history_cache(_with_system_cache_control(projected))
+    assert [message["role"] for message in cached] == ["system", "user", "user"]
+    assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    context = SimpleNamespace(
+        tools=[],
+        supports_active_cache=True,
+        adapter=adapter,
+        ai=ai,
+    )
+
+    raw_diagnostics = _cache_diagnostics(messages, context)
+    projected_diagnostics = _cache_diagnostics(
+        projected, context, provider_projected=True,
+    )
+    assert raw_diagnostics["conversation_messages"] == 3
+    assert raw_diagnostics["cache_anchor_indices"] == [1, 2]
+    assert raw_diagnostics["stable_prefix_digest"] == projected_diagnostics[
+        "stable_prefix_digest"
+    ]
+
+
+def test_openai_driver_sends_sanitized_provider_projection():
+    class _Stream:
+        async def __aiter__(self):
+            delta = SimpleNamespace(content="ok", reasoning_content=None, tool_calls=[])
+            yield SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=delta)])
+
+        async def close(self):
+            return None
+
+    class _Completions:
+        kwargs = None
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return _Stream()
+
+    ai = SimpleNamespace(provider="openai", api_format="openai", model="test-model")
+    adapter = adapter_for(ai)
+    completions = _Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    context = SimpleNamespace(
+        adapter=adapter,
+        ai=ai,
+        model=ai.model,
+        tools=[],
+        max_tokens=64,
+        think_kwargs={},
+        supports_explicit_cache=False,
+    )
+    messages = [
+        {"role": "system", "content": "stable"},
+        {"role": "tool", "tool_call_id": "stale", "content": "orphan"},
+        {"role": "user", "content": "current"},
+    ]
+
+    async def _run():
+        return [item async for item in OpenAIDriver().run_round(client, context, messages)]
+
+    asyncio.run(_run())
+
+    assert [message["role"] for message in completions.kwargs["messages"]] == [
+        "system", "user",
+    ]
+    assert messages[1]["role"] == "tool"  # 清洗仅作用于出站副本
+
+
+def test_deepseek_driver_drops_orphan_tool_result_before_request():
+    class _Stream:
+        async def __aiter__(self):
+            delta = SimpleNamespace(content="ok", reasoning_content=None, tool_calls=[])
+            yield SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=delta)])
+
+        async def close(self):
+            return None
+
+    class _Completions:
+        kwargs = None
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return _Stream()
+
+    completions = _Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    ai = SimpleNamespace(provider="deepseek", model="deepseek-flash", thinking="disabled")
+    adapter = adapter_for(ai)
+    ctx = SimpleNamespace(
+        adapter=adapter,
+        ai=ai,
+        model=ai.model,
+        tools=[],
+        max_tokens=1024,
+        think_kwargs=adapter.build_openai_thinking_kwargs(ai),
+        supports_active_cache=adapter.supports_active_cache(ai.model),
+        supports_explicit_cache=adapter.supports_explicit_cache(ai.model),
+    )
+    messages = [
+        {"role": "system", "content": "稳定系统提示"},
+        {"role": "tool", "tool_call_id": "stale-call", "content": "截断后残留的旧结果"},
+        {"role": "user", "content": "看这张图"},
+    ]
+
+    async def _run():
+        return [item async for item in OpenAIDriver().run_round(client, ctx, messages)]
+
+    asyncio.run(_run())
+
+    assert completions.kwargs["messages"] == [messages[0], messages[2]]
+    assert messages[1]["role"] == "tool"  # 不回写会话历史
 
 
 def test_inline_image_stops_cache_checkpoint_before_image():

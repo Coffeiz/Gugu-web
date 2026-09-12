@@ -17,6 +17,10 @@ from app.services.workspaces import workspace_shell_supported
 
 TERMINAL_RETENTION_DAYS = 30
 TERMINAL_OUTPUT_RETENTION_CHARS = 500_000
+# 咕咕终端按用户滚动保留的个数上限：终端只是会话 shell 输出的分组记录（命令
+# 每次独立执行），删除后旧会话再用 shell 会自动重开，不影响操作。超出上限的
+# 直接删除（含已关闭的），避免终端页被历史咕咕终端淹没、干扰用户自建终端。
+AGENT_TERMINAL_KEEP_ALIVE = 5
 
 
 def _terminal_id() -> str:
@@ -110,6 +114,8 @@ async def ensure_agent_terminal(db: AsyncSession, user_id, *, session_id: int, w
         )
         db.add(row)
         await db.flush()
+        # 新终端刚成为最新，按用户滚动裁掉超出保留数的旧咕咕终端
+        await enforce_agent_terminal_cap(db, user_id)
     else:
         if not workspace_shell_supported():
             row.workspace_id = None
@@ -221,6 +227,26 @@ async def delete_terminal(db: AsyncSession, row: TerminalSessionRecord) -> None:
     await db.execute(delete(TerminalEventRecord).where(TerminalEventRecord.terminal_id == row.id))
     await db.delete(row)
     await db.flush()
+
+
+async def enforce_agent_terminal_cap(db: AsyncSession, user_id) -> int:
+    """咕咕终端按用户滚动保留最近 `AGENT_TERMINAL_KEEP_ALIVE` 个，超出直接删除。
+
+    不区分开启/关闭状态：终端页的干扰来自所有历史咕咕终端（含删会话级联关闭
+    的），只清开启的解决不了列表拥挤。保留最近更新的 5 个，活跃会话的终端因
+    复用会持续刷新 `updated_at`，天然不会被驱逐；被删会话的旧终端再用 shell
+    时由 `ensure_agent_terminal` 自动重开。用户自建终端（source=user）不参与。
+    """
+    result = await db.execute(select(TerminalSessionRecord).where(
+        TerminalSessionRecord.owner_id == user_id,
+        TerminalSessionRecord.source == TerminalSource.AGENT.value,
+    ).order_by(TerminalSessionRecord.updated_at.desc(), TerminalSessionRecord.id.desc()))
+    rows = list(result.scalars().all())
+    evicted = 0
+    for row in rows[AGENT_TERMINAL_KEEP_ALIVE:]:
+        await delete_terminal(db, row)
+        evicted += 1
+    return evicted
 
 
 async def prune_terminals(db: AsyncSession, user_id, *, older_than_days: int = TERMINAL_RETENTION_DAYS) -> int:

@@ -50,6 +50,7 @@ from agent.providers.message_utils import (
     _contains_volatile_image,
     _history_cache_state,
     _openai_tool_result,
+    render_openai_request_history,
     _volatile_message_indices,
     _with_history_cache,
     _with_system_cache_control,
@@ -82,6 +83,10 @@ class NormalizedToolCall(ToolCall):
     """运行时工具调用，在 canonical 字段上补充 provider 解析状态。"""
 
     parse_error: bool = False   # 只有 OpenAI 路会真的置真（JSON 截断解析失败）
+    # provider 返回的 arguments 原始字符串。canonical history 存这个原样字节，
+    # 回放时才能与 live 发出的 wire 逐字节一致——parse→dumps 会改变序列化风格
+    # （空格/键序），跨 run 前缀缓存会在第一个工具轮就断开（2026-09-12 排查）。
+    raw_arguments: str | None = None
 
 
 @dataclass
@@ -226,7 +231,16 @@ class AnthropicDriver:
             restored = {"role": "assistant", "content": copy.deepcopy(restored_blocks)}
             # 当前请求的 user 消息仍由业务历史提供；状态只在 provider boundary
             # 插入，且用完即清，避免同一次 run 重复回放旧响应。
-            if outbound and outbound[-1].get("role") == "user":
+            if hasattr(outbound, "conversation"):
+                # dynamic_tail 是仅本次请求使用的 provider 提醒，不是对话末尾。
+                # 恢复块要插入 conversation，不能通过切片把 PromptMessages 摊平，
+                # 否则后面的 Anthropic cache helper 会把动态提醒也当成稳定历史。
+                conversation = outbound.conversation
+                insert_at = len(conversation)
+                if conversation and conversation[-1].get("role") == "user":
+                    insert_at -= 1
+                outbound.insert(insert_at, restored)
+            elif outbound and outbound[-1].get("role") == "user":
                 outbound = outbound[:-1] + [restored, outbound[-1]]
             else:
                 outbound.append(restored)
@@ -381,7 +395,7 @@ class OpenAIDriver:
     async def run_round(self, client, ctx, messages):
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
-        outbound = ctx.adapter.render_history(messages)
+        outbound = render_openai_request_history(messages, ctx.adapter)
         # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
         # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
         # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
@@ -457,7 +471,8 @@ class OpenAIDriver:
         for b in ordered:
             try:
                 args = json.loads(b["args"])
-                tool_calls.append(NormalizedToolCall(id=b["id"], name=b["name"], input=args))
+                tool_calls.append(NormalizedToolCall(
+                    id=b["id"], name=b["name"], input=args, raw_arguments=b["args"]))
             except Exception:
                 # 参数 JSON 解析失败（多为长内容被 max_tokens 截断）→ 别拿空参跑：增删改工具吃到 {} 会
                 # 误伤数据或报错，还会白置 did_mutate 触发一整轮核实。标 parse_error，共享循环据此跳过

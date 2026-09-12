@@ -28,7 +28,6 @@ defineProps<{
   border-radius: 18px;
   background: var(--surface-base);
   box-shadow: var(--shadow-rest);
-  backdrop-filter: blur(12px);
 }
 
 .section-head {

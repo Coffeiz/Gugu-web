@@ -39,19 +39,23 @@ def _selected_row(document, document_key, *, confidence=0.9):
 
 
 def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
-    """打桩统一查询 IPC 与索引会话，捕获瞬态规格、来源过滤与排序参数。"""
+    """打桩统一查询 IPC 与索引会话，捕获瞬态规格、来源过滤与排序参数。
+
+    PRD-RAG-9 之后 Memory 语料在 worker 内读取：Python 侧只传 prepare_memory
+    参数，文档不再经过 Python 装载通道；documents_by_id 仅用于选中行回连。
+    """
     from agent.rag import batch_retriever as br
-    from agent.rag.index_cache import _worker_document_key
+    from agent.rag.ts_sidecar import _worker_document_key
 
     calls = {}
     keys = {_worker_document_key(doc): doc for doc in documents}
 
-    async def fake_load_memory(self, memory, scope):
-        calls["source_filter"] = memory.source_filter
-        return list(documents), "daily", {"document_load_ms": 1}
-
-    async def replace_transient(docs, revision, *, vectors=None, vector_version=""):
-        calls["transient"] = list(docs)
+    async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
+                             snapshot_text, vector_version):
+        calls["owner"] = str(owner)
+        calls["source_filter"] = source_filter
+        return {"transient_revision": "t1", "memory_source": "daily",
+                "document_count": len(documents), "vector_count": 0, "probe": {}}
 
     async def unified_query(query, *, searches, query_vector, source_order,
                             candidate_limit, rank_options, before_message_id=None,
@@ -71,7 +75,7 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
         }
 
     index = SimpleNamespace(
-        client=SimpleNamespace(replace_transient=replace_transient),
+        client=SimpleNamespace(prepare_memory=prepare_memory),
         unified_query=unified_query,
         documents_by_id=keys,
     )
@@ -84,7 +88,6 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
         calls["prepare"] = True
         return index
 
-    monkeypatch.setattr(br.UnifiedQueryRetriever, "_load_memory", fake_load_memory)
     monkeypatch.setattr(br.IndexedSourceRetriever, "session_scope", session_scope)
     monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
     return calls, keys
@@ -94,21 +97,19 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
 async def test_memory_only_query_delivers_worker_selection(monkeypatch):
     """Memory-only 显式查询走统一链：只发瞬态规格，交付 worker 选中行。"""
     from agent.rag.service import search_memory
+    from agent.rag.ts_sidecar import _worker_document_key
 
     doc = _memory_doc()
-    calls, keys = _install_unified_memory_stubs(monkeypatch, documents=[doc])
-    # document_key 必须用真实 worker 键，否则回连不到 Python 文档。
-    from agent.rag.index_cache import _worker_document_key
-
-    calls, keys = _install_unified_memory_stubs(
+    calls, _keys = _install_unified_memory_stubs(
         monkeypatch, documents=[doc],
         selected=[_selected_row(doc, _worker_document_key(doc))])
 
     result = await search_memory("user-a", "缓存", limit=5)
 
     assert calls["prepare"]
-    assert [spec.get("corpus") for spec in calls["searches"]] == ["transient"]
+    assert calls["owner"] == "user-a"
     assert calls["source_filter"] == "all"
+    assert [spec.get("corpus") for spec in calls["searches"]] == ["transient"]
     assert calls["rank_options"]["selection_mode"] == "top_k"
     assert result["results"]
     item = result["results"][0]

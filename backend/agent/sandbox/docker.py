@@ -222,6 +222,7 @@ class DockerSandboxExecutor:
                     ) if mounted
                 ),
                 allow_script_execution=allow_script_execution,
+                allow_container_device_paths=True,
             )
         profile = network_profile or self.settings.network_profile
         if profile not in ("none", "egress"):

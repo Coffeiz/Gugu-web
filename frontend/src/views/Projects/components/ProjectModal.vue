@@ -340,7 +340,7 @@ const { moveFolders: movePmFoldersInto, moveFiles: movePmFilesInto } = useProjec
 
 
 // ── 排序 ──────────────────────────────────────────────────────────────────────
-const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting()
+const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting('project-modal')
 
 const {
   sortedFolders: sortedCurrentFolders,

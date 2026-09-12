@@ -499,6 +499,7 @@ class ScheduledTasksSkill(BaseSkill):
             },
             handler=_create_scheduled_task,
             mutates=True,
+            requires_confirmation=True,
         ),
         Tool(
             name="update_scheduled_task", label="更新定时任务",
@@ -534,6 +535,7 @@ class ScheduledTasksSkill(BaseSkill):
             },
             handler=_update_scheduled_task,
             mutates=True,
+            requires_confirmation=True,
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",

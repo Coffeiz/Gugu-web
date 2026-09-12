@@ -176,6 +176,8 @@ backend/agent/tools/memory.py           # save_knowledge / search_memory 入口
 id: knowledge-uuid
 title: 项目消息协议
 topic: 项目
+keywords_json: ["消息协议", "protocol"]
+description: 调试或设计消息格式时先读这条。
 scope_type: owner
 owner_user_id: user-id
 source_type: user
@@ -197,7 +199,9 @@ updated_at: 2026-08-04T00:00:00Z
 |---|---:|
 | `title` | 80 字符 |
 | `topic` | 40 字符 |
-| 正文 `content` | 1,000 字符 |
+| `keywords` | 最多 10 个，单个 40 字符 |
+| `description` | 150 字符 |
+| 正文 `content` | 3,000 字符 |
 | `source_label` | 120 字符 |
 | `source_ref` | 300 字符 |
 | 单用户 Knowledge 总量 | 32 MB |
@@ -205,6 +209,11 @@ updated_at: 2026-08-04T00:00:00Z
 超限必须拒绝保存并返回结构化错误，不允许静默截断。长文档应存入文件库，由文件 RAG 负责分块；Knowledge 只保存可复用的短事实、规则和摘要。历史版本最多保留 5 个。
 
 Markdown 文件是可读、可编辑和可迁移的主数据；索引、embedding 和检索缓存都可以删除后重建。数据库若用于任务、来源索引或审计，不得成为绕过文件作用域的另一条读取路径。
+
+### 3.2.1 后续演进（2026-09）
+
+- **`description` 触发式描述**：一句话说明「未来什么情况下需要这条知识」，与 `topic`（写入去重身份）、`keywords`（检索别名）分工；随 RAG 投影拼入 summary 进 BM25/向量索引文本，并和 keywords 一起参与 document_version 戳（`{version}:k{hash}`），只改描述也触发重索引。description 不参与 topic 去重匹配。
+- **snapshot 知识清单注入**：session snapshot 动态区新增「## 知识」段，owner 作用域条目按 `updated_at` 倒序取前 40 条，行格式「标题：描述」，描述缺失回退 topic、再退裸标题；头部提示模型按需用 `search_memory` 拉全文。受限 IM（member/unknown 发言人）不加载，防止 owner 知识标题泄漏；清单随 snapshot 30 分钟滑动 TTL 刷新，群/项目 scope 仍由 RAG 召回按 ACL 负责。
 
 ### 3.3 与现有 Memory/RAG 的关系
 

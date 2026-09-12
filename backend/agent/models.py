@@ -16,6 +16,9 @@ class AgentRequest:
     user_id: object               # UUID
     user_name: str
     session_id: Optional[int] = None
+    pending_queue_id: Optional[str] = None  # Web 标签页的待发队列标识，用于新会话 ID 落地前暂存
+    pending_queue_item_key: Optional[int] = None  # 后端持久化用户消息时原子确认对应队列项
+    pending_queue_claim_token: Optional[str] = None  # 队列派发的后端租约令牌，阻止多浏览器重复发送
     chat_id: Optional[str] = None       # IM 群会话标识；网页/私聊为空
     platform_bot_id: Optional[str] = None  # 当前 IM Bot/频道标识（ConversationSession 的作用域）
     platform_user_id: Optional[str] = None  # 当前 IM 发言人的平台身份标识

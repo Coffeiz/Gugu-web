@@ -190,6 +190,7 @@ defineExpose({
 /* 日期头：大数字 + 小字月份/星期（周视图日历的语言） */
 
 .tl-col {
+  --glass-card-blur: var(--glass-blur);
   --surface-glass: rgba(255,255,255,0.25);
   isolation: isolate;
   border-radius: 40px;

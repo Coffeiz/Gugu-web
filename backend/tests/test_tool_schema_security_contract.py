@@ -29,6 +29,23 @@ async def test_call_tool_preserves_nested_file_artifact(monkeypatch):
     assert result["_artifact"] == artifact
 
 
+@pytest.mark.asyncio
+async def test_call_tool_rejects_recursive_target(monkeypatch):
+    """绕过 Agent 主循环直接调用 Adapter 时，也不能递归 dispatch 自身。"""
+    from agent.tools import meta, registry
+
+    async def unexpected_dispatch(*_args, **_kwargs):
+        pytest.fail("递归 call_tool 不得进入 registry.dispatch")
+
+    monkeypatch.setattr(registry, "dispatch", unexpected_dispatch)
+    result = await meta._call_tool(None, "user-1", {
+        "name": "call_tool", "arguments": {"name": "send_email", "arguments": {}},
+    })
+
+    assert result["error"] == "tool_call_invalid"
+    assert result["issues"][0]["rule"] == "recursive_adapter"
+
+
 def _issues(name: str, payload: dict) -> list[dict]:
     tool = registry.get(name)
     return validate_input(build_validator(tool.input_schema), payload)

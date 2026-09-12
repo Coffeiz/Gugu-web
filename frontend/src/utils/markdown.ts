@@ -95,3 +95,93 @@ function ensureExternalLinksOpenInNewTab(html: string, preserveChatActions = fal
 export function renderMarkdown(text: string | null | undefined): string {
   return text ? sanitizeHtml(md.parse(String(text)) as string) : ''
 }
+
+export interface MarkdownFrontmatterEntry {
+  key: string
+  value: string
+}
+
+export interface SplitMarkdownFrontmatterResult {
+  body: string
+  bodyStartLine: number
+  entries: MarkdownFrontmatterEntry[]
+}
+
+function formatFrontmatterScalar(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'")
+  }
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      return trimmed.slice(1, -1)
+    }
+  }
+  return trimmed
+}
+
+function parseFrontmatterEntries(yaml: string): MarkdownFrontmatterEntry[] {
+  const lines = yaml.split(/\r\n|\r|\n/)
+  const entries: MarkdownFrontmatterEntry[] = []
+  const keyLine = /^([A-Za-z0-9_-]+):(?:[ \t]*(.*))?$/
+
+  for (let index = 0; index < lines.length;) {
+    const match = keyLine.exec(lines[index])
+    if (!match) {
+      index++
+      continue
+    }
+
+    const [, key, rawValue = ''] = match
+    const continuation: string[] = []
+    let next = index + 1
+    while (next < lines.length && !keyLine.test(lines[next])) {
+      const line = lines[next]
+      if (line.trim() && !/^\s/.test(line)) break
+      continuation.push(line)
+      next++
+    }
+
+    let value = formatFrontmatterScalar(rawValue)
+    if (/^[|>][+-]?$/.test(rawValue.trim())) {
+      const blockLines = continuation
+        .filter(line => line.trim())
+        .map(line => line.replace(/^\s+/, ''))
+      value = rawValue.trim().startsWith('>') ? blockLines.join(' ') : blockLines.join('\n')
+    } else if (!value && continuation.some(line => /^\s+-\s+/.test(line))) {
+      value = continuation
+        .map(line => /^\s+-\s+(.*)$/.exec(line)?.[1])
+        .filter((item): item is string => item !== undefined)
+        .map(formatFrontmatterScalar)
+        .join(', ')
+    } else if (!value && continuation.some(line => line.trim())) {
+      value = continuation
+        .filter(line => line.trim())
+        .map(line => line.trim())
+        .join('\n')
+    }
+
+    entries.push({ key, value })
+    index = next
+  }
+
+  return entries
+}
+
+/** 拆出标准 YAML frontmatter，供预览显示元数据表格并只渲染 Markdown 正文。 */
+export function splitYamlFrontmatter(source: string): SplitMarkdownFrontmatterResult {
+  const match = /^(?:\uFEFF)?---[ \t]*\r?\n[\s\S]*?^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/m.exec(source)
+  if (!match) return { body: source, bodyStartLine: 0, entries: [] }
+
+  const yaml = match[0]
+    .replace(/^(?:\uFEFF)?---[ \t]*\r?\n/, '')
+    .replace(/^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)$/m, '')
+
+  return {
+    body: source.slice(match[0].length),
+    bodyStartLine: match[0].split(/\r\n|\r|\n/).length - 1,
+    entries: parseFrontmatterEntries(yaml),
+  }
+}

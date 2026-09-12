@@ -1,11 +1,65 @@
 import { describe, expect, it } from 'vitest'
 import { renderMd, renderMdStream } from '@/components/common/gugu-chat/markdown'
+import { splitYamlFrontmatter } from '@/utils/markdown'
 
 const escapedTable = [
   '\\| 测试 \\| 期望 \\| 实际 \\| 结论 \\|',
   '\\|------\\|------\\|------\\|------\\|\\',
   '\\| `cat a.md` 看 \\| 不应执行 \\| 字面输出 \\| ✅ 安全 \\|',
 ].join('\n')
+
+describe('Markdown YAML frontmatter', () => {
+  it('预览时剥离闭合的元数据，并保留正文起始行以正确映射待办', () => {
+    const source = [
+      '---',
+      'name: demo',
+      'description: a demo skill',
+      '---',
+      '## 正文标题',
+    ].join('\n')
+
+    expect(splitYamlFrontmatter(source)).toEqual({
+      body: '## 正文标题',
+      bodyStartLine: 4,
+      entries: [
+        { key: 'name', value: 'demo' },
+        { key: 'description', value: 'a demo skill' },
+      ],
+    })
+  })
+
+  it('支持 BOM、CRLF 和 YAML 文档结束符', () => {
+    expect(splitYamlFrontmatter('\uFEFF---\r\nname: demo\r\n...\r\n正文')).toEqual({
+      body: '正文',
+      bodyStartLine: 3,
+      entries: [{ key: 'name', value: 'demo' }],
+    })
+  })
+
+  it('没有完整 frontmatter 时保留普通 Markdown 内容', () => {
+    const source = '---\n普通分隔线后的正文'
+    expect(splitYamlFrontmatter(source)).toEqual({ body: source, bodyStartLine: 0, entries: [] })
+  })
+
+  it('将数组和多行描述整理为可读表格值', () => {
+    const source = [
+      '---',
+      'related_tools:',
+      '  - shell',
+      '  - run_script',
+      'description: >-',
+      '  第一行描述',
+      '  第二行描述',
+      '---',
+      '正文',
+    ].join('\n')
+
+    expect(splitYamlFrontmatter(source).entries).toEqual([
+      { key: 'related_tools', value: 'shell, run_script' },
+      { key: 'description', value: '第一行描述 第二行描述' },
+    ])
+  })
+})
 
 describe('聊天 Markdown 表格', () => {
   it('还原模型转义的表格竖线并渲染为 GFM table', () => {

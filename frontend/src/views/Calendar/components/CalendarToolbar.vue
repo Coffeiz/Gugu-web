@@ -41,7 +41,6 @@ const { t } = useI18n()
 
 <style>
 .cal-toolbar { --gb-tint: var(--glass-bg); display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
-.cal-toolbar:hover { --gb-tint: var(--glass-bg-hover); background: transparent; box-shadow: var(--glass-shadow-lg); }
 .cal-toolbar .toolbar-left { display: flex; align-items: center; gap: 4px; }
 .cal-toolbar .nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
 .cal-toolbar .nav-btn:hover { background: rgba(0,0,0,0.06); }

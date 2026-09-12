@@ -849,11 +849,37 @@ def test_systemd_templates_pin_rootless_socket():
         assert 'DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock' in text
         assert 'GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock' in text
     start_script = (backend / "start.sh").read_text(encoding="utf-8")
+    assert ('SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd '
+            'gugu-backend gugu-worker gugu-gateway"' in start_script)
     assert 'id -u "$run_user"' in start_script
     assert 's#__RUN_UID__#${run_uid}#g' in start_script
+    assert 's#__RUN_HOME__#${run_home}#g' in start_script
+    egress = (backend / "gugu-sandbox-egress.service").read_text(encoding="utf-8")
+    assert "sandbox_egress_init.sh" in egress
+    assert "GUGU_EGRESS_PROXY_URL=http://egress-proxy:3128" in egress
+    assert "DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock" in egress
     sandboxd = (backend / "gugu-sandboxd.service").read_text(encoding="utf-8")
     assert "agent.sandbox.sandboxd" in sandboxd
     assert "--allowed-root __DATA_DIR__" in sandboxd
+    assert "gugu-sandbox-egress.service" in sandboxd
+
+
+def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
+    from pathlib import Path
+
+    backend = Path(__file__).parents[1]
+    script = (backend / "scripts/sandbox_egress_init.sh").read_text(encoding="utf-8")
+    assert 'docker_cli network create --internal "$EGRESS_NETWORK"' in script
+    assert 'PROXY_CONTAINER_NAME="${GUGU_EGRESS_PROXY_CONTAINER_NAME:-egress-proxy}"' in script
+    assert 'GUGU_EGRESS_PROXY_URL:-http://egress-proxy:3128' in script
+    assert 'GUGU_EGRESS_CONFIG_FILE' in script
+    assert 'sandbox.get("egress_proxy_url")' in script
+    assert 'sandbox.get("network_profile")' in script
+    assert 'network_profile 不是 egress，跳过代理引导' in script
+    assert '--network "$EGRESS_NETWORK"' in script
+    assert 'network connect "$network" "$PROXY_CONTAINER_NAME"' in script
+    assert 'connect_network "$PROXY_UPLINK_NETWORK"' in script
+    assert '--volume "$SQUID_CONF:/etc/squid/squid.conf:ro"' in script
 
 
 def test_quota_measurement_ignores_symlinks_and_checks_reservation(tmp_path):

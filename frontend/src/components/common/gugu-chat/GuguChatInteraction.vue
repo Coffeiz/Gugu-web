@@ -2,8 +2,9 @@
   <div class="interaction-bubble">
     <div class="interaction-title">{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</div>
     <div class="interaction-body">{{ msg.interaction?.body }}</div>
-    <div class="interaction-actions">
-      <ActionButton v-for="option in displayOptions" :key="option.id" fit
+    <!-- 空 options 的存量提问（兜底按钮上线前创建的）不渲染空按钮区，避免悬空分隔线 -->
+    <div v-if="displayOptions.length" class="interaction-actions">
+      <ActionButton v-for="option in displayOptions" :key="option.id" class="interaction-option" fit
                     :disabled="resolved || submitting || expired" @click="selectOption(option)">
         {{ option.label }}
       </ActionButton>
@@ -94,7 +95,25 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-bubble { width: min(360px, 88%); box-sizing: border-box; margin: 0; padding: 14px; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--surface-card-solid); color: var(--content-primary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); }
 .interaction-title { color: var(--content-primary); font-size: var(--font-size-md); font-weight: 650; line-height: var(--line-height-ui); }
 .interaction-body { margin-top: 5px; color: var(--content-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-body); white-space: pre-wrap; }
-.interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
+.interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
+.interaction-actions :deep(.interaction-option) {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 34px;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--line-height-body);
+}
+.interaction-actions :deep(.interaction-option .app-action-button-content) {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }

@@ -92,7 +92,7 @@ def test_adapter_for_deepseek_by_provider():
     assert a.name == "deepseek"
     assert a.api_format == "openai"
     assert a.supports_active_cache("")
-    assert a.supports_explicit_cache("")
+    assert not a.supports_explicit_cache("")
     assert a.supports_thinking_toggle
 
 
@@ -144,7 +144,7 @@ def test_cache_capabilities_are_separate_by_provider():
     deepseek = adapter_for(_ai(provider="deepseek", model="deepseek-chat")).cache_capabilities("deepseek-chat")
     qwen = adapter_for(_ai(provider="qwen", model="qwen3.6-flash")).cache_capabilities("qwen3.6-flash")
     minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3")).cache_capabilities("MiniMax-M3")
-    assert deepseek.automatic_prefix_cache and deepseek.explicit_cache_control
+    assert deepseek.automatic_prefix_cache and not deepseek.explicit_cache_control
     assert qwen.automatic_prefix_cache and qwen.explicit_cache_control and qwen.single_history_anchor
     assert minimax.automatic_prefix_cache
 
@@ -154,10 +154,12 @@ def test_adapter_for_deepseek_by_base_url_fallback():
     assert a.name == "deepseek"
 
 
-def test_deepseek_vision_capability_is_limited_to_vision_model():
+def test_deepseek_vision_capability_includes_current_and_legacy_vision_models():
     adapter = adapter_for(_ai(provider="deepseek"))
+    assert adapter.capabilities("deepseek-flash").vision
     assert adapter.capabilities("deepseek-v4-flash-vision-exp").vision
     assert not adapter.capabilities("deepseek-v4-flash").vision
+    assert not adapter.capabilities("deepseek-chat").vision
 
 
 def test_deepseek_thinking_uses_official_openai_parameter_split():

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 BROADCAST_CHANNEL = "events:__broadcast__"
 LIVE_RESOURCES = {
     "projects", "calendar", "files", "mind", "scheduled_tasks", "sessions",
-    "clients", "im_channels", "terminals",
+    "clients", "im_channels", "terminals", "pending_queues",
 }
 LIVE_OPERATIONS = {"create", "update", "delete", "move", "append", "refresh"}
 

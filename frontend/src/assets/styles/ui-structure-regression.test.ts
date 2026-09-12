@@ -86,6 +86,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(componentTokens).not.toContain('box-shadow var(--motion-hover-card) ease')
   })
 
+  it('画布便签由组件保留完整的 hover 阴影过渡，不被通用卡片动效覆盖', () => {
+    expect(componentThemeRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card)')
+    expect(noteCard).toContain('box-shadow 0.3s ease')
+  })
+
   it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
     expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup')
     expect(overlayScrollbars).toContain("thumb.classList.add('overlay-scrollbar--notif')")
@@ -126,6 +131,16 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatWindow).not.toContain('chat-main:not(.is-expanded) :deep(.chat-input-row)')
     expect(chatWindow).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
+  })
+
+  it('待发送队列显示为右侧气泡，状态与操作在卡片内垂直居中', () => {
+    expect(chatWindow).toContain('<span class="chat-pending-state">')
+    expect(chatWindow).toContain("{{ t('chatUi.pendingQueue') }}")
+    expect(chatWindow).toContain('align-items: flex-end; gap: 6px;')
+    expect(chatWindow).toContain('grid-template-columns: auto minmax(0, 1fr) 24px;')
+    expect(chatWindow).toContain('align-items: center;')
+    expect(chatWindow).toContain('min-height: 40px;')
+    expect(chatWindow).toContain('padding: 8px 13px;')
   })
 
   it('GuguChat 主体使用静态背景，关闭窗口时也不恢复 backdrop-filter', () => {
@@ -176,9 +191,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
   it('聊天附件和语音 hover 不连续插值阴影，避免快速移动时触发密集 paint', () => {
     const chatActionBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card))')
+    const chatActionStrongBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card) strong)')
     const chatFileBlock = cssBlock(guguChat, ':deep(.msg-file)')
     const chatVoiceBlock = cssBlock(guguChat, ':deep(.msg-voice)')
     expect(chatActionBlock).not.toContain('box-shadow var(--motion-hover-control)')
+    expect(chatActionStrongBlock).toContain('color: inherit;')
     expect(chatFileBlock).not.toContain('box-shadow 0.25s')
     expect(chatVoiceBlock).not.toContain('box-shadow 0.15s')
   })

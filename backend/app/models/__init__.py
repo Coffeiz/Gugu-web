@@ -889,6 +889,26 @@ class ConversationSession(Base):
     )
 
 
+class ConversationPendingQueue(Base):
+    """Web 会话中尚未发送的消息；与正式对话历史分开持久化。"""
+
+    __tablename__ = "conversation_pending_queues"
+    __table_args__ = (
+        UniqueConstraint("user_id", "queue_id", name="uq_conversation_pending_queue_owner_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    queue_id: Mapped[str] = mapped_column(String(64))
+    session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    items: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
 class ProviderReasoningState(Base):
     """独立于 canonical history 的 Provider 推理状态。
 
@@ -996,6 +1016,10 @@ class ConversationMessage(Base):
     canonical_batch_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("conversation_batches.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 仅 summary 行使用：本条摘要覆盖到的最大消息 id。compress 在写摘要的同一
+    # 事务里落这个水位；历史装载取 max(session.baseline, summary.covers) 过滤，
+    # 防「读到新摘要 + 旧 baseline」竞态把摘要已覆盖的原文重复拼进上下文。
+    covers_until_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
     canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
@@ -1229,6 +1253,12 @@ class KnowledgeIndexEntry(Base):
         Index(
             "ix_knowledge_index_scope_source",
             "owner_user_id", "scope_type", "scope_id", "source_type",
+        ),
+        # worker 增量同步的水位游标：按 (owner, source, indexed_at) 读自上次水位
+        # 之后的变更行（含墓碑；墓碑即 deleted_at 非空的行）
+        Index(
+            "ix_knowledge_index_owner_source_indexed",
+            "owner_user_id", "source_type", "indexed_at",
         ),
     )
 

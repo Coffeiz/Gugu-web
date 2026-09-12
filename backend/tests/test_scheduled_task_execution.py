@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agent.context.assembly import reminder
+
 
 def test_scheduled_messages_keep_snapshot_context_before_tail():
     from agent.scheduled_execution import _build_scheduled_messages
@@ -16,11 +18,15 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     assert messages[0] == {"role": "system", "content": "稳定系统"}
     assert "小北的计划" in messages[1]["content"]
     assert messages[2]["role"] == "user"
-    assert "以下是仅供你内部遵循的回应规则" in messages[2]["content"]
+    assert any(
+        "以下是仅供你内部遵循的回应规则" in block.get("text", "")
+        for block in messages[2]["content"]
+        if block.get("type") == "stance-context"
+    )
     assert messages[3] == {"role": "user", "content": "执行任务"}
     assert sum("小北的计划" in item["content"] for item in messages) == 1
-    assert messages[-1]["content"][0]["type"] == "time-context"
-    assert "当前时间" in messages[-1]["content"][0]["text"]
+    assert messages.dynamic_tail == [reminder("当前时间：2026-08-21（星期五）10:00")]
+    assert "当前时间" not in str(messages.conversation)
 
 
 @pytest.mark.asyncio

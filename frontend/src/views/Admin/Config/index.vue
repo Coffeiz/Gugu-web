@@ -573,7 +573,7 @@ async function testSmtp() {
 .save-bar {
   display: flex; align-items: center; gap: 10px; padding: 14px 20px;
   background: rgba(255,255,255,0.05);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,0.09); border-radius: 14px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
   position: sticky; bottom: 12px;

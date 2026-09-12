@@ -112,6 +112,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         shellAutopilotEnabled=bool(data.get("shell_autopilot_enabled", False)),
         unlimitedMode=bool(data.get("unlimited_mode", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
+        showIntermediateReplies=bool(data.get("show_intermediate_replies", True)),
         toolInjectionMode=(
             data.get("tool_injection_mode", "full")
             if data.get("tool_injection_mode", "full") in _TOOL_INJECTION_MODES
@@ -245,6 +246,8 @@ async def update_preferences(
         data["unlimited_mode"] = body.unlimitedMode
     if body.showToolInteractions is not None:
         data["show_tool_interactions"] = body.showToolInteractions
+    if body.showIntermediateReplies is not None:
+        data["show_intermediate_replies"] = body.showIntermediateReplies
     if body.toolInjectionMode is not None and body.toolInjectionMode in _TOOL_INJECTION_MODES:
         data["tool_injection_mode"] = body.toolInjectionMode
     prefs.data = data

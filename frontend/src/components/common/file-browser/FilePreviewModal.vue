@@ -377,8 +377,8 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   inset: 0;
   /* z-index 由 :style 动态(统一窗口带,点谁谁上) */
   overflow: hidden;
-  /* 整个预览模态提升为独立 GPU 合成层，防止 OOPIF（PDF iframe）的创建/销毁
-     触发外层 sidebar/topbar backdrop-filter 的重合成闪烁 */
+  /* 整个预览模态提升为独立 GPU 合成层，避免 OOPIF（PDF iframe）创建/销毁时
+     让预览内容与底层页面一起反复重绘。 */
   will-change: transform;
 }
 

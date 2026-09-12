@@ -217,7 +217,7 @@ def test_skill_management_tools_are_registered_on_demand_not_in_meta_schema():
     meta_tools = {tool.name: tool for tool in MetaSkill.tools}
     from agent.capabilities.defaults import all_system_tool_names
     resident_tools = set(all_system_tool_names())
-    for name in ("create_skill", "update_skill", "delete_skill"):
+    for name in ("list_skills", "create_skill", "update_skill", "delete_skill"):
         assert name not in meta_tools
         assert name not in resident_tools
         assert registry.snapshot().get(name) is not None
@@ -234,7 +234,7 @@ def test_default_capabilities_include_registered_system_tools_and_builtin_skill_
 
     assert "send_email" in resident_tools
     assert resident_tools <= registered_tools
-    assert "create_skill" not in resident_tools
+    assert not {"list_skills", "create_skill", "update_skill", "delete_skill"} & resident_tools
     assert "email" in static
     assert "邮件" in static
 
@@ -244,7 +244,7 @@ def test_skill_management_is_discoverable_without_being_a_provider_tool():
 
     context = build_fixed_adapter_context([])
 
-    assert {"create_skill", "update_skill", "delete_skill"} <= set(context.snapshot.tools)
+    assert {"list_skills", "create_skill", "update_skill", "delete_skill"} <= set(context.snapshot.tools)
     assert context.select_for_messages([]).tool_names == (
         "call_tool", "get_tool_schema", "use_skill", "ask_user"
     )
@@ -255,11 +255,11 @@ async def test_get_tool_schema_can_discover_skill_management_tools_on_demand():
     from agent.tools.meta import _get_tool_schema
 
     result = await _get_tool_schema(None, None, {
-        "tools": ["create_skill", "update_skill", "delete_skill"],
+        "tools": ["list_skills", "create_skill", "update_skill", "delete_skill"],
     })
 
     assert result == {
-        "tool_schemas": ["create_skill", "update_skill", "delete_skill"],
+        "tool_schemas": ["list_skills", "create_skill", "update_skill", "delete_skill"],
         "rejected": [],
     }
 

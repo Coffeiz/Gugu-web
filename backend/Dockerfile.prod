@@ -38,9 +38,10 @@ FROM node:22-trixie AS rag-runtime
 WORKDIR /rag
 COPY backend/ts/workers/rag/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
+        ali-oss@6.23.0 \
         @node-rs/jieba@2.0.1 \
         @node-rs/jieba-linux-x64-gnu@2.0.1 \
-    && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
+    && node -e "Promise.all([import('@node-rs/jieba'), import('ali-oss')]).then(() => console.log('RAG runtime dependencies ready'))"
 
 FROM python:3.14-slim-trixie
 
@@ -75,6 +76,19 @@ RUN sed -i \
         "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
     && rm -f /tmp/gst-base.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# 基础包安全补丁升级：APT_MIRROR（TUNA）对 trixie-security 同步滞后，镜像里的
+# gzip/glib/mbedtls/pcre2/python3.13/sqlite3/libssh2/perl 等会停在带 CVE 的旧版
+# （2026-09-12 docker-release trivy 门连败根因，29 HIGH/CRITICAL）。逐包追 deb 是
+# 无底洞，这里把源切回官方 security pool 做一次完整 upgrade，自动覆盖后续 CVE；
+# 镜像源同步追平后可把 sed 段去掉。
+RUN sed -i \
+        -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
+        -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/opt/venv/bin:${PATH}" \

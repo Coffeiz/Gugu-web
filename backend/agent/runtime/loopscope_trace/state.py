@@ -582,7 +582,9 @@ def record_context_layout(
             "system_fp": hashlib.sha1((system_text or "").encode("utf-8")).hexdigest()[:12],
             "application_boundary": _jsonable(metadata or {}),
         }
-        _layout_logger.info("[context-layout] %s", payload)
+        # 数据已进 run.attributes 与 collector span；主日志只留 DEBUG 通道，
+        # 排查缓存边界时把 agent.core 调到 DEBUG 即可恢复完整输出。
+        _layout_logger.debug("[context-layout] %s", payload)
         run.attributes["context_layout"] = payload
         span = run.span(
             "context",

@@ -409,10 +409,18 @@ docker network inspect gugu-sandbox-egress
 > 只读挂进 bootstrap 的 `/var/run/docker.sock`，脚本会自动改走
 > `docker save | load` 从宿主搬运。
 >
-> 不使用 Compose profile、采用 systemd 直接运行 sandboxd 时，仍需手动运行
-> `backend/scripts/prepare_rootless_storage.py`（或对应安装流程）应用 ACL；不要把
-> `SANDBOX_ACL` 之类手工开关当作 Compose 的替代品。Compose 的 bootstrap 会在数据迁移
-> 完成后统一处理，覆盖新建和已有用户目录。
+> 不使用 Compose profile、采用 systemd 直接运行 sandboxd 时，`make install` 会额外安装
+> `gugu-sandbox-egress.service`。它以同一个 Rootless Docker 用户在 sandboxd 前幂等创建
+> `gugu-sandbox-egress` internal 网络和 `egress-proxy`，再把代理接到默认 `bridge` 出网；
+> 沙盒容器仍只加入 internal 网络。这样非 Compose 部署不再依赖手工创建代理容器，也不会把
+> 动态的 `172.20.x.x` 写进代理配置。代理地址应在 Admin 中保存为
+> `http://egress-proxy:3128`，网络名保存为 `gugu-sandbox-egress`。
+>
+> 非 Compose 部署仍需手动运行 `backend/scripts/prepare_rootless_storage.py`（或对应安装
+> 流程）应用 ACL；不要把 `SANDBOX_ACL` 之类手工开关当作 Compose 的替代品。systemd 的
+> egress 引导只负责 Docker 网络和代理，不会擅自改写 `config.override.json` 或用户数据。
+> 配置中的 egress 代理必须先在 Admin 保存一次，之后 `gugu-sandbox-egress.service` 才能让
+> 实际沙盒请求通过这个地址工作。
 >
 > 手动等效操作（不依赖 bootstrap 服务时）：
 >
@@ -577,9 +585,9 @@ sudo nginx -t && sudo systemctl reload nginx
 - **入口反代开启缓存导致"操作不生效、刷新后归位"**：1Panel/OpenResty 站点的 `location /` 若开 `proxy_cache`，会把 `/api` 的 GET 响应一并缓存（默认 `proxy_cache_valid 200 ... 10m`，key 只有 host+uri+args）——写入实际成功，但后续读取命中旧缓存，表现为用户操作后界面不变；且 key 不含 Authorization/Cookie，**不同用户命中同一 URL 会共享缓存响应，有跨用户泄露风险**。规则：`/api` 一律 `proxy_cache off`；静态资源可缓存但 `index.html` 不能长缓存（发版后会引用旧 hash 资源）。另：1Panel 改 vhost 可能被面板覆写，reload 前后各 `cat` 一次确认。排障口诀：接口日志正常、库里数据正确、客户端读到旧值 → 先查入口链路缓存。
 - 私有仓库 clone：服务器生成 SSH key → GitHub 仓库 Settings → Deploy keys 加只读公钥 → `git clone git@github.com:...`（国内服务器连不上 GitHub 时走代理 / 镜像）。
 
-### 4.5 后端服务（systemd · 一次装全 4 个）
+### 4.5 后端服务（systemd · 一次装全 6 个）
 
-> **大白话**：生产服务器上，咕咕的三个核心后端进程和一个沙盒执行服务交给 systemd（Linux 自带的服务管理器）托管——进程崩了它自动拉起来、服务器重启它自动跟着启动，不用人守着敲命令。前提是**一次性**先跑 `make install` 把四个单元注册给 systemd。没有启用 Shell 沙盒时，`gugu-sandboxd` 可以保持关闭，但模板仍会一并安装。
+> **大白话**：生产服务器上，咕咕的三个核心后端进程、一个沙盒执行服务和一个 egress 引导服务交给 systemd（Linux 自带的服务管理器）托管——进程崩了它自动拉起来、服务器重启它自动跟着启动，不用人守着敲命令。前提是**一次性**先跑 `make install` 把五个单元注册给 systemd。没有启用 Shell 沙盒时，egress 引导会读取 `network_profile` 并自动跳过，不会创建代理容器。
 >
 > **本项目部署现状**：生产环境和 dev 机的三个核心服务**都走 systemd**。`gugu-sandboxd` 的单元模板和安装入口已经加入，但某台机器只有在 Rootless Docker、固定镜像和用户数据根目录都准备好后，才应启用它。两种启动方式**不能同时用在同一台机器的同一个端口上**，选一个当唯一主人（详见下文「铁律」）；`scripts/dev-restart.sh` 仍保留在仓库供以后需要免 sudo 快速迭代的场景参考。
 >
@@ -598,11 +606,14 @@ sudo nginx -t && sudo systemctl reload nginx
 > # 然后用同一个 RUN_USER 补跑 make install，再 systemctl restart gugu-backend
 > ```
 
-项目自带四个单元模板（`gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` / `gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并立即重启四个单元，因此启用前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
+项目自带六个单元模板（`gugu-rag-sidecar.service` 托管 RAG TS worker 宿主，`gugu-sandbox-egress.service`，
+以及 `gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` /
+`gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并
+立即重启六个单元；启用 Shell 沙盒前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
 
 ```bash
 cd backend && RUN_USER=youruser make install
-sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-gateway
+sudo systemctl status gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway
 ```
 
 `gugu-sandboxd` 通过 `/run/user/<uid>/gugu-sandboxd.sock` 接收受限 JSON Lines 请求，业务进程不会直接持有 Docker socket。systemd 模板会自动注入 `DOCKER_HOST` 和 `GUGU_SANDBOXD_SOCKET`，不需要把它们配置成 TCP 地址，也不要把 Unix Socket 暴露给外部网络。
@@ -728,20 +739,22 @@ Admin → Shell 沙盒），**先备份配置、只改这两个字段、原子�
 
 `make install` 会：
 
-- 按**当前 backend 目录**(`APP_DIR`)填好四个单元的 `WorkingDirectory`/`ExecStart`/`ReadWritePaths`（占位符，不写死路径——换部署目录不用手改）；
+- 按**当前 backend 目录**(`APP_DIR`)填好五个单元的 `WorkingDirectory`/`ExecStart`/`ReadWritePaths`（占位符，不写死路径——换部署目录不用手改）；
 - 建出 `Gugu-data/users/`、`logs/`、`config.override.json` 并 `chown` 给运行用户（`ReadWritePaths` 要求路径**真实存在**，否则 systemd 报 `226/NAMESPACE`）；
-- `daemon-reload` + `enable` + `restart` 四个单元；因此执行完整 `make install` 前必须先让 Rootless Docker、固定镜像和用户数据根目录就绪。只跑网页开发环境时，使用 §3 的本地启动方式，不要把完整 systemd 安装当成免 Docker 的安装路径。
-- 运行用户必须显式指定：`RUN_USER=youruser make install`（须已存在、能读 `.venv` 与项目目录；项目在 `/home/<user>` 下时通常应使用该 user）。卸载：`make uninstall`（一并清四个）。
+- `daemon-reload` + `enable` + `restart` 五个单元；因此执行完整 `make install` 前必须先让 Rootless Docker、固定镜像和用户数据根目录就绪。只跑网页开发环境时，使用 §3 的本地启动方式，不要把完整 systemd 安装当成免 Docker 的安装路径。
+- 运行用户必须显式指定：`RUN_USER=youruser make install`（须已存在、能读 `.venv` 与项目目录；项目在 `/home/<user>` 下时通常应使用该 user）。卸载：`make uninstall`（一并清五个）。
 
-四个服务：
+五个服务：
 
 
 | 服务                | 进程                  | Restart                               | 日志                         |
 | ----------------- | ------------------- | ------------------------------------- | -------------------------- |
+| `gugu-rag-sidecar` | RAG TS worker 宿主（per-owner 常驻索引，socket 共享） | on-failure | `logs/gugu-rag-sidecar.log` |
 | `gugu-backend`    | uvicorn 网页          | on-failure                            | `logs/gugu.log`            |
 | `gugu-worker`     | IM 大脑（消费队列、跑 agent） | **always**                            | `logs/gugu-worker.log`     |
 | `gugu-gateway` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-gateway.log` |
 | `gugu-sandboxd`   | Rootless Docker 沙盒执行服务 | **always** | `logs/` 或 systemd journal |
+| `gugu-sandbox-egress` | Rootless Docker egress 网络/代理引导 | **oneshot + RemainAfterExit** | systemd journal |
 
 
 - **worker/gateway/sandboxd 用 `Restart=always`**：IM 进程死了必须秒拉起；sandboxd 退出后也应尽快恢复，否则生产 Shell 请求会明确失败。这是安全优先的失败方式，不会回退到宿主机执行。
@@ -918,7 +931,7 @@ journalctl -u gugu-gateway -f         # 或 tail logs/gugu-gateway.log
 cd backend
 make status              # web 状态 + 健康检查；完整 systemd 状态见下一行
 make logs                # web 实时日志
-sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-gateway
+sudo systemctl status gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway
 sudo journalctl -u gugu-sandboxd -f                      # 沙盒执行服务
 sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 ```
@@ -947,6 +960,13 @@ scripts/release/compose-update.sh \
 部署安全约束：Compose 文件统一固定 project name 为 `gugu-web-compose`，从而保证数据库始终使用同一个 `gugu-web-compose_pgdata` 卷。不要通过改 project name、`-p` 参数或 `docker compose down -v` 启动/清理生产环境；更新前应先确认 `docker inspect gugu-web-compose-postgres-1` 的挂载卷仍为该卷。systemd/源码部署使用 `backend/deploy.sh` 时，会在迁移前生成包含 PostgreSQL custom-format dump 的完整备份，并在迁移后检查关键表和 Alembic 版本；数据库备份失败会直接中止部署。
 
 更新脚本依赖环境中已有的 `GUGU_DB_PASSWORD`，并从 `backend/.env` 校验 `ADMIN_PASSWORD`，不会从仓库文件或命令参数打印这些凭据。`COSIGN_IDENTITY_REGEXP` 和 `COSIGN_OIDC_ISSUER` 可用于企业部署时收紧签名发布者范围。
+
+> 🔥 **dockerd 升级 / 服务器重启后的两个坑（2026-09-12 生产实战）**：
+>
+> 1. **dockerd 升级后必须全栈重建容器**。docker-ce 升级（如 29.8.0）+ 重启后，重启前已存在的容器内嵌 DNS（127.0.0.11）解析服务名会 SERVFAIL——nginx 报 `frontend could not be resolved (2: Server failure)`（整站 502）、worker 报 `Error -3 connecting to redis:6379. Temporary failure in name resolution` 崩溃循环，但新重建的容器正常。修复：`cd /opt/Gugu-web-main && docker compose -p gugu-web-main up -d --force-recreate`。**以后 dockerd 相关包升级，重启后必须跟一次全栈 force-recreate**。
+> 2. **检查每个容器的 restart 策略**。compose 里没写 `restart:` 的服务（实战是 postgres）策略是 `no`，重启/ dockerd 重启后不会自动拉起 → backend entrypoint 卡在「等待数据库就绪」死循环、整站 502。用 `docker inspect <容器> --format '{{.HostConfig.RestartPolicy.Name}}'` 逐个核对，缺的补 `docker update --restart unless-stopped <容器>`，并争取在 compose 文件里显式声明。
+>
+> 重启后验证清单：`docker ps` 全员 Up 且 **postgres 在列**；`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9595` 返回 200；`docker exec <worker> getent hosts redis` 能解析。worker/gateway/sandboxd 显示 unhealthy 是 healthcheck 假警报（业务日志正常即忽略）。
 
 ```bash
 # scp/rsync 传新代码后：
@@ -1130,6 +1150,8 @@ MemoryMax=512M
 | `make stop` 说「未运行」但 `systemctl` 显示服务在跑 | 生产 backend 由 systemd `gugu-backend.service` 托管，`make start/stop` 管的是另起的手动 uvicorn → 两者不是一个进程。生产一律用 `systemctl`（详见 §6.2） |
 | 部署后数据页全部「加载失败 / summary 401」 | 重建 `.env` 时 `SECRET_KEY` 变了 → 旧登录 token 全失效。**重新登录即恢复**；根治:`SECRET_KEY` 跨部署保持同一值，别每次重新生成（详见 §7 ⚠️ / §4.2） |
 | 咕咕移动文件报权限错误 | 首次部署漏跑了 `make install`，服务用户没有 `Gugu-data/users/` 的写权限。确认 `gugu-backend.service` 的 `User`、`ls -la Gugu-data/users/` 的属主和 `ReadWritePaths`，修复后重启 backend（详见 §4.5）|
+| Docker 升级/重启后整站 502，nginx 日志 `frontend could not be resolved (2: Server failure)`、worker 报 `Error -3 ... name resolution` | dockerd 升级后旧容器内嵌 DNS 失效 → `docker compose -p gugu-web-main up -d --force-recreate` 全栈重建（详见 §7.0.1 🔥）|
+| 重启后 postgres 容器没起来（Exited 0 无人拉起），backend 卡「等待数据库就绪」 | 该容器 restart 策略是 `no` → `docker start <容器>` 先恢复，再 `docker update --restart unless-stopped <容器>` 补策略，compose 里显式声明 `restart: unless-stopped`（详见 §7.0.1 🔥）|
 
 
 ### 10.2 数据库迁移恢复：alembic 与 create_all 不同步（生产实战）

@@ -1,10 +1,10 @@
 # 咕咕 · 前台设计规范
 
-> 整理自产品讨论，最后更新：2026-07-10
+> 整理自产品讨论，最后更新：2026-09-12
 
 ## 概述
 
-这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是 **Glassmorphism（毛玻璃）+ 冷淡紫灰色调**：浅灰到冷灰蓝的渐变背景上叠加半透明白色卡片、`backdrop-filter` 模糊、细边框高光，视觉上克制、不张扬。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
+这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是**冷淡紫灰色调的轻玻璃视觉**：浅灰到冷灰蓝的渐变背景上叠加半透明表面、细边框和阴影；常驻内容面板默认不模糊背景，导航侧栏和 Mind 笔记 glass 保留 blur，弹窗/菜单等临时浮层也可按需使用真实 `backdrop-filter`。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
 
 ---
 
@@ -85,37 +85,38 @@ backend/
 参考：Glassmorphism + 冷淡灰色系
 
 - **背景**：顶部浅灰（`#e8e9ee`）→ 底部冷灰蓝（`#9aa2b8`），`160deg` 线性渐变，固定不随内容滚动
-- **卡片**：`rgba(255,255,255,0.56)` 半透明 + `backdrop-filter: blur(20px)` 毛玻璃，边框高光 + 轻阴影构成层次感；hover 时背景/阴影以 `0.25s ease` 淡入淡出，不立即亮起
+- **卡片**：半透明 tint、边框高光 + 轻阴影构成层次感；常驻卡片不使用 `backdrop-filter`，hover 时背景/阴影以 `0.25s ease` 淡入淡出，不立即亮起
 - **边缘高光**：`inset 0 1px 0 rgba(255,255,255,0.95)` 顶边亮线模拟玻璃切割倒角
 - **阴影**：轻阴影 `0 4px 16px rgba(80,90,110,0.08)`，扁平化，不堆叠
 - **圆角**：面板 `18px`，小元素 `10–12px`
 
 **圆角形状分层约定**：
 - `.glass-card` 面板统一 `border-radius: var(--radius-lg)` + `corner-shape: squircle`
-- 顶栏这类用 `GlassBg` 的活玻璃宿主，背景层必须 `border-radius: inherit` + `corner-shape: inherit`，保证背景磨砂层和外框走同一条曲线
-- `GlassBg` 自己负责圆角裁切（`overflow: hidden` 放在背景层，不放在宿主），宿主本体保持 `overflow: visible`，否则顶栏按钮这类外发阴影会被裁掉
+- 顶栏直接用 `.glass-card` 的静态 tint，不挂载独立 `GlassBg`；宿主保持 `overflow: visible`，避免顶栏按钮的外发阴影被裁掉
+- 其他明确采用 `GlassBg` 的工具栏，仍由 `GlassBg` 自己负责圆角裁切（`overflow: hidden` 放在背景层，不放在宿主）
 - 小按钮、输入框、chip、页内工具条按钮一律用普通圆角，不跟 squircle 混用
 
-**毛玻璃三档（全走 CSS 变量，改一处全站生效，别再写死 blur 值）：**
+**Surface blur 约定（全走 CSS 变量，明确哪些 surface 需要背景采样）：**
 
 | 档 | 变量/落点 | 值 | 用途 |
 |---|---|---|---|
-| 大面板 | `--glass-blur`（variables.css） | `blur(20px)` | glass-card 面板、聊天窗、音乐播放器、BaseModal 卡片、Profile、通知气泡、编辑卡右栏 |
-| 小弹窗 | `--popup-blur`（variables.css） | `blur(12px)` | `.popup-menu`（右键/排序/表单）、日期选择器、活动添加/编辑弹窗、文件信息、通知中心、全局搜索下拉、月份选择、溢出弹窗 |
-| 拖拽克隆 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 卡片拖拽代理的材质和内容层由 runtime 生命周期统一协调，组件只提供自身视觉结构 |
+| 常驻面板 | `--glass-card-blur` | `none` | 页面内容卡、顶栏和 Admin 内容卡；用 tint、边框和阴影建立层次 |
+| 导航与笔记 glass | `--popup-blur` / `--glass-blur` | 主题 token | 应用/Admin 侧边导航；Mind 模式标签、画布工具 chrome、每日笔记玻璃底板及实体贴纸 |
+| 临时浮层 | `--popup-surface-blur` / `--glass-blur` | 主题 token | `.popup-menu`、日期选择器、搜索下拉、弹窗卡片、聊天/媒体预览等浮在页面内容上的 surface |
+| 拖拽代理 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 独立的短暂交互材质，不改变常驻面板默认无 blur 的契约 |
 
-### 两种玻璃实现：标准 glass-card vs GlassBg 仿玻璃（按视觉体感选型）
+### 两种静态玻璃表面：标准 glass-card vs GlassBg 仿玻璃
 
 前台有两种玻璃实现，视觉相似、技术路径和 hover 机制完全不同：
 
-| | 标准 `.glass-card`（真磨砂） | `GlassBg` 仿玻璃（faux glass） |
+| | 标准 `.glass-card` | `GlassBg` 仿玻璃（faux glass） |
 |---|---|---|
-| 绘制 | 宿主自身 `background` + `backdrop-filter` 真实模糊 | `.glass-bg > .gb-tint` 叠层（`z-index:-1`），无 backdrop-filter |
-| 适用 | 内容**可灵活调整/交互**的面板（列表、表单、可编辑内容） | 以**固定内容为主**的面板，或浮在会动内容之上（backdrop-filter 在动内容上会边缘白带） |
-| 现例 | 技能页、终端页、文件库主面板 | 顶栏、日历工具栏/主面板/侧栏、文件工具栏 |
+| 绘制 | 宿主自身绘制半透明 tint、边框和阴影；默认无 `backdrop-filter`，允许明确的局部 surface opt-in | `.glass-bg > .gb-tint` 叠层（`z-index:-1`），无 backdrop-filter |
+| 适用 | 常驻内容面板与顶栏 | 明确需要 faux glass 边缘/高光结构的工具栏 |
+| 现例 | 技能页、终端页、文件库主面板和顶栏 | 日历工具栏、文件工具栏；顶栏不使用 GlassBg |
 | hover | global.css `.glass-card:hover`，token `--glass-card-background-hover` | component-theme-refinements.css 契约规则 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`（带 0.25s 过渡） |
 
-选型以**视觉体感为主**：同一个页面里两种玻璃可以共存（如日历页工具栏是仿玻璃、弹层里的编辑卡是标准玻璃）。**例外：项目页**——项目列浮在可拖拽卡片之上（按「浮在动内容上」本该用仿玻璃），实际用的是标准 glass-card，体感成立就以它为准。
+除导航与笔记 glass 的明确例外外，常驻面板即使叠在可滚动/可交互内容上，也通过 tint、边框和阴影区分，不按内容是否可编辑来决定 blur。
 
 实现红线（多次踩坑）：
 - 仿玻璃的 hover tint 规则**必须放全局样式表**（component-theme-refinements.css 的 `.glass-card:hover .gb-tint`）；写在 GlassBg.vue 或宿主的 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。
@@ -233,9 +234,9 @@ function darkenHex(hex, amount = 0.60) {
 - **彩色胶囊/条 hover**：统一使用 `box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1)`，`0.25s ease` 过渡；inset 阴影天然在内容之下，无需 z-index 操控，可覆盖 inline background。适用场景：近期节点胶囊（`.cap-row:hover .cap-capsule`，global.css 统一定义）、日历事件 chip、项目条、更多按钮、更多弹窗条目
 - **勾选框样式已全局统一**：原生 `input[type="checkbox"]` 统一走 16px、5px 圆角、紫灰边白底；选中态是紫色渐变 + 白勾。登录/注册确认框、markdown 任务列表、日历“全天”等都复用这套，不要在局部组件再复制一份外观 CSS
 - **卡片拖拽统一由 Interaction Runtime 接管**：业务卡片使用 pointer 入口注册 Object、Surface、Target 和 Action；Runtime 负责阈值、代理、命中、landing、reveal、regrab 与清理，业务侧只处理数据和业务动作。原生 HTML5 `dataTransfer` 仅保留给操作系统文件上传，不用于卡片移动。
-- **拖拽代理视觉由卡片结构与 Runtime 生命周期共同管理**：卡片组件提供本体材质、内容和附加交互，Runtime 控制代理快照、毛玻璃/本体交接、相机 shell 和落地时序；不要再新增 `.phys-drag-clone` 或页面级物理样式。
+- **拖拽代理视觉由卡片结构与 Runtime 生命周期共同管理**：卡片组件提供本体材质、内容和附加交互，Runtime 控制代理快照、临时拖拽材质、相机 shell 和落地时序；不要再新增 `.phys-drag-clone` 或页面级物理样式。该短暂代理材质独立于常驻源卡片（默认无背景 blur）的表面契约。
 - **卡片悬浮操作按钮是跨域契约，不是文件域私有样式**：统一定义在 `assets/styles/components/card-actions.css`（`.file-card-btn` 卡片悬浮 20×20 / `.file-list-btn` 列表行 24×24，file- 前缀仅为历史兼容）。视觉口径：实底 `--control-bg` + `backdrop-filter: blur(4px)` + `--elevation-card` 投影，`background/color 0.15s` 淡入淡出；破坏性操作加 `del`（或 `danger`）类，hover 转 `--status-danger` 红色。消费方：文件库 / Dashboard FilePanel / ProjectModal 直接挂类；画布四类卡（便签、实体贴纸、文件引用卡、项目引用卡）经 `CardAffordances.vue` 的 `:deep(button)` 复用同一口径。新卡片类型的悬浮操作按钮一律消费该契约，禁止另画透明底、无过渡的按钮；改动契约时 `card-actions.css` 与 `CardAffordances.vue` 两处声明同步，归属细节见 `assets/styles/STYLE-OWNERS.md`。
-- **多选拖拽的主克隆/影子叠层不叠额外 `opacity`**：曾经影子卡（`i===0`/`i===1`）各叠 `opacity: 0.55`/`0.35`、主克隆叠 `0.88`，跟卡片自身 `background` 的 `0.5` 透明度相乘后严重稀释白底（0.5×0.35≈0.18，肉眼看基本只剩玻璃感），跟单文件拖拽观感不一致。层次感（"这是叠了好几张"）已经靠位置偏移（`dx`/`dy`）、旋转（`rz`）、缩放（`sc`）、`zIndex`、`box-shadow` 表达，不需要再用透明度区分，故去掉这层额外 opacity，多选拖拽的每一层都跟单文件走同一份底色/透明度。**`backdrop-filter` 分层限制**：每叠一层都是一次独立的背景采样+高斯模糊，GPU 开销随层数线性上升，多选最多叠 3 层（主卡+2 张影子）全做全尺寸模糊太费——只留前两层做模糊：主克隆 `blur(12px)`（CSS 默认值），紧贴主卡的第一张影子（`i===0`）降到 `blur(6px)`（内联样式覆盖，CSS 规则未加 `!important` 故可覆盖），再往后那张（`i===1`，仅选中 3+ 项才出现）`backdrop-filter: none`——这张压在最底下、被前两张挡掉大半，模糊不模糊肉眼分不出来。
+- **多选拖拽的主克隆/影子叠层不叠额外 `opacity`**：曾经影子卡（`i===0`/`i===1`）各叠 `opacity: 0.55`/`0.35`、主克隆叠 `0.88`，跟卡片自身 `background` 的 `0.5` 透明度相乘后严重稀释白底（0.5×0.35≈0.18，肉眼看基本只剩玻璃感），跟单文件拖拽观感不一致。层次感（"这是叠了好几张"）已经靠位置偏移（`dx`/`dy`）、旋转（`rz`）、缩放（`sc`）、`zIndex`、`box-shadow` 表达，不需要再用透明度区分，故去掉这层额外 opacity，多选拖拽的每一层都跟单文件走同一份底色/透明度。**Runtime 拖拽代理是例外**：它是短暂的交互表面，当前仍由 Runtime/卡片规则协调 blur；常驻源卡片保持无背景 blur。
 
 ---
 
@@ -385,10 +386,10 @@ function darkenHex(hex, amount = 0.60) {
 所有弹窗基于 `BaseModal.vue`，**禁止**在子弹窗重复定义遮罩、动画、Esc 逻辑。
 
 - Transition name `bm`，`:duration="200"` 定时收尾（进场根节点自身没有任何过渡属性可监听，必须显式给时长，否则 Vue 下一帧就摘掉 enter-active、玻璃 ramp 跑不完）
-- **进场 = 「玻璃 ramp」，绝不动 opacity（2026-07-06 定版）**：遮罩的压暗（`background-color`）+ 模糊、卡片/玻璃面板（`.bm-card` / `.panel-left` / `.modal-right`）的 `backdrop-filter` blur 半径本身从 0 过渡到各自满值（`cubic-bezier(0.4,0,0.2,1)`，0.2s）。面板部分的 ramp 规则在 `global.css`（BaseModal 的 scoped 样式够不到 slot 里带调用方 scope id 的玻璃面板），from 态用 `!important` 压过 blur prop 写到 `.bm-card` 上的 inline 样式
+- **进场 = 「玻璃 ramp」，绝不动 opacity（2026-07-06 定版）**：遮罩的压暗（`background-color`）+ 模糊、浮层卡片 `.bm-card` 的 `backdrop-filter` blur 半径本身从 0 过渡到满值（`cubic-bezier(0.4,0,0.2,1)`，0.2s）。双栏弹窗的 `.panel-left` / `.modal-right` 只绘制静态 tint；ramp 规则在 `global.css`（BaseModal 的 scoped 样式够不到 slot 里的 `.bm-card`），from 态用 `!important` 压过 blur prop 写到 `.bm-card` 上的 inline 样式
   - **为什么进场禁止 opacity**：CSS 规范（filter-effects-2）里 `opacity < 1` 的元素是隔离组（backdrop root），其**子孙的 `backdrop-filter` 只能在组内采样、采不到组外的页面/窗口**。旧版把 opacity 淡入挂在卡片容器上，弹窗叠在 GuguChat 大窗口等浮动窗口上打开时，整个淡入期间玻璃面板被祖先隔离、模糊完全失效，动画结束一瞬间才"啪"地糊上（性能 trace 帧序列实测）。`will-change` 预热、延迟几帧再露出都治不了——不是算得慢，是被隔离。同理，**任何含 backdrop-filter 的玻璃元素，祖先链上都不要挂 opacity/filter/mask 类动画**
 - **离场保留纯 opacity 淡出**（`cubic-bezier(0.4,0,1,1)`，0.2s）：关闭瞬间的模糊失效会被同步的淡出盖住，肉眼基本不可察，不值得再做一次反向 ramp
-- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的浮层元素在动画帧间产生像素跳位（GPU compositing 问题）；底层 `.glass-card` 面板含 backdrop-filter，弹窗进出场均不使用 transform
+- **禁止 transform**：`scale` 或 `translateY` 会让含 `backdrop-filter` 的浮层元素在动画帧间产生像素跳位（GPU compositing 问题）；弹窗进出场均不使用 transform
 
 | 弹窗 | width | height | zIndex |
 |------|-------|--------|--------|
@@ -427,7 +428,7 @@ function darkenHex(hex, amount = 0.60) {
 ### 文件库页（Files）
 
 - **工具栏**：项目筛选下拉 / 类型筛选下拉 / 搜索框 / 网格视图 & 列表视图切换 / 上传按钮
-  - 工具栏 `position: relative; z-index: 20`，防止下拉菜单被文件卡片遮挡（`.glass-card` 含 `backdrop-filter` 会创建新层叠上下文，需显式 z-index 控制层序）
+  - 工具栏 `position: relative; z-index: 20`，防止下拉菜单被文件卡片遮挡
 - **网格视图**：`auto-fill minmax(128px, 1fr)` 卡片
   - 顶部行：ext badge + 版本号（内联在 ext 后，`v-if versions.length > 1`）+ 项目彩点
   - 卡片内容：文件名（ellipsis）/ 阶段标签 / 大小·日期

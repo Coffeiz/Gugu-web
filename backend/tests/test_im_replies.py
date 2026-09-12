@@ -1,6 +1,29 @@
 import pytest
 
 
+@pytest.mark.asyncio
+async def test_im_display_preferences_reads_both_flags_with_legacy_defaults(monkeypatch):
+    from agent.interactions.preferences import im_display_preferences
+    from app.db import session as db_session
+
+    class FakeDb:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalar(self, _query):
+            class Row:
+                data = {"show_tool_interactions": True, "show_intermediate_replies": False}
+            return Row()
+
+    monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
+    monkeypatch.setattr(db_session, "_SessionLocal", FakeDb)
+
+    assert await im_display_preferences("synthetic-user") == (True, False)
+
+
 def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
     from agent.gateway.qq import QQAPIError, _qq_msg_id_invalid
 
@@ -91,6 +114,35 @@ async def test_send_agent_response_sends_each_round_separately(monkeypatch):
 
     assert sent == ["第一轮", "最后一轮"]
     assert result == "最后一轮"
+
+
+@pytest.mark.asyncio
+async def test_send_agent_response_hides_intermediate_rounds_but_keeps_final(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="最终回复", round_texts=["中间草稿一", "中间草稿二", "最终回复"]),
+        show_intermediate_replies=False,
+    )
+
+    assert sent == ["最终回复"]
+    assert result == "最终回复"
 
 
 @pytest.mark.asyncio

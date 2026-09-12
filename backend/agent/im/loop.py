@@ -882,7 +882,7 @@ async def dispatch_im_message(payload: dict):
         # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
         req.message = f"请立即开始执行目标任务：{goal_text}"
 
-    show_tool_interactions = await _should_show_tool_interactions(req.user_id)
+    show_tool_interactions, show_intermediate_replies = await _im_display_preferences(req.user_id)
     bind_im_context(req, payload, show_tool_interactions=show_tool_interactions)
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
@@ -951,6 +951,8 @@ async def dispatch_im_message(payload: dict):
         await _publish_web_event({"type": "token", "content": str(text)})
         index = immediate_round_index
         immediate_round_index += 1
+        if not show_intermediate_replies:
+            return True
         # 发送失败后不能再把后续 round 当成连续前缀；最终收尾会按已成功
         # 发送的 index 精确补发，避免丢失失败 round 或重复发送成功 round。
         if immediate_round_blocked:
@@ -1003,6 +1005,7 @@ async def dispatch_im_message(payload: dict):
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
+                show_intermediate_replies=show_intermediate_replies,
             )
             if resp is None:
                 # 没有可用飞书凭据时，流式网关不会消费生成器；继续走统一收集出口，
@@ -1022,7 +1025,8 @@ async def dispatch_im_message(payload: dict):
                 on_tool_event=_show_tool_event,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
-                payload, _mirror_stream(token_iter)
+                payload, _mirror_stream(token_iter),
+                show_intermediate_replies=show_intermediate_replies,
             )
         else:
             resp = await agent_loop.run_collect(
@@ -1048,6 +1052,8 @@ async def dispatch_im_message(payload: dict):
             if not web_stream_failed:
                 await _publish_web_event({"type": "done", "source": platform})
             await genstream.end(web_stream_session_id, owner_run_id=web_stream_owner_id)
+            from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+            await publish_session_pending_queue_changed(user_id, web_stream_session_id)
 
     await persist_im_session(
         platform,
@@ -1131,7 +1137,8 @@ async def dispatch_im_message(payload: dict):
             reply_text = resp.text or ""
     else:
         reply_text = await send_agent_response(
-            payload, resp, already_sent_rounds=sent_round_indices
+            payload, resp, already_sent_rounds=sent_round_indices,
+            show_intermediate_replies=show_intermediate_replies,
         )
 
     if reply_text is None:
@@ -1174,9 +1181,9 @@ async def dispatch_im_message(payload: dict):
     return resp
 
 
-async def _should_show_tool_interactions(user_id) -> bool:
-    from agent.interactions.preferences import show_tool_interactions
-    return await show_tool_interactions(user_id)
+async def _im_display_preferences(user_id) -> tuple[bool, bool]:
+    from agent.interactions.preferences import im_display_preferences
+    return await im_display_preferences(user_id)
 
 
 async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> bool:
