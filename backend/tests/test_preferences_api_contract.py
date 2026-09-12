@@ -55,7 +55,7 @@ def test_personality_is_in_static_prompt_only_when_enabled(monkeypatch):
     assert "称呼我为小北，回答先给结论。" in static
     assert "<user-preference>" not in static
     assert "## 咕咕人格（用户自定义）" not in static
-    assert "## 你能做什么" not in static
+    assert "## 1. 做事" not in static
     assert "用户人格偏好" not in dynamic
 
     disabled_static, _, _ = builder.build_split(
@@ -81,4 +81,4 @@ def test_empty_personality_keeps_default_persona(monkeypatch):
         "default", "测试用户", [], [],
         style_prefs={"personality_preference": "", "personality_preference_enabled": True},
     )
-    assert "## 你能做什么" in static
+    assert "## 1. 做事" in static

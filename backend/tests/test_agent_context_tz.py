@@ -37,7 +37,7 @@ def test_build_split_includes_default_profile_policy_in_static_prompt():
     assert "必须调用 `web_search` 重新核实" in static
     assert "外部事实硬门槛" in static
     assert "先 `use_skill(\"web-search\")`" in static
-    assert "不能凭记忆判断“应该知道”" in static
+    assert "不要因为「感觉应该知道」就跳过核实" in static
     assert "先调用 `search_memory` 搜索记忆，再回答" in static
     assert "检索仍没有相关结果" in static
     assert "当前、最新、最近" not in dynamic
