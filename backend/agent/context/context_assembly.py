@@ -16,8 +16,8 @@ def build_context(*, fixed_parts: Iterable[dict], history: Iterable[dict],
     fixed = tuple(dict(item) for item in fixed_parts)
     history_values = tuple(dict(item) for item in history)
     current = tuple(dict(item) for item in current_batch)
-    # 当前用户、RAG、姿态和时间都属于同一 current_turn；下一轮它们会正常进入
-    # canonical_history，不再维护独立 dynamic tail。
+    # 当前用户、RAG 和姿态属于 current_turn；每请求变化的当前时间由 PromptMessages
+    # 放入 provider-only dynamic tail，不进入 canonical_history。
     static = tuple(
         item for item in fixed
         if item.get("role") == "system"

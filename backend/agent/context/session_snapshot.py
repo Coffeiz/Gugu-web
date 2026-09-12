@@ -45,10 +45,10 @@ def _tz_storage_value(user_tz) -> str:
 
 
 def current_time_text(user_tz=None) -> str:
-    """生成每轮尾部的日期消息；精确时分由本轮 message-time block 提供。"""
+    """生成每轮 provider-only 时间提醒，包含当前日期与时分。"""
     current = datetime.now(user_tz or LOCAL_TZ)
     weekday = "一二三四五六日"[current.weekday()]
-    text = f"{current:%Y-%m-%d}（星期{weekday}）"
+    text = f"{current:%Y-%m-%d}（星期{weekday}）{current:%H:%M}"
     text += date_boundary_note(current.hour)
     return text
 

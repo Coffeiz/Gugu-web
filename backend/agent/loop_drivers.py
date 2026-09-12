@@ -50,7 +50,7 @@ from agent.providers.message_utils import (
     _contains_volatile_image,
     _history_cache_state,
     _openai_tool_result,
-    sanitize_openai_tool_history,
+    render_openai_request_history,
     _volatile_message_indices,
     _with_history_cache,
     _with_system_cache_control,
@@ -231,7 +231,16 @@ class AnthropicDriver:
             restored = {"role": "assistant", "content": copy.deepcopy(restored_blocks)}
             # 当前请求的 user 消息仍由业务历史提供；状态只在 provider boundary
             # 插入，且用完即清，避免同一次 run 重复回放旧响应。
-            if outbound and outbound[-1].get("role") == "user":
+            if hasattr(outbound, "conversation"):
+                # dynamic_tail 是仅本次请求使用的 provider 提醒，不是对话末尾。
+                # 恢复块要插入 conversation，不能通过切片把 PromptMessages 摊平，
+                # 否则后面的 Anthropic cache helper 会把动态提醒也当成稳定历史。
+                conversation = outbound.conversation
+                insert_at = len(conversation)
+                if conversation and conversation[-1].get("role") == "user":
+                    insert_at -= 1
+                outbound.insert(insert_at, restored)
+            elif outbound and outbound[-1].get("role") == "user":
                 outbound = outbound[:-1] + [restored, outbound[-1]]
             else:
                 outbound.append(restored)
@@ -386,7 +395,7 @@ class OpenAIDriver:
     async def run_round(self, client, ctx, messages):
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
-        outbound = ctx.adapter.render_history(messages)
+        outbound = render_openai_request_history(messages, ctx.adapter)
         # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
         # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
         # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
@@ -398,7 +407,6 @@ class OpenAIDriver:
                 messages = _with_history_cache(outbound)
         else:
             messages = outbound
-        messages = sanitize_openai_tool_history(messages)
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         stream = await client.chat.completions.create(

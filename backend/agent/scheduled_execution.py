@@ -55,9 +55,9 @@ def _build_scheduled_messages(
         batch, _ = assembly.assemble_turn(
             stance=stance_text,
             current_user={"role": "user", "content": user_content},
-            now_text=now_str,
         )
         messages.append_batch(batch)
+        messages.set_dynamic_tail([assembly.reminder(f"当前时间：{now_str}")])
         return messages
 
     messages = assembly.assemble(
@@ -68,9 +68,9 @@ def _build_scheduled_messages(
     batch, _ = assembly.assemble_turn(
         stance=stance_text,
         current_user={"role": "user", "content": user_content},
-        now_text=now_str,
     )
     messages.append_batch(batch)
+    messages.set_dynamic_tail([assembly.reminder(f"当前时间：{now_str}")])
     return messages
 
 

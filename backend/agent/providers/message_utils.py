@@ -37,8 +37,8 @@ def _volatile_message_indices(messages: list) -> set[int]:
     }
 
 
-def sanitize_openai_tool_history(messages: list) -> list:
-    """在 OpenAI Chat Completions 请求边界移除孤儿或不完整的工具轮次。
+def _sanitize_openai_tool_history(messages: list) -> tuple[list, dict[str, Any]]:
+    """清理 OpenAI 投影中的孤儿工具记录，并返回不含正文的变更摘要。
 
     旧会话经过截断/压缩后，可能以 role=tool 开头，或只留下 assistant 的部分
     parallel tool_calls。OpenAI 兼容 API 要求工具结果紧跟带有对应 tool_calls 的
@@ -121,15 +121,53 @@ def sanitize_openai_tool_history(messages: list) -> list:
         dynamic_tail = []
 
     cleaned_conversation, retained = clean_sequence(conversation)
-    cleaned_tail, _ = clean_sequence(dynamic_tail)
+    cleaned_tail, retained_tail = clean_sequence(dynamic_tail)
     changed = (
         cleaned_conversation != conversation
         or cleaned_tail != dynamic_tail
     )
+
+    def changed_indices(
+        original: list[dict],
+        cleaned: list[dict],
+        retained: list[int],
+        offset: int = 0,
+    ) -> tuple[list[int], int]:
+        retained_set = set(retained)
+        indexes = [offset + index for index in range(len(original)) if index not in retained_set]
+        indexes.extend(
+            offset + original_index
+            for clean_index, original_index in enumerate(retained)
+            if original[original_index] != cleaned[clean_index]
+        )
+        modified = sum(
+            original[original_index] != cleaned[clean_index]
+            for clean_index, original_index in enumerate(retained)
+        )
+        return indexes, modified
+
+    conversation_changes, conversation_modified = changed_indices(
+        conversation, cleaned_conversation, retained,
+    )
+    tail_changes, tail_modified = changed_indices(
+        dynamic_tail, cleaned_tail, retained_tail, offset=len(conversation),
+    )
+    changed_positions = conversation_changes + tail_changes
+    diagnostics = {
+        "applied": True,
+        "changed": changed,
+        "removed_messages": (
+            len(conversation) - len(retained)
+            + len(dynamic_tail) - len(retained_tail)
+        ),
+        "modified_messages": conversation_modified + tail_modified,
+        "first_changed_index": min(changed_positions) if changed_positions else None,
+    }
+
     if not is_prompt_messages:
-        return cleaned_conversation if changed else messages
+        return (cleaned_conversation if changed else messages), diagnostics
     if not changed:
-        return messages
+        return messages, diagnostics
 
     from agent.context.assembly import PromptMessages
 
@@ -150,7 +188,29 @@ def sanitize_openai_tool_history(messages: list) -> list:
             setattr(result, name, list(value) if name.startswith("_canonical_") else value)
     if hasattr(messages, "_canonical_batch_metadata"):
         result._canonical_batch_metadata = copy.deepcopy(messages._canonical_batch_metadata)
-    return result
+    return result, diagnostics
+
+
+def sanitize_openai_tool_history(messages: list) -> list:
+    """在 OpenAI Chat Completions 请求边界移除孤儿或不完整的工具轮次。"""
+    cleaned, _diagnostics = _sanitize_openai_tool_history(messages)
+    return cleaned
+
+
+def render_openai_request_history(
+    messages: list,
+    adapter,
+    *,
+    with_diagnostics: bool = False,
+) -> list | tuple[list, dict[str, Any]]:
+    """生成清洗后的 OpenAI provider 历史投影。
+
+    缓存策略、LoopScope 和实际 Chat Completions 请求必须共用这个投影；调用方应在
+    此步骤之后再计算/插入缓存锚点，避免清理历史后请求前缀与诊断指纹不一致。
+    """
+    rendered = adapter.render_history(messages)
+    cleaned, diagnostics = _sanitize_openai_tool_history(rendered)
+    return (cleaned, diagnostics) if with_diagnostics else cleaned
 
 
 def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
@@ -213,19 +273,38 @@ def _history_cache_state(messages: list) -> tuple[int, set[int]]:
     return stable_limit, anchor_indices
 
 
-def _cache_message_copy(messages: list, rendered: list[dict], stable_limit: int):
+def _without_cache_control(value: Any) -> Any:
+    """递归移除 provider 缓存标记，供动态尾缀出站前清理。"""
+    if isinstance(value, dict):
+        return {
+            key: _without_cache_control(item)
+            for key, item in value.items()
+            if key != "cache_control"
+        }
+    if isinstance(value, list):
+        return [_without_cache_control(item) for item in value]
+    return value
+
+
+def _cache_message_copy(messages: list, rendered: list[dict]):
     """复制缓存标记后的消息，同时保留 PromptMessages 的动态尾缀边界。"""
     if not hasattr(messages, "conversation"):
         return rendered
 
     from agent.context.assembly import PromptMessages
 
+    # 缓存锚点可以因内联图片而提前截止，但 conversation 与 provider-only
+    # dynamic_tail 的边界仍由 PromptMessages 自己定义，两者不能混用。
+    conversation_count = len(messages.conversation)
     result = PromptMessages(
-        rendered[:stable_limit],
+        rendered[:conversation_count],
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
     )
-    if len(rendered) > stable_limit:
-        result.set_dynamic_tail(rendered[stable_limit:])
+    if len(rendered) > conversation_count:
+        result.set_dynamic_tail([
+            _without_cache_control(message)
+            for message in rendered[conversation_count:]
+        ])
     result._cache_anchor_indices = list(getattr(messages, "cache_anchor_indices", ()))
     for name in (
         "canonical_context", "_canonical_batches", "_canonical_batch_digests",
@@ -244,7 +323,7 @@ def _with_history_cache(messages: list) -> list:
     # 动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾。
     stable_limit, anchor_indices = _history_cache_state(messages)
     if stable_limit <= 0:
-        return list(messages)
+        return _cache_message_copy(messages, list(messages))
     remember_anchor = getattr(messages, "remember_cache_anchor", None)
     if remember_anchor is not None:
         for index in sorted(anchor_indices):
@@ -266,7 +345,7 @@ def _with_history_cache(messages: list) -> list:
             }]
         new_messages.append(clone)
 
-    return _cache_message_copy(messages, new_messages, stable_limit)
+    return _cache_message_copy(messages, new_messages)
 
 
 def _with_single_history_cache(messages: list) -> list:
@@ -277,7 +356,7 @@ def _with_single_history_cache(messages: list) -> list:
     """
     stable_limit, anchor_indices = _history_cache_state(messages)
     if stable_limit <= 0:
-        return list(messages)
+        return _cache_message_copy(messages, list(messages))
     # _history_cache_state 还会返回旧 baseline，供其它 provider 跨续轮使用；
     # Qwen 只能发送最新一个历史锚点，避免 provider 在工具续轮中回退到旧短前缀。
     latest_history_anchor = max(anchor_indices) if anchor_indices else None
@@ -311,13 +390,14 @@ def _with_single_history_cache(messages: list) -> list:
                 for block in content
             ]
         new_messages.append(clone)
-    return _cache_message_copy(messages, new_messages, stable_limit)
+    return _cache_message_copy(messages, new_messages)
 
 
 def _with_system_cache_control(messages: list) -> list:
     """只在 provider 请求副本上标记连续 system 前缀，避免污染会话 history。"""
-    result = copy.deepcopy(messages)
-    for message in result:
+    conversation_count = len(getattr(messages, "conversation", messages))
+    result = copy.deepcopy(list(messages))
+    for message in result[:conversation_count]:
         if message.get("role") != "system":
             break
         content = message.get("content")
@@ -331,7 +411,8 @@ def _with_system_cache_control(messages: list) -> list:
                 *content[:-1],
                 {**content[-1], "cache_control": {"type": "ephemeral"}},
             ]
-    return result
+    # _cache_message_copy 统一负责恢复 PromptMessages 边界并清理 dynamic_tail。
+    return _cache_message_copy(messages, result)
 
 
 def _openai_tool_result(res: Any, *, allow_images: bool = True) -> tuple[str, list[dict]]:

@@ -13,7 +13,11 @@ from agent.loop_drivers import (
     _with_history_cache,
 )
 from agent.context.assembly import PromptMessages
-from agent.providers.message_utils import sanitize_openai_tool_history
+from agent.providers.message_utils import (
+    render_openai_request_history,
+    sanitize_openai_tool_history,
+    _with_system_cache_control,
+)
 from agent.runtime.loopscope_trace.utils import _cache_diagnostics
 
 
@@ -205,6 +209,99 @@ def test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_meta
     assert [call["id"] for call in cleaned[1]["tool_calls"]] == ["present"]
     assert cleaned.fixed_prefix_size == 1
     assert cleaned.cache_anchor_indices == [3]
+
+
+def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
+    ai = SimpleNamespace(provider="openai", api_format="openai", model="test-model")
+    adapter = adapter_for(ai)
+    messages = PromptMessages([
+        {"role": "system", "content": "稳定系统提示"},
+        {"role": "user", "content": "上一轮用户消息"},
+        {"role": "tool", "tool_call_id": "stale", "content": "孤儿结果"},
+        {"role": "user", "content": "本轮用户消息"},
+    ], fixed_prefix_size=1)
+
+    projected, sanitization = render_openai_request_history(
+        messages, adapter, with_diagnostics=True,
+    )
+
+    assert [message["role"] for message in projected] == ["system", "user", "user"]
+    assert sanitization == {
+        "applied": True,
+        "changed": True,
+        "removed_messages": 1,
+        "modified_messages": 0,
+        "first_changed_index": 2,
+    }
+    assert [message["role"] for message in messages] == ["system", "user", "tool", "user"]
+
+    cached = _with_history_cache(_with_system_cache_control(projected))
+    assert [message["role"] for message in cached] == ["system", "user", "user"]
+    assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    context = SimpleNamespace(
+        tools=[],
+        supports_active_cache=True,
+        adapter=adapter,
+        ai=ai,
+    )
+
+    raw_diagnostics = _cache_diagnostics(messages, context)
+    projected_diagnostics = _cache_diagnostics(
+        projected, context, provider_projected=True,
+    )
+    assert raw_diagnostics["conversation_messages"] == 3
+    assert raw_diagnostics["cache_anchor_indices"] == [1, 2]
+    assert raw_diagnostics["stable_prefix_digest"] == projected_diagnostics[
+        "stable_prefix_digest"
+    ]
+
+
+def test_openai_driver_sends_sanitized_provider_projection():
+    class _Stream:
+        async def __aiter__(self):
+            delta = SimpleNamespace(content="ok", reasoning_content=None, tool_calls=[])
+            yield SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=delta)])
+
+        async def close(self):
+            return None
+
+    class _Completions:
+        kwargs = None
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return _Stream()
+
+    ai = SimpleNamespace(provider="openai", api_format="openai", model="test-model")
+    adapter = adapter_for(ai)
+    completions = _Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    context = SimpleNamespace(
+        adapter=adapter,
+        ai=ai,
+        model=ai.model,
+        tools=[],
+        max_tokens=64,
+        think_kwargs={},
+        supports_explicit_cache=False,
+    )
+    messages = [
+        {"role": "system", "content": "stable"},
+        {"role": "tool", "tool_call_id": "stale", "content": "orphan"},
+        {"role": "user", "content": "current"},
+    ]
+
+    async def _run():
+        return [item async for item in OpenAIDriver().run_round(client, context, messages)]
+
+    asyncio.run(_run())
+
+    assert [message["role"] for message in completions.kwargs["messages"]] == [
+        "system", "user",
+    ]
+    assert messages[1]["role"] == "tool"  # 清洗仅作用于出站副本
 
 
 def test_deepseek_driver_drops_orphan_tool_result_before_request():

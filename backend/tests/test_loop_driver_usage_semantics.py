@@ -140,6 +140,62 @@ async def test_anthropic_split_usage_passes_through(monkeypatch):
     assert result.usage_out == 5
 
 
+@pytest.mark.asyncio
+async def test_anthropic_restored_blocks_do_not_flatten_dynamic_tail(monkeypatch):
+    import agent.core as core
+
+    captured = {}
+    final = SimpleNamespace(
+        content=[],
+        usage=SimpleNamespace(
+            input_tokens=5, output_tokens=1,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ),
+    )
+
+    async def fake_stream_round(_client, kwargs, _adapter):
+        captured.update(kwargs)
+        yield ("final", final)
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    messages = PromptMessages([
+        {"role": "system", "content": [{"type": "text", "text": "稳定快照"}]},
+        {"role": "user", "content": [{"type": "text", "text": "当前问题"}]},
+    ])
+    messages.set_dynamic_tail([{
+        "role": "user",
+        "content": [{"type": "text", "text": "当前时间提醒"}],
+    }])
+    ctx = SimpleNamespace(
+        model="claude-test", max_tokens=32, tools=[],
+        system_param={}, thinking_param={}, generation_param={},
+        supports_active_cache=True,
+        restored_blocks=[{"type": "thinking", "thinking": "已恢复状态"}],
+        adapter=SimpleNamespace(render_history=render_events_for_provider),
+    )
+
+    async for _kind, _value in AnthropicDriver().run_round(object(), ctx, messages):
+        pass
+
+    outbound = captured["messages"]
+    assert isinstance(outbound, PromptMessages)
+    assert [message["role"] for message in outbound.conversation] == [
+        "user", "assistant", "user",
+    ]
+    assert outbound.conversation[1]["content"][0]["thinking"] == "已恢复状态"
+    assert outbound.dynamic_tail == [{
+        "role": "user", "content": [{"type": "text", "text": "当前时间提醒"}],
+    }]
+    assert not any(
+        "cache_control" in block
+        for message in outbound.dynamic_tail
+        for block in (message.get("content") or [])
+        if isinstance(block, dict)
+    )
+    assert len(messages.conversation) == 2
+    assert ctx.restored_blocks is None
+
+
 def test_anthropic_history_sanitizes_before_provider_render():
     """canonical time-context 保持独立边界，不应在每轮渲染后重复清洗。"""
     messages = PromptMessages([
