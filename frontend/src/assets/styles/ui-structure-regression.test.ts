@@ -86,6 +86,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(componentTokens).not.toContain('box-shadow var(--motion-hover-card) ease')
   })
 
+  it('画布便签由组件保留完整的 hover 阴影过渡，不被通用卡片动效覆盖', () => {
+    expect(componentThemeRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card)')
+    expect(noteCard).toContain('box-shadow 0.3s ease')
+  })
+
   it('通知弹窗的滚动滑块跟随弹窗生命周期并位于内容表面之上', () => {
     expect(overlayScrollbars).toContain('.chat-window, .drawer-shell, .bm-card, .notif-popup')
     expect(overlayScrollbars).toContain("thumb.classList.add('overlay-scrollbar--notif')")

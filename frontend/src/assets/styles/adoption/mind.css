@@ -2,17 +2,16 @@
    the file-card dark contract; do not duplicate file-card styling here. */
 html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); }
 
-/* Floating Mind chrome is not a content card. Mono keeps its quieter card language but restores a
-   translucent backdrop surface for the top mode switcher, canvas drawer, bottom toolbar and the
-   toolbar's object picker. Drawer/toolbar/picker are .glass-card: remap the whole component contract,
-   including --glass-card-blur. product.css owns the final Mono .glass-card backdrop declaration and
-   resolves this local token, so content cards can stay no-blur without a specificity fight here. */
+/* Mind navigation and floating note/canvas chrome intentionally retain blur as explicit glass surfaces. */
 html[data-family='mono'] .mind-tabs {
   background: var(--chrome-glass-bg);
   border-color: var(--chrome-glass-border);
   box-shadow: var(--chrome-glass-shadow);
   backdrop-filter: var(--chrome-glass-blur);
   -webkit-backdrop-filter: var(--chrome-glass-blur);
+}
+html[data-theme][data-family] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
+  --glass-card-blur: var(--glass-blur);
 }
 html[data-family='mono'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   --glass-card-background: var(--chrome-glass-bg);
@@ -21,7 +20,6 @@ html[data-family='mono'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   --glass-card-border-hover: var(--chrome-glass-border);
   --glass-card-shadow: var(--chrome-glass-shadow);
   --glass-card-shadow-hover: var(--chrome-glass-shadow);
-  --glass-card-blur: var(--chrome-glass-blur);
   background: var(--glass-card-background);
   border-color: var(--glass-card-border);
   box-shadow: var(--glass-card-shadow);

@@ -25,22 +25,8 @@
   --gugu-fab-hover-shadow: 0 6px 20px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.16);
 }
 
-/* ── Topbar: shell is quiet in dark; both child buttons animate in both themes. ── */
-html[data-theme][data-family] .topbar {
-  transition: box-shadow var(--hover-motion-control);
-}
-html[data-theme='dark'][data-family] .topbar:hover {
-  --gb-tint: var(--glass-bg);
-  box-shadow: var(--topbar-shadow);
-}
-/* ── Calendar toolbar shell + controls ── */
-html[data-theme][data-family] .cal-toolbar {
-  transition: box-shadow var(--hover-motion-control);
-}
-html[data-theme='dark'][data-family] .cal-toolbar:hover {
-  --gb-tint: var(--glass-bg);
-  box-shadow: var(--glass-card-shadow);
-}
+/* ── Topbar / calendar toolbar controls ──
+   玻璃宿主保持静态，只有内部控件提供 hover 反馈。 */
 html[data-theme][data-family] .cal-toolbar .nav-btn,
 html[data-theme][data-family] .cal-toolbar .period-btn,
 html[data-theme][data-family] .cal-toolbar .today-btn,

@@ -86,7 +86,7 @@ const loading = ref(false)
 const groups  = ref<SearchGroup[]>([])
 const total   = ref(0)
 
-// 面板 Teleport 到 body（脱离顶栏的 backdrop-filter，blur 才生效），用 fixed 跟随搜索框定位
+// 面板 Teleport 到 body，脱离页面布局的层叠上下文后再绘制浮层 blur；用 fixed 跟随搜索框定位
 const panelStyle = ref({})
 function updatePanelPos() {
   const r = wrapEl.value?.getBoundingClientRect()

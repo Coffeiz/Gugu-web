@@ -85,7 +85,7 @@ defineExpose({ barsEl: computed(() => barsEl.value) })
 .mini-player {
   position: fixed; right: 28px; box-sizing: border-box; width: 360px;   /* border-box 外宽 360，与小窗/气泡严格对齐 */
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
-  background: var(--glass-card-background); backdrop-filter: var(--glass-card-blur); -webkit-backdrop-filter: var(--glass-card-blur);
+  background: var(--glass-card-background); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-card-border); border-radius: var(--card-radius);
   box-shadow: var(--glass-card-shadow); padding: 12px 14px 10px;
   display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */
