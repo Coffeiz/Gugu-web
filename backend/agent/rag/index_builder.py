@@ -395,7 +395,11 @@ async def records_to_write_documents(
     *,
     settings=None,
 ) -> list[IndexDocument]:
-    """把授权 source record 经 TS canonical projection 转为持久化文档。"""
+    """把授权 source record 经 TS canonical projection 转为持久化文档。
+
+    record 按条数与估算字节双阈值分块投递：整来源单行 JSONL 会超过 worker
+    流上限（32MB），file 语料涨过该线后来源级重建持续失败（09-10 起）。
+    """
     from app.core.config import get_settings
 
     settings = settings or get_settings()
@@ -411,13 +415,39 @@ async def records_to_write_documents(
         index_dir=index_dir_for_owner(owner_user_id),
     )
     payload = [{**record, "scope": scope_to_wire(scope)} for record, scope in records]
-    wire_documents = await client.adapt_records(source_type, payload)
+    wire_documents: list[dict] = []
+    for chunk in _chunk_projection_payload(payload):
+        wire_documents.extend(await client.adapt_records(source_type, chunk))
     documents = [wire_document_to_persistent(raw, owner_user_id) for raw in wire_documents]
     logging.getLogger("agent.rag.index_builder").info(
         "RAG 写库投影 engine=ts source=%s records=%s chunks=%s elapsed_ms=%s",
         source_type, len(records), len(documents), int((time.monotonic() - started) * 1000),
     )
     return documents
+
+
+ADAPT_CHUNK_MAX_RECORDS = 400
+ADAPT_CHUNK_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _chunk_projection_payload(payload: list[dict]) -> list[list[dict]]:
+    """按条数与估算字节把投影 payload 分块，单块远低于 worker 流上限。"""
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_bytes = 0
+    for item in payload:
+        size = len(item.get("content") or "") + len(item.get("title") or "") \
+            + len(item.get("summary") or "") + 512
+        if current and (len(current) >= ADAPT_CHUNK_MAX_RECORDS
+                        or current_bytes + size > ADAPT_CHUNK_MAX_BYTES):
+            chunks.append(current)
+            current = []
+            current_bytes = 0
+        current.append(item)
+        current_bytes += size
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 async def build_source_documents(db, owner_user_id: object, source_type: str) -> list[IndexDocument]:
