@@ -1,6 +1,6 @@
 # PRD-MCP-1：用户自带 MCP 工具接入
 
-> 状态：全部待实施（方向已定稿：用户自己配置 MCP server，平台只保留基础接入能力；未开始编码）
+> 状态：全部待实施（方向已定稿：首发支持用户自定义 MCP；平台级官方 MCP 暂缓——默认接什么未定，Admin 保留能力与扩展位；未开始编码）
 > 创建：2026-09-13
 > 最近更新：2026-09-13
 > 关联模块：`backend/agent/tools/base.py`、`backend/agent/capabilities/selector.py`、`backend/agent/loop_drivers.py`、`backend/agent/core.py`、`backend/app/security/`（凭据加密）、`frontend/src/views/`（用户设置页）
@@ -14,7 +14,7 @@
 | 用户 MCP 配置管理（设置页 CRUD、凭据加密存储） | 🔲 | 未实施 |
 | 用户 MCP 工具进入对话（声明、调用、确认门） | 🔲 | 未实施 |
 | stdio 本地 server 接入（强制沙盒化） | 🔲 | 未实施，Phase 2 |
-| Admin 全局 MCP server 目录 | 🔲 | 明确不做（方向定稿：用户自带，平台不做服务端目录） |
+| 平台级官方 MCP（Admin 配置、全体用户可用） | 🔲 | 暂缓：默认接什么未定；数据模型与合并逻辑预留 `scope=platform` 扩展位，Admin 总开关与总量统计能力保留 |
 
 ## 1. 背景与目标
 
@@ -26,9 +26,9 @@
 - MCP 工具与 builtin 工具走同一条执行契约：schema 校验、参数归一化、调用熔断、结果预算、确认门全部复用，不为 MCP 开第二条执行路径。
 - 用户凭据加密存储、不进日志；单个 server 故障只影响该 server，不拖垮 Agent Loop。
 
-明确不做：
+明确不做（本期）：
 
-- 不做 Admin 全局 MCP server 目录/市场（平台不代配置任何 server）。
+- 平台级官方 MCP 目录**暂缓**：默认接什么还没想好，本期不实现、不做 UI；但 Admin 能力保留（`mcp.enabled` 总开关、总量统计），数据模型与工具合并逻辑预留平台级来源扩展位，选型定案后可平滑补上。
 - 不接 MCP 的 resources / prompts / sampling 能力，只接 **tools**。
 - 不做 MCP server 托管/发布。
 - 不改变现有 builtin 工具的注册、快照与 dispatch 语义。
@@ -40,6 +40,7 @@
 - 用户在设置页维护自己的 MCP server 列表，每个条目包含：名称（用户内唯一，作命名空间）、传输类型（Phase 1 仅 `http`，Phase 2 增 `stdio`）、endpoint URL、可选请求头（如 `Authorization`）、启用开关、超时秒数、工具白名单（为空 = 全部）、确认模式（`auto` / `confirm_all`，默认 `confirm_all`，用户可改 `auto`）。
 - 配置存数据库（用户维度表），请求头凭据使用平台凭据主密钥加密落库，任何接口不回显明文。删除 server 级联清掉其工具缓存。
 - 数量上限：每用户最多 5 个 server、单 server 最多 32 个工具、每用户可见工具总量最多 64 个；超上限保存/加载被拒并给出人话提示。
+- 配置模型带 `scope` 字段：本期只实现 `scope=user`（用户自己维护）；`scope=platform`（Admin 维护、全体用户可用）仅预留字段与合并分支，不做 UI、不写入数据。
 - 保留平台总开关 `mcp.enabled`（配置项，默认关）：运维侧一键摘除全部 MCP 工具，用户配置保留。
 
 ### FR-MCP-2：工具发现与注册
@@ -82,6 +83,7 @@
 
 - **不进主 `SkillRegistry` 快照**：主快照进程级冻结，且 MCP 工具是「按用户动态」的，进全局快照语义不成立。`McpToolManager` 按 `(user_id, server_id)` 持有工具列表，在两处汇入：轮次组装 `ctx.tools` 时按当前用户合并声明；`dispatch` 入口按 `source="mcp"` 路由。主 registry 冻结、重名校验、快照语义零改动。
 - **配置走数据库而非 override**：每用户维度 + 凭据加密决定了必须落库（`ai_presets` 的 override 先例只适合全局 Admin 配置）；配置在 DB，backend 与 worker（定时任务）天然读到同一份，无多进程一致性问题。
+- **预留平台级来源**：工具缓存键与包装统一带 `scope` 维度（本期仅 `scope=user` 生效）；表设计 `user_id` 可空（NULL=平台级，本期不写入），未来 Admin 配置官方 server 时只补配置入口，merge/dispatch 层不再动。
 - **Phase 1 手写最小客户端**：只用到 `initialize` / `tools/list` / `tools/call`，`httpx` 实现 JSON-RPC（streamable HTTP）即可；stdio 留 Phase 2 且强制容器沙盒（用户不可信命令不得宿主直跑）。
 - **凭据加密复用平台主密钥体系**（BYOK 同一套 `CREDENTIALS_MASTER_KEY_FILE`），不新造加密机制。
 
@@ -126,11 +128,11 @@ frontend/src/
 - `agent/tools/base.py` 的 `SkillRegistry` 快照语义、重名校验、builtin 工具定义**明确不改**；MCP 工具不调用 `SkillRegistry.add()`。
 - `agent/context/` 压缩与缓存对齐链路**不改**；MCP 声明只是 `ctx.tools` 按用户的追加项。
 - `schema_adapter` 是唯一做 schema 降级的地方，规则必须可单测，禁止散落在 manager/client。
-- Admin 后台**不新增** MCP 管理页（方向定稿）；仅有平台级总量统计可后续挂进现有用量页，不在本 PRD 范围内单独建页。
+- Admin 后台本期**不新增** MCP 管理页（平台级选型未定，暂缓不等于移除）；本期 Admin 能力=总开关 + 用量总量统计，平台级来源的扩展位见 3.1，选型定案后补配置入口即可。
 
 ### 3.3 数据与隐私边界
 
-- `user_mcp_servers` 表：`user_id` 外键、名称用户内唯一索引、endpoint、传输类型、加密后的 headers、enabled、confirm_mode、超时、白名单 JSON、时间戳；迁移向下兼容（downgrade 删表）。
+- `user_mcp_servers` 表：`user_id` 可空外键（NULL=平台级来源，本期不写入）、名称在所属 scope 内唯一、endpoint、传输类型、加密后的 headers、`scope`、enabled、confirm_mode、超时、白名单 JSON、时间戳；迁移向下兼容（downgrade 删表）。
 - 凭据只以密文落库；解密只发生在向该用户的 server 发请求时；Admin 与用户列表接口一律掩码。
 - MCP 工具结果按既有工具输出规则进上下文与轨迹，不额外落可见日志。
 
@@ -159,6 +161,7 @@ frontend/src/
 2. 每用户 5 server / 64 工具的上限量值是否合适（可配置，先给默认）。
 3. IM 场景默认开放 MCP 工具，还是先只开 Web、IM 二期再放（本稿按全渠道同步生效）。
 4. 平台总开关 `mcp.enabled` 首发默认关、由你择时打开——是否符合预期。
+5. 平台级官方 MCP 的默认接入选型（接什么 server、凭据谁出、是否与内置工具重叠）未定——定案后按 `scope=platform` 预留位实施。
 
 ## 6. 唯一实施 TODO
 
@@ -166,7 +169,7 @@ frontend/src/
 
 - [ ] `MCP1-001` 实现 `mcp/client.py` 最小 JSON-RPC 客户端（initialize / tools/list / tools/call，streamable HTTP），含超时与结构化错误；验收：对 FakeMcpServer 与真实 echo server 完成 list/call 往返，超时返回 `{"error": ...}` 而非异常。
 - [ ] `MCP1-002` 实现 `mcp/schema_adapter.py` 消毒与前缀、上限、Tool 包装（source=mcp、mutates=True、repeat_safe=False）；验收：`test_mcp_schema_adapter.py` 覆盖拒载/降级/裁剪/重名用例全部通过。
-- [ ] `MCP1-003` `user_mcp_servers` ORM 模型 + Alembic 迁移 + 凭据加密接入（复用平台主密钥）；验收：`alembic upgrade/downgrade` 往返通过，密文落库、用户内名称唯一索引生效。
+- [ ] `MCP1-003` `user_mcp_servers` ORM 模型 + Alembic 迁移 + 凭据加密接入（复用平台主密钥），表含 `scope` 与可空 `user_id` 预留位；验收：`alembic upgrade/downgrade` 往返通过，密文落库、scope 内名称唯一约束生效。
 - [ ] `MCP1-004` 用户侧 CRUD + 连接测试 API（`/api/v1/mcp/servers`），含 URL 安全校验、上限拒绝、凭据掩码；验收：`test_mcp_settings_api.py` 通过，越权访问他人 server 返回 404。
 - [ ] `MCP1-005` 实现 `mcp/manager.py`：按 `(user, server)` 的工具缓存、dispatch 路由、退避、配置失效；验收：`test_mcp_manager_dispatch.py` 通过，跨用户隔离与 server 停机人话错误用例通过。
 - [ ] `MCP1-006` 接入 `loop_drivers.py` 按用户声明合并、`core.py` dispatch 路由、selector 合并；验收：用户配置后模型可见 `mcp_*` 工具并完成真实调用二轮对话；关闭 `mcp.enabled` 后从声明消失，未配置用户与 builtin 行为不变。
@@ -178,7 +181,8 @@ frontend/src/
 - [ ] `MCP1-009` stdio 传输客户端：子进程在 rootless docker 沙盒内运行（沿 Dockerfile.sandbox 设施），宿主零直跑；含空闲回收、崩溃重启上限；验收：stdio echo server 在 devserver 沙盒内全链路可用，僵尸进程可回收，宿主文件系统不可见。
 - [ ] `MCP1-010` server 连接状态细览与手动「重新连接」；验收：设置页可触发重连并反映最新工具列表。
 
-### Phase 3：体验增强（按需）
+### Phase 3：体验增强与平台级预留（按需）
 
 - [ ] `MCP1-011` 常用 server 连接模板（预填 endpoint/参数结构，凭据仍用户自填）；验收：模板仅生成配置草稿，不内置任何平台凭据。
 - [ ] `MCP1-012` 用户级调用配额与用量展示（scenario=mcp 已打标，补页面呈现）；验收：用量页可见 MCP 分类统计。
+- [ ] `MCP1-013` 平台级官方 MCP（`scope=platform`）：Admin 配置入口、全体用户零配置可见官方工具；前置条件：官方默认接什么已定案（待确认 5）；验收：按预留扩展位实施，用户无感获得平台工具且可按 server 白名单禁用。
