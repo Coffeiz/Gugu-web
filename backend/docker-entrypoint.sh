@@ -73,8 +73,12 @@ priority=10
 autorestart=true
 EOF
     # RAG worker 宿主：常驻托管 per-owner TS worker，应用进程经 unix socket 共享热索引。
+    # 仅非单容器模式由 supervisord 托管；GUGU_SINGLE_CONTAINER=1 时由后面的
+    # monitored_pids 块负责，两处都起会互相顶掉同一路径的 socket。
     mkdir -p /run/gugu
-    cat >> "$EMBED_RUN/supervisord.conf" <<SUPERVISEOF
+    export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
+    if [ "${GUGU_SINGLE_CONTAINER:-0}" != "1" ]; then
+        cat >> "$EMBED_RUN/supervisord.conf" <<SUPERVISEOF
 
 [program:rag-sidecar]
 directory=/app
@@ -82,8 +86,7 @@ command=python -m agent.rag.sidecar_host --socket /run/gugu/rag-sidecar.sock
 priority=15
 autorestart=true
 SUPERVISEOF
-    # 应用进程与 worker/gateway 都经该 socket 共享宿主（client 不可达时自动回退 spawn）
-    export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
+    fi
     # 沙盒需要能创建隔离容器：仅当用户显式挂载了 docker socket 才把 sandboxd 纳入托管，
     # 否则不启动（Shell 能力保持不可用，不影响其余功能）。
     if [ -S /var/run/docker.sock ]; then

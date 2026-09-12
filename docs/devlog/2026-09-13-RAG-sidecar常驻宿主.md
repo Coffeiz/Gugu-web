@@ -65,3 +65,25 @@ sidecar/缓存都是进程本地，请求落到冷进程就要全量 DB 装载 4
 
 `config.override.json` 移除 `ts_sidecar_socket` 单键（或恢复备份）并重启 backend/
 worker/gateway 即回到进程内 spawn；`systemctl disable --now gugu-rag-sidecar` 可选。
+
+## 镜像与 compose 起服务验证（同日补充）
+
+- **发现并修复双实例缺陷**：一体化镜像（根 `Dockerfile`）默认 `GUGU_SINGLE_CONTAINER=1`，
+  入口的 embedded 分支（supervisord `[program:rag-sidecar]`）和单容器分支
+  （monitored_pids）会同时各起一个 sidecar_host，后者启动时 unlink 前者的 socket
+  互相顶。修复：supervisord 块加 `GUGU_SINGLE_CONTAINER != 1` 门控，
+  单容器模式统一由 monitored_pids 负责（两分支写同一个 socket 路径的语义不变）。
+- **一体化镜像**（`docker build -f Dockerfile`）：构建成功（仅既有的
+  SecretsUsedInArgOrEnv 警告）；容器 `healthy`，进程面 = postgres 17 + redis +
+  **单个 sidecar_host** + uvicorn(8001) + nginx，`/run/gugu/rag-sidecar.sock` 存在，
+  9595 健康端点 `{"status":"ok"}`。
+- **分离部署 compose**（`docker-compose.prod.yml`）：`config -q` 合法（需
+  GUGU_BACKEND_IMAGE / GUGU_FRONTEND_IMAGE / GUGU_DB_PASSWORD 等 required 变量）；
+  `compose up postgres redis searxng egress-proxy migrate data-migrate backend`
+  全链拉起：postgres/redis healthy、两个迁移 job Exited(0)、backend healthy 且
+  容器内 `/health` 通过。分离模式下 backend 容器无 `SEARCH__TS_SIDECAR_SOCKET`，
+  按设计回退进程内 spawn。
+- **构建环境备忘**：devserver rootless dockerd 无代理，Docker Hub 直连超时；
+  基础镜像与 buildkit 前端用 `docker.1ms.run` 预拉后 retag（`python:3.14-slim-trixie`、
+  `node:22-trixie`、`docker/dockerfile:1`）。
+- 验证镜像/容器/临时卷已清理。
