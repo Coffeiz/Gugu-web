@@ -21,7 +21,7 @@ from app.core import events
 from app.db.session import get_db
 from app.models import User, TerminalSessionRecord, Workspace
 from app.services.terminals import (
-    create_terminal, delete_terminal, get_terminal, list_terminals,
+    create_terminal, delete_terminal, enforce_agent_terminal_cap, get_terminal, list_terminals,
     terminate_terminal as terminate_terminal_record,
     prune_terminals, reopen_terminal, reset_terminal, rename_terminal, serialize_event, serialize_terminal, terminal_events, terminal_metrics,
     append_shell_result, append_terminal_status,
@@ -127,6 +127,7 @@ async def get_terminals(user: User = Depends(get_current_user), db: AsyncSession
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
     await prune_terminals(db, user.id)
+    await enforce_agent_terminal_cap(db, user.id)
     await db.commit()
     rows = await list_terminals(db, user.id)
     pty_status = await pty_access(db, user.id)

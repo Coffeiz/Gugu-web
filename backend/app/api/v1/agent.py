@@ -8,9 +8,9 @@ import json
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Path, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ from app.core.ownership import get_owned
 from app.core.tz import iso_utc, now_utc
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, User, UserBot, Workspace
-from app.services import interactions
+from app.services import conversation_pending_queue, interactions
 from app.services.workspaces import resolve_sandbox_root, workspace_shell_supported
 from app.services.filesystem_authorization import (
     SUBJECT_SESSION,
@@ -38,19 +38,85 @@ from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-_MAX_ATTACH_BYTES = 10 * 1024 * 1024   # 单个聊天附件上限 10MB
+_MAX_ATTACH_BYTES = 512 * 1024 * 1024   # 单个聊天附件上限 512MB（与 nginx client_max_body_size 对齐）
+# 音频候选（voice/audio mime/转码候选扩展名）materialize 成整字节的独立上限：
+# 转码与时长探测无法流式，超限按原样流式暂存（voice 录音直接拒）。
+_AUDIO_MATERIALIZE_CAP = 64 * 1024 * 1024
 
 
 class ChatRequest(BaseModel):
     message: str
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     session_id: Optional[int] = None
+    pending_queue_id: Optional[str] = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    pending_queue_item_key: Optional[int] = Field(default=None, gt=0)
+    pending_queue_claim_token: Optional[str] = Field(default=None, max_length=128)
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
     references: Optional[list[dict]] = None   # 用户通过 @ 补全选中的业务对象
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
     interaction_prompt_id: Optional[int] = None
     interaction_token: Optional[str] = None
     interaction_event_id: Optional[str] = None
+
+
+class PendingQueueAttachment(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    file_id: Optional[int] = None
+    attach_id: Optional[str] = Field(default=None, max_length=128)
+    name: Optional[str] = Field(default=None, max_length=512)
+    ext: Optional[str] = Field(default=None, max_length=32)
+    size: Optional[int] = Field(default=None, ge=0)
+    size_bytes: Optional[int] = Field(default=None, ge=0)
+    kind: Optional[str] = Field(default=None, max_length=32)
+    mime: Optional[str] = Field(default=None, max_length=128)
+    qq_face: Optional[bool] = None
+    quoted: Optional[bool] = None
+    duration: Optional[float] = Field(default=None, ge=0)
+    upload: Optional[bool] = None
+    img_width: Optional[int] = Field(default=None, ge=0)
+    img_height: Optional[int] = Field(default=None, ge=0)
+
+
+class PendingQueueReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["project", "file", "event", "conversation"]
+    id: int = Field(gt=0)
+    label: str = Field(max_length=512)
+
+
+class PendingQueueItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: int = Field(gt=0)
+    text: str = Field(max_length=200_000)
+    attachments: list[PendingQueueAttachment] = Field(default_factory=list, max_length=32)
+    references: list[PendingQueueReference] = Field(default_factory=list, max_length=50)
+
+
+class PendingQueueUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[PendingQueueItem] = Field(max_length=200)
+
+
+class PendingQueuePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: int = Field(gt=0)
+    items: list[PendingQueueItem] = Field(default_factory=list, max_length=200)
+    remove_keys: list[int] = Field(default_factory=list, max_length=200)
+
+
+class PendingQueueClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: int = Field(gt=0)
+
+
+class PendingQueueReleaseRequest(PendingQueueClaimRequest):
+    claim_token: str = Field(min_length=1, max_length=128)
 
 
 class InteractionResponseRequest(BaseModel):
@@ -206,27 +272,59 @@ async def upload_attachment(
     """聊天附件上传：暂存（不进文件库），返回 attach_id。咕咕可看内容/可保存。"""
     from app.core import media_transcode
     from app.core.config import get_settings
+    from app.core.upload_stream import spool_upload
     from agent import providers
-    data = await file.read()
-    if len(data) > _MAX_ATTACH_BYTES:
-        raise HTTPException(400, "文件太大（聊天附件上限 10MB）")
+    # 分块收流：内存峰值与附件上限解耦；只有转码/语音路径才 materialize 成字节。
+    spool, size, _sha = await spool_upload(
+        file, limit=_MAX_ATTACH_BYTES, status_code=400,
+        message=f"文件太大（聊天附件上限 {_MAX_ATTACH_BYTES // 1048576}MB）")
     parts = (file.filename or "file").rsplit(".", 1)
     name = parts[0] or "file"
     ext = parts[1] if len(parts) > 1 else ""
     # 语音录音：浏览器多录成 webm/opus（mimo 不收）→ 转成 mp3 再暂存，让 mimo 能听。
     # m4a(Safari)/ogg(Firefox) 是 mimo 原生格式、免转；缺 ffmpeg 则原样、退文字提示。
-    if (ext or "").lower() not in ("mp3", "wav", "flac", "m4a", "ogg"):
-        conv = media_transcode.to_provider_audio(data, ext, file.content_type,
-                                                 providers.adapter_for(get_settings().ai))
-        if conv is not None:
-            data, ext = conv, "mp3"
-    mime = "audio/mpeg" if ext == "mp3" else file.content_type
-    if voice:
-        dur = media_transcode.probe_duration(data, ext)
-        meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
-    else:
-        meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
-    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
+    # 只有确认「这是待转码/待探测的音频」才 materialize 成字节——扩展名和 mime
+    # 都是用户可控输入，普通 PDF/压缩包/图片一律留在流上走 stage_stream。
+    ext_l = (ext or "").lower()
+    content_type_l = (file.content_type or "").lower()
+    needs_audio_processing = bool(voice) or content_type_l.startswith("audio") or "voice" in content_type_l or (
+        ext_l in ("webm", "opus", "silk", "sil", "slk", "amr", "aac", "wma"))
+    # spool 生命周期统一在 finally：所有分支（含提前 return / 抛错）都保证关闭。
+    try:
+        # 音频候选的转码/时长探测都要整字节，单独给 materialize 上限（分钟级录音
+        # 不可能超过它；mime 和扩展名都是用户可控输入，不能放任 500MB「音频」整读）。
+        if needs_audio_processing and size > _AUDIO_MATERIALIZE_CAP:
+            if voice:
+                raise HTTPException(
+                    400, f"语音录音过大（上限 {_AUDIO_MATERIALIZE_CAP // 1048576}MB），请分段录制后再发送")
+            # 非 voice 的大音频不做进程内转码，按原样流式暂存（转码留给小文件）。
+            mime = "audio/mpeg" if ext_l == "mp3" else file.content_type
+            meta = await chat_attach.stage_stream(
+                current_user.id, name, ext, mime, stream=spool, size=size, platform="web")
+            return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
+        data: bytes | None = None
+        if needs_audio_processing and ext_l not in ("mp3", "wav", "flac", "m4a", "ogg"):
+            spool.seek(0)
+            data = spool.read()   # 已过 materialize 上限，转码需要整字节
+            conv = media_transcode.to_provider_audio(data, ext, file.content_type,
+                                                     providers.adapter_for(get_settings().ai))
+            if conv is not None:
+                data, ext = conv, "mp3"
+        mime = "audio/mpeg" if ext == "mp3" else file.content_type
+        if voice:
+            if data is None:
+                spool.seek(0)
+                data = spool.read()
+            dur = media_transcode.probe_duration(data, ext)
+            meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
+        elif data is not None:
+            meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
+        else:
+            meta = await chat_attach.stage_stream(
+                current_user.id, name, ext, mime, stream=spool, size=size, platform="web")
+        return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
+    finally:
+        spool.close()
 
 
 @router.get("/attachment/{attach_id}/thumb")
@@ -330,6 +428,9 @@ async def chat(
         user_id=current_user.id,
         user_name=current_user.username,
         session_id=body.session_id,
+        pending_queue_id=body.pending_queue_id,
+        pending_queue_item_key=body.pending_queue_item_key,
+        pending_queue_claim_token=body.pending_queue_claim_token,
         source="web",
         attachments=body.attachments or [],
         references=body.references or [],
@@ -396,9 +497,9 @@ async def cancel_stream(
 ):
     """终止该用户会话的后台 Web 生成。
 
-    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务直接
-    cancel（立即生效）；跨 worker / 任务未登记时退回 Redis 取消标记，由 run
-    心跳在 5s 内自取消。
+    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务按
+    快照 owner_run_id 精确 cancel（立即生效）；跨 worker / 任务未登记时退回
+    Redis 取消标记，由 run 心跳在 5s 内自取消。
     """
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
@@ -408,8 +509,13 @@ async def cancel_stream(
     active = await genstream.is_active(session_id)
     cancelled_locally = False
     if active:
+        # 排队引入后同一会话可能有多个后台任务（一个在跑、其余在门上排队）。
+        # 必须按快照的 owner_run_id 精确取消「正在跑的这个」，否则会杀掉排队
+        # 任务而真正在跑的 run 继续；本进程没有该任务时回退取消标记（跨 worker）。
+        snap = await genstream.snapshot(session_id)
+        owner_run_id = str((snap or {}).get("owner_run_id") or "")
         from agent.gateway.web import cancel_local_generation
-        cancelled_locally = cancel_local_generation(session_id)
+        cancelled_locally = cancel_local_generation(session_id, owner_run_id or None)
         if not cancelled_locally:
             await genstream.request_cancel(session_id)
     return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
@@ -646,6 +752,138 @@ async def get_greeting(
     return {"text": text}
 
 
+@router.get("/pending-queues/{queue_id}")
+async def get_pending_queue_by_id(
+    queue_id: str = Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取草稿或会话队列快照。"""
+    session_id, items = await conversation_pending_queue.get_pending_queue_by_id(
+        db,
+        user_id=current_user.id,
+        queue_id=queue_id,
+    )
+    return {"sessionId": session_id, "items": items}
+
+
+@router.put("/pending-queues/{queue_id}")
+async def update_draft_pending_queue(
+    queue_id: str,
+    body: PendingQueueUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """全量替换尚未绑定会话的新对话草稿队列。"""
+    if len(queue_id) > 64 or not queue_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(422, "队列标识无效")
+    if queue_id.startswith("session-"):
+        raise HTTPException(409, "会话队列必须使用增量更新")
+    items = [item.model_dump(mode="json", exclude_none=True) for item in body.items]
+    await conversation_pending_queue.replace_draft_pending_queue(
+        db,
+        user_id=current_user.id,
+        queue_id=queue_id,
+        items=items,
+    )
+    return {"ok": True, "count": len(body.items)}
+
+
+@router.patch("/pending-queues/{queue_id}")
+async def patch_session_pending_queue(
+    request: Request,
+    queue_id: str = Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+    body: PendingQueuePatch = ...,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not queue_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(422, "队列标识无效")
+    session = await get_owned(db, ConversationSession, body.session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "对话不存在")
+    expected_id = conversation_pending_queue.session_pending_queue_id(session.id)
+    if queue_id != expected_id:
+        raise HTTPException(409, "队列标识与会话不一致")
+    await conversation_pending_queue.patch_pending_queue(
+        db,
+        user_id=current_user.id,
+        queue_id=expected_id,
+        session_id=body.session_id,
+        upsert_items=[item.model_dump(mode="json", exclude_none=True) for item in body.items],
+        remove_keys=body.remove_keys,
+    )
+    if body.items or body.remove_keys:
+        await conversation_pending_queue.publish_session_pending_queue_changed(
+            current_user.id,
+            body.session_id,
+            origin=request.headers.get("X-Client-Id"),
+        )
+    return {"ok": True, "count": len(body.items)}
+
+
+@router.post("/pending-queues/{queue_id}/items/{item_key}/claim")
+async def claim_session_pending_queue_item(
+    queue_id: str = Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+    item_key: int = Path(gt=0),
+    body: PendingQueueClaimRequest = ...,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not queue_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(422, "队列标识无效")
+    session = await get_owned(db, ConversationSession, body.session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "对话不存在")
+    expected_id = conversation_pending_queue.session_pending_queue_id(session.id)
+    if queue_id != expected_id:
+        raise HTTPException(409, "队列标识与会话不一致")
+    if await genstream.is_active(session.id):
+        return {"claim_token": None, "reason": "session_active"}
+    token = await conversation_pending_queue.claim_pending_queue_item(
+        db,
+        user_id=current_user.id,
+        queue_id=expected_id,
+        session_id=session.id,
+        item_key=item_key,
+    )
+    return {"claim_token": token}
+
+
+@router.post("/pending-queues/{queue_id}/items/{item_key}/release")
+async def release_session_pending_queue_item(
+    request: Request,
+    queue_id: str = Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+    item_key: int = Path(gt=0),
+    body: PendingQueueReleaseRequest = ...,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not queue_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(422, "队列标识无效")
+    session = await get_owned(db, ConversationSession, body.session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "对话不存在")
+    expected_id = conversation_pending_queue.session_pending_queue_id(session.id)
+    if queue_id != expected_id:
+        raise HTTPException(409, "队列标识与会话不一致")
+    released = await conversation_pending_queue.release_pending_queue_claim(
+        db,
+        user_id=current_user.id,
+        queue_id=expected_id,
+        session_id=session.id,
+        item_key=item_key,
+        claim_token=body.claim_token,
+    )
+    if released:
+        await conversation_pending_queue.publish_session_pending_queue_changed(
+            current_user.id,
+            body.session_id,
+            origin=request.headers.get("X-Client-Id"),
+        )
+    return {"released": released}
+
+
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: int,
@@ -758,6 +996,12 @@ async def get_session_messages(
         subject_type=SUBJECT_SESSION,
         subject_id=session.id,
     ) if filesystem_authorization_enabled() else None
+    pending_queue: list[dict] = []
+    pending_queue = await conversation_pending_queue.get_pending_queue_for_session(
+        db,
+        user_id=current_user.id,
+        session_id=session.id,
+    )
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
                     "ownerPlatformUserId": owner_platform_user_id,
@@ -770,6 +1014,7 @@ async def get_session_messages(
         # 排队/基线整理是持久状态，刷新或切回会话后前端据此恢复「正在整理上下文」提示
         "executionState": session.execution_state,
         "pendingMessageCount": int(session.pending_message_count or 0),
+        "pendingQueue": pending_queue,
         "pagination": {
             "limit": limit,
             "hasMore": has_more,

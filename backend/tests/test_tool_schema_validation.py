@@ -272,6 +272,40 @@ def test_project_colors_use_semantic_tokens_at_agent_boundary():
     assert project_color_key(PROJECT_COLOR_PRESETS[5]) == "lavender"
 
 
+@pytest.mark.parametrize("color", PROJECT_COLOR_KEYS)
+def test_project_color_normalization_preserves_semantic_tokens(color):
+    from agent.tools import registry
+
+    normalized, adaptations = normalize_legacy_input("set_color", {
+        "project_id": "308",
+        "color": color,
+    })
+    normalized, _ = normalize_input_by_schema(
+        registry.get("set_color").input_schema, normalized,
+    )
+
+    assert normalized["color"] == color
+    assert adaptations == []
+    assert validate_input(
+        registry.get("set_color")._input_validator or build_validator(
+            registry.get("set_color").input_schema,
+        ),
+        normalized,
+    ) == []
+
+
+def test_project_color_normalization_converts_legacy_gradient_only():
+    gradient = PROJECT_COLOR_PRESETS[2]
+
+    normalized, adaptations = normalize_legacy_input("set_color", {
+        "project_id": "308",
+        "color": gradient,
+    })
+
+    assert normalized["color"] == "teal"
+    assert adaptations == ["set_color.color:normalized_token"]
+
+
 def test_schema_normalization_converts_numeric_text_and_omits_optional_empty_values():
     normalized, adaptations = normalize_input_by_schema({
         "type": "object",

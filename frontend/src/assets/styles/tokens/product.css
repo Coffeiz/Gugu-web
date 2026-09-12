@@ -34,19 +34,14 @@ html[data-theme][data-family] .sidebar .user-card:hover { background: var(--side
 html[data-theme][data-family] .sidebar .badge { background: color-mix(in srgb,var(--action-primary) 42%,transparent); }
 
 /* ── Topbar ──────────────────────────────────────────────────────
-   DefaultLayout owns geometry and behaviour. The token layer only changes GlassBg paint/elevation;
-   no scroll timeline or layout override is allowed here. */
+   DefaultLayout owns geometry and behaviour. This layer only controls surface shadow; the topbar
+   paints its own static tint and does not mount a separate GlassBg layer. */
 html[data-theme][data-family] .topbar {
-  --gb-tint: var(--surface-glass);
-  /* Topbar 的外层卡片负责唯一高光；GlassBg 只负责背景填充，避免内外两层边缘叠成暗线。 */
-  --gb-highlight-strong: transparent;
-  --gb-highlight-side: transparent;
   box-shadow: var(--glass-card-shadow);
 }
-/* topbar hover 的 tint/阴影不再单独写：统一走 GlassBg 的 .glass-card:hover 契约
-   （tint 切 --surface-glass-hover）与语义 --glass-card-shadow-hover。 */
+/* topbar 与文件工具栏的玻璃宿主保持静态，内部控件自行提供 hover 反馈。 */
 html[data-theme][data-family] .files-toolbar {
-  /* 文件工具栏与 topbar 使用同一条外框契约，避免 GlassBg 叠出错位的第二层边缘。 */
+  /* 文件工具栏保留 faux tint，但高光边界由宿主统一绘制，不与静态 topbar 叠出双层边缘。 */
   --gb-highlight-strong: transparent;
   --gb-highlight-side: transparent;
 }
@@ -118,18 +113,9 @@ html[data-theme][data-family='mono'] .chat-window .msg.ai .msg-bubble {
 }
 
 /* Mono is the public name; mono remains the compatibility data-family id.
-   Content .glass-card surfaces disable blur through the component token rather than a hard final
-   `backdrop-filter:none`. Floating chrome, including the primary navigation, keeps its own glass
-   material so the sidebar remains translucent without changing content-card elevation. */
-html[data-family='mono'] { --glass-card-blur: none; }
+   Persistent page surfaces inherit the global no-blur contract; floating surfaces opt in separately. */
 html[data-theme][data-family='mono'] .sidebar {
   background: var(--chrome-glass-bg);
-  backdrop-filter: var(--chrome-glass-blur);
-  -webkit-backdrop-filter: var(--chrome-glass-blur);
-}
-html[data-family='mono'] .glass-card:not(.topbar) {
-  backdrop-filter: var(--glass-card-blur);
-  -webkit-backdrop-filter: var(--glass-card-blur);
 }
 
 /* Native controls and selections share action/focus language. */

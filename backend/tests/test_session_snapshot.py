@@ -21,13 +21,16 @@ from agent.context.session_snapshot import (
     workspace_binding_key,
     workspace_snapshot_block,
 )
-from agent.context.assembly import NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder, newly_appended
+from agent.context.assembly import (
+    NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder,
+    newly_appended, stance_digest,
+)
 from agent.loop_drivers import _with_history_cache, _with_single_history_cache
 from agent.runtime.loopscope_trace.state import _ScopeRun, _scope_run, _now
 import pytest
 
 
-def test_current_time_tail_keeps_date_but_not_duplicate_clock_time(monkeypatch):
+def test_current_time_tail_includes_date_and_current_clock_time(monkeypatch):
     class FixedDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -36,7 +39,7 @@ def test_current_time_tail_keeps_date_but_not_duplicate_clock_time(monkeypatch):
 
     monkeypatch.setattr("agent.context.session_snapshot.datetime", FixedDatetime)
 
-    assert current_time_text(timezone.utc) == "2026-08-26（星期三）"
+    assert current_time_text(timezone.utc) == "2026-08-26（星期三）16:10"
 
 
 def test_session_info_hash_is_stable_for_mapping_order():
@@ -331,8 +334,8 @@ def test_prompt_messages_keep_turn_batch_contiguous_before_tool_round():
         current_user={"role": "user", "content": "new"},
         stance="stance",
         extra_reminder="summary",
-        now_text="time",
     )
+    messages.set_dynamic_tail([reminder("当前时间：time")])
     messages.append_batch(turn)
     messages.append_batch(NewMessageBatch([
         {"role": "assistant", "content": "tool call"},
@@ -340,13 +343,19 @@ def test_prompt_messages_keep_turn_batch_contiguous_before_tool_round():
     ]))
 
     assert [item["content"] for item in messages][-6:] == [
-        "[system-reminder]\nstance\n[/system-reminder]",
+        [{
+            "type": "stance-context",
+            "digest": stance_digest("stance"),
+            "text": reminder("stance")["content"],
+        }],
         "new",
         "[system-reminder]\nsummary\n[/system-reminder]",
-            [{"type": "time-context", "text": "[system-reminder]\n当前时间：time\n[/system-reminder]"}],
         "tool call",
         "tool result",
+        "[system-reminder]\n当前时间：time\n[/system-reminder]",
     ]
+    assert messages.dynamic_tail == [reminder("当前时间：time")]
+    assert "当前时间：time" not in str(messages.conversation)
     assert messages.newly_appended(2)[-2:][0]["content"] == "tool call"
 
 
@@ -361,9 +370,11 @@ def test_stance_digest_only_appends_when_stance_changes():
         current_user={"role": "user", "content": "三"},
     )
 
-    assert first.messages[0]["content"].startswith("[system-reminder]")
+    assert first.messages[0]["content"][0]["type"] == "stance-context"
+    assert first.messages[0]["content"][0]["text"].startswith("[system-reminder]")
     assert [item["content"] for item in same.messages] == ["二"]
-    assert changed.messages[0]["content"].startswith("[system-reminder]")
+    assert changed.messages[0]["content"][0]["type"] == "stance-context"
+    assert changed.messages[0]["content"][0]["text"].startswith("[system-reminder]")
     assert changed_digest != same_digest
 
 
@@ -404,16 +415,20 @@ def test_snapshot_reminder_is_fixed_before_history_and_runtime_tail():
         current_user={"role": "user", "content": "new"},
         stance="stance",
         message_time=reminder("message-time"),
-        now_text="time",
     )[0])
+    messages.set_dynamic_tail([reminder("当前时间：time")])
 
     assert messages[0] == snapshot
     assert [item["content"] for item in messages.conversation] == [
         snapshot["content"], "history",
-        "[system-reminder]\nstance\n[/system-reminder]",
+        [{
+            "type": "stance-context",
+            "digest": stance_digest("stance"),
+            "text": reminder("stance")["content"],
+        }],
             [{"type": "time-context", "text": "[system-reminder]\nmessage-time\n[/system-reminder]"}], "new",
-        [{"type": "time-context", "text": "[system-reminder]\n当前时间：time\n[/system-reminder]"}],
     ]
+    assert messages.dynamic_tail == [reminder("当前时间：time")]
 
 
 def test_turn_batch_keeps_stance_and_message_time_order_stable():
@@ -424,7 +439,11 @@ def test_turn_batch_keeps_stance_and_message_time_order_stable():
     )
 
     assert [item["content"] for item in batch.messages] == [
-        "[system-reminder]\nstance\n[/system-reminder]",
+        [{
+            "type": "stance-context",
+            "digest": stance_digest("stance"),
+            "text": reminder("stance")["content"],
+        }],
         [{"type": "time-context", "text": "[system-reminder]\nmessage-time\n[/system-reminder]"}],
         "new",
     ]

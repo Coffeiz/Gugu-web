@@ -64,6 +64,7 @@
       :copied-id="copiedId" :voice-playing-id="voicePlayingId"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
+      :pending-queue="visiblePendingQueue" @remove-queued="removeQueued"
       v-model:input-text="inputText"
       :references="inputReferences" @update:references="inputReferences = $event"
       :pending-att="pendingAtt" :att-uploading="attUploading"
@@ -139,7 +140,8 @@ import { useChatImConnect } from './composables/useChatImConnect'
 import { useChatWindow } from './composables/useChatWindow'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { useFilesystemAuthorization, type FilesystemAuthorizationApi } from '@/composables/useFilesystemAuthorization'
-import { errorMessage } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { getDraftPendingQueueId, isPendingQueueRecoveryNeeded, setPendingQueueRecoveryNeeded } from './composables/chatPendingQueueStorage'
 const { t } = useI18n()
 
 interface QuotaInfo {
@@ -341,9 +343,11 @@ onMounted(() => {
         localStorage.removeItem(LAST_SESSION_KEY)
         messages.value = [{ id: mkid(), role: 'ai', text: '', html: '', time: now(), _greeting: true }]
         prefetchGreeting()
+        return
       }
     })
   } else {
+    void recoverPendingQueue()
     // 全新对话（无可恢复会话）才需要默认问候 → 此刻后台生成；刷新/接续停在老会话时不空跑。
     prefetchGreeting()
   }
@@ -353,6 +357,7 @@ function toggleUnlimitedMode() {
 }
 
 onUnmounted(() => {
+  stopPendingQueueRecovery = true
   window.removeEventListener('gugu-quota-changed', onQuotaChanged)
   window.removeEventListener('beforeunload', saveProgress)
 })
@@ -381,6 +386,8 @@ const conversation = useChatConversation({
   refreshAfterTools, loadQuota: () => loadQuota(),
   playIncomingMessageSfx: () => playIncomingMessageSfx(),
   onContentReset, onCaptureBaseScrollH, onSyncSmallH,
+  onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
+  onQueueDispatchError: () => showAppError(t('chatUi.networkError')),
 })
 const {
   messages, mkid, now, sessionSettling,
@@ -388,12 +395,31 @@ const {
   sessionId, ownerPlatformUserId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
   currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
+  restorePendingQueueForDraft, restorePendingQueueForSession,
+  drainPendingQueue,
   stick, lastTop,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
+  pendingQueue, removeQueued,
   scrollBottom, onMsgScroll,
   animateGreeting, clearStatus,
 } = conversation
+
+const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => item.sessionId === sessionId.value))
+
+let stopPendingQueueRecovery = false
+
+async function recoverPendingQueue() {
+  if (!isPendingQueueRecoveryNeeded()) return
+  try {
+    const snapshot = await agentApi.getPendingQueue(getDraftPendingQueueId())
+    if (stopPendingQueueRecovery || sessionId.value != null) return
+    restorePendingQueueForDraft(snapshot.items)
+    setPendingQueueRecoveryNeeded(snapshot.items.length > 0 || pendingQueue.value.length > 0)
+  } catch {
+    // 不在页面后台轮询；恢复标记保留，下次打开聊天时再读服务端快照。
+  }
+}
 
 // 授权/撤销成功后立即更新标题栏；会话列表刷新只负责把本地状态重新校准到服务端。
 const sessionFilesystemAuthorized = ref(false)
@@ -437,7 +463,9 @@ async function confirmSessionAuthorization() {
 }
 
 const pendingCustomPromptId = ref<number | null>(null)
-watch(sessionId, () => { pendingCustomPromptId.value = null })
+watch(sessionId, () => {
+  pendingCustomPromptId.value = null
+})
 
 async function onInteractionSelect(_msg: ChatMessage, option: { id: string; label: string; token: string }) {
   const promptId = _msg.interaction?.promptId
@@ -746,6 +774,9 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
     transform var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
+}
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card) strong) {
+  color: inherit;
 }
 /* 咕咕回复的 `---` 分隔线：实色次级文字色，全主题可辨，与预览窗 .tv-md hr 同口径 */
 :deep(.msg-bubble.md-body hr) {

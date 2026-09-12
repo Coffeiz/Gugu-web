@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent.context import loaders
@@ -168,6 +168,7 @@ class ContextData:
     memory: dict
     im_channels: dict
     im_memory: dict
+    knowledge: list = field(default_factory=list)
 
 
 async def load_context_data(
@@ -197,6 +198,7 @@ async def load_context_data(
     memory = await loaders.load_memory(user_id, query) if memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
     im_memory = await load_im_memory(request)
+    knowledge = await loaders.load_knowledge_overview(user_id)
     return ContextData(
         projects=projects,
         user_tz=user_tz,
@@ -207,6 +209,7 @@ async def load_context_data(
         memory=memory,
         im_channels=im_channels,
         im_memory=im_memory,
+        knowledge=knowledge,
     )
 
 

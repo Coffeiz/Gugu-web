@@ -99,7 +99,7 @@ class IndexDocument:
             "citation": citation,
         }
         if self.source_type == "knowledge":
-            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "keywords", "parent_id"):
+            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "keywords", "description", "parent_id"):
                 if self.metadata.get(key):
                     result[key] = self.metadata[key]
         if self.source_type == "conversation":

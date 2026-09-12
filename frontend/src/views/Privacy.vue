@@ -30,7 +30,7 @@ const html = computed(() => sanitizeHtml(marked(privacyPolicy[locale.value as ke
 
 <style scoped>
 .privacy-page { position: fixed; inset: 0; overflow-y: auto; display: flex; align-items: flex-start; justify-content: center; font-family: var(--font-sans); padding: 40px 16px 60px; }
-.privacy-card { width: 100%; max-width: 760px; position: relative; z-index: 1; background: rgba(255,255,255,0.56); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.76); border-radius: 20px; box-shadow: 0 20px 60px rgba(80,90,110,0.12), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55); overflow: hidden; }
+.privacy-card { width: 100%; max-width: 760px; position: relative; z-index: 1; background: rgba(255,255,255,0.56); border: 1px solid rgba(255,255,255,0.76); border-radius: 20px; box-shadow: 0 20px 60px rgba(80,90,110,0.12), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55); overflow: hidden; }
 .privacy-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 14px 22px; background: rgba(255,255,255,0.5); border-bottom: 1px solid rgba(0,0,0,0.06); }
 .privacy-header :deep(.language-switcher) { justify-content: flex-end; }
 .back-link { display: flex; align-items: center; gap: 5px; justify-self: start; font-size: 13px; color: var(--text-secondary, #6b7280); text-decoration: none; transition: color 0.15s; }

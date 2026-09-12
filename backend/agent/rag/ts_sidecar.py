@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import uuid
 import weakref
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -16,6 +17,38 @@ from typing import Any
 from agent.rag.hybrid import hybrid_results
 from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 from agent.rag.scope import matches_scope
+
+
+def _record_worker_restore_probe(response: dict[str, Any]) -> None:
+    restore_probe = response.get("restore_probe")
+    if not isinstance(restore_probe, dict):
+        return
+
+    stage_names = {
+        "restore_read_file", "restore_json_parse", "restore_index_install",
+        "restore_vector_map", "restore_total",
+    }
+    count_names = {
+        "index_file_present", "index_file_bytes", "documents", "vectors", "restored",
+    }
+    raw_stage_ms = restore_probe.get("stage_ms")
+    raw_counts = restore_probe.get("counts")
+    from agent.rag.observation import probe_update
+
+    probe_update(index_worker_restore={
+        "stage_ms": {
+            name: int(value)
+            for name, value in raw_stage_ms.items()
+            if name in stage_names and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        } if isinstance(raw_stage_ms, dict) else {},
+        "counts": {
+            name: int(value)
+            for name, value in raw_counts.items()
+            if name in count_names and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        } if isinstance(raw_counts, dict) else {},
+    })
 
 
 class TsSidecarUnavailable(RuntimeError):
@@ -37,6 +70,8 @@ class SidecarRequestTiming:
 
     queue_wait_ms: int = 0
     query_ms: int = 0
+    ensure_process_ms: int = 0
+    response_wait_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +119,9 @@ class TsSidecarClient:
         self._lock = asyncio.Lock()
         self._revision: str | None = None
         self._document_count = 0
+        self._estimated_bytes = 0
+        self._vector_count = 0
+        self._vector_version = ""
         # 瞬态语料（Memory 快照）驻留在 worker 内存里：记录加载时的进程代数与指纹，
         # worker 重启后代数变化会自动重传，不依赖已失效的进程内状态。
         self._transient_revision: str | None = None
@@ -116,7 +154,8 @@ class TsSidecarClient:
         *,
         vectors: dict[str, list[float]] | None = None,
         vector_version: str = "",
-    ) -> None:
+        storage_owner_id: object | None = None,
+    ) -> dict:
         # 索引构建不是用户等待的搜索路径，全量 replace 可能远超 500ms 搜索超时。
         payload: dict[str, Any] = {
             "op": "replace",
@@ -126,16 +165,131 @@ class TsSidecarClient:
         if vectors is not None:
             payload["vectors"] = vectors
             payload["vector_version"] = vector_version
+        if storage_owner_id is not None:
+            if str(storage_owner_id) != self.owner_user_id:
+                raise ValueError("向量缓存 owner 与 sidecar owner 不一致")
+            payload["vector_cache"] = {
+                "owner_id": self.owner_user_id,
+                "vector_version": str(vector_version or ""),
+            }
         result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
+        self._vector_count = int(response.get("vector_count") or 0)
+        self._vector_version = str(response.get("vector_version") or "")
         self._restore_error = None
+        return response
 
     async def build_documents(self, batch: dict[str, list[dict]]) -> list[dict]:
         """让 TS builder 从统一 source batch 生成 canonical 文档；不读取业务数据库。"""
         response = (await self._request({"op": "build_documents", "batch": batch})).response
         return list(response.get("documents") or [])
+
+    async def database_revision(self, owner_user_id: object) -> str | None:
+        """让 owner-bound TS worker 读取持久索引 revision；owner 不接受调用参数覆盖。"""
+        response = (await self._request({
+            "op": "database_revision", "owner_id": str(owner_user_id),
+        })).response
+        value = response.get("revision")
+        return str(value) if value else None
+
+    async def load_index_from_database(
+        self, owner_user_id: object, revision: str, vector_version: str = "",
+    ) -> dict:
+        """在 TS worker 内按 owner 读取 canonical chunk 并建立索引，不回传正文。"""
+        response = (await self._request({
+            "op": "load_index_from_database",
+            "owner_id": str(owner_user_id),
+            "revision": str(revision or ""),
+            "vector_version": str(vector_version or ""),
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
+        self._revision = str(response.get("revision") or "")
+        self._document_count = int(response.get("document_count") or 0)
+        self._estimated_bytes = int(response.get("estimated_bytes") or 0)
+        self._vector_count = int(response.get("vector_count") or 0)
+        self._vector_version = str(response.get("vector_version") or "")
+        self._restore_error = None
+        return response
+
+    async def sync_index_from_database(
+        self, owner_user_id: object, revision: str, vector_version: str = "",
+    ) -> dict:
+        """增量自同步：worker 按 chunk 表水位只读取变更行并 patch 内存/磁盘索引。
+
+        水位缺失或落后超过墓碑保留视界时 worker 内部回退全量装载（响应带
+        fallback_full 标记），语义与全量 load 完全一致。"""
+        response = (await self._request({
+            "op": "sync_index_from_database",
+            "owner_id": str(owner_user_id),
+            "revision": str(revision or ""),
+            "vector_version": str(vector_version or ""),
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
+        self._revision = str(response.get("revision") or "")
+        self._document_count = int(response.get("document_count") or 0)
+        self._estimated_bytes = int(response.get("estimated_bytes") or 0)
+        self._vector_count = int(response.get("vector_count") or 0)
+        self._vector_version = str(response.get("vector_version") or "")
+        self._restore_error = None
+        return response
+
+    async def load_vectors_from_storage(self, owner_user_id: object, vector_version: str) -> dict:
+        """TS worker 从 owner 存储读取向量缓存并按当前索引文档键装载。"""
+        response = (await self._request({
+            "op": "load_vectors_from_storage",
+            "owner_id": str(owner_user_id),
+            "vector_version": str(vector_version or ""),
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
+        self._vector_count = int(response.get("vector_count") or 0)
+        self._vector_version = str(response.get("vector_version") or "")
+        return response
+
+    async def prepare_memory(
+        self, owner_user_id: object, scopes: list[Scope], *, source_filter: str,
+        snapshot_revision: str = "", snapshot_text: str = "", vector_version: str = "",
+        force: bool = False,
+    ) -> dict:
+        """TS 读取 Memory 文件、scope 状态和缓存向量；Python 只传 ACL 已确认的 scope。"""
+        wire_scopes = []
+        owner = str(owner_user_id)
+        for scope in scopes:
+            if str(scope.owner_user_id) != owner:
+                raise ValueError("Memory scope owner 与 sidecar owner 不一致")
+            if scope.scope_type == "owner":
+                wire_scopes.append({"ownerId": owner, "type": "owner", "id": owner})
+                continue
+            if scope.scope_type not in {"group", "member"}:
+                raise ValueError("Memory scope 类型不受 TS Memory Loader 支持")
+            wire_scopes.append({
+                "ownerId": owner,
+                "type": scope.scope_type,
+                "id": str(scope.scope_id),
+                "platform": str(scope.platform or ""),
+                "botId": str(scope.bot_id or ""),
+                "groupId": str(scope.group_id or ""),
+            })
+        response = (await self._request({
+            "op": "prepare_memory",
+            "owner_id": owner,
+            "scopes": wire_scopes,
+            "source_filter": str(source_filter or "all"),
+            "snapshot_revision": str(snapshot_revision or ""),
+            "snapshot_text": str(snapshot_text or ""),
+            "vector_version": str(vector_version or ""),
+            "force": bool(force),
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
+        self._transient_revision = str(response.get("transient_revision") or "")
+        self._transient_generation = self._process_generation
+        return response
+
+    async def set_vectors(
+        self, vectors: dict[str, list[float]], vector_version: str,
+    ) -> None:
+        """替换当前持久索引的向量侧车映射；不传输 source document 正文。"""
+        await self._request({
+            "op": "set_vectors", "vectors": vectors,
+            "vector_version": vector_version,
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)
 
     async def adapt_records(self, source_type: str, records: list[dict]) -> list[dict]:
         """TS 来源适配器投影：统一 source record → wire 文档；只做投影，不触碰索引。"""
@@ -159,7 +313,8 @@ class TsSidecarClient:
         *,
         vectors: dict[str, list[float]] | None = None,
         vector_version: str = "",
-    ) -> None:
+        storage_owner_id: object | None = None,
+    ) -> dict:
         """只同步发生变化的 chunk，保持 worker 的 revision 原子推进。
 
         vectors 与 replace 同语义：整表搭载当前持久向量映射，worker 整表覆盖。
@@ -174,11 +329,21 @@ class TsSidecarClient:
         if vectors is not None:
             payload["vectors"] = vectors
             payload["vector_version"] = vector_version
+        if storage_owner_id is not None:
+            if str(storage_owner_id) != self.owner_user_id:
+                raise ValueError("向量缓存 owner 与 sidecar owner 不一致")
+            payload["vector_cache"] = {
+                "owner_id": self.owner_user_id,
+                "vector_version": str(vector_version or ""),
+            }
         result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
         response = result.response
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or 0)
+        self._vector_count = int(response.get("vector_count") or 0)
+        self._vector_version = str(response.get("vector_version") or "")
         self._restore_error = None
+        return response
 
     async def replace_transient(
         self,
@@ -377,25 +542,77 @@ class TsSidecarClient:
                 await process.wait()
 
     async def _request(self, payload: dict, *, timeout_seconds: float | None = None) -> SidecarRequestResult:
+        """传输入口（模板方法）：锁/计时/probe 外壳共享，实际连接由三个可覆写点决定。
+
+        - ``_prepare_for_send``：确保传输就绪（基类=spawn/复用子进程并 ping 探活）；
+        - ``_transact``：单行请求/单行响应（基类=stdio）；
+        - ``_absorb_state``：把响应状态写回 client（基类只回写 revision；
+          socket 代理用宿主下发的 state 镜像整体覆盖）。
+        SocketSidecarClient 只覆写这三个点 + 三个状态语义方法，所有 payload
+        构造与基类共用一份，杜绝双份实现漂移。
+        """
         queued_at = asyncio.get_running_loop().time()
+        probe_enabled = payload.get("op") == "unified_query"
+        from agent.rag.observation import probe_finish, probe_start, probe_update
+
+        if probe_enabled:
+            probe_start("sidecar_lock_wait")
         async with self._lock:
             request_started = asyncio.get_running_loop().time()
             queue_wait_ms = int((request_started - queued_at) * 1000)
+            if probe_enabled:
+                probe_finish("sidecar_lock_wait", queued_at, queue_wait_ms=queue_wait_ms)
+                probe_start("sidecar_process_start")
+            ensure_started = asyncio.get_running_loop().time()
             self.touch()
             self._active_requests += 1
             try:
-                await self._ensure_process()
-                response = await self._request_unlocked(payload, timeout_seconds=timeout_seconds)
+                await self._prepare_for_send()
+                ensure_process_ms = int((asyncio.get_running_loop().time() - ensure_started) * 1000)
+                if probe_enabled:
+                    probe_finish("sidecar_process_start", ensure_started,
+                                 ensure_process_ms=ensure_process_ms)
+                    probe_start("sidecar_worker_response")
+                response_started = asyncio.get_running_loop().time()
+                response = await self._transact(payload, timeout_seconds=timeout_seconds)
+                response_wait_ms = int((asyncio.get_running_loop().time() - response_started) * 1000)
                 query_ms = int(
                     (asyncio.get_running_loop().time() - request_started) * 1000
-                ) if payload.get("op") in {"search", "batch_search"} else 0
+                ) if payload.get("op") in {"search", "batch_search", "unified_query"} else 0
+                if probe_enabled:
+                    probe_finish("sidecar_worker_response", response_started,
+                                 response_wait_ms=response_wait_ms)
+                    probe_update(sidecar={
+                        "queue_wait_ms": queue_wait_ms,
+                        "ensure_process_ms": ensure_process_ms,
+                        "response_wait_ms": response_wait_ms,
+                        "query_ms": query_ms,
+                    })
+                response = self._absorb_state(payload, response)
                 return SidecarRequestResult(
                     response=response,
-                    timing=SidecarRequestTiming(queue_wait_ms=queue_wait_ms, query_ms=query_ms),
+                    timing=SidecarRequestTiming(
+                        queue_wait_ms=queue_wait_ms, query_ms=query_ms,
+                        ensure_process_ms=ensure_process_ms, response_wait_ms=response_wait_ms,
+                    ),
                 )
             finally:
                 self._active_requests -= 1
                 self.touch()
+
+    async def _prepare_for_send(self) -> None:
+        await self._ensure_process()
+
+    async def _transact(self, payload: dict, *, timeout_seconds: float | None = None) -> dict:
+        return await self._request_unlocked(payload, timeout_seconds=timeout_seconds)
+
+    def _absorb_state(self, payload: dict, response: dict) -> dict:
+        # 只有持久索引类响应才代表 worker 的 state.revision。replace_transient 回的是
+        # 瞬态槽指纹，写进 _revision 会让 reuse_if_current 误判持久索引已同步、把
+        # 后续每次查询退化成全量重建（2026-09-11 修）。
+        if response.get("revision") is not None and payload.get("op") != "replace_transient":
+            self._revision = response.get("revision")
+        return response
 
     async def _ensure_process(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -404,12 +621,38 @@ class TsSidecarClient:
         if not command:
             raise TsSidecarUnavailable("TypeScript RAG worker 未配置")
         try:
+            worker_env = os.environ.copy()
+            worker_env["GUGU_RAG_OWNER_ID"] = self.owner_user_id
+            try:
+                from app.core.config import get_settings
+
+                runtime_settings = get_settings()
+                database_url = str(runtime_settings.db.url)
+                if database_url.startswith("postgresql+asyncpg://"):
+                    database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+                worker_env["GUGU_DATABASE_URL"] = database_url
+                worker_env["GUGU_STORAGE_BACKEND"] = str(runtime_settings.storage.backend or "local")
+                if runtime_settings.storage.backend == "local":
+                    worker_env["GUGU_STORAGE_ROOT"] = str(
+                        Path(runtime_settings.storage.local_path).expanduser().resolve()
+                    )
+                elif runtime_settings.storage.backend == "oss":
+                    # 凭据只通过 worker 私有环境传递，不进入 argv、JSONL 或日志。
+                    worker_env["GUGU_OSS_ACCESS_KEY_ID"] = str(runtime_settings.storage.oss_access_key_id or "")
+                    worker_env["GUGU_OSS_ACCESS_KEY_SECRET"] = str(runtime_settings.storage.oss_access_key_secret or "")
+                    worker_env["GUGU_OSS_BUCKET"] = str(runtime_settings.storage.oss_bucket or "")
+                    worker_env["GUGU_OSS_ENDPOINT"] = str(runtime_settings.storage.oss_endpoint or "")
+                    worker_env["GUGU_OSS_PREFIX"] = str(runtime_settings.storage.oss_prefix or "")
+            except Exception:
+                # 旧查询/排序 op 不依赖数据库环境；TS-owned index op 会显式失败，
+                # 不把配置加载错误伪装成空索引。
+                pass
             self._process = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
-                env=os.environ.copy(),
+                env=worker_env,
                 # 批量查询的 JSONL 响应聚合多来源候选原文，单行远超默认 64KB。
                 limit=SIDECAR_STREAM_LIMIT_BYTES,
             )
@@ -421,7 +664,9 @@ class TsSidecarClient:
             response = await self._request_unlocked({"op": "ping"}, timeout_seconds=5.0)
             self._revision = response.get("revision") or self._revision
             self._document_count = int(response.get("document_count") or 0)
+            self._vector_version = str(response.get("vector_version") or "")
             self._restore_error = response.get("restore_error") or None
+            _record_worker_restore_probe(response)
         except (OSError, asyncio.TimeoutError, TsSidecarUnavailable) as error:
             await self.close()
             if isinstance(error, TsSidecarUnavailable):
@@ -458,12 +703,169 @@ class TsSidecarClient:
                 str(response.get("message") or response.get("code") or "worker error"),
                 code=str(response.get("code") or "") or None,
             )
-        # 只有持久索引类响应才代表 worker 的 state.revision。replace_transient 回的是
-        # 瞬态槽指纹，写进 _revision 会让 reuse_if_current 误判持久索引已同步、把
-        # 后续每次查询退化成全量重建（2026-09-11 修）。
-        if response.get("revision") is not None and payload.get("op") != "replace_transient":
-            self._revision = response.get("revision")
         return response
+
+
+RANK_SOCKET_OWNER = "__rank__"
+
+
+def _sidecar_socket_path() -> str:
+    """gugu-rag-sidecar 宿主 socket 配置；空串=未启用，走进程内 spawn。"""
+    try:
+        from app.core.config import get_settings
+
+        return str(getattr(get_settings().search, "ts_sidecar_socket", "") or "")
+    except Exception:
+        return ""
+
+
+def _client_state_mirror(client: "TsSidecarClient") -> dict[str, Any]:
+    """从 client 导出跨进程镜像块；宿主下发、代理回填，字段与 client 状态一一对应。"""
+    return {
+        "revision": client._revision,
+        "document_count": int(client._document_count or 0),
+        "estimated_bytes": int(client._estimated_bytes or 0),
+        "vector_count": int(client._vector_count or 0),
+        "vector_version": str(client._vector_version or ""),
+        "restore_error": client._restore_error,
+        "transient_revision": client._transient_revision,
+        "transient_generation": int(client._transient_generation),
+        "process_generation": int(client._process_generation),
+    }
+
+
+class SocketSidecarClient(TsSidecarClient):
+    """经 gugu-rag-sidecar 宿主共享的常驻 worker 连接。
+
+    与基类共享全部 payload 构造；只把传输换成 unix socket，并让「状态归属权」
+    移交宿主：revision/瞬态指纹/进程代数以宿主下发镜像为准，
+    ``reuse_if_current`` 与 ``replace_transient`` 的短路判定也在宿主侧执行
+    （判定依据是宿主内真实 worker 进程的状态，跨进程读不到才需要走 IPC）。
+    """
+
+    def __init__(self, owner_user_id: object, *, socket_path: str,
+                 command: str = "", index_dir: str = ""):
+        super().__init__(owner_user_id, command=command, index_dir=index_dir)
+        self.socket_path = socket_path
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._mirror: dict[str, Any] = {}
+
+    async def _prepare_for_send(self) -> None:
+        if self._writer is not None and not self._writer.is_closing():
+            return
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path, limit=SIDECAR_STREAM_LIMIT_BYTES),
+                timeout=5.0,
+            )
+        except (OSError, asyncio.TimeoutError) as error:
+            self._reader = None
+            self._writer = None
+            raise TsSidecarUnavailable("sidecar 宿主 socket 不可用") from error
+
+    async def _transact(self, payload: dict, *, timeout_seconds: float | None = None) -> dict:
+        assert self._writer is not None and self._reader is not None
+        timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
+        envelope = {
+            "v": 1,
+            "req_id": uuid.uuid4().hex,
+            "owner": self.owner_user_id,
+            "timeout_ms": int(max(0.05, timeout) * 1000),
+            "payload": payload,
+        }
+        try:
+            self._writer.write((json.dumps(envelope, ensure_ascii=False) + "\n").encode())
+            await self._writer.drain()
+            line = await asyncio.wait_for(self._reader.readline(), timeout=max(0.05, timeout) + 5.0)
+        except (BrokenPipeError, ConnectionError, ValueError, asyncio.TimeoutError,
+                RuntimeError) as error:
+            # 与基类同一原则：半行残留/竞态会让响应流不可信，整条连接作废。
+            await self.close()
+            raise TsSidecarUnavailable("sidecar 宿主请求失败") from error
+        if not line:
+            await self.close()
+            raise TsSidecarUnavailable("sidecar 宿主连接已断开")
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise TsSidecarUnavailable("sidecar 宿主返回无效 JSON") from error
+        if response.get("status") == "error":
+            raise TsSidecarUnavailable(
+                str(response.get("message") or response.get("code") or "sidecar error"),
+                code=str(response.get("code") or "") or None,
+            )
+        self._mirror = dict(response.get("state") or {})
+        return dict(response.get("payload") or {})
+
+    def _absorb_state(self, payload: dict, response: dict) -> dict:
+        # 状态归属在宿主：镜像整体覆盖，方法体内的局部回写随后发生，
+        # 但它们的取值来自宿主透传的真实 worker 响应字段，与镜像一致。
+        state = self._mirror
+        self._revision = state.get("revision")
+        self._document_count = int(state.get("document_count") or 0)
+        self._estimated_bytes = int(state.get("estimated_bytes") or 0)
+        self._vector_count = int(state.get("vector_count") or 0)
+        self._vector_version = str(state.get("vector_version") or "")
+        self._restore_error = state.get("restore_error") or None
+        self._transient_revision = state.get("transient_revision")
+        self._transient_generation = int(state.get("transient_generation") if
+                                         state.get("transient_generation") is not None else -1)
+        self._process_generation = int(state.get("process_generation") or 0)
+        return response
+
+    async def reuse_if_current(self, revision: str | None) -> bool:
+        # 判定依据是宿主内真实 worker 的状态（含 ensure/磁盘恢复），本进程镜像不可信。
+        result = await self._request(
+            {"op": "reuse_if_current", "revision": revision or ""},
+            timeout_seconds=BUILD_TIMEOUT_SECONDS,
+        )
+        return bool(result.response.get("ok"))
+
+    async def prepare_memory(self, owner_user_id: object, scopes: list[Scope], *, source_filter: str,
+                             snapshot_revision: str = "", snapshot_text: str = "",
+                             vector_version: str = "", force: bool = False) -> dict:
+        response = await super().prepare_memory(
+            owner_user_id, scopes, source_filter=source_filter,
+            snapshot_revision=snapshot_revision, snapshot_text=snapshot_text,
+            vector_version=vector_version, force=force,
+        )
+        # 基类用本进程 _process_generation 回填瞬态代数；代理进程恒为 0，
+        # 必须以宿主镜像为准，否则下次短路口径错位。
+        self._transient_generation = int(self._mirror.get("transient_generation") or 0)
+        return response
+
+    async def replace_transient(
+        self,
+        documents: list[IndexDocument],
+        revision: str,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
+        force: bool = False,
+    ) -> None:
+        # 短路判定在宿主（它才看得到真实进程代数）：本进程不判，把 force 带下去。
+        payload: dict[str, Any] = {
+            "op": "replace_transient", "revision": revision, "force": bool(force),
+            "documents": [_wire_document(document) for document in documents],
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        self._transient_revision = str(result.response.get("revision") or revision)
+
+    async def close(self) -> None:
+        writer = self._writer
+        self._writer = None
+        self._reader = None
+        if writer is None:
+            return
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except (ConnectionError, OSError):
+            pass
 
 
 class TsLexicalIndex:
@@ -477,6 +879,10 @@ class TsLexicalIndex:
     def document_count(self) -> int:
         """返回 TS worker 中的实际文档数；冷恢复时 Python 不必保留全量文档。"""
         return self.client._document_count if not self.documents else len(self.documents)
+
+    @property
+    def estimated_bytes(self) -> int:
+        return self.client._estimated_bytes if not self.documents else 0
 
     async def batch_search(self, query: str, searches: list[dict], extra_documents: dict[str, IndexDocument] | None = None):
         """一次 IPC 返回逐来源候选，按每项 scope 再次校验。
@@ -573,7 +979,14 @@ class TsLexicalIndex:
         if vector_version:
             payload["vector_version"] = vector_version
         response = await self.client._request(payload)
-        return dict(response.response)
+        result = dict(response.response)
+        result["_sidecar_timing"] = {
+            "queue_wait_ms": response.timing.queue_wait_ms,
+            "ensure_process_ms": response.timing.ensure_process_ms,
+            "response_wait_ms": response.timing.response_wait_ms,
+            "query_ms": response.timing.query_ms,
+        }
+        return result
 
     async def search(
         self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
@@ -659,8 +1072,9 @@ def _from_wire_document(raw: dict[str, Any], owner_user_id: str) -> IndexDocumen
 
 
 def _worker_document_key(document: IndexDocument) -> str:
-    parent = document.parent_document_id or document.document_id
-    return f"{document.source_type}:{parent}:{document.chunk_index}"
+    """稳定 chunk 槽位；契约统一收口在 agent.rag.delta。"""
+    from agent.rag.delta import chunk_slot_key
+    return chunk_slot_key(document)
 
 
 def scope_to_wire(scope: Scope) -> dict:
@@ -717,29 +1131,54 @@ _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str,
 
 
 def _index_document_digest(document: IndexDocument) -> str:
-    """计算词法索引字段及召回展示上下文的摘要。"""
-    context = document.contextual_content() if document.source_type == "conversation" else ""
-    payload = "\x1f".join((
-        _worker_document_key(document),
-        document.source_type,
-        document.title,
-        document.summary,
-        document.content,
-        context,
-        "conversation-ranking-v1" if document.source_type == "conversation" else "",
-    ))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    """词法索引字段摘要；契约统一收口在 agent.rag.delta。"""
+    from agent.rag.delta import document_digest
+    return document_digest(document)
+
+
+async def _probe_sidecar_socket(socket_path: str) -> bool:
+    """轻量探活：socket 可连接才走共享宿主，否则回退进程内 spawn。"""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(socket_path, limit=SIDECAR_STREAM_LIMIT_BYTES),
+            timeout=2.0,
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except (ConnectionError, OSError):
+            pass
+        return True
+    except (OSError, asyncio.TimeoutError):
+        return False
 
 
 async def get_lexical_client(owner_user_id: object, *, command: str, index_dir: str) -> TsSidecarClient:
-    """按 owner 复用常驻 TS worker；索引缓存淘汰不再立即杀掉进程。"""
+    """按 owner 复用常驻 TS worker；索引缓存淘汰不再立即杀掉进程。
+
+    配置了 ``search.ts_sidecar_socket`` 时走共享宿主连接（多个 Python 进程
+    共享同一份热索引）；socket 不可用则回退进程内 spawn 并记警告。
+    """
     owner_key = str(owner_user_id)
     loop = asyncio.get_running_loop()
     _ensure_sidecar_reaper(loop)
     clients = _lexical_clients.setdefault(loop, {})
     client = clients.get(owner_key)
     if client is None:
-        client = TsSidecarClient(owner_key, command=command, index_dir=index_dir)
+        socket_path = _sidecar_socket_path()
+        if socket_path and owner_key != RANK_SOCKET_OWNER:
+            if await _probe_sidecar_socket(socket_path):
+                client = SocketSidecarClient(
+                    owner_key, socket_path=socket_path, command=command, index_dir=index_dir,
+                )
+            else:
+                import logging
+
+                logging.getLogger("agent.rag.sidecar").warning(
+                    "sidecar socket 不可达，回退进程内 spawn owner=%s", owner_key[:8],
+                )
+        if client is None:
+            client = TsSidecarClient(owner_key, command=command, index_dir=index_dir)
         clients[owner_key] = client
     client.touch()
     return client
@@ -780,9 +1219,17 @@ async def rank_candidates_with_cache(
     client = _rank_clients.get(loop)
     if client is None:
         settings = get_settings().search
-        client = TsSidecarClient(
-            f"score:{id(loop)}", command=settings.ts_sidecar_command, index_dir="",
-        )
+        socket_path = _sidecar_socket_path()
+        if socket_path and await _probe_sidecar_socket(socket_path):
+            # 无状态 rank worker 同样托管在宿主上；全进程共享一个 __rank__ 通道。
+            client = SocketSidecarClient(
+                RANK_SOCKET_OWNER, socket_path=socket_path,
+                command=settings.ts_sidecar_command, index_dir="",
+            )
+        else:
+            client = TsSidecarClient(
+                f"score:{id(loop)}", command=settings.ts_sidecar_command, index_dir="",
+            )
         _rank_clients[loop] = client
     by_id: dict[str, RecallCandidate] = {}
     payload = []
@@ -1015,6 +1462,7 @@ def _timeout_seconds() -> float:
 
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
+    "SocketSidecarClient", "RANK_SOCKET_OWNER",
     "rank_candidates_with_cache",
     "RANK_SCORING_VERSION",
     "SIDE_CAR_IDLE_TTL_SECONDS",

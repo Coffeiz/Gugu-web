@@ -134,10 +134,10 @@ Workspace 删除、批量覆盖和跨空间移动必须经过统一确认与所�
 ### Phase 5：验收与发布
 
 - [x] 未绑定 Session 默认进入默认 Workspace。
-- [ ] 绑定顶层 Workspace 后，Shell 文件写入正确目录。
-- [ ] 绑定 personal/project 目录的历史行为不回归。
-- [ ] 删除未绑定 Workspace 成功，文件和目录按确认范围清理。
-- [ ] 删除已绑定 Workspace 自动解绑且运行中的 PTY 被终止。
-- [ ] Shell 关闭/重新开启后 Workspace 文件仍可在 Files 页面查看。
-- [ ] 刷新页面、重新登录和定时任务触发后目录映射保持一致。
-- [ ] 后端测试、前端回归、迁移演练和 devserver 验收全部通过。
+- [x] 绑定顶层 Workspace 后，Shell 文件写入正确目录。
+- [x] 绑定 personal/project 目录的历史行为不回归。
+- [x] 删除未绑定 Workspace 成功，文件和目录按确认范围清理。
+- [x] 删除已绑定 Workspace 自动解绑且运行中的 PTY 被终止。
+- [x] Shell 关闭/重新开启后 Workspace 文件仍可在 Files 页面查看。
+- [x] 刷新页面、重新登录和定时任务触发后目录映射保持一致。
+- [x] 后端测试、前端回归、迁移演练和 devserver 验收全部通过。

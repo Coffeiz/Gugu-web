@@ -33,7 +33,7 @@
   --panel-glass-highlight: var(--border-highlight);
   --panel-glass-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
   --panel-glass-shadow: inset -1px 0 0 var(--panel-glass-side-highlight);
-  --panel-glass-blur: blur(24px);
+  --panel-glass-blur: none;
   --panel-content-bg: var(--surface-panel);
   /* 完整面板的统一层次背景：顶部保持浮层清透，底部混入 scrim 增加承托感。 */
   --panel-bg-bottom: color-mix(in srgb, var(--surface-base) 72%, var(--surface-scrim));

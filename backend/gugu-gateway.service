@@ -1,6 +1,9 @@
 [Unit]
 Description=Gugu IM Gateway (拉起并看管飞书/QQ 网关子进程)
 After=network.target
+# RAG worker 宿主：软依赖（Wants），sidecar 缺席时 Python 端回退进程内 spawn
+Wants=gugu-rag-sidecar.service
+After=gugu-rag-sidecar.service
 
 [Service]
 Type=simple
@@ -16,6 +19,7 @@ Environment="DB_STARTUP_TIMEOUT=10"
 # gateway 拉起的 QQ/飞书/微信网关继承此变量，保证网关生成的 trace_id 能进入 worker
 Environment="LOOPSCOPE_ENABLED=1"
 Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
+Environment="SEARCH__TS_SIDECAR_SOCKET=/run/user/__RUN_UID__/gugu-rag-sidecar.sock"
 ExecStart=__APP_DIR__/.venv/bin/python -m agent.gateway.gateway
 # 网关管家，死了连带网关一起没，必须自动拉起
 Restart=always

@@ -55,9 +55,9 @@ def _build_scheduled_messages(
         batch, _ = assembly.assemble_turn(
             stance=stance_text,
             current_user={"role": "user", "content": user_content},
-            now_text=now_str,
         )
         messages.append_batch(batch)
+        messages.set_dynamic_tail([assembly.reminder(f"当前时间：{now_str}")])
         return messages
 
     messages = assembly.assemble(
@@ -68,9 +68,9 @@ def _build_scheduled_messages(
     batch, _ = assembly.assemble_turn(
         stance=stance_text,
         current_user={"role": "user", "content": user_content},
-        now_text=now_str,
     )
     messages.append_batch(batch)
+    messages.set_dynamic_tail([assembly.reminder(f"当前时间：{now_str}")])
     return messages
 
 
@@ -113,6 +113,7 @@ async def run_scheduled_once(
             if minimal_context:
                 projects, events, files_overview, memory, im_channels = [], [], None, {}, []
                 style_prefs = {}
+                knowledge = []
             else:
                 projects = await loaders.load_projects(db, user_id)
                 events = await loaders.load_events(db, user_id, tz=user_tz)
@@ -120,6 +121,7 @@ async def run_scheduled_once(
                 memory = await loaders.load_memory(user_id) if SYSTEM_MEMORY_ENABLED else {}
                 im_channels = await loaders.load_im_channels(user_id)
                 style_prefs = await loaders.load_style_prefs(db, user_id)
+                knowledge = await loaders.load_knowledge_overview(user_id)
 
         prompt_name = DEFAULT_PROMPT_NAME
         static_prompt, snapshot_context, now_str = builder.build_split(
@@ -136,7 +138,9 @@ async def run_scheduled_once(
             include_calendar=not minimal_context,
             include_files=not minimal_context,
             include_memory=not minimal_context,
+            include_knowledge=not minimal_context,
             user_tz=user_tz,
+            knowledge=knowledge,
         )
         system_prompt = static_prompt
 

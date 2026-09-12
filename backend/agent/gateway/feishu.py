@@ -972,7 +972,8 @@ def _stream_fallback_text(text: str, has_files: bool) -> str:
 
 
 async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
-                          placeholder: str = "咕咕正在想…") -> tuple[bool, "AgentResponse | None"]:
+                          placeholder: str = "咕咕正在想…",
+                          show_intermediate_replies: bool = True) -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
 
     Args:
@@ -1000,7 +1001,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         accumulated = ""
         final_resp = None
         async for kind, payload in token_iter:
-            if kind == "token":
+            if kind == "token" and show_intermediate_replies:
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
@@ -1020,7 +1021,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         accumulated = ""
         final_resp = None
         async for kind, payload in token_iter:
-            if kind == "token":
+            if kind == "token" and show_intermediate_replies:
                 accumulated += payload
             elif kind == "final":
                 final_resp = payload
@@ -1063,6 +1064,8 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
     try:
         async for kind, payload in token_iter:
             if kind == "token":
+                if not show_intermediate_replies:
+                    continue
                 accumulated += payload
                 now = time.monotonic()
                 # 节流：时间 OR 长度任一满足就 patch（保证短响应也能及时显示）

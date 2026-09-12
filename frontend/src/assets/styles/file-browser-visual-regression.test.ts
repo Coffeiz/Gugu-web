@@ -132,7 +132,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesGridView).not.toContain('class="hover-card-fx"')
     expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):hover')
     expect(productCss).not.toContain('html[data-theme][data-family] .hover-card-fx:hover { box-shadow:')
-    expect(componentRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card),')
+    expect(componentRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card),')
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .hover-card-fx,\n')
   })
 

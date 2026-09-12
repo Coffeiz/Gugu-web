@@ -31,6 +31,7 @@ const datePickerCss = load('./adoption/date-picker.css')
 const publicPagesCss = load('./adoption/public-pages.css')
 const adoptionIndexCss = load('./adoption/index.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
+const globalCss = load('./global.css')
 const themeAdoptionCss = load('./theme-adoption.css')
 const productCss = load('./tokens/product.css')
 const runtimeCss = load('./adoption/runtime.css')
@@ -80,6 +81,7 @@ const paletteTokens = [
 ]
 const notificationBubbleVue = load('../../components/common/feedback/NotificationBubble.vue')
 const guguChatToolBubbleVue = load('../../components/common/gugu-chat/GuguChatToolBubble.vue')
+const defaultLayoutVue = load('../../layouts/DefaultLayout.vue')
 const newProjectModalVue = load('../../views/Projects/components/NewProjectModal.vue')
 const appSidebarVue = load('../../components/common/layout/AppSidebar.vue')
 const themeRefinementsCss = load('./theme-refinements.css')
@@ -98,6 +100,7 @@ const markdownViewVue = load('../../components/common/content/MarkdownView.vue')
 const usagePanelVue = load('../../views/Admin/Agent/observability/components/UsagePanel.vue')
 const promptPanelVue = load('../../views/Admin/Agent/prompting/components/PromptPanel.vue')
 const stateLabelsPanelVue = load('../../views/Admin/Agent/prompting/components/StateLabelsPanel.vue')
+const adminConfigVue = load('../../views/Admin/Config/index.vue')
 
 describe('主题 CSS 回归契约', () => {
   it('字体资源层与字体族 token 保持单一契约', () => {
@@ -433,15 +436,29 @@ describe('主题 CSS 回归契约', () => {
     expect(surfacesCss).not.toMatch(/html\[data-family='mono'\][^{]*\.fc-card/)
   })
 
-  it('Mono 内容卡关闭 blur、画布浮动 chrome 通过同一 glass-card token 恢复 blur', () => {
-    expect(componentCss).toContain('--glass-card-blur: var(--glass-blur)')
+  it('常驻内容面板默认无 blur，导航栏和笔记 glass 显式保留 blur', () => {
+    expect(componentCss).toContain('--glass-card-blur: none;')
+    expect(globalCss).toContain('backdrop-filter: var(--glass-card-blur)')
+    expect(productCss).not.toContain('.glass-card:not(.topbar)')
 
-    const monoFamily = cssBlock(productCss, "html[data-family='mono'] { --glass-card-blur: none;")
-    expect(monoFamily.trim()).toBe('--glass-card-blur: none;')
+    expect(productCss).not.toContain('--glass-card-blur:')
 
-    const monoGlassCard = cssBlock(productCss, "html[data-family='mono'] .glass-card:not(.topbar)")
-    expect(monoGlassCard).toContain('backdrop-filter: var(--glass-card-blur)')
-    expect(monoGlassCard).not.toContain('backdrop-filter: none')
+    expect(appSidebarVue).toContain('backdrop-filter:var(--popup-blur)')
+    const adminLayoutVue = load('../../layouts/AdminLayout.vue')
+    expect(adminLayoutVue).toContain('backdrop-filter: var(--popup-blur);')
+
+    const mindIndexVue = load('../../views/Mind/index.vue')
+    const mindTabs = cssBlock(mindIndexVue, '.mind-tabs {')
+    expect(mindTabs).toContain('backdrop-filter: var(--glass-blur)')
+    expect(mindTabs).toContain('-webkit-backdrop-filter: var(--glass-blur)')
+
+    const noteTimelineVue = load('../../views/Mind/components/NoteTimeline.vue')
+    expect(cssBlock(noteTimelineVue, '.tl-col {')).toContain('--glass-card-blur: var(--glass-blur)')
+    const entityStickerVue = load('../../views/Mind/components/EntitySticker.vue')
+    expect(entityStickerVue).toContain('backdrop-filter: var(--glass-blur)')
+
+    const mindGlass = cssBlock(mindCss, 'html[data-theme][data-family] :is(.canvas-drawer, .canvas-toolbar, .note-picker)')
+    expect(mindGlass).toContain('--glass-card-blur: var(--glass-blur)')
 
     const chromeBlock = cssBlock(
       mindCss,
@@ -449,12 +466,18 @@ describe('主题 CSS 回归契约', () => {
     )
     expect(chromeBlock).toContain('--glass-card-background: var(--chrome-glass-bg)')
     expect(chromeBlock).toContain('--glass-card-background-hover: var(--chrome-glass-bg)')
-    expect(chromeBlock).toContain('--glass-card-blur: var(--chrome-glass-blur)')
     expect(chromeBlock).toContain('background: var(--glass-card-background)')
     expect(chromeBlock).toContain('border-color: var(--glass-card-border)')
     expect(chromeBlock).toContain('box-shadow: var(--glass-card-shadow)')
     expect(chromeBlock).not.toContain('backdrop-filter:')
     expect(chromeBlock).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+
+    const adminStaticSurfaces = cssBlock(surfacesCss, 'html[data-theme][data-family] .admin-layout :is(')
+    expect(adminStaticSurfaces).toContain('backdrop-filter: none;')
+    expect(adminStaticSurfaces).not.toContain('.save-bar')
+    expect(adminConfigVue).toContain('backdrop-filter: var(--glass-blur);')
+    expect(adminConfigVue).toContain('-webkit-backdrop-filter: var(--glass-blur);')
+    expect(adminStaticSurfaces).toContain('-webkit-backdrop-filter: none;')
   })
 
   it('Mono 音乐播放器和暗色播放按钮复用主题 token，不回退到旧亮色渐变', () => {
@@ -494,12 +517,12 @@ describe('主题 CSS 回归契约', () => {
 
   it('真实项目页样板按主题族选择材质层', () => {
     const designPageVue = load('../../views/Design/components/DesignSystemPage.vue')
-    expect(designPageVue).toContain('<GlassBg />')
+    expect(designPageVue).not.toContain('<GlassBg />')
     expect(designPageVue).toContain('class="sample-topbar topbar glass-card"')
-    expect(designPageVue).toContain(":global(html[data-family='mono']) .sample-sidebar{background:var(--chrome-glass-bg);border-right-color:var(--chrome-glass-border);box-shadow:var(--chrome-glass-shadow);backdrop-filter:var(--chrome-glass-blur);-webkit-backdrop-filter:var(--chrome-glass-blur)}")
+    expect(designPageVue).toContain(":global(html[data-family='mono']) .sample-sidebar{background:var(--chrome-glass-bg);border-right-color:var(--chrome-glass-border);box-shadow:var(--chrome-glass-shadow)}")
     expect(designPageVue).toContain('background:var(--design-card-bg);border:1px solid var(--design-card-border)')
-    expect(designPageVue).toContain('.sample-main > .sample-topbar { --gb-tint: var(--glass-bg);')
-    expect(designPageVue).toContain('.sample-main > .sample-topbar:hover { --gb-tint: var(--glass-bg-hover); }')
+    expect(designPageVue).not.toContain('--gb-tint:')
+    expect(designPageVue).not.toContain('.sample-main > .sample-topbar:hover')
     expect(designPageVue).toContain('.project-column.glass-card { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); }')
     expect(designPageVue).not.toContain('border: 1px solid transparent;border-radius:var(--radius-md)')
     expect(designPageVue).not.toContain('border:1px solid var(--border-hairline);border-radius:var(--radius-md);background:var(--column-bg)')
@@ -509,16 +532,20 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('日历工具栏和终端顶部不重复绘制玻璃边界', () => {
+    expect(globalCss).not.toContain('.glass-card:hover')
     const componentCss = load('./component-theme-refinements.css')
     expect(componentCss).toContain('--gb-highlight-strong: transparent')
     expect(componentCss).toContain('--gb-highlight-side: transparent')
 
     const productCss = load('./tokens/product.css')
     const topbarBlock = cssBlock(productCss, 'html[data-theme][data-family] .topbar')
-    expect(topbarBlock).toContain('--gb-highlight-strong: transparent')
-    expect(topbarBlock).toContain('--gb-highlight-side: transparent')
     expect(topbarBlock).toContain('box-shadow: var(--glass-card-shadow)')
-    // topbar:hover 特例已清理：hover tint 由 GlassBg 的 .glass-card:hover 契约统一处理
+    expect(topbarBlock).not.toContain('backdrop-filter:')
+    expect(defaultLayoutVue).toContain('<header v-if="!fullBleed" class="topbar glass-card"')
+    expect(defaultLayoutVue).not.toContain('<GlassBg />')
+    expect(defaultLayoutVue).not.toContain("import GlassBg from")
+    expect(defaultLayoutVue).toContain('background: var(--glass-card-background)')
+    // 玻璃宿主保持静态，hover 只由内部控件提供
     expect(productCss).not.toContain('.topbar:hover')
     // terminal-main-head 的 glass token 特例已清理：终端页与其他面板共用标准契约
     expect(productCss).not.toContain('.terminal-main-head.glass-card')

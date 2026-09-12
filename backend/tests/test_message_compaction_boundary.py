@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 from agent.context.compaction import compact_context
 from agent.context.compress_conv import fixed_context_parts
-from agent.context.assembly import NewMessageBatch, PromptMessages, assemble, assemble_turn
+from agent.context.assembly import (
+    NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder,
+)
 from agent.context.history import build_history_parts
 from agent.context.canonical_tool_history import render_events_for_provider
 
@@ -20,13 +22,13 @@ def test_assembly_marks_snapshot_prefix():
     )
     batch, _ = assemble_turn(
         current_user={"role": "user", "content": "当前消息"},
-        now_text="当前时间",
     )
+    messages.set_dynamic_tail([reminder("当前时间：当前时间")])
     messages.append_batch(batch)
 
     assert messages.fixed_prefix_size == 2
     assert [m["content"] for m in messages.conversation[:2]] == ["固定系统", "固定 session info"]
-    assert messages[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
+    assert messages.dynamic_tail == [reminder("当前时间：当前时间")]
 
 
 def test_openai_provider_render_keeps_snapshot_prefix():
@@ -39,8 +41,8 @@ def test_openai_provider_render_keeps_snapshot_prefix():
     )
     batch, _ = assemble_turn(
         current_user={"role": "user", "content": "当前消息"},
-        now_text="当前时间",
     )
+    messages.set_dynamic_tail([reminder("当前时间：当前时间")])
     messages.append_batch(batch)
 
     outbound = render_events_for_provider(messages)
@@ -49,10 +51,10 @@ def test_openai_provider_render_keeps_snapshot_prefix():
     assert [item["content"] for item in outbound.conversation][:3] == [
         "固定 snapshot", "旧消息", "当前消息",
     ]
-    assert outbound[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
+    assert outbound.dynamic_tail == [reminder("当前时间：当前时间")]
 
 
-def test_rag_context_precedes_current_user_and_keeps_time_after_rag():
+def test_rag_precedes_current_user_while_current_time_stays_in_dynamic_tail():
     messages = assemble(
         fixed_parts=[{"role": "user", "content": "固定 session info"}],
         history=[{"role": "assistant", "content": "上一轮回复"}],
@@ -60,15 +62,15 @@ def test_rag_context_precedes_current_user_and_keeps_time_after_rag():
     batch, _ = assemble_turn(
         current_user={"role": "user", "content": "当前问题"},
         conversation_tail=[{"role": "user", "content": "[group-rag]\n稳定知识"}],
-        now_text="当前时间",
     )
+    messages.set_dynamic_tail([reminder("当前时间：当前时间")])
     messages.append_batch(batch)
 
     assert [item["content"] for item in messages.conversation] == [
         "固定 session info", "上一轮回复", "[group-rag]\n稳定知识", "当前问题",
-        [{"type": "time-context", "text": "[system-reminder]\n当前时间：当前时间\n[/system-reminder]"}],
     ]
-    assert messages[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
+    assert messages.dynamic_tail == [reminder("当前时间：当前时间")]
+    assert "当前时间：当前时间" not in str(messages.conversation)
 
 
 def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):

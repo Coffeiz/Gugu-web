@@ -5,6 +5,10 @@
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showToolInteractions') }}</span><span class="pm-field-hint">{{ t('profileImUi.showToolInteractionsHint') }}</span></div>
       <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="preferences.showToolInteractions" :aria-label="t('profileImUi.toggleToolInteractions')" @update:model-value="toggleToolInteractions" /><span class="pm-switch-label" :class="{ on: preferences.showToolInteractions }">{{ preferences.showToolInteractions ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
+    <div class="pm-bot-group-row pm-interaction-preference-row">
+      <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showIntermediateReplies') }}</span><span class="pm-field-hint">{{ t('profileImUi.showIntermediateRepliesHint') }}</span></div>
+      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="preferences.showIntermediateReplies" :aria-label="t('profileImUi.toggleIntermediateReplies')" @update:model-value="toggleIntermediateReplies" /><span class="pm-switch-label" :class="{ on: preferences.showIntermediateReplies }">{{ preferences.showIntermediateReplies ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
+    </div>
   </div>
   <div class="pm-sep"></div>
   <div class="pm-section">
@@ -95,6 +99,10 @@ let botsLoadSeq = 0
 
 function toggleToolInteractions() {
   void preferences.saveShowToolInteractions(!preferences.showToolInteractions)
+}
+
+function toggleIntermediateReplies() {
+  void preferences.saveShowIntermediateReplies(!preferences.showIntermediateReplies)
 }
 
 function botById(botId: number): Bot | undefined { return bots.value.find(bot => bot.id === botId) }

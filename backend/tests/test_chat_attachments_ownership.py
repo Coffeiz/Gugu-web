@@ -585,3 +585,230 @@ async def test_e2e_draft_upload_expires_but_attached_survives(db, user_a, storag
     attached_row = (await db.execute(select(ChatAttachment).where(ChatAttachment.attach_id == attached_attach_id))).scalars().first()
     assert attached_row is not None and attached_row.state == "attached", "已发送的附件不该被草稿 GC 碰，即使物理创建时间同样很老"
     assert await storage.exists(attached_row.storage_key), "已发送附件的物理字节应该还在"
+
+
+# ── stage_stream()：分块收流的附件暂存 ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_stage_stream_writes_exact_content(db, user_a, storage):
+    import io
+    stream = io.BytesIO(b"stream-attachment-body")
+    meta = await chat_attach.stage_stream(
+        user_a.id, "大附件", "bin", "application/octet-stream",
+        stream=stream, size=22,
+    )
+    assert meta["size"] == 22
+    assert meta["kind"] != "image"
+    assert await storage.exists(meta["storage_key"])
+    assert await storage.get(meta["storage_key"]) == b"stream-attachment-body"
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().first()
+    assert row is not None and row.state == "draft"
+
+
+# ── 流式上传路由回归：普通附件不得 materialize ───────────────────────────────
+
+def _png_bytes(w=4, h=7):
+    from io import BytesIO
+    from PIL import Image as PILImage
+    buf = BytesIO()
+    PILImage.new("RGB", (w, h), (200, 10, 10)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_pdf_goes_through_stage_stream(db, user_a, storage, monkeypatch):
+    """普通附件（pdf/zip/psd…）不允许整包 materialize：chat_attach.stage() 被调用
+    即失败；必须走 stage_stream 分块落盘，内容字节级一致。"""
+    import io
+    from starlette.datastructures import Headers
+    from fastapi import UploadFile
+    from app.api.v1.agent import upload_attachment
+
+    async def _must_not_materialize(*a, **k):
+        raise AssertionError("普通附件不应走 stage() 整包字节路径")
+
+    monkeypatch.setattr(chat_attach, "stage", _must_not_materialize)
+    body = b"%PDF-1.4 fake" * 2048
+    upload = UploadFile(file=io.BytesIO(body), filename="doc.pdf",
+                        headers=Headers({"content-type": "application/pdf"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["ext"] == "pdf"
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == body
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_fake_image_dims_none(db, user_a, storage):
+    """mime 是用户可控输入：假 PNG 不能为探尺寸整包读，探不到就 None。"""
+    import io
+    from starlette.datastructures import Headers
+    from fastapi import UploadFile
+    from app.api.v1.agent import upload_attachment
+
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * (64 * 1024)
+    upload = UploadFile(file=io.BytesIO(body), filename="fake.png",
+                        headers=Headers({"content-type": "image/png"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["kind"] == "image"
+    assert meta["img_width"] is None and meta["img_height"] is None
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == body
+
+
+@pytest.mark.asyncio
+async def test_stage_stream_real_image_gets_dimensions(db, user_a, storage):
+    import io
+    body = _png_bytes(4, 7)
+    meta = await chat_attach.stage_stream(
+        user_a.id, "真图", "png", "image/png", stream=io.BytesIO(body), size=len(body),
+    )
+    assert (meta["img_width"], meta["img_height"]) == (4, 7)
+    assert await storage.get(meta["storage_key"]) == body
+
+
+# ── 音频候选路径的 materialize 上限 ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_oversized_voice_recording_rejected(db, user_a, storage, monkeypatch):
+    """voice=true 超过音频 materialize 上限直接拒绝（含原生 mp3/wav）。"""
+    import io
+    from fastapi import HTTPException, UploadFile
+    from starlette.datastructures import Headers
+    from app.api.v1 import agent as _agent_api
+    from app.api.v1.agent import upload_attachment
+
+    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 8)
+    upload = UploadFile(file=io.BytesIO(b"wav-bytes-here" * 2), filename="rec.mp3",
+                        headers=Headers({"content-type": "audio/mpeg"}))
+    with pytest.raises(HTTPException) as ei:
+        await upload_attachment(file=upload, voice=True, current_user=user_a)
+    assert ei.value.status_code == 400
+    assert "语音录音过大" in str(ei.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_oversized_audio_attachment_staged_raw_via_stream(db, user_a, storage, monkeypatch):
+    """非 voice 的大音频不做进程内转码：按原样走 stage_stream，内容字节一致。"""
+    import io
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    from app.api.v1 import agent as _agent_api
+    from app.api.v1.agent import upload_attachment
+
+    async def _must_not_materialize(*a, **k):
+        raise AssertionError("超限大音频不应走 stage() 整包字节路径")
+
+    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 8)
+    monkeypatch.setattr(chat_attach, "stage", _must_not_materialize)
+    body = b"aac-audio-bytes" * 4
+    upload = UploadFile(file=io.BytesIO(body), filename="big.aac",
+                        headers=Headers({"content-type": "audio/aac"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["ext"] == "aac"          # 未转码，保留原扩展名
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == body
+
+
+@pytest.mark.asyncio
+async def test_small_webm_still_transcodes_under_cap(db, user_a, storage, monkeypatch):
+    """上限内的小 webm 录音行为不变：转码成 mp3 再暂存。"""
+    import io
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    from app.api.v1 import agent as _agent_api
+    from app.api.v1.agent import upload_attachment
+
+    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 1024 * 1024)
+    monkeypatch.setattr("app.core.media_transcode.to_provider_audio", lambda *a, **k: b"converted-mp3")
+    upload = UploadFile(file=io.BytesIO(b"webm-recording"), filename="rec.webm",
+                        headers=Headers({"content-type": "audio/webm"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["ext"] == "mp3"
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == b"converted-mp3"
+
+
+# ── 消费侧硬门：resolve_for_message 按 meta["size"] 在 read_bytes 之前拒绝 ───
+
+@pytest.mark.asyncio
+async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, monkeypatch):
+    """400MB 的 mp3 在发送消息时也不得先整包读进内存再拒绝。"""
+    meta = await chat_attach.stage(user_a.id, "大音频", "mp3", "audio/mpeg", b"mp3-bytes")
+
+    async def _big_meta(_user_id, _aid):
+        return dict(meta, size=100 * 1024 * 1024)
+
+    async def _must_not_read(m):
+        raise AssertionError("超限音频必须在 read_bytes 之前被 size 门拦下")
+
+    monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
+    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+
+    parts, _cards, _images, media = await chat_attach.resolve_for_message(
+        user_a.id, [meta["attach_id"]], "你好")
+    assert "太大" in parts
+    assert media == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, monkeypatch):
+    """假 PNG 声明成几百 MB 时，vision 分支同样读前拒绝。"""
+    meta = await chat_attach.stage(user_a.id, "假大图", "png", "image/png", b"png-bytes")
+
+    async def _big_meta(_user_id, _aid):
+        return dict(meta, size=100 * 1024 * 1024)
+
+    async def _must_not_read(m):
+        raise AssertionError("超限图片必须在 read_bytes 之前被 size 门拦下")
+
+    monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
+    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+
+    parts, _cards, images, media = await chat_attach.resolve_for_message(
+        user_a.id, [meta["attach_id"]], "你好")
+    assert images == [] and media == []
+    assert "没法直接看" in parts
+    assert "读取上限" in parts and "格式不支持" not in parts   # P3：原因保留真实文案
+
+
+@pytest.mark.asyncio
+async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, monkeypatch):
+    """500MB 的 .txt / 可提取 PDF 不得在发送消息时整包读进内存再截断。"""
+    meta = await chat_attach.stage(user_a.id, "大文档", "txt", "text/plain", b"tiny-text")
+
+    async def _big_meta(_user_id, _aid):
+        return dict(meta, size=500 * 1024 * 1024)
+
+    async def _must_not_read(m):
+        raise AssertionError("超限文本必须在 read_bytes 之前被 size 门拦下")
+
+    monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
+    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+
+    parts, _cards, _images, _media = await chat_attach.resolve_for_message(
+        user_a.id, [meta["attach_id"]], "你好")
+    assert "未直接读取" in parts and "read_file 读取" not in parts   # 不再承诺 read_file 能读到全文
+    assert "```" not in parts   # 没有把任何正文注入上下文
+

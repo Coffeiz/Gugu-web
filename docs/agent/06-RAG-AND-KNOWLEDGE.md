@@ -128,6 +128,20 @@ Python 读取主数据并生成 source record
 
 worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约，支持 `ping`、`adapt`、`replace`、`patch`、`search`、`batch_search`、`unified_query`、`hybrid_fuse` 和 `rank_candidates`。`patch` 只同步发生变化的 chunk slot，文档版本变化不会让未变化 chunk 被误判为新文档。
 
+### 5.0 索引更新与增量边界（PRD-RAG-9）
+
+**worker 托管**：配置 `search.ts_sidecar_socket`（unix socket）后，per-owner TS worker 由
+`gugu-rag-sidecar` 常驻宿主统一托管，多个 Python 进程共享同一份热索引，后端重启不再触发
+冷装载；socket 不可达时自动回退进程内 spawn。状态（revision/瞬态指纹/进程代数）以宿主为唯一
+权威，`reuse_if_current` 与 `replace_transient` 的短路判定都在宿主侧执行。
+
+索引更新事件（`RagIndexUpdated`）由事件总线按 (user, source_type) 合并串行消费，并先落 `index_jobs` durable outbox（进程重启后由恢复循环重放）。管线按事件是否携带 `source_id` 分流：
+
+- **文档级增量**（默认路径）：knowledge / file / project / calendar / note / canvas 六来源带 `source_id` 的事件走 `pipeline.update_document`——单对象读取 source record、单条 TS 投影、`compute_chunk_delta`（契约冻结在 `agent/rag/delta.py`，slot 键 `source_type:parent:chunk_index`，digest 不含 version 但含 scope/chunk_count）算出 upserts/deletes，DB 侧按父文档作用域 replace 写 `KnowledgeIndexEntry`，knowledge 额外做向量 upsert/delete；随后把增量 `patch` 给 TS worker，`revision_mismatch` 时回退 worker 侧来源级 `replace`，worker 不可用只记 `status=worker_unavailable`（DB revision 已推进，查询侧懒同步自愈）。
+- **来源级全量**（兜底/管理入口）：无 `source_id` 的事件、批量校准走 `rebuild_source_index`（来源内 chunk 对比替换）。诊断统一记 `mode=document_patch|source_replace` 与 upsert/delete 计数、耗时（§9 脱敏字段）。
+
+conversation（record 依赖相邻消息上下文）与 memory（worker 瞬态槽通道）不适用单文档增量，保持来源级/瞬态全量路径。
+
 worker 不访问网络、不输出业务正文、不做权限授权；运行时使用随制品发布的分词依赖，不能在 devserver 或 Docker 运行时临时编译 TypeScript。
 
 ### 5.1 TS 模块职责

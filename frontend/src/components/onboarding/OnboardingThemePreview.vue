@@ -209,8 +209,6 @@ const columns = [
   border-radius: var(--card-radius);
   background: var(--glass-card-background);
   box-shadow: var(--glass-card-shadow);
-  backdrop-filter: var(--topbar-blur);
-  -webkit-backdrop-filter: var(--topbar-blur);
 }
 .preview-title { min-width: 112px; }
 .preview-title b,.preview-title small { display: block; }

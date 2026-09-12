@@ -101,6 +101,13 @@ class StorageBackend(ABC):
     async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None:
         """写入文件"""
 
+    async def put_stream(self, key: str, source, size: int, mime_type: str | None = None) -> None:
+        """流式写入：source 是可 seek(0) 的二进制文件对象，size 为总字节数。
+
+        默认退化为一次性读入后走 put——自定义/测试后端自动兼容；本地与 OSS
+        后端覆写为真分块，内存占用与文件大小解耦。"""
+        await self.put(key, source.read(), mime_type)
+
     @abstractmethod
     async def get(self, key: str) -> bytes:
         """读取文件内容"""
@@ -186,11 +193,28 @@ class StorageBackend(ABC):
 
 class LocalStorageBackend(StorageBackend):
 
+    # 流式拷贝的分块大小；写盘走线程池，分块只影响单次 syscopy 的内存占用。
+    _STREAM_CHUNK = 1024 * 1024
+
     def __init__(self, root: Path):
         self.root = root
 
     async def put(self, key: str, data: bytes, mime_type: str | None = None) -> None:
-        path = self.root / key
+        await asyncio.to_thread(
+            self._atomic_write, self.root / key, key,
+            lambda dest: dest.write(data),
+        )
+
+    async def put_stream(self, key: str, source, size: int, mime_type: str | None = None) -> None:
+        """分块流式落盘：内存占用与文件大小解耦。source 须可 seek(0)。"""
+        def _copy(dest) -> None:
+            source.seek(0)
+            shutil.copyfileobj(source, dest, length=self._STREAM_CHUNK)
+        await asyncio.to_thread(self._atomic_write, self.root / key, key, _copy)
+
+    def _atomic_write(self, path: Path, key: str, write) -> None:
+        """阻塞的原子写入：write(dest) 把内容写进临时流，最后原子替换目标。
+        大文件写入在线程池执行（调用方 to_thread），不冻结事件循环。"""
         path.parent.mkdir(parents=True, exist_ok=True)
         existing_stat = None
         try:
@@ -208,7 +232,7 @@ class LocalStorageBackend(StorageBackend):
                 # 不会丢掉 ACL 条目。没有 ACL 的普通目录也至少保留共享读写权限。
                 os.fchmod(fd, _LOCAL_NEW_FILE_MODE)
             with os.fdopen(fd, "wb") as stream:
-                stream.write(data)
+                write(stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             if existing_stat is not None:
@@ -408,6 +432,18 @@ class OSSStorageBackend(StorageBackend):
         headers = {"Content-Type": mime_type} if mime_type else {}
         await _oss_retry("storage.oss.put", "oss.put_timeout", "文件上传失败，请稍后重试",
                           self.bucket.put_object, self.pfx + key, data, headers=headers)
+
+    async def put_stream(self, key: str, source, size: int, mime_type: str | None = None) -> None:
+        # file-like 直传 OSS，不经内存聚合；显式带 Content-Length（SpooledTemporaryFile
+        # 未滚盘时是 BytesIO，oss2 拿不到可靠长度）。闭包在每次尝试前 seek(0)，重试安全。
+        headers = {"Content-Type": mime_type} if mime_type else {}
+        headers["Content-Length"] = str(size)
+
+        def _upload():
+            source.seek(0)
+            return self.bucket.put_object(self.pfx + key, source, headers=headers)
+
+        await _oss_retry("storage.oss.put_stream", "oss.put_timeout", "文件上传失败，请稍后重试", _upload)
 
     async def get(self, key: str) -> bytes:
         # 读操作，天然幂等——安全重试。

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from agent.context.canonical_tool_history import (
@@ -289,3 +290,59 @@ def test_new_message_batch_accepts_persisted_reasoning_content():
     }])
 
     assert batch.canonical_messages[0]["content"][0]["type"] == "reasoning_content"
+
+
+def test_canonical_tool_round_keeps_provider_raw_arguments_bytes():
+    """跨 run 缓存字节保真：canonical 必须存 provider 原始 arguments 字符串。
+
+    live wire 发的就是这段原样字节（raw.tool_calls_payload 的 args）；parse→dict→
+    dumps 会改变序列化风格（空格/键序），下一个 run 从 DB 回放时与 live 不一致，
+    provider 前缀缓存在第一个工具轮就断开（2026-09-12 devserver run  事故）。
+    """
+    raw_args = '{"name": "read_file", "arguments": {"file_id": 5559}}'   # 带空格的 provider 原文
+    result = SimpleNamespace(
+        text="看一下",
+        tool_calls=[NormalizedToolCall(
+            id="call-1", name="call_tool",
+            input={"name": "read_file", "arguments": {"file_id": 5559}},
+            raw_arguments=raw_args,
+        )],
+    )
+    canonical = canonical_tool_round(result, [(result.tool_calls[0], {"ok": True})])
+    block = canonical[0]["content"][1]
+    assert block["type"] == "tool_call"
+    assert block["arguments"] == raw_args            # 原样字节，不是重新 dumps
+    assert isinstance(block["arguments"], str)
+
+    # 无 raw_arguments 时（旧路径/Anthropic dict）保持 dict，行为不变。
+    result_dict_only = SimpleNamespace(
+        text="查天气",
+        tool_calls=[ToolCall("call-2", "weather", {"city": "南京"})],
+    )
+    canonical_dict = canonical_tool_round(
+        result_dict_only, [(result_dict_only.tool_calls[0], {"ok": True})])
+    assert canonical_dict[0]["content"][1]["arguments"] == {"city": "南京"}
+
+
+def test_openai_replay_passes_raw_arguments_string_through_verbatim():
+    """回放渲染对字符串 arguments 必须原样透传，与 live wire 逐字节一致。"""
+    from agent.context.history import _openai_tool_call
+
+    raw_args = '{"name": "read_file", "arguments": {"file_id": 5559}}'
+    block = {"type": "tool_call", "id": "call-1", "name": "call_tool", "arguments": raw_args}
+    wire = _openai_tool_call(block)
+    assert wire["function"]["arguments"] == raw_args
+
+    # 完整 round-trip：canonical_tool_round → DB json 往返 → 回放，字节不变。
+    result = SimpleNamespace(
+        text="",
+        tool_calls=[NormalizedToolCall(
+            id="call-1", name="call_tool",
+            input={"name": "read_file", "arguments": {"file_id": 5559}},
+            raw_arguments=raw_args,
+        )],
+    )
+    canonical = canonical_tool_round(result, [(result.tool_calls[0], {"ok": True})])
+    persisted = json.loads(json.dumps(canonical, ensure_ascii=False))
+    replayed_block = next(b for b in persisted[0]["content"] if b.get("type") == "tool_call")
+    assert _openai_tool_call(replayed_block)["function"]["arguments"] == raw_args

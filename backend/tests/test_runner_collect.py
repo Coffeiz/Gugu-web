@@ -182,6 +182,36 @@ async def test_collect_exposes_nonempty_round_texts_for_im_output():
     assert result[-1]["round_texts"] == ["第一轮", "第二轮"]
 
 
+async def test_collect_flushes_explanation_before_interaction_card_and_does_not_repeat_it():
+    """回归：ask_user 触发卡片前先发送同轮说明，选择后续轮不得重发说明。"""
+    order = []
+
+    async def stream():
+        yield "data: " + json.dumps({"type": "token", "content": "先调整车队色块和车队名。"}, ensure_ascii=False) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "interaction_required", "prompt_id": 7, "kind": "choice",
+            "title": "先改哪里？", "options": [],
+        }, ensure_ascii=False) + "\n\n"
+        # 核心生成器在交互事件交给 consumer 后继续执行；此处代表展示 QQ 选择卡。
+        order.append("选择卡")
+        order.append("用户选择")
+        yield "data: " + json.dumps({"type": "_new_round"}, ensure_ascii=False) + "\n\n"
+        yield "data: " + json.dumps({"type": "round_start"}, ensure_ascii=False) + "\n\n"
+        yield "data: " + json.dumps({"type": "token", "content": "我会按选择继续处理。"}, ensure_ascii=False) + "\n\n"
+
+    async def capture_round(text):
+        order.append(("正文", text))
+
+    result = await _collect(stream(), include_meta=True, on_round=capture_round)
+
+    assert order == [
+        ("正文", "先调整车队色块和车队名。"),
+        "选择卡",
+        "用户选择",
+    ]
+    assert result[-1]["round_texts"] == ["先调整车队色块和车队名。", "我会按选择继续处理。"]
+
+
 def test_tool_event_text_does_not_expose_input_schema():
     event = {
         "type": "tool_done", "name": "web_search", "label": "搜索资料",

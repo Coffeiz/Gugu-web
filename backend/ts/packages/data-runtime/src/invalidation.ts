@@ -57,8 +57,12 @@ export function normalizeInvalidationEvent(value: unknown): DataRuntimeInvalidat
 /** 将跨进程业务事件转换为 Data Runtime 的精确缓存失效。 */
 export class DataRuntimeInvalidationBridge {
   private unsubscribe?: () => void;
+  // strip-only 兼容：参数属性语法见 runtime.ts 同款说明。
+  private readonly runtime: DataRuntime;
 
-  constructor(private readonly runtime: DataRuntime) {}
+  constructor(runtime: DataRuntime) {
+    this.runtime = runtime;
+  }
 
   attach(subscription: DataRuntimeEventSubscription): void {
     this.detach();

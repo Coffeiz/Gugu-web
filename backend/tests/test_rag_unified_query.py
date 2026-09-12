@@ -37,6 +37,16 @@ def _selected_row(document, document_key, *, confidence=0.9):
         "source_quality": 0.8, "normalized_score": 1.0, "fused_score": 0.5,
         "raw_score": 1.5, "citation": {"chunk_id": document.chunk_id},
         "citations": [{"chunk_id": document.chunk_id}],
+        "document": {
+            "id": document_key, "source_type": document.source_type,
+            "source_id": document.source_id, "title": document.title,
+            "summary": document.summary, "content": document.content,
+            "document_version": document.version, "parent_id": document.parent_document_id,
+            "chunk_index": document.chunk_index, "chunk_count": document.chunk_count,
+            "scope_type": document.scope.scope_type, "scope_id": document.scope.scope_id,
+            "platform": document.scope.platform, "bot_id": document.scope.bot_id,
+            "group_id": document.scope.group_id, "metadata": document.metadata,
+        },
     }
 
 
@@ -55,6 +65,8 @@ def _canned_response(file_doc, memory_doc, file_key, memory_key, *, fallback=Non
         "document_counts": {"file": 3, "memory": 1},
         "source_groups": {"file": {"candidate_count": 1, "hit_count": 1},
                           "memory": {"candidate_count": 1, "hit_count": 1}},
+        "probe": {"stage_ms": {"bm25_scoring": 4, "worker_total": 9},
+                  "counts": {"candidate_pool": 2}},
     }
 
 
@@ -67,8 +79,21 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
 
     calls = {}
 
-    async def replace_transient(documents, revision, *, vectors=None, vector_version=""):
-        calls["transient"] = (list(documents), revision, vectors, vector_version)
+    async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
+                             snapshot_text, vector_version):
+        calls["memory"] = {
+            "owner": owner, "scopes": scopes, "source_filter": source_filter,
+            "snapshot_revision": snapshot_revision, "snapshot_text": snapshot_text,
+            "vector_version": vector_version,
+        }
+        return {
+            "transient_revision": "ts-memory-revision",
+            "document_count": len(memory_documents or []),
+            "vector_count": len(vector_map or []), "memory_source": "owner-index+daily",
+            "probe": {"stage_ms": {"owner_document_read_and_adapt": 12},
+                      "counts": {"selected_documents": len(memory_documents or [])},
+                      "cache": {"owner_cache_hit": False}},
+        }
 
     async def unified_query(query, *, searches, query_vector, source_order,
                             candidate_limit, rank_options, before_message_id=None,
@@ -80,7 +105,10 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
         return canned
 
     index = SimpleNamespace(
-        client=SimpleNamespace(replace_transient=replace_transient),
+        client=SimpleNamespace(
+            owner_user_id="synthetic-owner", prepare_memory=prepare_memory,
+            _transient_revision="ts-memory-revision",
+        ),
         unified_query=unified_query, documents_by_id={},
     )
 
@@ -101,15 +129,6 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
 
     monkeypatch.setattr(embedding_mod, "embed", embed)
 
-    async def load_memory(self, memory, scope):
-        return list(memory_documents or []), "daily" if memory_documents else "", {}
-
-    monkeypatch.setattr(UnifiedQueryRetriever, "_load_memory", load_memory)
-
-    async def memory_vectors(self, owner, documents):
-        return dict(vector_map or {})
-
-    monkeypatch.setattr(UnifiedQueryRetriever, "_memory_vectors", memory_vectors)
     return calls, index
 
 
@@ -120,9 +139,11 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     from agent.rag.context import (
         reset_conversation_before_message_id, set_conversation_before_message_id,
     )
-    from agent.rag.index_cache import _documents_fingerprint
+    from agent.rag import batch_retriever as br
     from agent.rag.ts_sidecar import _worker_document_key
 
+    probe_updates = []
+    monkeypatch.setattr(br, "probe_update", lambda **values: probe_updates.append(values))
     file_doc, memory_doc = _file_doc(), _memory_doc()
     file_key, memory_key = _worker_document_key(file_doc), _worker_document_key(memory_doc)
     canned = _canned_response(file_doc, memory_doc, file_key, memory_key)
@@ -141,12 +162,11 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     finally:
         reset_conversation_before_message_id(token)
 
-    assert list(calls) == ["prepare", "transient", "query"]
-    documents, revision, vectors, vector_version = calls["transient"]
-    assert documents == [memory_doc]
-    assert revision == f"{_documents_fingerprint([memory_doc])}:prov:model:2"
-    assert vectors == {memory_key: [0.3, 0.4]}
-    assert vector_version == "prov:model:2"
+    assert list(calls) == ["prepare", "memory", "query"]
+    assert calls["memory"]["owner"] == "synthetic-owner"
+    assert calls["memory"]["scopes"][0].scope_type == "owner"
+    assert calls["memory"]["source_filter"] == "all"
+    assert calls["memory"]["vector_version"] == "prov:model:2"
 
     assert calls["query"]["before_message_id"] == 7
     assert calls["query"]["query_vector"] == [0.1, 0.2]
@@ -154,6 +174,10 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert calls["query"]["candidate_limit"] == 20
     assert calls["query"]["rank_options"]["limit"] == 3
     assert [spec.get("corpus") for spec in calls["query"]["searches"]] == [None, "transient"]
+    assert any(update.get("memory", {}).get("prepare", {}).get("stage_ms", {}).get(
+        "owner_document_read_and_adapt") == 12 for update in probe_updates)
+    assert any(update.get("worker", {}).get("stage_ms", {}).get("bm25_scoring") == 4
+               for update in probe_updates)
 
     assert len(batches) == 1
     batch = batches[0]
@@ -170,7 +194,7 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert text == file_doc.content
     assert row["confidence"] == 0.9
     memory_candidate = batch.rank_rows[1][0]
-    assert memory_candidate.document is memory_doc
+    assert memory_candidate.document.content == memory_doc.content
 
 
 def test_unified_retriever_reconstructs_persistent_row_after_cold_restore():
@@ -197,7 +221,9 @@ def test_unified_retriever_reconstructs_persistent_row_after_cold_restore():
         client=SimpleNamespace(owner_user_id="synthetic-owner"),
     )
 
-    rows = retriever._resolve_rank_rows(index, {"selected": [row]}, [])
+    rows = retriever._resolve_rank_rows(
+        index, {"selected": [row]}, [], owner_user_id="synthetic-owner",
+    )
 
     assert len(rows) == 1
     candidate, text, resolved = rows[0]
@@ -207,6 +233,30 @@ def test_unified_retriever_reconstructs_persistent_row_after_cold_restore():
     assert candidate.document.content == row["text"]
     assert text == row["text"]
     assert resolved is row
+
+
+def test_unified_retriever_rechecks_owner_before_returning_ts_rows():
+    """Python 在 TS 返回后仍复核 owner，sidecar 响应不能越过最终 ACL。"""
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    foreign = _file_doc()
+    foreign = IndexDocument(
+        foreign.document_id, foreign.source_type, foreign.source_id,
+        Scope("other-owner"), foreign.title, foreign.summary, foreign.content, foreign.version,
+    )
+    key = "file:file-1:0"
+    index = SimpleNamespace(
+        documents_by_id={key: foreign},
+        client=SimpleNamespace(owner_user_id="synthetic-owner"),
+    )
+    retriever = UnifiedQueryRetriever([])
+
+    rows = retriever._resolve_rank_rows(
+        index, {"selected": [_selected_row(foreign, key)]}, [],
+        owner_user_id="synthetic-owner",
+    )
+
+    assert not rows
 
 
 @pytest.mark.asyncio

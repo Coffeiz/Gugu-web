@@ -7,10 +7,17 @@ class DeepSeekAdapter(ProviderAdapter):
     cache_mode = "active"
     supports_thinking_toggle = True
 
+    def supports_explicit_cache(self, model: str = "") -> bool:
+        """DeepSeek 使用服务端自动前缀缓存，不接受显式 cache_control 锚点。"""
+        return False
+
     def capabilities(self, model: str = "") -> ProviderCapabilities:
-        # DeepSeek 的视觉能力目前只开放在独立的 Vision Exp 模型，普通文本模型
-        # 仍保持 vision=False，避免把图片误发给不支持多模态的模型。
-        vision = model.strip().lower() == "deepseek-v4-flash-vision-exp"
+        # 当前 deepseek-flash 支持图片输入；旧 Vision Exp 名称仍由服务端兼容承接。
+        # 普通文本模型仍保持 vision=False，避免把图片误发给不支持多模态的模型。
+        vision = model.strip().lower() in {
+            "deepseek-flash",
+            "deepseek-v4-flash-vision-exp",
+        }
         return ProviderCapabilities(api_format="openai", cache_mode="active", thinking=True,
                                     structured_json=True, tools=True, vision=vision)
 

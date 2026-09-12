@@ -62,6 +62,7 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
             "topic": str(value.get("topic") or "").strip(),
             "content": str(value.get("content") or "").strip(),
             "keywords": value.get("keywords") if isinstance(value.get("keywords"), list) else [],
+            "description": str(value.get("description") or "").strip(),
             "certainty": certainty,
             "reason": str(value.get("reason") or "").strip()[:200],
         }
@@ -73,7 +74,7 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
             try:
                 normalized = normalize_capture(
                     item["title"], item["content"], topic=item["topic"],
-                    keywords=item["keywords"],
+                    keywords=item["keywords"], description=item["description"],
                     source_type="user" if save_mode == "explicit" else "conversation",
                     source_ref="conversation:reflection",
                     source_label="用户明确保存" if save_mode == "explicit" else "对话反思",
@@ -84,6 +85,7 @@ def normalize_operations(raw: object, *, save_mode: str = "automatic") -> list[d
             item["title"], item["topic"], item["content"], item["keywords"] = (
                 normalized["title"], normalized["topic"], normalized["content"], normalized["keywords"]
             )
+            item["description"] = normalized["description"]
         result.append(item)
     return result
 
@@ -143,7 +145,7 @@ async def reflect_if_candidate(
     )
     raw = branch.output if branch.ok else {}
     operations = normalize_operations(raw, save_mode=save_mode)
-    saved = 0
+    saved_ids: list[str] = []
     store = KnowledgeStore(user_id)
     for operation in operations[:3]:
         if operation["action"] == "ignore":
@@ -152,7 +154,8 @@ async def reflect_if_candidate(
         source_ref = f"conversation:{session_id}" if session_id else "conversation:reflection"
         entry = build_entry(user_id, {
             "title": operation["title"], "content": operation["content"],
-            "topic": operation["topic"], "keywords": operation["keywords"], "source_type": source_type,
+            "topic": operation["topic"], "keywords": operation["keywords"],
+            "description": operation.get("description", ""), "source_type": source_type,
             "source_ref": source_ref,
             "source_label": "用户明确保存" if save_mode == "explicit" else "对话反思",
             "confidence": operation["certainty"],
@@ -163,8 +166,9 @@ async def reflect_if_candidate(
         elif operation["target_id"]:
             entry.id = operation["target_id"]
         await store.save(entry)
-        saved += 1
-    return saved
+        saved_ids.append(entry.id)
+    # 返回保存的条目 id 列表：调用方据此发文档级 RagIndexUpdated（PRD-RAG-9）。
+    return saved_ids
 
 
 __all__ = [

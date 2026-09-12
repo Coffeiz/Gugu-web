@@ -118,17 +118,12 @@ body {
   border-radius: var(--radius-lg);
   corner-shape: squircle;
   box-shadow: var(--glass-card-shadow);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-card-blur);
+  -webkit-backdrop-filter: var(--glass-card-blur);
   transition:
     background var(--glass-card-transition),
     border-color var(--glass-card-transition),
     box-shadow var(--glass-card-transition);
-}
-.glass-card:hover {
-  background: var(--glass-card-background-hover);
-  border-color: var(--glass-card-border-hover);
-  box-shadow: var(--glass-card-shadow-hover);
 }
 
 /* 段落间距 */
@@ -141,10 +136,9 @@ body {
 .section-title { font-size: 15px; font-weight: 700; }
 .section-link { font-size: 13px; color: var(--color-primary); cursor: pointer; }
 
-/* ── 面板左侧栏通用毛玻璃样式 ── */
+/* ── 面板左侧栏静态 tint ── */
 .panel-left {
   background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border-right: 1px solid rgba(255,255,255,0.62);
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
 }
@@ -154,16 +148,12 @@ body {
    祖先形成隔离组，backdrop-filter 采不到弹窗后面的页面/窗口。规则放全局是因为
    BaseModal 的 scoped 样式够不到 slot 里的玻璃面板（slot 内容带的是调用方组件的 scope id）。
    !important 用于压过 BaseModal 通过 blur prop 写到 .bm-card 上的 inline 样式。 */
-.bm-enter-from .bm-card,
-.bm-enter-from .panel-left,
-.bm-enter-from .modal-right {
+.bm-enter-from .bm-card {
   background-color: transparent !important;
   backdrop-filter: blur(0px) !important;
   -webkit-backdrop-filter: blur(0px) !important;
 }
-.bm-enter-active .bm-card,
-.bm-enter-active .panel-left,
-.bm-enter-active .modal-right {
+.bm-enter-active .bm-card {
   transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
               backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
               -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
@@ -201,7 +191,8 @@ body {
    排在后面赢了）侥幸吃到这份"拎起来"的阴影，其它类型全部被自己的静止阴影盖掉、拖起来跟不
    拖时几乎一样重，看着"各种卡片的拖动悬浮阴影不一样"。全站拖拽克隆的抬起阴影只应该有一份、
    不该被谁的静止态阴影个别覆盖，这里强制赢。 */
-/* 文件卡 / 文件夹卡 / 项目卡拖拽：卡片容器自己背景+模糊，不加外圈装饰层（试过用负
+/* 文件卡 / 文件夹卡 / 项目卡拖拽：Runtime 克隆体可在抓取期间短暂使用背景模糊，不影响
+   常驻源卡片的无 blur 材质。卡片容器自己背景+模糊，不加外圈装饰层（试过用负
    z-index 子元素做「本体不透明+外圈单独模糊」的分层方案，box-shadow 柔光/backdrop-filter
    都试过，效果要么是装饰光晕、要么在拖拽自带的 3D 后仰变换下失真变成硬边白框——都不是
    「卡片本身透出背后模糊内容」，撤回，改回最简单的单层容器）。
@@ -220,11 +211,8 @@ body {
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
 
 
-/* 曾经拖拽期间关掉顶栏/侧栏 backdrop-filter 减负（perf trace 显示单次整屏重绘 ~29ms）——
-   但代价是拖拽这一两秒导航栏毛玻璃质感整个消失、松手后再突然变回来，用户体验上一直觉得
-   是个别扭的跳变（"一直有的问题"）。撤掉这份优化，把手感放在性能之前；如果之后在低端设备
-   上又测出明显的拖拽卡顿，再回来考虑更精细的方案（比如只在克隆体真的经过顶栏/侧栏那片
-   区域时才临时关闭，而不是整段拖拽期间全程关闭）。 */
+/* 顶栏与常驻侧栏本身不再使用 backdrop-filter，因此无需根据拖拽状态切换底层导航材质。
+   Runtime 克隆体的短暂拖拽材质仍由 adoption/runtime.css 单独管理。 */
 /* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
 
 /* Runtime 绑定对象的统一 Safari 拖拽契约。selectstart 由唯一绑定入口拦截，编辑控件显式恢复文本选择。 */

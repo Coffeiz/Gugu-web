@@ -75,7 +75,9 @@ async def create_prompt(
     # 误传 allow_text_input，也必须在统一创建入口被强制关闭。
     allow_custom_reply = source == "agent" and bool(allow_text_input)
     rendered_options = list(options)
-    if allow_custom_reply and rendered_options:
+    # 0 选项也要兜底自定义回复：模型问开放性问题（question）时不带 options，
+    # 没有按钮就没有回答入口（token 只随选项生成），网页端打字只会进排队。
+    if allow_custom_reply:
         rendered_options.append({
             "id": CUSTOM_REPLY_OPTION_ID,
             "label": CUSTOM_REPLY_LABEL,
@@ -492,7 +494,13 @@ async def consume_text(
     schema = _schema_dict(prompt.schema_json)
     if schema.get("source") != "agent" or not bool(schema.get("allow_text_input")):
         raise ValueError("该交互不接受文本回答")
-    if schema.get("options") and not bool(schema.get("custom_input_active")):
+    # 两步式只针对真实选择项；仅带自定义回复兜底按钮的提问（开放性问题）在文本
+    # 消费侧视同无选项，IM/网页直接打字仍然有效。
+    real_options = [
+        item for item in (schema.get("options") or [])
+        if isinstance(item, dict) and item.get("id") != CUSTOM_REPLY_OPTION_ID
+    ]
+    if real_options and not bool(schema.get("custom_input_active")):
         raise ValueError("请先选择自定义回答")
     text = str(text or "").strip()
     if not text or len(text) > 2000:
@@ -652,10 +660,15 @@ async def consume_custom_text(
     )).scalars().all()
     for prompt in prompts:
         schema = _schema_dict(prompt.schema_json)
+        # 仅带自定义回复兜底按钮的提问视同无选项：IM 用户直接打字仍是有效回答。
+        real_options = [
+            item for item in (schema.get("options") or [])
+            if isinstance(item, dict) and item.get("id") != CUSTOM_REPLY_OPTION_ID
+        ]
         if (
             schema.get("source") == "agent"
             and bool(schema.get("allow_text_input"))
-            and (bool(schema.get("custom_input_active")) or not schema.get("options"))
+            and (bool(schema.get("custom_input_active")) or not real_options)
         ):
             return await consume_text(
                 db,

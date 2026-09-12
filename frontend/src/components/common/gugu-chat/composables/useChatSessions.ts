@@ -2,7 +2,7 @@ import { nextTick, computed, onScopeDispose, type Ref } from 'vue'
 import { i18n } from '@/i18n'
 import { agentApi, getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
-import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
+import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
@@ -101,7 +101,9 @@ export function useChatSessions(options: {
   streaming: Ref<boolean>
   resumeStream: (id: number) => Promise<void>
   resetSessionTurn: () => void
-  clearPendingQueue: () => void
+  clearPendingQueue: (clearOrphanedStorage?: boolean) => void
+  restorePendingQueue: (id: number, items?: QueuedMessagePayload[]) => void
+  drainPendingQueue: () => Promise<void>
   clearStatus: () => void
   setStatus: (item: { kind: 'text' | 'dots' | 'hide'; label?: string }) => void
   contextCompactingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
@@ -171,10 +173,7 @@ export function useChatSessions(options: {
     options.setSessionSettling(true)
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
-    // 旧会话排队等着接力发送的消息不属于要切进去的这个会话，清掉——不清的话，等新会话
-    // 这边某次 send() 结束时会把它们当成"这个会话排队的消息"接着发出去（真实复现过的
-    // bug：A 会话生成中发消息进队列，切到 C 会话，C 的回复一结束，A 排队的那条被发进 C）。
-    options.clearPendingQueue()
+    // 待发消息按 session_id 归属；切换只更改展示状态，恢复和排水时按目标会话筛选。
     // 请求期间清掉旧会话的 DOM，避免新会话挂载前沿用旧 scrollTop；请求失败再恢复。
     messages.value = []
     options.clearStatus()
@@ -297,8 +296,13 @@ export function useChatSessions(options: {
       await options.waitForStableScrollLayout()
       if (viewGeneration !== options.getViewGeneration()) return
       options.setSessionSettling(false)
+      options.restorePendingQueue(id, Array.isArray(data.pendingQueue) ? data.pendingQueue : [])
       if (shouldResume) {
         await options.resumeStream(id)
+      } else {
+        // 刷新前队列可能正好在上一轮结束后尚未排水；没有活跃 SSE 时也要继续接力。
+        // 发送错误由 send 自己显示为网络错误；这里避免启动恢复链路产生未处理拒绝。
+        void options.drainPendingQueue().catch(() => {})
       }
       if (viewGeneration !== options.getViewGeneration()) return
       await options.scrollBottom(true)
@@ -313,7 +317,7 @@ export function useChatSessions(options: {
     options.setSessionSettling(false)
     options.abortCtrl.value?.abort()
     options.streaming.value = false
-    options.clearPendingQueue()   // 同 loadSession：旧会话排队的消息不属于新对话，清掉
+    options.clearPendingQueue(true)   // 新对话不继承任何会话的待发队列
     sessionId.value = null
     messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
     options.clearStatus()      // 旧会话残留的思考/工具状态气泡不属于这个空会话，清掉（loadSession 早就有这步，这里之前漏了）

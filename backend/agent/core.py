@@ -33,6 +33,7 @@ _log = logging.getLogger("agent.core")
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
 # 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
 _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
+_MAX_CALL_TOOL_ADAPTER_DEPTH = 4
 
 
 def _sanitize_anthropic_history(messages) -> tuple[int, int, bool]:
@@ -71,14 +72,57 @@ def _provider_context_usage(driver: Any, result: Any) -> int:
             + max(0, int(getattr(result, "cache_write_tokens", 0) or 0)))
 
 
-def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
-    """取得固定 Adapter 的业务参数。
+def _resolve_tool_call(raw_name: Any, raw_input: Any) -> tuple[str, Any, dict | None]:
+    """解析固定 Adapter，返回最终业务工具、参数和协议错误。
 
-    规范协议是 ``call_tool(name, arguments)``。部分模型会把目标工具的
-    参数错误展开到 ``call_tool`` 顶层，例如 ``{name: "http_get", url: ...}``。
-    这里只移除 Adapter 自己的 ``name``，把其余字段交给目标工具原有的
-    schema 校验；不在这里猜测或放宽目标工具契约。
+    允许有限层的 ``call_tool`` 自包装，以兼容模型把 Adapter 调用本身又包进
+    Adapter 的输出；确认门、权限与重放必须始终看到最终业务工具名。参数仍由
+    最终工具自己的 Schema 校验，这里只校验 Adapter 外层协议。
     """
+    if not isinstance(raw_name, str):
+        return "invalid_tool_call", {}, invalid_tool_call_payload()
+    if raw_name != "call_tool":
+        return raw_name, raw_input, None
+
+    target_name = raw_name
+    tool_input = raw_input
+    for _ in range(_MAX_CALL_TOOL_ADAPTER_DEPTH):
+        if not isinstance(tool_input, dict):
+            return "invalid_tool_call", {}, invalid_tool_call_payload(
+                path="arguments", reason="call_tool.arguments 必须是 JSON object"
+            )
+        raw_target_name = tool_input.get("name")
+        target_name = normalize_tool_name(raw_target_name)
+        if target_name is None:
+            return "invalid_tool_call", {}, invalid_tool_call_payload(
+                reason="call_tool.name 必须是字符串"
+            )
+
+        if "arguments" in tool_input:
+            if not isinstance(tool_input["arguments"], dict):
+                return "invalid_tool_call", {}, invalid_tool_call_payload(
+                    path="arguments", reason="call_tool.arguments 必须是 JSON object"
+                )
+            tool_input = tool_input["arguments"]
+        else:
+            flattened = {key: value for key, value in tool_input.items() if key != "name"}
+            if not flattened:
+                return "invalid_tool_call", {}, invalid_tool_call_payload(
+                    path="arguments", rule="required",
+                    reason="call_tool.arguments 是必填字段",
+                )
+            tool_input = flattened
+
+        if target_name != "call_tool":
+            return target_name, tool_input, None
+
+    return "invalid_tool_call", {}, invalid_tool_call_payload(
+        reason="call_tool 嵌套层数超过限制", rule="max_depth"
+    )
+
+
+def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
+    """兼容旧调用点的单层参数提取；主循环统一使用 ``_resolve_tool_call``。"""
     if not isinstance(tool_input, dict):
         return {}
     arguments = tool_input.get("arguments")
@@ -461,16 +505,6 @@ class _PendingInteraction(NamedTuple):
     tool_call_id: str
     tool_name: str
     replay: dict | None = None
-
-
-def _dispatch_target_and_input(tc, adapter_target):
-    """算出这次工具调用真正要 dispatch 的目标与参数。
-
-    Adapter（``call_tool``）路允许模型用扁平参数，目标名与参数都取自入参。
-    """
-    if adapter_target is not None:
-        return adapter_target, _resolve_adapter_arguments(tc.input)
-    return tc.name, tc.input
 
 
 async def _dispatch_in_session(
@@ -1356,8 +1390,7 @@ class LLMRunner:
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(
-                    (str((tc.input or {}).get("name") or "").strip()
-                     if tc.name == "call_tool" and isinstance(tc.input, dict) else tc.name) in _mutset
+                    _resolve_tool_call(tc.name, tc.input)[0] in _mutset
                     for tc in result.tool_calls
                 ):
                     async for _line in genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
@@ -1463,43 +1496,15 @@ class LLMRunner:
                         tool_budget_exceeded = False
                         driver.update_tools(ctx, [])
                 for call_index, tc in enumerate(result.tool_calls):
-                    adapter_target = None
-                    protocol_error = None
                     raw_call_name = getattr(tc, "name", None)
-                    if not isinstance(raw_call_name, str):
-                        protocol_error = invalid_tool_call_payload()
-                    elif raw_call_name == "call_tool" and isinstance(tc.input, dict):
-                        raw_target_name = tc.input.get("name")
-                        if raw_target_name is not None and normalize_tool_name(raw_target_name) is None:
-                            protocol_error = invalid_tool_call_payload(
-                                reason="call_tool.name 必须是字符串"
-                            )
-                        else:
-                            adapter_target = normalize_tool_name(raw_target_name)
-                            if adapter_target:
-                                # 固定 Adapter 为了兼容旧模型允许扁平参数，但不能把只有
-                                # name 的调用静默降级成目标工具的空对象，否则错误会伪装成
-                                # 业务 Schema 缺字段，也会诱发模型重复发送同一个空调用。
-                                has_arguments = "arguments" in tc.input
-                                has_flattened_arguments = any(key != "name" for key in tc.input)
-                                if not has_arguments and not has_flattened_arguments:
-                                    protocol_error = invalid_tool_call_payload(
-                                        path="arguments",
-                                        rule="required",
-                                        reason="call_tool.arguments 是必填字段",
-                                    )
-                                elif has_arguments and not isinstance(tc.input.get("arguments"), dict):
-                                    protocol_error = invalid_tool_call_payload(
-                                        path="arguments",
-                                        reason="call_tool.arguments 必须是 JSON object",
-                                    )
-                    effective_tool_name = adapter_target or (
-                        raw_call_name if isinstance(raw_call_name, str) else "invalid_tool_call"
+                    dispatch_target, dispatch_input, protocol_error = _resolve_tool_call(
+                        raw_call_name, getattr(tc, "input", None)
                     )
+                    effective_tool_name = dispatch_target
                     # 工具名污染全局兜底：模型偶发把 JSON 参数写成 XML 片段拼进工具名
-                    # （如 create_file"><target>…）。在名字定稿处统一抢救一次并回写
-                    # tc.name/adapter_target，前端工具卡、熔断计数、dispatch 和下一轮
-                    # canonical 历史回放全部看到干净名；dispatch 层另有同款兜底，覆盖
+                    # （如 create_file"><target>…）。在名字定稿处统一抢救一次；适配器
+                    # 保留 provider 原始调用用于历史配对，UI、熔断与 dispatch 使用干净名；
+                    # dispatch 层另有同款兜底，覆盖
                     # use_skill 委托等不经本循环的入口。
                     if (
                         effective_tool_name != "invalid_tool_call"
@@ -1509,10 +1514,11 @@ class LLMRunner:
                         salvaged = salvage_tool_name(effective_tool_name)
                         if salvaged is not None and registry.get(salvaged) is not None:
                             _log.info("[core] 工具名污染兜底：%r → %r", effective_tool_name, salvaged)
-                            if adapter_target is not None:
-                                adapter_target = salvaged
+                            if raw_call_name == "call_tool":
+                                dispatch_target = salvaged
                             else:
                                 tc.name = salvaged
+                                dispatch_target = salvaged
                             effective_tool_name = salvaged
                     label = self._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
@@ -1524,7 +1530,7 @@ class LLMRunner:
                         # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
+                                           name=effective_tool_name, label=label, input=dispatch_input, verify=verify_mode,
                                            status="skipped")
                         yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
                                            name=effective_tool_name, label=label, verify=verify_mode,
@@ -1540,7 +1546,7 @@ class LLMRunner:
                         try:
                             call_sig = (
                                 effective_tool_name,
-                                json.dumps(tc.input or {}, sort_keys=True, ensure_ascii=False, default=str),
+                                json.dumps(dispatch_input or {}, sort_keys=True, ensure_ascii=False, default=str),
                             )
                         except (TypeError, ValueError):
                             call_sig = None
@@ -1558,7 +1564,7 @@ class LLMRunner:
                                     effective_tool_name, repeat_count, run_id,
                                 )
                                 yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                                   name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
+                                                   name=effective_tool_name, label=label, input=dispatch_input, verify=verify_mode,
                                                    status="skipped")
                                 yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
                                                    name=effective_tool_name, label=label, verify=verify_mode,
@@ -1597,14 +1603,14 @@ class LLMRunner:
                     # 自检轮工具照常显示，但打 verify 标记：前端凭 verify 收尾不冒「生成中」点点（否则回复完还在转、像卡住）
                     tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                     yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                       name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
+                                       name=effective_tool_name, label=label, input=dispatch_input, verify=verify_mode,
                                        status="running")
                     # Skill 正文第一次通过 use_skill 进入 history 后，正文指纹一致时复用；
                     # 文件更新或 history 中仍是旧版标记时，重新加载正文。
                     skill_slug = None
-                    if tc.name == "use_skill":
+                    if effective_tool_name == "use_skill":
                         from agent.skills import resolve_skill_slug
-                        requested_skill = str((tc.input or {}).get("name") or "")
+                        requested_skill = str((dispatch_input or {}).get("name") or "")
                         skill_slug = resolve_skill_slug(requested_skill) or requested_skill.strip().lower()
                     current_skill_digest = None
                     if skill_slug:
@@ -1631,7 +1637,6 @@ class LLMRunner:
                         }, ensure_ascii=False)
                         artifact = None
                     else:
-                        dispatch_target, dispatch_input = _dispatch_target_and_input(tc, adapter_target)
                         res, artifact = await _dispatch_in_session(
                             user_id, dispatch_target, dispatch_input,
                             session_id=session_id, session=session, run_id=run_id,
@@ -1648,9 +1653,8 @@ class LLMRunner:
                                 loaded_skill_slugs[skill_slug] = digest
                             elif current_skill_digest:
                                 loaded_skill_slugs[skill_slug] = current_skill_digest
-                    # 兼容固定 Adapter：模型可能以 call_tool(name="ask_user") 调用。
-                    # 此时 tc.name 仍是 call_tool，但实际已解析出的工具名才是
-                    # ask_user；两条调用路径必须进入同一个交互卡创建流程。
+                    # 固定 Adapter 已在进入 dispatch 前归一到业务工具名，因此 ask_user
+                    # 与直调走同一条交互卡创建流程。
                     if effective_tool_name == "ask_user":
                         # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
                         # provider history，等待回答后由 interaction service 替换 pending
@@ -1719,8 +1723,8 @@ class LLMRunner:
                             {
                                 "name": effective_tool_name,
                                 "label": label,
-                                "target": adapter_target or tc.name,
-                                "input": _dispatch_target_and_input(tc, adapter_target)[1],
+                                "target": dispatch_target,
+                                "input": dispatch_input,
                             },
                         )
                         dispatched.append((tc, res))
@@ -1804,7 +1808,10 @@ class LLMRunner:
                             batch.append(event_message)
 
                     for tc, _res in dispatched:
-                        if tc.name == "get_tool_schema":
+                        resolved_name, resolved_input, resolve_error = _resolve_tool_call(
+                            tc.name, tc.input
+                        )
+                        if resolve_error is None and resolved_name == "get_tool_schema":
                             try:
                                 declaration = json.loads(_res) if isinstance(_res, str) else _res
                             except (TypeError, ValueError):
@@ -1825,8 +1832,8 @@ class LLMRunner:
                                     if tool is not None:
                                         add_event(tool_schema_event(tool))
                             continue
-                        if tc.name == "use_skill":
-                            skill_name = str((tc.input or {}).get("name") or "").strip()
+                        if resolve_error is None and resolved_name == "use_skill":
+                            skill_name = str((resolved_input or {}).get("name") or "").strip()
                             resolved_skill = None
                             from agent.skills import resolve_skill_slug
                             resolved_skill = resolve_skill_slug(skill_name) or skill_name
@@ -1843,9 +1850,7 @@ class LLMRunner:
                                         add_event(tool_schema_event(tool))
                             continue
                         target_name = None
-                        if tc.name == "call_tool" and isinstance(tc.input, dict):
-                            target_name = str(tc.input.get("name") or "").strip() or None
-                        if not target_name and tc.name != "call_tool":
+                        if resolve_error is None and resolved_name != "call_tool":
                             try:
                                 error_payload = json.loads(_res) if isinstance(_res, str) else _res
                             except (TypeError, ValueError):
@@ -1855,10 +1860,9 @@ class LLMRunner:
                                 if isinstance(error_payload, dict) else None
                             )
                             if isinstance(recovery, dict) and recovery.get("needed") is True:
-                                # 动态 Provider 直接调用业务工具且参数校验失败时，
-                                # 也把当前工具 Schema 写入 canonical history；下一轮
-                                # 不再让模型继续凭记忆猜参数。
-                                target_name = tc.name
+                                # 直接调用或经固定 Adapter 调用业务工具且参数校验失败时，
+                                # 都把最终工具 Schema 写入 canonical history；下一轮不再猜。
+                                target_name = resolved_name
                         if target_name:
                             tool = tool_snapshot.get(target_name)
                             if tool is not None:

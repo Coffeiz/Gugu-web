@@ -1,6 +1,9 @@
 [Unit]
 Description=Gugu Backend (FastAPI)
 After=network.target
+# RAG worker 宿主：软依赖（Wants），sidecar 缺席时 Python 端回退进程内 spawn
+Wants=gugu-rag-sidecar.service
+After=gugu-rag-sidecar.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -24,6 +27,7 @@ Environment="GUGU_STARTUP_MIGRATIONS=0"
 # 与 worker/gateway 保持一致，网页请求也可继续上报 LoopScope
 Environment="LOOPSCOPE_ENABLED=1"
 Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
+Environment="SEARCH__TS_SIDECAR_SOCKET=/run/user/__RUN_UID__/gugu-rag-sidecar.sock"
 ExecStartPre=__APP_DIR__/start.sh cleanup-port
 ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=on-failure

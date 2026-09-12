@@ -33,7 +33,6 @@ defineEmits(['update:modelValue'])
 .field-input {
   padding: 9px 12px;
   border-radius: 9px;
-  backdrop-filter: blur(8px);
   font-size: 13px;
   font-family: var(--font-sans);
   outline: none;

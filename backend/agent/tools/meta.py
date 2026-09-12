@@ -11,7 +11,7 @@ import json
 from agent import skills as _skills
 from agent.security.logsafe import fingerprint
 from agent.tools.base import BaseSkill, Tool
-from agent.tools.tool_contract import normalize_tool_name
+from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_name
 
 
 async def _get_tool_schema(db, user_id, args: dict):
@@ -134,6 +134,12 @@ async def _call_tool(db, user_id, args: dict):
     arguments = args.get("arguments")
     if not name:
         return {"error": "缺少业务工具名"}
+    if name == "call_tool":
+        # 固定 Adapter 只能包装业务工具。自递归调用无法获得更具体的权限/确认上下文，
+        # 主循环会先解包合法的有限层包装；绕过主循环进入此处时明确拒绝。
+        return invalid_tool_call_payload(
+            reason="call_tool 不能将自身作为目标工具", rule="recursive_adapter"
+        )
     if not isinstance(arguments, dict):
         return {"error": "arguments 必须是 object"}
     from agent.tools import registry

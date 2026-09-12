@@ -1287,8 +1287,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .cal-done:hover { opacity: 0.7; }   /* 悬停略恢复，方便看清要操作的那条 */
 
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-/* 浮在会动内容之上，用 backdrop-filter 会闪白带 → 改用 <GlassBg> faux 玻璃（同顶栏，见 DefaultLayout 注释）。
-   宿主透明 + isolation 建层叠上下文让 GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
+/* 浮在会动内容之上，用 backdrop-filter 会闪白带 → 改用 <GlassBg> faux tint。
+   宿主透明 + isolation 建层叠上下文让 GlassBg(z-index:-1) 压在内容下。 */
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }

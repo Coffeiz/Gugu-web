@@ -191,6 +191,7 @@ async def prepare_run(
         clean = sanitize.sanitize_messages(assembled.conversation)
         merged_cross_segment = merged_cross_segment and len(clean) < before
         assembled.replace_conversation(clean)
+        assembled.set_dynamic_tail([session_snapshot.time_message(user_tz)])
         audit.context_layout_audit(
             phase="assembled", session=session, snapshot=snapshot,
             history=effective_history, messages=assembled,
@@ -222,6 +223,7 @@ async def prepare_run(
         extra_reminder=extra_reminder,
     )
     assembled.append_batch(turn_batch)
+    assembled.set_dynamic_tail([session_snapshot.time_message(user_tz)])
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,
         history=effective_history, messages=assembled,

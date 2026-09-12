@@ -5,6 +5,6 @@
 """
 
 from .stream_events import encode_event
-from .preferences import show_tool_interactions
+from .preferences import im_display_preferences, show_intermediate_replies, show_tool_interactions
 
-__all__ = ["encode_event", "show_tool_interactions"]
+__all__ = ["encode_event", "im_display_preferences", "show_tool_interactions", "show_intermediate_replies"]

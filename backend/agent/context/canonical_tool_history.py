@@ -236,10 +236,16 @@ def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list
             or not getattr(call, "name", None)
         ):
             continue
+        # arguments 优先存 provider 原始字符串：OpenAI 兼容路径的 wire 就是这个
+        # 字节串，回放时原样发回才能与 live 逐字节一致；parse→dict→dumps 会改变
+        # 序列化风格（空格/键序），跨 run 前缀缓存在第一个工具轮就断开。
+        raw_arguments = getattr(call, "raw_arguments", None)
+        input_value = raw_arguments if isinstance(raw_arguments, str) else getattr(
+            call, "input", getattr(call, "arguments", {}))
         assistant_blocks.append(ToolCall(
             id=str(call.id),
             name=str(call.name),
-            input=getattr(call, "input", getattr(call, "arguments", {})),
+            input=input_value,
         ).to_block())
 
     canonical: list[dict] = []

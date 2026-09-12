@@ -24,9 +24,10 @@ const blocks = css.split('}')
 // 这些是跨页面复用、且用户能直接感知的材质拥有者。业务组件通过
 // .glass-card 或 .modal-mask 继承材质，不要求每个业务 class 重复声明 blur。
 // 只检查非 none 的规则，避免 mono 模式的显式 none 规则掩盖 glass 规则缺失。
+// 1.2.0 起玻璃契约改四类 surface：常驻内容面板（如 .chat-main）默认静态
+// tint、不要求 blur（由 ui-structure 回归钉静态背景）；导航侧栏与浮层保留。
 const contracts = [
   ['侧栏', '.sidebar'],
-  ['咕咕聊天主体', '.chat-main'],
   ['通用玻璃卡片（画布/项目/工具栏）', '.glass-card'],
   ['通用弹窗遮罩（任务/项目/设置）', '.modal-mask'],
   ['弹出菜单', '.popup-menu'],

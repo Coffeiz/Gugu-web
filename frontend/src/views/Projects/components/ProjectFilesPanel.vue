@@ -313,12 +313,8 @@ const {
   display: flex; flex-direction: column; min-height: 0;
   flex: 1 1 0; min-width: 0; position: relative;
   background: var(--panel-bg);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
 }
-/* 切换期间临时关掉嵌套 backdrop-filter：它套在 .bm-card 的毛玻璃里、宽度又随动画变，
-   会让外层整层毛玻璃在动画起止帧重栅格化 → 整个面板闪屏。切完恢复，静态时毛玻璃照常。 */
-.project-modal-root.pm-switching .modal-right { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 /* 两栏边缘切换按钮由 ProjectFileToolbar 渲染，但定位基准属于右栏宿主。 */
 .col-toggle-btn {

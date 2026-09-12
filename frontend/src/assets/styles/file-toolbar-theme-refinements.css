@@ -307,7 +307,9 @@ html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) {
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: none;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) .bc-label {
   display: block;

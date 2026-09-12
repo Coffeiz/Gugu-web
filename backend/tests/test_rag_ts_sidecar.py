@@ -9,12 +9,48 @@ from agent.rag.ts_sidecar import (
     SIDE_CAR_IDLE_TTL_SECONDS,
     TsSidecarClient,
     _lexical_clients,
+    _record_worker_restore_probe,
     _rank_clients,
     _take_idle_sidecars,
     _worker_document_key,
     SidecarRequestResult,
     SidecarRequestTiming,
 )
+
+
+def test_worker_restore_probe_keeps_only_timing_and_aggregate_counts():
+    from agent.rag.observation import RecallObservation, current_recall
+
+    observation = RecallObservation()
+    token = current_recall.set(observation)
+    try:
+        _record_worker_restore_probe({
+            "restore_probe": {
+                "stage_ms": {
+                    "restore_read_file": 10,
+                    "restore_json_parse": 20,
+                    "restore_index_install": 30,
+                    "unexpected": 99,
+                },
+                "counts": {
+                    "index_file_bytes": 1024,
+                    "documents": 123,
+                    "restored": 1,
+                    "document_text": "不得进入探针",
+                },
+            },
+        })
+    finally:
+        current_recall.reset(token)
+
+    assert observation.probe["metrics"]["index_worker_restore"] == {
+        "stage_ms": {
+            "restore_read_file": 10,
+            "restore_json_parse": 20,
+            "restore_index_install": 30,
+        },
+        "counts": {"index_file_bytes": 1024, "documents": 123, "restored": 1},
+    }
 
 
 def test_wire_document_keeps_business_fields_for_cold_restore():
@@ -52,9 +88,56 @@ def test_index_dir_for_owner_uses_hidden_user_storage(monkeypatch, tmp_path):
     assert index_dir_for_owner("user-a").endswith("/user-a/.system/rag/ts-index")
 
 
+@pytest.mark.asyncio
+async def test_sidecar_memory_prepare_only_sends_python_authorized_scope(monkeypatch):
+    client = TsSidecarClient("owner-a", command="")
+    captured = {}
+
+    async def fake_request(payload, *, timeout_seconds=None):
+        captured.update(payload)
+        return SidecarRequestResult({
+            "transient_revision": "transient-v1", "document_count": 2,
+            "vector_count": 1, "vector_version": "provider:model:2",
+        }, SidecarRequestTiming())
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    result = await client.prepare_memory(
+        "owner-a", [Scope(
+            owner_user_id="owner-a", platform="qq", bot_id="bot-1", group_id="group-2",
+            scope_type="member", scope_id="group-2:member-3",
+        )],
+        source_filter="all", snapshot_revision="0", snapshot_text="已注入上下文",
+        vector_version="provider:model:2",
+    )
+    assert captured["op"] == "prepare_memory"
+    assert captured["scopes"] == [{
+        "ownerId": "owner-a", "type": "member", "id": "group-2:member-3",
+        "platform": "qq", "botId": "bot-1", "groupId": "group-2",
+    }]
+    assert "documents" not in captured and "vectors" not in captured
+    assert result["document_count"] == 2
+    assert client._transient_revision == "transient-v1"
+
+    with pytest.raises(ValueError, match="owner 与 sidecar owner"):
+        await client.prepare_memory(
+            "owner-a", [Scope(owner_user_id="owner-b", scope_type="owner")],
+            source_filter="all",
+        )
+
+
+@pytest.mark.asyncio
+async def test_sidecar_storage_vector_mutation_is_owner_bound():
+    client = TsSidecarClient("owner-a", command="")
+    with pytest.raises(ValueError, match="向量缓存 owner"):
+        await client.replace([], "r1", storage_owner_id="owner-b")
+    with pytest.raises(ValueError, match="向量缓存 owner"):
+        await client.patch([], [], "r1", "r0", storage_owner_id="owner-b")
+
+
 def _worker_command() -> str:
     worker = Path(__file__).parents[1] / "ts" / "workers" / "rag" / "src" / "index.ts"
-    return f"node --experimental-strip-types {worker}"
+    tsx_loader = Path(__file__).parents[1] / "ts" / "node_modules" / "tsx" / "dist" / "loader.mjs"
+    return f"node --import {tsx_loader} {worker}"
 
 
 @pytest.mark.asyncio

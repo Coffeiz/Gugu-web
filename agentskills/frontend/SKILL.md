@@ -42,7 +42,8 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 
 ## 玻璃表面两种实现与 hover 契约
 
-- 标准 `.glass-card`（backdrop-filter 真磨砂）用于内容可灵活调整/交互的面板；`GlassBg` 仿玻璃（`.glass-bg > .gb-tint`，无 backdrop-filter）用于固定内容为主或浮在会动内容之上的面板（backdrop-filter 在动内容上会边缘白带）。以视觉体感为主选型；**项目页是例外**（动内容上仍用标准玻璃）。
+- 常驻内容面板默认使用半透明 tint、边框和阴影，不采样背景；`--glass-card-blur: none`。应用/Admin 侧边导航与 Mind 笔记 glass 是明确例外，可显式启用 blur。顶栏直接绘制 `.glass-card` tint，不挂载独立 `GlassBg`。
+- `GlassBg`（`.glass-bg > .gb-tint`，无 backdrop-filter）只用于明确选择 faux glass 的工具栏等表面；真实 blur 留给弹窗、菜单、预览窗口等确实浮在页面内容上的临时 surface，并通过 popup/modal token 或组件自身样式显式启用。
 - 仿玻璃宿主的 hover tint 规则只能放全局样式表（component-theme-refinements.css 的 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`）；写在组件 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。
 - 不想要 hover 的面板用 opt-out 契约：`--glass-card-background-hover` / `--glass-card-shadow-hover` 自映射回静止值（技能页、终端页先例）；禁止恢复主题层「暗色一刀切 hover 屏蔽」。暗色 hover 高亮幅度在 theme-refinements.css 暗色段标定（现 7% 白）。
 

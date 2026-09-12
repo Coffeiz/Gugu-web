@@ -71,17 +71,16 @@ def test_indexed_source_retriever_accepts_every_unified_persistent_source(source
 async def test_memory_only_query_runs_transient_spec_without_persistent_sources(monkeypatch):
     """只有 Memory 的显式查询：持久化索引仅作 IPC 宿主，searches 只含瞬态规格。"""
     from agent.rag import batch_retriever as br
-    from agent.rag.models import IndexDocument
 
     calls = {}
     scope = Scope("synthetic-owner")
-    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
 
-    async def fake_load_memory(self, memory, inner_scope):
-        return [memory_doc], "daily", {"document_load_ms": 1}
-
-    async def replace_transient(documents, revision, *, vectors=None, vector_version=""):
-        calls["transient"] = list(documents)
+    async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
+                             snapshot_text, vector_version):
+        calls["prepare"] = True
+        calls["owner"] = str(owner)
+        return {"transient_revision": "t1", "memory_source": "daily",
+                "document_count": 1, "vector_count": 0, "probe": {}}
 
     async def unified_query(query, *, searches, query_vector, source_order,
                             candidate_limit, rank_options, before_message_id=None,
@@ -95,7 +94,7 @@ async def test_memory_only_query_runs_transient_spec_without_persistent_sources(
         }
 
     index = SimpleNamespace(
-        client=SimpleNamespace(replace_transient=replace_transient),
+        client=SimpleNamespace(prepare_memory=prepare_memory),
         unified_query=unified_query, documents_by_id={},
     )
 
@@ -104,16 +103,15 @@ async def test_memory_only_query_runs_transient_spec_without_persistent_sources(
         yield object()
 
     async def get(*args, **kwargs):
-        calls["prepare"] = True
         return index
 
-    monkeypatch.setattr(UnifiedQueryRetriever, "_load_memory", fake_load_memory)
     monkeypatch.setattr(IndexedSourceRetriever, "session_scope", session_scope)
     monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
 
     retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "memory")])
     batches = await retriever.retrieve("缓存", scope=scope, strategy="bm25")
     assert calls["prepare"]
+    assert calls["owner"] == "synthetic-owner"
     assert [spec.get("corpus") for spec in calls["searches"]] == ["transient"]
     assert calls["source_order"] == ["memory"]
     assert len(batches) == 1 and batches[0].source_type == "unified"
@@ -128,23 +126,27 @@ async def test_unknown_source_returns_empty_batches():
 
 
 def _revision_mismatch_harness(monkeypatch, *, error_codes: list[str | None], calls: dict):
-    """搭一个 memory-only 统一查询环境：worker 按 error_codes 依次失败/成功。"""
+    """搭一个 memory-only 统一查询环境：worker 按 error_codes 依次失败/成功。
+
+    PRD-RAG-9 之后 Memory 语料由 worker 在 prepare_memory 内自读，重传瞬态语料
+    等价于 resync 后重新调用一次 prepare_memory。
+    """
     from agent.rag import batch_retriever as br
-    from agent.rag.models import IndexDocument
     from agent.rag.ts_sidecar import TsSidecarUnavailable
 
     scope = Scope("synthetic-owner")
-    memory_doc = IndexDocument("memory:daily-1", "memory", "daily", scope, "记忆", "", "缓存记忆", "v1")
 
-    async def fake_load_memory(self, memory, inner_scope):
-        return [memory_doc], "daily", {}
+    async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
+                             snapshot_text, vector_version):
+        calls["prepare"] = calls.get("prepare", 0) + 1
+        calls.setdefault("prepare_args", []).append(
+            (str(owner), str(source_filter), snapshot_revision, vector_version))
+        return {"transient_revision": "t1", "memory_source": "daily",
+                "document_count": 1, "vector_count": 0, "probe": {}}
 
     @asynccontextmanager
     async def session_scope(self):
         yield object()
-
-    async def replace_transient(documents, revision, *, vectors=None, vector_version="", force=False):
-        calls.setdefault("transient_forces", []).append(force)
 
     async def unified_query(query, **kwargs):
         calls["query"] = calls.get("query", 0) + 1
@@ -159,7 +161,7 @@ def _revision_mismatch_harness(monkeypatch, *, error_codes: list[str | None], ca
 
     def make_index():
         return SimpleNamespace(
-            client=SimpleNamespace(replace_transient=replace_transient),
+            client=SimpleNamespace(prepare_memory=prepare_memory),
             unified_query=unified_query, documents_by_id={},
         )
 
@@ -172,7 +174,6 @@ def _revision_mismatch_harness(monkeypatch, *, error_codes: list[str | None], ca
         calls["resync"] = calls.get("resync", 0) + 1
         return second
 
-    monkeypatch.setattr(UnifiedQueryRetriever, "_load_memory", fake_load_memory)
     monkeypatch.setattr(IndexedSourceRetriever, "session_scope", session_scope)
     monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get, resync=resync))
     return scope
@@ -188,8 +189,11 @@ async def test_revision_mismatch_resyncs_and_retries_once(monkeypatch):
     batches = await retriever.retrieve("缓存", scope=scope, strategy="bm25")
     assert calls["resync"] == 1
     assert calls["query"] == 2
-    # 首次是普通上传，重试必须强制重传瞬态语料（进程内残留不可信）。
-    assert calls["transient_forces"] == [False, True]
+    # 首次是普通装载，重试必须带着同一份语料参数在重同步后的索引上重新 prepare
+    # （worker 进程内残留不可信）。
+    assert calls["prepare"] == 2
+    assert len(calls["prepare_args"]) == 2
+    assert calls["prepare_args"][0] == calls["prepare_args"][1]
     assert len(batches) == 1 and batches[0].metadata["revision_resync"] == "True"
 
 

@@ -565,7 +565,12 @@ async def _compress_if_needed_unlocked(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role == "summary",
         ))
-        summary_message = ConversationMessage(session_id=session_id, role="summary", content=summary)
+        summary_message = ConversationMessage(
+            session_id=session_id, role="summary", content=summary,
+            # 水位与摘要行同事务落库：历史装载即使拿到旧的 session.baseline，
+            # 也能从摘要行本身读到真实覆盖边界，避免重复拼接已摘要的原文。
+            covers_until_id=to_compress[-1].id,
+        )
         db.add(summary_message)
         await db.flush()
         session.baseline_message_id = to_compress[-1].id

@@ -16,7 +16,7 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
 ## 核心设计原则
 
 - **ToC 优先**：面向个人/小团队的项目管理工具
-- **Glassmorphism**：半透明背景 + backdrop-filter 模糊 + 微妙边框高光
+- **玻璃视觉**：常驻内容面板以半透明 tint、细边框和阴影建立层次；应用/Admin 导航侧栏和 Mind 笔记 glass 保留真实 `backdrop-filter`，其他临时浮层也可按需使用
 - **冷紫灰调色板**：主色 `#7b7fb2`，所有颜色通过 CSS 变量（design token）管理
 
 ## 交互规范
@@ -42,8 +42,8 @@ description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系�
   技能卡共用这一份——发现两张卡片 hover 表现不一致时，先查是不是有人又写了本地 `.link`。
 - 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
 - 单选下拉：统一使用 `frontend/src/components/common/controls/SelectPopup.vue`；Admin 普通选项通过 `AdminSelect` 使用，Provider 分组等特殊场景在其基础上扩展，不使用页面专用原生 `<select>` 或重复绘制列表弹窗；保存中或不可用时使用公共组件的 `disabled` 状态。
-- 卡片：`--surface-card-solid` 或毛玻璃背景，圆角 12-16px
-- 侧边栏：220px 固定宽度，Glassmorphism 背景
+- 卡片：`--surface-card-solid` 或静态半透明 tint，圆角 12-16px；常驻内容卡默认不做背景模糊
+- 侧边栏：220px 固定宽度，使用半透明背景、边框与主题 blur
 
 ## 新增/修改 UI 时
 

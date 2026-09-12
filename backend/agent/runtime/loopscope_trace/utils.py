@@ -157,34 +157,55 @@ def _prompt_digest(value: Any) -> str:
         return ""
 
 
-def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[str, Any]:
+def _cache_diagnostics(
+    messages: Any,
+    ctx: Any = None,
+    model: str = "",
+    *,
+    provider_projected: bool = False,
+) -> dict[str, Any]:
     """返回缓存断点与工具 schema 的脱敏诊断信息。
 
     这里只记录大小、数量、位置和摘要，不能通过这些字段还原工具定义、参数、
     URL、图片或用户正文。诊断失败时返回空值，不影响模型请求。
     """
     try:
-        # 诊断必须和 driver 实际发送的 provider projection 使用同一份输入。
-        # 直接对 PromptMessages 的 canonical block 算 digest，会把 stance-context
-        # 和已渲染的 text、以及 provider 响应里的 null 元数据误判成前缀变化。
-        from agent.context.canonical_tool_history import render_events_for_provider
-        raw_conversation = getattr(messages, "conversation", messages)
-        # 兼容只在测试/旧调用方上提供 class-level conversation 的轻量容器；
-        # 真实 PromptMessages 仍要整体投影，以保留 dynamic tail 和 cache 元数据。
-        projection_source = (
-            raw_conversation
-            if isinstance(raw_conversation, list)
-            and not hasattr(messages, "fixed_prefix_size")
-            and raw_conversation is not messages
-            else messages
-        )
-        projected = render_events_for_provider(projection_source)
+        # 缓存指纹必须按 provider 实际投影计算。OpenAI 的 tool-call 清洗也属于
+        # 投影步骤，必须先于 anchor 选择；否则孤儿结果会进入 digest，却不会进入请求。
+        if provider_projected:
+            projected = messages
+        else:
+            from agent.context.canonical_tool_history import render_events_for_provider
+
+            adapter = getattr(ctx, "adapter", None)
+            ai = getattr(ctx, "ai", None)
+            protocol = (
+                adapter.protocol_format(ai)
+                if adapter is not None and ai is not None
+                else getattr(adapter, "api_format", None)
+            )
+            if adapter is not None and protocol == "openai":
+                from agent.providers.message_utils import render_openai_request_history
+
+                projected = render_openai_request_history(messages, adapter)
+            else:
+                raw_conversation = getattr(messages, "conversation", messages)
+                # 兼容只在测试/旧调用方上提供 class-level conversation 的轻量容器；
+                # 真实 PromptMessages 整体投影以保留 dynamic tail 与缓存元数据。
+                projection_source = (
+                    raw_conversation
+                    if isinstance(raw_conversation, list)
+                    and not hasattr(messages, "fixed_prefix_size")
+                    and raw_conversation is not messages
+                    else messages
+                )
+                projected = render_events_for_provider(projection_source)
         conversation = getattr(projected, "conversation", projected)
         if not isinstance(conversation, list):
             conversation = []
         from agent.loop_drivers import _history_cache_state
 
-        stable_message_count, effective_anchors = _history_cache_state(messages)
+        stable_message_count, effective_anchors = _history_cache_state(projected)
         anchors = sorted(int(index) for index in effective_anchors if isinstance(index, int))
         tools = getattr(ctx, "tools", None) or []
         tool_json = json.dumps(

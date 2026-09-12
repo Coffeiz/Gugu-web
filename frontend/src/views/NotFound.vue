@@ -62,7 +62,6 @@ const goBack = () => (window.history.length > 1 ? router.back() : router.push('/
   width: 420px; max-width: calc(100vw - 40px); position: relative; z-index: 1;
   text-align: center;
   background: var(--surface-glass);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border-strong);
   border-radius: 20px; padding: 40px 36px;
   box-shadow: var(--elevation-window);

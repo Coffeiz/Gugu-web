@@ -15,6 +15,21 @@ html[data-family='mono'] .mini-player {
   backdrop-filter: var(--chrome-glass-blur);
   -webkit-backdrop-filter: var(--chrome-glass-blur);
 }
+
+/* Admin 配置页的内容卡片是常驻面板，不采样页面背景；sticky 保存栏属于浮动操作区，保留自身玻璃材质。 */
+html[data-theme][data-family] .admin-layout :is(
+  .config-card,
+  .usage-stat-card,
+  .similar-image-card,
+  .deep-research-card,
+  .panel-card,
+  .memory-subpanel,
+  .feedback-item
+) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 html[data-family='mono'] .mini-player .mp-bars i { background: color-mix(in srgb,var(--action-primary) 72%,transparent); }
 html[data-family='mono'] .mini-player .mp-track { background: color-mix(in srgb,var(--action-primary) 14%,transparent); }
 html[data-family='mono'] .mini-player .mp-fill {

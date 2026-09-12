@@ -120,22 +120,39 @@ async def publish_data_runtime_invalidation(user_id, resource: str,
         pass
 
 
-def _publish_rag_index_events(user_id, resources: list[str], operation: str) -> None:
-    """把已提交的业务资源变更转成异步索引更新事件。"""
+def _publish_rag_index_events(
+    user_id, resources: list[str], operation: str,
+    entity_ids: list[str] | None = None,
+) -> None:
+    """把已提交的业务资源变更转成异步索引更新事件。
+
+    带实体 id 时逐条发文档级事件（PRD-RAG-9 文档级增量）；没带 id 的资源
+    保持来源级事件（全量重建兜底）。
+    """
     from agent.events.bus import publish as publish_agent_event
     from agent.events.types import RagIndexUpdated
 
     seen: set[str] = set()
+    ids = [str(item) for item in (entity_ids or []) if str(item).strip()]
     for resource in resources:
         for source_type in _RAG_SOURCES_BY_RESOURCE.get(resource, ()):
             if source_type in seen:
                 continue
             seen.add(source_type)
-            publish_agent_event(RagIndexUpdated(
-                user_id=user_id,
-                source_type=source_type,
-                operation=operation,
-            ))
+            if ids:
+                for source_id in ids:
+                    publish_agent_event(RagIndexUpdated(
+                        user_id=user_id,
+                        source_type=source_type,
+                        source_id=source_id,
+                        operation=operation,
+                    ))
+            else:
+                publish_agent_event(RagIndexUpdated(
+                    user_id=user_id,
+                    source_type=source_type,
+                    operation=operation,
+                ))
 
 async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, operation: str | None = None,
@@ -227,7 +244,19 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     if not payload:
         return False
     if res:
-        _publish_rag_index_events(user_id, res, inferred_operation)
+        # 聚合实体 id：显式 entity_id(s) 优先，文件库细粒度 file_op 的 id/ids 兜底。
+        ids: list[int | str] = []
+        if entity_ids is not None:
+            ids = list(entity_ids)
+        elif entity_id is not None:
+            ids = [entity_id]
+        else:
+            for key in ("id", "ids"):
+                if file_op and file_op.get(key) is not None:
+                    value = file_op[key]
+                    ids = value if isinstance(value, list) else [value]
+                    break
+        _publish_rag_index_events(user_id, res, inferred_operation, entity_ids=[str(i) for i in ids])
     try:
         await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
     except Exception:

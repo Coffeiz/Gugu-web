@@ -14,11 +14,12 @@ from app.db.session import get_db
 from app.models import CalendarEvent, File, Folder, Project, ScheduledTask, User  # orm-exempt: 模型引用随本文件遗留查询，Service 收口时一并移除
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.services.storage import get_storage
-from app.services.storage.trash import move_file_to_trash, restore_file_storage
+from app.services.storage.trash import restore_file_storage
 from app.services.undo import UndoService
 from app.services.undo.domains import domain_ref, domain_state, event_snapshot, project_snapshot, task_snapshot
 from app.services.undo.files import file_snapshot, folder_snapshot
 from app.services.projects import (
+    soft_delete_project_full,
     add_project,
     count_project_files,
     get_project_row,
@@ -222,22 +223,9 @@ async def delete_project(
     before_items.update({domain_ref("task", row.id): task_snapshot(row) for row in tasks})
 
     stamp = now_utc()
-    storage = get_storage()
-    for row in files:
-        await move_file_to_trash(storage, row)
-        row.deleted_at = stamp
-        row.version = int(row.version or 1) + 1
-    for row in folders:
-        row.deleted_at = stamp
-        row.version = int(row.version or 1) + 1
-    for row in calendar_events:
-        row.deleted_at = stamp
-        row.version = int(row.version or 1) + 1
-    for row in tasks:
-        row.enabled = False
-    p.deleted_at = stamp
-    p.version = int(p.version or 1) + 1
-    await db.flush()
+    files, folders, calendar_events, tasks = await soft_delete_project_full(
+        db, get_storage(), current_user.id, p, stamp,
+    )
 
     after_items = {domain_ref("project", p.id): project_snapshot(p)}
     after_items.update({domain_ref("file", row.id): file_snapshot(row) for row in files})

@@ -11,6 +11,7 @@ _SOURCE_TYPES = {"user", "file", "web", "derived", "conversation"}
 _CONFIDENCES = {"confirmed", "probable", "unverified"}
 _CAPTURE_MODES = {"explicit", "tool_result", "automatic"}
 _LIMITS = {"title": 80, "topic": 40, "content": 3000, "source_ref": 300, "source_label": 120}
+_MAX_DESCRIPTION = 150
 _MAX_KEYWORDS = 10
 _MAX_KEYWORD = 40
 
@@ -19,6 +20,7 @@ def normalize_capture(
     title: str, content: str, *, topic: str = "", source_type: str = "user",
     source_ref: str = "", source_label: str = "", confidence: str = "confirmed",
     capture_mode: str = "explicit", keywords: list[str] | None = None,
+    description: str = "",
 ) -> dict[str, Any]:
     """校验一次写入请求；超限直接拒绝，不静默截断。"""
     normalized_keywords: list[str] = []
@@ -31,6 +33,8 @@ def normalize_capture(
             seen_keywords.add(dedupe_key)
             if len(normalized_keywords) >= _MAX_KEYWORDS:
                 break
+    # description 是单行触发式描述，内部换行压成空格。
+    normalized_description = " ".join(str(description or "").split())
     values = {
         "title": str(title or "").strip(), "content": str(content or "").strip(),
         "topic": str(topic or "").strip(), "source_type": str(source_type or "user").strip().lower(),
@@ -38,6 +42,7 @@ def normalize_capture(
         "confidence": str(confidence or "confirmed").strip().lower(),
         "capture_mode": str(capture_mode or "explicit").strip().lower(),
         "keywords": normalized_keywords,
+        "description": normalized_description,
     }
     if not values["title"] or not values["content"]:
         raise ValueError("需要提供 title 和 content")
@@ -50,6 +55,8 @@ def normalize_capture(
     for name, limit in _LIMITS.items():
         if len(values[name]) > limit:
             raise ValueError(f"{name} 不能超过 {limit} 个字符")
+    if len(values["description"]) > _MAX_DESCRIPTION:
+        raise ValueError(f"description 不能超过 {_MAX_DESCRIPTION} 个字符")
     if values["capture_mode"] != "explicit":
         values["confidence"] = "probable"
     return values
@@ -60,6 +67,7 @@ def build_entry(user_id: object, values: dict[str, Any]) -> KnowledgeEntry:
     return KnowledgeEntry.create(
         title=values["title"], content=values["content"], topic=values["topic"],
         keywords=values.get("keywords", []),
+        description=values.get("description", ""),
         scope=KnowledgeScope(type="owner", owner_user_id=str(user_id)),
         source=source, confidence=values["confidence"],
     )

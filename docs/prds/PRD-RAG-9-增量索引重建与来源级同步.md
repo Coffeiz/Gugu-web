@@ -272,7 +272,7 @@ Knowledge、Memory 和其他来源的向量缓存继续保持各自边界，不�
 
 | 来源 | 首选增量粒度 | 特殊处理 |
 | --- | --- | --- |
-| knowledge | 单 Knowledge 条目 | 修改正文、关键词、来源或置信度时重建该条目全部 chunk |
+| knowledge | 单 Knowledge 条目 | 修改正文、关键词、描述、来源或置信度时重建该条目全部 chunk；关键词与描述参与 document_version 戳（`{version}:k{hash}`） |
 | file | 单文件；文件夹移动需处理旧/新父目录 | 文件删除、覆盖、重命名和移动必须清理旧 chunk |
 | project | 单项目或单阶段 | 项目状态、阶段和待办变化可能影响同一项目父文档 |
 | calendar | 单事件 | 重复事件按稳定业务 ID 去重 |
@@ -350,48 +350,48 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 ### Phase 0：契约、基线与差异工具
 
-- [ ] 冻结 `parent_key`、`chunk_key`、content hash 和 projection revision 契约。
-- [ ] 为现有来源级重建增加 `mode`、upsert/delete 数量和耗时诊断。
-- [ ] 抽出通用 chunk diff 工具，不复制 tokenizer 或切块逻辑。
-- [ ] 补齐重复事件、删除、无变化和 revision mismatch fixture。
-- [ ] 记录 Knowledge、file、project 在不同规模下的全量基线。
+- [x] 冻结 `parent_key`、`chunk_key`、content hash 和 projection revision 契约。
+- [x] 为现有来源级重建增加 `mode`、upsert/delete 数量和耗时诊断。
+- [x] 抽出通用 chunk diff 工具，不复制 tokenizer 或切块逻辑。
+- [x] 补齐重复事件、删除、无变化和 revision mismatch fixture。
+- [x] 记录 Knowledge、file、project 在不同规模下的全量基线。
 
 验收：同一输入下 diff 结果确定；正文不进入可见日志；旧来源级重建行为不变。
 
 ### Phase 1：Knowledge 文档级增量
 
-- [ ] 实现 Knowledge 单条读取和单条 canonical projection。
-- [ ] 实现单 `source_id` chunk projection 增量写入。
-- [ ] 接入 TS worker patch，并保留 mismatch 来源级 replace 回退。
-- [ ] 接入 Knowledge 向量 upsert/delete。
-- [ ] `save_knowledge`、`delete_knowledge` 和自动反思统一使用该事件链。
+- [x] 实现 Knowledge 单条读取和单条 canonical projection。
+- [x] 实现单 `source_id` chunk projection 增量写入。
+- [x] 接入 TS worker patch，并保留 mismatch 来源级 replace 回退。
+- [x] 接入 Knowledge 向量 upsert/delete。
+- [x] `save_knowledge`、`delete_knowledge` 和自动反思统一使用该事件链。
 
 验收：1000 条 Knowledge 中修改 1 条时，只读取和 patch 该条；正文修改、关键词修改、删除和恢复均无旧 chunk 残留。
 
 ### Phase 2：文件与项目增量
 
-- [ ] 文件覆盖、重命名、移动、删除接入单文件/受影响目录增量。
-- [ ] 项目字段、阶段和待办变化接入项目级增量。
-- [ ] 明确文件夹和项目父文档变化时的受影响集合。
-- [ ] 增加文件库、项目 UI 可见性与 RAG 召回一致性回归。
+- [x] 文件覆盖、重命名、移动、删除接入单文件/受影响目录增量。
+- [x] 项目字段、阶段和待办变化接入项目级增量。
+- [x] 明确文件夹和项目父文档变化时的受影响集合。
+- [x] 增加文件库、项目 UI 可见性与 RAG 召回一致性回归。
 
 验收：单文件或单项目变更不会扫描无关对象；移动后旧目录/旧项目 scope 不再召回。
 
 ### Phase 3：剩余来源与 durable recovery
 
-- [ ] Calendar、Canvas、Note、Conversation、Memory 接入统一 delta contract。
-- [ ] 引入 dirty marker 或索引 outbox。
-- [ ] 启动恢复、失败重放和定期来源校准落地。
-- [ ] 统一事件合并、取消、重试和状态查询。
+- [x] Calendar、Canvas、Note、Conversation、Memory 接入统一 delta contract。
+- [x] 引入 dirty marker 或索引 outbox。
+- [x] 启动恢复、失败重放和定期来源校准落地。
+- [x] 统一事件合并、取消、重试和状态查询。
 
 验收：重启、重复事件、事件丢失模拟后，索引最终与主数据一致；无法恢复时有明确管理诊断。
 
 ### Phase 4：性能优化与旧路径清理
 
-- [ ] 对比来源级 replace、chunk diff、TS patch 的 P50/P95。
-- [ ] 校准批量事件合并窗口，避免过短导致重复 patch、过长导致明显延迟。
-- [ ] 确认所有来源默认走增量；只保留明确的来源级重建和管理校准入口。
-- [ ] 清理重复差异实现、旧 shadow 路径和仅用于迁移的测试。
+- [x] 对比来源级 replace、chunk diff、TS patch 的 P50/P95。
+- [x] 校准批量事件合并窗口，避免过短导致重复 patch、过长导致明显延迟。
+- [x] 确认所有来源默认走增量；只保留明确的来源级重建和管理校准入口。
+- [x] 清理重复差异实现、旧 shadow 路径和仅用于迁移的测试。
 
 验收：生产默认更新路径不再因单文档变化触发来源级全量重建；全量回退仍可手动执行并有测试覆盖。
 

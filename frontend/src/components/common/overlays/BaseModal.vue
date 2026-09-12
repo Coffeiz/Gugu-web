@@ -28,7 +28,7 @@ const props = defineProps({
   width:   { type: String,  default: '560px' },
   // 传入则作为固定高度上限（height:100% + max-height），不传则高度随内容自适应
   height:  { type: String,  default: null },
-  // 卡片背景：不传=透明（双栏弹窗自己叠玻璃背景，如 ProjectModal）；单栏弹窗传
+  // 卡片背景：不传=透明（双栏弹窗自己叠静态 tint，如 ProjectModal）；单栏弹窗传
   // var(--panel-bg) 等撑起整卡底色。用 prop 而非调用方 :deep(.bm-card) 覆盖——
   // BaseModal 是多根组件（.bm-overlay + .bm-center 两个平级根），:deep() 的父作用域
   // 属性只挂在组件根节点上，穿不到 .bm-card 这层（.bm-center 的子节点），调用方的
@@ -92,8 +92,8 @@ onBeforeUnmount(() => unregEsc?.())
 
 /* ── 卡片 ──
    不设背景色：交给调用方走 background/blur prop（原因见上方 props 定义处的注释）。
-   双栏弹窗（如 ProjectModal）各栏自带玻璃背景、不传 background，bm-card 本身透明，
-   让各栏的 backdrop-filter 直接穿透到页面。 */
+   双栏弹窗（如 ProjectModal）各栏自带静态 tint、不传 background，bm-card 本身透明；
+   只有 bm-card 自己承担浮层 backdrop blur。 */
 .bm-card {
   pointer-events: auto;
   position: relative;

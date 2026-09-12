@@ -34,7 +34,7 @@ endif
 help:        ## 显示帮助
 	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
-	@echo "生产：make install 后 make start | stop | restart | status 管理 Python/FastAPI、IM、sandboxd；TS RAG 由 Python 按需复用固定制品"
+	@echo "生产：make install 后 make start | stop | restart | status 管理 egress、Python/FastAPI、IM、sandboxd；TS RAG 由 Python 按需复用固定制品"
 	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
 	@echo "Compose：make compose-up（轻量模式）；make compose-up SANDBOX_ACL=1 开启 sandbox profile（ACL 由 bootstrap 自动初始化）"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
@@ -114,7 +114,7 @@ rag-ts-build: filesync-ts-build ## 构建固定的 TypeScript RAG worker 制品�
 		Darwin:x86_64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-x64@2.0.1 ;; \
 		Darwin:arm64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-arm64@2.0.1 ;; \
 		esac
-	@ts/node_modules/.bin/esbuild ts/workers/rag/src/index.ts --platform=node --format=esm --bundle --banner:js='#!/usr/bin/env node' --external:@node-rs/jieba --external:@node-rs/jieba/* --outfile=bin/gugu-rag-ts-worker.mjs
+	@node ts/workers/rag/build.mjs
 	@rm -rf bin/node_modules
 	@cp -R ts/node_modules bin/node_modules
 	@chmod 755 bin/gugu-rag-ts-worker.mjs
@@ -192,12 +192,12 @@ backup:      ## 备份数据库 + Gugu-data/users + override 配置
 	./backup.sh
 
 # ── systemd ──────────────────────────────────────────────
-install:     ## 装成 systemd 服务（sandboxd + web + IM worker + IM gateway）
+install:     ## 装成 systemd 服务（egress + sandboxd + web + IM worker + IM gateway）
 	@$(MAKE) sandbox-acl-prepare
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务（四个核心服务，并清理旧实时事件服务）
-	for s in gugu-sandboxd gugu-backend gugu-worker gugu-gateway; do \
+uninstall:   ## 卸载 systemd 服务（rag-sidecar + egress + 四个核心服务，并清理旧实时事件服务）
+	for s in gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \

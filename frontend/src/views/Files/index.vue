@@ -374,7 +374,7 @@ const { jumpToTarget, consumePendingTarget } = useFileLibraryNavigation({
 })
 
 // ── 排序 ──
-const { SORT_OPTIONS, sortKey, sortDir, onSortSelect } = useSorting()
+const { SORT_OPTIONS, sortKey, sortDir, onSortSelect } = useSorting('files')
 
 const directory = useFileLibraryDirectory({
   projectStore,

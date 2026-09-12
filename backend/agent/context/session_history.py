@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from typing import Any
 
@@ -12,6 +13,8 @@ from sqlalchemy import select
 
 from .tokens import HISTORY_MAX_MSGS
 
+
+logger = logging.getLogger(__name__)
 
 _last_history_stats: ContextVar[dict[str, Any] | None] = ContextVar(
     "session_history_stats", default=None,
@@ -44,6 +47,19 @@ async def load_session_history(
     )
     summary = list((await db.execute(summary_query)).scalars().all())
 
+    # summary 行自带本次压缩的真实覆盖边界（与摘要同一事务写入，covers_until_id）。
+    # 装载先读 session.baseline、后读 summary，两次读取之间可能隔着一次压缩落库，
+    # 形成「新摘要 + 旧 baseline」竞态；取两者较大者作有效水位，防止把摘要已
+    # 覆盖的原文重复拼进上下文。旧摘要行没有该水位时退回传入的 baseline。
+    passed_baseline = int(baseline_message_id or 0)
+    covers_until = int(getattr(summary[0], "covers_until_id", 0) or 0) if summary else 0
+    effective_baseline = max(passed_baseline, covers_until)
+    if covers_until > passed_baseline:
+        logger.info(
+            "[history-baseline-divergence] session=%s loader_baseline=%s summary_covers=%s",
+            session_id, passed_baseline, covers_until,
+        )
+
     query = (
         select(ConversationMessage)
         .where(
@@ -53,9 +69,9 @@ async def load_session_history(
         .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
         .limit(max(1, int(max_messages)))
     )
-    if baseline_message_id > 0:
+    if effective_baseline > 0:
         query = query.where(
-            ConversationMessage.id > baseline_message_id
+            ConversationMessage.id > effective_baseline
         )
     newest = list((await db.execute(query)).scalars().all())
     # 不在数据库读取阶段使用本地 token 估算。历史只受非 token 的条数安全上限
@@ -66,7 +82,9 @@ async def load_session_history(
         "history_selected_count": len(history) + len(summary),
         "history_selection": "provider-authoritative",
         "history_summary_count": len(summary),
-        "history_baseline_message_id": int(baseline_message_id or 0),
+        "history_baseline_message_id": passed_baseline,
+        "history_effective_baseline_id": effective_baseline,
+        "history_summary_covers_until_id": covers_until or None,
         "history_oldest_selected_id": getattr(history[0], "id", None) if history else None,
         "history_newest_selected_id": getattr(history[-1], "id", None) if history else None,
     })

@@ -101,7 +101,9 @@ def context_layout_audit(*, phase: str, session: Any, snapshot: dict[str, Any] |
     # 只在当前任务内暂存一次组装边界，最终由 LoopScope 的 provider 入口消费。
     # 这样诊断不会停留在 history-loaded 等中间态，也不会把 web/IM 分成两套探针。
     _pending_layout.set(payload)
-    logger.info(
+    # 指纹边界每次请求都会产生，进主日志是纯噪音（数据已走 _pending_layout →
+    # LoopScope）；排查时把 agent.context.audit 调到 DEBUG 恢复输出。
+    logger.debug(
         "[context-layout] %s %s",
         phase, payload,
     )

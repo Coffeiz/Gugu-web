@@ -60,7 +60,10 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
         from app.core.project_colors import project_color_key
 
         color_key = project_color_key(normalized["color"])
-        if color_key != normalized["color"]:
+        # ``project_color_key`` 只负责把存储层渐变值反向映射成语义色名。
+        # 已经是语义色名时会返回 None，不能把合法输入覆盖成 None，否则后续
+        # Schema 校验会同时报 enum/type 错误。
+        if color_key is not None:
             normalized["color"] = color_key
             adaptations.append(f"{tool_name}.color:normalized_token")
     if tool_name == "create_event" and "all_day" not in normalized:

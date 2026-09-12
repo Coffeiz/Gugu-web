@@ -124,15 +124,32 @@ class FileOps:
 
     # ── 上传（保留两者 / 覆盖）───────────────────────────────────────────────────
     async def create_file(self, user_id, *, space, project_id, folder_id, stage_name,
-                          mind_map_id, display_name, ext, mime_type, data,
+                          mind_map_id, display_name, ext, mime_type, data=None,
                           img_width=None, img_height=None,
                           on_conflict="keep_both", overwrite_file_id=None,
                           workspace_directory_id=None,
-                          storage_limit_bytes=None, ledger_operation="file_upload") -> FileResult:
+                          storage_limit_bytes=None, ledger_operation="file_upload",
+                          stream=None, stream_size=None, stream_sha256=None) -> FileResult:
+        # 内容二选一：data 是已读入内存的字节（小文件/工具调用）；stream 是可
+        # seek(0) 的文件对象 + 预先算好的大小与 sha256（网页大文件上传，内存峰值
+        # 与文件大小解耦），流式路径经 storage.put_stream 分块落盘。
+        if (data is None) == (stream is None):
+            raise Invalid("file.content_required", "缺少文件内容")
+        if stream is not None:
+            size_bytes = int(stream_size or 0)
+            content_fingerprint = str(stream_sha256 or "")
+        else:
+            size_bytes = len(data)
+            content_fingerprint = hashlib.sha256(data).hexdigest()
         project, project_year, project_month, folder_name, folder_path, workspace_directory = await self._resolve_target(
             user_id, space, project_id, folder_id, workspace_directory_id,
             folder_msg="文件夹不存在，或不属于指定的项目/个人空间")
-        size_bytes = len(data)
+
+        async def _write_content(key: str) -> None:
+            if stream is not None:
+                await self.storage.put_stream(key, stream, size_bytes, mime_type)
+            else:
+                await self.storage.put(key, data, mime_type)
 
         # 覆盖已有同名文件：原地替换内容，保留同一个 file id；配额按新旧差值算。
         if on_conflict == "overwrite" and overwrite_file_id is not None:
@@ -149,7 +166,7 @@ class FileOps:
                 if used - existing.size_bytes + size_bytes > storage_limit_bytes:
                     raise Invalid("storage.full", "存储空间已满，无法上传")
             old_size_bytes = existing.size_bytes
-            await self.storage.put(existing.storage_key, data, mime_type)
+            await _write_content(existing.storage_key)
             existing.size = _fmt_size(size_bytes)
             existing.size_bytes = size_bytes
             existing.mime_type = mime_type
@@ -160,7 +177,7 @@ class FileOps:
             await self.db.flush()
             await record_canonical_file_change(
                 self.db, user_id=user_id, storage_key=existing.storage_key,
-                observed_fingerprint=hashlib.sha256(data).hexdigest(),
+                observed_fingerprint=content_fingerprint,
             )
             await record_usage(
                 self.db, user_id, category=FILE_LIBRARY,
@@ -184,7 +201,7 @@ class FileOps:
             if used + size_bytes > storage_limit_bytes:
                 raise Invalid("storage.full", "存储空间已满，无法上传")
 
-        await self.storage.put(final_key, data, mime_type)
+        await _write_content(final_key)
         db_file = File(
             user_id=user_id, display_name=final_name, ext=ext, space=space,
             project_id=project_id if space == "project" else None,
@@ -200,7 +217,7 @@ class FileOps:
         # 缺这条记录会让双向冲突检测把「工具单写两边」误判成两边都改过。
         await record_canonical_file_change(
             self.db, user_id=user_id, storage_key=db_file.storage_key,
-            observed_fingerprint=hashlib.sha256(data).hexdigest(),
+            observed_fingerprint=content_fingerprint,
         )
         await record_usage(
             self.db, user_id, category=FILE_LIBRARY, delta_bytes=size_bytes,

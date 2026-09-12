@@ -218,6 +218,7 @@ class OpenAIResponsesDriver:
             normalized.append(NormalizedToolCall(
                 id=call_id, name=name, input=args,
                 parse_error=parse_error,
+                raw_arguments=args_text if not parse_error else None,
             ))
         if response_id:
             # 先更新上下文再 yield；核心循环在拿到 done 后会结束当前 generator，

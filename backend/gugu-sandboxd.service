@@ -1,6 +1,7 @@
 [Unit]
 Description=Gugu Rootless Docker Sandbox Daemon
-After=network.target
+Wants=gugu-sandbox-egress.service
+After=network.target gugu-sandbox-egress.service
 
 [Service]
 Type=simple

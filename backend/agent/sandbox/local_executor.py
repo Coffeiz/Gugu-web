@@ -86,6 +86,7 @@ class LocalWorkspaceExecutor:
         self, argv: list[str], workdir: Path, *, allowed_absolute_paths: tuple[str, ...] = (),
         allow_script_execution: bool = False,
         environment: dict[str, str] | None = None,
+        allow_container_device_paths: bool = False,
     ) -> None:
         """阻止 workspace 命令通过参数访问 workspace 外的路径。
 
@@ -100,6 +101,10 @@ class LocalWorkspaceExecutor:
             if not value or value.startswith("-") and "/" not in value and "\\" not in value:
                 continue
             if value.startswith("~") or Path(value).is_absolute() or value.startswith(("/", "\\")):
+                if allow_container_device_paths and value in {
+                    "/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr",
+                }:
+                    continue
                 if value.startswith("/") and any(
                     Path(value) == Path(allowed) or Path(allowed) in Path(value).parents
                     for allowed in allowed_absolute_paths

@@ -19,8 +19,6 @@ html[data-theme][data-family] .design-page .design-hero {
   background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
   border-bottom-color: var(--border-subtle);
   box-shadow: var(--topbar-shadow);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 
 html[data-theme][data-family] .design-page .hero-title-row { display:block; }

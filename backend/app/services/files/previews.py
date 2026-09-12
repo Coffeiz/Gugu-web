@@ -61,15 +61,24 @@ def resolve_image_mime(raw: bytes, declared_mime: str | None) -> str | None:
         return None
 
 
-def read_image_dimensions(raw: bytes, mime_type: str | None) -> tuple[int | None, int | None]:
-    """读取图片尺寸；无法解析时返回空尺寸，不影响文件上传。"""
+def read_image_dimensions(raw, mime_type: str | None) -> tuple[int | None, int | None]:
+    """读取图片尺寸；无法解析时返回空尺寸，不影响文件上传。
+
+    raw 可以是字节，也可以是可 seek 的文件对象——Pillow 只读 header 就能
+    拿到尺寸；mime 是用户可控输入，不能为探宽高把整包拉进内存。
+    """
     if not mime_type or mime_type.lower() not in IMAGE_MIMES or mime_type.lower() == "image/svg+xml":
         return None, None
     try:
         from io import BytesIO
         from PIL import Image
 
-        with Image.open(BytesIO(raw)) as image:
+        if isinstance(raw, (bytes, bytearray)):
+            source = BytesIO(raw)
+        else:
+            source = raw
+            source.seek(0)
+        with Image.open(source) as image:
             return image.size
     except Exception:
         return None, None

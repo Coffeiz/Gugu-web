@@ -164,15 +164,21 @@ def _model_attachment_name(meta: dict) -> str:
     return f"{name}.{ext}" if ext else name
 
 
-def _probe_image_size(data: bytes, ext: str) -> tuple[int | None, int | None]:
+def _probe_image_size(data, ext: str) -> tuple[int | None, int | None]:
     """探真实像素尺寸（与 files.py 上传时同一套逻辑）：SVG 是矢量、Pillow 读不出「像素」尺寸，跳过；
-    失败也别报错——没探到就是 None，前端退回旧的占位图估算兜底。"""
+    失败也别报错——没探到就是 None，前端退回旧的占位图估算兜底。
+    data 可以是字节，也可以是可 seek 的文件对象（Pillow 只读 header，探尺寸不整包进内存）。"""
     if (ext or "").lower() == "svg":
         return None, None
     try:
         from PIL import Image
         import io as _io
-        img = Image.open(_io.BytesIO(data))
+        if isinstance(data, (bytes, bytearray)):
+            source = _io.BytesIO(data)
+        else:
+            source = data
+            source.seek(0)
+        img = Image.open(source)
         w, h = img.size
         img.close()
         return w, h
@@ -427,6 +433,44 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
+        meta["img_width"], meta["img_height"] = img_w, img_h
+    if extra:
+        meta.update(extra)
+    try:
+        await _record_draft(user_id, attach_id, storage_key, meta)
+    except Exception:
+        try:
+            await get_storage().delete(storage_key)
+        except Exception:
+            pass
+        raise
+    return meta
+
+
+async def stage_stream(user_id, name: str, ext: str, mime: str | None, *,
+                       stream, size: int, kind: str | None = None,
+                       subdir: str = ".chat_staging", extra: dict | None = None,
+                       platform: str | None = None,
+                       platform_message_id: str | None = None,
+                       attachment_index: int | None = None) -> dict:
+    """分块版 stage：网页大附件直进暂存，内存峰值与文件大小解耦。
+
+    stream 须可 seek(0)，由调用方负责 close。图片仍会把内容读进内存探真实
+    尺寸（图片实际都很小）；语音转码等需要整字节的路由继续走 stage(data)。
+    """
+    attach_id = uuid.uuid4().hex[:16]
+    ext_l = (ext or "").lower()[:10]
+    storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
+    await get_storage().put_stream(storage_key, stream, size, mime or "application/octet-stream")
+    meta = {
+        "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
+        "size": size, "storage_key": storage_key, "kind": kind or _kind(ext_l),
+        "platform": _current_platform(platform),
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
+    }
+    if meta["kind"] == "image":
+        img_w, img_h = _probe_image_size(stream, ext_l)
         meta["img_width"], meta["img_height"] = img_w, img_h
     if extra:
         meta.update(extra)
@@ -735,15 +779,19 @@ async def read_text(meta: dict) -> str:
 def _vision_enabled(model_cfg=None) -> bool:
     """当前模型是否支持多模态。
 
-    保留后台探测/手动开关，同时信任适配器对 DeepSeek Vision 这类明确登记的
-    模型能力，避免新建预设还没点检测时把图片误当普通附件。
+    保留后台探测/手动开关和能力覆写，同时信任适配器已登记的模型能力，
+    避免新建预设还没点检测时把图片误当普通附件。
     """
     try:
         from app.core.config import get_settings
         from agent import providers
         ai = model_cfg or get_settings().ai
         capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
-        return bool(getattr(ai, "vision", False)) or capabilities.vision
+        overrides = getattr(ai, "capability_overrides", None) or {}
+        vision_capability = overrides.get("vision")
+        if not isinstance(vision_capability, bool):
+            vision_capability = capabilities.vision
+        return bool(getattr(ai, "vision", False)) or vision_capability
     except Exception:
         return False
 
@@ -1260,7 +1308,8 @@ def vision_ready(model_cfg=None) -> bool:
     """当前实际运行模型已开启视觉能力。
 
     工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
-    转成 ``image_url``，因此 DeepSeek Vision 也可以读取工具返回的图片。
+    转成 ``image_url``。后台探测/手动开关是显式能力声明，不能再被静态
+    Provider 能力表反向否决。
 
     工具 handler 通常不会显式收到 model_cfg，因此默认优先读取本轮
     ``modelctx`` 绑定的实际模型；只有没有运行上下文时才回退到全局配置。
@@ -1268,19 +1317,19 @@ def vision_ready(model_cfg=None) -> bool:
     """
     try:
         from app.core.config import get_settings
-        from agent import providers
         s = get_settings()
         if model_cfg is None:
             from agent.llm import modelctx
             model_cfg = modelctx.get_model_cfg()
         ai = model_cfg or s.ai
-        capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
-        return _vision_enabled(ai) and (capabilities.vision or capabilities.api_format == "anthropic")
+        return _vision_enabled(ai)
     except Exception:
         return False
 
 
 VISION_READ_MAX = 30 * 1024 * 1024   # read_file 看图时从存储拉取的硬上限（压缩前），挡住超大文件
+TEXT_READ_MAX = 32 * 1024 * 1024   # 消息注入文本类附件（含 doctext 可提取的 PDF/Office）的读取硬上限：
+                                   # 最终只注入 32K 字符，32MB 原文绰绰有余；超大文档留给按需 read_file
 
 
 def vision_block(raw: bytes, ext: str):
@@ -1360,13 +1409,26 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
         fname = _model_attachment_name(meta)
         tag = f"《{fname}》(attach_id={meta['attach_id']})"
         if meta["kind"] == "text":
-            parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
+            # 消费侧硬门：文本/PDF/Office 在 read_text 里都是先整包 read_bytes 再提取、
+            # 最后才截到 32K 字符；超限直接不读，超大文档留给按需 read_file。
+            if meta["size"] > TEXT_READ_MAX:
+                # 提示别承诺 read_file：文本 256KB / PDF/Office 30MB 的上限都到不了这个量级。
+                parts.append(f"\n\n📎 用户上传的文件{tag}（正文过大，超过 {TEXT_READ_MAX // 1048576}MB，未直接读取；"
+                             f"可保存到文件库——用户要存就 save_uploaded_file(attach_id)——后续按需处理；"
+                             f"read_file 对文本/文档有更小的读取上限，不要反复尝试读取全文）。")
+            else:
+                parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
         elif meta["kind"] == "image":
             ext = (meta.get("ext") or "").lower()
+            img_why = None
             # vision 模型 + 受支持格式 + 没超张数 → 喂给模型真看（超体积/超大尺寸自动压缩）
             if vision and ext in VISION_EXTS and len(images) < VISION_IMG_COUNT:
                 try:
                     import base64
+                    # 消费侧硬门：图片同样按 meta["size"] 读前拒绝（VISION_READ_MAX 与
+                    # read_file 看图同一口径），超限走下方「没法直接看」文字提示。
+                    if meta["size"] > VISION_READ_MAX:
+                        raise ValueError(f"文件超过 {VISION_READ_MAX // 1048576}MB 读取上限")
                     raw = await read_bytes(meta)
                     fitted = _fit_image_for_vision(raw, ext)
                     if fitted:
@@ -1376,6 +1438,9 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                         parts.append(f"\n\n📎 用户上传了图片{tag}（见随附图像）；"
                                      f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
                         continue
+                except ValueError as e:
+                    # 明确的拒绝原因（如超限）要保留下来，不能吞成「格式不支持」
+                    img_why = str(e)
                 except Exception:
                     pass   # 读图/压缩失败 → 退回文字提示
             if not vision:
@@ -1385,8 +1450,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                              f"**就当普通文件正常处理**——别说「看不了图 / 看不到内容」，正常回应；"
                              f"用户要存就 save_uploaded_file(attach_id) 存进文件库）。")
             else:
-                # vision 开着但这张没喂成（格式不支持 / 读图失败）
-                parts.append(f"\n\n📎 用户上传了图片{tag}（这张没法直接看：格式不支持）；"
+                # vision 开着但这张没喂成（格式不支持 / 超限 / 读图失败）
+                parts.append(f"\n\n📎 用户上传了图片{tag}（这张没法直接看：{img_why or '格式不支持'}）；"
                              f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
         elif meta["kind"] in ("audio", "video", "voice"):
             is_voice = meta["kind"] == "voice"
@@ -1406,11 +1471,13 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                 try:
                     import base64
                     mime = _MEDIA_MIME.get(ext, meta.get("mime") or "application/octet-stream")
-                    # 视频源文件上限用暂存元数据里已有的 meta["size"]（跟 read_file 那边用
-                    # storage.stat() 是同一个思路）在读字节之前就拒绝，不要为了一个注定要
-                    # 拒绝的 500MB+ 视频先把整个文件读进内存（code review 指出）。
+                    # 消费侧硬门：一律先用暂存元数据里的 meta["size"] 拒绝，再碰
+                    # read_bytes——不要为了一个注定要拒绝的大文件先把整包读进内存
+                    # （视频 500MB / 音频 36MB，均为读前拦截，code review 两轮指出）。
                     if is_video and meta["size"] > VIDEO_SOURCE_MAX:
                         raise ValueError("这条视频太大（超过 500MB 处理上限），没法直接看")
+                    if not is_video and meta["size"] > MEDIA_RAW_MAX:
+                        raise ValueError("这条音频太大（超过上限），没法直接听")
                     raw = await read_bytes(meta)
                     if is_video:
                         # 视频决策（压缩阈值/base64 vs mm_file/大小上限）全部在 prepare_video_media
@@ -1427,9 +1494,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                             raw, mime, meta.get("name") or "video.mp4", video_cfg,
                         ))
                     else:
-                        # 音频/语音：保持旧行为，仅 ≤36MB 走 base64
-                        if meta["size"] > MEDIA_RAW_MAX:
-                            raise ValueError("这条音频太大（超过上限），没法直接听")
+                        # 音频/语音：仅 ≤MEDIA_RAW_MAX 走 base64（超限已在 read_bytes 前拦截）
                         media.append({"type": "audio", "mode": "base64", "mime": mime,
                                       "b64": base64.b64encode(raw).decode()})
                     if is_voice:

@@ -79,8 +79,6 @@ const props = defineProps({
   overflow: visible;
   background: var(--surface-glass);
   border-color: var(--border-strong);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
 }
 .fc-card:hover:not(.selected):not(.pre-selected) {
   background: var(--file-card-bg-hover);

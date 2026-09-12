@@ -4,7 +4,6 @@
     <main class="layout-main" :class="{ 'full-bleed': fullBleed, 'canvas-workspace': isCanvasWorkspace }">
       <!-- 顶栏（fullBleed 页隐藏：思维面板等「工作台」视图自己管头部，见 router meta） -->
       <header v-if="!fullBleed" class="topbar glass-card" :class="{ 'locale-ja': locale === 'ja-JP' }">
-        <GlassBg />
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
           <p>{{ todayStr }}</p>
@@ -87,7 +86,6 @@ import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import GuguChat from '@/components/common/gugu-chat/GuguChat.vue'
 import GlobalSearch from '@/components/common/layout/GlobalSearch.vue'
-import GlassBg from '@/components/common/layout/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'
 import ProjectModal    from '@/views/Projects/components/ProjectModal.vue'
 import EventEditModal  from '@/components/events/EventEditModal.vue'
@@ -194,7 +192,6 @@ const todayStr = computed(() => {
 }
 
 .topbar {
-  --gb-tint: var(--glass-bg);
   position: absolute;
   top: 20px;
   left: 20px;
@@ -204,17 +201,10 @@ const todayStr = computed(() => {
   align-items: center;
   gap: 14px;
   padding: 14px 20px;
-  /* 顶栏浮在会动的 page-content 之上，用 backdrop-filter 会闪白带（Chrome 边缘重栅格伪影，
-     合成隔离无法根治，见排查记录）。改用 <GlassBg>：background-attachment:fixed 的页面背景副本 +
-     普通 filter:blur 预模糊（静态、可缓存、跨引擎一致、无白带）。宿主自身透明、建层叠上下文让
-     GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
-  isolation: isolate;
-  background: transparent;
-  overflow: visible;  /* GlassBg 自己继承圆角裁切；宿主放开，按钮外发阴影才能露出来 */
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: var(--glass-card-background);
+  overflow: visible;  /* 按钮外发阴影不能被顶栏裁掉 */
 }
-/* topbar hover 的 tint/阴影统一走 GlassBg 的 .glass-card:hover 契约与语义 token。 */
+/* 顶栏玻璃宿主保持静态，内部按钮自行提供 hover 反馈。 */
 
 .topbar-title h1 {
   font-size: 20px;

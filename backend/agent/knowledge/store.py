@@ -19,6 +19,7 @@ _MAX_TOPIC = 40
 _MAX_KEYWORDS = 10
 _MAX_KEYWORD = 40
 _MAX_CONTENT = 3000
+_MAX_DESCRIPTION = 150
 _MAX_SOURCE_LABEL = 120
 _MAX_SOURCE_REF = 300
 _MAX_HISTORY = 5
@@ -54,6 +55,7 @@ def _serialize(entry: KnowledgeEntry) -> bytes:
         "title": entry.title,
         "topic": entry.topic,
         "keywords_json": entry.keywords,
+        "description": entry.description,
         "scope_json": entry.scope.__dict__,
         "source_json": entry.source.to_dict(),
         "confidence": entry.confidence,
@@ -99,6 +101,7 @@ def _parse(raw: bytes) -> KnowledgeEntry:
         "title": fields.get("title", ""),
         "topic": fields.get("topic", ""),
         "keywords": obj("keywords_json", []),
+        "description": fields.get("description", ""),
         "content": content,
         "scope": obj("scope_json", {}),
         "source": obj("source_json", {}),
@@ -117,6 +120,7 @@ def _validate(entry: KnowledgeEntry) -> None:
         ("title", entry.title, _MAX_TITLE),
         ("topic", entry.topic, _MAX_TOPIC),
         ("content", entry.content, _MAX_CONTENT),
+        ("description", entry.description, _MAX_DESCRIPTION),
         ("source_label", entry.source.label, _MAX_SOURCE_LABEL),
         ("source_ref", entry.source.ref, _MAX_SOURCE_REF),
     ):
@@ -140,6 +144,19 @@ def _validate(entry: KnowledgeEntry) -> None:
 class KnowledgeStore:
     def __init__(self, user_id: object):
         self.user_id = user_id
+
+    async def get(self, entry_id: str, *, active_only: bool = True) -> KnowledgeEntry | None:
+        """按 ID 直读单个条目，不遍历整个知识库（PRD-RAG-9 文档级增量入口）。"""
+        if not entry_id:
+            return None
+        storage = get_storage()
+        try:
+            entry = _parse(await storage.get(_path(self.user_id, str(entry_id))))
+        except (KeyError, TypeError, ValueError, OSError):
+            return None
+        if active_only and not entry.active:
+            return None
+        return entry
 
     async def list(self, *, scope: KnowledgeScope | None = None, active_only: bool = True) -> list[KnowledgeEntry]:
         storage = get_storage()
@@ -194,7 +211,9 @@ class KnowledgeStore:
                 entry.keywords = list(current.keywords)
             same_content = _norm(current.content) == _norm(entry.content)
             same_keywords = current.keywords == entry.keywords
-            if same_content and same_keywords:
+            # description 单独变化也要落盘升版本，否则只调描述的更新会被吞掉。
+            same_description = _norm(current.description) == _norm(entry.description)
+            if same_content and same_keywords and same_description:
                 return current
             if same_content:
                 entry.id = current.id

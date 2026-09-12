@@ -18,7 +18,7 @@ async def test_publishes_index_event_when_entries_saved(monkeypatch):
 
     async def fake_reflect(*args, **kwargs):
         saved_calls.append(kwargs.get("save_mode"))
-        return 2
+        return ["k-1", "k-2"]
 
     monkeypatch.setattr(knowledge_reflection, "reflect_if_candidate", fake_reflect)
 
@@ -27,11 +27,12 @@ async def test_publishes_index_event_when_entries_saved(monkeypatch):
     )
 
     assert saved_calls == ["automatic"]
-    assert len(published) == 1
+    assert {evt.source_id for evt in published} == {"k-1", "k-2"}
     evt = published[0]
     assert evt.user_id == "user-1"
     assert evt.source_type == "knowledge"
     assert evt.operation == "upsert"
+    assert all(evt.source_id for evt in published)
 
 
 async def test_no_event_when_nothing_saved(monkeypatch):
@@ -41,7 +42,7 @@ async def test_no_event_when_nothing_saved(monkeypatch):
                         lambda out: (True, "整理一下"))
 
     async def fake_reflect(*args, **kwargs):
-        return 0
+        return []
 
     monkeypatch.setattr(knowledge_reflection, "reflect_if_candidate", fake_reflect)
 

@@ -25,6 +25,46 @@ def test_vision_ready_uses_active_model_context(monkeypatch):
     assert chat_attach.vision_ready() is True
 
 
+def test_vision_ready_honors_explicit_toggle_for_openai_compatible_model(monkeypatch):
+    """后台明确启用视觉后，不应再被适配器的静态能力声明否决。"""
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    default_ai = SimpleNamespace(provider="qwen", model="qwen3.8", vision=False)
+    active_ai = SimpleNamespace(provider="deepseek", model="deepseek-flash", vision=True)
+    monkeypatch.setattr(chat_attach, "get_settings", lambda: SimpleNamespace(ai=default_ai), raising=False)
+    monkeypatch.setattr("agent.llm.modelctx.get_model_cfg", lambda: active_ai)
+    monkeypatch.setattr(
+        "agent.providers.adapter_for",
+        lambda _ai: SimpleNamespace(
+            capabilities=lambda _model: SimpleNamespace(vision=False, api_format="openai")
+        ),
+    )
+
+    assert chat_attach.vision_ready() is True
+
+
+def test_vision_ready_honors_capability_override(monkeypatch):
+    """模型能力覆写为支持视觉时，工具预检应使用同一份有效能力。"""
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    ai = SimpleNamespace(
+        provider="deepseek", model="custom-vision-model", vision=False,
+        capability_overrides={"vision": True},
+    )
+    monkeypatch.setattr(chat_attach, "get_settings", lambda: SimpleNamespace(ai=ai), raising=False)
+    monkeypatch.setattr("agent.llm.modelctx.get_model_cfg", lambda: ai)
+    monkeypatch.setattr(
+        "agent.providers.adapter_for",
+        lambda _ai: SimpleNamespace(
+            capabilities=lambda _model: SimpleNamespace(vision=False, api_format="openai")
+        ),
+    )
+
+    assert chat_attach.vision_ready() is True
+
+
 # ── _should_compress_video：压缩触发判断 ─────────────────────────────────────
 def test_should_compress_4k_high_bitrate():
     from app.core.chat_attach import _should_compress_video

@@ -1,7 +1,11 @@
 from agent.context.context_diagnostics import first_diff_index, request_diagnostics
 from agent.context.context_assembly import build_messages
 from agent.context.canonical_tool_history import render_events_for_provider
-from agent.loop_drivers import _history_cache_state, _with_single_history_cache
+from agent.loop_drivers import (
+    _history_cache_state,
+    _with_history_cache,
+    _with_single_history_cache,
+)
 from agent.providers.message_utils import _with_system_cache_control
 from agent.context.assembly import PromptMessages, reminder
 
@@ -143,6 +147,35 @@ def test_diagnostics_never_include_context_body_or_attachment_url():
     assert "signed" not in rendered
 
 
+def test_openai_request_diagnostics_report_cleaned_provider_history():
+    messages = build_messages(
+        fixed_parts=[{"role": "system", "content": "stable"}],
+        history=[{"role": "tool", "tool_call_id": "stale", "content": "private orphan"}],
+        current_batch=[{"role": "user", "content": "current"}],
+    )
+    result = request_diagnostics(
+        messages,
+        system_text="stable",
+        tools=[],
+        adapter=FakeAdapter(),
+        model="test",
+        api_format="openai",
+    )
+
+    assert result["wire_message_count"] == 2
+    assert [item["shape"]["role"] for item in result["wire_message_diagnostics"]] == [
+        "system", "user",
+    ]
+    assert result["provider_history_sanitization"] == {
+        "applied": True,
+        "changed": True,
+        "removed_messages": 1,
+        "modified_messages": 0,
+        "first_changed_index": 1,
+    }
+    assert "private orphan" not in str(result)
+
+
 def test_diagnostics_has_no_separate_tail_boundary():
     messages = build_messages(
         fixed_parts=[{"role": "system", "content": "stable"}],
@@ -211,6 +244,70 @@ def test_history_cache_copy_preserves_dynamic_tail_boundary():
                    for message in cached.dynamic_tail
                    for block in (message.get("content") or [])
                    if isinstance(block, dict))
+
+
+def _prompt_with_volatile_image_and_dynamic_tail():
+    prompt = PromptMessages([
+        {"role": "system", "content": [{"type": "text", "text": "稳定 system"}]},
+        {"role": "user", "content": "稳定历史"},
+        {"role": "user", "content": [{
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+        }]},
+        {"role": "assistant", "content": "图片之后的真实对话"},
+    ])
+    prompt.set_dynamic_tail([{
+        "role": "system",
+        "content": [{
+            "type": "text", "text": "本轮动态时间提醒",
+            "cache_control": {"type": "ephemeral"},
+        }],
+    }])
+    return prompt
+
+
+def _assert_dynamic_tail_is_uncached(cached, original):
+    assert isinstance(cached, PromptMessages)
+    assert len(cached.conversation) == len(original.conversation)
+    assert cached.conversation[2]["content"][0]["type"] == "image"
+    assert cached.conversation[3]["content"] == "图片之后的真实对话"
+    assert cached.dynamic_tail == [{
+        "role": "system",
+        "content": [{"type": "text", "text": "本轮动态时间提醒"}],
+    }]
+    assert not any(
+        "cache_control" in block
+        for message in cached.dynamic_tail
+        for block in (message.get("content") or [])
+        if isinstance(block, dict)
+    )
+
+
+def test_anthropic_history_cache_keeps_conversation_after_cache_cutoff_and_excludes_tail():
+    prompt = _prompt_with_volatile_image_and_dynamic_tail()
+
+    cached = _with_history_cache(render_events_for_provider(prompt))
+
+    _assert_dynamic_tail_is_uncached(cached, prompt)
+    stable_limit, anchors = _history_cache_state(cached)
+    assert stable_limit == 2
+    assert all(index < stable_limit for index in anchors)
+    assert "cache_control" in cached.conversation[1]["content"][0]
+
+
+def test_openai_cache_markers_stay_in_conversation_and_are_removed_from_tail():
+    prompt = _prompt_with_volatile_image_and_dynamic_tail()
+
+    projected = render_events_for_provider(prompt)
+    system_cached = _with_system_cache_control(projected)
+    cached = _with_single_history_cache(system_cached)
+
+    _assert_dynamic_tail_is_uncached(cached, prompt)
+    stable_limit, anchors = _history_cache_state(cached)
+    assert stable_limit == 2
+    assert all(index < stable_limit for index in anchors)
+    assert "cache_control" in cached.conversation[0]["content"][0]
+    assert "cache_control" in cached.conversation[1]["content"][0]
 
 
 def test_single_history_cache_replaces_old_anchor_instead_of_emitting_two():

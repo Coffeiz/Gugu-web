@@ -112,7 +112,16 @@ def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
     result = request.diagnostics()
     result["cache_capabilities"] = cache_capabilities(adapter, model).__dict__
     result["system_digest"] = digest(system_text)
-    wire = list(adapter.render_history(messages))
+    if api_format == "openai":
+        from agent.providers.message_utils import render_openai_request_history
+
+        wire_messages, history_sanitization = render_openai_request_history(
+            messages, adapter, with_diagnostics=True,
+        )
+        result["provider_history_sanitization"] = history_sanitization
+    else:
+        wire_messages = adapter.render_history(messages)
+    wire = list(wire_messages)
     result["wire_digest"] = digest(wire)
     result["wire_message_count"] = len(wire)
     wire_diagnostics = _wire_message_diagnostics(wire)

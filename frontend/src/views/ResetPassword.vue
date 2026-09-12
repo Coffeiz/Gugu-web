@@ -118,7 +118,6 @@ function goLogin() { router.push('/login') }
 .auth-card {
   width: 380px; position: relative; z-index: 1;
   background: rgba(255,255,255,0.56);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.76);
   border-radius: 20px; padding: 36px 32px;
   box-shadow:

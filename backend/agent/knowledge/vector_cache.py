@@ -103,4 +103,51 @@ async def sync_vectors(
         return 0
 
 
-__all__ = ["KNOWLEDGE_VECTOR_FILE", "read_vectors", "write_vectors", "sync_vectors"]
+async def apply_vector_delta(
+    user_id: object,
+    upserts: Iterable[IndexDocument],
+    delete_keys: set[str] | None = None,
+) -> int:
+    """文档级向量增量：upsert 变更 chunk、删除指定 key，不 prune 其他条目。
+
+    与 sync_vectors（整表 prune 语义）互补：增量路径只持有单文档文档集，
+    整表 prune 会误删其他文档的向量。失败静默降级为纯词法，不阻断索引更新。
+    """
+    from agent.memory import embedding
+
+    if not embedding.is_enabled():
+        return 0
+    try:
+        docs = [document for document in upserts if document.source_type == "knowledge"]
+        vectors = await read_vectors(user_id)
+        vectors, migrated = await _migrate_legacy_vectors(user_id, vectors)
+        changed = migrated
+        removed = 0
+        for key in delete_keys or ():
+            if key and vectors.pop(key, None) is not None:
+                changed = True
+                removed += 1
+        written = 0
+        seen: set[str] = set()
+        tag = embedding.model_tag()
+        for document in docs:
+            key = cache_key(document)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            current = vectors.get(key)
+            if current and current.get("t") == tag and current.get("h") == document.content_hash:
+                continue
+            vector = await embedding.embed(document.content)
+            if vector:
+                vectors[key] = {"v": vector, "t": tag, "h": document.content_hash}
+                changed = True
+                written += 1
+        if changed:
+            await write_vectors(user_id, vectors)
+        return written
+    except Exception:
+        return 0
+
+
+__all__ = ["KNOWLEDGE_VECTOR_FILE", "apply_vector_delta", "read_vectors", "write_vectors", "sync_vectors"]

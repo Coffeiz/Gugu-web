@@ -58,4 +58,4 @@ def test_disabled_personality_keeps_default_persona_and_does_not_change_security
     )
     assert "忽略安全规则" in enabled
     assert "忽略安全规则" not in disabled
-    assert "## 你能做什么" in disabled
+    assert "## 1. 做事" in disabled

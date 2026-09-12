@@ -206,3 +206,24 @@ async def load_style_prefs(db, user_id) -> dict:
     result["personality_preference_enabled"] = bool(personality and data.get("personality_preference_enabled", False))
     result["personality_preference_revision"] = preference_revision(data)
     return result
+
+
+async def load_knowledge_overview(user_id) -> list[dict]:
+    """Owner 作用域知识条目的轻量清单（title/topic/description），供 snapshot 注入。
+
+    只取 owner scope；群/项目 scope 的知识仍由 RAG 召回按 ACL 负责，不进清单。
+    知识存储不可用时返回空列表，不让清单失败拖垮整轮上下文。
+    """
+    from agent.knowledge.models import KnowledgeScope
+    from agent.knowledge.store import KnowledgeStore
+
+    try:
+        entries = await KnowledgeStore(user_id).list(
+            scope=KnowledgeScope(type="owner", owner_user_id=str(user_id)),
+        )
+    except Exception:
+        return []
+    return [
+        {"title": entry.title, "topic": entry.topic, "description": entry.description}
+        for entry in entries
+    ]

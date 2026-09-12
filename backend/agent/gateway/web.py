@@ -101,12 +101,14 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             files_overview = await loaders.load_files_overview(db, user_id)
             memory = await loaders.load_memory(user_id, req.message) if SYSTEM_MEMORY_ENABLED else {}
             im_channels = await loaders.load_im_channels(user_id)
+            knowledge = await loaders.load_knowledge_overview(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 projects, events, memory, files_overview,
                 notes=notes,
                 style_prefs=style_prefs, source="web",
                 im_channels=im_channels, user_msg=req.message, user_tz=user_tz,
+                knowledge=knowledge,
             )
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": "web",
@@ -164,6 +166,21 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         except chat_attach.AttachmentClaimError:
             await db.rollback()
             yield f"data: {json.dumps({'type': 'error', 'message': '附件已失效（可能已被使用或清理），请重新发送'})}\n\n"
+            return
+        from app.services.conversation_pending_queue import PendingQueueClaimConflict, bind_pending_queue
+        try:
+            await bind_pending_queue(
+                db,
+                user_id=user_id,
+                queue_id=req.pending_queue_id,
+                session_id=session.id,
+                acknowledged_item_key=req.pending_queue_item_key,
+                acknowledged_claim_token=req.pending_queue_claim_token,
+                bind_draft_items=is_new_session,
+            )
+        except PendingQueueClaimConflict:
+            await db.rollback()
+            yield f"data: {json.dumps({'type': 'error', 'message_key': 'chatUi.pendingQueueDispatchConflict'})}\n\n"
             return
         await db.commit()
         session_id = session.id
@@ -264,11 +281,34 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     await compress_conv.recover_orphaned_session(session_id, user_id=user_id)
     pubsub = await genstream.open_subscription(session_id)
     active_before_start = await genstream.is_active(session_id)
+    owner_run_id = genstream.new_run_id()
+
+    def _register_generation_task(task: asyncio.Task) -> None:
+        _gen_tasks.add(task)
+        task.add_done_callback(_gen_tasks.discard)
+
+        def _unregister_session_task(done_task, *, _sid: int = session_id, _rid: str = owner_run_id):
+            # 同会话「取消后立刻重发」时，旧任务迟到的回调不能把新登记的任务摘掉；
+            # 按 owner_run_id 精确摘除，排队任务与当前 run 互不误伤。
+            registry = _session_gen_tasks.get(_sid)
+            if registry is not None and registry.get(_rid) is done_task:
+                registry.pop(_rid, None)
+                if not registry:
+                    _session_gen_tasks.pop(_sid, None)
+
+        registry = _session_gen_tasks.setdefault(session_id, {})
+        registry[owner_run_id] = task
+        task.add_done_callback(_unregister_session_task)
+
     if not active_before_start:
         # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
         # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
-        owner_run_id = genstream.new_run_id()
         await genstream.begin(session_id, owner_run_id=owner_run_id)
+        if req.pending_queue_item_key is not None or (is_new_session and req.pending_queue_id):
+            from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+            await publish_session_pending_queue_changed(
+                req.user_id, session_id, origin=getattr(req, "origin", None),
+            )
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
@@ -278,36 +318,181 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             strip_thinking=strip_thinking,
             owner_run_id=owner_run_id,
         ))
-        _gen_tasks.add(task)
-        task.add_done_callback(_gen_tasks.discard)
+        _register_generation_task(task)
 
-        def _unregister_session_task(done_task, *, _sid: int = session_id):
-            # 同会话「取消后立刻重发」时，旧任务迟到的回调不能把新登记的任务摘掉。
-            if _session_gen_tasks.get(_sid) is done_task:
-                _session_gen_tasks.pop(_sid, None)
+        async for line in genstream.subscribe(session_id, pubsub=pubsub):
+            yield line
+        return
 
-        _session_gen_tasks[session_id] = task
-        task.add_done_callback(_unregister_session_task)
-
-    async for line in genstream.subscribe(session_id, pubsub=pubsub):
+    # ── run 进行中到达的消息：真正排队，不再只落库不调度 ──
+    # 消息已经在上面落库；这里创建同样的后台任务，让它进 session_run_gate 阻塞
+    # 等待当前 run 结束后接续处理。begin 必须推迟到门内执行（begin_after_gate）：
+    # 现在就 begin 会清掉当前 run 的快照和归属，破坏正在进行的生成与续看。
+    task = asyncio.create_task(_generate(
+        req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
+        attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
+        sent_at=user_message.sent_at, user_message=user_message,
+        session=session, history_stats=history_stats, model_cfg=model_cfg,
+        locale=current_locale,
+        strip_thinking=strip_thinking,
+        owner_run_id=owner_run_id,
+        begin_after_gate=True,
+    ))
+    _register_generation_task(task)
+    if req.pending_queue_item_key is not None or (is_new_session and req.pending_queue_id):
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
+        )
+    # 开头「先订阅后启动」建立的订阅直接交给 _stream_queued_run 继续用：pub/sub
+    # 发完即弃，排队期间订阅必须一直挂着——run-B begin 后、轮询确认归属前 publish
+    # 的事件全在连接缓冲里，不存在「接管之后才订阅」的丢失窗口；转不转发由
+    # run_id 归属过滤决定。
+    async for line in _stream_queued_run(session_id, owner_run_id, task, pubsub):
         yield line
 
 
+_QUEUED_RUN_MAX_WAIT_SECONDS = 900.0
+_QUEUED_RUN_POLL_INTERVAL_SECONDS = 1.0
+_QUEUED_RUN_PING_INTERVAL_SECONDS = 15.0
+
+
+async def _stream_queued_run(session_id: int, owner_run_id: str, task: asyncio.Task,
+                             pubsub=None):
+    """排队请求的 SSE：声明排队后等自己的 run 开始，再把它的事件转发出去。
+
+    订阅在 ``stream()`` 开头「先订阅后启动」时建立并一路保持：pub/sub 发完即弃，
+    begin 之后、轮询确认归属之前 publish 的事件全部躺在连接缓冲里，不存在「接管
+    之后才订阅」的丢失窗口（否则一个很快的排队回复会生成完毕但界面只有后半截）。
+    本 run 的每个事件都带 ``owner_run_id``（``_generate_unlocked._pub`` 统一注入），
+    第一个带本 run 标记的事件即接管点：之前的频道事件属于旧 run（含它的 done），
+    一律不转发也不终止本连接；之后的事件全数转发到终态。轮询只做兜底：错过终态
+    事件时按快照补 done、任务未接管即结束收 idle、心跳与最长等待上限。
+    """
+    yield f"data: {json.dumps({'type': 'queued', 'run_id': owner_run_id})}\n\n"
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _QUEUED_RUN_MAX_WAIT_SECONDS
+    last_ping = loop.time()
+    owned = False
+    if pubsub is None:
+        pubsub = await genstream.open_subscription(session_id)
+
+    def _process(message) -> tuple[str | None, bool]:
+        """解析一条频道消息，返回 (要转发的 SSE 行, 是否已归属本 run 的终态)。
+
+        接管判定：第一个带本 run 标记的事件。此前频道上的事件都属于旧 run
+        （或未标记归属的系统提示），转发会污染本条消息的回答——丢弃，也
+        不因它们的 done/error 终止本连接。
+        """
+        nonlocal owned
+        data = message.get("data")
+        try:
+            event = json.loads(data)
+        except (TypeError, ValueError):
+            return None, False
+        if not owned:
+            if event.get("run_id") != owner_run_id:
+                return None, False
+            owned = True
+        return f"data: {data}\n\n", event.get("type") in ("done", "error")
+
+    try:
+        while True:
+            try:
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=_QUEUED_RUN_POLL_INTERVAL_SECONDS,
+                )
+            except Exception:
+                msg = None
+            if msg is not None and msg.get("data"):
+                line, terminal = _process(msg)
+                if line is not None:
+                    yield line
+                if terminal:
+                    return
+                continue
+            now = loop.time()
+            snap = await genstream.snapshot(session_id)
+            # genstream.publish 的顺序是「先写快照、后广播」：快照可能领先于
+            # 连接缓冲里还没消费的事件。依据快照做任何兜底判定之前必须先把
+            # 缓冲清干，否则会把已排队的事件误判成丢失、提前收口（慢负载下
+            # 可复现的抢跑）。
+            drained = False
+            while True:
+                try:
+                    pending = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=0,
+                    )
+                except Exception:
+                    break
+                if pending is None or not pending.get("data"):
+                    break
+                drained = True
+                line, terminal = _process(pending)
+                if line is not None:
+                    yield line
+                if terminal:
+                    return
+            if drained:
+                continue
+            if owned and snap and snap.get("done"):
+                # 终态事件丢了（Redis 抖动等）：快照是权威结果，补发 done 让
+                # 前端正常收口，不制造中断气泡。
+                yield f"data: {json.dumps({'type': 'done', 'replayed': True})}\n\n"
+                return
+            if not owned and task.done():
+                # 后台任务已结束但快照从未归属过本 run：任务在门上排队期间被取消、
+                # 或 preflight 失败。转发不到任何事件了，让前端走 DB 加载收口。
+                yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
+                return
+            if not owned and snap and snap.get("done") \
+                    and snap.get("owner_run_id") == owner_run_id:
+                # run 在任何事件前就结束（排队中被取消等）：快照已是本 run 归属
+                # 且终态，补发终态让前端收口。
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+            if now - last_ping >= _QUEUED_RUN_PING_INTERVAL_SECONDS:
+                yield ": ping\n\n"
+                last_ping = now
+            if now >= deadline:
+                logger.warning("[web] session=%s 排队 run=%s 等待超时，SSE 收口", session_id, owner_run_id)
+                yield f"data: {json.dumps({'type': 'done', 'idle': True})}\n\n"
+                return
+    finally:
+        await genstream.close_subscription(session_id, pubsub)
+
+
 _gen_tasks: set = set()   # 持后台生成任务引用，防 GC（任务需脱离请求存活）
-_session_gen_tasks: dict[int, asyncio.Task] = {}   # 按会话登记，供终止端点直接 cancel
+# 按会话登记的生成任务：session_id → {owner_run_id: task}。排队引入后同一会话
+# 可能同时存在多个任务（一个在跑、其余在门上排队），必须按 run 归属精确取消。
+_session_gen_tasks: dict[int, dict[str, asyncio.Task]] = {}
 
 
-def cancel_local_generation(session_id: int) -> bool:
+def cancel_local_generation(session_id: int, owner_run_id: str | None = None) -> bool:
     """同进程内直接取消该会话的后台生成任务；任务不在本进程时返回 False。
 
+    ``owner_run_id`` 指定要取消的 run（终止端点从快照读当前归属传入）——排队
+    场景下不能按「最新登记」取消，否则杀掉的是排队任务而真正在跑的 run 继续。
+    未指定时回退为取消该会话全部存活任务（兼容旧行为语义）。
     uvicorn 多 worker 下生成任务可能活在另一个进程，此时由调用方回退到
     genstream 取消标记（run 心跳会自行发现并退出）。
     """
-    task = _session_gen_tasks.get(session_id)
-    if task is not None and not task.done():
-        task.cancel()
-        return True
-    return False
+    registry = _session_gen_tasks.get(session_id)
+    if not registry:
+        return False
+    if owner_run_id:
+        task = registry.get(owner_run_id)
+        if task is not None and not task.done():
+            task.cancel()
+            return True
+        return False
+    cancelled = False
+    for task in registry.values():
+        if not task.done():
+            task.cancel()
+            cancelled = True
+    return cancelled
 
 
 async def resume(session_id) -> AsyncGenerator[str, None]:
@@ -376,6 +561,16 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     attach_cards = attach_cards or []
     user_media = user_media or []
     settings = get_settings()
+
+    owner_run_id = str(owner_run_id or genstream.new_run_id())
+
+    async def _pub(event: dict) -> None:
+        # 本 run 的每个事件统一注入 owner_run_id：provider 内层的 run_id 是核心循环
+        # 自造的（core.py 另起 uuid），与 web 侧 owner_run_id 不同；排队连接靠
+        # run_id 识别「自己的 run 已开始」并转发（见 _stream_queued_run），token/done
+        # 这类原本不带 run_id 的事件必须能归属到 run。
+        await genstream.publish(session_id, {**event, "run_id": owner_run_id})
+
     from agent.llm import modelctx
     modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req) if model_cfg is None else None
@@ -560,7 +755,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     }
                     display_timeline.append(active_segment)
                 active_segment["text"] += out
-                await genstream.publish(session_id, {"type": "token", "content": out})
+                await _pub({"type": "token", "content": out})
 
         from agent import providers
         provider_adapter = providers.adapter_for(model_cfg)
@@ -576,7 +771,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     active_segment = None
                 current_run_id = str(evt.get("run_id") or current_run_id)
                 current_round_id = str(evt.get("round_id") or current_round_id)
-                await genstream.publish(session_id, evt)
+                await _pub(evt)
                 continue
             if etype == "_new_round":
                 last_round = round_buf            # 上一轮完整文本
@@ -585,7 +780,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置，防止上轮 _cut 污染
                 active_segment = None
                 # 保留 round_id/run_id，前端需要用它结束上一轮正文气泡并建立下一轮边界。
-                await genstream.publish(session_id, evt)
+                await _pub(evt)
                 continue
             if etype == "_usage":
                 usage_tokens["input"]  = evt["input"]
@@ -647,7 +842,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             # 旧流事件丢弃。
             if etype == "interaction_required":
                 evt = {"session_id": session_id, **evt}
-            await genstream.publish(session_id, evt)
+            await _pub(evt)
 
         if cancelled or generation_failed:
             # _cancelled 是内部事件，订阅转发只认 done/error 终态；取消收尾不补发
@@ -655,7 +850,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             # 「输出中」，生成期间排队的消息也发不出去。error 事件本身就会让订阅
             # 者退出，无需重复补发。
             if cancelled:
-                await genstream.publish(session_id, {"type": "done", "cancelled": True})
+                await _pub({"type": "done", "cancelled": True})
             return
 
         # 冲洗清洗器残留（未触发截断时的尾部）
@@ -698,7 +893,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
         # 回复正文已经持久化后，聊天流就应当结束。标题、总结和反思仍是后台收尾；
         # 上下文压缩已经在 provider round 达到 90% 时完成。
-        await genstream.publish(session_id, {"type": "done"})
+        await _pub({"type": "done"})
         run_completed = True
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
@@ -712,7 +907,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     if s:
                         s.title = title
                         await db3.commit()
-                await genstream.publish(session_id, {"type": "session_title", "title": title})
+                await _pub({"type": "session_title", "title": title})
 
         # ── 会话「一句话总结」：新会话出一版、之后每 ~6 条刷新（供 search/续接桥；与 IM 路同一套）──
         if full_reply and not resume_interaction:
@@ -730,7 +925,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         # except BaseException 吞掉的话，用户点「停止」会收到「咕咕开小差了」通用
         # 报错，且本轮持久化整体跳过。发取消终态让订阅端正常退出后 re-raise，
         # 交给外层 _generate 的取消分支清 active 快照。
-        await genstream.publish(session_id, {"type": "done", "cancelled": True})
+        await _pub({"type": "done", "cancelled": True})
         raise
     except BaseException as e:
         generation_failed = True
@@ -738,7 +933,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         is_network_error = _is_network_error(e)
         msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
-        await genstream.publish(session_id, {
+        await _pub({
             "type": "error",
             "message": msg,
             "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
@@ -757,6 +952,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         from agent.llm.llm_select import release as _release_model
         _release_model(model_cfg)
         await genstream.end(session_id, owner_run_id=owner_run_id)
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
+        )
 
 
 async def _refresh_generation_history(session_id: int, snapshot: dict, model_cfg):
@@ -790,11 +989,15 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
                     history_stats=None, model_cfg=None, locale=None,
-                    owner_run_id=None) -> None:
+                    owner_run_id=None, begin_after_gate: bool = False) -> None:
     """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。
 
     预处理（刷新历史、能力目录校验等）也在这里执行；这些步骤若异常，不能
     绕过 ``_generate_unlocked`` 的收口，否则 genstream 会一直停在生成中。
+
+    ``begin_after_gate=True`` 给排队任务用：run 进行中到达的消息，任务要先在
+    session gate 上等前一个 run 结束才能开始；``genstream.begin`` 若在排队时
+    执行会清掉当前 run 的快照和归属，必须等拿到门后再初始化自己的快照。
     """
     from agent.context import compress_conv
 
@@ -804,13 +1007,17 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     # （见 genstream.beat_alive / reap 与 recover_orphaned_session）。
     # 每 5s 还会检查取消标记：终止端点在另一 worker 进程时只能写 Redis 标记，
     # 由这里发现并直接 cancel 生成任务，而不是等 token/轮边界的协作检查。
+    # 排队任务（begin_after_gate）在拿到门、begin 清掉旧标记之前必须忽略取消
+    # 标记——那可能是给上一个 run 的「停止」，不该连带杀掉排队的这条消息。
     generate_task = asyncio.current_task()
+    run_begun = not begin_after_gate
 
     async def _run_heartbeat() -> None:
+        nonlocal run_begun
         loop = asyncio.get_running_loop()
         last_touch = 0.0
         while True:
-            if await genstream.is_cancelled(session_id):
+            if run_begun and await genstream.is_cancelled(session_id):
                 if generate_task is not None:
                     generate_task.cancel()
                 return
@@ -829,6 +1036,15 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 "type": "_context_compaction", "phase": "started", "reason": "queued_baseline",
             })
         async with compress_conv.session_run_gate(req, run_id=owner_run_id) as claimed_owner_run_id:
+            if begin_after_gate:
+                claimed = claimed_owner_run_id or owner_run_id
+                # begin 会重置快照并清掉 cancel 标记和租约；租约刚由门内 claim，
+                # begin 之后立即补回来，避免出现「无租约的活跃快照」被孤儿回收。
+                await genstream.begin(session_id, owner_run_id=claimed)
+                await genstream.claim_lease(session_id, claimed)
+            # 从这一刻起本 run 已接管快照（旧的取消标记已被 begin 清掉），
+            # 心跳开始按本 run 的取消标记工作。
+            run_begun = True
             refreshed = await _refresh_generation_history(
                 session_id, snapshot, model_cfg,
             )
@@ -850,10 +1066,18 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         await _finalize_preflight_failure(
             session_id, model_cfg, cancelled=True, owner_run_id=owner_run_id,
         )
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
+        )
         raise
     except BaseException as exc:
         await _finalize_preflight_failure(
             session_id, model_cfg, error=exc, owner_run_id=owner_run_id,
+        )
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
         )
     finally:
         heartbeat_task.cancel()
@@ -886,12 +1110,14 @@ async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
         message = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
                    else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
         await genstream.publish(session_id, {
+            "run_id": str(owner_run_id or ""),
             "type": "error",
             "message": message,
             "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
         })
     elif cancelled:
         await genstream.publish(session_id, {
+            "run_id": str(owner_run_id or ""),
             "type": "error",
             "message": "这次生成已中断，请重试。",
             "message_key": "chatUi.genericError",

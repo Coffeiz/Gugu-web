@@ -6028,6 +6028,11 @@ export interface components {
              */
             showToolInteractions: boolean;
             /**
+             * Showintermediatereplies
+             * @default true
+             */
+            showIntermediateReplies: boolean;
+            /**
              * Toolinjectionmode
              * @default full
              */
@@ -6095,6 +6100,7 @@ export interface components {
             unlimitedMode?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
+            showIntermediateReplies?: boolean | null;
             /** Toolinjectionmode */
             toolInjectionMode?: string | null;
             /** Personalitypreference */
