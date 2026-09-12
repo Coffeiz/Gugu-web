@@ -194,7 +194,10 @@ jobs:
           node-version: 22
 
       - name: Install RAG and file sync worker dependencies
-        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --filter @gugu/filesync-watcher... --frozen-lockfile
+        # worker 用相对路径直接打包 data-runtime 源码（不声明包依赖），filter 必须
+        # 显式带上 @gugu/data-runtime，否则它的 postgres/ali-oss 不会进安装面，
+        # esbuild 从 data-runtime 源码目录解析不到这两个包（CI 首跑即红）。
+        run: corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --filter gugu-rag-ts-worker... --filter @gugu/data-runtime --filter @gugu/filesync-watcher... --frozen-lockfile
 
       - name: Expose RAG worker runtime dependencies
         # 制品输出在 backend/bin；把 wrapper 和 Linux 原生包直接安装到制品旁边，
