@@ -39,6 +39,9 @@ from agent.context.history import build_chat_tool_events
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 _MAX_ATTACH_BYTES = 512 * 1024 * 1024   # 单个聊天附件上限 512MB（与 nginx client_max_body_size 对齐）
+# 音频候选（voice/audio mime/转码候选扩展名）materialize 成整字节的独立上限：
+# 转码与时长探测无法流式，超限按原样流式暂存（voice 录音直接拒）。
+_AUDIO_MATERIALIZE_CAP = 64 * 1024 * 1024
 
 
 class ChatRequest(BaseModel):
@@ -286,10 +289,23 @@ async def upload_attachment(
     content_type_l = (file.content_type or "").lower()
     needs_audio_processing = bool(voice) or content_type_l.startswith("audio") or "voice" in content_type_l or (
         ext_l in ("webm", "opus", "silk", "sil", "slk", "amr", "aac", "wma"))
+    # 音频候选的转码/时长探测都要整字节，单独给 materialize 上限（分钟级录音
+    # 不可能超过它；mime 和扩展名都是用户可控输入，不能放任 500MB「音频」整读）。
+    if needs_audio_processing and size > _AUDIO_MATERIALIZE_CAP:
+        if voice:
+            spool.close()
+            raise HTTPException(
+                400, f"语音录音过大（上限 {_AUDIO_MATERIALIZE_CAP // 1048576}MB），请分段录制后再发送")
+        # 非 voice 的大音频不做进程内转码，按原样流式暂存（转码留给小文件）。
+        mime = "audio/mpeg" if ext_l == "mp3" else file.content_type
+        meta = await chat_attach.stage_stream(
+            current_user.id, name, ext, mime, stream=spool, size=size, platform="web")
+        spool.close()
+        return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
     data: bytes | None = None
     if needs_audio_processing and ext_l not in ("mp3", "wav", "flac", "m4a", "ogg"):
         spool.seek(0)
-        data = spool.read()   # 录音只有分钟级大小，转码需要整字节
+        data = spool.read()   # 已过 materialize 上限，转码需要整字节
         conv = media_transcode.to_provider_audio(data, ext, file.content_type,
                                                  providers.adapter_for(get_settings().ai))
         if conv is not None:
