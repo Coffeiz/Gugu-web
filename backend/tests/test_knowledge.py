@@ -675,3 +675,13 @@ async def test_update_knowledge_tool_supports_description_only_partial_update(kn
     # 正文、标题等其他字段保持不变
     assert saved.content == "2026 赛季共 24 站。"
     assert saved.title == "F1 赛历"
+
+
+def test_knowledge_writing_skill_covers_description():
+    """写入规范正文必须跟着 description 字段走，防止工具与技能文档漂移。"""
+    from agent.skills import load_skill
+
+    body = load_skill("knowledge-writing")
+    assert "`description`" in body
+    assert "150" in body
+    assert "触发式描述" in body
