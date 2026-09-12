@@ -31,6 +31,12 @@ class _LivePubSub:
         return None
 
     async def get_message(self, ignore_subscribe_messages=True, timeout=None):
+        if timeout is not None and timeout <= 0:
+            # 非阻塞检查：直接看队列，不走 wait_for——timeout=0 的 wait_for
+            # 会立即超时（新任务还没机会执行），永远拿不到已缓冲的消息。
+            if self.queue.empty():
+                return None
+            return self.queue.get_nowait()
         try:
             return await asyncio.wait_for(self.queue.get(), timeout=timeout)
         except asyncio.TimeoutError:

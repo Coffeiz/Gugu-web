@@ -374,6 +374,26 @@ async def _stream_queued_run(session_id: int, owner_run_id: str, task: asyncio.T
     owned = False
     if pubsub is None:
         pubsub = await genstream.open_subscription(session_id)
+
+    def _process(message) -> tuple[str | None, bool]:
+        """解析一条频道消息，返回 (要转发的 SSE 行, 是否已归属本 run 的终态)。
+
+        接管判定：第一个带本 run 标记的事件。此前频道上的事件都属于旧 run
+        （或未标记归属的系统提示），转发会污染本条消息的回答——丢弃，也
+        不因它们的 done/error 终止本连接。
+        """
+        nonlocal owned
+        data = message.get("data")
+        try:
+            event = json.loads(data)
+        except (TypeError, ValueError):
+            return None, False
+        if not owned:
+            if event.get("run_id") != owner_run_id:
+                return None, False
+            owned = True
+        return f"data: {data}\n\n", event.get("type") in ("done", "error")
+
     try:
         while True:
             try:
@@ -384,23 +404,36 @@ async def _stream_queued_run(session_id: int, owner_run_id: str, task: asyncio.T
             except Exception:
                 msg = None
             if msg is not None and msg.get("data"):
-                data = msg["data"]
-                try:
-                    event = json.loads(data)
-                except (TypeError, ValueError):
-                    event = {}
-                if not owned:
-                    # 接管判定：第一个属于本 run 的事件。此前频道上的事件都属于
-                    # 旧 run（或未标记归属的系统提示），转发会污染本条消息的回答。
-                    if event.get("run_id") != owner_run_id:
-                        continue
-                    owned = True
-                yield f"data: {data}\n\n"
-                if event.get("type") in ("done", "error"):
+                line, terminal = _process(msg)
+                if line is not None:
+                    yield line
+                if terminal:
                     return
                 continue
             now = loop.time()
             snap = await genstream.snapshot(session_id)
+            # genstream.publish 的顺序是「先写快照、后广播」：快照可能领先于
+            # 连接缓冲里还没消费的事件。依据快照做任何兜底判定之前必须先把
+            # 缓冲清干，否则会把已排队的事件误判成丢失、提前收口（慢负载下
+            # 可复现的抢跑）。
+            drained = False
+            while True:
+                try:
+                    pending = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=0,
+                    )
+                except Exception:
+                    break
+                if pending is None or not pending.get("data"):
+                    break
+                drained = True
+                line, terminal = _process(pending)
+                if line is not None:
+                    yield line
+                if terminal:
+                    return
+            if drained:
+                continue
             if owned and snap and snap.get("done"):
                 # 终态事件丢了（Redis 抖动等）：快照是权威结果，补发 done 让
                 # 前端正常收口，不制造中断气泡。
