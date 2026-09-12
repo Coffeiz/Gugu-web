@@ -996,6 +996,10 @@ class ConversationMessage(Base):
     canonical_batch_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("conversation_batches.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 仅 summary 行使用：本条摘要覆盖到的最大消息 id。compress 在写摘要的同一
+    # 事务里落这个水位；历史装载取 max(session.baseline, summary.covers) 过滤，
+    # 防「读到新摘要 + 旧 baseline」竞态把摘要已覆盖的原文重复拼进上下文。
+    covers_until_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
     canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
