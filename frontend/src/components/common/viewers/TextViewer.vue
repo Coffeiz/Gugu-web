@@ -52,7 +52,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import { filesApi } from '@/services/api'
-import { sanitizeHtml } from '@/utils/markdown'
+import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime } from '@/stores/preview'
@@ -190,6 +190,7 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
 
 const mdHtml      = ref<string | null>(null)
 const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md 编辑模式的保存基于这个）
+let markdownBodyStartLine = 0
 // 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了。
 // 虚拟文档通过 saveSource 保存，不需要文件库 id。
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
@@ -501,7 +502,7 @@ const _TASK_RE = /^(\s*(?:[-*+]|\d+\.)\s+)\[([ xX])\]/
 async function toggleTask(idx: number, cb: HTMLInputElement) {
   const ls = rawText.value.split('\n')
   let n = -1, hit = -1
-  for (let li = 0; li < ls.length; li++) {
+  for (let li = markdownBodyStartLine; li < ls.length; li++) {
     if (_TASK_RE.test(ls[li]) && ++n === idx) { hit = li; break }
   }
   if (hit < 0) return
@@ -559,8 +560,15 @@ async function processText(text: string, ext: string) {
   mdHtml.value  = null
   rawText.value = text
   if ((ext || '').toUpperCase() === 'MD') {
-    mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
+    const { body, bodyStartLine, entries } = splitYamlFrontmatter(text)
+    markdownBodyStartLine = bodyStartLine
+    const frontmatterHtml = entries.length
+      ? `<table class="md-frontmatter"><tbody>${entries.map(({ key, value }) => `<tr><th>${escHtml(key)}</th><td>${escHtml(value)}</td></tr>`).join('')}</tbody></table>`
+      : ''
+    mdHtml.value = makeTasksInteractive(`${sanitizeHtml(frontmatterHtml)}${await renderMarkdown(body)}`)
     await renderMermaidBlocks()
+  } else {
+    markdownBodyStartLine = 0
   }
 }
 
@@ -1004,6 +1012,7 @@ onBeforeUnmount(() => {
   margin: 1em 0;
   font-size: 14px;
 }
+.tv-md :deep(table.md-frontmatter) { margin: 0 0 1.25em; }
 .tv-md :deep(th),
 .tv-md :deep(td) {
   padding: 8px 14px;
@@ -1011,6 +1020,8 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 .tv-md :deep(th) { background: var(--surface-soft); font-weight: 600; }
+.tv-md :deep(table.md-frontmatter th) { white-space: nowrap; }
+.tv-md :deep(table.md-frontmatter td) { white-space: pre-wrap; overflow-wrap: anywhere; }
 .tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
