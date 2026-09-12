@@ -186,9 +186,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
   it('聊天附件和语音 hover 不连续插值阴影，避免快速移动时触发密集 paint', () => {
     const chatActionBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card))')
+    const chatActionStrongBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card) strong)')
     const chatFileBlock = cssBlock(guguChat, ':deep(.msg-file)')
     const chatVoiceBlock = cssBlock(guguChat, ':deep(.msg-voice)')
     expect(chatActionBlock).not.toContain('box-shadow var(--motion-hover-control)')
+    expect(chatActionStrongBlock).toContain('color: inherit;')
     expect(chatFileBlock).not.toContain('box-shadow 0.25s')
     expect(chatVoiceBlock).not.toContain('box-shadow 0.15s')
   })

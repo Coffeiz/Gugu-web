@@ -775,6 +775,9 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card) strong) {
+  color: inherit;
+}
 /* 咕咕回复的 `---` 分隔线：实色次级文字色，全主题可辨，与预览窗 .tv-md hr 同口径 */
 :deep(.msg-bubble.md-body hr) {
   border: none;
