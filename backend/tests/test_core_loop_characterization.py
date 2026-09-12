@@ -31,6 +31,12 @@ from agent.core import (
 )
 from agent.tools import registry
 
+_CONFIRMATION_TOOL_NAMES = tuple(
+    name for name in registry.snapshot().all_tool_names()
+    if (tool := registry.snapshot().get(name))
+    and (tool.destructive or tool.requires_confirmation)
+)
+
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
@@ -538,6 +544,64 @@ async def test_tool_confirmation_cancel_replaces_tool_result_and_finalizes(monke
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any('"status": "cancelled"' in (c or "") for c in tool_results)
+
+
+@pytest.mark.parametrize("target_name", _CONFIRMATION_TOOL_NAMES)
+async def test_confirmation_adapter_routes_every_confirmable_tool(monkeypatch, dispatched, target_name):
+    """所有注册为 destructive/requires_confirmation 的工具都必须以最终工具名进入确认桥。"""
+    blocked = json.dumps({
+        "status": "waiting_confirmation", "needs_confirm": True,
+        "summary": "需要确认的操作", "confirm_code": "test-code",
+    }, ensure_ascii=False)
+    dispatches: list[tuple[str, dict]] = []
+    confirmations: list[str] = []
+
+    async def fake_dispatch(_uid, name, arguments):
+        dispatches.append((name, arguments))
+        return blocked, None
+
+    async def fake_create_tool_confirmation(**kwargs):
+        confirmations.append(kwargs["tool_name"])
+        assert kwargs["session_id"] == 807
+        return {
+            "prompt_id": 980, "kind": "confirm", "title": "需要确认",
+            "body": "确认后继续。",
+            "options": [{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+            "task_paused": True, "expires_at": "2026-09-12T23:00:00+08:00",
+        }
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return {"status": "cancelled", "option_id": "cancel", "text": "取消"}
+
+    monkeypatch.setattr(core.registry, "dispatch", fake_dispatch)
+    monkeypatch.setattr("app.services.interactions.create_tool_confirmation", fake_create_tool_confirmation)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+    patch_anthropic(monkeypatch, [msg([TU("call_tool", "wrapped-confirm", {
+        "name": "call_tool",
+        "arguments": {"name": target_name, "arguments": {"probe": "confirm-routing"}},
+    })])])
+
+    ev, _text, errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "执行操作"}], AI, session_id=807,
+    ))
+
+    assert dispatches == [(target_name, {"probe": "confirm-routing"})]
+    assert confirmations == [target_name]
+    assert ev["interaction_required"] == 1
+    assert errors == []
+
+
+def test_call_tool_adapter_rejects_excessive_nesting():
+    payload = {"name": "send_email", "arguments": {"probe": True}}
+    for _ in range(core._MAX_CALL_TOOL_ADAPTER_DEPTH):
+        payload = {"name": "call_tool", "arguments": payload}
+
+    target, arguments, error = core._resolve_tool_call("call_tool", payload)
+
+    assert target == "invalid_tool_call"
+    assert arguments == {}
+    assert error["error"] == "tool_call_invalid"
+    assert error["issues"][0]["rule"] == "max_depth"
 
 
 async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monkeypatch, dispatched):

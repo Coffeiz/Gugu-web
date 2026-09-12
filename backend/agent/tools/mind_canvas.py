@@ -1229,6 +1229,7 @@ class MindCanvasSkill(BaseSkill):
             },
             handler=_canvas_batch,
             mutates=True,
+            requires_confirmation=True,
         ),
     ]
 
