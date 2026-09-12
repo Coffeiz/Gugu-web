@@ -336,5 +336,67 @@ async def test_feishu_fallback_drains_agent_after_final(monkeypatch):
     assert sent_texts == ["最终回复"]
 
 
+@pytest.mark.asyncio
+async def test_feishu_fallback_hides_intermediate_tokens_but_sends_final(monkeypatch):
+    from agent.gateway import feishu
+
+    monkeypatch.setattr(feishu, "_creds_by_id", lambda _channel_id: _async_value(("app", "secret")))
+    monkeypatch.setattr(feishu, "_do_create_card", lambda *_args: _async_value(None))
+    sent_texts: list[str] = []
+
+    async def fake_send_text(_receive_id, text, _channel_id):
+        sent_texts.append(text)
+        return True
+
+    monkeypatch.setattr(feishu, "send_text", fake_send_text)
+
+    async def token_iter():
+        yield ("token", "这是中间草稿")
+        yield ("round_end", "这是中间草稿")
+        yield ("token", "最终回复")
+        yield ("final", AgentResponse(text="最终回复", session_id=13))
+
+    ok, response = await feishu.send_text_stream(
+        "receive", token_iter(), channel_id="channel", show_intermediate_replies=False,
+    )
+
+    assert ok is True
+    assert response.session_id == 13
+    assert sent_texts == ["最终回复"]
+
+
+@pytest.mark.asyncio
+async def test_qq_stream_hides_intermediate_rounds_but_sends_final(monkeypatch):
+    from agent.gateway import qq
+
+    streams: list[_FakeStream] = []
+
+    def make_stream(*_args, **_kwargs):
+        stream = _FakeStream()
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(qq, "create_private_text_stream", make_stream)
+
+    async def token_iter():
+        yield ("token", "这是中间草稿")
+        yield (ROUND_END, "这是中间草稿")
+        yield ("token", "最终回复")
+        yield ("final", AgentResponse(text="最终回复", session_id=14))
+
+    sent, response, last_text = await send_qq_stream_by_round(
+        {"platform_user_id": "user", "channel_id": "channel"},
+        token_iter(),
+        show_intermediate_replies=False,
+    )
+
+    assert sent is True
+    assert response.session_id == 14
+    assert last_text == "最终回复"
+    assert len(streams) == 1
+    assert streams[0].parts == []
+    assert streams[0].sent is True
+
+
 async def _async_value(value):
     return value

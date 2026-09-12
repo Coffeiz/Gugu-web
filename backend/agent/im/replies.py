@@ -54,7 +54,8 @@ async def _close_async_iterator(iterator) -> None:
 
 
 async def send_qq_stream_by_round(
-    payload: dict, token_iter: AsyncIterator[tuple[str, object]],
+    payload: dict, token_iter: AsyncIterator[tuple[str, object]], *,
+    show_intermediate_replies: bool = True,
 ) -> Tuple[bool, AgentResponse, str]:
     """QQ 私聊按 round 流式发送：每个 round 结束当前流消息，再开始下一条。"""
     from agent.gateway import qq
@@ -80,9 +81,9 @@ async def send_qq_stream_by_round(
             # finalize_run、历史落盘和 session baseline gate。
             continue
         try:
-            if kind == "token":
+            if kind == "token" and show_intermediate_replies:
                 stream.push(str(value or ""))
-            elif kind == ROUND_END:
+            elif kind == ROUND_END and show_intermediate_replies:
                 round_text = _fix_loose_bold(str(value or "")).strip()
                 if round_text:
                     await stream.finish(round_text)
@@ -416,6 +417,7 @@ async def send_agent_response(
     response: AgentResponse,
     *,
     already_sent_rounds: int | Set[int] = 0,
+    show_intermediate_replies: bool = True,
 ) -> str | None:
     """统一收尾一轮 AgentResponse：先发送附件，再按 round 发送文本说明。
 
@@ -431,14 +433,21 @@ async def send_agent_response(
         failure_text = result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
         return failure_text if await send_text(payload, failure_text) else None
     else:
-        texts = [
-            _fix_loose_bold(text)
-            for text in (response.round_texts or [])
-            if str(text or "").strip()
-        ]
         response_text = _fix_loose_bold(response.text or "").strip()
-        if not texts and not response.errored:
-            texts = [response_text] if response_text else (["给你～"] if response.files else ["嗯~在的，你说～"])
+        if show_intermediate_replies:
+            texts = [
+                _fix_loose_bold(text)
+                for text in (response.round_texts or [])
+                if str(text or "").strip()
+            ]
+            if not texts and not response.errored:
+                texts = [response_text] if response_text else (["给你～"] if response.files else ["嗯~在的，你说～"])
+        else:
+            # 关闭中间回复时忽略 round_texts，只发送 text（最后一轮正文）。
+            # 生成失败时 text 是独立错误提示，仍由下方错误收尾逻辑发送。
+            texts = [] if response.errored else (
+                [response_text] if response_text else (["给你～"] if response.files else ["嗯~在的，你说～"])
+            )
 
     # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
     last_text = texts[-1] if texts else ""

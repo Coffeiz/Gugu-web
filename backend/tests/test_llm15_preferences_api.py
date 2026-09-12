@@ -80,6 +80,38 @@ def test_tool_injection_mode_defaults_to_full(monkeypatch):
     assert result.toolInjectionMode == "full"
 
 
+def test_intermediate_reply_preference_defaults_to_enabled_and_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=False),
+    ))
+
+    assert preferences_api._to_response({}).showIntermediateReplies is True
+    assert preferences_api._to_response({"show_intermediate_replies": False}).showIntermediateReplies is False
+
+
+@pytest.mark.asyncio
+async def test_update_preferences_persists_intermediate_reply_preference(monkeypatch):
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=False),
+    ))
+    prefs = _Prefs()
+
+    async def fake_get_or_create(_user, _db):
+        return prefs
+
+    monkeypatch.setattr(preferences_api, "_get_or_create", fake_get_or_create)
+    monkeypatch.setattr(preferences_api, "read_personality_file", lambda _user_id: None)
+
+    result = await preferences_api.update_preferences(
+        PreferencesUpdate(showIntermediateReplies=False),
+        SimpleNamespace(id="synthetic-user"),
+        _Db(),
+    )
+
+    assert prefs.data["show_intermediate_replies"] is False
+    assert result.showIntermediateReplies is False
+
+
 @pytest.mark.asyncio
 async def test_update_preferences_persists_personality_and_invalidates_snapshot(monkeypatch):
     prefs = _Prefs()
