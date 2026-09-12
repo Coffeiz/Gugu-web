@@ -3,20 +3,18 @@ import { getLocale, i18n } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
-import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
+import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { API_BASE } from '../chatConstants'
 import { FILE_TOOLS, PROJECT_TOOLS, CALENDAR_TOOLS } from './useChatActions'
 import type GuguChatComposer from '../GuguChatComposer.vue'
+import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
+import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
-export interface QueuedMessage {
-  /** 稳定 id：排队条 v-for 的 key 与单条移除的定位。 */
-  key: number
-  text: string
-  attachments: ChatFile[]
-  references: ChatReference[]
+export interface QueuedMessage extends QueuedMessagePayload {
+  queueId: string
   sessionId: number | null
   viewGeneration: number
 }
@@ -56,6 +54,8 @@ export function useChatStream(options: {
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
   playIncomingMessageSfx: () => void
+  onQueuePersistenceError?: (error: unknown) => void
+  onQueueDispatchError?: (error: unknown) => void
   onContentReset?: () => void
 }) {
   const liveStore = useLiveStore()
@@ -63,14 +63,21 @@ export function useChatStream(options: {
 
   const streaming = ref(false)
   const abortCtrl = ref<AbortController | null>(null)
+  const draftPendingQueueId = getDraftPendingQueueId()
   // 新会话首轮在 session_id SSE 到达前仍是 null；记录后台生成归属，
   // 让中断按钮不会因为前端尚未切换 sessionId 而漏发取消请求。
   let activeSessionId: number | null = null
-  // 生成中发的消息，排队等流式结束后接着发。每条都带上入队那一刻的 sessionId/
-  // viewGeneration——切会话/新建会话时 useChatSessions 会调 clearPendingQueue()
-  // 清空，但万一切换和这里的消费之间有竞态，消费前再核对一次身份，防止把
-  // A 会话排队的消息发进已经切到的 B 会话（真实复现过的 bug，见 PR review）。
+  // 当前页面缓存已恢复的会话队列；其权威数据在服务端，跨浏览器按 session_id 聚合。
+  // 切换会话只过滤展示/消费目标，不清空其他会话的队列。
   const pendingQueue = ref<QueuedMessage[]>([])
+  const cancelledQueueKeys = new Set<string>()
+  const dispatchingQueueKeys = new Set<string>()
+  const persistedQueueItems = new Set<string>()
+  // 队列增量写入按顺序提交，避免同一标签里的移除/迁移请求乱序。
+  let pendingQueueWrite = Promise.resolve()
+  let drainingPendingQueue = false
+  let drainingView: { sessionId: number | null; viewGeneration: number } | null = null
+  let drainRequestedForAnotherView = false
   let _sessionTurn = 0                      // 当前 session 已发消息轮次（埋点用），切会话由 useChatSessions 调 resetSessionTurn 重置
   function resetSessionTurn() { _sessionTurn = 0 }
 
@@ -83,48 +90,250 @@ export function useChatStream(options: {
     if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
   }
 
-  function clearPendingQueue() {
-    pendingQueue.value = []
+  function enqueuePendingQueueWrite(task: () => Promise<void>) {
+    pendingQueueWrite = pendingQueueWrite.catch(() => {}).then(task)
+    return pendingQueueWrite
   }
 
-  function removeQueued(key: number) {
-    const index = pendingQueue.value.findIndex(item => item.key === key)
-    if (index !== -1) pendingQueue.value.splice(index, 1)
+  function queueIdentity(item: Pick<QueuedMessage, 'queueId' | 'key'>) {
+    return `${item.queueId}:${item.key}`
   }
 
-  async function drainPendingQueue() {
-    while (pendingQueue.value.length) {
-      const next = pendingQueue.value[0]
-      const sameView = next.viewGeneration === options.getViewGeneration()
-      const sameSession = next.sessionId == null || next.sessionId === sessionId.value
-      pendingQueue.value.shift()
-      if (!sameView || !sameSession) continue
-      // 排队期间消息不进对话流（展示在输入框上方的排队条）；此刻真正发送，
-      // 用户气泡在这一刻才落入对话，随后是本轮回复。
-      messages.value.push({
-        id: mkid(), role: 'user', text: next.text, time: now(),
-        references: next.references.length ? next.references : undefined,
-        files: next.attachments.length ? next.attachments.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
-      })
-      // 在前一条流的 finally 与下一条 POST 之间也保持思考态；否则状态气泡会
-      // 短暂消失，看起来像“没有收到”。
-      options.clearStatus()
-      options.setStatus(options.thinkingItem())
-      await options.scrollBottom()
-      await send(next.text, next.attachments, next.references)
-      break
+  function toPayload(item: QueuedMessage) {
+    return {
+      key: item.key,
+      text: item.text,
+      attachments: item.attachments,
+      references: item.references,
     }
   }
 
-  // 新对话第一轮发送时 sessionId 还是 null——后端稍后通过 session_id 事件回传真实 id。
-  // 把这个真实 id 回填到所有「入队时 sessionId == null 且属于当前 viewGeneration」的排队项上，
-  // 否则下一轮消费时 null !== realId 会被当作"已经离开的会话"丢弃（PR #8 复查的 P1）。
-  // 消费条件也放宽：sessionId == null 表示"入队时还没拿到"，允许在同 viewGeneration 内消费。
-  function resolvePendingSession(realId: number) {
-    const curView = options.getViewGeneration()
-    pendingQueue.value = pendingQueue.value.map(it =>
-      it.sessionId == null && it.viewGeneration === curView ? { ...it, sessionId: realId } : it
+  function persistDraftQueue(queueId: string) {
+    const draftItems = pendingQueue.value.filter(item => item.queueId === queueId && item.sessionId == null)
+    const items = draftItems.map(toPayload)
+    return enqueuePendingQueueWrite(async () => {
+      await agentApi.updatePendingQueue(queueId, items)
+      for (const item of draftItems) persistedQueueItems.add(queueIdentity(item))
+      if (items.length || pendingQueue.value.length) setPendingQueueRecoveryNeeded(true)
+    })
+  }
+
+  function persistQueueItem(item: QueuedMessage) {
+    if (item.sessionId == null) return persistDraftQueue(item.queueId)
+    return enqueuePendingQueueWrite(async () => {
+      await agentApi.patchPendingQueue(item.queueId, item.sessionId!, [toPayload(item)])
+      persistedQueueItems.add(queueIdentity(item))
+      setPendingQueueRecoveryNeeded(true)
+    })
+  }
+
+  function ensureQueueItemPersisted(item: QueuedMessage) {
+    if (persistedQueueItems.has(queueIdentity(item))) return pendingQueueWrite.catch(() => {})
+    return persistQueueItem(item)
+  }
+
+  function removePersistedQueueItem(item: QueuedMessage) {
+    if (item.sessionId == null) return persistDraftQueue(item.queueId)
+    return enqueuePendingQueueWrite(async () => {
+      await agentApi.patchPendingQueue(item.queueId, item.sessionId!, [], [item.key])
+    })
+  }
+
+  function clearPendingQueue(clearOrphanedStorage = false) {
+    const previousSessionId = sessionId.value
+    // 已有会话的队列继续留在本地和服务端；新建对话只清理尚未绑定会话的草稿项。
+    if (previousSessionId == null && clearOrphanedStorage) {
+      const draftItems = pendingQueue.value.filter(item => item.sessionId == null)
+      const draftQueueIds = new Set(draftItems.map(item => item.queueId))
+      for (const item of draftItems) persistedQueueItems.delete(queueIdentity(item))
+      pendingQueue.value = pendingQueue.value.filter(item => item.sessionId != null)
+      for (const queueId of draftQueueIds) {
+        void persistDraftQueue(queueId).catch(error => options.onQueuePersistenceError?.(error))
+      }
+    }
+  }
+
+  function restorePendingQueueForSession(id: number, serverItems: QueuedMessagePayload[] = []) {
+    const restored = (Array.isArray(serverItems) ? serverItems : [])
+      .filter(item => item.session_id === id)
+      .map(item => ({
+        ...item,
+        queueId: item.queue_id,
+        sessionId: id,
+        // 恢复后绑定当前会话视图；队列归属仍以 sessionId 为准。
+        viewGeneration: options.getViewGeneration(),
+      }))
+    const restoredIdentities = new Set(restored.map(queueIdentity))
+    const previousSessionItems = pendingQueue.value.filter(item => item.sessionId === id)
+    const unsavedLocalItems = previousSessionItems.filter(item =>
+      item.sessionId === id
+      && !persistedQueueItems.has(queueIdentity(item))
+      && !restoredIdentities.has(queueIdentity(item)),
     )
+    for (const item of previousSessionItems) {
+      if (!restoredIdentities.has(queueIdentity(item)) && !unsavedLocalItems.includes(item)) {
+        persistedQueueItems.delete(queueIdentity(item))
+      }
+    }
+    pendingQueue.value = [
+      ...pendingQueue.value.filter(item => item.sessionId !== id),
+      ...restored,
+      ...unsavedLocalItems,
+    ]
+    for (const item of restored) {
+      cancelledQueueKeys.delete(queueIdentity(item))
+      persistedQueueItems.add(queueIdentity(item))
+    }
+    if (serverItems.length) setPendingQueueRecoveryNeeded(true)
+  }
+
+  function restorePendingQueueForDraft(items: QueuedMessagePayload[]) {
+    const restored = items.filter(item => item.session_id == null).map(item => ({
+      ...item,
+      queueId: item.queue_id,
+      sessionId: null,
+      viewGeneration: options.getViewGeneration(),
+    }))
+    const restoredIdentities = new Set(restored.map(queueIdentity))
+    const previousDraftItems = pendingQueue.value.filter(item => item.sessionId == null)
+    const unsavedLocalItems = previousDraftItems.filter(item =>
+      !persistedQueueItems.has(queueIdentity(item))
+      && !restoredIdentities.has(queueIdentity(item)),
+    )
+    for (const item of previousDraftItems) {
+      if (!restoredIdentities.has(queueIdentity(item)) && !unsavedLocalItems.includes(item)) {
+        persistedQueueItems.delete(queueIdentity(item))
+      }
+    }
+    pendingQueue.value = [
+      ...pendingQueue.value.filter(item => item.sessionId != null),
+      ...restored,
+      ...unsavedLocalItems,
+    ]
+    for (const item of restored) {
+      cancelledQueueKeys.delete(queueIdentity(item))
+      persistedQueueItems.add(queueIdentity(item))
+    }
+    if (items.length) setPendingQueueRecoveryNeeded(true)
+  }
+
+  function removeQueued(queueId: string, key: number) {
+    const index = pendingQueue.value.findIndex(item => item.queueId === queueId && item.key === key)
+    if (index !== -1) {
+      const [item] = pendingQueue.value.splice(index, 1)
+      const identity = queueIdentity(item)
+      persistedQueueItems.delete(identity)
+      if (dispatchingQueueKeys.has(identity)) cancelledQueueKeys.add(identity)
+      void removePersistedQueueItem(item).catch(error => options.onQueuePersistenceError?.(error))
+    }
+  }
+
+  async function drainPendingQueue() {
+    const drainViewGeneration = options.getViewGeneration()
+    const drainSessionId = sessionId.value
+    if (drainingPendingQueue) {
+      if (drainingView && (
+        drainingView.viewGeneration !== drainViewGeneration
+        || drainingView.sessionId !== drainSessionId
+      )) drainRequestedForAnotherView = true
+      return
+    }
+    drainingPendingQueue = true
+    drainingView = { sessionId: drainSessionId, viewGeneration: drainViewGeneration }
+    const drainViewIsCurrent = () =>
+      drainViewGeneration === options.getViewGeneration() && sessionId.value === drainSessionId
+    try {
+      while (pendingQueue.value.length) {
+        if (!drainViewIsCurrent()) return
+        const next = pendingQueue.value.find(item => item.sessionId === drainSessionId)
+        if (!next) return
+        if (streaming.value) return
+        let dispatched = false
+        const identity = queueIdentity(next)
+        dispatchingQueueKeys.add(identity)
+        try {
+          dispatched = await dispatchPendingQueueItem(next.queueId, next.key, {
+            findItem: (queueId, key) => pendingQueue.value.find(item => item.queueId === queueId && item.key === key),
+            persist: ensureQueueItemPersisted,
+            claim: async item => {
+              if (item.sessionId == null) return null
+              const response = await agentApi.claimPendingQueueItem(item.queueId, item.sessionId, item.key)
+              return response.claim_token
+            },
+            release: async (item, claimToken) => {
+              if (item.sessionId != null) {
+                await agentApi.releasePendingQueueItem(item.queueId, item.sessionId, item.key, claimToken)
+              }
+            },
+            dispatch: async (item, claimToken) => {
+              const belongsToCurrentView = item.sessionId === sessionId.value
+                && item.viewGeneration === options.getViewGeneration()
+              if (belongsToCurrentView) {
+                options.clearStatus()
+                options.setStatus(options.thinkingItem())
+              }
+              await send(item.text, item.attachments, item.references, item.key, item.viewGeneration, item.sessionId, item.queueId, claimToken)
+            },
+            isCancelled: item => cancelledQueueKeys.has(queueIdentity(item)),
+            onPersistError: error => options.onQueuePersistenceError?.(error),
+            onDispatchError: error => options.onQueueDispatchError?.(error),
+          })
+        } catch {
+          return
+        } finally {
+          dispatchingQueueKeys.delete(identity)
+          cancelledQueueKeys.delete(identity)
+        }
+        if (!dispatched) {
+          if (!drainViewIsCurrent()) return
+          if (!pendingQueue.value.some(item => queueIdentity(item) === identity)) continue
+          return
+        }
+        // 队列项保留到后端与用户消息同一事务确认；请求失败或刷新不会提前丢失。
+        // 若后端没有发出 session_id 确认，条目仍在队列中；停止自动重试，避免失败时循环发送。
+        if (pendingQueue.value.some(item => queueIdentity(item) === identity)) return
+      }
+    } finally {
+      drainingPendingQueue = false
+      drainingView = null
+      const shouldDrainCurrentView = drainRequestedForAnotherView
+      drainRequestedForAnotherView = false
+      if (shouldDrainCurrentView && !streaming.value && pendingQueue.value.some(item => item.sessionId === sessionId.value)) {
+        queueMicrotask(() => { void drainPendingQueue().catch(() => {}) })
+      }
+    }
+  }
+
+  // 新对话首轮开始时暂时还没有服务端 session_id；收到真实 ID 后，把同一源视图的
+  // 草稿队列项迁移到该会话，并持久化迁移后的逐项归属。
+  function resolvePendingSession(
+    realId: number,
+    sourceViewGeneration = options.getViewGeneration(),
+  ) {
+    const migrated: QueuedMessage[] = []
+    const oldIdentities = new Map<QueuedMessage, string>()
+    const targetQueueId = getSessionPendingQueueId(realId)
+    for (const item of pendingQueue.value) {
+      if (item.sessionId == null && item.viewGeneration === sourceViewGeneration) {
+        oldIdentities.set(item, queueIdentity(item))
+        item.sessionId = realId
+        item.queueId = targetQueueId
+        migrated.push(item)
+      }
+    }
+    if (!migrated.length) return
+    for (const item of migrated) persistedQueueItems.delete(oldIdentities.get(item)!)
+    // 先清理该标签尚未完成的草稿快照写入，再增量写入会话队列。
+    void enqueuePendingQueueWrite(async () => {
+      await agentApi.updatePendingQueue(draftPendingQueueId, [])
+      await agentApi.patchPendingQueue(
+        targetQueueId,
+        realId,
+        migrated.map(toPayload),
+      )
+      for (const item of migrated) persistedQueueItems.add(queueIdentity(item))
+      setPendingQueueRecoveryNeeded(true)
+    }).catch(error => options.onQueuePersistenceError?.(error))
   }
 
   // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
@@ -134,6 +343,7 @@ export function useChatStream(options: {
     ownerSid: number | null,
     viewGeneration: number,
     replayText = '',
+    onSessionId?: (id: number, timelineOrder: number) => void,
   ) {
     const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
@@ -204,6 +414,7 @@ export function useChatStream(options: {
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
           if (evt.type === 'session_id') {
+            onSessionId?.(Number(evt.session_id), onSessionId ? nextTimelineOrder() : 0)
             const isNew = sessionId.value !== evt.session_id
             // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话。
             // 走 bindNewSessionId：身份落地要保留当前输入并记为新会话草稿（普通赋值
@@ -211,12 +422,9 @@ export function useChatStream(options: {
             if (viewGeneration === options.getViewGeneration() && sessionId.value === (sid ?? ownerSid)) {
               options.bindNewSessionId(evt.session_id)
             }
-            // 真实 id 到位后立即回填排队项：上面分支只在视图未切换时才更新 sessionId.value，
-            // 但排队项仍可能在视图已切换的情况下属于旧视图——这里只看"是否本流视图"，
-            // 不强求 sessionId.value 已同步。否则新会话首轮排队的第二条消息仍会被丢弃。
-            if (viewGeneration === options.getViewGeneration()) {
-              resolvePendingSession(evt.session_id)
-            }
+            // session_id 同时也是本流排队消息的目标归属。即使用户已切走，仍按本流的
+            // 入队代次绑定旧消息；不能把它们交给当前选中的另一个会话。
+            resolvePendingSession(evt.session_id, viewGeneration)
             sid = evt.session_id
             activeSessionId = evt.session_id
             if (isNew) await options.fetchSessions()
@@ -498,12 +706,14 @@ export function useChatStream(options: {
   // 后端重启、SSE 断开或 Redis 活跃快照过期后，浏览器可能还保留本地 streaming=true。
   // 这种状态不能把新消息永久塞进 pendingQueue；只有明确读到服务端已无活跃生成时才复位，
   // 查询失败则保留原状态，避免 Redis 短暂不可用时与正在运行的任务并发。
-  async function reconcileStaleStreaming(): Promise<void> {
+  async function reconcileStaleStreaming(expectedViewGeneration: number): Promise<void> {
     if (!streaming.value) return
     const sid = activeSessionId ?? sessionId.value
     if (sid == null) return
     try {
       const state = await agentApi.getMessages(String(sid)) as { active?: boolean }
+      if (expectedViewGeneration !== options.getViewGeneration()) return
+      if ((activeSessionId ?? sessionId.value) !== sid) return
       if (state.active !== false) return
       abortCtrl.value?.abort()
       abortCtrl.value = null
@@ -515,17 +725,87 @@ export function useChatStream(options: {
     }
   }
 
-  async function send(forcedText?: string, forcedAttachments?: ChatFile[], forcedReferences?: ChatReference[]) {
+  async function dispatchQueuedInBackground(
+    text: string,
+    attachments: ChatFile[],
+    references: ChatReference[],
+    sessionId: number,
+    itemKey: number,
+    queueId: string,
+    claimToken: string | null,
+  ) {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/agent/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({
+        message: text, locale: getLocale(), session_id: sessionId,
+        pending_queue_id: queueId, pending_queue_item_key: itemKey,
+        ...(claimToken ? { pending_queue_claim_token: claimToken } : {}),
+        attachments: attachments.map(a => a.attach_id), references,
+      }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.body) throw new Error('empty response body')
+    const reader = res.body.getReader()
+    try {
+      while (!(await reader.read()).done) { /* 响应归目标会话，当前视图不消费 */ }
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
+  async function send(
+    forcedText?: string,
+    forcedAttachments?: ChatFile[],
+    forcedReferences?: ChatReference[],
+    queuedItemKey?: number,
+    queuedViewGeneration?: number,
+    queuedSessionId?: number | null,
+    queuedQueueId?: string,
+    queuedClaimToken?: string | null,
+  ) {
+    const viewGeneration = queuedViewGeneration ?? options.getViewGeneration()
+    const isQueuedDispatch = queuedItemKey !== undefined
+    const targetSessionId = isQueuedDispatch ? (queuedSessionId ?? null) : sessionId.value
+    const queueId = queuedQueueId || (targetSessionId == null ? draftPendingQueueId : getSessionPendingQueueId(targetSessionId))
+    const queuedIdentity = queuedItemKey !== undefined ? `${queueId}:${queuedItemKey}` : ''
+    const invocationIsCurrent = () => viewGeneration === options.getViewGeneration()
+    const queuedItemIsCurrent = () => {
+      if (queuedItemKey === undefined) return true
+      return !cancelledQueueKeys.has(queuedIdentity)
+        && (targetSessionId != null || invocationIsCurrent())
+    }
+    const mayContinue = () => (isQueuedDispatch || invocationIsCurrent()) && queuedItemIsCurrent()
+
     // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
     const fromInput = forcedText === undefined
     const text = (fromInput ? options.inputText.value : (forcedText ?? '')).trim()
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
     if (!text && !atts.length) return
+    // 队列消息目标会话与当前视图不同：仍把原始 session_id 发给后端，但不接管
+    // 当前会话的 streaming/status/messages 状态。回复已落库，切回目标会话即可恢复。
+    if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
+      if (cancelledQueueKeys.has(queuedIdentity)) return
+      await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+      return
+    }
+    // 草稿尚未拿到真实 session_id 时不能脱离当前草稿发送，否则后端会创建/选中错误会话。
+    if (isQueuedDispatch && targetSessionId == null && !invocationIsCurrent()) return
     // 生成中：先 reconcile（可能把僵尸流态复位），再决定「直接发」还是「进排队条」。
     // 排队的消息不进对话流——展示在输入框上方的排队条，排水发送时才落入对话。
     const willQueueInitial = streaming.value
-    if (willQueueInitial) await reconcileStaleStreaming()
+    if (willQueueInitial) {
+      await reconcileStaleStreaming(viewGeneration)
+      if (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value) {
+        if (!cancelledQueueKeys.has(queuedIdentity)) {
+          await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+        }
+        return
+      }
+      if (!mayContinue()) return
+    }
     if (fromInput) {
       const isNewCommand = /^\/new\s*$/i.test(text)
       _sessionTurn++
@@ -544,23 +824,49 @@ export function useChatStream(options: {
       options.composerRef.value?.resetHeight()
       trackApi.track('chat_message', { turn: _sessionTurn }).catch(() => {})
       await options.scrollBottom(true)
+      if (!mayContinue()) return
     }
     if (streaming.value) {
+      if (queuedItemKey !== undefined) return
       pendingQueue.value.push({
-        key: mkid(),
+        key: createPendingQueueKey(),
+        queue_id: queueId,
+        queueId,
         text, attachments: atts, references: refs,
         sessionId: sessionId.value, viewGeneration: options.getViewGeneration(),
       })
+      setPendingQueueRecoveryNeeded(true)
+      try {
+        await persistQueueItem(pendingQueue.value[pendingQueue.value.length - 1])
+      } catch (error) {
+        options.onQueuePersistenceError?.(error)
+      }
       return
     }
 
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
-    abortCtrl.value = new AbortController()
+    const requestController = new AbortController()
+    abortCtrl.value = requestController
     await options.scrollBottom()
+    // scrollBottom 等待期间切走了：队列请求继续按队列项的目标会话后台发送，
+    // 普通输入则停止；不能醒来后读取新 sessionId 并错投。
+    if (!mayContinue() || (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value)) {
+      if (isQueuedDispatch && targetSessionId != null && !cancelledQueueKeys.has(queuedIdentity)) {
+        // 会话切换方已接管全局 UI 状态；这里只释放仍指向旧请求的控制器引用。
+        if (abortCtrl.value === requestController) abortCtrl.value = null
+        await dispatchQueuedInBackground(text, atts, refs, targetSessionId, queuedItemKey!, queueId, queuedClaimToken ?? null)
+        return
+      }
+      if (invocationIsCurrent() && abortCtrl.value === requestController) {
+        streaming.value = false
+        abortCtrl.value = null
+        options.clearStatus()
+      }
+      return
+    }
     const token = getToken()
-    const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
+    const ownerSid = targetSessionId   // 队列项显式归属的 session；普通发送取当前会话
     activeSessionId = ownerSid
-    const viewGeneration = options.getViewGeneration()
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
     let aiIdx = -1
     const usedTools = new Set<string>()
@@ -574,20 +880,35 @@ export function useChatStream(options: {
       const res = await fetch(`${API_BASE}/agent/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, attachments: atts.map(a => a.attach_id), references: refs,
+        body: JSON.stringify({ message: text, locale: getLocale(), session_id: ownerSid, pending_queue_id: queueId,
+                               ...(queuedItemKey !== undefined ? { pending_queue_item_key: queuedItemKey } : {}),
+                               ...(queuedClaimToken ? { pending_queue_claim_token: queuedClaimToken } : {}),
+                               attachments: atts.map(a => a.attach_id), references: refs,
                                ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
-        signal: abortCtrl.value.signal,
+        signal: requestController.signal,
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       if (!res.body) throw new Error('empty response body')
 
-      const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration)
+      let receivedSessionIdEvent = false
+      const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder) => {
+        receivedSessionIdEvent = true
+        if (queuedItemKey === undefined || ownerSid !== sessionId.value || viewGeneration !== options.getViewGeneration()) return
+        pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
+        messages.value.push({
+          id: mkid(), role: 'user', text, time: now(),
+          references: refs.length ? refs : undefined,
+          files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
+          _timelineOrder: timelineOrder,
+        })
+      })
       resolvedSid = r.sid
       // session_id 事件可能在浏览器切换/重连的边界丢失；流本身已经返回真实
-      // id，当前视图仍未切换时直接补回，确保 ownsView 成立并解除发送锁。
+      // id，补回会话身份并迁移仍带草稿归属的队列项。
       if (viewGeneration === options.getViewGeneration() && sessionId.value == null && r.sid != null) {
         sessionId.value = r.sid
       }
+      if (r.sid != null) resolvePendingSession(r.sid, viewGeneration)
       aiIdx = r.aiIdx
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
@@ -596,7 +917,7 @@ export function useChatStream(options: {
         await options.scrollBottom()
       }
     } catch (e: any) {
-      if (e?.name !== 'AbortError' && sessionId.value === resolvedSid) {
+      if (e?.name !== 'AbortError' && viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid) {
         // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
         options.clearStatus()
         messages.value.push({ id: mkid(), role: 'ai', text: i18n.global.t('chatUi.networkError'), time: now() })
@@ -605,7 +926,7 @@ export function useChatStream(options: {
       // 发送失败时清理本次带的草稿附件（best-effort，只是降低草稿孤儿产生速度的优化，
       // 不是主清理机制——后端只在附件仍是草稿态时才真的删，消息其实已经发送成功、
       // 只是这次响应丢失/超时的情况会被后端拒绝，不会误删，见 PRD-STORAGE-1）
-      if (e?.name !== 'AbortError' && atts.length) {
+      if (e?.name !== 'AbortError' && queuedItemKey === undefined && atts.length) {
         for (const attachment of atts) {
           if (!attachment.attach_id) continue
           agentApi.deleteDraftAttachment(attachment.attach_id).catch(() => {})
@@ -613,11 +934,12 @@ export function useChatStream(options: {
       }
     } finally {
       // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉
-      const ownsView = viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid
-      if (ownsView) {
+      const ownsCurrentView = () => viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid
+      if (ownsCurrentView()) {
         // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
         if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
-        options.clearStatus(); streaming.value = false; abortCtrl.value = null
+        options.clearStatus(); streaming.value = false
+        if (abortCtrl.value === requestController) abortCtrl.value = null
         options.loadQuota()   // 回复消耗精力，刷新一次——耗尽时顶部状态即时变「休息中」（不 await，原逻辑就是 fire-and-forget）
         // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
         // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
@@ -625,19 +947,14 @@ export function useChatStream(options: {
       }
       if (activeSessionId === resolvedSid) activeSessionId = null
       // 目标/工具限制命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
-      if (ownsView && /^\/(?:goal|unlimited)(?:\s|$)/i.test(text)) {
+      if (ownsCurrentView() && /^\/(?:goal|unlimited)(?:\s|$)/i.test(text)) {
         await options.fetchSessions()
       }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)
       // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）。
-      // 正常情况下 loadSession/newSession 已经在切换那一刻清空过 pendingQueue，这里的
-      // 身份核对是竞态兜底——万一切换和这次消费之间有空子可钻，也不能把排队消息发进
-      // 已经不是它所属的那个会话。
-      // sessionId == null 是"入队时还没拿到真实 id"（新对话第一轮），只要还在同一个
-      // viewGeneration 里就允许消费——真实 id 已在收到 session_id 事件时由
-      // resolvePendingSession 回填。
-      if (ownsView) {
+      // 队列本身按 session_id 分组；切到其他会话不清除源会话队列，切回时继续排水。
+      if (ownsCurrentView()) {
         await drainPendingQueue()
       }
     }
@@ -646,6 +963,8 @@ export function useChatStream(options: {
   return {
     streaming, abortCtrl, pendingQueue, removeQueued,
     resetSessionTurn, clearPendingQueue, resolvePendingSession,
+    restorePendingQueueForSession, restorePendingQueueForDraft, drainPendingQueue,
+    waitForPendingQueueWrites: () => pendingQueueWrite.catch(() => {}),
     send, stopStreaming, resumeStream,
   }
 }

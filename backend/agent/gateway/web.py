@@ -165,6 +165,21 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             await db.rollback()
             yield f"data: {json.dumps({'type': 'error', 'message': '附件已失效（可能已被使用或清理），请重新发送'})}\n\n"
             return
+        from app.services.conversation_pending_queue import PendingQueueClaimConflict, bind_pending_queue
+        try:
+            await bind_pending_queue(
+                db,
+                user_id=user_id,
+                queue_id=req.pending_queue_id,
+                session_id=session.id,
+                acknowledged_item_key=req.pending_queue_item_key,
+                acknowledged_claim_token=req.pending_queue_claim_token,
+                bind_draft_items=is_new_session,
+            )
+        except PendingQueueClaimConflict:
+            await db.rollback()
+            yield f"data: {json.dumps({'type': 'error', 'message_key': 'chatUi.pendingQueueDispatchConflict'})}\n\n"
+            return
         await db.commit()
         session_id = session.id
         modelctx.set_usage_context(user_id, session_id)
@@ -287,6 +302,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
         # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
         await genstream.begin(session_id, owner_run_id=owner_run_id)
+        if req.pending_queue_item_key is not None or (is_new_session and req.pending_queue_id):
+            from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+            await publish_session_pending_queue_changed(
+                req.user_id, session_id, origin=getattr(req, "origin", None),
+            )
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
@@ -317,6 +337,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         begin_after_gate=True,
     ))
     _register_generation_task(task)
+    if req.pending_queue_item_key is not None or (is_new_session and req.pending_queue_id):
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
+        )
     # 开头为「先订阅后启动」打开的订阅在排队分支用不上（尾部事件不转发给本连接），
     # 交给 _stream_queued_run 前先关掉，别让 pubsub 连接泄漏。
     await genstream.close_subscription(session_id, pubsub)
@@ -848,6 +873,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         from agent.llm.llm_select import release as _release_model
         _release_model(model_cfg)
         await genstream.end(session_id, owner_run_id=owner_run_id)
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
+        )
 
 
 async def _refresh_generation_history(session_id: int, snapshot: dict, model_cfg):
@@ -958,10 +987,18 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         await _finalize_preflight_failure(
             session_id, model_cfg, cancelled=True, owner_run_id=owner_run_id,
         )
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
+        )
         raise
     except BaseException as exc:
         await _finalize_preflight_failure(
             session_id, model_cfg, error=exc, owner_run_id=owner_run_id,
+        )
+        from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+        await publish_session_pending_queue_changed(
+            req.user_id, session_id, origin=getattr(req, "origin", None),
         )
     finally:
         heartbeat_task.cancel()

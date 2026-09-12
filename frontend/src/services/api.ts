@@ -727,6 +727,15 @@ export const agentApi = {
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
+  updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>
+    put(`/agent/pending-queues/${encodeURIComponent(queueId)}`, { items }),
+  patchPendingQueue: (queueId: string, sessionId: number, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>, removeKeys: number[] = []) =>
+    request('PATCH', `/agent/pending-queues/${encodeURIComponent(queueId)}`, { session_id: sessionId, items, remove_keys: removeKeys }),
+  claimPendingQueueItem: (queueId: string, sessionId: number, key: number) =>
+    post<{ claim_token: string | null; reason?: string }>(`/agent/pending-queues/${encodeURIComponent(queueId)}/items/${key}/claim`, { session_id: sessionId }),
+  releasePendingQueueItem: (queueId: string, sessionId: number, key: number, claimToken: string) =>
+    post<{ released: boolean }>(`/agent/pending-queues/${encodeURIComponent(queueId)}/items/${key}/release`, { session_id: sessionId, claim_token: claimToken }),
   getSessionState: (sessionId: string) => get<{ executionState: string; pendingMessageCount: number; active: boolean }>(`/agent/sessions/${sessionId}/state`),
   requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/agent/sessions/${id}/filesystem-authorization/request`),
   confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/agent/sessions/${id}/filesystem-authorization`, { confirm_code: confirmCode }),

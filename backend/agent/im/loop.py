@@ -1052,6 +1052,8 @@ async def dispatch_im_message(payload: dict):
             if not web_stream_failed:
                 await _publish_web_event({"type": "done", "source": platform})
             await genstream.end(web_stream_session_id, owner_run_id=web_stream_owner_id)
+            from app.services.conversation_pending_queue import publish_session_pending_queue_changed
+            await publish_session_pending_queue_changed(user_id, web_stream_session_id)
 
     await persist_im_session(
         platform,

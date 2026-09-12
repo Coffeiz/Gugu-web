@@ -128,6 +128,16 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
   })
 
+  it('待发送队列显示为右侧气泡，状态与操作在卡片内垂直居中', () => {
+    expect(chatWindow).toContain('<span class="chat-pending-state">')
+    expect(chatWindow).toContain("{{ t('chatUi.pendingQueue') }}")
+    expect(chatWindow).toContain('align-items: flex-end; gap: 6px;')
+    expect(chatWindow).toContain('grid-template-columns: auto minmax(0, 1fr) 24px;')
+    expect(chatWindow).toContain('align-items: center;')
+    expect(chatWindow).toContain('min-height: 40px;')
+    expect(chatWindow).toContain('padding: 8px 13px;')
+  })
+
   it('GuguChat 主体使用静态背景，关闭窗口时也不恢复 backdrop-filter', () => {
     const chatMainStart = chatWindow.indexOf('.chat-main {')
     const chatMainBlock = chatWindow.slice(chatMainStart, chatWindow.indexOf('}', chatMainStart))

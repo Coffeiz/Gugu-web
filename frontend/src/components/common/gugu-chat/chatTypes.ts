@@ -83,6 +83,17 @@ export interface ChatReference {
   label: string
 }
 
+/** 后端持久化的单条待发消息，不包含页面态或临时预览 URL。 */
+export interface QueuedMessagePayload {
+  key: number
+  queue_id: string
+  claimed?: boolean
+  session_id?: number | null
+  text: string
+  attachments: ChatFile[]
+  references: ChatReference[]
+}
+
 export interface ChatSession {
   id: number
   title: string

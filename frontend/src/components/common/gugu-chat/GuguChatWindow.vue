@@ -86,10 +86,13 @@
       <!-- 排队条：生成中发出的消息不进对话流，在这里排队展示（可单条移除）；
            排水真正发送时才作为用户气泡落入对话，后面跟本轮回复。 -->
       <div v-if="pendingQueue.length" class="chat-pending-strip" role="list" :aria-label="t('chatUi.pendingQueue')">
-        <div v-for="item in pendingQueue" :key="item.key" class="chat-pending-item" role="listitem">
-          <Icon name="status.loading" :size="12" class="chat-pending-spin" />
+        <div v-for="item in pendingQueue" :key="`${item.queueId}:${item.key}`" class="chat-pending-item" role="listitem">
+          <span class="chat-pending-state">
+            <Icon name="status.loading" :size="11" class="chat-pending-spin" />
+            <span>{{ t('chatUi.pendingQueue') }}</span>
+          </span>
           <span class="chat-pending-text" :title="item.text">{{ item.text || t('chatUi.pendingQueue') }}</span>
-          <button class="chat-pending-remove" :title="t('chatUi.removeQueued')" :aria-label="t('chatUi.removeQueued')" @click="emit('removeQueued', item.key)">
+          <button class="chat-pending-remove" :title="t('chatUi.removeQueued')" :aria-label="t('chatUi.removeQueued')" @click="emit('removeQueued', item.queueId, item.key)">
             <Icon name="action.close" :size="12" />
           </button>
         </div>
@@ -205,7 +208,7 @@ const { t } = useI18n()
 const emit = defineEmits<{
   'update:inputText': [value: string]
   'update:references': [value: ChatReference[]]
-  removeQueued: [key: number]
+  removeQueued: [queueId: string, key: number]
 }>()
 
 // inputText 是 props（只读），用 computed 包装成可写的 v-model 桥，把输入变化
@@ -389,33 +392,54 @@ defineExpose({
 
 /* ── 排队条：生成中发出的消息在输入框上方排队（不进对话流），排水发送时落入对话 ── */
 .chat-pending-strip {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 13px 2px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  padding: 8px 13px;
   border-top: 1px solid color-mix(in srgb, var(--content-tertiary) 12%, transparent);
 }
-.chat-main.is-expanded .chat-pending-strip { padding: 8px 24px 4px; }
+.chat-main.is-expanded .chat-pending-strip { padding-inline: 24px; }
 .chat-pending-item {
-  display: flex; align-items: center; gap: 7px;
-  padding: 5px 10px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--gugu-chat-user-bg) 26%, transparent);
-  font-size: 12px; color: var(--content-secondary);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(88%, 640px);
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 5px 7px 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--gugu-chat-user-bg) 28%, var(--gugu-chat-header-border));
+  border-radius: 14px 14px 4px 14px;
+  background: color-mix(in srgb, var(--gugu-chat-user-bg) 12%, var(--gugu-chat-main-bg));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--content-primary) 5%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--content-primary);
 }
-.chat-pending-spin { color: var(--content-tertiary); animation: chat-pending-rotate 1.2s linear infinite; flex-shrink: 0; }
+.chat-pending-state {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gugu-chat-user-bg) 12%, transparent);
+  color: var(--action-primary);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.chat-pending-spin { display: block; animation: chat-pending-rotate 1.2s linear infinite; flex-shrink: 0; }
 @keyframes chat-pending-rotate { to { transform: rotate(360deg); } }
 .chat-pending-text {
-  flex: 1; min-width: 0;
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chat-pending-remove {
-  flex-shrink: 0; width: 20px; height: 20px;
+  width: 24px; height: 24px;
   display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 6px; padding: 0;
-  background: none; color: var(--content-tertiary);
+  border: none; border-radius: 50%; padding: 0;
+  background: transparent; color: var(--content-tertiary);
   cursor: pointer; transition: background 0.12s, color 0.12s;
 }
 .chat-pending-remove svg { display: block; }
-.chat-pending-remove:hover { background: color-mix(in srgb, var(--content-tertiary) 14%, transparent); color: var(--content-primary); }
+.chat-pending-remove:hover { background: color-mix(in srgb, var(--content-primary) 9%, transparent); color: var(--content-primary); }
 
 /* 收起按钮（窗口头部，不在侧栏里） */
 .exp-icon-btn {

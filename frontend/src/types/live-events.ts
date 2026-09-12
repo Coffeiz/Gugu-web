@@ -1,5 +1,5 @@
 export const LIVE_EVENT_PROTOCOL_VERSION = 'live-event-v1' as const
-export type LiveResource = 'projects' | 'calendar' | 'files' | 'mind' | 'scheduled_tasks' | 'sessions' | 'clients' | 'im_channels' | 'terminals'
+export type LiveResource = 'projects' | 'calendar' | 'files' | 'mind' | 'scheduled_tasks' | 'sessions' | 'clients' | 'im_channels' | 'terminals' | 'pending_queues'
 export type LiveOperation = 'create' | 'update' | 'delete' | 'move' | 'append' | 'refresh'
 
 export interface LiveEventPayload {
@@ -20,7 +20,7 @@ export interface LiveEventPayload {
 export function isLiveEventPayload(value: unknown): value is LiveEventPayload {
   if (!value || typeof value !== 'object') return false
   const event = value as Record<string, unknown>
-  const resources: LiveResource[] = ['projects', 'calendar', 'files', 'mind', 'scheduled_tasks', 'sessions', 'clients', 'im_channels', 'terminals']
+  const resources: LiveResource[] = ['projects', 'calendar', 'files', 'mind', 'scheduled_tasks', 'sessions', 'clients', 'im_channels', 'terminals', 'pending_queues']
   const operations: LiveOperation[] = ['create', 'update', 'delete', 'move', 'append', 'refresh']
   return event.protocol_version === LIVE_EVENT_PROTOCOL_VERSION
     && typeof event.event_id === 'string' && event.event_id.length > 0

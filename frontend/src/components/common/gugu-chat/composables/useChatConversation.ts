@@ -7,6 +7,7 @@ import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatT
 import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
+import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
 import { useChatSessions } from './useChatSessions'
 import type GuguChatComposer from '../GuguChatComposer.vue'
@@ -36,6 +37,8 @@ export function useChatConversation(options: {
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
   playIncomingMessageSfx: () => void
+  onQueuePersistenceError?: (error: unknown) => void
+  onQueueDispatchError?: (error: unknown) => void
   onContentReset: () => void          // 窗口高度回到 SMALL_H 基线
   onCaptureBaseScrollH: () => void    // 记录当前内容高度为新的增高基线
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
@@ -403,9 +406,16 @@ export function useChatConversation(options: {
     refreshAfterTools: options.refreshAfterTools,
     loadQuota: options.loadQuota,
     playIncomingMessageSfx: options.playIncomingMessageSfx,
+    onQueuePersistenceError: options.onQueuePersistenceError,
+    onQueueDispatchError: options.onQueueDispatchError,
     onContentReset: options.onContentReset,
   })
-  const { streaming, abortCtrl, pendingQueue, removeQueued, resetSessionTurn, clearPendingQueue, send, stopStreaming, resumeStream } = streamApi
+  const {
+    streaming, abortCtrl, pendingQueue, removeQueued, resetSessionTurn, clearPendingQueue,
+    restorePendingQueueForSession, restorePendingQueueForDraft, drainPendingQueue,
+    waitForPendingQueueWrites,
+    send, stopStreaming, resumeStream,
+  } = streamApi
 
   // ── 会话切换（loadSession/newSession/deleteSession），见 useChatSessions.ts ──
   const sessionsApi = useChatSessions({
@@ -413,6 +423,8 @@ export function useChatConversation(options: {
     resolveSpeaker, bumpViewGeneration, getViewGeneration,
     composerRef: options.composerRef,
     abortCtrl, streaming, resumeStream, resetSessionTurn, clearPendingQueue,
+    restorePendingQueue: restorePendingQueueForSession,
+    drainPendingQueue,
     clearStatus, setStatus, contextCompactingItem: _contextCompactingItem,
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
@@ -421,6 +433,53 @@ export function useChatConversation(options: {
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
   const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession } = sessionsApi
+
+  // 队列正文仍以服务端为准：跨浏览器通过用户级 SSE 通知后读取一次快照；
+  // 断线重连时也补读当前会话，避免错过 Pub/Sub 不回放的事件。
+  let pendingQueueRefreshPromise: Promise<void> | null = null
+  let pendingQueueRefreshRequested = false
+  function refreshSessionPendingQueue(): Promise<void> {
+    if (sessionId.value == null) return Promise.resolve()
+    pendingQueueRefreshRequested = true
+    if (pendingQueueRefreshPromise) return pendingQueueRefreshPromise
+
+    pendingQueueRefreshPromise = (async () => {
+      while (pendingQueueRefreshRequested) {
+        pendingQueueRefreshRequested = false
+        const id = sessionId.value
+        if (id == null) continue
+        try {
+          await waitForPendingQueueWrites()
+          const snapshot = await agentApi.getPendingQueue(getSessionPendingQueueId(id))
+          if (sessionId.value !== id) continue
+          restorePendingQueueForSession(id, snapshot.items)
+          setPendingQueueRecoveryNeeded(snapshot.items.length > 0 || pendingQueue.value.length > 0)
+          if (snapshot.items.length && !streaming.value) void drainPendingQueue().catch(() => {})
+        } catch {
+          // SSE 重连或下一次队列变更会再次校准；不以定时请求掩盖暂时性失败。
+        }
+      }
+    })().finally(() => {
+      pendingQueueRefreshPromise = null
+      if (pendingQueueRefreshRequested) void refreshSessionPendingQueue()
+    })
+    return pendingQueueRefreshPromise
+  }
+
+  watch(() => liveStore.connected, (connected) => {
+    if (connected) void refreshSessionPendingQueue()
+  }, { immediate: true })
+
+  watch(() => liveStore.resourceEvent, (event) => {
+    if (
+      !event
+      || event.resource !== 'pending_queues'
+      || sessionId.value == null
+      || String(event.entity_id) !== String(sessionId.value)
+      || event.origin === CLIENT_ID
+    ) return
+    void refreshSessionPendingQueue()
+  })
 
   // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
   watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -477,7 +536,9 @@ export function useChatConversation(options: {
     stick, lastTop: _lastTop,
     fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,
-    pendingQueue, removeQueued,
+    pendingQueue, removeQueued, restorePendingQueueForDraft,
+    restorePendingQueueForSession, drainPendingQueue,
+    waitForPendingQueueWrites,
     scrollBottom, onMsgScroll,
     animateGreeting, _revealMessage, _flashChatMessage,
     clearStatus,

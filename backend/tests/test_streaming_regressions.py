@@ -301,7 +301,8 @@ async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monk
     )
 
     model = object()
-    await web._generate(SimpleNamespace(), 669, {}, [], False, model_cfg=model)
+    # req 需要带 user_id：preflight 失败收口会发会话排队队列变更事件。
+    await web._generate(SimpleNamespace(user_id=77), 669, {}, [], False, model_cfg=model)
 
     assert ("publish", 669, "error") in events
     assert ("end", 669) in events
