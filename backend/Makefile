@@ -114,7 +114,7 @@ rag-ts-build: filesync-ts-build ## 构建固定的 TypeScript RAG worker 制品�
 		Darwin:x86_64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-x64@2.0.1 ;; \
 		Darwin:arm64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-arm64@2.0.1 ;; \
 		esac
-	@ts/node_modules/.bin/esbuild ts/workers/rag/src/index.ts --platform=node --format=esm --bundle --banner:js='#!/usr/bin/env node' --external:@node-rs/jieba --external:@node-rs/jieba/* --outfile=bin/gugu-rag-ts-worker.mjs
+	@node ts/workers/rag/build.mjs
 	@rm -rf bin/node_modules
 	@cp -R ts/node_modules bin/node_modules
 	@chmod 755 bin/gugu-rag-ts-worker.mjs
