@@ -64,6 +64,7 @@
       :copied-id="copiedId" :voice-playing-id="voicePlayingId"
       :status-kind="statusKind" :status-typed="statusTyped"
       :session-settling="sessionSettling"
+      :pending-queue="pendingQueue" @remove-queued="removeQueued"
       v-model:input-text="inputText"
       :references="inputReferences" @update:references="inputReferences = $event"
       :pending-att="pendingAtt" :att-uploading="attUploading"
@@ -391,6 +392,7 @@ const {
   stick, lastTop,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
+  pendingQueue, removeQueued,
   scrollBottom, onMsgScroll,
   animateGreeting, clearStatus,
 } = conversation
@@ -817,21 +819,6 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
   border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
 }
-/* 生成中排队的用户消息：整条压暗 + 「排队中」小标签；排水真正发送时转正，
-   透明度过渡让「排队 → 已发出」的切换可感知而不是瞬间跳变。 */
-:deep(.msg.user.is-pending .msg-bubble) { opacity: 0.62; }
-:deep(.msg.user .msg-bubble) { transition: opacity 0.25s ease; }
-:deep(.msg-pending-chip) {
-  display: inline-flex; align-items: center; gap: 4px;
-  margin: 0 0 6px; padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px; line-height: 1.4;
-  background: color-mix(in srgb, var(--gugu-chat-user-fg) 14%, transparent);
-  color: var(--gugu-chat-user-fg);
-  opacity: 0.9;
-}
-:deep(.msg-pending-chip svg, .msg-pending-chip .icon) { animation: gugu-pending-spin 1.2s linear infinite; }
-@keyframes gugu-pending-spin { to { transform: rotate(360deg); } }
 /* 用户气泡 MD 排版（.user-md）：md-view 默认把标题/加粗/引用映射到深色文字
    token，紫底上对比不足，重映射到气泡前景。行内代码叠半透明前景，代码块用
    近实心亮面板——hljs token 色是按浅底调的，透在紫底上会看不清。 */

@@ -20,14 +20,7 @@
   <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onBodyClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderChatMd(msg.text, msg.references))" :text="msg.text" chat /></div>
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
-  <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick">
-    <!-- 生成中排队的消息：先以「排队中」形态展示，排水真正发给后端时转正。 -->
-    <span v-if="msg.pending" class="msg-pending-chip">
-      <Icon name="status.loading" :size="11" />
-      <span>{{ t('chatUi.pendingQueue') }}</span>
-    </span>
-    <MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat />
-  </div>
+  <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /></div>
   <div v-if="msg.files && msg.files.length" class="msg-files">
     <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
     <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->

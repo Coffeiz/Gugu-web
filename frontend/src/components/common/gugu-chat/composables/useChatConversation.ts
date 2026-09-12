@@ -405,7 +405,7 @@ export function useChatConversation(options: {
     playIncomingMessageSfx: options.playIncomingMessageSfx,
     onContentReset: options.onContentReset,
   })
-  const { streaming, abortCtrl, resetSessionTurn, clearPendingQueue, send, stopStreaming, resumeStream } = streamApi
+  const { streaming, abortCtrl, pendingQueue, removeQueued, resetSessionTurn, clearPendingQueue, send, stopStreaming, resumeStream } = streamApi
 
   // ── 会话切换（loadSession/newSession/deleteSession），见 useChatSessions.ts ──
   const sessionsApi = useChatSessions({
@@ -477,6 +477,7 @@ export function useChatConversation(options: {
     stick, lastTop: _lastTop,
     fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,
+    pendingQueue, removeQueued,
     scrollBottom, onMsgScroll,
     animateGreeting, _revealMessage, _flashChatMessage,
     clearStatus,

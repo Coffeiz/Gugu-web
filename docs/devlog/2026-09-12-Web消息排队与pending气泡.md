@@ -1,4 +1,4 @@
-# Web 消息排队：run 中到达的消息真正排队 + pending 气泡 + 停止保留队列
+# Web 消息排队：run 中到达的消息真正排队 + 输入框上方排队条 + 停止保留队列
 
 日期：2026-09-12
 关联：`backend/agent/gateway/web.py`、`backend/app/api/v1/agent.py`、
@@ -15,7 +15,7 @@
    更糟的是转发的当前 run 尾部事件会被前端渲染成**本条消息的回答**（归属错乱）。
 2. **前端续看不排水（确定 bug）**：`resumeStream` 的 `finally` 漏调
    `drainPendingQueue()`，刷新续看期间排队的消息永远停在内存队列里、从未 POST。
-3. 附带 UX 问题：run 中发的消息直接以普通气泡上屏（看不出是排队的）；点「停止」
+3. 附带 UX 问题：run 中发的消息直接以普通气泡混进对话流（看不出是排队的）；点「停止」
    会整队清空，连用户明确想发的排队消息一起丢掉。
 
 Web 的「排队」此前是纯前端行为（`pendingQueue` 只在浏览器内存里）；IM 走
@@ -47,11 +47,13 @@ Web 的「排队」此前是纯前端行为（`pendingQueue` 只在浏览器内�
 当前用户行（`prepare_run` 再追加 `current_text` 一次），排队 run 拿门后
 `_refresh_generation_history` 重载也不会重复。
 
-### 前端：pending 气泡 + 续看排水 + 停止保留队列
+### 前端：输入框上方排队条 + 续看排水 + 停止保留队列
 
-- **pending 气泡**：生成中发的消息以压暗气泡 +「排队中」旋转标签上屏（`msg.pending`，
-  已入 `v-memo` 数组保证转正时重渲染），多条在底部依次追加；排水真正 POST 时转正为
-  普通气泡（透明度过渡）。i18n 新增 `chatUi.pendingQueue`（排队中/待機中/Queued）。
+- **排队条**：生成中发的消息**不进对话流**，在输入框上方以排队条展示（旋转图标 +
+  单行省略的正文预览 + 单条移除按钮，多条向下追加）；排水真正 POST 时才把用户气泡
+  落入对话，后跟本轮回复。归属 `GuguChatWindow`（消息列表与输入框之间的固定区域，
+  不随虚拟列表滚动），`pendingQueue`/`removeQueued` 由 `useChatStream` 持有、经
+  `useChatConversation` 透传。i18n 新增 `chatUi.pendingQueue` / `removeQueued`（三语）。
 - **续看排水**：`resumeStream` 的 `finally` 补 `drainPendingQueue()`（带 ownsView 身份核对）。
 - **停止保留队列**：`stopStreaming` 不再清空 `pendingQueue`；取消当前 run 后，被中断流
   的 finally 排水立即发出下一条。后端此时若还没释放 run，新 POST 走服务端排队分支接续，

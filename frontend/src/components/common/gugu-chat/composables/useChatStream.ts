@@ -11,14 +11,14 @@ import type GuguChatComposer from '../GuguChatComposer.vue'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
-interface QueuedMessage {
+export interface QueuedMessage {
+  /** 稳定 id：排队条 v-for 的 key 与单条移除的定位。 */
+  key: number
   text: string
   attachments: ChatFile[]
   references: ChatReference[]
   sessionId: number | null
   viewGeneration: number
-  // 入队时展示的 pending 气泡 id；排水真正发送时转正为普通气泡。
-  bubbleId: number | null
 }
 
 /**
@@ -87,6 +87,11 @@ export function useChatStream(options: {
     pendingQueue.value = []
   }
 
+  function removeQueued(key: number) {
+    const index = pendingQueue.value.findIndex(item => item.key === key)
+    if (index !== -1) pendingQueue.value.splice(index, 1)
+  }
+
   async function drainPendingQueue() {
     while (pendingQueue.value.length) {
       const next = pendingQueue.value[0]
@@ -94,22 +99,15 @@ export function useChatStream(options: {
       const sameSession = next.sessionId == null || next.sessionId === sessionId.value
       pendingQueue.value.shift()
       if (!sameView || !sameSession) continue
-      // pending 气泡转正：这条消息现在真的发给后端了。气泡如果在视图重载中
-      // 丢了（罕见），补一条普通用户气泡，避免发出的消息没有自己的气泡。
-      const bubble = next.bubbleId != null
-        ? messages.value.find(m => m.id === next.bubbleId)
-        : undefined
-      if (bubble) {
-        bubble.pending = false
-      } else {
-        messages.value.push({
-          id: mkid(), role: 'user', text: next.text, time: now(),
-          references: next.references.length ? next.references : undefined,
-          files: next.attachments.length ? next.attachments.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
-        })
-      }
-      // 在前一条流的 finally 与下一条 POST 之间也保持思考态；否则排队消息
-      // 已经在消息列表里，但状态气泡会短暂消失，看起来像“没有收到”。
+      // 排队期间消息不进对话流（展示在输入框上方的排队条）；此刻真正发送，
+      // 用户气泡在这一刻才落入对话，随后是本轮回复。
+      messages.value.push({
+        id: mkid(), role: 'user', text: next.text, time: now(),
+        references: next.references.length ? next.references : undefined,
+        files: next.attachments.length ? next.attachments.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
+      })
+      // 在前一条流的 finally 与下一条 POST 之间也保持思考态；否则状态气泡会
+      // 短暂消失，看起来像“没有收到”。
       options.clearStatus()
       options.setStatus(options.thinkingItem())
       await options.scrollBottom()
@@ -524,7 +522,10 @@ export function useChatStream(options: {
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
     if (!text && !atts.length) return
-    let queuedBubbleId: number | null = null
+    // 生成中：先 reconcile（可能把僵尸流态复位），再决定「直接发」还是「进排队条」。
+    // 排队的消息不进对话流——展示在输入框上方的排队条，排水发送时才落入对话。
+    const willQueueInitial = streaming.value
+    if (willQueueInitial) await reconcileStaleStreaming()
     if (fromInput) {
       const isNewCommand = /^\/new\s*$/i.test(text)
       _sessionTurn++
@@ -532,15 +533,10 @@ export function useChatStream(options: {
         // /new 本身是控制命令，不成为新上下文的一部分；后端也会删除它的持久消息。
         messages.value = []
         options.onContentReset?.()
-      } else {
-        // 生成中发的消息以 pending 形态先上屏（视觉上「排队中」），排水真正
-        // 发送时转正为普通气泡（见 drainPendingQueue）。
-        const willQueue = streaming.value
-        const bubbleId = mkid()
-        messages.value.push({ id: bubbleId, role: 'user', text, time: now(), pending: willQueue,
+      } else if (!streaming.value) {
+        messages.value.push({ id: mkid(), role: 'user', text, time: now(),
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
-        if (willQueue) queuedBubbleId = bubbleId
       }
       options.inputText.value = ''
       options.inputReferences.value = []
@@ -549,22 +545,13 @@ export function useChatStream(options: {
       trackApi.track('chat_message', { turn: _sessionTurn }).catch(() => {})
       await options.scrollBottom(true)
     }
-    // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）。
-    // 带上此刻的会话身份——真正发出去之前会再核对一次，身份对不上就丢弃，不发进别的会话。
-    if (streaming.value) await reconcileStaleStreaming()
     if (streaming.value) {
       pendingQueue.value.push({
+        key: mkid(),
         text, attachments: atts, references: refs,
         sessionId: sessionId.value, viewGeneration: options.getViewGeneration(),
-        bubbleId: queuedBubbleId,
       })
       return
-    }
-    // reconcile 把僵尸流态复位了：刚才按「会排队」预标的 pending 气泡现在
-    // 直接进入发送，转正为普通气泡。
-    if (queuedBubbleId != null) {
-      const bubble = messages.value.find(m => m.id === queuedBubbleId)
-      if (bubble) bubble.pending = false
     }
 
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
@@ -657,7 +644,7 @@ export function useChatStream(options: {
   }
 
   return {
-    streaming, abortCtrl, pendingQueue,
+    streaming, abortCtrl, pendingQueue, removeQueued,
     resetSessionTurn, clearPendingQueue, resolvePendingSession,
     send, stopStreaming, resumeStream,
   }

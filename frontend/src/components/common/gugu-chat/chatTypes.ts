@@ -19,8 +19,6 @@ export interface ChatMessage {
   quotedText?: string
   time: string
   streaming?: boolean
-  /** 生成中排队、尚未真正发给后端的用户消息；排水发送时转正为 false。 */
-  pending?: boolean
   // 群聊消息的发言人标注：ai 不用管；owner 自己发的不用管（右侧气泡不署名）；
   // 群里其他成员填 platformUserName，气泡渲染在左侧并显示这个名字。
   speakerLabel?: string
