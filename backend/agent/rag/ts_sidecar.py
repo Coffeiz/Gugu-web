@@ -212,6 +212,27 @@ class TsSidecarClient:
         self._restore_error = None
         return response
 
+    async def sync_index_from_database(
+        self, owner_user_id: object, revision: str, vector_version: str = "",
+    ) -> dict:
+        """增量自同步：worker 按 chunk 表水位只读取变更行并 patch 内存/磁盘索引。
+
+        水位缺失或落后超过墓碑保留视界时 worker 内部回退全量装载（响应带
+        fallback_full 标记），语义与全量 load 完全一致。"""
+        response = (await self._request({
+            "op": "sync_index_from_database",
+            "owner_id": str(owner_user_id),
+            "revision": str(revision or ""),
+            "vector_version": str(vector_version or ""),
+        }, timeout_seconds=BUILD_TIMEOUT_SECONDS)).response
+        self._revision = str(response.get("revision") or "")
+        self._document_count = int(response.get("document_count") or 0)
+        self._estimated_bytes = int(response.get("estimated_bytes") or 0)
+        self._vector_count = int(response.get("vector_count") or 0)
+        self._vector_version = str(response.get("vector_version") or "")
+        self._restore_error = None
+        return response
+
     async def load_vectors_from_storage(self, owner_user_id: object, vector_version: str) -> dict:
         """TS worker 从 owner 存储读取向量缓存并按当前索引文档键装载。"""
         response = (await self._request({

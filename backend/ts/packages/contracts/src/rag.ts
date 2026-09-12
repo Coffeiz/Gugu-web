@@ -2,7 +2,7 @@
 
 export const RAG_CONTRACT_VERSION = "rag-v1" as const;
 // 0.5.0：数据读取与 Memory/向量准备统一在 TS worker 中执行。
-export const RAG_WORKER_VERSION = "0.5.0" as const;
+export const RAG_WORKER_VERSION = "0.6.0" as const;
 
 export type RagSourceType =
   | "memory"
@@ -189,6 +189,7 @@ export type RagRankResult = {
 export type RagRequest =
   | { op: "database_revision"; owner_id: string }
   | { op: "load_index_from_database"; owner_id: string; revision: string; vector_version?: string }
+  | { op: "sync_index_from_database"; owner_id: string; revision: string; vector_version?: string }
   | {
       op: "load_vectors_from_storage"; owner_id: string; vector_version: string;
     }

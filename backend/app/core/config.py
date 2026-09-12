@@ -286,6 +286,11 @@ class SearchSettings(BaseModel):
         "ilike", description="全局搜索后端：持久化索引（index）或 ILIKE 兼容模式"
     )
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
+    ts_index_sync_mode: Literal["incremental", "full"] = Field(
+        "incremental",
+        description="索引生命周期同步模式：incremental=worker 按水位增量同步（墓碑契约）；"
+        "full=回退每次全量装载（回滚开关）",
+    )
     ts_sidecar_socket: str = Field(
         "",
         description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空=每个 Python 进程按需自启 worker（旧行为）。"

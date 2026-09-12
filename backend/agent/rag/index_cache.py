@@ -410,7 +410,11 @@ class KnowledgeIndexCache:
                         return None
                     database_snapshot = await await_probe(
                         "index_ts_document_load",
-                        client.load_index_from_database(owner_user_id, revision or "", vector_tag),
+                        (
+                            client.sync_index_from_database(owner_user_id, revision or "", vector_tag)
+                            if getattr(settings, "ts_index_sync_mode", "incremental") == "incremental"
+                            else client.load_index_from_database(owner_user_id, revision or "", vector_tag)
+                        ),
                     )
                     worker_probe = database_snapshot.get("probe")
                     if isinstance(worker_probe, dict):
@@ -435,6 +439,8 @@ class KnowledgeIndexCache:
                             "database_rows", "documents", "posting_terms",
                             "vector_files_present", "vector_entries_loaded", "vector_count",
                             "index_persisted", "serialized_bytes",
+                            "applied_upserts", "applied_deletes", "scanned_rows",
+                            "passes", "fallback_full",
                         }
                         probe_update(index_ts_database_load={
                             "stage_ms": {
@@ -451,9 +457,18 @@ class KnowledgeIndexCache:
                             } if isinstance(raw_counts, dict) else {},
                         })
                     if diagnostics is not None:
-                        diagnostics["index_sync"] = "database_load"
+                        used_sync = getattr(settings, "ts_index_sync_mode", "incremental") == "incremental"
+                        worker_fell_back = bool((database_snapshot.get("probe") or {}).get("counts", {}).get("fallback_full")) \
+                            if isinstance(database_snapshot.get("probe"), dict) else False
+                        diagnostics["index_sync"] = (
+                            "ts_incremental_sync" if used_sync and not worker_fell_back else "database_load"
+                        )
+                        if worker_fell_back:
+                            diagnostics["index_sync_fallback_full"] = True
                         diagnostics["document_count"] = int(database_snapshot.get("document_count") or 0)
                         diagnostics["vector_count"] = int(database_snapshot.get("vector_count") or 0)
+                        diagnostics["sync_applied_upserts"] = int(database_snapshot.get("applied_upserts") or 0)
+                        diagnostics["sync_applied_deletes"] = int(database_snapshot.get("applied_deletes") or 0)
                     probe_update(index_build={
                         "document_count": int(database_snapshot.get("document_count") or 0),
                         "vector_count": int(database_snapshot.get("vector_count") or 0),

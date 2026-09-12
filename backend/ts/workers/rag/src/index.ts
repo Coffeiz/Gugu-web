@@ -14,6 +14,7 @@ import type {
 } from "../../../packages/contracts/src/rag.ts";
 import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
 import { createPostgresClient } from "../../../packages/data-runtime/src/postgres.ts";
+import type { RagCursor } from "../../../packages/data-runtime/src/contracts.ts";
 import { DataRuntime } from "../../../packages/data-runtime/src/runtime.ts";
 import { createStorageReaderFromEnv } from "../../../packages/data-runtime/src/storage-reader.ts";
 import { tokenizeRaw } from "./tokenizer.ts";
@@ -43,6 +44,9 @@ type State = {
   docFreq: Map<string, number>;
   avgLength: number;
   totalLength: number;
+  /** 增量同步水位：已应用到索引的最后一行 (indexed_at, id)。
+   * null = 未知（旧索引文件/无水位）→ 下次同步回退全量装载。 */
+  watermark: RagCursor | null;
   indexDir?: string;
 };
 
@@ -104,7 +108,8 @@ function makeState(indexDir?: string): State {
     restoreProbe: { stage_ms: {}, counts: {} },
     vectors: new Map(), vectorVersion: "",
     documents: [], documentsById: new Map(), postings: new Map(),
-    lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0, indexDir,
+    lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0,
+    watermark: null, indexDir,
   };
 }
 
@@ -195,6 +200,9 @@ async function restore(state: State): Promise<void> {
   stageStarted = performance.now();
   try {
     replaceInMemory(state, parsed.revision ?? "", parsed.documents ?? []);
+    state.watermark = (parsed.watermark && typeof parsed.watermark.ts === "string")
+      ? { ts: String(parsed.watermark.ts), id: Number(parsed.watermark.id || 0) }
+      : null;
     recordProbeStage(probe, "restore_index_install", stageStarted);
     probe.counts.documents = state.documents.length;
     stageStarted = performance.now();
@@ -292,7 +300,8 @@ async function persist(state: State, probe?: WorkerProbe): Promise<void> {
   const temporary = `${target}.tmp`;
   stageStarted = performance.now();
   const serialized = JSON.stringify({
-    version: VERSION, revision: state.revision, documents: state.documents,
+    version: VERSION, revision: state.revision, watermark: state.watermark,
+    documents: state.documents,
     vectors: Object.fromEntries(state.vectors), vector_version: state.vectorVersion,
   });
   if (probe) {
@@ -426,6 +435,86 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const revision = await getDataRuntime().getRagIndexRevision({ ownerId: request.owner_id });
     return { status: "ok", version: VERSION, revision };
   }
+  if (request.op === "sync_index_from_database") {
+    const operationStarted = performance.now();
+    const probe: WorkerProbe = {
+      stage_ms: {},
+      counts: { applied_upserts: 0, applied_deletes: 0, scanned_rows: 0, passes: 0, fallback_full: 0 },
+    };
+    assertWorkerOwner(request.owner_id);
+    const target = String(request.revision || "");
+    if (!target) throw new Error("sync_index_from_database 需要 revision");
+
+    // 水位缺失/解析失败/落后超过墓碑保留视界 → 全量装载兜底
+    const HORIZON_MS = 31 * 24 * 3600 * 1000;
+    const watermarkUsable = state.watermark
+      && !Number.isNaN(Date.parse(state.watermark.ts))
+      && Date.parse(state.watermark.ts) >= Date.now() - HORIZON_MS;
+    if (!watermarkUsable) {
+      probe.counts.fallback_full = 1;
+      recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
+      return handle(state, transient, {
+        op: "load_index_from_database",
+        owner_id: request.owner_id,
+        revision: request.revision,
+        vector_version: request.vector_version,
+      });
+    }
+
+    const upsertsAcc: Document[] = [];
+    const deletesAcc: string[] = [];
+    let cursor: RagCursor = state.watermark;
+    let passes = 0;
+    let overflow = false;
+    const deltaStarted = performance.now();
+    while (true) {
+      const delta = await getDataRuntime().loadRagIndexDelta(
+        { ownerId: request.owner_id }, cursor,
+      );
+      probe.counts.scanned_rows = Number(probe.counts.scanned_rows || 0) + delta.documents.length + delta.deleteIds.length;
+      for (const document of delta.documents) upsertsAcc.push(document);
+      for (const id of delta.deleteIds) deletesAcc.push(id);
+      if (!delta.cursor) break;
+      cursor = delta.cursor;
+      passes += 1;
+      if (!delta.hasMore) break;
+      if (passes >= 50) { overflow = true; break; }
+    }
+    probe.stage_ms.data_runtime_delta = Math.max(0, Math.round(performance.now() - deltaStarted));
+
+    if (overflow) {
+      // 变更量超出单次同步预算：放弃半截增量，走全量保证一致性
+      probe.counts.fallback_full = 1;
+      recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
+      return handle(state, transient, {
+        op: "load_index_from_database",
+        owner_id: request.owner_id,
+        revision: request.revision,
+        vector_version: request.vector_version,
+      });
+    }
+
+    const installStarted = performance.now();
+    patchInMemory(state, target, upsertsAcc, deletesAcc);
+    recordProbeStage(probe, "index_install_build", installStarted);
+    state.watermark = cursor;
+    probe.counts.applied_upserts = upsertsAcc.length;
+    probe.counts.applied_deletes = deletesAcc.length;
+    probe.counts.passes = passes;
+    if (upsertsAcc.length || deletesAcc.length) await persist(state, probe);
+    recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
+    return {
+      status: "ok", version: VERSION, revision: state.revision,
+      document_count: state.documents.length,
+      estimated_bytes: Buffer.byteLength(JSON.stringify(state.documents), "utf8"),
+      vector_count: state.vectors.size,
+      vector_version: state.vectorVersion,
+      applied_upserts: upsertsAcc.length,
+      applied_deletes: deletesAcc.length,
+      fallback_full: 0,
+      probe,
+    };
+  }
   if (request.op === "load_index_from_database") {
     const operationStarted = performance.now();
     const probe: WorkerProbe = { stage_ms: {}, counts: {} };
@@ -436,6 +525,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       probe.stage_ms[`data_runtime_${name}`] = elapsed;
     }
     Object.assign(probe.counts, result.probe.counts);
+    state.watermark = result.watermark ?? null;
 
     stageStarted = performance.now();
     replaceInMemory(state, request.revision, result.snapshot.documents);

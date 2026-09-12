@@ -45,6 +45,9 @@ def _use_fake_sidecar(monkeypatch):
         async def database_revision(self, _owner_user_id):
             return None
 
+        async def sync_index_from_database(self, owner_user_id, revision, vector_version=""):
+            return await self.load_index_from_database(owner_user_id, revision, vector_version)
+
         async def load_index_from_database(self, owner_user_id, revision, vector_version=""):
             from app.db import session as db_session
             from agent.rag.index_cache import load_index_documents

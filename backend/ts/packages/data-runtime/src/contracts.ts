@@ -141,6 +141,18 @@ export type MemoryScopeState = {
   tombstoned: boolean;
 };
 
+export type RagCursor = { ts: string; id: number };
+
+export type RagIndexDelta = {
+  documents: RagDocument[];
+  /** 软删墓碑行对应的 worker 文档键（增量删除） */
+  deleteIds: string[];
+  /** 本批最后一行的 (indexed_at, id)；无更多行时为 null */
+  cursor: RagCursor | null;
+  hasMore: boolean;
+  probe: { stage_ms: Record<string, number>; counts: Record<string, number> };
+};
+
 export type DataChunk = DataDocument & {
   chunk_id: string;
   chunk_index: number;
