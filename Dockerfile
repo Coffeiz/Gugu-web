@@ -103,8 +103,8 @@ RUN curl -fsSL -o /tmp/gst-base.deb \
 # 是无底洞，切回官方 security pool 做整段 upgrade 自动覆盖后续 CVE；
 # 镜像源同步追平后可移除本段。
 RUN sed -i \
-        -e "s|https\?://${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
-        -e "s|https\?://${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
+        -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
+        -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get upgrade -y \
