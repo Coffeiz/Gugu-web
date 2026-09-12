@@ -536,12 +536,13 @@ class KnowledgeIndexCache:
     async def _revision(self, db, owner_user_id: object) -> str | None:
         from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
 
+        # max(indexed_at) 必须含墓碑行（软删行）：这是 worker 增量同步的单游标水位。
+        # 纯删除时墓碑自身的时间戳推进 revision，删除才能被 worker 看见。
         rows = (await db.execute(select(
             KnowledgeIndexEntry.source_type,
             func.max(KnowledgeIndexEntry.indexed_at),
         ).where(
             KnowledgeIndexEntry.owner_user_id == owner_user_id,
-            KnowledgeIndexEntry.deleted_at.is_(None),
         ).group_by(KnowledgeIndexEntry.source_type))).all()
         if not rows:
             return None

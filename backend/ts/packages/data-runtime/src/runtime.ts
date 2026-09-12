@@ -23,7 +23,7 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2_000;
 const CONVERSATION_CONTEXT_MAX_CHARS = 600;
 const RAG_TOKENIZER_VERSION = "ts-jieba-words-v3";
-const RAG_PROJECTION_VERSION = "rag-projection-v3";
+const RAG_PROJECTION_VERSION = "rag-projection-v4";
 
 function conversationContext(value: unknown): string {
   return Array.from(String(value || "")).slice(0, CONVERSATION_CONTEXT_MAX_CHARS).join("");
@@ -374,11 +374,11 @@ export class DataRuntime {
     let stageStarted = performance.now();
     const rows = await this.query(() => this.sql`
       SELECT source_type, MAX(indexed_at) OVER (PARTITION BY source_type) AS max_indexed_at,
-             source_id, scope_type, scope_id, platform, bot_id, group_id,
+             deleted_at, source_id, scope_type, scope_id, platform, bot_id, group_id,
              document_id, parent_document_id, document_version, chunk_index, chunk_count,
              title, summary, content, metadata_json, source_updated_at
       FROM knowledge_index_entries
-      WHERE owner_user_id = ${ownerId} AND deleted_at IS NULL
+      WHERE owner_user_id = ${ownerId}
       ORDER BY id ASC
     `);
     probe.stage_ms.database_query = Math.max(0, Math.round(performance.now() - stageStarted));
@@ -406,6 +406,7 @@ export class DataRuntime {
     stageStarted = performance.now();
     const documents: RagDocument[] = [];
     for (const row of rows) {
+      if (row.deleted_at !== null && row.deleted_at !== undefined) continue;
       const sourceType = String(row.source_type || "");
       const sourceId = String(row.source_id || "");
       const parentId = String(row.parent_document_id || row.document_id || "");
@@ -466,7 +467,7 @@ export class DataRuntime {
     const rows = await this.query(() => this.sql`
       SELECT source_type, MAX(indexed_at) AS max_indexed_at
       FROM knowledge_index_entries
-      WHERE owner_user_id = ${ownerId} AND deleted_at IS NULL
+      WHERE owner_user_id = ${ownerId}
       GROUP BY source_type
       ORDER BY source_type
     `);

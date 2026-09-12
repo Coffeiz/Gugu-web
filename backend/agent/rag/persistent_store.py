@@ -1,10 +1,10 @@
 """统一知识索引的数据库持久化存储。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 
 from agent.rag.models import IndexDocument, Scope
 from app.models import KnowledgeIndexEntry
@@ -71,6 +71,26 @@ def _from_row(row: KnowledgeIndexEntry) -> IndexDocument:
     )
 
 
+# 软删墓碑保留期：worker 增量同步的水位只要落后不超过该视界就能看见删除；
+# 超过视界未同步的 worker 走全量 load 兜底。定期物理清理防表膨胀。
+TOMBSTONE_RETENTION = timedelta(days=30)
+
+
+async def _prune_tombstones(db, owner_user_id: object, source_type: str) -> int:
+    """物理清理超过保留期的软删墓碑行；顺路执行，失败不影响主写入。"""
+    try:
+        threshold = now_utc() - TOMBSTONE_RETENTION
+        result = await db.execute(delete(KnowledgeIndexEntry).where(
+            KnowledgeIndexEntry.owner_user_id == owner_user_id,
+            KnowledgeIndexEntry.source_type == source_type,
+            KnowledgeIndexEntry.deleted_at.is_not(None),
+            KnowledgeIndexEntry.deleted_at < threshold,
+        ))
+        return result.rowcount or 0
+    except Exception:
+        return 0
+
+
 async def replace_source_documents(
     db,
     owner_user_id: object,
@@ -113,9 +133,15 @@ async def replace_source_documents(
         row.deleted_at = None
         row.indexed_at = now_utc()
     stale = [row for key, row in existing.items() if key not in wanted]
+    stamp = now_utc()
     for row in stale:
-        await db.delete(row)
+        # 软删墓碑：worker 增量同步靠 (owner, source, indexed_at > 水位) 才能看见删除。
+        # 已是墓碑的行不刷新时间戳（保留其原始删除时刻，GC 视界语义稳定）。
+        if row.deleted_at is None:
+            row.deleted_at = stamp
+            row.indexed_at = stamp
     await db.flush()
+    await _prune_tombstones(db, owner_user_id, source_type)
     if stats is not None:
         stats["inserted"] = inserted
         stats["updated"] = len(documents) - inserted
@@ -153,11 +179,12 @@ async def apply_document_patch(
 ) -> dict[str, int]:
     """把单父文档的最新 chunk 集写入持久索引；只触碰该文档的行。
 
-    语义是「父文档作用域 replace」：该 parent 下不属于 upsert 键集的行一律
-    删除——主数据版本推进、chunk 收缩、正文改写都不会残留旧 chunk。
-    写完后把该来源全部行的 indexed_at 推进到同一时刻：owner revision 取
-    max(indexed_at)，纯删除时若不推进，查询侧会误判 worker 仍是最新的。
-    返回 inserted/updated/deleted 计数。
+    语义是「父文档作用域 replace」：该 parent 下不属于 upsert 键集的行打上
+    软删墓碑——主数据版本推进、chunk 收缩、正文改写都不会残留旧 chunk。
+    墓碑行带 deleted_at/indexed_at 双时间戳：worker 增量同步的单游标
+    （indexed_at > 水位）既能看见 upsert 也能看见删除，纯删除同样推进 revision，
+    因此不再需要旧协议的「整来源 bump indexed_at」（那是硬删不可见时代的补偿，
+    也是破坏增量读的元凶）。返回 inserted/updated/deleted 计数。
     """
     import time as _time
 
@@ -193,19 +220,11 @@ async def apply_document_patch(
     deleted = 0
     for key, row in existing.items():
         if key not in wanted:
-            await db.delete(row)
+            row.deleted_at = stamp
+            row.indexed_at = stamp
             deleted += 1
-    # owner revision 取该来源 max(indexed_at)；纯删除时没有任何行推进时间戳，
-    # 显式整来源 bump，保证查询侧能检测到变化。
-    await db.execute(
-        update(KnowledgeIndexEntry)
-        .where(
-            KnowledgeIndexEntry.owner_user_id == owner_user_id,
-            KnowledgeIndexEntry.source_type == source_type,
-        )
-        .values(indexed_at=stamp)
-    )
     await db.flush()
+    await _prune_tombstones(db, owner_user_id, source_type)
     from agent.rag.index_cache import invalidate_index_cache
     await invalidate_index_cache(owner_user_id, source_type)
     return {
