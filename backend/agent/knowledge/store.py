@@ -19,6 +19,7 @@ _MAX_TOPIC = 40
 _MAX_KEYWORDS = 10
 _MAX_KEYWORD = 40
 _MAX_CONTENT = 3000
+_MAX_DESCRIPTION = 150
 _MAX_SOURCE_LABEL = 120
 _MAX_SOURCE_REF = 300
 _MAX_HISTORY = 5
@@ -54,6 +55,7 @@ def _serialize(entry: KnowledgeEntry) -> bytes:
         "title": entry.title,
         "topic": entry.topic,
         "keywords_json": entry.keywords,
+        "description": entry.description,
         "scope_json": entry.scope.__dict__,
         "source_json": entry.source.to_dict(),
         "confidence": entry.confidence,
@@ -99,6 +101,7 @@ def _parse(raw: bytes) -> KnowledgeEntry:
         "title": fields.get("title", ""),
         "topic": fields.get("topic", ""),
         "keywords": obj("keywords_json", []),
+        "description": fields.get("description", ""),
         "content": content,
         "scope": obj("scope_json", {}),
         "source": obj("source_json", {}),
@@ -117,6 +120,7 @@ def _validate(entry: KnowledgeEntry) -> None:
         ("title", entry.title, _MAX_TITLE),
         ("topic", entry.topic, _MAX_TOPIC),
         ("content", entry.content, _MAX_CONTENT),
+        ("description", entry.description, _MAX_DESCRIPTION),
         ("source_label", entry.source.label, _MAX_SOURCE_LABEL),
         ("source_ref", entry.source.ref, _MAX_SOURCE_REF),
     ):
@@ -207,7 +211,9 @@ class KnowledgeStore:
                 entry.keywords = list(current.keywords)
             same_content = _norm(current.content) == _norm(entry.content)
             same_keywords = current.keywords == entry.keywords
-            if same_content and same_keywords:
+            # description 单独变化也要落盘升版本，否则只调描述的更新会被吞掉。
+            same_description = _norm(current.description) == _norm(entry.description)
+            if same_content and same_keywords and same_description:
                 return current
             if same_content:
                 entry.id = current.id

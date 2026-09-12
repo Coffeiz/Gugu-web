@@ -54,6 +54,9 @@ class KnowledgeEntry:
     updated_at: float = field(default_factory=time.time)
     active: bool = True
     history: list[dict] = field(default_factory=list)
+    # 触发式一句话描述（≤150 字符）：说明未来什么情况下需要这条知识，
+    # 供模型判断相关性；不参与 topic 去重身份。
+    description: str = ""
 
     @classmethod
     def create(
@@ -63,6 +66,7 @@ class KnowledgeEntry:
         content: str,
         topic: str = "",
         keywords: list[str] | None = None,
+        description: str = "",
         scope: KnowledgeScope,
         source: KnowledgeSource,
         confidence: KnowledgeConfidence = "confirmed",
@@ -73,7 +77,7 @@ class KnowledgeEntry:
             id=f"knowledge-{uuid.uuid4().hex}", title=title.strip(),
             content=content.strip(), topic=topic.strip(), keywords=list(keywords or []), scope=scope,
             source=source, confidence=confidence, parent_id=parent_id,
-            created_at=now, updated_at=now,
+            created_at=now, updated_at=now, description=description.strip(),
         )
 
     def to_dict(self) -> dict:
@@ -96,4 +100,5 @@ class KnowledgeEntry:
             updated_at=float(raw.get("updated_at") or time.time()),
             active=bool(raw.get("active", True)),
             history=list(raw.get("history") or []),
+            description=str(raw.get("description") or ""),
         )

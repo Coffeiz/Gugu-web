@@ -116,6 +116,7 @@ async def _save_knowledge(db, user_id, args: dict):
             confidence=args.get("confidence", "confirmed"),
             capture_mode=args.get("capture_mode", "explicit"),
             keywords=[item for item in keywords if isinstance(item, str)] if isinstance(keywords, list) else [],
+            description=args.get("description", ""),
         )
     except ValueError as exc:
         return {"error": str(exc)}
@@ -147,8 +148,9 @@ async def _update_knowledge(db, user_id, args: dict):
     old = next((item for item in entries if item.id == entry_id), None)
     if old is None:
         return {"error": "知识条目不存在或已删除；先用 search_memory 查询获取有效的 knowledge_id"}
-    # content 省略 = 部分更新（只调标题/主题/关键词等元数据），正文保持不变
+    # content 省略 = 部分更新（只调标题/主题/关键词/描述等元数据），正文保持不变
     content = str(args.get("content") or "").strip() or old.content
+    description = str(args.get("description") or "").strip() or old.description
     keywords = args.get("keywords")
     confidence = str(args.get("confidence") or old.confidence or "probable").strip().lower()
     if confidence not in {"confirmed", "probable", "unverified"}:
@@ -159,6 +161,7 @@ async def _update_knowledge(db, user_id, args: dict):
             topic=args.get("topic") or old.topic,
             source_type=old.source.type, source_ref=old.source.ref, source_label=old.source.label,
             confidence=confidence, capture_mode="explicit",
+            description=description,
             keywords=(
                 # 容忍模型混入数字等标量（如 2026），统一转字符串；复杂结构丢弃
                 [str(item).strip() for item in keywords
@@ -225,6 +228,9 @@ class MemorySkill(BaseSkill):
             "save_knowledge 对同主题条目是整段替换，直接保存会覆盖旧正文。"
             "keywords 填未来检索时可能出现的稳定别名、工具名或专有名词，最多10个，"
             "单个不超过40字符，必须能从标题、主题或正文直接支持；不要把关键词当成额外事实。"
+            "description 用一句触发式描述说明未来什么情况下需要这条知识，"
+            "不超过150字符，帮助日后判断这条知识和当前任务是否相关；"
+            "省略时只能靠标题和主题判断。"
             "成功后会立即返回 knowledge_id 和 index_status=queued，但检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
         ),
         input_schema={
@@ -234,6 +240,7 @@ class MemorySkill(BaseSkill):
                 "content": {"type": "string", "maxLength": 3000},
                 "topic": {"type": "string"},
                 "keywords": {"type": "array", "items": {"type": "string"}},
+                "description": {"type": "string", "maxLength": 150},
                 "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"]},
                 "source_ref": {"type": "string"},
                 "source_label": {"type": "string"},
@@ -251,10 +258,11 @@ class MemorySkill(BaseSkill):
         description=(
             "更新一条已存在的知识条目：修正记录错误、刷新过时内容或合并补充信息。"
             "knowledge_id 必须来自 search_memory 的真实结果。"
-            "content 省略时保留原正文，只调整标题、主题或关键词等字段；"
+            "content 省略时保留原正文，只调整标题、主题、关键词或描述等字段；"
             "提供 content 时必须是合并旧内容后的完整正文，不要只写新增或修改的部分。"
-            "title、topic、keywords 省略时保留原值，keywords 需要调整时给出完整新列表"
-            "（最多10个，非字符串元素自动转为字符串）。"
+            "title、topic、keywords、description 省略时保留原值，keywords 需要调整时给出完整新列表"
+            "（最多10个，非字符串元素自动转为字符串）；description 提供时用一句触发式描述"
+            "说明何时需要这条知识（不超过150字符）。"
             "内容与关键词都没有变化时不产生新版本。"
             "成功后检索索引异步更新；不要为了验证而在同一轮连续重复搜索。"
         ),
@@ -266,6 +274,7 @@ class MemorySkill(BaseSkill):
                 "title": {"type": "string"},
                 "topic": {"type": "string"},
                 "keywords": {"type": "array", "items": {"type": "string"}},
+                "description": {"type": "string", "maxLength": 150},
                 "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"]},
             },
             "required": ["knowledge_id"],
