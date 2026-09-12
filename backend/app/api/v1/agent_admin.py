@@ -190,6 +190,17 @@ PLACEHOLDERS = [
 # policy（内容政策）、reflection（反思提炼）、compress（记忆压缩）
 SPECIAL_PROMPTS = ["persona", "skills", "policy", "reflection", "compress"]
 
+# compress 的运行时消费方是 agent/memory/memory_compress.py，实际文件名是
+# memory_compress.md；其余特殊 prompt 与 tab 同名。此前直接拼 compress.md，
+# 文件不存在导致 Admin「记忆压缩」tab 永远显示空、保存也落到无人读取的文件。
+SPECIAL_PROMPT_FILES = {
+    "persona": "persona.md",
+    "skills": "skills.md",
+    "policy": "policy.md",
+    "reflection": "reflection.md",
+    "compress": "memory_compress.md",
+}
+
 
 class ImMemoryMaintenanceRequest(BaseModel):
     confirm: bool = False
@@ -356,7 +367,8 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
 def _prompt_path(profile: str) -> Path:
     if profile not in SPECIAL_PROMPTS and profile not in PROFILES:
         raise HTTPException(400, f"未知 profile: {profile}，可选：{SPECIAL_PROMPTS + PROFILES}")
-    return PROMPTS_DIR / f"{profile}.md"
+    name = SPECIAL_PROMPT_FILES.get(profile, f"{profile}.md")
+    return PROMPTS_DIR / name
 
 
 @router.get("/prompts")
@@ -389,7 +401,7 @@ async def list_prompts():
     })
     # reflection / compress：记忆相关提炼词，非对话 profile，谨慎修改
     for sp in ("reflection", "compress"):
-        spp = PROMPTS_DIR / f"{sp}.md"
+        spp = _prompt_path(sp)
         profiles.append({
             "profile": sp,
             "exists": spp.exists(),
