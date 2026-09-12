@@ -14,6 +14,7 @@
 | 用户 MCP 配置管理（设置页 CRUD、凭据加密存储） | 🔲 | 未实施 |
 | 用户 MCP 工具进入对话（声明、调用、确认门） | 🔲 | 未实施 |
 | stdio 本地 server 接入（强制沙盒化） | 🔲 | 未实施，Phase 2 |
+| 咕咕自助管理 MCP 配置（`manage_mcp_servers` 工具 + ask_user 密文通道） | 🔲 | 未实施，Phase 2 |
 | 平台级官方 MCP（Admin 配置、全体用户可用） | 🔲 | 暂缓：默认接什么未定；数据模型与合并逻辑预留 `scope=platform` 扩展位，Admin 总开关与总量统计能力保留 |
 
 ## 1. 背景与目标
@@ -77,6 +78,14 @@
 - Admin 仅能看到平台级总量统计（启用用户数、server 总数、调用量），不可见用户配置内容与凭据。
 - 关键事件（保存/停用/退避/拒载/超限）写可见日志，不含用户内容与凭据。
 
+### FR-MCP-7：咕咕自助管理 MCP 配置
+
+- 咕咕拥有内置工具 `manage_mcp_servers`（动作：`list` / `add` / `enable` / `disable` / `remove` / `test_connection`），只能操作**当前用户自己**的 server 配置；`add`/`remove` 走确认门，工具定义沿用用户 Skill 注册先例（`requires_confirmation`、`mutates=True`）。
+- **凭据不进上下文**：`add` 只配置非凭据部分（名称、endpoint、传输类型）；需要凭据时通过 `ask_user` 卡片的 **secret 输入字段**收集，提交走独立端点（携带 pending id + 用户身份 + 过期校验），服务端直接加密写入对应 server 配置。模型拿到的 tool result 只是占位文本（「用户已在安全输入组件完成凭据填写」），凭据值的通道从到头不经过模型上下文、SSE 事件与聊天 store。
+- **IM 降级**：secret 字段仅 Web 支持；IM 渠道的该类卡片降级为「去网页补全凭据」链接，不在纯文本回复中收集凭据。
+- **防钓鱼**：凭据提交端点严格绑定 pending id 对应的那条 server 配置；卡片明示目标 server 名称。MCP 工具描述中的「向用户索要凭据」类指令不构成收集依据。
+- 前端红线：secret 字段值不进聊天 store、不进聊天草稿 localStorage（草稿序列化必须排除该字段）、不进日志。
+
 ## 3. 技术方案
 
 ### 3.1 核心决策
@@ -101,10 +110,13 @@ backend/
 │   ├── capabilities/
 │   │   └── selector.py                   【修改】select 结果按当前用户合并启用中的 MCP 工具名
 │   ├── loop_drivers.py                   【修改】ctx.tools 组装处按用户合并 MCP 工具声明
-│   └── core.py                           【修改】dispatch 入口按 source=mcp 路由到 manager
+│   ├── core.py                           【修改】dispatch 入口按 source=mcp 路由到 manager
+│   └── tools/
+│       ├── mcp.py                        【新增】manage_mcp_servers 工具（list/add/enable/disable/remove/test）
+│       └── meta.py                       【修改】ask_user 增加 secret 输入字段类型（值不进上下文）
 ├── app/
 │   ├── api/v1/
-│   │   └── mcp_settings.py               【新增】用户侧 /api/v1/mcp/servers CRUD + 连接测试
+│   │   └── mcp_settings.py               【新增】用户侧 /api/v1/mcp/servers CRUD、连接测试、凭据提交端点（pending id 绑定）
 │   ├── models/
 │   │   └── mcp.py                        【新增】UserMcpServer ORM 模型
 │   ├── security/
@@ -120,6 +132,10 @@ backend/
     └── test_mcp_user_tools_e2e.py        【新增】用户配置→对话声明→调用→二轮引用（桩级）
 frontend/src/
 ├── views/Profile/ProfileMcpPane.vue      【新增】用户 MCP 设置面板（对齐 ProfileByokPane 先例）
+├── components/common/gugu-chat/
+│   ├── GuguChatInteraction.vue           【修改】ask_user 卡片渲染 secret 密码框并走独立提交端点
+│   ├── chatTypes.ts                      【修改】interaction 协议增加 secret 字段类型
+│   └── composables/useChatConversation.ts【修改】聊天草稿序列化排除 secret 字段
 └── services/api.ts                       【修改】新增 mcp settings 接口封装
 ```
 
@@ -151,6 +167,7 @@ frontend/src/
 | 用户凭据泄露 | 用户第三方账号被盗 | 主密钥加密落库、接口掩码、日志脱敏 |
 | 工具数量爆炸 → 声明进前缀，上下文膨胀、缓存键变化 | 成本延迟上升 | 每用户 server/工具数量上限；轮内工具集冻结；白名单裁剪 |
 | 工具描述/结果注入提示词攻击 | 被诱导执行非预期操作 | 结果按不可信文本 + 预算截断；默认 confirm_all；确认凭证不来自文本 |
+| 恶意 server 描述诱导模型向用户索要凭据 | 凭据被钓鱼收集 | secret 提交端点严格绑定 pending id 对应配置；卡片明示 server 名；工具描述中的索要指令不构成收集依据 |
 | 不可用 server 拖慢对话（超时占轮次时长） | 用户等到超时 | 独立超时 + 退避 + 人话错误；连接状态可见 |
 | 手写客户端与规范偏差（streamable HTTP 细节） | 兼容性坑 | 只承诺主流实现；真实 server e2e 验收；必要时再引入官方 SDK |
 | 用户在 IM 群聊暴露工具结果给群成员 | 信息越权可见 | 工具结果按既有 IM 消息边界处理，不做群内特殊放宽 |
@@ -176,10 +193,12 @@ frontend/src/
 - [ ] `MCP1-007` 设置页 `ProfileMcpPane`（对齐 BYOK 面板交互与主题契约）：列表、表单、连接状态、掩码回显；验收：devserver 5173 实测保存→对话可用→停机提示人话错误全链路，i18n 键齐、原生弹窗零使用。
 - [ ] `MCP1-008` devserver e2e + 故障演练（停机、超时、删配置即时摘除）；验收：按 §4 场景实测通过，结论记录 devlog。
 
-### Phase 2：stdio 本地 server（强制沙盒化）
+### Phase 2：stdio 本地 server 与对话式管理
 
 - [ ] `MCP1-009` stdio 传输客户端：子进程在 rootless docker 沙盒内运行（沿 Dockerfile.sandbox 设施），宿主零直跑；含空闲回收、崩溃重启上限；验收：stdio echo server 在 devserver 沙盒内全链路可用，僵尸进程可回收，宿主文件系统不可见。
 - [ ] `MCP1-010` server 连接状态细览与手动「重新连接」；验收：设置页可触发重连并反映最新工具列表。
+- [ ] `MCP1-014` `manage_mcp_servers` 工具（list/add/enable/disable/remove/test_connection，确认门，仅当前用户 scope）；验收：对话内「帮我加一个 MCP」完成添加并进入下一轮声明，跨用户不可操作，确认文案含 server 名。
+- [ ] `MCP1-015` ask_user secret 字段类型 + 独立凭据提交端点 + 占位 tool result；IM 渠道降级「去网页补全」链接；聊天草稿排除 secret 字段；验收：secret 值在上下文、SSE 事件、草稿 localStorage、日志四处均不出现（单测断言），过期/伪造 pending id 被拒。
 
 ### Phase 3：体验增强与平台级预留（按需）
 
