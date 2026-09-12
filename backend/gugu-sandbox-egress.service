@@ -1,0 +1,33 @@
+[Unit]
+Description=Gugu Rootless Docker Egress Proxy Bootstrap
+Wants=network-online.target
+After=network-online.target
+Before=gugu-sandboxd.service
+
+[Service]
+Type=oneshot
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+Environment="HOME=__RUN_HOME__"
+Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
+Environment="XDG_RUNTIME_DIR=/run/user/__RUN_UID__"
+Environment="GUGU_EGRESS_PROXY_URL=http://egress-proxy:3128"
+Environment="GUGU_EGRESS_PROXY_CONTAINER_NAME=egress-proxy"
+Environment="SANDBOX__EGRESS_NETWORK_NAME=gugu-sandbox-egress"
+Environment="GUGU_EGRESS_CONFIG_FILE=__APP_DIR__/config.override.json"
+Environment="GUGU_EGRESS_PROXY_IMAGE=ubuntu/squid:latest"
+Environment="SQUID_CONF_PATH=__APP_DIR__/../squid/egress.conf"
+ExecStart=__APP_DIR__/scripts/sandbox_egress_init.sh
+RemainAfterExit=yes
+# 冷拉 ubuntu/squid 全量实测 ~3.5 分钟（273MB），网络慢时更久；90s 默认会掐断首启。
+TimeoutStartSec=300s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=__APP_DIR__/../squid/egress.conf
+
+[Install]
+WantedBy=multi-user.target
