@@ -14,6 +14,7 @@ from app.services.interactions import (
     _hash_token,
     consume_action,
     consume_choice_text,
+    consume_custom_text,
     consume_text,
     create_agent_prompt,
     create_goal_mode_prompt,
@@ -200,6 +201,85 @@ async def test_ask_user_tool_result_creates_waiting_prompt(db, user_a):
     assert [item["id"] for item in actions] == ["talk", "sleep", CUSTOM_REPLY_OPTION_ID]
     assert prompt.schema_json["source"] == "agent"
     assert prompt.schema_json["allow_text_input"] is True
+
+
+@pytest.mark.asyncio
+async def test_question_prompt_without_options_still_offers_custom_reply(db, user_a):
+    """开放性提问（question、0 选项）也必须有自定义回复兜底按钮。
+
+    token 只随选项生成：0 选项时 rendered=[] 意味着网页端没有任何回答入口，
+    用户打字只能进消息排队。兜底后走与 choice 相同的两步式文本回答。
+    """
+    session = ConversationSession(user_id=user_a.id, title="开放提问", source="web")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-open-question",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "question",
+            "title": "这个文件夹建在哪、叫什么？",
+            "body": "告诉我两点就行",
+            "options": [],
+        },
+    )
+
+    assert prompt.kind == "question"
+    assert prompt.schema_json["options"] == [
+        {"id": CUSTOM_REPLY_OPTION_ID, "label": "自定义回复", "action_type": "custom_reply"},
+    ]
+    assert [item["id"] for item in actions] == [CUSTOM_REPLY_OPTION_ID]
+
+    custom = actions[0]
+    awaiting = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        token=custom["token"], event_id="evt-open-activate",
+    )
+    assert awaiting["result"]["status"] == "awaiting_text"
+    answered = await consume_text(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        text="建在个人文件库，叫「插画参考」", event_id="evt-open-text",
+    )
+    assert answered["result"]["status"] == "answered"
+    stored = await db.get(InteractionPrompt, prompt.id)
+    assert stored.status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_im_plain_text_answers_question_prompt_with_fallback_button(db, user_a):
+    """兜底按钮不算真实选项：IM 用户不点按钮、直接打字仍能回答开放性提问。"""
+    session = ConversationSession(user_id=user_a.id, title="IM 直答", source="qq")
+    db.add(session)
+    await db.commit()
+
+    prompt, _actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-im-open",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "question",
+            "title": "想看哪块的新闻？",
+            "body": "随便说说就行",
+            "options": [],
+        },
+    )
+    await db.commit()
+
+    result = await consume_custom_text(
+        db, user_id=user_a.id, session_id=session.id,
+        text="看看 F1", event_id="evt-im-open",
+    )
+    assert result is not None
+    assert result["result"]["status"] == "answered"
+    assert result["prompt_id"] == prompt.id
+    stored = await db.get(InteractionPrompt, prompt.id)
+    assert stored.status == "resolved"
 
 
 async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(db, user_a):
@@ -393,6 +473,67 @@ async def test_create_skill_confirmation_is_bridged_to_web_and_im_prompt(db, use
     assert history[-1]["task_paused"] is True
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "title_fragment"),
+    [
+        ("create_scheduled_task", "新建定时任务"),
+        ("update_scheduled_task", "更新定时任务"),
+        ("canvas_batch", "批量编排画布"),
+    ],
+)
+async def test_confirmable_tool_result_is_bridged_to_confirmation(
+    db, user_a, tool_name, title_fragment,
+):
+    """条件式授权/批量删除确认都必须生成确认卡。"""
+    session = ConversationSession(user_id=user_a.id, title="工具确认", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name=tool_name,
+        tool_call_id=f"call-{tool_name}",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "需要用户确认后继续执行本次操作",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+
+    assert interaction is not None
+    assert interaction["kind"] == "confirm"
+    assert interaction["task_paused"] is True
+    assert title_fragment in interaction["title"]
+    assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
+    assert "opaque-confirm-code" not in json.dumps(interaction, ensure_ascii=False)
+    history = await list_history(db, user_id=user_a.id, session_id=session.id)
+    assert history[-1]["task_paused"] is True
+
+
+async def test_unmarked_scheduled_task_tool_does_not_bridge_confirmation_payload(db, user_a):
+    """确认桥仍只接受显式声明可确认的工具，普通查询工具不能靠返回字段伪造确认卡。"""
+    session = ConversationSession(user_id=user_a.id, title="普通查询", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="list_scheduled_tasks",
+        tool_call_id="call-list-scheduled-tasks",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "不应由查询工具创建确认卡",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+
+    assert interaction is None
+
+
 async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):
     """确认按钮发送失败后的序号/文字回退，必须消费 confirm Prompt。"""
     from app.services.interactions import consume_choice_text
@@ -436,7 +577,9 @@ async def test_agent_text_answer_resolves_agent_prompt(db, user_a):
         source="agent",
     )
     await db.commit()
-    assert actions == []
+    # 0 选项也要有自定义回复兜底按钮（网页回答入口依赖随选项生成的 token）。
+    assert [item["id"] for item in actions] == [CUSTOM_REPLY_OPTION_ID]
+    # 兜底按钮不算真实选项：不先激活自定义输入、直接打字仍然可消费。
     result = await consume_text(
         db, user_id=user_a.id, prompt_id=prompt.id, text="旅行项目", event_id="evt-2"
     )
