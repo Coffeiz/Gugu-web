@@ -375,3 +375,71 @@ async def test_host_transient_short_circuit_avoids_forward(running_host):
         assert client._transient_revision == "mem-7"
     finally:
         await client.close()
+
+
+# ── 宿主 idle reaper：关闭期间被重新激活的 client 不得被回收 ─────────────
+
+
+class _ReapProbeClient:
+    """is_idle/touch/close 行为可控的最小 client 替身。"""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.idle_flag = True
+        self.closed = False
+
+    def touch(self) -> None:
+        self.idle_flag = False
+
+    def is_idle(self, now=None) -> bool:
+        return self.idle_flag
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_host_reaper_rechecks_idle_after_each_close(monkeypatch):
+    """回归：reaper 一次性收集 idle 列表后，关闭 A 的 await 期间 B 来了新请求
+    （touch → is_idle 变 False），轮到 B 时必须重验并跳过，绝不能把刚开始
+    服务的 worker 关掉（旧实现无条件 pop+close，偶发 sidecar unavailable）。"""
+    from agent.rag.sidecar_host import SidecarHost
+
+    host = SidecarHost("/tmp/sss-reap-race.sock")
+    a, b = _ReapProbeClient("a"), _ReapProbeClient("b")
+    host._clients["owner-a"] = a
+    host._clients["owner-b"] = b
+
+    async def a_close():
+        # close(A) 的 await 期间：B 被新请求激活。
+        b.touch()
+        await asyncio.sleep(0.01)
+        a.closed = True
+
+    a.close = a_close
+
+    reaped = await host._reap_once()
+
+    assert a.closed and reaped == 1
+    # B 已被新请求使用：不得回收，且仍是 dict 里那个实例。
+    assert not b.closed
+    assert host._clients.get("owner-b") is b
+    # B 活跃后，下一轮清扫不再动它。
+    assert await host._reap_once() == 0
+
+
+@pytest.mark.asyncio
+async def test_host_reaper_reaps_still_idle_clients_in_order():
+    """正常路径：两个都保持空闲时按列表回收；owner 槽位被清空。"""
+    from agent.rag.sidecar_host import SidecarHost
+
+    host = SidecarHost("/tmp/sss-reap-idle.sock")
+    a, b = _ReapProbeClient("a"), _ReapProbeClient("b")
+    host._clients["owner-a"] = a
+    host._clients["owner-b"] = b
+
+    reaped = await host._reap_once()
+
+    assert reaped == 2
+    assert a.closed and b.closed
+    assert not host._clients

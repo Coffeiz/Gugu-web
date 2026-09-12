@@ -139,14 +139,28 @@ class SidecarHost:
     async def _reap_idle(self) -> None:
         while True:
             await asyncio.sleep(REAP_INTERVAL_SECONDS)
-            idle = [owner for owner, client in self._clients.items()
-                    if client.is_idle()]
-            for owner in idle:
-                client = self._clients.pop(owner)
-                await client.close()
-                _log.info("sidecar 宿主回收空闲 worker owner=%s…", owner[:8])
-            if not self._clients and not idle:
-                continue
+            await self._reap_once()
+
+    async def _reap_once(self) -> int:
+        """清扫一轮空闲 worker，返回回收数。"""
+        idle = [owner for owner, client in self._clients.items()
+                if client.is_idle()]
+        reaped = 0
+        for owner in idle:
+            # 关闭上一个 client 的 await 期间，这个 owner 可能刚来新请求
+            # （_client_for 的 touch 会刷新最后使用时间、请求随后 active++）。
+            # 真正回收前必须在锁内重验「dict 里仍是这个 owner 的 client 且仍
+            # 空闲」；锁不跨 close 的 await——close 期间的新请求会拿到新 client，
+            # 与被回收的旧实例互不影响。
+            async with self._lock:
+                client = self._clients.get(owner)
+                if client is None or not client.is_idle():
+                    continue
+                self._clients.pop(owner, None)
+            await client.close()
+            reaped += 1
+            _log.info("sidecar 宿主回收空闲 worker owner=%s…", owner[:8])
+        return reaped
 
     async def start(self) -> None:
         path = Path(self.socket_path)
