@@ -10,13 +10,13 @@ from __future__ import annotations
 
 DEFAULT_PROMPT_NAME = "default"
 SYSTEM_MEMORY_ENABLED = True
-NON_RESIDENT_TOOL_NAMES = frozenset({"create_skill", "update_skill", "delete_skill"})
+NON_RESIDENT_TOOL_NAMES = frozenset({"list_skills", "create_skill", "update_skill", "delete_skill"})
 
 
 def all_system_tool_names() -> list[str]:
     """返回默认常驻的系统工具名，保持注册顺序。
 
-    Skill 生命周期工具仍在 Registry 和能力目录中可发现，但按既定协议只通过
+    Skill 管理工具仍在 Registry 和能力目录中可发现，但按既定协议只通过
     固定 Adapter 按需获取 Schema，不进入 Provider 的常驻工具 Schema。
     """
     from agent.tools import registry

@@ -1,6 +1,6 @@
-"""用户 Prompt Skill 的创建、更新和删除工具。
+"""Prompt Skill 的查询，以及用户自定义 Skill 的创建、更新和删除工具。
 
-本模块只负责 Skill 生命周期管理；Skill 加载和固定 Adapter 仍由 ``meta.py`` 负责。
+本模块独立注册 Skill 管理工具；Skill 正文仍通过 ``meta.py`` 中的 ``use_skill`` 入口按需加载。
 所有持久化操作都通过 ``SkillCapabilityRegistry``，不直接绕过注册服务写表。
 """
 from __future__ import annotations
@@ -9,6 +9,52 @@ import hashlib
 import json
 
 from agent.tools.base import BaseSkill, Tool
+
+
+async def _list_skills(db, user_id, args: dict):
+    """列出内置技能和当前账号的用户 Skill 元数据，不返回正文。"""
+    from agent import skills as builtin_skills
+    from app.models import UserSkill
+    from sqlalchemy import select
+
+    if db is None or user_id is None:
+        return {"error": "列出技能需要当前账号上下文"}
+
+    rows = (await db.execute(
+        select(UserSkill).where(
+            UserSkill.owner_id == user_id,
+            UserSkill.source == "user",
+        ).order_by(UserSkill.name, UserSkill.slug)
+    )).scalars().all()
+    visible_skills = [
+        {
+            "slug": row["slug"],
+            "name": row["name"],
+            "description_short": row["description_short"],
+            "category": row.get("category", ""),
+            "related_tools": list(row.get("related_tools") or ()),
+            "enabled": True,
+            "source": "builtin",
+        }
+        for row in builtin_skills.skill_metadata()
+    ]
+    visible_skills.extend(
+        {
+            "slug": row.slug,
+            "name": row.name,
+            "description_short": row.description_short,
+            "category": row.category,
+            "related_tools": list(row.related_tools or ()),
+            "enabled": bool(row.enabled),
+            "source": "user",
+        }
+        for row in rows
+    )
+    visible_skills.sort(key=lambda item: (item["name"].casefold(), item["slug"]))
+    return {
+        "count": len(visible_skills),
+        "skills": visible_skills,
+    }
 
 
 async def _create_skill(db, user_id, args: dict):
@@ -153,6 +199,22 @@ async def _delete_skill(db, user_id, args: dict):
 
 SKILL_MANAGEMENT_TOOLS = [
     Tool(
+        name="list_skills",
+        label="列出咕咕技能",
+        description_short="列出内置及当前账号自定义技能和启用状态。",
+        description=(
+            "列出内置 Prompt Skill 和当前账号自定义 Prompt Skill，包含名称、用途、分类、关联工具、启用状态和来源；"
+            "不会返回技能正文，也不会展示其他账号的技能。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+        handler=_list_skills,
+        repeat_safe=True,
+    ),
+    Tool(
         name="create_skill",
         label="创建咕咕技能",
         description_short="创建用户自定义技能并保存可复用做法。",
@@ -227,10 +289,10 @@ SKILL_MANAGEMENT_TOOLS = [
 
 
 class SkillManagementSkill(BaseSkill):
-    """Skill 生命周期工具的注册组。
+    """Skill 管理工具的独立注册组。
 
     该组只负责让固定 Adapter 能在用户需要时发现并 dispatch 工具；不加入默认
-    默认工具集合，因此 create/update/delete_skill 不会作为常驻 Provider Schema 发送。
+    工具集合，因此这些工具不会作为常驻 Provider Schema 发送。
     """
 
     name = "skill-management"

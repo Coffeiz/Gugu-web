@@ -9,9 +9,9 @@ from .selector import CapabilitySelector
 
 CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
-# Skill 生命周期管理不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
+# Skill 管理工具不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
 # 它们不会因此进入 Provider 的首轮工具 Schema。
-ON_DEMAND_TOOL_NAMES = ("create_skill", "update_skill", "delete_skill")
+ON_DEMAND_TOOL_NAMES = ("list_skills", "create_skill", "update_skill", "delete_skill")
 
 
 def _capability_tool_names(tool_names: list[str]) -> list[str]:
@@ -229,6 +229,7 @@ def catalog_block(
     if kind == "skill":
         lines.extend([
             "技能只展示名称和用途；命中技能场景时先使用 `use_skill` 加载正文，再按正文执行。",
+            "用户询问有哪些可用技能或自定义技能启用状态时，先用 `get_tool_schema` 获取 `list_skills` 的 Schema，再通过 `call_tool` 调用；该工具只返回元数据，不返回技能正文。",
             "用户要求创建、修改或删除一套可复用做法时，先用 `get_tool_schema` 获取对应的 Skill 生命周期工具 Schema，"
             "再通过 `call_tool` 调用 `create_skill`、`update_skill` 或 `delete_skill`；不要把 `create_skill` 误当成 `create_project`。",
         ])
@@ -245,6 +246,7 @@ def catalog_block(
             "再通过 `call_tool` 调用 `create_skill`、`update_skill` 或 `delete_skill`；不要把 `create_skill` 误当成 `create_project`；"
             "创建时至少准备 name、description_short、body 和 related_tools，"
             "无关联工具时 related_tools 使用空数组 []。",
+            "用户询问有哪些可用技能或自定义技能启用状态时，先用 `get_tool_schema` 获取 `list_skills` 的 Schema，再通过 `call_tool` 调用；不要为列清单加载技能正文。",
         ])
     ordered_tools = tuple(tool_order or snapshot.tools)
     tools = tuple(

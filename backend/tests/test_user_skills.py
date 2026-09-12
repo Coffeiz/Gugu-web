@@ -7,7 +7,7 @@ from agent.capabilities.errors import CapabilityRegistrationError
 from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.skill_registry import SkillCapabilityRegistry, validate_user_skill
 from agent.tools import registry as tool_registry
-from agent.tools.skill_management import _create_skill
+from agent.tools.skill_management import _create_skill, _list_skills
 from agent.tools.meta import _use_skill
 from agent.interactions.confirmations import confirmation_payload, redeem_confirmation
 from app.models import UserSkill
@@ -65,6 +65,45 @@ async def test_user_skill_is_owned_and_only_enabled_metadata_is_exposed(db, user
     visible = await registry.user_metadata(db, user_a.id)
     assert [item.name for item in visible] == ["morning-briefing"]
     assert not any(item.name == "other-briefing" for item in visible)
+
+
+@pytest.mark.asyncio
+async def test_list_skills_returns_only_current_users_metadata_without_bodies(db, user_a, user_b):
+    registry = SkillCapabilityRegistry()
+    allowed = set(tool_registry._tools)
+    disabled = await registry.create_user_skill(
+        db, user_a.id, allowed_tool_names=allowed, **_payload(name="停用简报"),
+    )
+    await registry.create_user_skill(
+        db, user_b.id, allowed_tool_names=allowed,
+        **_payload(slug="private-briefing", name="其他用户的简报"),
+    )
+    disabled.enabled = False
+    await registry.create_user_skill(
+        db, user_a.id, allowed_tool_names=allowed,
+        **_payload(slug="weekly-review", name="每周复盘"),
+    )
+    await db.commit()
+
+    result = await _list_skills(db, user_a.id, {})
+
+    from agent import skills as builtin_skills
+
+    assert result["count"] == len(builtin_skills.skill_metadata()) + 2
+    listed = {row["slug"]: row for row in result["skills"]}
+    assert {"morning-briefing", "weekly-review"} <= listed.keys()
+    assert "weather" in listed
+    assert listed["weather"]["source"] == "builtin"
+    assert not any(row["slug"] == "private-briefing" for row in result["skills"])
+    assert all("body" not in row for row in result["skills"])
+    assert all("content_digest" not in row for row in result["skills"])
+    assert listed["morning-briefing"]["enabled"] is False
+    assert listed["morning-briefing"]["source"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_list_skills_requires_account_context():
+    assert await _list_skills(None, None, {}) == {"error": "列出技能需要当前账号上下文"}
 
 
 @pytest.mark.asyncio
