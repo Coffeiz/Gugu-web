@@ -735,15 +735,19 @@ async def read_text(meta: dict) -> str:
 def _vision_enabled(model_cfg=None) -> bool:
     """当前模型是否支持多模态。
 
-    保留后台探测/手动开关，同时信任适配器对 DeepSeek Vision 这类明确登记的
-    模型能力，避免新建预设还没点检测时把图片误当普通附件。
+    保留后台探测/手动开关和能力覆写，同时信任适配器已登记的模型能力，
+    避免新建预设还没点检测时把图片误当普通附件。
     """
     try:
         from app.core.config import get_settings
         from agent import providers
         ai = model_cfg or get_settings().ai
         capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
-        return bool(getattr(ai, "vision", False)) or capabilities.vision
+        overrides = getattr(ai, "capability_overrides", None) or {}
+        vision_capability = overrides.get("vision")
+        if not isinstance(vision_capability, bool):
+            vision_capability = capabilities.vision
+        return bool(getattr(ai, "vision", False)) or vision_capability
     except Exception:
         return False
 
@@ -1260,7 +1264,8 @@ def vision_ready(model_cfg=None) -> bool:
     """当前实际运行模型已开启视觉能力。
 
     工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
-    转成 ``image_url``，因此 DeepSeek Vision 也可以读取工具返回的图片。
+    转成 ``image_url``。后台探测/手动开关是显式能力声明，不能再被静态
+    Provider 能力表反向否决。
 
     工具 handler 通常不会显式收到 model_cfg，因此默认优先读取本轮
     ``modelctx`` 绑定的实际模型；只有没有运行上下文时才回退到全局配置。
@@ -1268,14 +1273,12 @@ def vision_ready(model_cfg=None) -> bool:
     """
     try:
         from app.core.config import get_settings
-        from agent import providers
         s = get_settings()
         if model_cfg is None:
             from agent.llm import modelctx
             model_cfg = modelctx.get_model_cfg()
         ai = model_cfg or s.ai
-        capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
-        return _vision_enabled(ai) and (capabilities.vision or capabilities.api_format == "anthropic")
+        return _vision_enabled(ai)
     except Exception:
         return False
 
