@@ -1414,6 +1414,10 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             if vision and ext in VISION_EXTS and len(images) < VISION_IMG_COUNT:
                 try:
                     import base64
+                    # 消费侧硬门：图片同样按 meta["size"] 读前拒绝（VISION_READ_MAX 与
+                    # read_file 看图同一口径），超限走下方「没法直接看」文字提示。
+                    if meta["size"] > VISION_READ_MAX:
+                        raise ValueError("图片超过读取上限")
                     raw = await read_bytes(meta)
                     fitted = _fit_image_for_vision(raw, ext)
                     if fitted:
@@ -1453,11 +1457,13 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                 try:
                     import base64
                     mime = _MEDIA_MIME.get(ext, meta.get("mime") or "application/octet-stream")
-                    # 视频源文件上限用暂存元数据里已有的 meta["size"]（跟 read_file 那边用
-                    # storage.stat() 是同一个思路）在读字节之前就拒绝，不要为了一个注定要
-                    # 拒绝的 500MB+ 视频先把整个文件读进内存（code review 指出）。
+                    # 消费侧硬门：一律先用暂存元数据里的 meta["size"] 拒绝，再碰
+                    # read_bytes——不要为了一个注定要拒绝的大文件先把整包读进内存
+                    # （视频 500MB / 音频 36MB，均为读前拦截，code review 两轮指出）。
                     if is_video and meta["size"] > VIDEO_SOURCE_MAX:
                         raise ValueError("这条视频太大（超过 500MB 处理上限），没法直接看")
+                    if not is_video and meta["size"] > MEDIA_RAW_MAX:
+                        raise ValueError("这条音频太大（超过上限），没法直接听")
                     raw = await read_bytes(meta)
                     if is_video:
                         # 视频决策（压缩阈值/base64 vs mm_file/大小上限）全部在 prepare_video_media
@@ -1474,9 +1480,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                             raw, mime, meta.get("name") or "video.mp4", video_cfg,
                         ))
                     else:
-                        # 音频/语音：保持旧行为，仅 ≤36MB 走 base64
-                        if meta["size"] > MEDIA_RAW_MAX:
-                            raise ValueError("这条音频太大（超过上限），没法直接听")
+                        # 音频/语音：仅 ≤MEDIA_RAW_MAX 走 base64（超限已在 read_bytes 前拦截）
                         media.append({"type": "audio", "mode": "base64", "mime": mime,
                                       "b64": base64.b64encode(raw).decode()})
                     if is_voice:

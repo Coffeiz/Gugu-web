@@ -736,3 +736,53 @@ async def test_small_webm_still_transcodes_under_cap(db, user_a, storage, monkey
         select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
     )).scalars().one()
     assert await storage.get(row.storage_key) == b"converted-mp3"
+
+
+# ── 消费侧硬门：resolve_for_message 按 meta["size"] 在 read_bytes 之前拒绝 ───
+
+@pytest.mark.asyncio
+async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, monkeypatch):
+    """400MB 的 mp3 在发送消息时也不得先整包读进内存再拒绝。"""
+    meta = await chat_attach.stage(user_a.id, "大音频", "mp3", "audio/mpeg", b"mp3-bytes")
+
+    async def _big_meta(_user_id, _aid):
+        return dict(meta, size=100 * 1024 * 1024)
+
+    async def _must_not_read(m):
+        raise AssertionError("超限音频必须在 read_bytes 之前被 size 门拦下")
+
+    monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
+    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+
+    parts, _cards, _images, media = await chat_attach.resolve_for_message(
+        user_a.id, [meta["attach_id"]], "你好")
+    assert "太大" in parts
+    assert media == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, monkeypatch):
+    """假 PNG 声明成几百 MB 时，vision 分支同样读前拒绝。"""
+    meta = await chat_attach.stage(user_a.id, "假大图", "png", "image/png", b"png-bytes")
+
+    async def _big_meta(_user_id, _aid):
+        return dict(meta, size=100 * 1024 * 1024)
+
+    async def _must_not_read(m):
+        raise AssertionError("超限图片必须在 read_bytes 之前被 size 门拦下")
+
+    monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
+    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+
+    parts, _cards, images, media = await chat_attach.resolve_for_message(
+        user_a.id, [meta["attach_id"]], "你好")
+    assert images == [] and media == []
+    assert "没法直接看" in parts
