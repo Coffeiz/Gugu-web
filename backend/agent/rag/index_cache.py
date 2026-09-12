@@ -22,7 +22,9 @@ from app.models import KnowledgeIndexEntry
 
 
 INDEX_CACHE_TTL_SECONDS = 30 * 60
-PER_OWNER_CACHE_BYTES = 32 * 1024 * 1024
+# 单 owner 索引准入预算。32MB 是语料很小时定的：真实用户索引长到 ~56MB（1.9 万
+# 持久文档）后条目永远进不了 Python 缓存，放大每进程 sidecar 冷启动成本；提到 128MB。
+PER_OWNER_CACHE_BYTES = 128 * 1024 * 1024
 GLOBAL_CACHE_BYTES = 512 * 1024 * 1024
 DEFAULT_SOURCE_TYPES = (
     "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
