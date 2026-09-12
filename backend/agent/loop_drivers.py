@@ -50,6 +50,7 @@ from agent.providers.message_utils import (
     _contains_volatile_image,
     _history_cache_state,
     _openai_tool_result,
+    sanitize_openai_tool_history,
     _volatile_message_indices,
     _with_history_cache,
     _with_system_cache_control,
@@ -393,6 +394,7 @@ class OpenAIDriver:
                 messages = _with_history_cache(outbound)
         else:
             messages = outbound
+        messages = sanitize_openai_tool_history(messages)
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         stream = await client.chat.completions.create(

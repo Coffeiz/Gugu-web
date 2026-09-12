@@ -37,6 +37,122 @@ def _volatile_message_indices(messages: list) -> set[int]:
     }
 
 
+def sanitize_openai_tool_history(messages: list) -> list:
+    """在 OpenAI Chat Completions 请求边界移除孤儿或不完整的工具轮次。
+
+    旧会话经过截断/压缩后，可能以 role=tool 开头，或只留下 assistant 的部分
+    parallel tool_calls。OpenAI 兼容 API 要求工具结果紧跟带有对应 tool_calls 的
+    assistant 消息；这类旧记录会直接导致整个请求 400。只改出站副本，不改持久历史。
+    """
+    def clean_sequence(sequence: list[dict]) -> tuple[list[dict], list[int]]:
+        cleaned: list[dict] = []
+        retained_indices: list[int] = []
+        index = 0
+        while index < len(sequence):
+            message = sequence[index]
+            if not isinstance(message, dict):
+                index += 1
+                continue
+
+            calls = message.get("tool_calls")
+            if message.get("role") != "assistant" or not isinstance(calls, list) or not calls:
+                if message.get("role") != "tool":
+                    cleaned.append(dict(message))
+                    retained_indices.append(index)
+                index += 1
+                continue
+
+            calls_by_id: dict[str, dict] = {}
+            for call in calls:
+                if isinstance(call, dict) and call.get("id"):
+                    calls_by_id.setdefault(str(call["id"]), call)
+
+            tool_messages: list[tuple[int, dict]] = []
+            cursor = index + 1
+            while cursor < len(sequence):
+                candidate = sequence[cursor]
+                if not isinstance(candidate, dict) or candidate.get("role") != "tool":
+                    break
+                tool_messages.append((cursor, candidate))
+                cursor += 1
+
+            matched_ids = {
+                str(result.get("tool_call_id"))
+                for _, result in tool_messages
+                if result.get("tool_call_id")
+                and str(result["tool_call_id"]) in calls_by_id
+            }
+            if matched_ids:
+                assistant = dict(message)
+                assistant["tool_calls"] = [
+                    call for call in calls
+                    if isinstance(call, dict)
+                    and str(call.get("id") or "") in matched_ids
+                    and calls_by_id.get(str(call.get("id") or "")) is call
+                ]
+                cleaned.append(assistant)
+                retained_indices.append(index)
+                emitted_ids: set[str] = set()
+                for result_index, result in tool_messages:
+                    result_id = str(result.get("tool_call_id") or "")
+                    if result_id not in matched_ids or result_id in emitted_ids:
+                        continue
+                    cleaned.append(dict(result))
+                    retained_indices.append(result_index)
+                    emitted_ids.add(result_id)
+            elif message.get("content"):
+                # 保留 assistant 的普通文本，但丢弃没有任何结果的调用声明。
+                assistant = dict(message)
+                assistant.pop("tool_calls", None)
+                cleaned.append(assistant)
+                retained_indices.append(index)
+
+            # 消费整个相邻工具结果段；未配对项不会在下一轮被误当成合法结果。
+            index = cursor
+
+        return cleaned, retained_indices
+
+    is_prompt_messages = hasattr(messages, "fixed_prefix_size")
+    if is_prompt_messages:
+        conversation = list(messages.conversation)
+        dynamic_tail = list(messages.dynamic_tail)
+    else:
+        conversation = list(messages)
+        dynamic_tail = []
+
+    cleaned_conversation, retained = clean_sequence(conversation)
+    cleaned_tail, _ = clean_sequence(dynamic_tail)
+    changed = (
+        cleaned_conversation != conversation
+        or cleaned_tail != dynamic_tail
+    )
+    if not is_prompt_messages:
+        return cleaned_conversation if changed else messages
+    if not changed:
+        return messages
+
+    from agent.context.assembly import PromptMessages
+
+    old_fixed_size = int(getattr(messages, "fixed_prefix_size", 0) or 0)
+    fixed_prefix_size = sum(index < old_fixed_size for index in retained)
+    result = PromptMessages(cleaned_conversation, fixed_prefix_size=fixed_prefix_size)
+    if cleaned_tail:
+        result.set_dynamic_tail(cleaned_tail)
+    old_to_new = {old: new for new, old in enumerate(retained)}
+    result._cache_anchor_indices = [
+        old_to_new[index]
+        for index in getattr(messages, "cache_anchor_indices", ())
+        if index in old_to_new
+    ]
+    for name in ("canonical_context", "_canonical_batches", "_canonical_batch_digests"):
+        if hasattr(messages, name):
+            value = getattr(messages, name)
+            setattr(result, name, list(value) if name.startswith("_canonical_") else value)
+    if hasattr(messages, "_canonical_batch_metadata"):
+        result._canonical_batch_metadata = copy.deepcopy(messages._canonical_batch_metadata)
+    return result
+
+
 def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
     """模型首轮消费图片后，把初始图片消息收敛为稳定文本。"""
     for index in indices:
