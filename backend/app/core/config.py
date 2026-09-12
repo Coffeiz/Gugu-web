@@ -286,6 +286,11 @@ class SearchSettings(BaseModel):
         "ilike", description="全局搜索后端：持久化索引（index）或 ILIKE 兼容模式"
     )
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
+    ts_sidecar_socket: str = Field(
+        "",
+        description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空=每个 Python 进程按需自启 worker（旧行为）。"
+        "配置后 RAG worker 由 sidecar 宿主统一托管，多个后端进程共享热索引，后端重启不再触发冷装载",
+    )
     ts_sidecar_index_dir: str = Field(
         "var/rag-ts-index",
         description="旧版 TypeScript 索引目录；新索引默认保存在用户存储目录的 .system/rag/ts-index 下",

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import uuid
 import weakref
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -377,25 +378,72 @@ class TsSidecarClient:
                 await process.wait()
 
     async def _request(self, payload: dict, *, timeout_seconds: float | None = None) -> SidecarRequestResult:
+        """传输入口（模板方法）：锁/计时/probe 外壳共享，实际连接由三个可覆写点决定。
+
+        - ``_prepare_for_send``：确保传输就绪（基类=spawn/复用子进程并 ping 探活）；
+        - ``_transact``：单行请求/单行响应（基类=stdio）；
+        - ``_absorb_state``：把响应状态写回 client（基类只回写 revision；
+          socket 代理用宿主下发的 state 镜像整体覆盖）。
+        SocketSidecarClient 只覆写这三个点 + 三个状态语义方法，所有 payload
+        构造与基类共用一份，杜绝双份实现漂移。
+        """
         queued_at = asyncio.get_running_loop().time()
+        probe_enabled = payload.get("op") == "unified_query"
+        from agent.rag.observation import probe_finish, probe_start, probe_update
+
+        if probe_enabled:
+            probe_start("sidecar_lock_wait")
         async with self._lock:
             request_started = asyncio.get_running_loop().time()
             queue_wait_ms = int((request_started - queued_at) * 1000)
+            if probe_enabled:
+                probe_finish("sidecar_lock_wait", queued_at, queue_wait_ms=queue_wait_ms)
+                probe_start("sidecar_process_start")
+            ensure_started = asyncio.get_running_loop().time()
             self.touch()
             self._active_requests += 1
             try:
-                await self._ensure_process()
-                response = await self._request_unlocked(payload, timeout_seconds=timeout_seconds)
+                await self._prepare_for_send()
+                ensure_process_ms = int((asyncio.get_running_loop().time() - ensure_started) * 1000)
+                if probe_enabled:
+                    probe_finish("sidecar_process_start", ensure_started,
+                                 ensure_process_ms=ensure_process_ms)
+                    probe_start("sidecar_worker_response")
+                response_started = asyncio.get_running_loop().time()
+                response = await self._transact(payload, timeout_seconds=timeout_seconds)
+                response_wait_ms = int((asyncio.get_running_loop().time() - response_started) * 1000)
                 query_ms = int(
                     (asyncio.get_running_loop().time() - request_started) * 1000
-                ) if payload.get("op") in {"search", "batch_search"} else 0
+                ) if payload.get("op") in {"search", "batch_search", "unified_query"} else 0
+                if probe_enabled:
+                    probe_finish("sidecar_worker_response", response_started,
+                                 response_wait_ms=response_wait_ms)
+                    probe_update(sidecar={
+                        "queue_wait_ms": queue_wait_ms,
+                        "ensure_process_ms": ensure_process_ms,
+                        "response_wait_ms": response_wait_ms,
+                        "query_ms": query_ms,
+                    })
+                response = self._absorb_state(payload, response)
                 return SidecarRequestResult(
                     response=response,
-                    timing=SidecarRequestTiming(queue_wait_ms=queue_wait_ms, query_ms=query_ms),
+                    timing=SidecarRequestTiming(
+                        queue_wait_ms=queue_wait_ms, query_ms=query_ms,
+                        ensure_process_ms=ensure_process_ms, response_wait_ms=response_wait_ms,
+                    ),
                 )
             finally:
                 self._active_requests -= 1
                 self.touch()
+
+    async def _prepare_for_send(self) -> None:
+        await self._ensure_process()
+
+    async def _transact(self, payload: dict, *, timeout_seconds: float | None = None) -> dict:
+        return await self._request_unlocked(payload, timeout_seconds=timeout_seconds)
+
+    def _absorb_state(self, payload: dict, response: dict) -> dict:
+        return response
 
     async def _ensure_process(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -458,12 +506,169 @@ class TsSidecarClient:
                 str(response.get("message") or response.get("code") or "worker error"),
                 code=str(response.get("code") or "") or None,
             )
-        # 只有持久索引类响应才代表 worker 的 state.revision。replace_transient 回的是
-        # 瞬态槽指纹，写进 _revision 会让 reuse_if_current 误判持久索引已同步、把
-        # 后续每次查询退化成全量重建（2026-09-11 修）。
-        if response.get("revision") is not None and payload.get("op") != "replace_transient":
-            self._revision = response.get("revision")
         return response
+
+
+RANK_SOCKET_OWNER = "__rank__"
+
+
+def _sidecar_socket_path() -> str:
+    """gugu-rag-sidecar 宿主 socket 配置；空串=未启用，走进程内 spawn。"""
+    try:
+        from app.core.config import get_settings
+
+        return str(getattr(get_settings().search, "ts_sidecar_socket", "") or "")
+    except Exception:
+        return ""
+
+
+def _client_state_mirror(client: "TsSidecarClient") -> dict[str, Any]:
+    """从 client 导出跨进程镜像块；宿主下发、代理回填，字段与 client 状态一一对应。"""
+    return {
+        "revision": client._revision,
+        "document_count": int(client._document_count or 0),
+        "estimated_bytes": int(client._estimated_bytes or 0),
+        "vector_count": int(client._vector_count or 0),
+        "vector_version": str(client._vector_version or ""),
+        "restore_error": client._restore_error,
+        "transient_revision": client._transient_revision,
+        "transient_generation": int(client._transient_generation),
+        "process_generation": int(client._process_generation),
+    }
+
+
+class SocketSidecarClient(TsSidecarClient):
+    """经 gugu-rag-sidecar 宿主共享的常驻 worker 连接。
+
+    与基类共享全部 payload 构造；只把传输换成 unix socket，并让「状态归属权」
+    移交宿主：revision/瞬态指纹/进程代数以宿主下发镜像为准，
+    ``reuse_if_current`` 与 ``replace_transient`` 的短路判定也在宿主侧执行
+    （判定依据是宿主内真实 worker 进程的状态，跨进程读不到才需要走 IPC）。
+    """
+
+    def __init__(self, owner_user_id: object, *, socket_path: str,
+                 command: str = "", index_dir: str = ""):
+        super().__init__(owner_user_id, command=command, index_dir=index_dir)
+        self.socket_path = socket_path
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._mirror: dict[str, Any] = {}
+
+    async def _prepare_for_send(self) -> None:
+        if self._writer is not None and not self._writer.is_closing():
+            return
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path, limit=SIDECAR_STREAM_LIMIT_BYTES),
+                timeout=5.0,
+            )
+        except (OSError, asyncio.TimeoutError) as error:
+            self._reader = None
+            self._writer = None
+            raise TsSidecarUnavailable("sidecar 宿主 socket 不可用") from error
+
+    async def _transact(self, payload: dict, *, timeout_seconds: float | None = None) -> dict:
+        assert self._writer is not None and self._reader is not None
+        timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
+        envelope = {
+            "v": 1,
+            "req_id": uuid.uuid4().hex,
+            "owner": self.owner_user_id,
+            "timeout_ms": int(max(0.05, timeout) * 1000),
+            "payload": payload,
+        }
+        try:
+            self._writer.write((json.dumps(envelope, ensure_ascii=False) + "\n").encode())
+            await self._writer.drain()
+            line = await asyncio.wait_for(self._reader.readline(), timeout=max(0.05, timeout) + 5.0)
+        except (BrokenPipeError, ConnectionError, ValueError, asyncio.TimeoutError,
+                RuntimeError) as error:
+            # 与基类同一原则：半行残留/竞态会让响应流不可信，整条连接作废。
+            await self.close()
+            raise TsSidecarUnavailable("sidecar 宿主请求失败") from error
+        if not line:
+            await self.close()
+            raise TsSidecarUnavailable("sidecar 宿主连接已断开")
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise TsSidecarUnavailable("sidecar 宿主返回无效 JSON") from error
+        if response.get("status") == "error":
+            raise TsSidecarUnavailable(
+                str(response.get("message") or response.get("code") or "sidecar error"),
+                code=str(response.get("code") or "") or None,
+            )
+        self._mirror = dict(response.get("state") or {})
+        return dict(response.get("payload") or {})
+
+    def _absorb_state(self, payload: dict, response: dict) -> dict:
+        # 状态归属在宿主：镜像整体覆盖，方法体内的局部回写随后发生，
+        # 但它们的取值来自宿主透传的真实 worker 响应字段，与镜像一致。
+        state = self._mirror
+        self._revision = state.get("revision")
+        self._document_count = int(state.get("document_count") or 0)
+        self._estimated_bytes = int(state.get("estimated_bytes") or 0)
+        self._vector_count = int(state.get("vector_count") or 0)
+        self._vector_version = str(state.get("vector_version") or "")
+        self._restore_error = state.get("restore_error") or None
+        self._transient_revision = state.get("transient_revision")
+        self._transient_generation = int(state.get("transient_generation") if
+                                         state.get("transient_generation") is not None else -1)
+        self._process_generation = int(state.get("process_generation") or 0)
+        return response
+
+    async def reuse_if_current(self, revision: str | None) -> bool:
+        # 判定依据是宿主内真实 worker 的状态（含 ensure/磁盘恢复），本进程镜像不可信。
+        result = await self._request(
+            {"op": "reuse_if_current", "revision": revision or ""},
+            timeout_seconds=BUILD_TIMEOUT_SECONDS,
+        )
+        return bool(result.response.get("ok"))
+
+    async def prepare_memory(self, owner_user_id: object, scopes: list[Scope], *, source_filter: str,
+                             snapshot_revision: str = "", snapshot_text: str = "",
+                             vector_version: str = "", force: bool = False) -> dict:
+        response = await super().prepare_memory(
+            owner_user_id, scopes, source_filter=source_filter,
+            snapshot_revision=snapshot_revision, snapshot_text=snapshot_text,
+            vector_version=vector_version, force=force,
+        )
+        # 基类用本进程 _process_generation 回填瞬态代数；代理进程恒为 0，
+        # 必须以宿主镜像为准，否则下次短路口径错位。
+        self._transient_generation = int(self._mirror.get("transient_generation") or 0)
+        return response
+
+    async def replace_transient(
+        self,
+        documents: list[IndexDocument],
+        revision: str,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        vector_version: str = "",
+        force: bool = False,
+    ) -> None:
+        # 短路判定在宿主（它才看得到真实进程代数）：本进程不判，把 force 带下去。
+        payload: dict[str, Any] = {
+            "op": "replace_transient", "revision": revision, "force": bool(force),
+            "documents": [_wire_document(document) for document in documents],
+        }
+        if vectors is not None:
+            payload["vectors"] = vectors
+            payload["vector_version"] = vector_version
+        result = await self._request(payload, timeout_seconds=BUILD_TIMEOUT_SECONDS)
+        self._transient_revision = str(result.response.get("revision") or revision)
+
+    async def close(self) -> None:
+        writer = self._writer
+        self._writer = None
+        self._reader = None
+        if writer is None:
+            return
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except (ConnectionError, OSError):
+            pass
 
 
 class TsLexicalIndex:
@@ -723,15 +928,49 @@ def _index_document_digest(document: IndexDocument) -> str:
     return document_digest(document)
 
 
+async def _probe_sidecar_socket(socket_path: str) -> bool:
+    """轻量探活：socket 可连接才走共享宿主，否则回退进程内 spawn。"""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(socket_path, limit=SIDECAR_STREAM_LIMIT_BYTES),
+            timeout=2.0,
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except (ConnectionError, OSError):
+            pass
+        return True
+    except (OSError, asyncio.TimeoutError):
+        return False
+
+
 async def get_lexical_client(owner_user_id: object, *, command: str, index_dir: str) -> TsSidecarClient:
-    """按 owner 复用常驻 TS worker；索引缓存淘汰不再立即杀掉进程。"""
+    """按 owner 复用常驻 TS worker；索引缓存淘汰不再立即杀掉进程。
+
+    配置了 ``search.ts_sidecar_socket`` 时走共享宿主连接（多个 Python 进程
+    共享同一份热索引）；socket 不可用则回退进程内 spawn 并记警告。
+    """
     owner_key = str(owner_user_id)
     loop = asyncio.get_running_loop()
     _ensure_sidecar_reaper(loop)
     clients = _lexical_clients.setdefault(loop, {})
     client = clients.get(owner_key)
     if client is None:
-        client = TsSidecarClient(owner_key, command=command, index_dir=index_dir)
+        socket_path = _sidecar_socket_path()
+        if socket_path and owner_key != RANK_SOCKET_OWNER:
+            if await _probe_sidecar_socket(socket_path):
+                client = SocketSidecarClient(
+                    owner_key, socket_path=socket_path, command=command, index_dir=index_dir,
+                )
+            else:
+                import logging
+
+                logging.getLogger("agent.rag.sidecar").warning(
+                    "sidecar socket 不可达，回退进程内 spawn owner=%s", owner_key[:8],
+                )
+        if client is None:
+            client = TsSidecarClient(owner_key, command=command, index_dir=index_dir)
         clients[owner_key] = client
     client.touch()
     return client
@@ -772,9 +1011,17 @@ async def rank_candidates_with_cache(
     client = _rank_clients.get(loop)
     if client is None:
         settings = get_settings().search
-        client = TsSidecarClient(
-            f"score:{id(loop)}", command=settings.ts_sidecar_command, index_dir="",
-        )
+        socket_path = _sidecar_socket_path()
+        if socket_path and await _probe_sidecar_socket(socket_path):
+            # 无状态 rank worker 同样托管在宿主上；全进程共享一个 __rank__ 通道。
+            client = SocketSidecarClient(
+                RANK_SOCKET_OWNER, socket_path=socket_path,
+                command=settings.ts_sidecar_command, index_dir="",
+            )
+        else:
+            client = TsSidecarClient(
+                f"score:{id(loop)}", command=settings.ts_sidecar_command, index_dir="",
+            )
         _rank_clients[loop] = client
     by_id: dict[str, RecallCandidate] = {}
     payload = []
@@ -1007,6 +1254,7 @@ def _timeout_seconds() -> float:
 
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
+    "SocketSidecarClient", "RANK_SOCKET_OWNER",
     "rank_candidates_with_cache",
     "RANK_SCORING_VERSION",
     "SIDE_CAR_IDLE_TTL_SECONDS",
