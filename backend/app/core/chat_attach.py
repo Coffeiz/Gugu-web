@@ -1328,6 +1328,8 @@ def vision_ready(model_cfg=None) -> bool:
 
 
 VISION_READ_MAX = 30 * 1024 * 1024   # read_file 看图时从存储拉取的硬上限（压缩前），挡住超大文件
+TEXT_READ_MAX = 32 * 1024 * 1024   # 消息注入文本类附件（含 doctext 可提取的 PDF/Office）的读取硬上限：
+                                   # 最终只注入 32K 字符，32MB 原文绰绰有余；超大文档留给按需 read_file
 
 
 def vision_block(raw: bytes, ext: str):
@@ -1407,9 +1409,16 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
         fname = _model_attachment_name(meta)
         tag = f"《{fname}》(attach_id={meta['attach_id']})"
         if meta["kind"] == "text":
-            parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
+            # 消费侧硬门：文本/PDF/Office 在 read_text 里都是先整包 read_bytes 再提取、
+            # 最后才截到 32K 字符；超限直接不读，超大文档留给按需 read_file。
+            if meta["size"] > TEXT_READ_MAX:
+                parts.append(f"\n\n📎 用户上传的文件{tag}（超过 {TEXT_READ_MAX // 1048576}MB，未直接读取正文；"
+                             f"用户要保存就 save_uploaded_file(attach_id) 存进文件库，需要内容时再用 read_file 读取）。")
+            else:
+                parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
         elif meta["kind"] == "image":
             ext = (meta.get("ext") or "").lower()
+            img_why = None
             # vision 模型 + 受支持格式 + 没超张数 → 喂给模型真看（超体积/超大尺寸自动压缩）
             if vision and ext in VISION_EXTS and len(images) < VISION_IMG_COUNT:
                 try:
@@ -1417,7 +1426,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     # 消费侧硬门：图片同样按 meta["size"] 读前拒绝（VISION_READ_MAX 与
                     # read_file 看图同一口径），超限走下方「没法直接看」文字提示。
                     if meta["size"] > VISION_READ_MAX:
-                        raise ValueError("图片超过读取上限")
+                        raise ValueError(f"文件超过 {VISION_READ_MAX // 1048576}MB 读取上限")
                     raw = await read_bytes(meta)
                     fitted = _fit_image_for_vision(raw, ext)
                     if fitted:
@@ -1427,6 +1436,9 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                         parts.append(f"\n\n📎 用户上传了图片{tag}（见随附图像）；"
                                      f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
                         continue
+                except ValueError as e:
+                    # 明确的拒绝原因（如超限）要保留下来，不能吞成「格式不支持」
+                    img_why = str(e)
                 except Exception:
                     pass   # 读图/压缩失败 → 退回文字提示
             if not vision:
@@ -1436,8 +1448,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                              f"**就当普通文件正常处理**——别说「看不了图 / 看不到内容」，正常回应；"
                              f"用户要存就 save_uploaded_file(attach_id) 存进文件库）。")
             else:
-                # vision 开着但这张没喂成（格式不支持 / 读图失败）
-                parts.append(f"\n\n📎 用户上传了图片{tag}（这张没法直接看：格式不支持）；"
+                # vision 开着但这张没喂成（格式不支持 / 超限 / 读图失败）
+                parts.append(f"\n\n📎 用户上传了图片{tag}（这张没法直接看：{img_why or '格式不支持'}）；"
                              f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
         elif meta["kind"] in ("audio", "video", "voice"):
             is_voice = meta["kind"] == "voice"

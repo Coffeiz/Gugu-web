@@ -786,3 +786,29 @@ async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, mo
         user_a.id, [meta["attach_id"]], "你好")
     assert images == [] and media == []
     assert "没法直接看" in parts
+    assert "读取上限" in parts and "格式不支持" not in parts   # P3：原因保留真实文案
+
+
+@pytest.mark.asyncio
+async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, monkeypatch):
+    """500MB 的 .txt / 可提取 PDF 不得在发送消息时整包读进内存再截断。"""
+    meta = await chat_attach.stage(user_a.id, "大文档", "txt", "text/plain", b"tiny-text")
+
+    async def _big_meta(_user_id, _aid):
+        return dict(meta, size=500 * 1024 * 1024)
+
+    async def _must_not_read(m):
+        raise AssertionError("超限文本必须在 read_bytes 之前被 size 门拦下")
+
+    monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
+    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
+
+    parts, _cards, _images, _media = await chat_attach.resolve_for_message(
+        user_a.id, [meta["attach_id"]], "你好")
+    assert "未直接读取正文" in parts
+    assert "```" not in parts   # 没有把任何正文注入上下文
+
