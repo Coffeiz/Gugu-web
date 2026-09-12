@@ -87,3 +87,40 @@ worker/gateway 即回到进程内 spawn；`systemctl disable --now gugu-rag-side
   基础镜像与 buildkit 前端用 `docker.1ms.run` 预拉后 retag（`python:3.14-slim-trixie`、
   `node:22-trixie`、`docker/dockerfile:1`）。
 - 验证镜像/容器/临时卷已清理。
+
+## 索引生命周期移交 TS（同日追加：墓碑契约 + worker 增量自同步）
+
+用户拍板「RAG 全走 TS，Py 只负责校验和安全」，边界定为 **chunk 表（knowledge_index_entries）
+= Python 与 TS 的交接线**：record 构建留 Python（业务语义），worker 从 chunk 表自主增量同步、
+独占索引生命周期。接手并行会话未提交的 TS 直读 WIP 作为地基（data-runtime 只读层、
+worker 直连 PG、owner-bound 环境通道；提交 308dc601d）。
+
+### 提交序列
+- 308dc601d TS 直读通道地基（接手 WIP）
+- 16570c4c5 chunk 表墓碑契约：软删 + 单游标水位 + 复合索引 + RAG_PROJECTION_VERSION v4
+- 7f0620d8c worker sync_index_from_database 增量自同步 + Python 冷路径接线反转
+- 777870595 / dabab8727 entrypoint 双实例门控与可观测性修补
+
+### 契约要点
+- **单游标水位**：revision 的 max(indexed_at) 改为含墓碑行（v4 口径）。删除从物理删改软删
+  （deleted_at + indexed_at 双时间戳）；worker 以 index.json 里的 watermark = (indexed_at, id)
+  为游标，`WHERE (indexed_at,id) > watermark` 一条 SQL 同时拿到 upserts（活行）与
+  deletes（墓碑行文档键）。旧的「整来源 bump indexed_at」协议删除——那是硬删不可见时代
+  的补偿，也是增量读退化的元凶。
+- **回退链**：水位缺失（旧 index.json）/ 超过 31 天视界 / 单次变更超 50 批 → worker 内部
+  自动转全量 load，响应打 fallback_full 标记；Python 配置 `search.ts_index_sync_mode`
+  可整体回滚到 full。
+- **墓碑 GC**：写路径顺路清理 30 天前的软删行。
+
+### 效果（devserver 实测）
+- 漂移后（每轮对话的 conversation 来源级重建）查询从 **5–10s 全量装载 → 63ms**
+  （增量同步或复用）；文档级写后查询 26ms 且 worker 复用。
+- 首次同步水位未知自动回退一次全量，属预期迁移成本，之后纯增量。
+- 附带修复：来源级投影分块（≤400 条/≤8MB）——file 语料超 32MB 流上限导致来源级
+  重建从 09-10 起连续失败 122 次的问题（f5961b150）。
+
+### 踩坑备忘
+- `npm install --no-save` 会修剪 bin/node_modules、ts/node_modules 里的「extraneous」
+  包（esbuild/@node-rs/jieba 被剪掉），devserver 手工重建制品后要逐个补装；
+  正确顺序：ts 下装 prod 依赖 → 补 esbuild → build.mjs → bin 下补 ali-oss/jieba。
+- revision 口径变更（v4）会让现网 worker 一次性判定落后触发全量装载，属预期迁移成本。
