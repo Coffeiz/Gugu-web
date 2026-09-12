@@ -1,6 +1,8 @@
 """Anthropic历史适配器入口。"""
 from __future__ import annotations
 
+import json
+
 from .context_adapter import ContextAdapter
 from agent.context.canonical_tool_history import event_text
 
@@ -14,7 +16,15 @@ class AnthropicHistoryAdapter(ContextAdapter):
             block_type = block.get("type")
             if block_type in {"tool_call", "tool_use"}:
                 arguments = block.get("arguments", block.get("input", {}))
-                if not isinstance(arguments, dict):
+                # Anthropic 的 tool_use.input 必须是对象。canonical 里 OpenAI 路的
+                # arguments 是 provider 原始字符串（跨 run 缓存字节保真），这里解回对象。
+                if isinstance(arguments, str):
+                    try:
+                        parsed = json.loads(arguments)
+                    except (TypeError, json.JSONDecodeError):
+                        parsed = None
+                    arguments = parsed if isinstance(parsed, dict) else {}
+                elif not isinstance(arguments, dict):
                     arguments = {}
                 blocks.append({
                     "type": "tool_use", "id": block.get("id"),

@@ -83,6 +83,10 @@ class NormalizedToolCall(ToolCall):
     """运行时工具调用，在 canonical 字段上补充 provider 解析状态。"""
 
     parse_error: bool = False   # 只有 OpenAI 路会真的置真（JSON 截断解析失败）
+    # provider 返回的 arguments 原始字符串。canonical history 存这个原样字节，
+    # 回放时才能与 live 发出的 wire 逐字节一致——parse→dumps 会改变序列化风格
+    # （空格/键序），跨 run 前缀缓存会在第一个工具轮就断开（2026-09-12 排查）。
+    raw_arguments: str | None = None
 
 
 @dataclass
@@ -459,7 +463,8 @@ class OpenAIDriver:
         for b in ordered:
             try:
                 args = json.loads(b["args"])
-                tool_calls.append(NormalizedToolCall(id=b["id"], name=b["name"], input=args))
+                tool_calls.append(NormalizedToolCall(
+                    id=b["id"], name=b["name"], input=args, raw_arguments=b["args"]))
             except Exception:
                 # 参数 JSON 解析失败（多为长内容被 max_tokens 截断）→ 别拿空参跑：增删改工具吃到 {} 会
                 # 误伤数据或报错，还会白置 did_mutate 触发一整轮核实。标 parse_error，共享循环据此跳过

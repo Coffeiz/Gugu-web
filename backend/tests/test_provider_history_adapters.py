@@ -44,3 +44,52 @@ def test_openai_and_anthropic_render_same_canonical_history_without_changing_dig
     assert openai.messages[1]["role"] == "tool"
     assert anthropic.messages[0]["content"][0]["type"] == "tool_use"
     assert anthropic.messages[1]["content"][0]["type"] == "tool_result"
+
+
+def test_openai_adapter_passes_raw_string_arguments_verbatim():
+    """OpenAI 回放对字符串 arguments 原样透传：跨 run 缓存要求与 live wire 逐字节一致。"""
+    raw_args = '{"name": "read_file", "arguments": {"file_id": 5559}}'
+    envelopes = (
+        normalize_history_message({
+            "role": "assistant",
+            "content_json": [{"type": "tool_call", "id": "t1", "name": "call_tool", "arguments": raw_args}],
+        }),
+        normalize_history_message({"role": "tool", "tool_call_id": "t1", "content": "ok"}),
+    )
+    request = CanonicalRequest(context=CanonicalContext(canonical_history=tuple(
+        item.to_dict() for item in envelopes)), provider="test", api_format="openai", model="m")
+    rendered = OpenAIHistoryAdapter(None).render_envelopes(request, envelopes)
+    wire_args = rendered.messages[0]["tool_calls"][0]["function"]["arguments"]
+    assert wire_args == raw_args
+    assert isinstance(wire_args, str)
+
+
+def test_anthropic_adapter_parses_raw_string_arguments_into_object():
+    """Anthropic 的 tool_use.input 必须是对象：字符串 arguments 解回 dict，不能丢成空对象。"""
+    raw_args = '{"name": "read_file", "arguments": {"file_id": 5559}}'
+    envelopes = (
+        normalize_history_message({
+            "role": "assistant",
+            "content_json": [{"type": "tool_call", "id": "t1", "name": "call_tool", "arguments": raw_args}],
+        }),
+        normalize_history_message({"role": "tool", "tool_call_id": "t1", "content": "ok"}),
+    )
+    request = CanonicalRequest(context=CanonicalContext(canonical_history=tuple(
+        item.to_dict() for item in envelopes)), provider="test", api_format="anthropic", model="m")
+    rendered = AnthropicHistoryAdapter(None).render_envelopes(request, envelopes)
+    tool_use = rendered.messages[0]["content"][0]
+    assert tool_use["type"] == "tool_use"
+    assert tool_use["input"] == {"name": "read_file", "arguments": {"file_id": 5559}}
+
+
+def test_anthropic_adapter_coerces_malformed_string_arguments_to_empty_object():
+    envelopes = (
+        normalize_history_message({
+            "role": "assistant",
+            "content_json": [{"type": "tool_call", "id": "t1", "name": "call_tool", "arguments": "不是JSON"}],
+        }),
+    )
+    request = CanonicalRequest(context=CanonicalContext(canonical_history=tuple(
+        item.to_dict() for item in envelopes)), provider="test", api_format="anthropic", model="m")
+    rendered = AnthropicHistoryAdapter(None).render_envelopes(request, envelopes)
+    assert rendered.messages[0]["content"][0]["input"] == {}
