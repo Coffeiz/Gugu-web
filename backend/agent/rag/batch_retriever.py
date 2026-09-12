@@ -8,21 +8,25 @@ import time
 from dataclasses import dataclass
 
 from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
-from agent.rag.context import get_conversation_before_message_id, get_snapshot_revision
-from agent.rag.index_cache import _documents_fingerprint, get_index_cache
+from agent.rag.context import get_conversation_before_message_id, get_snapshot_context, get_snapshot_revision
+from agent.rag.index_cache import get_index_cache
 from agent.rag.models import Scope
-from agent.rag.observation import progress
+from agent.rag.observation import await_probe, probe_complete, probe_finish, probe_update, progress
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
-from agent.rag.ts_sidecar import TsSidecarUnavailable, _worker_document_key
+from agent.rag.scope import normalize_memory_scopes
+from agent.rag.ts_sidecar import TsSidecarUnavailable
 
 
 @dataclass(frozen=True)
 class _TransientCorpus:
-    """Memory 快照语料与它的上传参数，重试时按同一指纹强制重传。"""
+    """worker 内 Memory 装载参数；不把语料正文或向量搬回 Python。"""
 
-    documents: list
+    owner: str
+    scopes: list[Scope]
+    source_filter: str
+    snapshot_revision: str
+    snapshot_text: str
     revision: str
-    vectors: dict[str, list[float]] | None
     vector_version: str
 
 
@@ -30,8 +34,8 @@ class UnifiedQueryRetriever(UnifiedRetriever):
     """Phase 5 统一查询主链：一次索引准备 + 一次 ``unified_query`` IPC。
 
     召回、来源聚合、conversation 水位、Memory 融合与 confidence 排序全部在
-    TS worker 内完成；Python 保留业务数据装载、权限事实、向量生成和注入组装。
-    向量随瞬态语料驻留 worker（指纹耦合 embedding 模型版本戳），不随查询重复传输。
+    TS worker 内完成；Python 只保留 scope 授权、查询 embedding provider 调用、命中
+    权限复核和最终注入组装。Memory 正文与缓存向量在 worker 内读取和驻留。
     """
 
     SOURCE_ORDER = (
@@ -62,21 +66,23 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         memory = next((item for item in selected if item.source_type == "memory"), None)
         persistent = [item for item in selected if item.source_type != "memory"]
         started = time.monotonic()
-        memory_documents: list | None = None
+        memory_scopes: list[Scope] | None = None
         memory_index_source = ""
-        memory_meta: dict = {}
         if memory is not None:
             progress("memory", "index_prepare")
-            memory_documents, memory_index_source, memory_meta = await self._load_memory(memory, scope)
-        scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
+            memory_scopes = normalize_memory_scopes(memory.user_id, scope)
+        scopes = memory_scopes or (list(scope) if isinstance(scope, (list, tuple)) else [scope])
         specs, _allowed = self._persistent_specs(persistent, scopes, limit=candidate_limit)
-        if memory_documents is not None:
+        if memory is not None:
             specs.append({"source_types": {"memory"}, "scope": None,
                           "limit": candidate_limit, "corpus": "transient"})
         if not specs:
             for item in selected:
                 progress(item.source_type, "completed", reason="scope_rejected")
+            probe_update(search={"spec_count": 0, "selected_source_count": len(selected)})
+            probe_complete("completed", reason="scope_rejected")
             return [RetrievalBatch(item.source_type, fallback_reason="scope_rejected") for item in selected]
+        probe_update(search={"spec_count": len(specs), "selected_source_count": len(selected)})
 
         if persistent:
             session_owner, owner = self._session_owner(persistent)
@@ -89,32 +95,65 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         ts_index = None
         try:
             async with session_owner.session_scope() as db:
-                index = await get_index_cache().get(
-                    db, owner, "all", scope, diagnostics=metadata,
-                    baseline_revision=get_snapshot_revision() or None,
+                index = await await_probe(
+                    "index_cache_get",
+                    get_index_cache().get(
+                        db, owner, "all", scope, diagnostics=metadata,
+                        baseline_revision=get_snapshot_revision() or None,
+                    ),
                 )
+                probe_update(index_cache={
+                    key: metadata[key]
+                    for key in (
+                        "cache_hit", "cache_hit_layer", "snapshot_reused", "cache_miss_reason",
+                        "index_sync", "index_build_ms", "document_count", "sidecar_reused",
+                        "disk_index_reused", "index_restore_error", "upsert_count", "delete_count",
+                    )
+                    if key in metadata
+                })
                 prepare_ms = int((time.monotonic() - started) * 1000)
                 for item in persistent:
                     progress(item.source_type, "sidecar_search", index_prepare_ms=prepare_ms)
                 # 指纹耦合 embedding 模型版本戳：换模型必然重传语料与向量。参数留到
-                # 重试时复用，revision 不一致重试要按同一指纹强制重传。
+                # 重试时复用；语料和向量只在 worker 内读取与驻留。
                 transient: _TransientCorpus | None = None
-                if memory_documents is not None:
-                    vectors: dict[str, list[float]] | None = None
-                    vector_version = ""
-                    if embedding_enabled and memory_documents:
-                        vectors = await self._memory_vectors(owner, memory_documents)
-                        vector_version = embedding.model_tag()
+                if memory is not None and memory_scopes is not None:
+                    vector_version = embedding.model_tag() if embedding_enabled else ""
                     transient = _TransientCorpus(
-                        documents=memory_documents,
-                        revision=f"{_documents_fingerprint(memory_documents)}:{vector_version}",
-                        vectors=vectors, vector_version=vector_version,
+                        owner=str(owner), scopes=memory_scopes,
+                        source_filter=str(memory.source_filter or "all"),
+                        snapshot_revision=get_snapshot_revision(),
+                        snapshot_text=get_snapshot_context(),
+                        revision="", vector_version=vector_version,
                     )
-                    await index.client.replace_transient(
-                        transient.documents, transient.revision,
-                        vectors=transient.vectors, vector_version=transient.vector_version)
+                    prepared = await await_probe(
+                        "memory_load",
+                        index.client.prepare_memory(
+                            transient.owner, transient.scopes,
+                            source_filter=transient.source_filter,
+                            snapshot_revision=transient.snapshot_revision,
+                            snapshot_text=transient.snapshot_text,
+                            vector_version=transient.vector_version,
+                        ),
+                        terminal_on_error=True,
+                    )
+                    transient = _TransientCorpus(
+                        **{**transient.__dict__, "revision": str(prepared.get("transient_revision") or "")},
+                    )
+                    memory_index_source = str(prepared.get("memory_source") or "")
+                    memory_probe = prepared.get("probe")
+                    probe_update(memory={
+                        "document_count": int(prepared.get("document_count") or 0),
+                        "vector_count": int(prepared.get("vector_count") or 0),
+                        "vector_version_present": bool(transient.vector_version),
+                        "index_source": memory_index_source,
+                        "prepare": memory_probe if isinstance(memory_probe, dict) else {},
+                    })
                 ts_index = index
-                query_vector = list(await embedding.embed(query) or []) if embedding_enabled else []
+                query_vector = list(await await_probe(
+                    "query_embedding", embedding.embed(query),
+                ) or []) if embedding_enabled else []
+                probe_update(search={"query_vector_dimensions": len(query_vector)})
                 query_kwargs = {
                     "searches": specs,
                     "query_vector": query_vector,
@@ -135,14 +174,30 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     "vector_version": embedding.model_tag() if embedding_enabled else None,
                 }
                 try:
-                    response = await index.unified_query(query, **query_kwargs)
-                except TsSidecarUnavailable as exc:
-                    index, response = await self._resync_and_retry(
-                        exc, query=query, query_kwargs=query_kwargs, db=db, owner=owner,
-                        scope=scope, transient=transient, metadata=metadata,
+                    response = await await_probe(
+                        "sidecar_unified_query", index.unified_query(query, **query_kwargs),
                     )
-                    ts_index = index
+                except TsSidecarUnavailable as exc:
+                    index, response = await await_probe(
+                        "revision_resync_retry",
+                        self._resync_and_retry(
+                            exc, query=query, query_kwargs=query_kwargs, db=db, owner=owner,
+                            scope=scope, transient=transient, metadata=metadata,
+                        ),
+                    )
+                ts_index = index
+                sidecar_timing = response.pop("_sidecar_timing", {})
+                worker_probe = response.pop("probe", None)
+                if not isinstance(worker_probe, dict):
+                    worker_probe = response.pop("_probe", {})
+                else:
+                    response.pop("_probe", None)
+                probe_update(sidecar=sidecar_timing, worker=worker_probe)
         except BaseException as exc:
+            probe_complete(
+                "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
+                error_type=type(exc).__name__,
+            )
             for item in selected:
                 progress(item.source_type, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error",
                          error_type=type(exc).__name__)
@@ -164,13 +219,22 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         }
         progress("unified", "completed", **details)
         stats = dict(response.get("stats") or {})
+        rank_resolution_started = time.monotonic()
+        rank_rows = self._resolve_rank_rows(
+            ts_index, response, memory_scopes or [], owner_user_id=str(owner),
+        )
+        probe_finish("rank_row_resolution", rank_resolution_started)
+        probe_complete("completed", candidate_count=sum(
+            int(group.get("hit_count") or 0)
+            for group in (response.get("source_groups") or {}).values()
+        ), selected_count=len(rank_rows))
         return [RetrievalBatch(
             source_type="unified", results=(), index_source=memory_index_source or "persistent-ts",
             fallback_reason=fallback,
             candidate_count=sum(int(group.get("hit_count") or 0)
                                 for group in (response.get("source_groups") or {}).values()),
             metadata={key: str(value) for key, value in details.items()},
-            rank_rows=self._resolve_rank_rows(ts_index, response, memory_documents),
+            rank_rows=rank_rows,
             rank_stats=stats,
         )]
 
@@ -187,35 +251,56 @@ class UnifiedQueryRetriever(UnifiedRetriever):
 
         只重试一次：第二次仍失败按原错误抛出，不把真实故障吞成重试风暴。
         """
+        trigger_code = "revision_mismatch" if exc.code == "revision_mismatch" else (
+            "other" if exc.code else "missing"
+        )
+        probe_update(revision_resync={"trigger_error_code": trigger_code})
         if getattr(exc, "code", None) != "revision_mismatch":
+            probe_update(revision_resync={"outcome": "skipped_non_revision_error"})
             raise exc
         metadata["revision_resync"] = "True"
-        index = await get_index_cache().resync(
-            db, owner, "all", scope, diagnostics=metadata,
-            baseline_revision=get_snapshot_revision() or None,
+        index = await await_probe(
+            "revision_resync_index_get",
+            get_index_cache().resync(
+                db, owner, "all", scope, diagnostics=metadata,
+                baseline_revision=get_snapshot_revision() or None,
+            ),
         )
         if transient is not None:
-            # 强制重传：瞬时槽的短路判断依据的是进程内状态，此刻不能信。
-            await index.client.replace_transient(
-                transient.documents, transient.revision,
-                vectors=transient.vectors, vector_version=transient.vector_version, force=True,
+            prepared = await await_probe(
+                "revision_resync_memory_prepare",
+                index.client.prepare_memory(
+                    transient.owner, transient.scopes,
+                    source_filter=transient.source_filter,
+                    snapshot_revision=transient.snapshot_revision,
+                    snapshot_text=transient.snapshot_text,
+                    vector_version=transient.vector_version,
+                ),
             )
-        return index, await index.unified_query(query, **query_kwargs)
+            transient = _TransientCorpus(
+                **{**transient.__dict__, "revision": str(prepared.get("transient_revision") or "")},
+            )
+        try:
+            response = await await_probe(
+                "revision_resync_query", index.unified_query(query, **query_kwargs),
+            )
+        except TsSidecarUnavailable as retry_error:
+            probe_update(revision_resync={
+                "outcome": "retry_error",
+                "retry_error_code": (
+                    "revision_mismatch" if retry_error.code == "revision_mismatch"
+                    else "other" if retry_error.code else "missing"
+                ),
+            })
+            raise
+        probe_update(revision_resync={"outcome": "completed"})
+        return index, response
 
     def _memory_session_owner(self, memory):
         """Memory-only 查询的 IPC 宿主：只借用会话与索引缓存，不注册持久化来源。"""
         return IndexedSourceRetriever(memory.user_id, db=self._session,
                                       db_factory=self._session_factory,
                                       source_type="knowledge")
-
-    async def _load_memory(self, memory, scope):
-        """装载 Memory 候选语料，返回 (documents, index_source, metadata)。"""
-        from agent.rag.service import _memory_recall_documents
-
-        documents, index_source, document_load_ms = await _memory_recall_documents(
-            memory.user_id, scope, memory.source_filter,
-        )
-        return documents, index_source, {"document_load_ms": document_load_ms}
 
     def _persistent_specs(self, persistent, scopes, *, limit):
         """构造逐来源逐 scope 的批量查询规格，返回 (specs, allowed_by_source)。"""
@@ -252,17 +337,24 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                                           db_factory=adapter._db_factory, source_type="file"), owner
         return first, owner
 
-    def _resolve_rank_rows(self, ts_index, response, memory_documents):
+    def _resolve_rank_rows(self, ts_index, response, memory_scopes, *, owner_user_id: str | None = None):
         """把 worker 选中行回连 Python 文档，输出 (candidate, text, row) 三元组。"""
-        from agent.rag.index_cache import _worker_document_key
         from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
+        from agent.rag.scope import matches_scope
 
+        owner = str(owner_user_id or getattr(ts_index.client, "owner_user_id", ""))
+        if not owner:
+            raise ValueError("RAG 查询缺少已校验的 owner 身份")
         documents_by_key = dict(ts_index.documents_by_id)
-        for document in memory_documents or ():
-            documents_by_key[_worker_document_key(document)] = document
         triples = []
         for row in response.get("selected") or []:
             document = documents_by_key.get(str(row.get("document_key") or ""))
+            if document is None and isinstance(row.get("document"), dict):
+                from agent.rag.ts_sidecar import _from_wire_document
+
+                document = _from_wire_document(
+                    row["document"], owner,
+                )
             if document is None:
                 # 冷恢复时 Python 侧可能没有持久化文档副本，但 TS 仍会返回
                 # citation/text。不要因此静默丢掉 knowledge/file/project 等结果。
@@ -276,7 +368,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         document_id=chunk_id or source_id,
                         source_type=source_type,
                         source_id=source_id or chunk_id,
-                        scope=Scope(owner_user_id=str(ts_index.client.owner_user_id)),
+                        scope=Scope(owner_user_id=owner),
                         title=str(citation.get("title") or ""),
                         summary="",
                         content=text,
@@ -286,22 +378,15 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                     )
             if document is None:
                 continue
+            if str(document.scope.owner_user_id) != owner:
+                continue
+            if document.source_type == "memory" and not any(
+                matches_scope(document, scope) for scope in memory_scopes
+            ):
+                continue
             candidate = RecallCandidate.from_result(
                 RecallResult(document, float(row.get("raw_score") or 0.0)),
                 rank=len(triples) + 1,
             )
             triples.append((candidate, str(row.get("text") or ""), row))
         return tuple(triples)
-
-    async def _memory_vectors(self, owner, memory_documents) -> dict[str, list[float]]:
-        """从 Python 向量缓存读取 Memory 语料向量，按 worker 文档键交付。"""
-        from agent.rag.index_cache import _worker_document_key
-        from agent.rag.service import _load_cached_vectors
-
-        vector_map = await _load_cached_vectors(owner, memory_documents)
-        by_key = {_worker_document_key(document): document for document in memory_documents}
-        return {
-            key: vector_map[document.chunk_id]
-            for key, document in by_key.items()
-            if document.chunk_id in vector_map
-        }

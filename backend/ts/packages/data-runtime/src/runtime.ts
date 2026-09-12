@@ -1,5 +1,5 @@
 import type { Sql } from "postgres";
-import type { RagSearchScope, RagSourceRecord } from "../../contracts/src/rag.ts";
+import type { RagDocument, RagSearchScope, RagSourceRecord } from "../../contracts/src/rag.ts";
 import { assertOwnerScope, DataRuntimeError } from "./contracts.ts";
 import { DataRuntimeCache } from "./cache.ts";
 import type { DataRuntimeInvalidationEvent } from "./invalidation.ts";
@@ -13,6 +13,8 @@ import type {
   KnowledgeRecord,
   MemoryRecord,
   ProjectRecord,
+  RagIndexSnapshot,
+  MemoryScopeState,
   ReadOptions,
   StorageReader,
 } from "./contracts.ts";
@@ -20,6 +22,8 @@ import type {
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2_000;
 const CONVERSATION_CONTEXT_MAX_CHARS = 600;
+const RAG_TOKENIZER_VERSION = "ts-jieba-words-v3";
+const RAG_PROJECTION_VERSION = "rag-projection-v3";
 
 function conversationContext(value: unknown): string {
   return Array.from(String(value || "")).slice(0, CONVERSATION_CONTEXT_MAX_CHARS).join("");
@@ -47,8 +51,13 @@ function ownerScope(ownerId: string): RagSearchScope {
 export class DataRuntime {
   private readonly cache = new DataRuntimeCache<DataReadResult<unknown>>();
   private closed = false;
+  // 参数属性语法（constructor(private readonly sql)）不被 node --experimental-strip-types
+  // 支持，sidecar 测试从 TS 源启动 worker，这里保持 strip-only 兼容写法。
+  private readonly sql: Sql;
 
-  constructor(private readonly sql: Sql) {}
+  constructor(sql: Sql) {
+    this.sql = sql;
+  }
 
   async close(): Promise<void> {
     if (this.closed) return;
@@ -345,6 +354,166 @@ export class DataRuntime {
       } satisfies CanvasRecord;
     });
     return { records, nextAfterId: records.length === limit ? Number(rows.at(-1)?.id) : undefined };
+  }
+
+  /**
+   * 查询当前 owner 的持久化 canonical chunks，直接供同进程 RAG worker 建索引。
+   * 正文不会回传 Python；只有选中的文档会在查询响应中返回用于权限复核和引用组装。
+   */
+  async loadRagIndex(context: DataAccessContext): Promise<{
+    revision: string | null;
+    snapshot: RagIndexSnapshot;
+    probe: {
+      stage_ms: Record<string, number>;
+      counts: Record<string, number>;
+    };
+  }> {
+    const ownerId = assertOwnerScope(context);
+    const operationStarted = performance.now();
+    const probe = { stage_ms: {} as Record<string, number>, counts: {} as Record<string, number> };
+    let stageStarted = performance.now();
+    const rows = await this.query(() => this.sql`
+      SELECT source_type, MAX(indexed_at) OVER (PARTITION BY source_type) AS max_indexed_at,
+             source_id, scope_type, scope_id, platform, bot_id, group_id,
+             document_id, parent_document_id, document_version, chunk_index, chunk_count,
+             title, summary, content, metadata_json, source_updated_at
+      FROM knowledge_index_entries
+      WHERE owner_user_id = ${ownerId} AND deleted_at IS NULL
+      ORDER BY id ASC
+    `);
+    probe.stage_ms.database_query = Math.max(0, Math.round(performance.now() - stageStarted));
+    probe.counts.database_rows = rows.length;
+
+    // revision 与文档必须来自同一条 SQL 语句快照，避免并发写入时拿到
+    // 新 revision + 旧文档（或反过来），造成 worker 索引状态和水位不一致。
+    stageStarted = performance.now();
+    const revisionBySource = new Map<string, string>();
+    for (const row of rows) {
+      const sourceType = String(row.source_type || "");
+      const rawRevision = row.max_indexed_at;
+      const value = rawRevision instanceof Date
+        ? rawRevision.toISOString()
+        : String(rawRevision || "");
+      if (sourceType) revisionBySource.set(sourceType, value);
+    }
+    const revision = revisionBySource.size
+      ? `${RAG_TOKENIZER_VERSION}:${RAG_PROJECTION_VERSION}:${[...revisionBySource]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([source, value]) => `${source}:${value}`).join(";")}`
+      : null;
+    probe.stage_ms.revision_projection = Math.max(0, Math.round(performance.now() - stageStarted));
+
+    stageStarted = performance.now();
+    const documents: RagDocument[] = [];
+    for (const row of rows) {
+      const sourceType = String(row.source_type || "");
+      const sourceId = String(row.source_id || "");
+      const parentId = String(row.parent_document_id || row.document_id || "");
+      const version = String(row.document_version || "");
+      const chunkIndex = Number(row.chunk_index || 0);
+      const chunkCount = Math.max(1, Number(row.chunk_count || 1));
+      const title = String(row.title || "");
+      const summary = String(row.summary || "");
+      const content = String(row.content || "");
+      const rawMetadata = row.metadata_json;
+      const metadata = rawMetadata && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)
+        ? rawMetadata as Record<string, string | number | boolean | null>
+        : {};
+      const documentKey = `${sourceType}:${parentId}:${chunkIndex}`;
+      const text = [title, ...(summary ? [summary] : []), content].join("\n");
+      const updatedAt = row.source_updated_at instanceof Date
+        ? row.source_updated_at.toISOString()
+        : String(row.source_updated_at || "");
+      const document: RagDocument = {
+        id: documentKey,
+        source_id: sourceId,
+        text,
+        content,
+        ...(sourceType === "conversation" ? { ranking_text: content } : {}),
+        ...(sourceType === "conversation" && metadata.kind === "message"
+          ? {
+              context_text: [metadata.context_before, metadata.context_current ?? content, metadata.context_after]
+                .map((part) => String(part || ""))
+                .filter((part) => part.trim())
+                .join("\n"),
+            }
+          : {}),
+        source_type: sourceType,
+        title,
+        summary,
+        platform: String(row.platform || ""),
+        bot_id: String(row.bot_id || ""),
+        group_id: String(row.group_id || ""),
+        scope_type: String(row.scope_type || "owner"),
+        scope_id: String(row.scope_id || ""),
+        document_version: version,
+        parent_id: parentId,
+        chunk_index: chunkIndex,
+        chunk_count: chunkCount,
+        updated_at: updatedAt || undefined,
+        metadata,
+      };
+      documents.push(document);
+    }
+    probe.stage_ms.document_projection = Math.max(0, Math.round(performance.now() - stageStarted));
+    probe.stage_ms.load_rag_index_total = Math.max(0, Math.round(performance.now() - operationStarted));
+    probe.counts.documents = documents.length;
+    return { revision, snapshot: { documents }, probe };
+  }
+
+  async getRagIndexRevision(context: DataAccessContext): Promise<string | null> {
+    const ownerId = assertOwnerScope(context);
+    const rows = await this.query(() => this.sql`
+      SELECT source_type, MAX(indexed_at) AS max_indexed_at
+      FROM knowledge_index_entries
+      WHERE owner_user_id = ${ownerId} AND deleted_at IS NULL
+      GROUP BY source_type
+      ORDER BY source_type
+    `);
+    if (!rows.length) return null;
+    const revisions = rows.map((row) => {
+      const value = row.max_indexed_at instanceof Date
+        ? row.max_indexed_at.toISOString()
+        : String(row.max_indexed_at || "");
+      return `${String(row.source_type)}:${value}`;
+    });
+    return `${RAG_TOKENIZER_VERSION}:${RAG_PROJECTION_VERSION}:${revisions.join(";")}`;
+  }
+
+  async getMemoryScopeState(
+    context: DataAccessContext,
+    scope: { type: "group" | "member"; id: string; platform: string; botId: string },
+  ): Promise<MemoryScopeState> {
+    const ownerId = assertOwnerScope(context);
+    if (!scope.id || !scope.platform || !scope.botId) {
+      throw new DataRuntimeError("invalid_context", "Memory scope 缺少必要字段");
+    }
+    const cursorType = scope.type === "group" ? "group" : "platform-user";
+    const rows = await this.query(() => this.sql`
+      SELECT
+        (SELECT scope_version FROM memory_reflection_cursors
+          WHERE owner_user_id = ${ownerId} AND platform = ${scope.platform}
+            AND bot_id = ${scope.botId} AND scope_type = ${cursorType}
+            AND scope_id = ${scope.id} LIMIT 1) AS scope_version,
+        (SELECT updated_at FROM memory_reflection_cursors
+          WHERE owner_user_id = ${ownerId} AND platform = ${scope.platform}
+            AND bot_id = ${scope.botId} AND scope_type = ${cursorType}
+            AND scope_id = ${scope.id} LIMIT 1) AS updated_at,
+        EXISTS (SELECT 1 FROM memory_scope_tombstones
+          WHERE owner_user_id = ${ownerId} AND platform = ${scope.platform}
+            AND bot_id = ${scope.botId} AND scope_type = ${cursorType}
+            AND scope_id = ${scope.id}) AS tombstoned
+    `);
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) throw new DataRuntimeError("database_unavailable", "Memory scope 状态查询失败");
+    const rawUpdatedAt = row.updated_at;
+    const updatedAt = rawUpdatedAt instanceof Date
+      ? rawUpdatedAt.toISOString()
+      : String(rawUpdatedAt || "");
+    const revision = row.scope_version == null
+      ? "missing"
+      : `${Number(row.scope_version) || 0}:${updatedAt}`;
+    return { revision, tombstoned: row.tombstoned === true };
   }
 
   async loadRagSources(

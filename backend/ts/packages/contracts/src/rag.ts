@@ -1,8 +1,8 @@
 /** TypeScript RAG Worker 与业务桥接层共用的 canonical contract。 */
 
 export const RAG_CONTRACT_VERSION = "rag-v1" as const;
-// 0.3.3：TS Data Runtime 补齐 conversation 相邻上下文，旧磁盘索引不得继续恢复。
-export const RAG_WORKER_VERSION = "0.3.3" as const;
+// 0.5.0：数据读取与 Memory/向量准备统一在 TS worker 中执行。
+export const RAG_WORKER_VERSION = "0.5.0" as const;
 
 export type RagSourceType =
   | "memory"
@@ -187,6 +187,17 @@ export type RagRankResult = {
 };
 
 export type RagRequest =
+  | { op: "database_revision"; owner_id: string }
+  | { op: "load_index_from_database"; owner_id: string; revision: string; vector_version?: string }
+  | {
+      op: "load_vectors_from_storage"; owner_id: string; vector_version: string;
+    }
+  | {
+      op: "prepare_memory"; owner_id: string;
+      scopes: Array<{ ownerId: string; type: "owner" | "group" | "member"; id: string; platform?: string; botId?: string; groupId?: string }>;
+      source_filter: string; snapshot_revision?: string; snapshot_text?: string; vector_version?: string;
+    }
+  | { op: "set_vectors"; vectors: Record<string, number[]>; vector_version: string }
   | { op: "batch_search"; revision: string; query: string; transient_revision?: string; searches: Array<{ id: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; corpus?: "persistent" | "transient" }> }
   | {
       op: "hybrid_fuse";
@@ -231,8 +242,8 @@ export type RagRequest =
   | { op: "adapt"; source_type: RagSourceType | string; records: Record<string, unknown>[] }
   | { op: "build_documents"; batch: RagSourceBatch }
   | { op: "build_and_index"; revision: string; batch: RagSourceBatch }
-  | { op: "replace"; revision: string; documents: RagDocument[]; /** 全量持久向量表（键为 document_key），worker 整表替换并记录版本戳；缺省表示本轮不更新向量。 */ vectors?: Record<string, number[]>; /** 与 vectors 配套的生效 embedding 模型版本戳。 */ vector_version?: string }
-  | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[]; /** 与 replace 相同的整表持久向量替换（Python 每次构建都随载全量当前映射，整表覆盖即自清理已删文档）。 */ vectors?: Record<string, number[]>; vector_version?: string }
+  | { op: "replace"; revision: string; documents: RagDocument[]; /** 全量持久向量表；保留给兼容调用方。 */ vectors?: Record<string, number[]>; /** 与 vectors 配套的生效 embedding 模型版本戳。 */ vector_version?: string; /** 在同一 worker 操作内从已绑定 owner 的存储加载向量，避免索引/向量状态撕裂。 */ vector_cache?: { owner_id: string; vector_version: string } }
+  | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[]; /** 与 replace 相同的持久向量表；保留给兼容调用方。 */ vectors?: Record<string, number[]>; vector_version?: string; vector_cache?: { owner_id: string; vector_version: string } }
   | { op: "search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope }
   | { op: "unified_search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope; max_chars?: number }
   | {
@@ -254,8 +265,13 @@ export type RagRequest =
 export type RagHybridFuseResult = { chunk_id: string; score: number };
 
 export type RagSuccessResponse =
+  | { status: "ok"; version: string; revision: string | null }
+  | { status: "ok"; version: string; revision: string; document_count: number; estimated_bytes: number; vector_count: number; vector_version: string }
+  | { status: "ok"; version: string; revision: string; document_count: number; estimated_bytes: number; vector_count: number; vector_version: string; probe: RagIndexLoadProbe }
+  | { status: "ok"; version: string; vector_count: number; vector_version: string }
+  | { status: "ok"; version: string; transient_revision: string; document_count: number; vector_count: number; vector_version: string; memory_source: string; probe?: RagMemoryPrepareProbe }
   | { status: "ok"; version: string; revision: string; batches: Array<{ id: string; results: RagSearchResult[]; diagnostics: RagSearchDiagnostics }>; document_counts: Record<string, number> }
-  | { status: "ok"; version: string; revision: string; document_count: number; restore_error?: string | null }
+  | { status: "ok"; version: string; revision: string; document_count: number; restore_error?: string | null; restore_probe?: RagIndexLoadProbe }
   | { status: "ok"; version: string; tokens: string[] }
   | { status: "ok"; version: string; documents: RagDocument[]; document_count: number }
   | { status: "ok"; version: string; selected: RagRankResult[]; stats: RagRankDiagnostics; input_digest: string }
@@ -280,7 +296,33 @@ export type RagSuccessResponse =
       fusion: { fusion: "hybrid-rrf" | "bm25"; vector_doc_count: number; vector_version: string; fallback: string | null };
       document_counts: Record<string, number>;
       source_groups: Record<string, { candidate_count: number; hit_count: number }>;
+      /** 仅阶段名、耗时与计数；不含查询或文档正文。 */
+      probe?: RagUnifiedQueryProbe;
     };
+
+export type RagUnifiedQueryProbe = {
+  stage_ms: Record<string, number>;
+  counts: {
+    persistent_documents: number;
+    transient_documents: number;
+    search_specs: number;
+    candidate_pool: number;
+    selected: number;
+    source_groups: number;
+  };
+};
+
+/** 索引冷加载诊断；仅包含阶段耗时与聚合计数，不含正文、owner 或 revision。 */
+export type RagIndexLoadProbe = {
+  stage_ms: Record<string, number>;
+  counts: Record<string, number>;
+};
+
+export type RagMemoryPrepareProbe = {
+  stage_ms: Record<string, number>;
+  counts: Record<string, number>;
+  cache: Record<string, boolean>;
+};
 
 export type RagErrorResponse = {
   status: "error";
@@ -288,6 +330,6 @@ export type RagErrorResponse = {
   message: string;
 };
 
-export type RagUnifiedQueryResult = RagRankResult & { document_key: string; raw_score: number };
+export type RagUnifiedQueryResult = RagRankResult & { document_key: string; raw_score: number; document?: RagDocument };
 
 export type RagResponse = RagSuccessResponse | RagErrorResponse;

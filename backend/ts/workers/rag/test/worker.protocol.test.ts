@@ -1,9 +1,11 @@
 import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { rankCandidates } from "../src/service.ts";
 import { queryMatch } from "../src/ranking/confidence.ts";
@@ -12,7 +14,7 @@ import { rescoreDocument } from "../src/ranking/idf-rescore.ts";
 const workerDir = resolve(import.meta.dirname, "..");
 
 test("RAG worker 遵守 JSONL ping 与 replace/search contract", async (t) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -39,8 +41,77 @@ test("RAG worker 遵守 JSONL ping 与 replace/search contract", async (t) => {
   await once(child, "close");
 });
 
+test("RAG worker 在 replace/patch 同一操作内按 owner 装载向量缓存", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-rag-storage-"));
+  const ownerId = "worker-storage-owner";
+  const memoryDir = join(root, ownerId, ".agent");
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(join(memoryDir, "memory_vec.json"), JSON.stringify({
+    "rag:parent-1:v1:0": { t: "provider:model:2", v: [0.25, 0.75] },
+  }));
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
+    cwd: workerDir,
+    env: {
+      PATH: process.env.PATH || "",
+      GUGU_RAG_OWNER_ID: ownerId,
+      GUGU_STORAGE_BACKEND: "local",
+      GUGU_STORAGE_ROOT: root,
+    },
+  });
+  t.after(async () => {
+    child.kill();
+    await rm(root, { recursive: true, force: true });
+  });
+  const lines = createInterface({ input: child.stdout });
+  const pending: Array<(value: string) => void> = [];
+  const received: string[] = [];
+  lines.on("line", (line) => {
+    const waiter = pending.shift();
+    if (waiter) waiter(line); else received.push(line);
+  });
+  const readResponse = async (): Promise<Record<string, unknown>> => {
+    const line = received.shift() ?? await new Promise<string>((resolveLine) => pending.push(resolveLine));
+    return JSON.parse(line) as Record<string, unknown>;
+  };
+  const document = {
+    id: "file:1:0", text: "vector-backed file", content: "vector-backed file",
+    source_type: "file", source_id: "1", parent_id: "parent-1",
+    document_version: "v1", chunk_index: 0, chunk_count: 1, scope_type: "owner",
+  };
+  const vectorCache = { owner_id: ownerId, vector_version: "provider:model:2" };
+  child.stdin.write(JSON.stringify({
+    op: "replace", revision: "r1", documents: [document], vector_cache: vectorCache,
+  }) + "\n");
+  const replaced = await readResponse();
+  assert.equal(replaced.status, "ok");
+  assert.equal(replaced.vector_count, 1);
+  assert.equal(replaced.vector_version, "provider:model:2");
+
+  child.stdin.write(JSON.stringify({
+    op: "patch", revision: "r2", base_revision: "r1", upserts: [document], deletes: [],
+    vector_cache: vectorCache,
+  }) + "\n");
+  const patched = await readResponse();
+  assert.equal(patched.status, "ok");
+  assert.equal(patched.revision, "r2");
+  assert.equal(patched.vector_count, 1);
+
+  child.stdin.write(JSON.stringify({
+    op: "patch", revision: "r3", base_revision: "r2", upserts: [], deletes: ["file:1:0"],
+    vector_cache: { owner_id: "other-owner", vector_version: "provider:model:2" },
+  }) + "\n");
+  const rejected = await readResponse();
+  assert.equal(rejected.status, "error");
+  child.stdin.write('{"op":"ping"}\n');
+  const ping = await readResponse();
+  assert.equal(ping.revision, "r2");
+  assert.equal(ping.document_count, 1);
+  child.stdin.end();
+  await once(child, "close");
+});
+
 test("RAG worker 的统一 builder 可构建所有通用 source record", async (t) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -67,7 +138,7 @@ test("RAG worker 的统一 builder 可构建所有通用 source record", async (
 });
 
 test("RAG worker 可在一次协议请求内构建并更新索引", async (t) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -97,7 +168,7 @@ test("RAG worker 可在一次协议请求内构建并更新索引", async (t) =>
 });
 
 test("RAG worker 在截断前应用 source 与 scope 过滤", async (t) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -134,7 +205,7 @@ test("RAG worker 在截断前应用 source 与 scope 过滤", async (t) => {
 });
 
 test("RAG worker 使用 metadata 过滤 project/folder scope", async (t) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -165,7 +236,7 @@ test("RAG worker 使用 metadata 过滤 project/folder scope", async (t) => {
 });
 
 test("RAG worker unified_search 执行正文去重、来源上限和字符预算", async (t) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -406,7 +477,7 @@ test("conversation 自动标题不参与 query-match 与 IDF 重排", () => {
 });
 
 function spawnWorker(t: import("node:test").TestContext) {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -619,7 +690,7 @@ test("Phase 4：索引损坏与版本不匹配显式报告，重建后清除", a
   const dir = await mkdtemp(join(os.tmpdir(), "rag-corrupt-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const spawnWith = async (indexDir: string) => {
-    const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts", indexDir],
+    const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts", indexDir],
       { cwd: workerDir });
     t.after(() => child.kill());
     return child;
@@ -659,6 +730,26 @@ test("Phase 4：索引损坏与版本不匹配显式报告，重建后清除", a
   assert.equal(ping2.document_count, 1);
   corrupted.stdin.end();
   await once(corrupted, "close");
+
+  // 正常持久化索引重启后，ping 暴露恢复分段耗时和聚合计数，不带索引正文。
+  const restored = await spawnWith(dir);
+  const c = await talk(restored);
+  c.request({ op: "ping" });
+  const pingRestored = await c.read();
+  const restoreProbe = pingRestored.restore_probe as {
+    stage_ms: Record<string, number>; counts: Record<string, number>;
+  };
+  assert.deepEqual(Object.keys(restoreProbe.stage_ms).sort(), [
+    "restore_index_install", "restore_json_parse", "restore_read_file",
+    "restore_total", "restore_vector_map",
+  ]);
+  assert.equal(restoreProbe.counts.index_file_present, 1);
+  assert.equal(restoreProbe.counts.documents, 1);
+  assert.equal(restoreProbe.counts.vectors, 0);
+  assert.equal(restoreProbe.counts.restored, 1);
+  assert.equal(JSON.stringify(restoreProbe).includes("重建后的正文"), false);
+  restored.stdin.end();
+  await once(restored, "close");
 
   // 3) 版本不匹配 → version_mismatch；旧制品不能假装可用。
   const stored = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
@@ -785,10 +876,26 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   assert.equal(unified.stats.scoring_version, "confidence-v4");
   assert.equal(unified.stats.rescore_version, "idf-nonlinear-v2");
   assert.equal(unified.stats.idf_source, "combined_ts_index");
+  assert.equal(unified.probe.counts.persistent_documents, docs.length);
+  assert.equal(unified.probe.counts.transient_documents, memoryDocs.length);
+  assert.equal(unified.probe.counts.search_specs, 3);
+  assert.ok(unified.probe.stage_ms.bm25_scoring >= 0);
+  assert.ok(unified.probe.stage_ms.lexical_search_and_group >= 0);
+  assert.ok(unified.probe.stage_ms.rank_and_idf_rescore >= 0);
+  assert.ok(unified.probe.stage_ms.worker_total >= 0);
   // 水位：message_id=5 的会话文档不参与。
-  const unifiedRows = unified.selected as Array<{ document_key: string; confidence: number }>;
+  const unifiedRows = unified.selected as Array<{
+    document_key: string;
+    confidence: number;
+    document?: { text?: string };
+  }>;
   const unifiedKeys = unifiedRows.map((row) => row.document_key);
   assert.ok(!unifiedKeys.includes("conv:5:0"));
+  assert.equal(
+    unifiedRows.find((row) => row.document_key === "file:1:0")?.document?.text,
+    "缓存文件的部署结论",
+    "冷恢复查询需把命中文档随结果返回，供 Python 做 scope 二次授权",
+  );
   // 与参考管线（同水位口径）选中序列与 confidence 全等。
   const referenceRows = reference.selected as Array<{ id: string; confidence: number }>;
   assert.deepEqual(unifiedKeys, referenceRows.map((row) => keyById.get(row.id)));

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -23,12 +24,25 @@ from app.models import KnowledgeIndexEntry
 
 INDEX_CACHE_TTL_SECONDS = 30 * 60
 # 单 owner 索引准入预算。32MB 是语料很小时定的：真实用户索引长到 ~56MB（1.9 万
-# 持久文档）后条目永远进不了 Python 缓存，放大每进程 sidecar 冷启动成本；提到 128MB。
+# 持久文档）后条目永远进不了缓存，每次查询都全量冷装载 5s+，直接打穿搜索超时。
+# 提到 128MB；注意 TS 序列化索引住在 worker 进程里，这里的超卖是可控的。
 PER_OWNER_CACHE_BYTES = 128 * 1024 * 1024
 GLOBAL_CACHE_BYTES = 512 * 1024 * 1024
 DEFAULT_SOURCE_TYPES = (
     "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
+
+
+@asynccontextmanager
+async def _observed_lock(lock: asyncio.Lock, phase: str):
+    """等待缓存锁时保留独立阶段；没有自动召回观测时等同普通锁。"""
+    from agent.rag.observation import await_probe
+
+    await await_probe(phase, lock.acquire())
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def estimate_document_bytes(documents: list[IndexDocument]) -> int:
@@ -44,42 +58,6 @@ def estimate_document_bytes(documents: list[IndexDocument]) -> int:
 def estimate_index_bytes(documents: list[IndexDocument], index) -> int:
     """估算统一 TypeScript lexical index 的缓存预算。"""
     return max(estimate_document_bytes(documents), int(getattr(index, "estimated_bytes", 0) or 0))
-
-
-def _worker_document_key(document: IndexDocument) -> str:
-    """稳定 chunk 槽位；契约统一收口在 agent.rag.delta。"""
-    from agent.rag.delta import chunk_slot_key
-    return chunk_slot_key(document)
-
-
-async def _persistent_vectors(
-    owner_user_id, documents: list[IndexDocument], diagnostics: dict[str, object] | None = None,
-) -> tuple[dict[str, list[float]], str]:
-    """整表收集持久来源的缓存向量，按 worker 文档键映射后随 replace/patch 搭载。
-
-    memory/pattern 走 replace_transient 的瞬态槽通道，不进持久表（控制 IPC 体量）；
-    embedding 未启用或缓存未命中时返回空表，worker 端按纯词法降级。读取失败只
-    标记诊断并降级，不允许向量缓存问题阻断索引构建。
-    """
-    from agent.memory import embedding
-    from agent.rag.service import _load_cached_vectors
-
-    if not documents:
-        return {}, ""
-    try:
-        if not embedding.is_enabled():
-            return {}, ""
-        cached = await _load_cached_vectors(owner_user_id, documents)
-    except Exception as exc:
-        if diagnostics is not None:
-            diagnostics["persistent_vectors_error"] = type(exc).__name__
-        return {}, ""
-    vectors: dict[str, list[float]] = {}
-    for document in documents:
-        vector = cached.get(document.chunk_id)
-        if vector and document.source_type not in {"memory", "pattern"}:
-            vectors[_worker_document_key(document)] = vector
-    return vectors, embedding.model_tag()
 
 
 @dataclass
@@ -118,6 +96,7 @@ class KnowledgeIndexCache:
         当前 revision 全量 replace 一次；只给 revision 不一致后的自愈重试用，正常
         查询走缓存与增量 patch。
         """
+        from agent.rag.observation import await_probe, probe_update
         from app.core.config import get_settings
 
         search_settings = get_settings().search
@@ -139,15 +118,25 @@ class KnowledgeIndexCache:
         if (not force and shared_key and entry is not None
                 and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend)):
             self._touch(key, entry)
+            probe_update(index_cache={"cache_path": "snapshot_fast_hit", "shared_index": True})
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
                 diagnostics["shared_index"] = True
                 diagnostics["snapshot_reused"] = True
             return entry.index
-        revision = baseline_revision or await self._revision(db, owner_user_id)
+        revision = baseline_revision
+        if revision is None:
+            revision = await await_probe(
+                "index_revision_read", self._current_revision(
+                    db, owner_user_id, backend, search_settings,
+                ),
+            )
+        else:
+            probe_update(index_cache={"revision_source": "snapshot_baseline"})
         entry = self._entries.get(key)
         if not force and entry is not None and self._valid(entry, revision, backend) and not shared_key:
             self._touch(key, entry)
+            probe_update(index_cache={"cache_path": "revision_cache_hit", "shared_index": False})
             if diagnostics is not None:
                 diagnostics["cache_hit"] = True
                 diagnostics["cache_miss_reason"] = ""
@@ -160,20 +149,36 @@ class KnowledgeIndexCache:
                 else "revision_changed" if entry.revision != revision
                 else "backend_changed"
             )
+        probe_update(index_cache={
+            "cache_path": "cache_miss",
+            "cache_entry_present": entry is not None,
+            "shared_index": bool(shared_key),
+            "forced_resync": force,
+            "revision_source": "snapshot_baseline" if baseline_revision is not None else "database",
+            "cache_miss_reason": diagnostics.get("cache_miss_reason") if diagnostics else None,
+        })
 
         lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        async with _observed_lock(lock, "index_cache_lock_wait"):
             entry = self._entries.get(key)
             if (not force and shared_key and entry is not None
                     and entry.persistent_loaded and self._valid_snapshot_entry(entry, backend)):
                 self._touch(key, entry)
+                probe_update(index_cache={"cache_path": "snapshot_hit_after_lock", "shared_index": True})
                 if diagnostics is not None:
                     diagnostics.update(cache_hit=True, shared_index=True, snapshot_reused=True,
                                        cache_miss_reason="", document_count=_index_document_count(entry.index))
                 return entry.index
-            revision = baseline_revision or await self._revision(db, owner_user_id)
+            revision = baseline_revision
+            if revision is None:
+                revision = await await_probe(
+                    "index_revision_recheck", self._current_revision(
+                        db, owner_user_id, backend, search_settings,
+                    ),
+                )
             if not force and entry is not None and self._valid(entry, revision, backend) and not shared_key:
                 self._touch(key, entry)
+                probe_update(index_cache={"cache_path": "revision_hit_after_lock", "shared_index": False})
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
                     diagnostics["cache_miss_reason"] = ""
@@ -182,10 +187,17 @@ class KnowledgeIndexCache:
             # 冷启动优先让 TS worker 从持久化索引恢复。只有索引不存在、版本不匹配或
             # revision 变化时才读取完整 DB 文档并重建，避免每次进程重启都拉全量正文。
             if backend == "typescript" and not shared_key and not force:
-                restored = await self._build_index(
-                    backend, owner_user_id, None, revision, search_settings, diagnostics,
+                restored = await await_probe(
+                    "index_sidecar_restore",
+                    self._build_index(
+                        backend, owner_user_id, None, revision, search_settings, diagnostics,
+                    ),
                 )
                 if restored is not None:
+                    probe_update(index_cache={
+                        "cache_path": "persistent_sidecar_restore",
+                        "disk_index_reused": bool(diagnostics and diagnostics.get("disk_index_reused")),
+                    })
                     if diagnostics is not None:
                         diagnostics["cache_hit"] = True
                         diagnostics["cache_hit_layer"] = "persistent_sidecar"
@@ -195,7 +207,32 @@ class KnowledgeIndexCache:
                         restored, 1, revision, backend, time.monotonic(),
                     ))
                     return restored
-            documents = await load_index_documents(db, owner_user_id)
+            if backend == "typescript":
+                index = await await_probe(
+                    "index_ts_database_load",
+                    self._build_index(
+                        backend, owner_user_id, None, revision, search_settings, diagnostics,
+                        allow_database_load=True,
+                    ),
+                )
+                if diagnostics is not None:
+                    diagnostics["cache_hit"] = False
+                    diagnostics["shared_index"] = bool(shared_key)
+                    diagnostics["document_count"] = _index_document_count(index)
+                    diagnostics["index_sync"] = "ts_database_load"
+                size = estimate_index_bytes([], index)
+                if size <= self.owner_limit_bytes:
+                    self._store(key, _Entry(
+                        index, size, revision, backend, time.monotonic(), persistent_loaded=True,
+                    ))
+                else:
+                    self._entries.pop(key, None)
+                    self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
+                return index
+            documents = await await_probe(
+                "index_document_load", load_index_documents(db, owner_user_id),
+            )
+            probe_update(index_cache={"loaded_document_count": len(documents)})
             index_documents = list(documents)
             # force 是「不信任何缓存状态」的全量重同步：不借旧条目做增量，直接 replace。
             base_entry = None if force else (entry or self._latest_snapshot_entry(owner_key, backend, key))
@@ -219,10 +256,14 @@ class KnowledgeIndexCache:
                         diagnostics["cache_hit"] = True
                         diagnostics["shared_index"] = True
                     return entry.index
-            index = await self._build_index(
-                backend, owner_user_id, index_documents, revision, search_settings, diagnostics,
-                previous_documents=(list(getattr(base_entry.index, "documents", ())) if base_entry is not None else None),
-                previous_revision=(base_entry.revision if base_entry is not None else None),
+            probe_update(index_cache={"cache_path": "database_load_and_sync"})
+            index = await await_probe(
+                "index_worker_sync",
+                self._build_index(
+                    backend, owner_user_id, index_documents, revision, search_settings, diagnostics,
+                    previous_documents=(list(getattr(base_entry.index, "documents", ())) if base_entry is not None else None),
+                    previous_revision=(base_entry.revision if base_entry is not None else None),
+                ),
             )
             if diagnostics is not None:
                 diagnostics["cache_hit"] = False
@@ -323,29 +364,103 @@ class KnowledgeIndexCache:
     async def _build_index(self, backend, owner_user_id, documents, revision, settings,
                            diagnostics: dict[str, object] | None = None,
                            previous_documents: list[IndexDocument] | None = None,
-                           previous_revision: str | None = None):
+                           previous_revision: str | None = None,
+                           allow_database_load: bool = False):
+        from agent.rag.observation import await_probe, probe_finish, probe_start, probe_update
+        from agent.memory import embedding
+
         started = time.monotonic()
         if backend == "typescript":
-            client = await get_lexical_client(
-                owner_user_id,
-                command=settings.ts_sidecar_command,
-                index_dir=index_dir_for_owner(owner_user_id),
+            vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
+            client = await await_probe(
+                "index_worker_acquire",
+                get_lexical_client(
+                    owner_user_id,
+                    command=settings.ts_sidecar_command,
+                    index_dir=index_dir_for_owner(owner_user_id),
+                ),
             )
             try:
-                reused = await client.reuse_if_current(revision)
+                reused = await await_probe(
+                    "index_worker_restore_check", client.reuse_if_current(revision),
+                )
+                probe_update(index_build={
+                    "document_count": len(documents) if documents is not None else None,
+                    "worker_revision_reused": bool(reused),
+                })
                 if diagnostics is not None:
                     diagnostics["sidecar_reused"] = bool(reused)
                     if client.restore_error:
                         # 磁盘索引损坏或版本不匹配：显式报告，本次必然走全量重建。
                         diagnostics["index_restore_error"] = client.restore_error
+                if reused and client._vector_version != vector_tag:
+                    vector_result = await await_probe(
+                        "index_ts_vector_cache_load",
+                        client.load_vectors_from_storage(owner_user_id, vector_tag),
+                    )
+                    if diagnostics is not None:
+                        diagnostics["vector_count"] = int(vector_result.get("vector_count") or 0)
+                        diagnostics["vector_version_refreshed"] = True
                 if documents is None:
                     if reused:
                         if diagnostics is not None:
                             diagnostics["disk_index_reused"] = True
                         return TsLexicalIndex([], client, revision)
-                    return None
+                    if not allow_database_load:
+                        return None
+                    database_snapshot = await await_probe(
+                        "index_ts_document_load",
+                        client.load_index_from_database(owner_user_id, revision or "", vector_tag),
+                    )
+                    worker_probe = database_snapshot.get("probe")
+                    if isinstance(worker_probe, dict):
+                        raw_stage_ms = worker_probe.get("stage_ms")
+                        raw_counts = worker_probe.get("counts")
+                        stage_names = {
+                            "data_runtime_database_query",
+                            "data_runtime_revision_projection",
+                            "data_runtime_document_projection",
+                            "data_runtime_load_rag_index_total",
+                            "index_install_build",
+                            "vector_cache_load",
+                            "vector_storage_read",
+                            "vector_parse_and_match",
+                            "persist_directory_prepare",
+                            "persist_serialize",
+                            "persist_write_and_rename",
+                            "persist_total",
+                            "load_index_from_database_total",
+                        }
+                        count_names = {
+                            "database_rows", "documents", "posting_terms",
+                            "vector_files_present", "vector_entries_loaded", "vector_count",
+                            "index_persisted", "serialized_bytes",
+                        }
+                        probe_update(index_ts_database_load={
+                            "stage_ms": {
+                                name: int(value)
+                                for name, value in raw_stage_ms.items()
+                                if name in stage_names and isinstance(value, (int, float))
+                                and not isinstance(value, bool)
+                            } if isinstance(raw_stage_ms, dict) else {},
+                            "counts": {
+                                name: int(value)
+                                for name, value in raw_counts.items()
+                                if name in count_names and isinstance(value, (int, float))
+                                and not isinstance(value, bool)
+                            } if isinstance(raw_counts, dict) else {},
+                        })
+                    if diagnostics is not None:
+                        diagnostics["index_sync"] = "database_load"
+                        diagnostics["document_count"] = int(database_snapshot.get("document_count") or 0)
+                        diagnostics["vector_count"] = int(database_snapshot.get("vector_count") or 0)
+                    probe_update(index_build={
+                        "document_count": int(database_snapshot.get("document_count") or 0),
+                        "vector_count": int(database_snapshot.get("vector_count") or 0),
+                        "index_source": "database",
+                    })
+                    return TsLexicalIndex([], client, revision)
                 if not reused:
-                    vectors, vector_tag = await _persistent_vectors(owner_user_id, documents, diagnostics)
                     can_patch = bool(
                         settings.ts_sidecar_index_dir
                         and previous_documents is not None
@@ -355,22 +470,49 @@ class KnowledgeIndexCache:
                     if can_patch:
                         from agent.rag.delta import compute_chunk_delta
 
+                        delta_started = time.monotonic()
+                        probe_start("index_delta_compute")
                         delta = compute_chunk_delta(previous_documents, documents)
                         upserts = list(delta.upserts)
                         deletes = list(delta.deletes)
-                        await client.patch(
-                            upserts, deletes, revision, previous_revision,
-                            vectors=vectors, vector_version=vector_tag,
+                        probe_finish(
+                            "index_delta_compute", delta_started,
+                            upsert_count=len(upserts), delete_count=len(deletes),
+                        )
+                        vector_result = await await_probe(
+                            "index_worker_patch",
+                            client.patch(
+                                upserts, deletes, revision, previous_revision,
+                                storage_owner_id=owner_user_id,
+                                vector_version=vector_tag,
+                            ),
                         )
                         if diagnostics is not None:
                             diagnostics["index_sync"] = "patch"
                             diagnostics["upsert_count"] = len(upserts)
                             diagnostics["delete_count"] = len(deletes)
                     else:
-                        await client.replace(documents, revision, vectors=vectors, vector_version=vector_tag)
+                        vector_result = await await_probe(
+                            "index_worker_replace",
+                            client.replace(
+                                documents, revision,
+                                storage_owner_id=owner_user_id,
+                                vector_version=vector_tag,
+                            ),
+                        )
                         if diagnostics is not None:
                             diagnostics["index_sync"] = "replace"
-            except TsSidecarUnavailable:
+                    if diagnostics is not None:
+                        diagnostics["vector_count"] = int(vector_result.get("vector_count") or 0)
+            except TsSidecarUnavailable as error:
+                probe_update(index_build={
+                    "outcome": "error",
+                    "error_type": type(error).__name__,
+                    "error_code": (
+                        "revision_mismatch" if error.code == "revision_mismatch"
+                        else "other" if error.code else "missing"
+                    ),
+                })
                 await client.close()
                 if diagnostics is not None:
                     diagnostics["fallback"] = "typescript_unavailable"
@@ -380,6 +522,16 @@ class KnowledgeIndexCache:
                     diagnostics["index_build_ms"] = int((time.monotonic() - started) * 1000)
                 return TsLexicalIndex(documents, client, revision)
         raise TsSidecarUnavailable(f"不支持的词法后端: {backend}")
+
+    async def _current_revision(self, db, owner_user_id: object, backend, settings) -> str | None:
+        if backend != "typescript":
+            return await self._revision(db, owner_user_id)
+        client = await get_lexical_client(
+            owner_user_id,
+            command=settings.ts_sidecar_command,
+            index_dir=index_dir_for_owner(owner_user_id),
+        )
+        return await client.database_revision(owner_user_id)
 
     async def _revision(self, db, owner_user_id: object) -> str | None:
         from agent.rag.protocol import RAG_PROJECTION_VERSION, TOKENIZER_VERSION
@@ -431,10 +583,22 @@ class KnowledgeIndexCache:
         worker 以 ``revision_mismatch`` 拒绝。只有重新装载文档并 replace 才能让 worker
         状态对齐本轮 revision，所以这里必然全量重同步一次。
         """
-        self.invalidate(owner_user_id, include_snapshot=True)
-        return await self.get(
-            db, owner_user_id, source_type, scope,
-            diagnostics=diagnostics, baseline_revision=baseline_revision, force=True,
+        from agent.rag.observation import await_probe, probe_finish, probe_start, probe_update
+
+        started = time.monotonic()
+        probe_start("revision_cache_invalidate")
+        invalidated_entries = self.invalidate(owner_user_id, include_snapshot=True)
+        probe_finish(
+            "revision_cache_invalidate", started,
+            invalidated_entry_count=invalidated_entries,
+        )
+        probe_update(revision_resync={"invalidated_entry_count": invalidated_entries})
+        return await await_probe(
+            "revision_resync_forced_index_get",
+            self.get(
+                db, owner_user_id, source_type, scope,
+                diagnostics=diagnostics, baseline_revision=baseline_revision, force=True,
+            ),
         )
 
     def clear(self) -> None:

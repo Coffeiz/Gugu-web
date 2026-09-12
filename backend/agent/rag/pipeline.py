@@ -143,22 +143,30 @@ async def _knowledge_client(user_id: object):
     )
 
 
+def _embedding_vector_version() -> str:
+    """索引写侧只传模型版本；向量缓存正文由 TS worker 从 owner 存储读取。"""
+    from agent.memory import embedding
+
+    return embedding.model_tag() if embedding.is_enabled() else ""
+
+
 async def _replace_worker_index(
     user_id: object, db, revision: str | None, *, source_type: str = "knowledge",
     diagnostics: dict[str, object] | None = None,
 ) -> None:
     """mismatch 回退：worker 侧整来源 replace（不动主数据库，DB 已是最新）。"""
-    from agent.rag.index_cache import _persistent_vectors
     from agent.rag.ts_sidecar import TsSidecarUnavailable
 
     records = await build_source_records(db, user_id, source_type)
     if records is None:
         raise RuntimeError(f"来源未提供 canonical source record：{source_type}")
     documents = await records_to_write_documents(user_id, source_type, records)
-    vectors, vector_tag = await _persistent_vectors(user_id, documents, diagnostics)
     client = await _knowledge_client(user_id)
     try:
-        await client.replace(documents, revision, vectors=vectors, vector_version=vector_tag)
+        await client.replace(
+            documents, revision, storage_owner_id=user_id,
+            vector_version=_embedding_vector_version(),
+        )
     except TsSidecarUnavailable:
         await client.close()
         raise
@@ -261,15 +269,12 @@ async def update_document(
         status = "ready"
         base_revision_match: bool | None = None
         try:
-            from agent.rag.index_cache import _persistent_vectors
-
-            diagnostics: dict[str, object] = {}
-            vectors, vector_tag = await _persistent_vectors(user_id, all_documents, diagnostics)
             client = await _knowledge_client(user_id)
             await client.patch(
                 upserts, delete_slots, revision,
                 getattr(client, "_revision", None),
-                vectors=vectors, vector_version=vector_tag,
+                storage_owner_id=user_id,
+                vector_version=_embedding_vector_version(),
             )
         except TsSidecarUnavailable as exc:
             if exc.code == "revision_mismatch":

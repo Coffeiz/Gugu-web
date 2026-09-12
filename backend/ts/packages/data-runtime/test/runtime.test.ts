@@ -135,3 +135,85 @@ test("Data Runtime 的 Memory 读取只通过显式 StorageReader", async () => 
   ]);
   assert.equal(result.records[0]?.content, "长期记忆");
 });
+
+test("Data Runtime 在同一数据库快照装载 RAG 文档和 revision", async () => {
+  const queries: Array<{ text: string; values: unknown[] }> = [];
+  const indexedAt = new Date("2026-09-12T08:00:00.000Z");
+  const sql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+    queries.push({ text: strings.join("?").replace(/\s+/g, " "), values });
+    return Promise.resolve([
+      {
+        source_type: "knowledge", max_indexed_at: indexedAt,
+        source_id: "kb-7", scope_type: "owner", scope_id: "owner-1",
+        document_id: "7", parent_document_id: "7", document_version: "v2",
+        chunk_index: 1, chunk_count: 2, title: "知识标题", summary: "知识摘要",
+        content: "知识正文", metadata_json: { confidence: 0.8 },
+        source_updated_at: indexedAt,
+      },
+      {
+        source_type: "knowledge", max_indexed_at: indexedAt,
+        source_id: "kb-7", scope_type: "owner", scope_id: "owner-1",
+        document_id: "7", parent_document_id: "7", document_version: "v2",
+        chunk_index: 0, chunk_count: 2, title: "知识标题", summary: "知识摘要",
+        content: "另一个知识块", metadata_json: {}, source_updated_at: indexedAt,
+      },
+      {
+        source_type: "conversation", max_indexed_at: "2026-09-12T08:30:00.000Z",
+        source_id: "message-12", scope_type: "owner", scope_id: "owner-1",
+        document_id: "conversation:12", parent_document_id: "conversation:12",
+        document_version: "12", chunk_index: 0, chunk_count: 1,
+        title: "会话标题", summary: "", content: "当前问题",
+        metadata_json: {
+          kind: "message", context_before: "assistant：前文",
+          context_current: "user：当前问题", context_after: "assistant：后文",
+        }, source_updated_at: indexedAt,
+      },
+      {
+        source_type: "memory", max_indexed_at: indexedAt,
+        source_id: "memory", scope_type: "owner", scope_id: "owner-1",
+        document_id: "memory:memory:1", parent_document_id: "memory:1",
+        document_version: "v1", chunk_index: 0, chunk_count: 1,
+        title: "长期记忆", summary: "", content: "记忆内容",
+        metadata_json: {}, source_updated_at: indexedAt,
+      },
+    ]);
+  }) as never;
+  const runtime = new DataRuntime(sql);
+
+  const result = await runtime.loadRagIndex({ ownerId: "owner-1" });
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0]!.text, /MAX\(indexed_at\) OVER \(PARTITION BY source_type\)/);
+  assert.match(queries[0]!.text, /owner_user_id = \?/);
+  assert.match(queries[0]!.text, /deleted_at IS NULL/);
+  assert.deepEqual(queries[0]!.values, ["owner-1"]);
+  assert.equal(
+    result.revision,
+    "ts-jieba-words-v3:rag-projection-v3:conversation:2026-09-12T08:30:00.000Z;knowledge:2026-09-12T08:00:00.000Z;memory:2026-09-12T08:00:00.000Z",
+  );
+  assert.equal(result.snapshot.documents.length, 4);
+  assert.equal(result.snapshot.documents[0]?.id, "knowledge:7:1");
+  assert.equal(result.snapshot.documents[0]?.text, "知识标题\n知识摘要\n知识正文");
+  assert.equal(result.snapshot.documents[2]?.ranking_text, "当前问题");
+  assert.equal(
+    result.snapshot.documents[2]?.context_text,
+    "assistant：前文\nuser：当前问题\nassistant：后文",
+  );
+  assert.deepEqual(Object.keys(result.snapshot), ["documents"]);
+  assert.deepEqual(result.probe.counts, { database_rows: 4, documents: 4 });
+  assert.deepEqual(Object.keys(result.probe.stage_ms).sort(), [
+    "database_query", "document_projection", "load_rag_index_total", "revision_projection",
+  ]);
+  assert.equal(JSON.stringify(result.probe).includes("知识正文"), false);
+});
+
+test("Data Runtime 空索引返回 null revision 且不回传正文", async () => {
+  const runtime = new DataRuntime((() => Promise.resolve([])) as never);
+  const result = await runtime.loadRagIndex({ ownerId: "owner-1" });
+  assert.equal(result.revision, null);
+  assert.deepEqual(result.snapshot, { documents: [] });
+  assert.deepEqual(result.probe.counts, { database_rows: 0, documents: 0 });
+  assert.deepEqual(Object.keys(result.probe.stage_ms).sort(), [
+    "database_query", "document_projection", "load_rag_index_total", "revision_projection",
+  ]);
+});

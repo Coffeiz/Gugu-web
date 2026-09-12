@@ -1,11 +1,13 @@
-import type { RagSourceRecord } from "../../contracts/src/rag.ts";
+import type { RagDocument, RagSourceRecord } from "../../contracts/src/rag.ts";
 
 export type DataScope = {
-  type: "owner" | "group";
+  type: "owner" | "group" | "member";
   id: string;
   platform?: string;
   botId?: string;
   groupId?: string;
+  /** Python 边界层已校验的 scope 所属用户；worker 仍需与绑定 owner 比较。 */
+  ownerId?: string;
 };
 
 /** 所有 TS 数据读取都必须带 owner；scope 只允许收窄读取范围。 */
@@ -59,12 +61,16 @@ export type DataErrorCode =
   | "read_failed";
 
 export class DataRuntimeError extends Error {
+  // strip-only 兼容：参数属性语法见 runtime.ts 同款说明。
+  readonly code: DataErrorCode;
+
   constructor(
-    readonly code: DataErrorCode,
+    code: DataErrorCode,
     message: string,
     options?: { cause?: unknown },
   ) {
     super(message, options);
+    this.code = code;
     this.name = "DataRuntimeError";
   }
 }
@@ -124,6 +130,15 @@ export type DataDocument = {
   document_version: string;
   updated_at?: string;
   metadata?: Record<string, string | number | boolean | null>;
+};
+
+export type RagIndexSnapshot = {
+  documents: RagDocument[];
+};
+
+export type MemoryScopeState = {
+  revision: string;
+  tombstoned: boolean;
 };
 
 export type DataChunk = DataDocument & {

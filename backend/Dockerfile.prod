@@ -38,9 +38,10 @@ FROM node:22-trixie AS rag-runtime
 WORKDIR /rag
 COPY backend/ts/workers/rag/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-fund --no-audit \
+        ali-oss@6.23.0 \
         @node-rs/jieba@2.0.1 \
         @node-rs/jieba-linux-x64-gnu@2.0.1 \
-    && node -e "import('@node-rs/jieba').then(() => console.log('RAG Jieba runtime ready'))"
+    && node -e "Promise.all([import('@node-rs/jieba'), import('ali-oss')]).then(() => console.log('RAG runtime dependencies ready'))"
 
 FROM python:3.14-slim-trixie
 

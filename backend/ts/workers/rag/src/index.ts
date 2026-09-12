@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type {
   RagDocument,
+  RagIndexLoadProbe,
   RagRankCandidate,
   RagRequest,
   RagResponse,
@@ -12,19 +13,25 @@ import type {
   RagSearchResult,
 } from "../../../packages/contracts/src/rag.ts";
 import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
+import { createPostgresClient } from "../../../packages/data-runtime/src/postgres.ts";
+import { DataRuntime } from "../../../packages/data-runtime/src/runtime.ts";
+import { createStorageReaderFromEnv } from "../../../packages/data-runtime/src/storage-reader.ts";
 import { tokenizeRaw } from "./tokenizer.ts";
 import { buildSourceDocuments, type RagSourceBatch } from "./index-builder.ts";
 import { rankCandidates } from "./service.ts";
 import { corpusStatistics, mergeCorpusStatistics, scoreTerms, termFrequency, tokenize as tokens } from "./ranking/bm25.ts";
 import { rankingText } from "./ranking/document-text.ts";
 import type { Posting } from "./ranking/types.ts";
+import { loadDocumentVectors, prepareMemory, type AuthorizedMemoryScope } from "./memory-loader.ts";
 
 const VERSION = RAG_WORKER_VERSION;
 
 type Document = RagDocument;
+type WorkerProbe = RagIndexLoadProbe;
 type State = {
   revision: string;
   restoreError: string | null;
+  restoreProbe: RagIndexLoadProbe;
   /** 向量驻留表；键 = worker 文档键。transient 槽放 Memory 快照向量，
    * persistent 槽放 knowledge 等持久来源向量（随 replace/patch 整表搭载、可落盘）。 */
   vectors: Map<string, number[]>;
@@ -93,37 +100,119 @@ function hybridFuseScores(
 
 function makeState(indexDir?: string): State {
   return {
-    revision: "", restoreError: null, vectors: new Map(), vectorVersion: "",
+    revision: "", restoreError: null,
+    restoreProbe: { stage_ms: {}, counts: {} },
+    vectors: new Map(), vectorVersion: "",
     documents: [], documentsById: new Map(), postings: new Map(),
     lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0, indexDir,
   };
 }
 
+function recordProbeStage(probe: WorkerProbe, name: string, started: number): void {
+  probe.stage_ms[name] = Math.max(0, Math.round(performance.now() - started));
+}
+
+let dataRuntime: DataRuntime | null = null;
+let storageReader: ReturnType<typeof createStorageReaderFromEnv> | null = null;
+
+function assertWorkerOwner(ownerId: string): void {
+  const boundOwner = String(process.env.GUGU_RAG_OWNER_ID || "").trim();
+  if (!boundOwner || !ownerId || ownerId.toLowerCase() !== boundOwner.toLowerCase()) {
+    throw new Error("RAG Worker 拒绝不匹配的 owner 范围");
+  }
+}
+
+function getDataRuntime(): DataRuntime {
+  if (dataRuntime) return dataRuntime;
+  const databaseUrl = String(process.env.GUGU_DATABASE_URL || "").trim();
+  if (!databaseUrl) throw new Error("RAG Worker 未配置数据库读取通道");
+  dataRuntime = new DataRuntime(createPostgresClient(databaseUrl, {
+    max: 1,
+    idleTimeout: 15,
+    connectTimeout: 5,
+  }));
+  return dataRuntime;
+}
+
+function getStorageReader(): ReturnType<typeof createStorageReaderFromEnv> {
+  if (!storageReader) storageReader = createStorageReaderFromEnv();
+  return storageReader;
+}
+
 async function restore(state: State): Promise<void> {
-  if (!state.indexDir) return;
+  const operationStarted = performance.now();
+  const probe: WorkerProbe = { stage_ms: {}, counts: {
+    index_file_present: 0,
+    index_file_bytes: 0,
+    documents: 0,
+    vectors: 0,
+    restored: 0,
+  } };
+  if (!state.indexDir) {
+    recordProbeStage(probe, "restore_total", operationStarted);
+    state.restoreProbe = probe;
+    return;
+  }
+
+  let stageStarted = performance.now();
   let raw: string;
   try {
     raw = await readFile(join(state.indexDir, "index.json"), "utf8");
   } catch {
     // 首次冷启动没有索引文件，不属于损坏。
+    recordProbeStage(probe, "restore_read_file", stageStarted);
+    recordProbeStage(probe, "restore_total", operationStarted);
+    state.restoreProbe = probe;
     return;
   }
+  recordProbeStage(probe, "restore_read_file", stageStarted);
+  probe.counts.index_file_present = 1;
+  probe.counts.index_file_bytes = Buffer.byteLength(raw, "utf8");
+
   // 恢复失败由上层 replace 重建；结局必须显式可观测，不能伪装成有数据或无声跳过。
+  stageStarted = performance.now();
+  let parsed: {
+    version?: string; revision?: string; documents?: Document[];
+    vectors?: Record<string, number[]>; vector_version?: string;
+  };
   try {
-    const parsed = JSON.parse(raw) as {
-      version?: string; revision?: string; documents?: Document[];
-      vectors?: Record<string, number[]>; vector_version?: string;
-    };
-    if (parsed.version !== VERSION) {
-      state.restoreError = "version_mismatch";
-      return;
-    }
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    recordProbeStage(probe, "restore_json_parse", stageStarted);
+    recordProbeStage(probe, "restore_total", operationStarted);
+    state.restoreError = "corrupt";
+    state.restoreProbe = probe;
+    return;
+  }
+  recordProbeStage(probe, "restore_json_parse", stageStarted);
+  if (parsed.version !== VERSION) {
+    state.restoreError = "version_mismatch";
+    recordProbeStage(probe, "restore_total", operationStarted);
+    state.restoreProbe = probe;
+    return;
+  }
+
+  stageStarted = performance.now();
+  try {
     replaceInMemory(state, parsed.revision ?? "", parsed.documents ?? []);
+    recordProbeStage(probe, "restore_index_install", stageStarted);
+    probe.counts.documents = state.documents.length;
+    stageStarted = performance.now();
     state.vectors = new Map(Object.entries(parsed.vectors ?? {}));
+    recordProbeStage(probe, "restore_vector_map", stageStarted);
+    probe.counts.vectors = state.vectors.size;
     state.vectorVersion = String(parsed.vector_version ?? "");
+    probe.counts.restored = 1;
   } catch {
     state.restoreError = "corrupt";
+    if (probe.stage_ms.restore_index_install === undefined) {
+      recordProbeStage(probe, "restore_index_install", stageStarted);
+    } else {
+      recordProbeStage(probe, "restore_vector_map", stageStarted);
+    }
   }
+  recordProbeStage(probe, "restore_total", operationStarted);
+  state.restoreProbe = probe;
 }
 
 function replaceInMemory(state: State, revision: string, documents: Document[]): void {
@@ -187,16 +276,37 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
 
-async function persist(state: State): Promise<void> {
-  if (!state.indexDir) return;
+async function persist(state: State, probe?: WorkerProbe): Promise<void> {
+  const operationStarted = performance.now();
+  if (!state.indexDir) {
+    if (probe) {
+      probe.stage_ms.persist_total = 0;
+      probe.counts.index_persisted = 0;
+    }
+    return;
+  }
+  let stageStarted = performance.now();
   await mkdir(state.indexDir, { recursive: true, mode: 0o700 });
+  if (probe) recordProbeStage(probe, "persist_directory_prepare", stageStarted);
   const target = join(state.indexDir, "index.json");
   const temporary = `${target}.tmp`;
-  await writeFile(temporary, JSON.stringify({
+  stageStarted = performance.now();
+  const serialized = JSON.stringify({
     version: VERSION, revision: state.revision, documents: state.documents,
     vectors: Object.fromEntries(state.vectors), vector_version: state.vectorVersion,
-  }), { mode: 0o600 });
+  });
+  if (probe) {
+    recordProbeStage(probe, "persist_serialize", stageStarted);
+    probe.counts.serialized_bytes = Buffer.byteLength(serialized, "utf8");
+  }
+  stageStarted = performance.now();
+  await writeFile(temporary, serialized, { mode: 0o600 });
   await rename(temporary, target);
+  if (probe) {
+    recordProbeStage(probe, "persist_write_and_rename", stageStarted);
+    recordProbeStage(probe, "persist_total", operationStarted);
+    probe.counts.index_persisted = 1;
+  }
 }
 
 /** replace/patch 携带向量时的整表替换：Python 每次索引构建都随载全量当前映射，
@@ -205,6 +315,38 @@ function applyVectorMap(state: State, request: { vectors?: Record<string, number
   if (request.vectors === undefined) return;
   state.vectors = new Map(Object.entries(request.vectors ?? {}));
   state.vectorVersion = String(request.vector_version ?? "");
+}
+
+function validateStoredVectorOwner(request: { vector_cache?: { owner_id: string } }): void {
+  if (request.vector_cache) assertWorkerOwner(String(request.vector_cache.owner_id || ""));
+}
+
+async function applyStoredVectorCache(
+  state: State,
+  request: {
+    vector_cache?: { owner_id: string; vector_version: string };
+    vectors?: Record<string, number[]>;
+    vector_version?: string;
+  },
+): Promise<{ vector_count: number; vector_version: string; vector_cache_load_ms?: number }> {
+  if (!request.vector_cache) {
+    applyVectorMap(state, request);
+    return { vector_count: state.vectors.size, vector_version: state.vectorVersion };
+  }
+  const ownerId = String(request.vector_cache.owner_id || "");
+  assertWorkerOwner(ownerId);
+  const vectorVersion = String(request.vector_cache.vector_version || "");
+  const started = performance.now();
+  const vectors = vectorVersion
+    ? await loadDocumentVectors(ownerId, state.documents, vectorVersion, getStorageReader())
+    : {};
+  state.vectors = new Map(Object.entries(vectors));
+  state.vectorVersion = vectorVersion;
+  return {
+    vector_count: state.vectors.size,
+    vector_version: state.vectorVersion,
+    vector_cache_load_ms: Math.round(performance.now() - started),
+  };
 }
 
 function matchesScope(document: Document, scope?: RagSearchScope): boolean {
@@ -279,6 +421,115 @@ function search(
 function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16); }
 
 async function handle(state: State, transient: State, request: RagRequest): Promise<RagResponse> {
+  if (request.op === "database_revision") {
+    assertWorkerOwner(request.owner_id);
+    const revision = await getDataRuntime().getRagIndexRevision({ ownerId: request.owner_id });
+    return { status: "ok", version: VERSION, revision };
+  }
+  if (request.op === "load_index_from_database") {
+    const operationStarted = performance.now();
+    const probe: WorkerProbe = { stage_ms: {}, counts: {} };
+    assertWorkerOwner(request.owner_id);
+    let stageStarted = performance.now();
+    const result = await getDataRuntime().loadRagIndex({ ownerId: request.owner_id });
+    for (const [name, elapsed] of Object.entries(result.probe.stage_ms)) {
+      probe.stage_ms[`data_runtime_${name}`] = elapsed;
+    }
+    Object.assign(probe.counts, result.probe.counts);
+
+    stageStarted = performance.now();
+    replaceInMemory(state, request.revision, result.snapshot.documents);
+    recordProbeStage(probe, "index_install_build", stageStarted);
+    probe.counts.posting_terms = state.postings.size;
+
+    const vectorVersion = String(request.vector_version || "");
+    const vectorProbe = {
+      stage_ms: {} as Record<string, number>,
+      counts: {} as Record<string, number>,
+      cache: { owner_cache_hit: false, scoped_cache_hit: false },
+    };
+    stageStarted = performance.now();
+    const vectors = vectorVersion
+      ? await loadDocumentVectors(
+        request.owner_id, result.snapshot.documents, vectorVersion, getStorageReader(), vectorProbe,
+      )
+      : {};
+    recordProbeStage(probe, "vector_cache_load", stageStarted);
+    for (const [name, elapsed] of Object.entries(vectorProbe.stage_ms)) {
+      probe.stage_ms[name] = elapsed;
+    }
+    Object.assign(probe.counts, vectorProbe.counts);
+    state.vectors = new Map(Object.entries(vectors));
+    state.vectorVersion = vectorVersion;
+    state.restoreError = null;
+    probe.counts.vector_count = state.vectors.size;
+    await persist(state, probe);
+    recordProbeStage(probe, "load_index_from_database_total", operationStarted);
+    return {
+      status: "ok", version: VERSION, revision: state.revision,
+      document_count: state.documents.length,
+      estimated_bytes: Buffer.byteLength(JSON.stringify(state.documents), "utf8"),
+      vector_count: state.vectors.size,
+      vector_version: state.vectorVersion,
+      probe,
+    };
+  }
+  if (request.op === "load_vectors_from_storage") {
+    assertWorkerOwner(request.owner_id);
+    const vectors = await loadDocumentVectors(
+      request.owner_id, state.documents, String(request.vector_version || ""), getStorageReader(),
+    );
+    state.vectors = new Map(Object.entries(vectors));
+    state.vectorVersion = String(request.vector_version || "");
+    await persist(state);
+    return {
+      status: "ok", version: VERSION,
+      vector_count: state.vectors.size,
+      vector_version: state.vectorVersion,
+    };
+  }
+  if (request.op === "prepare_memory") {
+    const operationStarted = performance.now();
+    assertWorkerOwner(request.owner_id);
+    const prepared = await prepareMemory({
+      ownerId: request.owner_id,
+      scopes: request.scopes as AuthorizedMemoryScope[],
+      sourceFilter: request.source_filter,
+      snapshotRevision: String(request.snapshot_revision || ""),
+      snapshotText: String(request.snapshot_text || ""),
+      vectorVersion: String(request.vector_version || ""),
+    }, getDataRuntime(), getStorageReader());
+    const vectorVersion = String(request.vector_version || "");
+    let stageStarted = performance.now();
+    const transientRevision = digest({ documents: prepared.documents, vectorVersion });
+    prepared.probe.stage_ms.transient_revision = Math.round(performance.now() - stageStarted);
+    stageStarted = performance.now();
+    replaceInMemory(transient, transientRevision, prepared.documents);
+    transient.vectors = new Map(Object.entries(prepared.vectors));
+    transient.vectorVersion = vectorVersion;
+    prepared.probe.stage_ms.transient_index_install = Math.round(performance.now() - stageStarted);
+    prepared.probe.stage_ms.prepare_memory_operation_total = Math.round(performance.now() - operationStarted);
+    prepared.probe.counts.transient_document_count = transient.documents.length;
+    prepared.probe.counts.transient_vector_count = transient.vectors.size;
+    return {
+      status: "ok", version: VERSION,
+      transient_revision: transient.revision,
+      document_count: transient.documents.length,
+      vector_count: transient.vectors.size,
+      vector_version: transient.vectorVersion,
+      memory_source: prepared.indexSource,
+      probe: prepared.probe,
+    };
+  }
+  if (request.op === "set_vectors") {
+    applyVectorMap(state, request);
+    await persist(state);
+    return {
+      status: "ok", version: VERSION,
+      vector_count: state.vectors.size,
+      vector_version: state.vectorVersion,
+    };
+  }
   if (request.op === "replace_transient") {
     // Memory 快照语料：与持久化索引共存于同一 worker，各自保留 BM25 统计边界；
     // 只驻内存不落盘，worker 重启后由 Python 按快照指纹重传。
@@ -292,21 +543,28 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
   if (request.op === "unified_query") {
     // Phase 5 统一查询：一次 IPC 完成 BM25 召回、来源聚合、水位过滤、Memory
     // 融合与 confidence 排序；Python 只保留权限复核与注入组装。
+    const workerStarted = performance.now();
     const searches = Array.isArray(request.searches) ? request.searches : [];
     const hasTransient = searches.some((item) => item.corpus === "transient");
     if (request.revision !== state.revision) return { status: "error", code: "revision_mismatch", message: "TS 统一查询索引版本不一致" };
     if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient.revision)) {
       return { status: "error", code: "revision_mismatch", message: "TS 统一查询瞬态语料版本不一致" };
     }
+    const stageMs: Record<string, number> = {};
+    let stageStarted = performance.now();
     const terms = new Set(tokens(request.query));
+    stageMs.query_tokenize = Math.round(performance.now() - stageStarted);
+    stageStarted = performance.now();
     const persistentScores = scoreTerms(state, terms);
     const transientScores = hasTransient ? scoreTerms(transient, terms) : undefined;
+    stageMs.bm25_scoring = Math.round(performance.now() - stageStarted);
     const candidateLimit = Math.max(1, Math.min(Number(request.candidate_limit ?? 20), 50));
     const sourceOrder = Array.isArray(request.source_order) ? request.source_order.map(String) : [];
 
     // 逐 spec 检索后按来源聚合：同来源跨 scope 去重保首见，(-score, id) 排序截断。
     const groupOrder: string[] = [];
     const groups = new Map<string, Array<{ key: string; score: number; document: Document }>>();
+    stageStarted = performance.now();
     for (const item of searches) {
       const corpus = item.corpus === "transient" ? transient : state;
       const preparedScores = item.corpus === "transient" ? transientScores : persistentScores;
@@ -323,6 +581,8 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         group.push({ key: hit.id, score: hit.score, document: hit.document });
       }
     }
+    stageMs.lexical_search_and_group = Math.round(performance.now() - stageStarted);
+    stageStarted = performance.now();
     const merged = new Map<string, Array<{ key: string; score: number; document: Document }>>();
     for (const [source, group] of groups) {
       const ordered = group
@@ -345,6 +605,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         }));
       }
     }
+    stageMs.merge_and_watermark = Math.round(performance.now() - stageStarted);
 
     // 融合：Memory 组向量来自瞬态槽驻留（随语料上传），语义与 hybrid_fuse 冻结契约一致；
     // 其余持久来源组用 replace/patch 整表搭载的持久向量，且要求 Python 声明的
@@ -363,6 +624,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     // 候选池级语义分（原始余弦）：融合生效的组内每个向量命中都进池，
     // 供 v4 排序按 池最大值 归一化后以 0.45/0.55 混入词法位（镜像 Python
     // 诊断探针 apply_confidence_v4 的语义混合公式）。
+    stageStarted = performance.now();
     const semanticCosines = new Map<string, number>();
     const memoryGroup = merged.get("memory");
     if (memoryGroup && memoryGroup.length && queryVector.length && transient.vectors.size) {
@@ -402,8 +664,10 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     if (fusedAny) {
       fusion = { fusion: "hybrid-rrf", vector_doc_count: vectorDocCount, vector_version: fusionVersion, fallback: null };
     }
+    stageMs.vector_fusion = Math.round(performance.now() - stageStarted);
 
     // 候选打包镜像 Python rank_candidates_with_cache 的 payload（含平铺顺序）。
+    stageStarted = performance.now();
     const orderedSources = [
       ...sourceOrder.filter((source) => merged.has(source)),
       ...groupOrder.filter((source) => !sourceOrder.includes(source)),
@@ -426,10 +690,12 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         });
       }
     }
+    stageMs.candidate_pack = Math.round(performance.now() - stageStarted);
     const rankOptions = (request.rank ?? {}) as NonNullable<typeof request.rank>;
     const rankingStatistics = hasTransient
       ? mergeCorpusStatistics([state, transient])
       : corpusStatistics(state);
+    stageStarted = performance.now();
     const ranked = rankCandidates(request.query, payload, {
       limit: Number(rankOptions.limit ?? 5),
       maxChars: Number(rankOptions.max_chars ?? 3000),
@@ -439,6 +705,8 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       selectionMode: rankOptions.selection_mode ?? "confidence",
       corpusStatistics: rankingStatistics,
     });
+    stageMs.rank_and_idf_rescore = Math.round(performance.now() - stageStarted);
+    stageStarted = performance.now();
     const document_counts: Record<string, number> = {};
     for (const corpus of [state, transient]) {
       for (const document of corpus.documents) {
@@ -449,15 +717,32 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     for (const [source, group] of merged) {
       source_groups[source] = { candidate_count: group.length, hit_count: group.length };
     }
+    stageMs.response_assembly = Math.round(performance.now() - stageStarted);
+    stageMs.worker_total = Math.round(performance.now() - workerStarted);
     return {
       status: "ok", version: VERSION, revision: state.revision,
       selected: ranked.results.map((row) => ({
         ...row,
         document_key: keysByCandidateId.get(row.id) ?? "",
+        document: (() => {
+          const key = keysByCandidateId.get(row.id) ?? "";
+          return state.documentsById.get(key) ?? transient.documentsById.get(key);
+        })(),
         raw_score: Number(payload.find((candidate) => candidate.id === row.id)?.raw_score ?? 0),
       })),
       stats: ranked.diagnostics,
       fusion, document_counts, source_groups,
+      probe: {
+        stage_ms: stageMs,
+        counts: {
+          persistent_documents: state.documents.length,
+          transient_documents: hasTransient ? transient.documents.length : 0,
+          search_specs: searches.length,
+          candidate_pool: payload.length,
+          selected: ranked.results.length,
+          source_groups: merged.size,
+        },
+      },
     };
   }
   if (request.op === "batch_search") {
@@ -530,6 +815,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     return {
       status: "ok", version: VERSION, revision: state.revision,
       document_count: state.documents.length, restore_error: state.restoreError,
+      vector_version: state.vectorVersion, restore_probe: state.restoreProbe,
     };
   }
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
@@ -558,20 +844,28 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     };
   }
   if (request.op === "replace") {
+    validateStoredVectorOwner(request);
     replaceInMemory(state, request.revision ?? "", request.documents ?? []);
-    applyVectorMap(state, request);
+    const vectors = await applyStoredVectorCache(state, request);
     state.restoreError = null;
     await persist(state);
-    return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
+    return {
+      status: "ok", version: VERSION, revision: state.revision,
+      document_count: state.documents.length, ...vectors,
+    };
   }
   if (request.op === "patch") {
     if ((request.base_revision ?? "") !== state.revision && request.base_revision !== undefined) {
       return { status: "error", code: "revision_mismatch", message: "TS worker patch 基线 revision 与当前索引不一致" };
     }
+    validateStoredVectorOwner(request);
     patchInMemory(state, request.revision ?? "", request.upserts ?? [], request.deletes ?? []);
-    applyVectorMap(state, request);
+    const vectors = await applyStoredVectorCache(state, request);
     await persist(state);
-    return { status: "ok", version: VERSION, revision: state.revision, document_count: state.documents.length };
+    return {
+      status: "ok", version: VERSION, revision: state.revision,
+      document_count: state.documents.length, ...vectors,
+    };
   }
   if (request.op === "search") {
     if ((request.revision ?? "") !== state.revision) return { status: "error", code: "revision_mismatch", message: "TS sidecar revision 与请求不一致" };
@@ -655,3 +949,4 @@ for await (const line of input) {
   catch (error) { response = { status: "error", code: "worker_failure", message: error instanceof Error ? error.message : "worker failure" }; }
   process.stdout.write(`${JSON.stringify(response)}\n`);
 }
+await dataRuntime?.close();
