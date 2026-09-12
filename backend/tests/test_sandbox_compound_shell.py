@@ -74,6 +74,25 @@ def test_plain_command_still_runs_direct_argv(tmp_path):
     assert _container_tail(argv) == ["ls", "-la"]
 
 
+def test_plain_curl_allows_container_device_output(tmp_path):
+    """Docker 沙盒允许 curl 使用容器内安全设备路径，不误报 workspace 越界。"""
+    argv = _executor(tmp_path).build_argv(
+        "curl -s -o /dev/null -w 'baidu: %{http_code}' https://www.baidu.com --max-time 8",
+    )
+    assert _container_tail(argv) == [
+        "curl", "-s", "-o", "/dev/null", "-w", "baidu: %{http_code}",
+        "https://www.baidu.com", "--max-time", "8",
+    ]
+
+
+def test_plain_docker_command_still_rejects_external_absolute_paths(tmp_path):
+    """放行容器设备路径不应扩大到宿主机绝对路径。"""
+    import pytest
+
+    with pytest.raises(ValueError, match="绝对路径"):
+        _executor(tmp_path).build_argv("curl -o /etc/passwd https://www.baidu.com")
+
+
 def test_compound_command_rejects_invalid_quotes(tmp_path):
     """普通模式下 -c 载荷引号解析失败时明确报错，不静默交给 sh。"""
     import pytest
