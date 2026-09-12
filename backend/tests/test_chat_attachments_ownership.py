@@ -809,6 +809,6 @@ async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, mon
 
     parts, _cards, _images, _media = await chat_attach.resolve_for_message(
         user_a.id, [meta["attach_id"]], "你好")
-    assert "未直接读取正文" in parts
+    assert "未直接读取" in parts and "read_file 读取" not in parts   # 不再承诺 read_file 能读到全文
     assert "```" not in parts   # 没有把任何正文注入上下文
 

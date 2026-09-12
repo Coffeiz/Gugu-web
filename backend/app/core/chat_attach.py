@@ -1412,8 +1412,10 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             # 消费侧硬门：文本/PDF/Office 在 read_text 里都是先整包 read_bytes 再提取、
             # 最后才截到 32K 字符；超限直接不读，超大文档留给按需 read_file。
             if meta["size"] > TEXT_READ_MAX:
-                parts.append(f"\n\n📎 用户上传的文件{tag}（超过 {TEXT_READ_MAX // 1048576}MB，未直接读取正文；"
-                             f"用户要保存就 save_uploaded_file(attach_id) 存进文件库，需要内容时再用 read_file 读取）。")
+                # 提示别承诺 read_file：文本 256KB / PDF/Office 30MB 的上限都到不了这个量级。
+                parts.append(f"\n\n📎 用户上传的文件{tag}（正文过大，超过 {TEXT_READ_MAX // 1048576}MB，未直接读取；"
+                             f"可保存到文件库——用户要存就 save_uploaded_file(attach_id)——后续按需处理；"
+                             f"read_file 对文本/文档有更小的读取上限，不要反复尝试读取全文）。")
             else:
                 parts.append(f"\n\n📎 用户上传的文件{tag}，内容如下：\n```\n{await read_text(meta)}\n```")
         elif meta["kind"] == "image":
