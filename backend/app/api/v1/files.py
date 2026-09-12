@@ -54,7 +54,7 @@ from app.services.undo.files import file_snapshot, operation_state, ref_for, sav
 router = APIRouter(prefix="/files", tags=["files"])
 
 # 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
-_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
 # ── GET /files ────────────────────────────────────────────────────────────────

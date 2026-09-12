@@ -38,7 +38,7 @@ from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-_MAX_ATTACH_BYTES = 10 * 1024 * 1024   # 单个聊天附件上限 10MB
+_MAX_ATTACH_BYTES = 512 * 1024 * 1024   # 单个聊天附件上限 512MB（与 nginx client_max_body_size 对齐）
 
 
 class ChatRequest(BaseModel):
@@ -209,7 +209,7 @@ async def upload_attachment(
     from agent import providers
     data = await file.read()
     if len(data) > _MAX_ATTACH_BYTES:
-        raise HTTPException(400, "文件太大（聊天附件上限 10MB）")
+        raise HTTPException(400, f"文件太大（聊天附件上限 {_MAX_ATTACH_BYTES // 1048576}MB）")
     parts = (file.filename or "file").rsplit(".", 1)
     name = parts[0] or "file"
     ext = parts[1] if len(parts) > 1 else ""
