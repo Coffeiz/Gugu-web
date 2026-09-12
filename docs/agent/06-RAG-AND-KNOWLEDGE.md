@@ -130,6 +130,11 @@ worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约，�
 
 ### 5.0 索引更新与增量边界（PRD-RAG-9）
 
+**worker 托管**：配置 `search.ts_sidecar_socket`（unix socket）后，per-owner TS worker 由
+`gugu-rag-sidecar` 常驻宿主统一托管，多个 Python 进程共享同一份热索引，后端重启不再触发
+冷装载；socket 不可达时自动回退进程内 spawn。状态（revision/瞬态指纹/进程代数）以宿主为唯一
+权威，`reuse_if_current` 与 `replace_transient` 的短路判定都在宿主侧执行。
+
 索引更新事件（`RagIndexUpdated`）由事件总线按 (user, source_type) 合并串行消费，并先落 `index_jobs` durable outbox（进程重启后由恢复循环重放）。管线按事件是否携带 `source_id` 分流：
 
 - **文档级增量**（默认路径）：knowledge / file / project / calendar / note / canvas 六来源带 `source_id` 的事件走 `pipeline.update_document`——单对象读取 source record、单条 TS 投影、`compute_chunk_delta`（契约冻结在 `agent/rag/delta.py`，slot 键 `source_type:parent:chunk_index`，digest 不含 version 但含 scope/chunk_count）算出 upserts/deletes，DB 侧按父文档作用域 replace 写 `KnowledgeIndexEntry`，knowledge 额外做向量 upsert/delete；随后把增量 `patch` 给 TS worker，`revision_mismatch` 时回退 worker 侧来源级 `replace`，worker 不可用只记 `status=worker_unavailable`（DB revision 已推进，查询侧懒同步自愈）。

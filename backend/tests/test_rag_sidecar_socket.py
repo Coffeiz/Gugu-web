@@ -254,3 +254,124 @@ async def test_factory_falls_back_to_spawn_when_socket_missing(monkeypatch):
     monkeypatch.setattr(ts_sidecar, "_sidecar_socket_path", lambda: str(Path("/nonexistent/sidecar.sock")))
     client = await get_lexical_client("owner-fb", command="", index_dir="idx")
     assert type(client) is TsSidecarClient
+
+
+# ── 宿主（SidecarHost）：真 socket 全链路 + 内层 fake client ─────────────
+
+
+class FakeInnerClient:
+    """宿主内真实 TsSidecarClient 的替身：同样的状态字段与方法面。"""
+
+    def __init__(self):
+        self.owner_user_id = "owner-host"
+        self._lock = asyncio.Lock()
+        self._process = None
+        self._revision = None
+        self._document_count = 0
+        self._estimated_bytes = 0
+        self._vector_count = 0
+        self._vector_version = ""
+        self._restore_error = None
+        self._transient_revision = None
+        self._transient_generation = -1
+        self._process_generation = 2
+        self.requests: list[dict] = []
+        self.reuse_calls = 0
+
+    def touch(self) -> None:
+        pass
+
+    def is_idle(self, now=None) -> bool:
+        return False
+
+    async def reuse_if_current(self, revision):
+        self.reuse_calls += 1
+        return bool(revision) and self._revision == revision
+
+    async def _request(self, payload, *, timeout_seconds=None):
+        async with self._lock:
+            self.requests.append(payload)
+            op = payload.get("op")
+            if op == "boom":
+                raise TsSidecarUnavailable("过期", code="revision_mismatch")
+            if op == "replace":
+                self._revision = payload.get("revision") or None
+                self._document_count = len(payload.get("documents") or [])
+                return ts_sidecar.SidecarRequestResult(
+                    response={"status": "ok", "revision": self._revision,
+                              "document_count": self._document_count},
+                    timing=ts_sidecar.SidecarRequestTiming(),
+                )
+            if op == "replace_transient":
+                self._transient_revision = str(payload.get("revision") or "")
+                return ts_sidecar.SidecarRequestResult(
+                    response={"status": "ok", "revision": self._transient_revision},
+                    timing=ts_sidecar.SidecarRequestTiming(),
+                )
+            return ts_sidecar.SidecarRequestResult(
+                response={"status": "ok"}, timing=ts_sidecar.SidecarRequestTiming(),
+            )
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+async def running_host(monkeypatch):
+    from agent.rag.sidecar_host import SidecarHost
+
+    inner = FakeInnerClient()
+    monkeypatch.setattr(SidecarHost, "_client_for", lambda self, owner: inner)
+    host = SidecarHost(f"/tmp/sss-host-{format(abs(hash(inner)) % 0xffffffff, 'x')}.sock")
+    await host.start()
+    try:
+        yield host, inner
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_host_routes_requests_and_exports_state(running_host):
+    host, inner = running_host
+    client = SocketSidecarClient("owner-host", socket_path=host.socket_path)
+    try:
+        await client.replace([], "rev-9")
+        assert inner.requests[-1]["op"] == "replace"
+        assert client._revision == "rev-9"
+        assert client._document_count == 0
+        assert client._process_generation == 2   # 镜像来自宿主导出
+        assert await client.reuse_if_current("rev-9") is True
+        assert inner.reuse_calls == 1
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_host_maps_worker_error_to_envelope_error(running_host):
+    host, _inner = running_host
+    client = SocketSidecarClient("owner-host", socket_path=host.socket_path)
+    try:
+        with pytest.raises(TsSidecarUnavailable) as exc_info:
+            await client._request({"op": "boom"})
+        assert exc_info.value.code == "revision_mismatch"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_host_transient_short_circuit_avoids_forward(running_host):
+    from types import SimpleNamespace
+
+    host, inner = running_host
+    inner._process = SimpleNamespace(returncode=None)
+    inner._transient_revision = "mem-7"
+    inner._transient_generation = inner._process_generation
+    client = SocketSidecarClient("owner-host", socket_path=host.socket_path)
+    try:
+        await client.replace_transient([], "mem-7", force=False)
+        # 短路生效：没有真正转发给内层 client
+        assert all(p.get("op") != "replace_transient" for p in inner.requests)
+        # 宿主短路响应回填了瞬态指纹镜像
+        assert client._transient_revision == "mem-7"
+    finally:
+        await client.close()

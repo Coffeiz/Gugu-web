@@ -196,8 +196,8 @@ install:     ## 装成 systemd 服务（sandboxd + web + IM worker + IM gateway�
 	@$(MAKE) sandbox-acl-prepare
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务（四个核心服务，并清理旧实时事件服务）
-	for s in gugu-sandboxd gugu-backend gugu-worker gugu-gateway; do \
+uninstall:   ## 卸载 systemd 服务（rag-sidecar + 四个核心服务，并清理旧实时事件服务）
+	for s in gugu-rag-sidecar gugu-sandboxd gugu-backend gugu-worker gugu-gateway; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \

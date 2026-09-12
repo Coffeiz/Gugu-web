@@ -577,9 +577,9 @@ sudo nginx -t && sudo systemctl reload nginx
 - **入口反代开启缓存导致"操作不生效、刷新后归位"**：1Panel/OpenResty 站点的 `location /` 若开 `proxy_cache`，会把 `/api` 的 GET 响应一并缓存（默认 `proxy_cache_valid 200 ... 10m`，key 只有 host+uri+args）——写入实际成功，但后续读取命中旧缓存，表现为用户操作后界面不变；且 key 不含 Authorization/Cookie，**不同用户命中同一 URL 会共享缓存响应，有跨用户泄露风险**。规则：`/api` 一律 `proxy_cache off`；静态资源可缓存但 `index.html` 不能长缓存（发版后会引用旧 hash 资源）。另：1Panel 改 vhost 可能被面板覆写，reload 前后各 `cat` 一次确认。排障口诀：接口日志正常、库里数据正确、客户端读到旧值 → 先查入口链路缓存。
 - 私有仓库 clone：服务器生成 SSH key → GitHub 仓库 Settings → Deploy keys 加只读公钥 → `git clone git@github.com:...`（国内服务器连不上 GitHub 时走代理 / 镜像）。
 
-### 4.5 后端服务（systemd · 一次装全 4 个）
+### 4.5 后端服务（systemd · 一次装全 5 个）
 
-> **大白话**：生产服务器上，咕咕的三个核心后端进程和一个沙盒执行服务交给 systemd（Linux 自带的服务管理器）托管——进程崩了它自动拉起来、服务器重启它自动跟着启动，不用人守着敲命令。前提是**一次性**先跑 `make install` 把四个单元注册给 systemd。没有启用 Shell 沙盒时，`gugu-sandboxd` 可以保持关闭，但模板仍会一并安装。
+> **大白话**：生产服务器上，咕咕的三个核心后端进程和一个沙盒执行服务交给 systemd（Linux 自带的服务管理器）托管——进程崩了它自动拉起来、服务器重启它自动跟着启动，不用人守着敲命令。前提是**一次性**先跑 `make install` 把五个单元注册给 systemd。没有启用 Shell 沙盒时，`gugu-sandboxd` 可以保持关闭，但模板仍会一并安装。
 >
 > **本项目部署现状**：生产环境和 dev 机的三个核心服务**都走 systemd**。`gugu-sandboxd` 的单元模板和安装入口已经加入，但某台机器只有在 Rootless Docker、固定镜像和用户数据根目录都准备好后，才应启用它。两种启动方式**不能同时用在同一台机器的同一个端口上**，选一个当唯一主人（详见下文「铁律」）；`scripts/dev-restart.sh` 仍保留在仓库供以后需要免 sudo 快速迭代的场景参考。
 >
@@ -598,11 +598,11 @@ sudo nginx -t && sudo systemctl reload nginx
 > # 然后用同一个 RUN_USER 补跑 make install，再 systemctl restart gugu-backend
 > ```
 
-项目自带四个单元模板（`gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` / `gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并立即重启四个单元，因此启用前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
+项目自带五个单元模板（`gugu-rag-sidecar.service` 托管 RAG TS worker 宿主，`gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` / `gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并立即重启五个单元；RAG worker 宿主缺席时后端自动回退进程内 spawn。启用 Shell 沙盒前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
 
 ```bash
 cd backend && RUN_USER=youruser make install
-sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-gateway
+sudo systemctl status gugu-rag-sidecar gugu-sandboxd gugu-backend gugu-worker gugu-gateway
 ```
 
 `gugu-sandboxd` 通过 `/run/user/<uid>/gugu-sandboxd.sock` 接收受限 JSON Lines 请求，业务进程不会直接持有 Docker socket。systemd 模板会自动注入 `DOCKER_HOST` 和 `GUGU_SANDBOXD_SOCKET`，不需要把它们配置成 TCP 地址，也不要把 Unix Socket 暴露给外部网络。
@@ -738,6 +738,7 @@ Admin → Shell 沙盒），**先备份配置、只改这两个字段、原子�
 
 | 服务                | 进程                  | Restart                               | 日志                         |
 | ----------------- | ------------------- | ------------------------------------- | -------------------------- |
+| `gugu-rag-sidecar` | RAG TS worker 宿主（per-owner 常驻索引，socket 共享） | on-failure | `logs/gugu-rag-sidecar.log` |
 | `gugu-backend`    | uvicorn 网页          | on-failure                            | `logs/gugu.log`            |
 | `gugu-worker`     | IM 大脑（消费队列、跑 agent） | **always**                            | `logs/gugu-worker.log`     |
 | `gugu-gateway` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-gateway.log` |

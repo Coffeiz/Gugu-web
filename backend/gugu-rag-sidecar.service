@@ -1,0 +1,36 @@
+[Unit]
+Description=Gugu RAG Sidecar Host (per-owner TS worker daemon)
+After=network.target
+Before=gugu-backend.service gugu-worker.service gugu-gateway.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# 运行用户，由 start.sh install 按 RUN_USER 填入（默认 www-data，不要用 root）
+User=__RUN_USER__
+Group=__RUN_USER__
+TimeoutStopSec=25s
+# 以下路径由 start.sh install 按实际安装目录(APP_DIR)自动填入，勿手改占位符
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# socket 路径必须与后端的 search.ts_sidecar_socket 配置一致（start.sh install 会校验）
+Environment="GUGU_RAG_SIDECAR_SOCKET=/run/user/__RUN_UID__/gugu-rag-sidecar.sock"
+ExecStart=__APP_DIR__/.venv/bin/python -m agent.rag.sidecar_host --socket /run/user/__RUN_UID__/gugu-rag-sidecar.sock
+Restart=on-failure
+RestartSec=3
+
+# 写进 Debug 面板读的日志文件（而非 journal）
+StandardOutput=append:__APP_DIR__/logs/gugu-rag-sidecar.log
+StandardError=append:__APP_DIR__/logs/gugu-rag-sidecar.log
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）：
+# socket 目录 + 用户存储根（TS worker 写索引目录/读向量缓存）
+ReadWritePaths=__DATA_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index /run/user/__RUN_UID__
+
+[Install]
+WantedBy=multi-user.target

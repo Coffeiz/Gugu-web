@@ -21,7 +21,7 @@ LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
 # 生产核心 owner：FastAPI、Python IM worker/gateway 与 sandboxd；实时事件入口也由 FastAPI 提供。
-SYSTEMD_SERVICES="gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
+SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -337,8 +337,9 @@ cmd_foreground() {
 }
 
 cmd_install() {
-    # 四个核心常驻服务：sandboxd、web(uvicorn)、IM worker、IM gateway(网关管家)。
-    # TS RAG 不是独立服务，由 Python adapter 按需复用固定 worker 制品。
+    # 五个核心常驻服务：rag-sidecar、sandboxd、web(uvicorn)、IM worker、IM gateway(网关管家)。
+    # TS RAG worker 由 rag-sidecar 宿主统一托管（unix socket 共享热索引）；
+    # 后端进程在 socket 不可达时自动回退进程内 spawn。
     local services="$SYSTEMD_SERVICES"
     # 必须显式指定服务运行用户，避免安装脚本擅自改变项目归属。
     local run_user="${RUN_USER:-}"
