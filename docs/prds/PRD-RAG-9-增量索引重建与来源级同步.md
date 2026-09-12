@@ -272,7 +272,7 @@ Knowledge、Memory 和其他来源的向量缓存继续保持各自边界，不�
 
 | 来源 | 首选增量粒度 | 特殊处理 |
 | --- | --- | --- |
-| knowledge | 单 Knowledge 条目 | 修改正文、关键词、来源或置信度时重建该条目全部 chunk |
+| knowledge | 单 Knowledge 条目 | 修改正文、关键词、描述、来源或置信度时重建该条目全部 chunk；关键词与描述参与 document_version 戳（`{version}:k{hash}`） |
 | file | 单文件；文件夹移动需处理旧/新父目录 | 文件删除、覆盖、重命名和移动必须清理旧 chunk |
 | project | 单项目或单阶段 | 项目状态、阶段和待办变化可能影响同一项目父文档 |
 | calendar | 单事件 | 重复事件按稳定业务 ID 去重 |
