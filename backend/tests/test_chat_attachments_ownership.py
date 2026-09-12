@@ -605,3 +605,68 @@ async def test_stage_stream_writes_exact_content(db, user_a, storage):
         select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
     )).scalars().first()
     assert row is not None and row.state == "draft"
+
+
+# ── 流式上传路由回归：普通附件不得 materialize ───────────────────────────────
+
+def _png_bytes(w=4, h=7):
+    from io import BytesIO
+    from PIL import Image as PILImage
+    buf = BytesIO()
+    PILImage.new("RGB", (w, h), (200, 10, 10)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_pdf_goes_through_stage_stream(db, user_a, storage, monkeypatch):
+    """普通附件（pdf/zip/psd…）不允许整包 materialize：chat_attach.stage() 被调用
+    即失败；必须走 stage_stream 分块落盘，内容字节级一致。"""
+    import io
+    from starlette.datastructures import Headers
+    from fastapi import UploadFile
+    from app.api.v1.agent import upload_attachment
+
+    async def _must_not_materialize(*a, **k):
+        raise AssertionError("普通附件不应走 stage() 整包字节路径")
+
+    monkeypatch.setattr(chat_attach, "stage", _must_not_materialize)
+    body = b"%PDF-1.4 fake" * 2048
+    upload = UploadFile(file=io.BytesIO(body), filename="doc.pdf",
+                        headers=Headers({"content-type": "application/pdf"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["ext"] == "pdf"
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == body
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_fake_image_dims_none(db, user_a, storage):
+    """mime 是用户可控输入：假 PNG 不能为探尺寸整包读，探不到就 None。"""
+    import io
+    from starlette.datastructures import Headers
+    from fastapi import UploadFile
+    from app.api.v1.agent import upload_attachment
+
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * (64 * 1024)
+    upload = UploadFile(file=io.BytesIO(body), filename="fake.png",
+                        headers=Headers({"content-type": "image/png"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["kind"] == "image"
+    assert meta["img_width"] is None and meta["img_height"] is None
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == body
+
+
+@pytest.mark.asyncio
+async def test_stage_stream_real_image_gets_dimensions(db, user_a, storage):
+    import io
+    body = _png_bytes(4, 7)
+    meta = await chat_attach.stage_stream(
+        user_a.id, "真图", "png", "image/png", stream=io.BytesIO(body), size=len(body),
+    )
+    assert (meta["img_width"], meta["img_height"]) == (4, 7)
+    assert await storage.get(meta["storage_key"]) == body

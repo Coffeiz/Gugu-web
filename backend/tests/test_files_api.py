@@ -39,7 +39,8 @@ def _upload(data: bytes, filename: str, content_type: str = "text/plain") -> Upl
 
 async def _do_upload(db, user, data, filename, **kw):
     return await files_api.upload_file(
-        BackgroundTasks(), file=_upload(data, filename), current_user=user, origin=None, db=db,
+        BackgroundTasks(), file=_upload(data, filename, kw.pop("content_type", "text/plain")),
+        current_user=user, origin=None, db=db,
         space=kw.pop("space", "personal"), project_id=kw.pop("project_id", None),
         folder_id=kw.pop("folder_id", None), stage_name=kw.pop("stage_name", ""),
         mind_map_id=kw.pop("mind_map_id", None), on_conflict=kw.pop("on_conflict", "keep_both"),
@@ -176,3 +177,33 @@ async def test_normal_overwrite_still_records_undo(db, user_a):
         request=_request_with_undo_context())
     ops = (await db.execute(select(UndoOperation))).scalars().all()
     assert len(ops) == 1
+
+
+# ── 图片探针：header 直读，假图不整包进内存 ─────────────────────────────────
+
+def _png_bytes(w=3, h=5):
+    from io import BytesIO
+    from PIL import Image as PILImage
+    buf = BytesIO()
+    PILImage.new("RGB", (w, h), (200, 10, 10)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def test_upload_real_image_gets_dimensions(db, user_a):
+    body = _png_bytes(4, 7)
+    await _do_upload(db, user_a, body, "真图.png", content_type="image/png")
+    row = (await db.execute(
+        select(File).where(File.display_name == "真图")
+    )).scalars().one()
+    assert (row.img_width, row.img_height) == (4, 7)
+
+
+async def test_upload_fake_image_dims_none(db, user_a):
+    """mime 是用户可控输入：假 PNG 探不到尺寸就 None，不能为宽高整包读。"""
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * (128 * 1024)
+    r = await _do_upload(db, user_a, body, "假图.png", content_type="image/png")
+    row = (await db.execute(
+        select(File).where(File.display_name == "假图")
+    )).scalars().one()
+    assert row.img_width is None and row.img_height is None
+    assert r.size_bytes == len(body)

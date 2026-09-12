@@ -280,8 +280,14 @@ async def upload_attachment(
     ext = parts[1] if len(parts) > 1 else ""
     # 语音录音：浏览器多录成 webm/opus（mimo 不收）→ 转成 mp3 再暂存，让 mimo 能听。
     # m4a(Safari)/ogg(Firefox) 是 mimo 原生格式、免转；缺 ffmpeg 则原样、退文字提示。
+    # 只有确认「这是待转码/待探测的音频」才 materialize 成字节——扩展名和 mime
+    # 都是用户可控输入，普通 PDF/压缩包/图片一律留在流上走 stage_stream。
+    ext_l = (ext or "").lower()
+    content_type_l = (file.content_type or "").lower()
+    needs_audio_processing = bool(voice) or content_type_l.startswith("audio") or "voice" in content_type_l or (
+        ext_l in ("webm", "opus", "silk", "sil", "slk", "amr", "aac", "wma"))
     data: bytes | None = None
-    if (ext or "").lower() not in ("mp3", "wav", "flac", "m4a", "ogg"):
+    if needs_audio_processing and ext_l not in ("mp3", "wav", "flac", "m4a", "ogg"):
         spool.seek(0)
         data = spool.read()   # 录音只有分钟级大小，转码需要整字节
         conv = media_transcode.to_provider_audio(data, ext, file.content_type,

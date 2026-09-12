@@ -229,9 +229,8 @@ async def upload_file(
     _is_img = bool(mime_type) and mime_type.lower() in IMAGE_MIMES and mime_type.lower() != "image/svg+xml"
     img_width = img_height = None
     if _is_img:
-        # 只有图片 mime 才把内容读进内存探尺寸（图片实际都很小）。
-        img_width, img_height = read_image_dimensions(spool.read(), mime_type)
-        spool.seek(0)
+        # Pillow 只读 header 拿尺寸；mime 是用户可控输入，探宽高不能整包进内存。
+        img_width, img_height = read_image_dimensions(spool, mime_type)
 
     _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
     undo_content = size_bytes <= _UNDO_CONTENT_MAX

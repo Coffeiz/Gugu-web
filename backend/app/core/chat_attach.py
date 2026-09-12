@@ -164,15 +164,21 @@ def _model_attachment_name(meta: dict) -> str:
     return f"{name}.{ext}" if ext else name
 
 
-def _probe_image_size(data: bytes, ext: str) -> tuple[int | None, int | None]:
+def _probe_image_size(data, ext: str) -> tuple[int | None, int | None]:
     """探真实像素尺寸（与 files.py 上传时同一套逻辑）：SVG 是矢量、Pillow 读不出「像素」尺寸，跳过；
-    失败也别报错——没探到就是 None，前端退回旧的占位图估算兜底。"""
+    失败也别报错——没探到就是 None，前端退回旧的占位图估算兜底。
+    data 可以是字节，也可以是可 seek 的文件对象（Pillow 只读 header，探尺寸不整包进内存）。"""
     if (ext or "").lower() == "svg":
         return None, None
     try:
         from PIL import Image
         import io as _io
-        img = Image.open(_io.BytesIO(data))
+        if isinstance(data, (bytes, bytearray)):
+            source = _io.BytesIO(data)
+        else:
+            source = data
+            source.seek(0)
+        img = Image.open(source)
         w, h = img.size
         img.close()
         return w, h
@@ -464,8 +470,7 @@ async def stage_stream(user_id, name: str, ext: str, mime: str | None, *,
         "attachment_index": attachment_index,
     }
     if meta["kind"] == "image":
-        stream.seek(0)
-        img_w, img_h = _probe_image_size(stream.read(), ext_l)
+        img_w, img_h = _probe_image_size(stream, ext_l)
         meta["img_width"], meta["img_height"] = img_w, img_h
     if extra:
         meta.update(extra)
