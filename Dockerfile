@@ -97,6 +97,19 @@ RUN curl -fsSL -o /tmp/gst-base.deb \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
     && rm -f /tmp/gst-base.deb
 
+# 基础包安全补丁升级，与 backend/Dockerfile.prod 同款：APT_MIRROR（TUNA）对
+# trixie-security 同步滞后，gzip/glib/mbedtls/pcre2/python3.13/sqlite3/libssh2/perl
+# 会停在带 CVE 的旧版（2026-09-12 docker-release trivy 门失败根因）。逐包追 deb
+# 是无底洞，切回官方 security pool 做整段 upgrade 自动覆盖后续 CVE；
+# 镜像源同步追平后可移除本段。
+RUN sed -i \
+        -e "s|https\?://${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
+        -e "s|https\?://${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 ENV PATH=/opt/venv/bin:${PATH} \
