@@ -585,3 +585,23 @@ async def test_e2e_draft_upload_expires_but_attached_survives(db, user_a, storag
     attached_row = (await db.execute(select(ChatAttachment).where(ChatAttachment.attach_id == attached_attach_id))).scalars().first()
     assert attached_row is not None and attached_row.state == "attached", "已发送的附件不该被草稿 GC 碰，即使物理创建时间同样很老"
     assert await storage.exists(attached_row.storage_key), "已发送附件的物理字节应该还在"
+
+
+# ── stage_stream()：分块收流的附件暂存 ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_stage_stream_writes_exact_content(db, user_a, storage):
+    import io
+    stream = io.BytesIO(b"stream-attachment-body")
+    meta = await chat_attach.stage_stream(
+        user_a.id, "大附件", "bin", "application/octet-stream",
+        stream=stream, size=22,
+    )
+    assert meta["size"] == 22
+    assert meta["kind"] != "image"
+    assert await storage.exists(meta["storage_key"])
+    assert await storage.get(meta["storage_key"]) == b"stream-attachment-body"
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().first()
+    assert row is not None and row.state == "draft"

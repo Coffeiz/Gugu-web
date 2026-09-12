@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.core.security import get_client_id, get_current_user, verify_stream_token
 from app.core.tz import now_utc
+from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, User
 from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
@@ -53,8 +54,11 @@ from app.services.undo.files import file_snapshot, operation_state, ref_for, sav
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-# 单文件上传硬上限（字节）——独立于存储配额，防一次性 read 进内存打爆。
+# 单文件上传硬上限（字节）——独立于存储配额；端点分块收流，内存峰值与上限解耦。
 _MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+# undo 内容备份上限：覆盖上传的撤销要同时留存新旧两份正文，超过该大小的文件
+# 不记撤销操作（否则一次 512MB 覆盖就是三份全量拷贝，撤销本身变成磁盘炸弹）。
+_UNDO_CONTENT_MAX = 64 * 1024 * 1024
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
 # ── GET /files ────────────────────────────────────────────────────────────────
@@ -215,21 +219,25 @@ async def upload_file(
     display_name, ext = parse_upload_filename(original_name)
     mime_type = file.content_type
 
-    data = await file.read()
-    size_bytes = len(data)
-
-    # 单文件硬上限：整个请求体一次性进内存，配额可能为 None（无限），需独立的字节闸防内存打爆。
-    # 属请求体传输约束（413），留在端点；语义校验（项目/文件夹/配额/覆盖）在 FileService。
-    if size_bytes > _MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
+    # 单文件硬上限：分块收流（1MB 块 + spool 自动滚盘），超限立刻 413，内存峰值
+    # 与上限解耦。属请求体传输约束（413），留在端点；语义校验（项目/文件夹/配额/
+    # 覆盖）在 FileService。spool 交给 create_file 流式落盘，用完即关。
+    spool, size_bytes, content_sha = await spool_upload(
+        file, limit=_MAX_UPLOAD_BYTES, status_code=413,
+        message=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
 
     _is_img = bool(mime_type) and mime_type.lower() in IMAGE_MIMES and mime_type.lower() != "image/svg+xml"
-    img_width, img_height = read_image_dimensions(data, mime_type)
+    img_width = img_height = None
+    if _is_img:
+        # 只有图片 mime 才把内容读进内存探尺寸（图片实际都很小）。
+        img_width, img_height = read_image_dimensions(spool.read(), mime_type)
+        spool.seek(0)
 
     _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    undo_content = size_bytes <= _UNDO_CONTENT_MAX
     before_file = None
     before_content = None
-    if on_conflict == "overwrite" and overwrite_file_id is not None:
+    if on_conflict == "overwrite" and overwrite_file_id is not None and undo_content:
         before_file = await get_owned(db, File, overwrite_file_id, current_user.id)
         if before_file is not None:
             before_content = await get_storage().get(before_file.storage_key)
@@ -237,30 +245,41 @@ async def upload_file(
 
     # 语义核心（key/配额/覆盖/落库）交 FileService；端点保留传输面：图片尺寸解出、缩略图调度、
     # 缓存清理、响应 shape、事务与事件。
-    result = await FileService(db).create_file(
-        current_user.id, space=space, project_id=project_id, folder_id=folder_id,
-        workspace_directory_id=workspace_directory_id,
-        stage_name=stage_name, mind_map_id=mind_map_id, display_name=display_name, ext=ext,
-        mime_type=mime_type, data=data, img_width=img_width, img_height=img_height,
-        on_conflict=on_conflict, overwrite_file_id=overwrite_file_id,
-        storage_limit_bytes=_storage_limit,
-    )
+    try:
+        result = await FileService(db).create_file(
+            current_user.id, space=space, project_id=project_id, folder_id=folder_id,
+            workspace_directory_id=workspace_directory_id,
+            stage_name=stage_name, mind_map_id=mind_map_id, display_name=display_name, ext=ext,
+            mime_type=mime_type, img_width=img_width, img_height=img_height,
+            stream=spool, stream_size=size_bytes, stream_sha256=content_sha,
+            on_conflict=on_conflict, overwrite_file_id=overwrite_file_id,
+            storage_limit_bytes=_storage_limit,
+        )
+    except BaseException:
+        spool.close()
+        raise
     f = result.file
     if result.was_overwrite:
         delete_thumb_cache(f.id)   # 旧缩略图必须清，否则还显示覆盖前的图
 
-    operation = await UndoService.record_forward(
-        db, user_id=current_user.id,
-        context_id=request.headers.get("X-Undo-Context-ID") if request else None, resource="files",
-        action="overwrite" if result.was_overwrite else "create",
-        target_refs=[{"kind": "file", "id": f.id}],
-        before_state=operation_state({ref_for("file", f.id): before_snapshot} if before_snapshot else {}),
-        after_state=operation_state({ref_for("file", f.id): file_snapshot(f)}),
-        base_versions={ref_for("file", f.id): {"version": before_snapshot.get("version", 0) if before_snapshot else 0}},
-    )
+    # 超大文件不记撤销：undo 的覆盖恢复要留存新旧两份正文，512MB 级别会让
+    # 撤销本身变成磁盘与内存炸弹（undo_content=False 时 before_content 恒空）。
+    operation = None
+    if undo_content:
+        operation = await UndoService.record_forward(
+            db, user_id=current_user.id,
+            context_id=request.headers.get("X-Undo-Context-ID") if request else None, resource="files",
+            action="overwrite" if result.was_overwrite else "create",
+            target_refs=[{"kind": "file", "id": f.id}],
+            before_state=operation_state({ref_for("file", f.id): before_snapshot} if before_snapshot else {}),
+            after_state=operation_state({ref_for("file", f.id): file_snapshot(f)}),
+            base_versions={ref_for("file", f.id): {"version": before_snapshot.get("version", 0) if before_snapshot else 0}},
+        )
     if operation and result.was_overwrite and before_content is not None:
+        spool.seek(0)
         await save_content_artifacts(operation, get_storage(), current_user.id,
-                                     ref_for("file", f.id), before_content, data)
+                                     ref_for("file", f.id), before_content, spool.read())
+    spool.close()
 
     await db.commit()
     await db.refresh(f)

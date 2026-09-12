@@ -269,26 +269,40 @@ async def upload_attachment(
     """聊天附件上传：暂存（不进文件库），返回 attach_id。咕咕可看内容/可保存。"""
     from app.core import media_transcode
     from app.core.config import get_settings
+    from app.core.upload_stream import spool_upload
     from agent import providers
-    data = await file.read()
-    if len(data) > _MAX_ATTACH_BYTES:
-        raise HTTPException(400, f"文件太大（聊天附件上限 {_MAX_ATTACH_BYTES // 1048576}MB）")
+    # 分块收流：内存峰值与附件上限解耦；只有转码/语音路径才 materialize 成字节。
+    spool, size, _sha = await spool_upload(
+        file, limit=_MAX_ATTACH_BYTES, status_code=400,
+        message=f"文件太大（聊天附件上限 {_MAX_ATTACH_BYTES // 1048576}MB）")
     parts = (file.filename or "file").rsplit(".", 1)
     name = parts[0] or "file"
     ext = parts[1] if len(parts) > 1 else ""
     # 语音录音：浏览器多录成 webm/opus（mimo 不收）→ 转成 mp3 再暂存，让 mimo 能听。
     # m4a(Safari)/ogg(Firefox) 是 mimo 原生格式、免转；缺 ffmpeg 则原样、退文字提示。
+    data: bytes | None = None
     if (ext or "").lower() not in ("mp3", "wav", "flac", "m4a", "ogg"):
+        spool.seek(0)
+        data = spool.read()   # 录音只有分钟级大小，转码需要整字节
         conv = media_transcode.to_provider_audio(data, ext, file.content_type,
                                                  providers.adapter_for(get_settings().ai))
         if conv is not None:
             data, ext = conv, "mp3"
     mime = "audio/mpeg" if ext == "mp3" else file.content_type
-    if voice:
-        dur = media_transcode.probe_duration(data, ext)
-        meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
-    else:
-        meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
+    try:
+        if voice:
+            if data is None:
+                spool.seek(0)
+                data = spool.read()
+            dur = media_transcode.probe_duration(data, ext)
+            meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
+        elif data is not None:
+            meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
+        else:
+            meta = await chat_attach.stage_stream(
+                current_user.id, name, ext, mime, stream=spool, size=size, platform="web")
+    finally:
+        spool.close()
     return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
 
 

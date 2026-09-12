@@ -441,6 +441,45 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
     return meta
 
 
+async def stage_stream(user_id, name: str, ext: str, mime: str | None, *,
+                       stream, size: int, kind: str | None = None,
+                       subdir: str = ".chat_staging", extra: dict | None = None,
+                       platform: str | None = None,
+                       platform_message_id: str | None = None,
+                       attachment_index: int | None = None) -> dict:
+    """分块版 stage：网页大附件直进暂存，内存峰值与文件大小解耦。
+
+    stream 须可 seek(0)，由调用方负责 close。图片仍会把内容读进内存探真实
+    尺寸（图片实际都很小）；语音转码等需要整字节的路由继续走 stage(data)。
+    """
+    attach_id = uuid.uuid4().hex[:16]
+    ext_l = (ext or "").lower()[:10]
+    storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
+    await get_storage().put_stream(storage_key, stream, size, mime or "application/octet-stream")
+    meta = {
+        "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
+        "size": size, "storage_key": storage_key, "kind": kind or _kind(ext_l),
+        "platform": _current_platform(platform),
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
+    }
+    if meta["kind"] == "image":
+        stream.seek(0)
+        img_w, img_h = _probe_image_size(stream.read(), ext_l)
+        meta["img_width"], meta["img_height"] = img_w, img_h
+    if extra:
+        meta.update(extra)
+    try:
+        await _record_draft(user_id, attach_id, storage_key, meta)
+    except Exception:
+        try:
+            await get_storage().delete(storage_key)
+        except Exception:
+            pass
+        raise
+    return meta
+
+
 async def stage_voice(user_id, name: str, ext: str, mime: str | None, data: bytes,
                       duration: float | None = None, platform: str | None = None,
                       platform_message_id: str | None = None,
