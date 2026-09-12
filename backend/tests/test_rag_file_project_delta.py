@@ -46,11 +46,11 @@ class FakeWorker:
         self.calls: list[tuple[str, dict]] = []
         self.revision: str | None = "seed"
 
-    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None, vector_version=""):
+    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None, vector_version="", storage_owner_id=None):
         self.calls.append(("patch", {"upserts": [d.chunk_id for d in upserts], "deletes": list(deletes)}))
         self.revision = revision
 
-    async def replace(self, documents, revision, *, vectors=None, vector_version=""):
+    async def replace(self, documents, revision, *, vectors=None, vector_version="", storage_owner_id=None):
         self.calls.append(("replace", {"chunks": [d.chunk_id for d in documents]}))
         self.revision = revision
 

@@ -62,7 +62,7 @@ class FakeWorker:
         self.revision: str | None = "seed"
         self.fail_patch_codes: list[str] = []
 
-    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None, vector_version=""):
+    async def patch(self, upserts, deletes, revision, base_revision, *, vectors=None, vector_version="", storage_owner_id=None):
         if self.fail_patch_codes:
             code = self.fail_patch_codes.pop(0)
             if code:
@@ -73,7 +73,7 @@ class FakeWorker:
         }))
         self.revision = revision
 
-    async def replace(self, documents, revision, *, vectors=None, vector_version=""):
+    async def replace(self, documents, revision, *, vectors=None, vector_version="", storage_owner_id=None):
         self.calls.append(("replace", {"chunks": [d.chunk_id for d in documents], "revision": revision}))
         self.revision = revision
 
