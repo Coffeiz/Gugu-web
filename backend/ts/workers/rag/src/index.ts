@@ -453,12 +453,17 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     if (!watermarkUsable) {
       probe.counts.fallback_full = 1;
       recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
-      return handle(state, transient, {
+      const response = await handle(state, transient, {
         op: "load_index_from_database",
         owner_id: request.owner_id,
         revision: request.revision,
         vector_version: request.vector_version,
       });
+      if (response && typeof response === "object") {
+        response.fallback_full = 1;
+        if (response.probe && response.probe.counts) response.probe.counts.fallback_full = 1;
+      }
+      return response;
     }
 
     const upsertsAcc: Document[] = [];
@@ -486,12 +491,17 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       // 变更量超出单次同步预算：放弃半截增量，走全量保证一致性
       probe.counts.fallback_full = 1;
       recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
-      return handle(state, transient, {
+      const response = await handle(state, transient, {
         op: "load_index_from_database",
         owner_id: request.owner_id,
         revision: request.revision,
         vector_version: request.vector_version,
       });
+      if (response && typeof response === "object") {
+        response.fallback_full = 1;
+        if (response.probe && response.probe.counts) response.probe.counts.fallback_full = 1;
+      }
+      return response;
     }
 
     const installStarted = performance.now();

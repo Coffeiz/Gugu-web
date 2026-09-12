@@ -219,7 +219,8 @@ class KnowledgeIndexCache:
                     diagnostics["cache_hit"] = False
                     diagnostics["shared_index"] = bool(shared_key)
                     diagnostics["document_count"] = _index_document_count(index)
-                    diagnostics["index_sync"] = "ts_database_load"
+                    # _build_index 内部已按 sync/load 写入精确标签；此处仅兜底
+                    diagnostics.setdefault("index_sync", "ts_database_load")
                 size = estimate_index_bytes([], index)
                 if size <= self.owner_limit_bytes:
                     self._store(key, _Entry(

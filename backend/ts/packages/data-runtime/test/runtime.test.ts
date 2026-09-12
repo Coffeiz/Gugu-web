@@ -185,11 +185,13 @@ test("Data Runtime 在同一数据库快照装载 RAG 文档和 revision", async
   assert.equal(queries.length, 1);
   assert.match(queries[0]!.text, /MAX\(indexed_at\) OVER \(PARTITION BY source_type\)/);
   assert.match(queries[0]!.text, /owner_user_id = \?/);
-  assert.match(queries[0]!.text, /deleted_at IS NULL/);
+  // 水位口径含墓碑行（软删行参与 max(indexed_at)，作为增量同步的单游标）
+  assert.doesNotMatch(queries[0]!.text, /deleted_at IS NULL/);
+  assert.match(queries[0]!.text, /deleted_at,/);
   assert.deepEqual(queries[0]!.values, ["owner-1"]);
   assert.equal(
     result.revision,
-    "ts-jieba-words-v3:rag-projection-v3:conversation:2026-09-12T08:30:00.000Z;knowledge:2026-09-12T08:00:00.000Z;memory:2026-09-12T08:00:00.000Z",
+    "ts-jieba-words-v3:rag-projection-v4:conversation:2026-09-12T08:30:00.000Z;knowledge:2026-09-12T08:00:00.000Z;memory:2026-09-12T08:00:00.000Z",
   );
   assert.equal(result.snapshot.documents.length, 4);
   assert.equal(result.snapshot.documents[0]?.id, "knowledge:7:1");
@@ -199,6 +201,7 @@ test("Data Runtime 在同一数据库快照装载 RAG 文档和 revision", async
     result.snapshot.documents[2]?.context_text,
     "assistant：前文\nuser：当前问题\nassistant：后文",
   );
+  assert.deepEqual(result.watermark, { ts: "2026-09-12T08:30:00.000Z", id: 0 });
   assert.deepEqual(Object.keys(result.snapshot), ["documents"]);
   assert.deepEqual(result.probe.counts, { database_rows: 4, documents: 4 });
   assert.deepEqual(Object.keys(result.probe.stage_ms).sort(), [
