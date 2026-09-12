@@ -223,6 +223,7 @@ async def _run_collect_unlocked(
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
+                knowledge=data.knowledge,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,
@@ -679,6 +680,7 @@ async def _run_stream_unlocked(
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
+                knowledge=data.knowledge,
             )
             snapshot_context, snapshot_im_memory = add_im_memory_to_snapshot(
                 snapshot_context, data.im_memory, req,

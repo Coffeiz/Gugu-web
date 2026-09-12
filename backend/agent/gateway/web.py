@@ -101,12 +101,14 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             files_overview = await loaders.load_files_overview(db, user_id)
             memory = await loaders.load_memory(user_id, req.message) if SYSTEM_MEMORY_ENABLED else {}
             im_channels = await loaders.load_im_channels(user_id)
+            knowledge = await loaders.load_knowledge_overview(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 projects, events, memory, files_overview,
                 notes=notes,
                 style_prefs=style_prefs, source="web",
                 im_channels=im_channels, user_msg=req.message, user_tz=user_tz,
+                knowledge=knowledge,
             )
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": "web",

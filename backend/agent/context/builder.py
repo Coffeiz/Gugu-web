@@ -10,6 +10,11 @@ from agent.context.session_system import NON_STREAMING_BLOCK, build_static_promp
 # 项目状态英文枚举 → 中文（注入上下文时翻好，免得咕咕照搬英文说给用户）
 _STATUS_ZH = {"pending": "待开始", "active": "进行中", "done": "已完成"}
 
+# 知识清单注入条数上限；清单取最新（loader 按 updated_at 倒序取前 N 条），
+# 旧知识被新知识自然挤出，越新的知识越重要。description 写入侧限 150 字符，
+# 单行长度有界，不再另设字节预算。
+_KNOWLEDGE_MANIFEST_MAX_ITEMS = 40
+
 
 def _files_block(fo: dict | None) -> str:
     """个人文件库概览文本：一级目录 + 最近文件。"""
@@ -66,7 +71,9 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
                 include_projects: bool = True, include_calendar: bool = True,
                 include_files: bool = True, include_memory: bool = True,
                 user_tz=None, im_message_format: str | None = None,
-                notes: list[dict] | None = None) -> tuple[str, str, str]:
+                notes: list[dict] | None = None,
+                knowledge: list[dict] | None = None,
+                include_knowledge: bool = True) -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
     静态部分（每轮重建）：人格/基础 policy/政策/工具使用协议/风格/全部内置 Skill 索引
@@ -124,6 +131,26 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
     files_block = (_files_block(files)
                    if include_files else "（本次任务不需要文件上下文，未加载）")
     dynamic_parts.append(f"## 文件\n{files_block}")
+
+    knowledge = knowledge if (include_knowledge and knowledge) else []
+    kx_lines: list[str] = []
+    for item in knowledge[:_KNOWLEDGE_MANIFEST_MAX_ITEMS]:
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        desc = str(item.get("description") or "").strip()
+        if not desc:
+            topic = str(item.get("topic") or "").strip()
+            desc = f"（{topic}）" if topic else ""
+        kx_lines.append(f"- {title}：{desc}" if desc else f"- {title}")
+    if include_knowledge:
+        kx_block = "\n".join(kx_lines) if kx_lines else "暂无已保存知识"
+    else:
+        kx_block = "（本次任务不需要知识上下文，未加载）"
+    dynamic_parts.append(
+        "## 知识\n以下是已保存的知识条目，仅供判断是否与当前任务相关；"
+        "需要全文时用 search_memory 检索，不要凭标题编造内容。\n" + kx_block
+    )
 
     src_block = _source_block(source, im_channels)
     if src_block:
