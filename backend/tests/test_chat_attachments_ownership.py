@@ -670,3 +670,69 @@ async def test_stage_stream_real_image_gets_dimensions(db, user_a, storage):
     )
     assert (meta["img_width"], meta["img_height"]) == (4, 7)
     assert await storage.get(meta["storage_key"]) == body
+
+
+# ── 音频候选路径的 materialize 上限 ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_oversized_voice_recording_rejected(db, user_a, storage, monkeypatch):
+    """voice=true 超过音频 materialize 上限直接拒绝（含原生 mp3/wav）。"""
+    import io
+    from fastapi import HTTPException, UploadFile
+    from starlette.datastructures import Headers
+    from app.api.v1 import agent as _agent_api
+    from app.api.v1.agent import upload_attachment
+
+    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 8)
+    upload = UploadFile(file=io.BytesIO(b"wav-bytes-here" * 2), filename="rec.mp3",
+                        headers=Headers({"content-type": "audio/mpeg"}))
+    with pytest.raises(HTTPException) as ei:
+        await upload_attachment(file=upload, voice=True, current_user=user_a)
+    assert ei.value.status_code == 400
+    assert "语音录音过大" in str(ei.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_oversized_audio_attachment_staged_raw_via_stream(db, user_a, storage, monkeypatch):
+    """非 voice 的大音频不做进程内转码：按原样走 stage_stream，内容字节一致。"""
+    import io
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    from app.api.v1 import agent as _agent_api
+    from app.api.v1.agent import upload_attachment
+
+    async def _must_not_materialize(*a, **k):
+        raise AssertionError("超限大音频不应走 stage() 整包字节路径")
+
+    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 8)
+    monkeypatch.setattr(chat_attach, "stage", _must_not_materialize)
+    body = b"aac-audio-bytes" * 4
+    upload = UploadFile(file=io.BytesIO(body), filename="big.aac",
+                        headers=Headers({"content-type": "audio/aac"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["ext"] == "aac"          # 未转码，保留原扩展名
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == body
+
+
+@pytest.mark.asyncio
+async def test_small_webm_still_transcodes_under_cap(db, user_a, storage, monkeypatch):
+    """上限内的小 webm 录音行为不变：转码成 mp3 再暂存。"""
+    import io
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    from app.api.v1 import agent as _agent_api
+    from app.api.v1.agent import upload_attachment
+
+    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 1024 * 1024)
+    monkeypatch.setattr("app.core.media_transcode.to_provider_audio", lambda *a, **k: b"converted-mp3")
+    upload = UploadFile(file=io.BytesIO(b"webm-recording"), filename="rec.webm",
+                        headers=Headers({"content-type": "audio/webm"}))
+    meta = await upload_attachment(file=upload, voice=False, current_user=user_a)
+    assert meta["ext"] == "mp3"
+    row = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"])
+    )).scalars().one()
+    assert await storage.get(row.storage_key) == b"converted-mp3"
