@@ -20,8 +20,8 @@ async def _list_skills(db, user_id, args: dict):
     if db is None or user_id is None:
         return {"error": "列出技能需要当前账号上下文"}
 
-    rows = (await db.execute(
-        select(UserSkill).where(
+    rows = (await db.execute(  # orm-exempt: 只读自有人格技能清单，owner 过滤单用户作用域，待技能域 Service 收口
+        select(UserSkill).where(  # orm-exempt: 同上，与上行同一查询
             UserSkill.owner_id == user_id,
             UserSkill.source == "user",
         ).order_by(UserSkill.name, UserSkill.slug)
