@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterable
 import logging
 from typing import Any
@@ -78,6 +79,16 @@ async def _search_with_timeout(search_awaitable, timeout: float):
         else:
             _log.warning("自动知识召回超时，后台任务继续收尾，pending=%d",
                          len(_background_recall_tasks))
+            # 超时取消会拆掉 observation 上下文，per-source 进度随之丢失
+            # （2026-09-14 run 慢查询无法归因的教训）；这里显式留存快照。
+            from agent.rag.observation import current_recall
+
+            observation = current_recall.get()
+            if observation is not None:
+                _log.warning("自动知识召回超时进度 source_progress=%s pending_sources=%s",
+                             json.dumps(observation.sources, ensure_ascii=False, default=str),
+                             [name for name, value in observation.sources.items()
+                              if value.get("stage") not in {"completed", "error", "cancelled"}])
         raise
 _PASSIVE_HINTS = (
     "以前", "之前", "上次", "曾经", "当时", "历史", "记得", "记忆",

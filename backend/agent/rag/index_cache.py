@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 
 from agent.rag.models import IndexDocument
-from agent.rag.persistent_store import load_index_documents
 from agent.rag.models import Scope
 from agent.rag.ts_sidecar import (
     TsLexicalIndex,
@@ -230,53 +229,10 @@ class KnowledgeIndexCache:
                     self._entries.pop(key, None)
                     self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
                 return index
-            documents = await await_probe(
-                "index_document_load", load_index_documents(db, owner_user_id),
-            )
-            probe_update(index_cache={"loaded_document_count": len(documents)})
-            index_documents = list(documents)
-            # force 是「不信任何缓存状态」的全量重同步：不借旧条目做增量，直接 replace。
-            base_entry = None if force else (entry or self._latest_snapshot_entry(owner_key, backend, key))
-            if entry is None and shared_key and base_entry is not None:
-                current_sources = {document.source_type for document in documents}
-                index_documents = [
-                    document for document in getattr(base_entry.index, "documents", ())
-                    if document.source_type not in current_sources
-                ] + index_documents
-            if entry is not None and shared_key and not force:
-                previous = {
-                    _document_key(document): document
-                    for document in getattr(entry.index, "documents", ())
-                }
-                previous.update({_document_key(document): document for document in documents})
-                index_documents = list(previous.values())
-                if _documents_match(getattr(entry.index, "documents", ()), index_documents):
-                    entry.persistent_loaded = True
-                    self._touch(key, entry)
-                    if diagnostics is not None:
-                        diagnostics["cache_hit"] = True
-                        diagnostics["shared_index"] = True
-                    return entry.index
-            probe_update(index_cache={"cache_path": "database_load_and_sync"})
-            index = await await_probe(
-                "index_worker_sync",
-                self._build_index(
-                    backend, owner_user_id, index_documents, revision, search_settings, diagnostics,
-                    previous_documents=(list(getattr(base_entry.index, "documents", ())) if base_entry is not None else None),
-                    previous_revision=(base_entry.revision if base_entry is not None else None),
-                ),
-            )
-            if diagnostics is not None:
-                diagnostics["cache_hit"] = False
-                diagnostics["shared_index"] = bool(shared_key)
-                diagnostics["document_count"] = _index_document_count(index)
-            size = estimate_index_bytes(index_documents, index)
-            if size <= self.owner_limit_bytes:
-                self._store(key, _Entry(index, size, revision, backend, time.monotonic(), persistent_loaded=True))
-            else:
-                self._entries.pop(key, None)
-                self._dispose(_Entry(index, size, revision, backend, time.monotonic()))
-            return index
+            # backend 固定为 typescript（_selected_backend），上方分支必然返回。
+            # 此处曾是 Python 后端的「全量装载 + 来源合并 + worker sync」路径，
+            # TS 迁移后不可达，已删除（2026-09-14 清理）；force 语义不受影响——
+            # 它只作用于上方缓存捷径的跳过，worker 侧仍走水位增量同步。
 
     async def get_transient(
         self, owner_user_id: object, documents: list[IndexDocument], *, revision: str,
