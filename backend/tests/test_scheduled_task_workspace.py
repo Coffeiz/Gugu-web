@@ -156,6 +156,49 @@ async def test_batch_task_filesystem_authorization_confirms_once_and_grants_only
 
 
 @pytest.mark.asyncio
+async def test_batch_task_authorization_consumes_confirmation_when_targets_became_active_before_replay(
+    db, user_a, enable_filesystem_authorization,
+):
+    from agent.interactions.confirmations import redeem_confirmation
+
+    tasks = [
+        ScheduledTask(user_id=user_a.id, name=f"并发授权任务 {index}", payload="", cron="0 9 * * *")
+        for index in range(2)
+    ]
+    db.add_all(tasks)
+    await db.commit()
+    for task in tasks:
+        await db.refresh(task)
+
+    task_ids = [task.id for task in tasks]
+    args = {"task_ids": task_ids, "filesystem_authorized": True}
+    blocked = await _update_scheduled_task(db, user_a.id, args)
+    payload = blocked if isinstance(blocked, dict) else json.loads(blocked)
+    assert payload["needs_confirm"] is True
+
+    # 模拟用户确认前，另一路已完成同一批任务的授权。
+    for task in tasks:
+        await grant_scheduled_task_filesystem_access(db, user_a.id, task.id)
+    await db.commit()
+    assert redeem_confirmation(user_a.id, payload["confirm_code"]) is not None
+
+    replay = await _update_scheduled_task(db, user_a.id, args)
+    assert replay["success"] is True
+    assert replay["unchanged"] is True
+    await db.commit()
+
+    for task in tasks:
+        assert await revoke_scheduled_task_filesystem_access(db, user_a.id, task.id) is True
+    await db.commit()
+
+    reauthorization = await _update_scheduled_task(db, user_a.id, args)
+    reauthorization_payload = (
+        reauthorization if isinstance(reauthorization, dict) else json.loads(reauthorization)
+    )
+    assert reauthorization_payload["needs_confirm"] is True
+
+
+@pytest.mark.asyncio
 async def test_batch_task_authorization_does_not_accept_legacy_reusable_confirmation(
     db, user_a, enable_filesystem_authorization,
 ):

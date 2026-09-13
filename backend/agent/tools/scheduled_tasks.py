@@ -349,26 +349,6 @@ async def _update_scheduled_task(db, user_id, args: dict):
                     "error": "停用的定时任务不能授予完整用户沙箱权限",
                     "tasks": disabled,
                 }, ensure_ascii=False)
-            active = []
-            for task in tasks:
-                grant = await get_active_grant(
-                    db, user_id,
-                    subject_type=SUBJECT_SCHEDULED_TASK,
-                    subject_id=task.id,
-                )
-                if grant is not None:
-                    active.append(task.id)
-            if len(active) == len(tasks):
-                for task in tasks:
-                    await grant_scheduled_task_filesystem_access(
-                        db, user_id, task.id, granted_by="askuser",
-                    )
-                return {
-                    "success": True,
-                    "filesystem_authorized": True,
-                    "task_ids": [task.id for task in tasks],
-                    "unchanged": True,
-                }
             names = "、".join(task.name for task in tasks[:10])
             if len(tasks) > 10:
                 names += f"等 {len(tasks)} 个"
@@ -389,6 +369,34 @@ async def _update_scheduled_task(db, user_id, args: dict):
                 confirmation_targets,
                 context=confirmation_context,
             )
+            active = []
+            for task in tasks:
+                grant = await get_active_grant(
+                    db, user_id,
+                    subject_type=SUBJECT_SCHEDULED_TASK,
+                    subject_id=task.id,
+                )
+                if grant is not None:
+                    active.append(task.id)
+            if len(active) == len(tasks):
+                for task in tasks:
+                    await grant_scheduled_task_filesystem_access(
+                        db, user_id, task.id, granted_by="askuser",
+                    )
+                await db.flush()
+                if not revoke_confirmation(
+                    user_id,
+                    confirmation_summary,
+                    identity=confirmation_identity,
+                ):
+                    await db.rollback()
+                    return {"error": "无法安全完成沙箱授权，未保留本次授权，请重新确认后重试"}
+                return {
+                    "success": True,
+                    "filesystem_authorized": True,
+                    "task_ids": [task.id for task in tasks],
+                    "unchanged": True,
+                }
             blocked = confirm.needs_target_confirmation(
                 args,
                 confirmation_summary,
