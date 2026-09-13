@@ -320,6 +320,8 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   it('普通输入统一使用足够的行高，避免字母下伸部被输入框裁切', () => {
     expect(sharedForms).toContain('line-height: var(--line-height-body);')
     expect(sharedForms).toContain('vertical-align: middle;')
+    expect(sharedForms).toContain("input:is([type='text'], [type='email']")
+    expect(sharedForms).not.toContain(":where(input[type='text']")
   })
 
   it('定时任务卡片启停状态由最终主题层平滑过渡', () => {
