@@ -4,8 +4,8 @@
   "mode": "full",
   "status": "failed",
   "date": "2026-09-14",
-  "created_at": "2026-09-13T18:31:40.921771+00:00",
-  "commit": "313029bce0116c745c7dfec522e2e73f36f1bed7",
+  "created_at": "2026-09-13T18:44:38.698237+00:00",
+  "commit": "04c6572659ebe8c65ac7b108b8657cf7098711fd",
   "worktree_dirty": true,
   "tools": {
     "python": "3.14.3",
@@ -124,9 +124,9 @@
   "runs": [
     {
       "language": "python",
-      "status": "failed",
-      "exit_code": 1,
-      "duration_ms": 152174,
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 147326,
       "command": "python -m pytest -q --disable-warnings --cov=agent --cov=app --cov-branch --cov-report=json:<TEMP>（全量测试套件）",
       "scopes": []
     },
@@ -134,7 +134,7 @@
       "language": "typescript",
       "status": "failed",
       "exit_code": 1,
-      "duration_ms": 4551,
+      "duration_ms": 4775,
       "command": "corepack pnpm exec vitest run --coverage.enabled --coverage.provider=v8 --coverage.include=src/** --coverage.reporter=json --coverage.reportsDirectory=<TEMP>（全量测试套件）",
       "scopes": []
     }
@@ -5015,8 +5015,8 @@
       "tests": [],
       "test_association": "pending_manual",
       "cc": 29,
-      "coverage": 0.526316,
-      "crap": 118.3846,
+      "coverage": 0.710526,
+      "crap": 49.3997,
       "risk": "高"
     },
     {
@@ -6567,23 +6567,23 @@
     {
       "source": "backend/agent/tools/tool_contract.py",
       "function": "_issues_for_error",
-      "start_line": 356,
-      "end_line": 410,
+      "start_line": 385,
+      "end_line": 442,
       "domain": "全量扫描（backend/agent + backend/app）",
       "layer": "全量测试套件覆盖率（手动）",
       "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
       "tests": [],
       "test_association": "pending_manual",
-      "cc": 22,
-      "coverage": 0.794118,
-      "crap": 26.2238,
+      "cc": 23,
+      "coverage": 0.805556,
+      "crap": 26.889,
       "risk": "中"
     },
     {
       "source": "backend/agent/tools/tool_contract.py",
       "function": "_schema_repair_hints",
-      "start_line": 442,
-      "end_line": 476,
+      "start_line": 474,
+      "end_line": 508,
       "domain": "全量扫描（backend/agent + backend/app）",
       "layer": "全量测试套件覆盖率（手动）",
       "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
@@ -7391,21 +7391,6 @@
     },
     {
       "source": "backend/app/api/v1/agent_perception.py",
-      "function": "_mean",
-      "start_line": 31,
-      "end_line": 33,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 4,
-      "coverage": 0.0,
-      "crap": 20.0,
-      "risk": "中"
-    },
-    {
-      "source": "backend/app/api/v1/agent_perception.py",
       "function": "perception_stats",
       "start_line": 44,
       "end_line": 201,
@@ -7415,8 +7400,8 @@
       "tests": [],
       "test_association": "pending_manual",
       "cc": 74,
-      "coverage": 0.0,
-      "crap": 5550.0,
+      "coverage": 0.92,
+      "crap": 76.8037,
       "risk": "高"
     },
     {
@@ -11277,12 +11262,6 @@
   ],
   "errors": [
     {
-      "language": "python",
-      "kind": "failed",
-      "exit_code": 1,
-      "error_type": null
-    },
-    {
       "language": "typescript",
       "kind": "failed",
       "exit_code": 1,
@@ -11290,11 +11269,11 @@
     }
   ],
   "summary": {
-    "functions_total": 3384,
+    "functions_total": 3385,
     "complexity_hotspots": 454,
     "risk_high": 454,
-    "risk_medium": 288,
-    "risk_low": 2642,
+    "risk_medium": 287,
+    "risk_low": 2644,
     "mutants_total": null,
     "mutants_killed": null,
     "mutants_survived": null,
@@ -11302,5 +11281,5 @@
     "mutants_error": null,
     "equivalent_marked": null
   },
-  "duration_ms": 179662
+  "duration_ms": 174444
 }
