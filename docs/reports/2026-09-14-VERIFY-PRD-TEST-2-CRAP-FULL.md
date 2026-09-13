@@ -1,9 +1,9 @@
 # VERIFY：PRD-TEST-2 CRAP 全量扫描报告
 
 > 报告日期：2026-09-14
-> Commit：c7431e10c7656f8c11c340582dcb9f6a36a021a7（工作区修改：是）
+> Commit：2210eec674803f0e6b1d5f71bdf96a6f6e3774a4（工作区修改：是）
 > 状态：failed（非阻断；本次未运行变异测试）
-> 耗时：182339 ms
+> 耗时：179800 ms
 
 ---
 
@@ -13,12 +13,12 @@
 
 | 语言 | 扫描目录 | 测试入口 | 测试结果 | 耗时 |
 |---|---|---|---|---|
-| python | backend/agent、backend/app | 全量测试套件 | passed | 153592 ms |
-| typescript | frontend/src | 全量测试套件 | failed | 4506 ms |
+| python | backend/agent、backend/app | 全量测试套件 | passed | 152886 ms |
+| typescript | frontend/src | 全量测试套件 | failed | 4469 ms |
 
 ## 风险分布
 
-- 函数总数：3385；高（≥30）：458；中（≥15）：293；低：2634。
+- 函数总数：3385；高（≥30）：454；中（≥15）：288；低：2643。
 
 ## 中/高风险明细
 
@@ -258,7 +258,6 @@
 | 高 | 56.0000 | 7 | 0.0% | bounded_scope_memory | [backend/agent/memory/maintenance_batches.py:144](../../backend/agent/memory/maintenance_batches.py#L144) | 待人工关联 |
 | 高 | 56.0000 | 7 | 0.0% | _misperc_llm | [backend/agent/memory/reflection.py:91](../../backend/agent/memory/reflection.py#L91) | 待人工关联 |
 | 高 | 56.0000 | 7 | 0.0% | append_misread | [backend/agent/memory/store.py:877](../../backend/agent/memory/store.py#L877) | 待人工关联 |
-| 高 | 56.0000 | 7 | 0.0% | _responses_tools | [backend/agent/providers/openai_responses.py:42](../../backend/agent/providers/openai_responses.py#L42) | 待人工关联 |
 | 高 | 56.0000 | 7 | 0.0% | cap_usage | [backend/agent/quota.py:99](../../backend/agent/quota.py#L99) | 待人工关联 |
 | 高 | 56.0000 | 7 | 0.0% | _stored_group_scopes | [backend/agent/rag/scope.py:146](../../backend/agent/rag/scope.py#L146) | 待人工关联 |
 | 高 | 56.0000 | 7 | 0.0% | _stored_member_scopes | [backend/agent/rag/scope.py:171](../../backend/agent/rag/scope.py#L171) | 待人工关联 |
@@ -312,7 +311,6 @@
 | 高 | 42.5405 | 42 | 93.3% | _collect | [backend/agent/runner.py:1085](../../backend/agent/runner.py#L1085) | 待人工关联 |
 | 高 | 42.3717 | 17 | 55.6% | _run_terminal_command | [backend/app/api/v1/terminals.py:481](../../backend/app/api/v1/terminals.py#L481) | 待人工关联 |
 | 高 | 42.1710 | 26 | 71.2% | _http_get_one | [backend/agent/tools/web.py:108](../../backend/agent/tools/web.py#L108) | 待人工关联 |
-| 高 | 42.0000 | 6 | 0.0% | project_sort_key | [backend/agent/context/loaders.py:24](../../backend/agent/context/loaders.py#L24) | 待人工关联 |
 | 高 | 42.0000 | 6 | 0.0% | load_files_overview | [backend/agent/context/loaders.py:95](../../backend/agent/context/loaders.py#L95) | 待人工关联 |
 | 高 | 42.0000 | 6 | 0.0% | generate_summary | [backend/agent/conversation/session_metadata.py:91](../../backend/agent/conversation/session_metadata.py#L91) | 待人工关联 |
 | 高 | 42.0000 | 6 | 0.0% | _handle_card_action | [backend/agent/gateway/feishu.py:181](../../backend/agent/gateway/feishu.py#L181) | 待人工关联 |
@@ -416,7 +414,6 @@
 | 高 | 30.8548 | 28 | 84.6% | build_single_source_record | [backend/agent/rag/index_builder.py:169](../../backend/agent/rag/index_builder.py#L169) | 待人工关联 |
 | 高 | 30.6288 | 19 | 68.2% | extract_quoted | [backend/agent/im/media_ingress_wechat.py:62](../../backend/agent/im/media_ingress_wechat.py#L62) | 待人工关联 |
 | 高 | 30.4049 | 20 | 70.4% | _search_conversations | [backend/agent/tools/conversations.py:65](../../backend/agent/tools/conversations.py#L65) | 待人工关联 |
-| 高 | 30.0000 | 5 | 0.0% | short_catalog | [backend/agent/capabilities/index.py:92](../../backend/agent/capabilities/index.py#L92) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | load_recent_notes | [backend/agent/context/loaders.py:70](../../backend/agent/context/loaders.py#L70) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | _recover_due_rag_index_jobs | [backend/agent/events/bus.py:195](../../backend/agent/events/bus.py#L195) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | react | [backend/agent/gateway/feishu.py:261](../../backend/agent/gateway/feishu.py#L261) | 待人工关联 |
@@ -435,7 +432,6 @@
 | 高 | 30.0000 | 5 | 0.0% | schedule | [backend/agent/memory/reflection.py:428](../../backend/agent/memory/reflection.py#L428) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | ensure_six_h_window | [backend/agent/quota.py:48](../../backend/agent/quota.py#L48) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | _scope_revision | [backend/agent/rag/adapters/memory.py:52](../../backend/agent/rag/adapters/memory.py#L52) | 待人工关联 |
-| 高 | 30.0000 | 5 | 0.0% | conversation_summary_record | [backend/agent/rag/index_builder.py:132](../../backend/agent/rag/index_builder.py#L132) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | rank_candidates | [backend/agent/rag/ts_sidecar.py:507](../../backend/agent/rag/ts_sidecar.py#L507) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | _pin_session_user_skill_metadata | [backend/agent/runner.py:47](../../backend/agent/runner.py#L47) | 待人工关联 |
 | 高 | 30.0000 | 5 | 0.0% | clear_state | [backend/agent/runtime/runtime_state.py:57](../../backend/agent/runtime/runtime_state.py#L57) | 待人工关联 |
@@ -600,12 +596,10 @@
 | 中 | 20.0000 | 4 | 0.0% | load_context_data | [backend/agent/im/context_loader.py:174](../../backend/agent/im/context_loader.py#L174) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | persist_im_session | [backend/agent/im/loop.py:581](../../backend/agent/im/loop.py#L581) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | resolve_private_streaming_enabled | [backend/agent/im/message_format.py:57](../../backend/agent/im/message_format.py#L57) | 待人工关联 |
-| 中 | 20.0000 | 4 | 0.0% | _message_text | [backend/agent/memory/im_reflection.py:110](../../backend/agent/memory/im_reflection.py#L110) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | observe_session_activity | [backend/agent/memory/reflection_jobs.py:318](../../backend/agent/memory/reflection_jobs.py#L318) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | requeue_pending_cleanups | [backend/agent/memory/scope_lifecycle.py:84](../../backend/agent/memory/scope_lifecycle.py#L84) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | merge_scope_event_memory | [backend/agent/memory/scoped_store.py:94](../../backend/agent/memory/scoped_store.py#L94) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | read_pattern_vecs | [backend/agent/memory/store.py:427](../../backend/agent/memory/store.py#L427) | 待人工关联 |
-| 中 | 20.0000 | 4 | 0.0% | _conversation_context_line | [backend/agent/rag/index_builder.py:144](../../backend/agent/rag/index_builder.py#L144) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | rebuild_knowledge_index | [backend/agent/rag/index_builder.py:466](../../backend/agent/rag/index_builder.py#L466) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | search_conversations | [backend/agent/rag/service.py:664](../../backend/agent/rag/service.py#L664) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | load_vectors_from_storage | [backend/agent/rag/ts_sidecar.py:290](../../backend/agent/rag/ts_sidecar.py#L290) | 待人工关联 |
@@ -649,14 +643,11 @@
 | 中 | 20.0000 | 4 | 0.0% | _persistent_master_key | [backend/app/byok/crypto.py:15](../../backend/app/byok/crypto.py#L15) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | _run_safety_net | [backend/app/core/attachment_gc.py:195](../../backend/app/core/attachment_gc.py#L195) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | set_qq_face_cached | [backend/app/core/chat_attach.py:125](../../backend/app/core/chat_attach.py#L125) | 待人工关联 |
-| 中 | 20.0000 | 4 | 0.0% | validate_alert_email_recipients | [backend/app/core/config.py:371](../../backend/app/core/config.py#L371) | 待人工关联 |
-| 中 | 20.0000 | 4 | 0.0% | _deep_merge | [backend/app/core/config.py:609](../../backend/app/core/config.py#L609) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | _run | [backend/app/core/doctext.py:27](../../backend/app/core/doctext.py#L27) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | _lo_convert | [backend/app/core/doctext.py:57](../../backend/app/core/doctext.py#L57) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | setup_process_output | [backend/app/core/logging.py:78](../../backend/app/core/logging.py#L78) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | _ffmpeg_bin | [backend/app/core/media_transcode.py:26](../../backend/app/core/media_transcode.py#L26) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | _ffprobe_bin | [backend/app/core/media_transcode.py:39](../../backend/app/core/media_transcode.py#L39) | 待人工关联 |
-| 中 | 20.0000 | 4 | 0.0% | next_project_stage_key | [backend/app/core/projects.py:177](../../backend/app/core/projects.py#L177) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | _parse | [backend/app/core/redis.py:99](../../backend/app/core/redis.py#L99) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | get_current_user_id | [backend/app/core/security.py:165](../../backend/app/core/security.py#L165) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | get_current_user | [backend/app/core/security.py:215](../../backend/app/core/security.py#L215) | 待人工关联 |
@@ -668,7 +659,6 @@
 | 中 | 20.0000 | 4 | 0.0% | read_file_thumbnail | [backend/app/services/files/previews.py:190](../../backend/app/services/files/previews.py#L190) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | permanently_delete_all_files | [backend/app/services/files/trash.py:142](../../backend/app/services/files/trash.py#L142) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | permanently_delete_file | [backend/app/services/files/trash.py:157](../../backend/app/services/files/trash.py#L157) | 待人工关联 |
-| 中 | 20.0000 | 4 | 0.0% | empty | [backend/app/services/filesync/targeted.py:59](../../backend/app/services/filesync/targeted.py#L59) | 待人工关联 |
 | 中 | 20.0000 | 4 | 0.0% | terminal_metrics | [backend/app/services/terminals.py:278](../../backend/app/services/terminals.py#L278) | 待人工关联 |
 | 中 | 19.9814 | 14 | 68.8% | send_reply | [backend/agent/im/replies.py:247](../../backend/agent/im/replies.py#L247) | 待人工关联 |
 | 中 | 19.9611 | 12 | 61.9% | sandbox_readiness | [backend/agent/sandbox/docker_runtime.py:228](../../backend/agent/sandbox/docker_runtime.py#L228) | 待人工关联 |
@@ -766,6 +756,7 @@
 | 中 | 15.1781 | 14 | 81.8% | _logical_path | [backend/agent/tools/files/grep.py:43](../../backend/agent/tools/files/grep.py#L43) | 待人工关联 |
 | 中 | 15.0501 | 15 | 93.9% | _pending_conflicts | [backend/app/services/filesync/bindings.py:132](../../backend/app/services/filesync/bindings.py#L132) | 待人工关联 |
 | 中 | 15.0420 | 15 | 94.3% | _generate_append_summary | [backend/agent/context/compaction.py:565](../../backend/agent/context/compaction.py#L565) | 待人工关联 |
+| 中 | 15.0420 | 15 | 94.3% | handle_request | [backend/agent/rag/sidecar_host.py:66](../../backend/agent/rag/sidecar_host.py#L66) | 待人工关联 |
 | 中 | 15.0000 | 15 | 100.0% | _select_kept_units | [backend/agent/context/budget.py:314](../../backend/agent/context/budget.py#L314) | [backend/tests/test_context_budget.py](../../backend/tests/test_context_budget.py) |
 | 中 | 15.0000 | 15 | 100.0% | snapshot_context | [backend/agent/context/session_snapshot.py:199](../../backend/agent/context/session_snapshot.py#L199) | 待人工关联 |
 | 中 | 15.0000 | 15 | 100.0% | from_dict | [backend/agent/knowledge/models.py:87](../../backend/agent/knowledge/models.py#L87) | 待人工关联 |

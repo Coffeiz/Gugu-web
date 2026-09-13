@@ -122,3 +122,146 @@ def test_lens_similar_falls_back_to_full_sentence_match_without_trigger():
     assert _similar("不要过度澄清直接回答", "不要过度澄清直接回答问题") is True
     assert _similar("", "任意") is False
     assert _similar("短句", "完全不同的另一句") is False
+
+
+# ── P1 第二批（2026-09-14）──
+
+from datetime import datetime
+from types import SimpleNamespace
+
+from agent.capabilities.index import CapabilityIndex
+from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot
+from agent.context.loaders import project_sort_key
+from agent.memory.im_reflection import _message_text
+from agent.providers.openai_responses import _responses_tools
+from agent.rag.index_builder import (
+    CONVERSATION_CONTEXT_MAX_CHARS,
+    _conversation_context_line,
+    conversation_summary_record,
+)
+from app.core.config import SecuritySettings
+from app.core.projects import next_project_stage_key
+from app.services.filesync.targeted import PathEventBatch
+
+
+def _deep_merge(base, override):
+    from app.core.config import _deep_merge as merge
+    merge(base, override)
+    return base
+
+
+def test_deep_merge_recurses_into_dicts_and_overrides_scalars():
+    base = {"a": {"x": 1, "y": 2}, "b": 1, "c": {"keep": True}}
+    merged = _deep_merge(base, {"a": {"y": 20, "z": 30}, "b": {"nested": True}, "d": "新"})
+    assert merged["a"] == {"x": 1, "y": 20, "z": 30}
+    assert merged["b"] == {"nested": True}
+    assert merged["c"] == {"keep": True}
+    assert merged["d"] == "新"
+
+
+def test_next_project_stage_key_returns_max_plus_one():
+    assert next_project_stage_key([]) == "s0"  # 空结构从 s0 起
+    assert next_project_stage_key([{"key": "s1"}, {"key": "s2"}]) == "s3"
+    assert next_project_stage_key([{"key": "stage7"}, {"key": "s4"}]) == "s5"
+    assert next_project_stage_key([{"key": "s"}], prefix="t") == "t0"  # 不同前缀各自从 0 起
+
+
+def test_project_sort_key_orders_by_status_then_priority():
+    from datetime import datetime
+
+    def project(status, priority="medium", deadline=None, start_date=None, done_at=None, pid=1):
+        return SimpleNamespace(status=status, priority=priority, deadline=deadline,
+                               start_date=start_date, done_at=done_at, id=pid)
+
+    done = project("done", priority="high", done_at=datetime(2026, 9, 1), pid=7)
+    active = project("active", priority="high", deadline="2026-10-01", pid=3)
+    pending = project("pending", priority="low", start_date="2026-01-01", pid=9)
+
+    assert project_sort_key(done)[0] == project_sort_key(active)[0] == -3
+    assert project_sort_key(pending)[0] == -1
+    assert project_sort_key(active) < project_sort_key(pending)
+    assert project_sort_key(done)[1] == -datetime(2026, 9, 1).timestamp()
+
+
+def test_conversation_summary_record_shape():
+    session = SimpleNamespace(
+        id=12, title="对话标题", summary="对话摘要", source="web",
+        updated_at=datetime.fromisoformat("2026-09-14T08:00:00+00:00"),
+    )
+    record = conversation_summary_record(session)
+    assert record["source_type"] == "conversation"
+    assert record["kind"] == "summary"
+    assert record["id"] == "12:summary"
+    assert record["session_id"] == "12"
+    assert record["title"] == "对话标题"
+    assert record["summary"] == "对话摘要"
+    assert record["session_source"] == "web"
+    assert record["session_updated_at"] == "2026-09-14T08:00:00+00:00"
+
+
+def test_conversation_context_line_truncates_and_skips_non_text_roles():
+    row = SimpleNamespace(role="user", content="问题" * 500)
+    line = _conversation_context_line(row)
+    assert line.startswith("user：问题")
+    assert len(line) <= len("user：") + CONVERSATION_CONTEXT_MAX_CHARS
+    assert _conversation_context_line(SimpleNamespace(role="tool", content="x")) == ""
+    assert _conversation_context_line(SimpleNamespace(role="user", content="   ")) == ""
+
+
+def test_responses_tools_converts_chat_function_schema():
+    tools = [
+        {"type": "function", "function": {"name": "http_get", "description": "抓网页", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {"name": "no_params"}},
+        {"type": "function", "function": {"description": "缺名字"}},
+        "junk",
+    ]
+    result = _responses_tools(tools)
+    assert result == [
+        {"type": "function", "name": "http_get", "description": "抓网页",
+         "parameters": {"type": "object", "properties": {}}},
+        {"type": "function", "name": "no_params", "description": "", "parameters": {"type": "object"}},
+    ]
+
+
+def test_message_text_formats_owner_and_platform_roles():
+    owner = SimpleNamespace(role="assistant", content="回复内容")
+    assert _message_text(owner) == "[咕咕] 回复内容"
+    assert _message_text(SimpleNamespace(role="assistant", content=None)) == "[咕咕] （无文字）"
+    member = SimpleNamespace(role="user", content="问题", platform_user_name="小北", platform_user_id="qq-1")
+    assert _message_text(member) == "[小北，platform_user_id=qq-1] 问题"
+    anonymous = SimpleNamespace(role="user", content=None, platform_user_name=None, platform_user_id=None)
+    assert _message_text(anonymous) == "[未提供昵称，platform_user_id=未知ID] （无文字）"
+
+
+def test_path_event_batch_empty_reflects_all_accumulators():
+    assert PathEventBatch().empty() is True
+    assert PathEventBatch(changed={"a"}).empty() is False
+    assert PathEventBatch(deleted={"a"}).empty() is False
+    assert PathEventBatch(folders_created={"a"}).empty() is False
+    assert PathEventBatch(folders_deleted={"a"}).empty() is False
+
+
+def test_short_catalog_lists_skills_and_registered_tools_only():
+    index = CapabilityIndex({}, {})
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={
+            "listed": CapabilityMeta(name="listed", kind="tool", description_short="已注册工具", category="t"),
+            "unlisted": CapabilityMeta(name="unlisted", kind="tool", description_short="未启用", category="t", enabled=False),
+        },
+        skills={
+            "skill-a": CapabilityMeta(name="skill-a", kind="skill", description_short="技能", category="s"),
+            "skill-disabled": CapabilityMeta(name="skill-disabled", kind="skill", description_short="停用技能", category="s", enabled=False),
+        },
+    )
+    catalog = index.short_catalog(snapshot)
+    assert [item["name"] for item in catalog] == ["listed", "skill-a"]
+    assert catalog[0]["kind"] == "tool"
+    assert catalog[1]["kind"] == "skill"
+
+
+def test_security_settings_alert_recipients_strips_dedupes_and_validates():
+    assert SecuritySettings.validate_alert_email_recipients([" a@b.co ", "a@b.co", "c@d.io"]) == ["a@b.co", "c@d.io"]
+    import pytest
+    with pytest.raises(ValueError, match="告警目标邮箱"):
+        SecuritySettings.validate_alert_email_recipients(["not-an-email"])
