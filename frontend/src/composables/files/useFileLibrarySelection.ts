@@ -20,18 +20,23 @@ export interface FileLibrarySelectionOptions {
 export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   // 卡片点击的手势一致性守卫：click 只在「按下也发生在同一张卡内」时才算数。
   // 场景——重命名输入框在手势中途因 blur 提交被卸载，浏览器发现 mousedown
-  // 目标已不在 DOM，会把 click 改派到释放点元素（别的卡片），误开预览/进目录。
+  // 目标已不在 DOM，会把 click 改派到释放点元素（别的卡片，甚至同一张卡的
+  // 其它区域），误开预览/进目录。
   // capture 阶段记录：RenameInput 的包装层 @mousedown.stop 不影响 capture 命中。
   let pressCard: Element | null = null
+  let pressTarget: Element | null = null
   const onDocumentPress = (event: MouseEvent) => {
-    const target = event.target as Element | null
-    pressCard = target?.closest?.('.fc-card, .folder-card, .list-row') ?? null
+    pressTarget = event.target as Element | null
+    pressCard = pressTarget?.closest?.('.fc-card, .folder-card, .list-row') ?? null
   }
   document.addEventListener('mousedown', onDocumentPress, { capture: true })
   if (getCurrentScope()) {
     onScopeDispose(() => document.removeEventListener('mousedown', onDocumentPress, { capture: true }))
   }
   function pressStartedOutside(event: MouseEvent): boolean {
+    // 按下目标在手势中被移出 DOM（重命名输入框 blur 提交即卸载是典型）：
+    // 这次 click 是浏览器改派的，不代表用户在释放点的意图，一律忽略。
+    if (pressTarget && !pressTarget.isConnected) return true
     const card = event.currentTarget as Element | null
     if (!card) return false
     return !pressCard || (pressCard !== card && !card.contains(pressCard))

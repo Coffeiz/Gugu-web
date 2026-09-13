@@ -83,4 +83,36 @@ describe('useFileLibrarySelection 点击手势一致性', () => {
     cardA.remove()
     cardB.remove()
   })
+
+  it('按下目标在手势中被移除（重命名输入卸载）：释放点同卡也不开预览', () => {
+    const cardA = makeCard()
+    const input = document.createElement('input')
+    cardA.appendChild(input)
+    const openPreview = vi.fn()
+    const file = { id: 8, ext: 'png', displayName: 'b.png' } as never
+    const sel = useFileLibrarySelection({
+      containerRef: ref(null),
+      currentType: ref('all'),
+      getFolders: () => [],
+      getFiles: () => [file],
+      getTrashFolders: () => [],
+      enterFolder: vi.fn(),
+      openPreview,
+      isPreviewable: () => true,
+    })
+
+    // 按下在重命名输入框上，拖选后 blur 提交 → 输入框卸载；释放落在同一张卡上。
+    pressWithin(input)
+    input.remove()
+    sel.handleFileClick(file, { currentTarget: cardA } as unknown as MouseEvent)
+    expect(openPreview).not.toHaveBeenCalled()
+
+    // 输入框还在时（未提交卸载）的正常点击不受影响。
+    pressWithin(input)
+    cardA.appendChild(input)
+    sel.handleFileClick(file, { currentTarget: cardA } as unknown as MouseEvent)
+    expect(openPreview).toHaveBeenCalledTimes(1)
+
+    cardA.remove()
+  })
 })
