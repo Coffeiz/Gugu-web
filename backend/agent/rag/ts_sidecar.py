@@ -1183,12 +1183,6 @@ def wire_document_to_persistent(raw: dict[str, Any], owner_user_id: object) -> I
 _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, TsSidecarClient]] = weakref.WeakKeyDictionary()
 
 
-def _index_document_digest(document: IndexDocument) -> str:
-    """词法索引字段摘要；契约统一收口在 agent.rag.delta。"""
-    from agent.rag.delta import document_digest
-    return document_digest(document)
-
-
 async def _probe_sidecar_socket(socket_path: str) -> bool:
     """轻量探活：socket 可连接才走共享宿主，否则回退进程内 spawn。"""
     try:

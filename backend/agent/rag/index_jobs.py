@@ -43,17 +43,28 @@ def _is_ephemeral_sqlite(session_factory) -> bool:
     )
 
 
+def _merge_pending_ids(existing: Optional[list], source_id: str) -> list[str]:
+    """同源待处理文档 ID 并集（保持插入顺序、去重）；空 ID 表示来源级事件。"""
+    merged = [str(item) for item in (existing or []) if str(item)]
+    if source_id and source_id not in merged:
+        merged.append(source_id)
+    return merged
+
+
 async def persist_event(event: RagIndexUpdated) -> Optional[int]:
     """合并一条最新事件并返回当前 generation。
 
-    测试和未初始化数据库的轻量进程仍可使用内存事件总线；这类场景返回 None，
-    不让持久化旁路阻塞业务写入。
+    文档级事件（带 source_id）把 ID 并入 pending_source_ids——同源多文档
+    合并只去重、不丢文档（PRD-RAG-9 §5.2）；来源级事件（无 source_id）
+    清空集合，语义为全量重建。测试和未初始化数据库的轻量进程仍可使用
+    内存事件总线；这类场景返回 None，不让持久化旁路阻塞业务写入。
     """
     user_id = _user_uuid(event.user_id)
     session_factory = _session_factory()
     if user_id is None or session_factory is None or _is_ephemeral_sqlite(session_factory):
         return None
 
+    source_id = str(event.source_id or "").strip()
     # 两个进程可能同时看到“没有任务”并尝试 INSERT；唯一键冲突后重试一次，
     # 第二次会拿到已存在的行并转为 UPDATE。
     for attempt in range(2):
@@ -74,7 +85,8 @@ async def persist_event(event: RagIndexUpdated) -> Optional[int]:
                     job = RagIndexJob(
                         user_id=user_id,
                         source_type=str(event.source_type),
-                        source_id=str(event.source_id or ""),
+                        source_id=source_id,
+                        pending_source_ids=[source_id] if source_id else [],
                         version=str(event.version or ""),
                         operation=str(event.operation or "upsert"),
                         status="queued",
@@ -83,7 +95,13 @@ async def persist_event(event: RagIndexUpdated) -> Optional[int]:
                     )
                     db.add(job)
                 else:
-                    job.source_id = str(event.source_id or "")
+                    job.source_id = source_id
+                    if source_id:
+                        job.pending_source_ids = _merge_pending_ids(
+                            job.pending_source_ids, source_id,
+                        )
+                    else:
+                        job.pending_source_ids = []
                     job.version = str(event.version or "")
                     job.operation = str(event.operation or "upsert")
                     job.status = "queued"
@@ -174,6 +192,23 @@ async def mark_result(
             job.next_attempt_at = None
             job.last_error_code = None
             job.last_succeeded_at = now
+            # 该文档已成功入索引，从待处理集合移除；来源级事件（空 ID）成功
+            # 即全量收敛，清空整个集合。失败时保留集合供到期重放。
+            completed_id = str(event.source_id or "").strip()
+            pending_ids = [str(item) for item in (job.pending_source_ids or []) if str(item)]
+            if completed_id:
+                job.pending_source_ids = [i for i in pending_ids if i != completed_id]
+            else:
+                job.pending_source_ids = []
+            job.completed_generation = int(generation)
+            if job.pending_source_ids:
+                # 同源还有待重放文档：保持 queued 让恢复循环继续逐 ID 收敛，
+                # 不能置 ready（ready 行不会被 due_events 捞起，剩余 ID 会卡死）。
+                job.status = "queued"
+                job.next_attempt_at = now
+            else:
+                job.status = "ready"
+                job.next_attempt_at = None
             await db.commit()
             return 0.0
 
@@ -189,11 +224,17 @@ async def mark_result(
 
 
 async def due_events(limit: int = 100) -> list[RagIndexUpdated]:
-    """读取到期任务；running 租约过期也视为可恢复。"""
+    """读取到期任务；running 租约过期也视为可恢复。
+
+    pending_source_ids 非空时按 ID 逐条展开成文档级事件（操作统一为
+    upsert：最终动作由当前主数据决定，对象已删时投影返回空、按 delete
+    收敛，见 PRD-RAG-9 §5.2 规则 4）；重放成功后由 mark_result 逐 ID 移除。
+    """
     session_factory = _session_factory()
     if session_factory is None or _is_ephemeral_sqlite(session_factory):
         return []
     now = now_utc()
+    events: list[RagIndexUpdated] = []
     async with session_factory() as db:
         rows = (
             await db.execute(
@@ -214,13 +255,29 @@ async def due_events(limit: int = 100) -> list[RagIndexUpdated]:
                 .limit(limit)
             )
         ).scalars().all()
-        return [
-            RagIndexUpdated(
-                user_id=row.user_id,
-                source_type=row.source_type,
-                source_id=row.source_id,
-                version=row.version,
-                operation=row.operation,
-            )
-            for row in rows
-        ]
+        for row in rows:
+            pending_ids = [str(item) for item in (row.pending_source_ids or []) if str(item)]
+            if pending_ids:
+                events.extend(
+                    RagIndexUpdated(
+                        user_id=row.user_id,
+                        source_type=row.source_type,
+                        source_id=source_id,
+                        version=row.version,
+                        operation="upsert",
+                        replayed=True,
+                    )
+                    for source_id in pending_ids
+                )
+            else:
+                events.append(
+                    RagIndexUpdated(
+                        user_id=row.user_id,
+                        source_type=row.source_type,
+                        source_id=row.source_id,
+                        version=row.version,
+                        operation=row.operation,
+                        replayed=True,
+                    )
+                )
+    return events
