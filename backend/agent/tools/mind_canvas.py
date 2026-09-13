@@ -511,9 +511,15 @@ async def _canvas_delete(db, user_id, args: dict):
             if canvas is None:
                 return {"error": f"画布 {canvas_id} 不存在"}
             canvases.append(canvas)
+        canvases.sort(key=lambda canvas: canvas.id)
         names = "、".join((c.title or "未命名画布") for c in canvases[:8]) + (f"等 {len(canvases)} 个" if len(canvases) > 8 else "")
-        blocked = confirm.needs_confirmation(args, f"将删除画布：{names}，共 {len(canvases)} 个，包含便签、引用节点和连接关系", user_id,
-                                             identity=f"canvas_delete:canvas_ids={sorted(canvas_ids)}")
+        blocked = confirm.needs_target_confirmation(
+            args,
+            f"将删除画布：{names}，共 {len(canvases)} 个，包含便签、引用节点和连接关系",
+            user_id,
+            action="delete_canvas",
+            targets={"canvas_id": canvas_ids},
+        )
         if blocked is not None:
             return blocked
         for canvas in canvases:
@@ -528,8 +534,13 @@ async def _canvas_delete(db, user_id, args: dict):
     if canvas is None:
         return {"error": "画布不存在"}
     title = canvas.title or "未命名画布"
-    blocked = confirm.needs_confirmation(args, f"将删除画布「{title}」（含所有便签、引用节点和连接关系）", user_id,
-                                         identity=f"canvas_delete:canvas_id={canvas_id}")
+    blocked = confirm.needs_target_confirmation(
+        args,
+        f"将删除画布「{title}」（含所有便签、引用节点和连接关系）",
+        user_id,
+        action="delete_canvas",
+        targets={"canvas_id": [canvas_id]},
+    )
     if blocked is not None:
         return blocked
     ok = await delete_canvas(db, user_id, canvas_id, commit=True)
@@ -723,13 +734,20 @@ async def _canvas_delete_note(db, user_id, args: dict):
         if node is None:
             return {"error": "找不到这条画布便签"}
         checked.append((node_id, node.version, node))
+    checked.sort(key=lambda entry: entry[0])
     if batched:
         message = f"将删除 {len(checked)} 条画布便签，并从画布移除其视图项"
     else:
         message = f"将删除画布便签「{checked[0][2].title or '未命名'}」，并从画布移除其视图项"
     note_ids = sorted(node_id for node_id, _, _ in checked)
-    blocked = confirm.needs_confirmation(args, message, user_id,
-                                         identity=f"canvas_delete_note:canvas_id={args.get('canvas_id')}:node_ids={note_ids}")
+    blocked = confirm.needs_target_confirmation(
+        args,
+        message,
+        user_id,
+        action="delete_canvas_note",
+        targets={"node_id": note_ids},
+        context={"canvas_id": args.get("canvas_id")},
+    )
     if blocked is not None:
         return blocked
     results = []
@@ -847,8 +865,15 @@ async def _canvas_disconnect(db, user_id, args: dict):
             if relation is None:
                 return {"error": f"关联 {relation_id} 不存在"}
             relations.append(relation)
-        blocked = confirm.needs_confirmation(args, f"将删除 {len(relations)} 条节点关联", user_id,
-                                             identity=f"canvas_disconnect:relation_ids={sorted(relation_ids)}")
+        relations.sort(key=lambda relation: relation.id)
+        blocked = confirm.needs_target_confirmation(
+            args,
+            f"将删除 {len(relations)} 条节点关联",
+            user_id,
+            action="delete_canvas_relation",
+            targets={"relation_id": relation_ids},
+            context={"canvas_id": canvas_id},
+        )
         if blocked is not None:
             return blocked
         for relation in relations:
@@ -861,8 +886,14 @@ async def _canvas_disconnect(db, user_id, args: dict):
     relation = await get_canvas_relation(db, user_id, relation_id, canvas_id)
     if relation is None:
         return {"error": "关联不存在"}
-    blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id,
-                                         identity=f"canvas_disconnect:relation_id={relation_id}")
+    blocked = confirm.needs_target_confirmation(
+        args,
+        f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}",
+        user_id,
+        action="delete_canvas_relation",
+        targets={"relation_id": [relation_id]},
+        context={"canvas_id": canvas_id},
+    )
     if blocked is not None:
         return blocked
     await disconnect_node_relation(db, user_id, relation_id, canvas_id=canvas_id, commit=False)
@@ -898,11 +929,13 @@ async def _canvas_batch(db, user_id, args: dict):
             operation.get("node_id") for operation in operations
             if isinstance(operation, dict) and operation.get("kind") == "delete_note"
         )
-        blocked = confirm.needs_confirmation(
+        blocked = confirm.needs_target_confirmation(
             args,
             f"将删除 {len(batch_note_ids)} 条画布便签，并从画布移除其视图项",
             user_id,
-            identity=f"canvas_delete_note:canvas_id={canvas_id}:node_ids={batch_note_ids}",
+            action="delete_canvas_note",
+            targets={"node_id": batch_note_ids},
+            context={"canvas_id": canvas_id},
         )
         if blocked is not None:
             return blocked
@@ -1020,7 +1053,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "canvas_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
+                    "canvas_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20, "uniqueItems": True},
                 },
                 "required": [],
                 "oneOf": [
@@ -1031,6 +1064,7 @@ class MindCanvasSkill(BaseSkill):
             handler=_canvas_delete,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
         Tool(
             name="canvas_create_note", label="创建画布便签",
@@ -1132,7 +1166,18 @@ class MindCanvasSkill(BaseSkill):
             description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项使用 node_id，批量使用 notes。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}},
+                "properties": {
+                    "node_id": {"type": "integer"},
+                    "notes": {
+                        "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": True,
+                        "items": {
+                            "type": "object",
+                            "properties": {"node_id": {"type": "integer"}},
+                            "required": ["node_id"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
                 "required": [],
                 "oneOf": [
                     {"required": ["node_id"], "not": {"required": ["notes"]}},
@@ -1142,6 +1187,7 @@ class MindCanvasSkill(BaseSkill):
             handler=_canvas_delete_note,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
         Tool(
             name="canvas_connect", label="连接画布节点",
@@ -1188,7 +1234,7 @@ class MindCanvasSkill(BaseSkill):
             description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
-                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}},
+                "properties": {"canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True}},
                 "required": ["canvas_id"],
                 "oneOf": [
                     {"required": ["relation_id"], "not": {"required": ["relation_ids"]}},
@@ -1198,6 +1244,7 @@ class MindCanvasSkill(BaseSkill):
             handler=_canvas_disconnect,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
         Tool(
             name="canvas_batch", label="批量编排画布",
@@ -1230,6 +1277,7 @@ class MindCanvasSkill(BaseSkill):
             handler=_canvas_batch,
             mutates=True,
             requires_confirmation=True,
+            batch_confirmation=True,
         ),
     ]
 

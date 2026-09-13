@@ -270,9 +270,15 @@ async def _delete_project(db, user_id, args: dict):
             if project is None:
                 return json.dumps({"error": f"项目 {pid} 不存在"})
             projects.append(project)
+        projects.sort(key=lambda project: project.id)
         names = "、".join(p.name for p in projects[:8]) + (f"等 {len(projects)} 个" if len(projects) > 8 else "")
-        blocked = confirm.needs_confirmation(args, f"将删除项目：{names}，共 {len(projects)} 个，连同其中文件移入回收站（30 天内可恢复）", user_id,
-                                             identity=f"delete_project:project_ids={sorted(project_ids)}")
+        blocked = confirm.needs_target_confirmation(
+            args,
+            f"将删除项目：{names}，共 {len(projects)} 个，连同其中文件移入回收站（30 天内可恢复）",
+            user_id,
+            action="delete_project",
+            targets={"project_id": project_ids},
+        )
         if blocked is not None:
             return blocked
         storage = get_storage()
@@ -294,8 +300,11 @@ async def _delete_project(db, user_id, args: dict):
     # 不可逆 → 删除二次确认保底
     file_cnt = await count_project_files(db, user_id, p.id)
     summary = f"将删除项目「{p.name}」" + (f"及其 {file_cnt} 个文件" if file_cnt else "") + "移入回收站（30 天内可恢复）"
-    blocked = confirm.needs_confirmation(args, summary, user_id,
-                                         identity=f"delete_project:project_id={p.id}")
+    blocked = confirm.needs_target_confirmation(
+        args, summary, user_id,
+        action="delete_project",
+        targets={"project_id": [p.id]},
+    )
     if blocked is not None:
         return blocked
 
@@ -559,13 +568,14 @@ class ProjectsSkill(BaseSkill):
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
+                    "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20, "uniqueItems": True},
                 },
                 "required": [],
             },
             handler=_delete_project,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
         Tool(
             name="get_project", label="项目详情",

@@ -90,11 +90,13 @@ async def _permanent_delete(db, user_id, args: dict):
         # 确认后又新增回收站项时授权不会命中，需要重新确认。
         trash_file_ids = sorted(f.id for f in await list_deleted_files(db, user_id, limit=trash_limit))
         trash_folder_ids = sorted(f.id for f in folders)
-        blocked = confirm.needs_confirmation(
+        blocked = confirm.needs_target_confirmation(
             args,
             f"将永久删除回收站里全部 {deleted_count} 个文件和 {len(folders)} 个文件夹，删除后无法恢复",
             user_id,
-            identity=f"permanent_delete_all:file_ids={trash_file_ids};folder_ids={trash_folder_ids}",
+            action="permanent_delete_trash",
+            targets={"file_id": trash_file_ids, "folder_id": trash_folder_ids},
+            context={"all": 1},
         )
         if blocked is not None:
             return blocked
@@ -144,14 +146,23 @@ async def _permanent_delete(db, user_id, args: dict):
         if folder is None:
             return json.dumps({"error": f"文件夹 {folder_id} 不在回收站"})
         folders.append(folder)
+    files.sort(key=lambda file: file.id)
+    folders.sort(key=lambda folder: folder.id)
 
     names = [f"{f.display_name}.{f.ext}" for f in files] + [f"文件夹：{f.name}" for f in folders]
     preview = "、".join(names[:10])
     if len(names) > 10:
         preview += f"等 {len(names)} 项"
-    blocked = confirm.needs_confirmation(
-        args, f"将永久删除 {preview}，共 {len(names)} 项，删除后无法恢复", user_id,
-        identity=f"permanent_delete:file_ids={sorted(file_ids)};folder_ids={sorted(folder_ids)}")
+    blocked = confirm.needs_target_confirmation(
+        args,
+        f"将永久删除 {preview}，共 {len(names)} 项，删除后无法恢复",
+        user_id,
+        action="permanent_delete_trash",
+        targets={
+            **({"file_id": file_ids} if file_ids else {}),
+            **({"folder_id": folder_ids} if folder_ids else {}),
+        },
+    )
     if blocked is not None:
         return blocked
 
@@ -221,8 +232,8 @@ class TrashSkill(BaseSkill):
                 "properties": {
                     "file_id": {"type": "integer"},
                     "folder_id": {"type": "integer"},
-                    "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
-                    "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
+                    "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
                     "all": {"type": "boolean"},
                 },
                 "required": [],
@@ -230,6 +241,7 @@ class TrashSkill(BaseSkill):
             handler=_permanent_delete,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
     ]
 

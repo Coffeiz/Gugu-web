@@ -127,12 +127,17 @@ async def _delete_event(db, user_id, args: dict):
             if error:
                 return error
             events.append(event)
+        events.sort(key=lambda event: event.id)
         reminders = [await list_event_reminders(db, user_id, event.id) for event in events]
         names = "、".join(event.title for event in events[:10]) + (f"等 {len(events)} 个" if len(events) > 10 else "")
         reminder_count = sum(len(items) for items in reminders)
-        blocked = confirm.needs_confirmation(
-            args, f"将删除日历事件：{names}，共 {len(events)} 个，并连带删除 {reminder_count} 条提醒，且无法恢复", user_id,
-            identity=f"delete_event:event_ids={sorted(event_ids)}")
+        blocked = confirm.needs_target_confirmation(
+            args,
+            f"将删除日历事件：{names}，共 {len(events)} 个，并连带删除 {reminder_count} 条提醒，且无法恢复",
+            user_id,
+            action="delete_calendar_event",
+            targets={"event_id": event_ids},
+        )
         if blocked is not None:
             return blocked
         results = []
@@ -154,8 +159,11 @@ async def _delete_event(db, user_id, args: dict):
     # 事件无回收站 → 不可逆 → 删除二次确认保底
     _r = f"及其 {len(reminders)} 条提醒" if reminders else ""
     summary = f"将删除日历事件「{etitle}」（{e.date}）{_r}，事件无回收站，删除后不可恢复"
-    blocked = confirm.needs_confirmation(args, summary, user_id,
-                                         identity=f"delete_event:event_id={eid}")
+    blocked = confirm.needs_target_confirmation(
+        args, summary, user_id,
+        action="delete_calendar_event",
+        targets={"event_id": [eid]},
+    )
     if blocked is not None:
         return blocked
 
@@ -325,7 +333,7 @@ class CalendarSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "event_id": {"type": "integer"},
-                    "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
                     "event": {"type": "string"},
                     "on_date": {"type": "string", "pattern": _DATE_PATTERN},
                 },
@@ -334,6 +342,7 @@ class CalendarSkill(BaseSkill):
             handler=_delete_event,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
         Tool(
             name="add_event_reminder",

@@ -238,6 +238,8 @@ async def _create_scheduled_task(db, user_id, args: dict):
         from app.services.filesystem_authorization import filesystem_authorization_enabled
         if not filesystem_authorization_enabled():
             return json.dumps({"error": "完整用户沙箱授权功能当前未开启"}, ensure_ascii=False)
+        if args.get("enabled", True) is False:
+            return json.dumps({"error": "停用的定时任务不能授予完整用户沙箱权限"}, ensure_ascii=False)
     spec = _normalize_tool_schedule(args)
     if isinstance(spec, str):
         return spec
@@ -307,6 +309,98 @@ async def _create_scheduled_task(db, user_id, args: dict):
 
 
 async def _update_scheduled_task(db, user_id, args: dict):
+    task_ids = args.get("task_ids")
+    if task_ids is not None:
+        if (
+            not isinstance(task_ids, list)
+            or not task_ids
+            or len(task_ids) > 50
+            or any(isinstance(task_id, bool) or not isinstance(task_id, int) or task_id <= 0 for task_id in task_ids)
+        ):
+            return json.dumps({"error": "task_ids 必须是 1-50 个正整数任务 id"}, ensure_ascii=False)
+        if len(set(task_ids)) != len(task_ids):
+            return json.dumps({"error": "task_ids 不能包含重复任务"}, ensure_ascii=False)
+        if set(args) - {"task_ids", "filesystem_authorized", "confirm"}:
+            return json.dumps({"error": "批量任务更新仅支持 filesystem_authorized 授权或撤销"}, ensure_ascii=False)
+        if not isinstance(args.get("filesystem_authorized"), bool):
+            return json.dumps({"error": "批量任务必须明确传 filesystem_authorized=true 或 false"}, ensure_ascii=False)
+        tasks = []
+        for task_id in task_ids:
+            task = await get_task(db, user_id, task_id)
+            if task is None:
+                return json.dumps({"error": f"定时任务 {task_id} 不存在"}, ensure_ascii=False)
+            tasks.append(task)
+        tasks.sort(key=lambda task: task.id)
+
+        from app.services.filesystem_authorization import (
+            SUBJECT_SCHEDULED_TASK,
+            filesystem_authorization_enabled,
+            get_active_grant,
+            grant_scheduled_task_filesystem_access,
+            revoke_scheduled_task_filesystem_access,
+        )
+        authorize = args["filesystem_authorized"]
+        if authorize and not filesystem_authorization_enabled():
+            return json.dumps({"error": "完整用户沙箱授权功能当前未开启"}, ensure_ascii=False)
+        if authorize:
+            disabled = [task.name for task in tasks if not task.enabled]
+            if disabled:
+                return json.dumps({
+                    "error": "停用的定时任务不能授予完整用户沙箱权限",
+                    "tasks": disabled,
+                }, ensure_ascii=False)
+            active = []
+            for task in tasks:
+                grant = await get_active_grant(
+                    db, user_id,
+                    subject_type=SUBJECT_SCHEDULED_TASK,
+                    subject_id=task.id,
+                )
+                if grant is not None:
+                    active.append(task.id)
+            if len(active) == len(tasks):
+                for task in tasks:
+                    await grant_scheduled_task_filesystem_access(
+                        db, user_id, task.id, granted_by="askuser",
+                    )
+                return {
+                    "success": True,
+                    "filesystem_authorized": True,
+                    "task_ids": [task.id for task in tasks],
+                    "unchanged": True,
+                }
+            names = "、".join(task.name for task in tasks[:10])
+            if len(tasks) > 10:
+                names += f"等 {len(tasks)} 个"
+            blocked = confirm.needs_target_confirmation(
+                args,
+                f"允许以下定时任务读写整个用户沙箱：{names}（共 {len(tasks)} 个，包含 /workspace、/personal、/project）",
+                user_id,
+                action="authorize_scheduled_task_filesystem",
+                targets={"task_id": task_ids},
+                ttl_minutes=10,
+                instruction="确认后，只为列出的每个定时任务分别创建完整用户沙箱授权；不包含宿主机目录，也不会授权其他任务。",
+            )
+            if blocked is not None:
+                return blocked
+            for task in tasks:
+                await grant_scheduled_task_filesystem_access(
+                    db, user_id, task.id, granted_by="askuser",
+                )
+            changed_ids = [task_id for task_id in task_ids if task_id not in active]
+        else:
+            changed_ids = []
+            for task in tasks:
+                if await revoke_scheduled_task_filesystem_access(db, user_id, task.id):
+                    changed_ids.append(task.id)
+        await db.flush()
+        return {
+            "success": True,
+            "filesystem_authorized": authorize,
+            "task_ids": [task.id for task in tasks],
+            "changed_count": len(changed_ids),
+        }
+
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
@@ -314,6 +408,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
         from app.services.filesystem_authorization import filesystem_authorization_enabled
         if not filesystem_authorization_enabled():
             return json.dumps({"error": "完整用户沙箱授权功能当前未开启"}, ensure_ascii=False)
+        if args.get("enabled", t.enabled) is False:
+            return json.dumps({"error": "停用的定时任务不能授予完整用户沙箱权限"}, ensure_ascii=False)
     schedule_fields = {"schedule_kind", "cron", "interval_minutes", "start_at", "end_at"}
     editable_fields = schedule_fields | {
         "name", "instruction", "channels", "enabled", "delivery_mode", "authorized_tools",
@@ -337,7 +433,19 @@ async def _update_scheduled_task(db, user_id, args: dict):
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
     else:
         workspace_id = getattr(t, "workspace_id", None)
-    if args.get("filesystem_authorized") is True and getattr(t, "filesystem_authorization_grant_id", None) is None:
+    if args.get("filesystem_authorized") is True:
+        from app.services.filesystem_authorization import (
+            SUBJECT_SCHEDULED_TASK,
+            get_active_grant,
+        )
+        active_grant = await get_active_grant(
+            db, user_id,
+            subject_type=SUBJECT_SCHEDULED_TASK,
+            subject_id=t.id,
+        )
+    else:
+        active_grant = None
+    if args.get("filesystem_authorized") is True and active_grant is None:
         requested_name = str(args.get("name") or t.name).strip()
         summary = f"允许定时任务「{requested_name}」读写整个用户沙箱（包含 /workspace、/personal、/project）"
         blocked = confirm.needs_confirmation(
@@ -436,9 +544,15 @@ async def _delete_scheduled_task(db, user_id, args: dict):
             if task is None:
                 return json.dumps({"error": f"定时任务 {tid} 不存在"})
             tasks.append(task)
+        tasks.sort(key=lambda task: task.id)
         names = "、".join(t.name for t in tasks[:10]) + (f"等 {len(tasks)} 个" if len(tasks) > 10 else "")
-        blocked = confirm.needs_confirmation(args, f"将删除定时任务：{names}，共 {len(tasks)} 个", user_id,
-                                             identity=f"delete_scheduled_task:task_ids={sorted(task_ids)}")
+        blocked = confirm.needs_target_confirmation(
+            args,
+            f"将删除定时任务：{names}，共 {len(tasks)} 个",
+            user_id,
+            action="delete_scheduled_task",
+            targets={"task_id": task_ids},
+        )
         if blocked is not None:
             return blocked
         results = [dict(zip(("deleted_task_id", "name"), await delete_task(db, task))) for task in tasks]
@@ -447,8 +561,13 @@ async def _delete_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
-    blocked = confirm.needs_confirmation(args, f"将删除定时任务「{t.name}」（{_humanize_cron(t.cron)}）", user_id,
-                                         identity=f"delete_scheduled_task:task_id={t.id}")
+    blocked = confirm.needs_target_confirmation(
+        args,
+        f"将删除定时任务「{t.name}」（{_humanize_cron(t.cron)}）",
+        user_id,
+        action="delete_scheduled_task",
+        targets={"task_id": [t.id]},
+    )
     if blocked is not None:
         return blocked
     tid, name = await delete_task(db, t)
@@ -504,12 +623,13 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="update_scheduled_task", label="更新定时任务",
             description_short='修改定时任务；可调整执行计划和 QQ 投递范围。',
-            description="修改定时任务内容、投递渠道、启停、调度窗口、workspace 或邮件附件；按 task_id 或 task 定位。email_attachment_file_ids 只接受当前用户文件库的 file_id 数组，最多 5 个，显式传空数组可清除。任务本轮调用 send_file 生成的文件仍会自动附到 email。修改调度类型时必须同时提供新类型所需字段。schedule_kind=once 时提供 start_at 并清除 end_at；schedule_kind=cron 时提供 cron；schedule_kind=interval 时提供 interval_minutes（1-60），间隔从 start_at 锚定。start_at/end_at 省略表示不修改，显式传 null 表示清除；workspace_id 显式传 null 会解除绑定，绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true/false 仅用于显式申请或撤销完整用户沙箱授权，true 必须经过确认；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]。",
+            description="修改定时任务内容、投递渠道、启停、调度窗口、workspace 或邮件附件；单项按 task_id/task 定位。批量 task_ids 仅支持 filesystem_authorized=true/false；授权操作会一次确认目标集合，再为每个任务分别授权，不会授权列表以外的任务。email_attachment_file_ids 只接受当前用户文件库中的 file_id 数组，最多 5 个，显式传空数组可清除。任务本轮调用 send_file 生成的文件仍会自动附到 email。修改调度类型时必须同时提供新类型所需字段。schedule_kind=once 时提供 start_at 并清除 end_at；schedule_kind=cron 时提供 cron；schedule_kind=interval 时提供 interval_minutes（1-60），间隔从 start_at 锚定。start_at/end_at 省略表示不修改，显式传 null 表示清除；workspace_id 显式传 null 会解除绑定，绑定后任务从 workspace 根目录执行并可读写整个 workspace。filesystem_authorized=true/false 仅用于显式申请或撤销完整用户沙箱授权，true 必须经过确认；不要传目录级授权参数。只有用户明确授权时才传 authorized_tools=[send_email]。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "task_id":     {"type": "integer"},
                     "task":        {"type": "string"},
+                    "task_ids":    {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "maxItems": 50, "uniqueItems": True},
                     "name":        {"type": "string"},
                     "instruction": {"type": "string"},
                     "schedule_kind": {"type": ["string", "null"], "enum": ["cron", "interval", "once", None]},
@@ -532,10 +652,34 @@ class ScheduledTasksSkill(BaseSkill):
                     }, "required": ["root", "script_path", "interpreter"]},
                 },
                 "required": [],
+                "oneOf": [
+                    {
+                        "required": ["task_id"],
+                        "not": {"anyOf": [{"required": ["task"]}, {"required": ["task_ids"]}]},
+                    },
+                    {
+                        "required": ["task"],
+                        "not": {"anyOf": [{"required": ["task_id"]}, {"required": ["task_ids"]}]},
+                    },
+                    {
+                        "required": ["task_ids", "filesystem_authorized"],
+                        "not": {"anyOf": [
+                            {"required": ["task_id"]},
+                            {"required": ["task"]},
+                            *[{"required": [field]} for field in (
+                                "name", "instruction", "schedule_kind", "cron", "interval_minutes",
+                                "start_at", "end_at", "channels", "enabled", "delivery_mode",
+                                "authorized_tools", "email_attachment_file_ids", "workspace_id",
+                                "script_authorization",
+                            )],
+                        ]},
+                    },
+                ],
             },
             handler=_update_scheduled_task,
             mutates=True,
             requires_confirmation=True,
+            batch_confirmation=True,
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
@@ -546,13 +690,14 @@ class ScheduledTasksSkill(BaseSkill):
                 "properties": {
                     "task_id": {"type": "integer"},
                     "task":    {"type": "string"},
-                    "task_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "task_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
                 },
                 "required": [],
             },
             handler=_delete_scheduled_task,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
     ]
 

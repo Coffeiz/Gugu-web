@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 import json
 import secrets
@@ -90,6 +91,80 @@ def _summary_hash(summary: str) -> str:
 
 def _identity_hash(identity: str | None) -> str:
     return sha256((identity or "").encode("utf-8")).hexdigest()
+
+
+def target_confirmation_identity(
+    action: str,
+    targets: Mapping[str, Sequence[str | int]],
+    *,
+    context: Mapping[str, str | int | None] | None = None,
+) -> str:
+    """生成绑定动作、上下文和完整目标集合的稳定确认身份。
+
+    目标顺序不影响身份；资源类别和父级上下文会参与身份，避免不同类型或不同容器
+    中的同号 ID 共用一次确认。调用方仍须在此之前完成所有权和参数校验。
+    """
+    if not isinstance(action, str) or not action.strip() or not targets:
+        raise ValueError("目标确认必须提供 action 和 targets")
+    normalized_targets: dict[str, list[dict[str, object]]] = {}
+    for kind, values in sorted(targets.items()):
+        if not isinstance(kind, str) or not kind.strip():
+            raise ValueError("目标确认的资源类别不能为空")
+        if not isinstance(values, Sequence) or isinstance(values, (str, bytes)) or not values:
+            raise ValueError("每种目标类型都必须提供非空 ID 列表")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (str, int))
+            or (isinstance(value, str) and not value.strip())
+            for value in values
+        ):
+            raise ValueError("目标 ID 仅支持非空字符串或整数")
+        encoded = {
+            json.dumps(
+                {"type": type(value).__name__, "value": value},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for value in values
+        }
+        if len(encoded) != len(values):
+            raise ValueError("目标集合不能包含重复 ID")
+        normalized_targets[kind] = [json.loads(value) for value in sorted(encoded)]
+    identity_payload = {
+        "action": action,
+        "context": dict(sorted((context or {}).items())),
+        "targets": normalized_targets,
+    }
+    return "target:" + json.dumps(
+        identity_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def needs_target_confirmation(
+    args: dict,
+    summary: str,
+    user_id,
+    *,
+    action: str,
+    targets: Mapping[str, Sequence[str | int]],
+    context: Mapping[str, str | int | None] | None = None,
+    ttl_minutes: int = _TOKEN_TTL_MINUTES,
+    instruction: str | None = None,
+) -> str | None:
+    """单项和批量动作的统一确认入口；一次确认只覆盖本次精确目标集合。"""
+    try:
+        identity = target_confirmation_identity(action, targets, context=context)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    return needs_confirmation(
+        args,
+        summary,
+        user_id,
+        identity=identity,
+        ttl_minutes=ttl_minutes,
+        instruction=instruction,
+    )
 
 
 def _grant_key(user_id, summary: str, identity: str | None) -> str:
