@@ -23,7 +23,7 @@
 - 既有 CI：`.github/workflows/runtime-integration.yml` 已运行前端 `npm run test:run` 和后端完整 `pytest -q`；报告脚本不加入 workflow，不改变既有测试/构建门禁。
 - 执行策略：CRAP 报告和变异测试由维护者按迭代节奏定期手动运行；重要重构或发布前可加跑。它们不由 push、PR 或发布流水线自动触发，也不创建自动 CI job。策略变更必须先更新本 PRD 并单独评审。
 - 显式试点：上述测试文件是源码级覆盖率运行范围；只有 `crap_scope.json` 中 `function_tests` 明确登记的函数才显示函数级测试关联，其余显示“待人工关联”，不从源码级测试列表推断函数关联。均标记为 L0 单元测试。
-- 排除范围：未扫描目录/仓库其余代码；未连接真实 provider、网络、IM、Docker、PTY、共享 Redis/Postgres 或用户文件。变异测试同样只扫描 `mutation_scope.json` 明确登记的目标。
+- 排除范围：试点基线未扫描目录/仓库其余代码；未连接真实 provider、网络、IM、Docker、PTY、共享 Redis/Postgres 或用户文件。变异测试同样只扫描 `mutation_scope.json` 明确登记的目标。2026-09-14 起 CRAP 增加 `--full` 全量扫描模式（声明目录内全部源文件 + 整语言套件覆盖率，手动运行，仍不接入 CI），试点基线保留作对照。
 - 报告入口：`backend/.venv/bin/python scripts/quality/crap_report.py`；输出 `docs/reports/` 下同名 JSON/Markdown。CRAP ≥30 标高、≥15 标中，其余标低；风险分层是展示规则，不是门禁。
 - 本次基线：[Markdown 报告](../reports/2026-09-13-VERIFY-PRD-TEST-2-CRAP-PHASE0-1.md) · [JSON 报告](../reports/2026-09-13-VERIFY-PRD-TEST-2-CRAP-PHASE0-1.json)。
 

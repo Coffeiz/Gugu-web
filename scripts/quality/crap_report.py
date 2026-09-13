@@ -26,8 +26,14 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCOPE = ROOT / "scripts/quality/crap_scope.json"
 DEFAULT_REPORT_DIR = ROOT / "docs/reports"
 REPORT_STEM = "{date}-VERIFY-PRD-TEST-2-CRAP-PHASE0-1"
+REPORT_STEM_FULL = "{date}-VERIFY-PRD-TEST-2-CRAP-FULL"
 RISK_HIGH = 30.0
 RISK_MEDIUM = 15.0
+FULL_RUN_TIMEOUT_SECONDS = 900
+PYTHON_FULL_SCAN_DOMAIN = "全量扫描（backend/agent + backend/app）"
+TYPESCRIPT_FULL_SCAN_DOMAIN = "全量扫描（frontend/src）"
+FULL_SCAN_LAYER = "全量测试套件覆盖率（手动）"
+FULL_SCAN_CI = "CRAP 报告仅周期性手动运行，不由自动 CI 触发"
 SENSITIVE_KEYS = {
     "access_token", "api_key", "attachment", "attachment_content",
     "authorization", "chat_content", "chat_id", "content", "cookie",
@@ -69,6 +75,174 @@ def coverage_ratio_for_span(
     if not lines:
         return None
     return len(lines & covered_lines) / len(lines)
+
+
+def validate_full_scan(config: Any, root: Path = ROOT) -> dict[str, dict[str, Any]]:
+    """校验全量扫描配置；include_dirs 必须是仓库内存在的目录。"""
+    full = config.get("full_scan")
+    if not isinstance(full, dict) or not full:
+        raise ReportError("全量模式需要在范围配置中声明 full_scan 段")
+    validated: dict[str, dict[str, Any]] = {}
+    for language in ("python", "typescript"):
+        section = full.get(language)
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            raise ReportError(f"full_scan.{language} 必须是对象")
+        include_dirs = section.get("include_dirs")
+        if not isinstance(include_dirs, list) or not include_dirs:
+            raise ReportError(f"full_scan.{language}.include_dirs 必须是非空列表")
+        dirs: list[str] = []
+        for raw in include_dirs:
+            relative = Path(raw)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ReportError(f"扫描目录必须是仓库内相对路径：{raw}")
+            resolved = (root / relative).resolve()
+            if not resolved.is_relative_to(root.resolve()) or not resolved.is_dir():
+                raise ReportError(f"扫描目录不存在：{raw}")
+            dirs.append(relative.as_posix())
+        exclude = section.get("exclude", [])
+        if not isinstance(exclude, list) or not all(isinstance(item, str) and item.strip() for item in exclude):
+            raise ReportError(f"full_scan.{language}.exclude 必须是字符串列表")
+        validated[language] = {"include_dirs": dirs, "exclude": [item.strip() for item in exclude]}
+    if not validated:
+        raise ReportError("full_scan 段没有声明任何语言")
+    return validated
+
+
+def _discover_full_files(full_scan: dict[str, dict[str, Any]], language: str, root: Path = ROOT) -> list[Path]:
+    """按 include_dirs 枚举语言源文件；排除显式模式与测试/声明文件。"""
+    suffixes = {".py"} if language == "python" else {".ts", ".tsx"}
+    excluded_names = {"__init__.py"} if language == "python" else set()
+    excluded_patterns = {
+        "test_", "spec.", ".d.ts", ".stories.", "__generated__",
+    }
+    configured_exclude = full_scan.get(language, {}).get("exclude", [])
+    files: list[Path] = []
+    for include_dir in full_scan[language]["include_dirs"]:
+        base = root / include_dir
+        for path in sorted(base.rglob("*")):
+            if not path.is_file() or path.suffix not in suffixes:
+                continue
+            relative = path.relative_to(root)
+            posix = relative.as_posix()
+            if path.name in excluded_names:
+                continue
+            if any(pattern in path.name for pattern in excluded_patterns):
+                continue
+            if any(posix.startswith(pattern) or posix == pattern.rstrip("/") for pattern in configured_exclude):
+                continue
+            files.append(relative)
+    return files
+
+
+def _association_index(config: dict[str, Any]) -> dict[tuple[str, str], list[str]]:
+    """把试点 scope 的 function_tests 转成 (源文件, 函数名) → 测试 的索引。"""
+    index: dict[tuple[str, str], list[str]] = {}
+    for scope in config.get("scopes", []):
+        for function_name, tests in (scope.get("function_tests") or {}).items():
+            index[(scope["source"], function_name)] = list(tests)
+    return index
+
+
+def _run_full_test(language: str, full_scan: dict[str, dict[str, Any]], temp_dir: Path) -> dict[str, Any]:
+    """整语言测试套件 + 全源码覆盖率；全量扫描的采集阶段。"""
+    coverage_dir = temp_dir / f"{language}-full-coverage"
+    if language == "python":
+        backend = ROOT / "backend"
+        command = [
+            sys.executable, "-m", "pytest", "-q", "--disable-warnings",
+            "--cov=agent", "--cov=app", "--cov-branch",
+            f"--cov-report=json:{coverage_dir / 'coverage.json'}",
+        ]
+        cwd = backend
+        env = _safe_env(temp_dir / f"full-{language}", python_path=backend)
+        coverage_path = coverage_dir / "coverage.json"
+        display = "python -m pytest -q --disable-warnings --cov=agent --cov=app --cov-branch --cov-report=json:<TEMP>（全量测试套件）"
+    else:
+        frontend = ROOT / "frontend"
+        command = [
+            "corepack", "pnpm", "exec", "vitest", "run",
+            "--coverage.enabled", "--coverage.provider=v8",
+            "--coverage.include=src/**",
+            "--coverage.reporter=json", f"--coverage.reportsDirectory={coverage_dir}",
+        ]
+        cwd = frontend
+        env = _safe_env(temp_dir / f"full-{language}")
+        coverage_path = coverage_dir / "coverage-final.json"
+        display = "corepack pnpm exec vitest run --coverage.enabled --coverage.provider=v8 --coverage.include=src/** --coverage.reporter=json --coverage.reportsDirectory=<TEMP>（全量测试套件）"
+
+    started = time.monotonic()
+    try:
+        result = subprocess.run(
+            command, cwd=cwd, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            timeout=FULL_RUN_TIMEOUT_SECONDS, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout", "exit_code": None, "duration_ms": round((time.monotonic() - started) * 1000), "coverage_path": coverage_path, "command": display}
+    except OSError as exc:
+        return {"status": "error", "exit_code": None, "duration_ms": round((time.monotonic() - started) * 1000), "coverage_path": coverage_path, "command": display, "error_type": type(exc).__name__}
+    return {
+        "status": "passed" if result.returncode == 0 else "failed",
+        "exit_code": result.returncode,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "coverage_path": coverage_path,
+        "command": display,
+    }
+
+
+def _function_records_full(
+    source: Path, coverage_path: Path, language: str,
+    associations: dict[tuple[str, str], list[str]],
+    *,
+    domain: str,
+) -> list[dict[str, Any]] | None:
+    """全量扫描的单文件函数记录；无函数或无覆盖率数据的文件跳过。"""
+    if lizard is None:
+        raise ReportError("未安装 lizard，无法计算圈复杂度")
+    try:
+        analysis = lizard.analyze_file(str(source))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+    if not analysis.function_list:
+        return None
+    try:
+        executable, covered = _coverage_for_file(source, coverage_path, language)
+    except (ReportError, json.JSONDecodeError, OSError):
+        return None
+    python_spans = _python_function_body_spans(source) if language == "python" else None
+    source_posix = source.relative_to(ROOT).as_posix()
+    functions = []
+    for function in analysis.function_list:
+        if python_spans is None:
+            start_line, end_line = function.start_line, function.end_line
+        else:
+            span = python_spans.get((function.name, function.start_line))
+            if span is None:
+                continue
+            start_line, end_line = span
+        coverage = coverage_ratio_for_span(executable, covered, start_line, end_line)
+        if coverage is None:
+            continue
+        score = crap_score(function.cyclomatic_complexity, coverage)
+        associated_tests = associations.get((source_posix, function.name), [])
+        functions.append({
+            "source": source_posix,
+            "function": function.name,
+            "start_line": function.start_line,
+            "end_line": function.end_line,
+            "domain": domain,
+            "layer": FULL_SCAN_LAYER,
+            "ci": FULL_SCAN_CI,
+            "tests": associated_tests,
+            "test_association": "registered" if associated_tests else "pending_manual",
+            "cc": function.cyclomatic_complexity,
+            "coverage": round(coverage, 6),
+            "crap": round(score, 4),
+            "risk": risk_level(score),
+        })
+    return functions
 
 
 def validate_scope(config: Any, root: Path = ROOT) -> list[dict[str, Any]]:
@@ -444,22 +618,79 @@ def _markdown(report: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
-def build_report(scope_config: dict[str, Any], *, language: str = "all") -> dict[str, Any]:
-    scopes = validate_scope(scope_config)
-    selected = scopes if language == "all" else [item for item in scopes if item["language"] == language]
-    if not selected:
-        raise ReportError(f"所选语言没有显式分析范围：{language}")
+def _markdown_full(report: dict[str, Any]) -> str:
+    counts = report["summary"]
+    rows = [
+        "# VERIFY：PRD-TEST-2 CRAP 全量扫描报告",
+        "",
+        f"> 报告日期：{report['date']}",
+        f"> Commit：{report['commit']}（工作区修改：{'是' if report['worktree_dirty'] else '否'}）",
+        f"> 状态：{report['status']}（非阻断；本次未运行变异测试）",
+        f"> 耗时：{report['duration_ms']} ms",
+        "",
+        "---",
+        "",
+        "## 范围与方法",
+        "",
+        "全量扫描：lizard 遍历声明目录内的全部源文件计算 CC，覆盖率来自整语言测试套件单次运行"
+        "（pytest --cov=agent --cov=app；vitest --coverage.include=src/**）。"
+        "CRAP = CC² × (1 − Cov)³ + CC。风险标签只用于报告排序，不构成门禁。"
+        "低风险（<15）条目仅计数，不逐条列出；中/高风险全量列出。",
+        "",
+        "| 语言 | 扫描目录 | 测试入口 | 测试结果 | 耗时 |",
+        "|---|---|---|---|---|",
+    ]
+    for run in report["runs"]:
+        scan_dirs = "、".join(report["full_scan"][run["language"]]["include_dirs"])
+        rows.append(f"| {run['language']} | {scan_dirs} | 全量测试套件 | {run['status']} | {run['duration_ms']} ms |")
+    rows.extend([
+        "",
+        "## 风险分布",
+        "",
+        f"- 函数总数：{counts['functions_total']}；高（≥30）：{counts['risk_high']}；中（≥15）：{counts['risk_medium']}；低：{counts['risk_low']}。",
+        "",
+        "## 中/高风险明细",
+        "",
+        "| 风险 | CRAP | CC | Cov | 函数 | 源码位置 | 测试关联 |",
+        "|---|---:|---:|---:|---|---|---|",
+    ])
+    flagged = [item for item in report["items"] if item["risk"] in ("中", "高")]
+    for item in sorted(flagged, key=lambda record: record["crap"], reverse=True):
+        source_link = f"[{item['source']}:{item['start_line']}](../../{item['source']}#L{item['start_line']})"
+        test_links = ", ".join(f"[{test}](../../{test})" for test in item["tests"]) or "待人工关联"
+        rows.append(f"| {item['risk']} | {item['crap']:.4f} | {item['cc']} | {item['coverage']:.1%} | {item['function']} | {source_link} | {test_links} |")
+    if not flagged:
+        rows.append("| — | — | — | — | 没有中/高风险函数 | — | — |")
+    rows.extend([
+        "",
+        "## 数据边界",
+        "",
+        "- 全量扫描不区分业务领域，domain 统一标记为扫描目录；测试关联只来自试点 scope 的显式登记，其余为待人工关联。",
+        "- 低风险函数只计入数量；JSON 与 Markdown 均不逐条列出。",
+        "- 报告只保留仓库相对路径、函数名、覆盖率/复杂度和测试状态；覆盖率中间文件在系统临时目录生成并自动清理。",
+        "- 运行失败（如依赖供应链策略拒绝安装）会标记 failed 并返回非零状态，不产出看似成功的报告。",
+        "- 测试运行失败时仍会提取已生成的覆盖率并标注 failed；此时部分函数覆盖率可能偏低（受失败用例影响），解读时以状态为准。",
+        "",
+    ])
+    return "\n".join(rows)
+
+
+def build_report(scope_config: dict[str, Any], *, language: str = "all", mode: str = "pilot") -> dict[str, Any]:
+    if mode not in {"pilot", "full"}:
+        raise ReportError(f"未知报告模式：{mode}")
     started = time.monotonic()
     report: dict[str, Any] = {
         "schema_version": 1,
         "report_type": "crap",
+        "mode": mode,
         "status": "passed",
         "date": datetime.now().astimezone().date().isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "commit": "unknown",
         "worktree_dirty": False,
         "tools": _tool_versions(),
-        "scope": selected,
+        "scope": [],
+        "full_scan": {},
         "exclusions": list(scope_config.get("exclusions", [])),
         "runs": [],
         "items": [],
@@ -467,6 +698,9 @@ def build_report(scope_config: dict[str, Any], *, language: str = "all") -> dict
         "summary": {
             "functions_total": 0,
             "complexity_hotspots": 0,
+            "risk_high": 0,
+            "risk_medium": 0,
+            "risk_low": 0,
             "mutants_total": None,
             "mutants_killed": None,
             "mutants_survived": None,
@@ -475,41 +709,85 @@ def build_report(scope_config: dict[str, Any], *, language: str = "all") -> dict
             "equivalent_marked": None,
         },
     }
+    if mode == "full":
+        report["full_scan"] = validate_full_scan(scope_config)
+        report["scope"] = validate_scope(scope_config) if scope_config.get("scopes") else []
+    else:
+        report["scope"] = validate_scope(scope_config)
     git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
     if git.returncode == 0:
         report["commit"] = git.stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
     report["worktree_dirty"] = dirty.returncode != 0 or bool(dirty.stdout.strip())
 
-    grouped = {key: [entry for entry in selected if entry["language"] == key] for key in ("python", "typescript")}
+    grouped = {key: [entry for entry in report["scope"] if entry["language"] == key] for key in ("python", "typescript")}
+    associations = _association_index(scope_config)
     with tempfile.TemporaryDirectory(prefix="gugu-crap-") as temp_name:
         temp_dir = Path(temp_name)
-        for lang, entries in grouped.items():
-            if not entries:
-                continue
-            run = _run_test(lang, entries, temp_dir)
-            report["runs"].append({
-                "language": lang,
-                "status": run["status"],
-                "exit_code": run["exit_code"],
-                "duration_ms": run["duration_ms"],
-                "command": run["command"],
-                "scopes": entries,
-            })
-            if run["status"] != "passed":
-                report["status"] = "failed"
-                report["errors"].append({"language": lang, "kind": run["status"], "exit_code": run["exit_code"], "error_type": run.get("error_type")})
-                continue
-            for entry in entries:
-                try:
-                    report["items"].extend(_function_records(entry, run["coverage_path"]))
-                except (ReportError, json.JSONDecodeError, OSError) as exc:
+        if mode == "full":
+            languages = [lang for lang in ("python", "typescript") if lang in report["full_scan"]]
+            if language != "all":
+                languages = [lang for lang in languages if lang == language]
+            if not languages:
+                raise ReportError(f"所选语言没有声明全量扫描范围：{language}")
+            for lang in languages:
+                run = _run_full_test(lang, report["full_scan"], temp_dir)
+                report["runs"].append({
+                    "language": lang,
+                    "status": run["status"],
+                    "exit_code": run["exit_code"],
+                    "duration_ms": run["duration_ms"],
+                    "command": run["command"],
+                    "scopes": [],
+                })
+                if run["status"] != "passed":
                     report["status"] = "failed"
-                    report["errors"].append({"language": lang, "kind": "analysis_error", "error_type": type(exc).__name__})
+                    report["errors"].append({"language": lang, "kind": run["status"], "exit_code": run["exit_code"], "error_type": run.get("error_type")})
+                    # 失败也尝试提取已写出的覆盖率（个别偶发测试失败时覆盖率仍然有效；
+                    # 覆盖率文件缺失时由 _function_records_full 逐文件跳过）。
+                domain = PYTHON_FULL_SCAN_DOMAIN if lang == "python" else TYPESCRIPT_FULL_SCAN_DOMAIN
+                for source in _discover_full_files(report["full_scan"], lang):
+                    try:
+                        records = _function_records_full(
+                            ROOT / source, run["coverage_path"], lang, associations, domain=domain,
+                        )
+                    except (ReportError, json.JSONDecodeError, OSError, SyntaxError):
+                        records = None
+                    if records:
+                        report["items"].extend(records)
+        else:
+            for lang, entries in grouped.items():
+                if not entries:
+                    continue
+                run = _run_test(lang, entries, temp_dir)
+                report["runs"].append({
+                    "language": lang,
+                    "status": run["status"],
+                    "exit_code": run["exit_code"],
+                    "duration_ms": run["duration_ms"],
+                    "command": run["command"],
+                    "scopes": entries,
+                })
+                if run["status"] != "passed":
+                    report["status"] = "failed"
+                    report["errors"].append({"language": lang, "kind": run["status"], "exit_code": run["exit_code"], "error_type": run.get("error_type")})
+                    continue
+                for entry in entries:
+                    try:
+                        report["items"].extend(_function_records(entry, run["coverage_path"]))
+                    except (ReportError, json.JSONDecodeError, OSError) as exc:
+                        report["status"] = "failed"
+                        report["errors"].append({"language": lang, "kind": "analysis_error", "error_type": type(exc).__name__})
 
     report["duration_ms"] = round((time.monotonic() - started) * 1000)
     report["summary"]["functions_total"] = len(report["items"])
     report["summary"]["complexity_hotspots"] = sum(item["risk"] == "高" for item in report["items"])
+    if mode == "full":
+        # 低风险只计数不落明细，控制全量报告体积；中/高风险全量保留。
+        report["summary"]["risk_high"] = report["summary"]["complexity_hotspots"]
+        report["summary"]["risk_medium"] = sum(item["risk"] == "中" for item in report["items"])
+        report["summary"]["risk_low"] = sum(item["risk"] == "低" for item in report["items"])
+        report["items"] = [item for item in report["items"] if item["risk"] in ("中", "高")]
     if not report["items"] and report["status"] == "passed":
         report["status"] = "failed"
         report["errors"].append({"kind": "empty_analysis", "error_type": "ReportError"})
@@ -522,15 +800,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scope-file", type=Path, default=DEFAULT_SCOPE)
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--language", choices=("all", "python", "typescript"), default="all")
+    parser.add_argument("--full", action="store_true", help="全量扫描模式：整语言测试套件覆盖率 + 声明目录全部源文件")
     parser.add_argument("--date", help="报告文件名前缀；默认使用本地日期 YYYY-MM-DD")
     parser.add_argument("--overwrite", action="store_true", help="明确允许覆盖同日期的既有报告文件")
     args = parser.parse_args(argv)
+    mode = "full" if args.full else "pilot"
     try:
         config_path = args.scope_file.resolve()
         if not config_path.is_file():
             raise ReportError("范围配置文件不存在")
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        report = build_report(config, language=args.language)
+        report = build_report(config, language=args.language, mode=mode)
         report_date = args.date or report["date"]
         try:
             datetime.strptime(report_date, "%Y-%m-%d")
@@ -538,17 +818,20 @@ def main(argv: list[str] | None = None) -> int:
             raise ReportError("日期格式必须是 YYYY-MM-DD")
         output_dir = args.report_dir if args.report_dir.is_absolute() else ROOT / args.report_dir
         output_dir.mkdir(parents=True, exist_ok=True)
-        stem = REPORT_STEM.format(date=report_date)
+        stem = (REPORT_STEM_FULL if mode == "full" else REPORT_STEM).format(date=report_date)
         json_path = output_dir / f"{stem}.json"
         markdown_path = output_dir / f"{stem}.md"
         if not args.overwrite and (json_path.exists() or markdown_path.exists()):
             raise ReportError("同名报告已存在；需要替换时请显式传入 --overwrite")
         json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        markdown_path.write_text(_markdown(report), encoding="utf-8")
+        markdown_path.write_text(_markdown_full(report) if mode == "full" else _markdown(report), encoding="utf-8")
         print(f"报告状态：{report['status']}")
         print(f"Markdown：{markdown_path.relative_to(ROOT) if markdown_path.is_relative_to(ROOT) else markdown_path}")
         print(f"JSON：{json_path.relative_to(ROOT) if json_path.is_relative_to(ROOT) else json_path}")
-        print(f"函数：{report['summary']['functions_total']}；高风险：{report['summary']['complexity_hotspots']}")
+        if mode == "full":
+            print(f"函数：{report['summary']['functions_total']}；高：{report['summary']['risk_high']}；中：{report['summary']['risk_medium']}")
+        else:
+            print(f"函数：{report['summary']['functions_total']}；高风险：{report['summary']['complexity_hotspots']}")
         return 0 if report["status"] == "passed" else 1
     except (ReportError, OSError, json.JSONDecodeError, KeyError, ValueError, importlib.metadata.PackageNotFoundError) as exc:
         print(f"CRAP 报告未生成：{type(exc).__name__}: {exc}", file=sys.stderr)

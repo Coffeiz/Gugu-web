@@ -64,3 +64,11 @@ CRAP 报告和变异测试均为维护者周期性手动执行的质量检查，
     backend/.venv/bin/python -m pytest -c backend/pytest.ini scripts/quality/test_crap_report.py scripts/quality/test_mutation_report.py -q
 
 添加范围时必须一并核对源码、运行测试范围、领域、测试层级、CI 情况和排除说明。源码级 `tests` 只表示本次覆盖率运行的测试集合；函数级关联必须通过 `function_tests` 明确登记，未登记的函数会显示“待人工关联”，禁止把源码下所有测试伪装成每个函数的关联测试。禁止将整个目录或仓库交给复杂度/覆盖率工具默认扫描。
+
+## CRAP 全量扫描（2026-09-14 起）
+
+- 命令：`backend/.venv/bin/python scripts/quality/crap_report.py --full`。
+- 范围：`crap_scope.json` 的 `full_scan` 段声明目录（当前 backend/agent + backend/app、frontend/src）
+  内全部源文件；覆盖率来自整语言测试套件单次运行（pytest --cov=agent --cov=app / vitest --coverage.include=src/**）。
+- 报告：`docs/reports/{date}-VERIFY-PRD-TEST-2-CRAP-FULL.{json,md}`；中/高风险全量列出，低风险仅计数。
+- 全量模式同样手动运行、不进 CI；测试运行失败时仍提取已生成的覆盖率并标注 failed。

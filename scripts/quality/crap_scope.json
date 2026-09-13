@@ -3,7 +3,8 @@
   "exclusions": [
     "本轮仅选两个确定性单元测试目标；不扫描同目录其他模块。",
     "不连接真实模型、网络、IM、Docker、PTY、共享 Redis/Postgres 或用户文件。",
-    "变异测试属于 Phase 2，本报告不运行，也不推断 mutation score。"
+    "变异测试属于 Phase 2，本报告不运行，也不推断 mutation score。",
+    "全量模式只扫描声明目录内的源文件（.py/.ts/.tsx，排除测试与类型声明）；低风险条目仅计数不逐条列出。"
   ],
   "scopes": [
     {
@@ -87,5 +88,20 @@
       "layer": "L0 单元测试",
       "ci": "普通 Vitest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发"
     }
-  ]
+  ],
+  "full_scan": {
+    "python": {
+      "include_dirs": [
+        "backend/agent",
+        "backend/app"
+      ],
+      "exclude": []
+    },
+    "typescript": {
+      "include_dirs": [
+        "frontend/src"
+      ],
+      "exclude": []
+    }
+  }
 }
