@@ -14,7 +14,7 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, session_snapshot, assembly, session_history, run_context, session_system, compress_conv
+from agent.context import builder, dynamic_tail, loaders, session_snapshot, assembly, session_history, run_context, session_system, compress_conv
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.core import LLMRunner
@@ -249,7 +249,7 @@ async def _run_collect_unlocked(
             return builder.build_static_prompt(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 style_prefs=style_prefs,
-                current_date=session_snapshot.current_date_text(current_user_tz),
+                current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
         snapshot = await session_snapshot.ensure_snapshot(
@@ -393,7 +393,7 @@ async def _run_collect_unlocked(
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
-        _ctx_injection = session_snapshot.reminder_message(_ctx_content)
+        _ctx_injection = dynamic_tail.reminder_message(_ctx_content)
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
@@ -701,7 +701,7 @@ async def _run_stream_unlocked(
             return builder.build_static_prompt(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 style_prefs=style_prefs,
-                current_date=session_snapshot.current_date_text(current_user_tz),
+                current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
         snapshot = await session_snapshot.ensure_snapshot(
@@ -830,7 +830,7 @@ async def _run_stream_unlocked(
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
-        _ctx_injection = session_snapshot.reminder_message(_ctx_content)
+        _ctx_injection = dynamic_tail.reminder_message(_ctx_content)
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)

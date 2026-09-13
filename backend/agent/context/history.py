@@ -405,7 +405,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
     RAG 知识块由调用方放在当前用户消息之前的稳定 conversation 区域；这里只负责
     从持久化 history 还原同样的顺序，避免动态尾部与下一轮 history 边界不一致。
     """
-    from .session_snapshot import message_time_reminder
+    from .dynamic_tail import message_time_reminder
 
     parts: list[dict] = []
     for message in history:

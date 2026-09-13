@@ -3,7 +3,7 @@
 system prompt 的组装位于 ``session_system.py``；本模块只组装项目、日历、笔记、文件
 和消息格式等动态上下文。
 """
-from agent.context.session_snapshot import current_date_text, current_time_text
+from agent.context.dynamic_tail import current_date_text, current_time_text
 from agent.context.session_system import NON_STREAMING_BLOCK, build_static_prompt
 
 
