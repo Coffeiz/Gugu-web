@@ -260,30 +260,29 @@ async def test_web_only_delivery_with_files_reports_no_attachment_support(monkey
 
 
 @pytest.mark.asyncio
-async def test_deliver_im_files_counts_missing_attach_id_and_metadata_as_failures(monkeypatch):
-    """_deliver_im_files 本身的统计要如实：缺 attach_id、附件 metadata 查不到（过期/
-    从没存过）都要计入失败，不能被 continue 悄悄跳过导致总数和成功数一起漏记。"""
+async def test_deliver_im_files_delegates_to_shared_sender_with_owner(monkeypatch):
+    """定时任务沿用统一 IM 附件出口，并传入文件属主供发送器做授权校验。"""
     import app.scheduled_tasks as scheduled
-    from app.core import chat_attach
+    from types import SimpleNamespace
 
-    monkeypatch.setattr(chat_attach, "get_meta", AsyncMock(side_effect=[
-        {"storage_key": "k1", "name": "图1", "ext": "png"},   # a1: 有 meta
-        None,                                                  # a2: 查不到 meta（过期）
-    ]))
-    send_file = AsyncMock(return_value=True)
-    monkeypatch.setattr("agent.im.replies.send_file", send_file)
+    send_files = AsyncMock(return_value=SimpleNamespace(sent=2, requested=3))
+    monkeypatch.setattr("agent.im.files.send_files", send_files)
 
     target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
-    files = [
-        {"attach_id": "a1", "name": "图1", "ext": "png"},
-        {"attach_id": "a2", "name": "图2", "ext": "png"},
-        {"name": "没有 attach_id 的附件"},
-    ]
-    ok_count, total = await scheduled._deliver_im_files("user-1", "qq", target, files)
+    files = [{"file_id": 17}, {"attach_id": "a1"}]
+    assert await scheduled._deliver_im_files("owner-1", "qq", target, files) == (2, 3)
 
-    assert total == 3
-    assert ok_count == 1   # 只有 a1 真的发出去了
-    send_file.assert_awaited_once()
+    payload = send_files.await_args.args[0]
+    assert payload == {
+        "platform": "qq",
+        "channel_id": "bot-1",
+        "chat_id": "group-1",
+        "platform_user_id": "owner-1",
+        "chat_type": "group",
+        "context_token": "",
+        "owner_user_id": "owner-1",
+    }
+    assert send_files.await_args.args[1] is files
 
 
 @pytest.mark.asyncio
