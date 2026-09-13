@@ -61,6 +61,8 @@ type State = {
   /** 增量同步水位：已应用到索引的最后一行 (indexed_at, id)。
    * null = 未知（旧索引文件/无水位）→ 下次同步回退全量装载。 */
   watermark: RagCursor | null;
+  /** 词法指纹缓存（lexicalFingerprint）：install 跳过内容未变文档用。 */
+  fingerprints: Map<string, string>;
   indexDir?: string;
 };
 
@@ -123,7 +125,7 @@ function makeState(indexDir?: string): State {
     vectors: new Map(), vectorVersion: "",
     documents: [], documentsById: new Map(), postings: new Map(),
     lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0,
-    watermark: null, indexDir,
+    watermark: null, fingerprints: new Map(), indexDir,
   };
 }
 
@@ -264,6 +266,7 @@ function replaceInMemory(state: State, revision: string, documents: Document[]):
   state.revision = revision;
   state.documents = [];
   state.documentsById = new Map();
+  state.fingerprints = new Map();
   state.postings = new Map();
   state.lengths = new Map();
   state.docFreq = new Map();
@@ -311,7 +314,48 @@ function removeDocument(state: State, id: string): void {
   state.lengths.delete(id);
 }
 
-function patchInMemory(state: State, revision: string, upserts: Document[], deletes: string[]): void {
+interface InstallTiming {
+  tokenizeMs: number;
+  structureMs: number;
+  documents: number;
+  skippedDocuments: number;
+}
+
+/**
+ * 词法指纹：参与 BM25/过滤/展示的字段规范化哈希。
+ *
+ * 对齐 Python agent/rag/delta.py 的契约——document_version / updated_at
+ * 不参与（版本推进单独不构成重新索引的理由）。来源级重建会整表重写行
+ * （indexed_at/updated_at 全部推新），install 阶段凭此指纹跳过内容未变的
+ * 文档，避免对未变更正文反复分词（2026-09-14 冷加载尖峰的根因）。
+ */
+function lexicalFingerprint(document: Document): string {
+  return createHash("sha256").update([
+    document.source_type,
+    document.parent_id ?? "",
+    String(document.chunk_index ?? 0),
+    String(document.chunk_count ?? 1),
+    document.ranking_text ?? document.text ?? "",
+    document.text ?? "",
+    document.context_text ?? "",
+    document.title ?? "",
+    document.summary ?? "",
+    document.scope_type,
+    document.scope_id,
+    document.platform ?? "",
+    document.bot_id ?? "",
+    document.group_id ?? "",
+    JSON.stringify(document.metadata ?? null),
+  ].join("\x1f")).digest("hex");
+}
+
+function patchInMemory(
+  state: State,
+  revision: string,
+  upserts: Document[],
+  deletes: string[],
+  timing?: InstallTiming,
+): void {
   // 逐条 removeDocument/addDocument 在冷启动全量补丁上是 O(n²)：每条 upsert 触发
   // 一次 documents 数组全量 filter 拷贝、每个词项 posting 一次 indexOf+splice 线性
   // 搬移——20237 条实测 install 68s，把 30s 构建预算顶爆（2026-09-13 devserver
@@ -319,7 +363,26 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
   // 全部处理完并收集脏词项，最后对脏词项 posting 一次性重建、documents 数组
   // 单次 filter。复杂度从 O(n²) 降到 O(总变更词项出现数)。
   const removedIds = new Set<string>(deletes);
-  for (const document of upserts) removedIds.add(document.id);
+
+  // 先识别内容未变的 upsert：词法指纹一致 → 保留现条目，不分词、不动账目。
+  // 来源级重建整表重写行（updated_at/indexed_at 推新）时，这里把 install 的
+  // 分词成本从「全表」压到「真实变更」。
+  const fingerprintStart = timing ? performance.now() : 0;
+  const changedUpserts: Document[] = [];
+  for (const document of upserts) {
+    const newFp = lexicalFingerprint(document);
+    const existingFp = state.fingerprints.get(document.id);
+    const existing = state.documentsById.get(document.id);
+    const oldFp = existingFp ?? (existing ? lexicalFingerprint(existing) : null);
+    if (existing !== undefined && oldFp === newFp && !removedIds.has(document.id)) {
+      if (timing) timing.skippedDocuments += 1;
+      continue;
+    }
+    state.fingerprints.set(document.id, newFp);
+    changedUpserts.push(document);
+    removedIds.add(document.id);
+  }
+  if (timing) timing.structureMs += performance.now() - fingerprintStart;
 
   const dirtyTerms = new Set<string>();
   // 同 id 多条 upsert 只保留最后一条（与原逐条 remove→add 的「后者胜」语义一致）。
@@ -327,7 +390,13 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
   for (const id of removedIds) {
     const existing = state.documentsById.get(id);
     if (!existing) continue;
+    state.fingerprints.delete(id);
+    const tokenizeStarted = performance.now();
     const frequency = termFrequency(tokens(rankingText(existing)));
+    if (timing) {
+      timing.tokenizeMs += performance.now() - tokenizeStarted;
+      timing.documents += 1;
+    }
     state.totalLength -= state.lengths.get(id) ?? 0;
     state.lengths.delete(id);
     state.documentsById.delete(id);
@@ -338,8 +407,13 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
       else state.docFreq.delete(term);
     }
   }
-  for (const document of upserts) {
+  for (const document of changedUpserts) {
+    const tokenizeStarted = performance.now();
     const frequency = termFrequency(tokens(rankingText(document)));
+    if (timing) {
+      timing.tokenizeMs += performance.now() - tokenizeStarted;
+      timing.documents += 1;
+    }
     const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
     state.lengths.set(document.id, length);
     state.totalLength += length;
@@ -353,6 +427,7 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
   // 新增侧按词项倒排预聚合：若在重建阶段对每个脏词项都扫一遍 added 全表，
   // 全量重灌场景仍是 O(dirtyTerms × n)（20237 条全量重灌实测仍 71s）。先按
   // 词项收集一次 [docId, count]，重建时只取自己的条目，整体线性。
+  const structureStarted = timing ? performance.now() : 0;
   const addsByTerm = new Map<string, Array<[string, number]>>();
   for (const [docId, entry] of added) {
     for (const [term, count] of entry.frequency) {
@@ -382,6 +457,7 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
   }
   state.documents = state.documents.filter((item) => !removedIds.has(item.id));
   for (const entry of added.values()) state.documents.push(entry.document);
+  if (timing) timing.structureMs += performance.now() - structureStarted;
   state.revision = revision;
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
@@ -652,7 +728,13 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     emitBuildProbe("sync_index_from_database", "index_install_start", operationStarted, {
       applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
     });
-    patchInMemory(state, target, upsertsAcc, deletesAcc);
+    // install 内部分段：分词/词频 vs 倒排与账目结构构建（诊断冷加载瓶颈用）
+    const installTiming: InstallTiming = { tokenizeMs: 0, structureMs: 0, documents: 0, skippedDocuments: 0 };
+    patchInMemory(state, target, upsertsAcc, deletesAcc, installTiming);
+    probe.stage_ms.install_tokenize_ms = Math.max(0, Math.round(installTiming.tokenizeMs));
+    probe.stage_ms.install_structure_ms = Math.max(0, Math.round(installTiming.structureMs));
+    probe.stage_ms.install_documents = installTiming.documents;
+    probe.counts.install_skipped_documents = installTiming.skippedDocuments;
     recordProbeStage(probe, "index_install_build", installStarted);
     emitBuildProbe("sync_index_from_database", "index_install_complete", operationStarted, {
       document_count: state.documents.length, posting_terms: state.postings.size,
