@@ -194,14 +194,18 @@ def _seed_failed_update_task(previous_image: str, new_image: str) -> dict:
     }
 
 
-def _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy):
+def _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy, *, compose_config=None):
     async def docker_json(_args, *, timeout=30):
         return [{}]
 
     async def command(_args, *, timeout, env=None):
         return b""
 
+    async def compose(_args):
+        return compose_config if compose_config is not None else {"services": {"app": {}, "sandboxd": {}}}
+
     monkeypatch.setattr(daemon, "_compose_text", compose_text)
+    monkeypatch.setattr(daemon, "_compose", compose)
     monkeypatch.setattr(daemon, "_current_release", current_release)
     monkeypatch.setattr(daemon, "_docker_json", docker_json)
     monkeypatch.setattr(daemon, "_command", command)
@@ -246,10 +250,6 @@ async def test_rollback_success_restores_app_and_sandboxd(tmp_path, monkeypatch)
 
     async def compose_text(args, *, env=None, timeout=30):
         compose_calls.append((list(args), dict(env) if env else None))
-        if args[:2] == ["ps", "-q"] and args[-1] == "app":
-            return "running-container\n"
-        if args[:2] == ["ps", "-aq"] and args[-1] == "app":
-            return "running-container\n"
         return "ok"
 
     _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy)
@@ -275,8 +275,8 @@ async def test_rollback_success_restores_app_and_sandboxd(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_rollback_allows_stopped_app(tmp_path, monkeypatch):
-    """更新中断后 app 已停止（最需要回滚的场景）也必须能进入并完成回滚。"""
+async def test_rollback_allows_missing_app_container(tmp_path, monkeypatch):
+    """app 容器被整体删除（比停止更极端的中断态）也能回滚：Compose app 服务定义 + 本机旧镜像即可从零重建。"""
     old_image = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
     new_image = "docker.io/coffeiz/gugu-web@sha256:" + "b" * 64
     daemon, _ = make_daemon(tmp_path, monkeypatch, state=_seed_failed_update_task(old_image, new_image))
@@ -291,13 +291,11 @@ async def test_rollback_allows_stopped_app(tmp_path, monkeypatch):
 
     async def compose_text(args, *, env=None, timeout=30):
         compose_calls.append((list(args), dict(env) if env else None))
-        if args[:2] == ["ps", "-q"] and args[-1] == "app":
-            return ""  # app 已停止
-        if args[:2] == ["ps", "-aq"] and args[-1] == "app":
-            return "stopped-container\n"  # 容器仍存在
         return "ok"
 
-    _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy)
+    _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy, compose_config={
+        "services": {"app": {"image": old_image}, "sandboxd": {"image": old_image}},
+    })
     done = _trace_rollback(monkeypatch, daemon)
 
     preflight = await daemon._rollback_preflight({"operator": "admin-test"})
@@ -315,3 +313,28 @@ async def test_rollback_allows_stopped_app(tmp_path, monkeypatch):
     assert up_args == ["up", "-d", "--no-deps", "--force-recreate", "app", "sandboxd"]
     assert up_env["GUGU_WEB_IMAGE"] == old_image
     assert daemon.state["current"] == {"version": "v1.2.1", "image": old_image}
+
+
+@pytest.mark.asyncio
+async def test_rollback_preflight_rejects_without_app_service_definition(tmp_path, monkeypatch):
+    """反向契约：Compose 项目里 app 服务定义不在（或解析失败）时，即使旧镜像在本机也判 not ready。"""
+    old_image = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+    new_image = "docker.io/coffeiz/gugu-web@sha256:" + "b" * 64
+    daemon, _ = make_daemon(tmp_path, monkeypatch, state=_seed_failed_update_task(old_image, new_image))
+
+    async def current_release():
+        return {"version": "v1.2.2", "image": new_image}
+
+    async def healthy():
+        return True
+
+    async def compose_text(args, *, env=None, timeout=30):
+        return "ok"
+
+    _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy, compose_config={
+        "services": {"postgres": {}, "redis": {}},  # app 服务定义丢失
+    })
+
+    preflight = await daemon._rollback_preflight({"operator": "admin-test"})
+    assert preflight["ready"] is False
+    assert "challenge" not in preflight

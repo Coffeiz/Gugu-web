@@ -733,17 +733,19 @@ class UpdateDaemon:
                 present = True
             except Exception:
                 present = False
-            # 更新中断后 app 常处于停止状态，而这正是最需要回滚的时刻；
-            # ps -aq 允许 stopped 容器，只要求 Compose 项目里 app 容器仍然存在。
+            # 更新中断后 app 可能停止、甚至容器被整体删除，而这正是最需要回滚的时刻；
+            # 只要 Compose 项目里 app 服务定义还在、旧镜像在本机，up -d 就能从零重建，
+            # 因此检查的是服务定义而非容器存在或运行状态。
             try:
-                app_present = bool((await self._compose_text(["ps", "-aq", "app"])).strip())
+                compose_config = await self._compose(["config", "--format", "json"])
+                app_defined = "app" in (compose_config.get("services") or {})
             except Exception:
-                app_present = False
-            ready = present and app_present
+                app_defined = False
+            ready = present and app_defined
             result: dict[str, Any] = {
                 "ready": ready, "task_id": task["id"], "target_image": target,
                 "target_version": task.get("previous_version", "unknown"),
-                "detail": "上一版本镜像仍在本机，可安全恢复" if ready else "上一版本镜像不存在或 app 容器不可用",
+                "detail": "上一版本镜像仍在本机，可安全恢复" if ready else "上一版本镜像不存在或 Compose app 服务定义不可用",
             }
             if ready:
                 token = secrets.token_urlsafe(48)
