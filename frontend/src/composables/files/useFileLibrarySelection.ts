@@ -18,23 +18,22 @@ export interface FileLibrarySelectionOptions {
 
 /** 文件库页面的统一选择协调器；批量副作用仍由 action composable 负责。 */
 export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
-  // 卡片点击的手势一致性守卫：click 只在「按下发生在普通卡面」时才算数。
-  // 场景——在重命名输入框里拖选文字、松手时鼠标落在卡片上（同卡或别的卡都
-  // 会发生）：浏览器的 click 合成规则是「派发到按下目标与释放目标的公共祖先」，
-  // 输入框和释放点同属一张卡时，click 会合法地派发到卡片元素本身，被当成
-  // 一次卡片点击（误开预览/进目录/切选中）。探针实测 blur 提交（输入框卸载）
-  // 与 click 派发的先后是竞态，任何依赖「按下目标是否还在 DOM」的判断都不
-  // 可靠；确定性信号是按下起点在文本可编辑区内——这类 click 属于文本编辑
-  // 手势，永远不算卡片点击。真正的卡片点击永远按在普通卡面上。
+  // 卡片点击的手势一致性守卫：click 只在「按下发生在同一张卡的普通卡面」时
+  // 才算数。两个排除项：
+  // 1. 文本可编辑区内按下的 click（重命名输入框拖选文字松手在卡上）——浏览器的
+  //    click 合成规则是「派发到按下目标与释放目标的公共祖先」，输入框和释放点
+  //    同属一张卡时 click 会派发到卡片元素本身，被误当成卡片点击（开预览/进
+  //    目录/切选中）。判据用「按下起点在 editable 内」而非「输入框是否已卸载」：
+  //    探针实测 blur 提交与 click 派发的先后是竞态，后者不可靠。
+  // 2. 按下在别的卡上：按下与释放不在同一卡的手势不属于这张卡。
   // capture 阶段记录：RenameInput 的包装层 @mousedown.stop 不影响 capture 命中。
   let pressCard: Element | null = null
-  let pressTarget: Element | null = null
   let pressInEditable = false
   const onDocumentPress = (event: MouseEvent) => {
-    pressTarget = event.target as Element | null
-    pressInEditable = !!pressTarget && (pressTarget.closest('input, textarea, [contenteditable]') !== null
-      || (pressTarget instanceof HTMLElement && pressTarget.isContentEditable))
-    pressCard = pressTarget?.closest?.('.fc-card, .folder-card, .list-row') ?? null
+    const target = event.target as Element | null
+    pressInEditable = !!target && (target.closest('input, textarea, [contenteditable]') !== null
+      || (target instanceof HTMLElement && target.isContentEditable))
+    pressCard = target?.closest?.('.fc-card, .folder-card, .list-row') ?? null
   }
   document.addEventListener('mousedown', onDocumentPress, { capture: true })
   if (getCurrentScope()) {
@@ -42,9 +41,6 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   }
   function pressStartedOutside(event: MouseEvent): boolean {
     if (pressInEditable) return true
-    // 按下目标在手势中被移出 DOM（输入框 blur 提交卸载是典型）：浏览器改派的
-    // click，同样不代表用户在释放点的意图。
-    if (pressTarget && !pressTarget.isConnected) return true
     const card = event.currentTarget as Element | null
     if (!card) return false
     return !pressCard || (pressCard !== card && !card.contains(pressCard))
