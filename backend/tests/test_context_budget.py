@@ -2,6 +2,7 @@
 
 from agent.context.budget import (
     ContextBudget,
+    atomic_message_units,
     enforce_message_budget,
     estimate_tool_schema_tokens,
     truncate_messages,
@@ -68,6 +69,24 @@ def test_over_budget_keeps_latest_tool_round_atomic():
     tool_indices = [index for index, item in enumerate(result) if item.get("role") == "tool"]
     assert not tool_indices or any(item.get("tool_calls") for item in result[:tool_indices[0]])
     assert stats.after_tokens <= ContextBudget(120).soft_limit_tokens + 10
+
+
+def test_atomic_message_units_keep_tool_call_and_consecutive_results_together():
+    messages = [
+        {"role": "user", "content": "之前的问题"},
+        {"role": "assistant", "tool_calls": [{"id": "call-1"}], "content": None},
+        {"role": "tool", "tool_call_id": "call-1", "content": "结果一"},
+        {"role": "tool", "tool_call_id": "call-2", "content": "结果二"},
+        {"role": "user", "content": "当前问题"},
+    ]
+
+    assert atomic_message_units(messages) == [[0], [1, 2, 3], [4]]
+
+
+def test_atomic_message_units_keep_trailing_tool_call_without_orphan_result():
+    messages = [{"role": "assistant", "tool_calls": [{"id": "call-last"}], "content": None}]
+
+    assert atomic_message_units(messages) == [[0]]
 
 
 def test_single_oversized_current_message_is_truncated_without_llm():

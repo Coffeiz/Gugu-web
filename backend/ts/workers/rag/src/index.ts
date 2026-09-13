@@ -11,6 +11,7 @@ import type {
   RagSearchDiagnostics,
   RagSearchScope,
   RagSearchResult,
+  RagUnifiedQueryProbe,
 } from "../../../packages/contracts/src/rag.ts";
 import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
 import { createPostgresClient } from "../../../packages/data-runtime/src/postgres.ts";
@@ -24,8 +25,21 @@ import { corpusStatistics, mergeCorpusStatistics, scoreTerms, termFrequency, tok
 import { rankingText } from "./ranking/document-text.ts";
 import type { Posting } from "./ranking/types.ts";
 import { loadDocumentVectors, prepareMemory, type AuthorizedMemoryScope } from "./memory-loader.ts";
+import { embedQuery } from "./query-embedding.ts";
 
 const VERSION = RAG_WORKER_VERSION;
+const BUILD_PROBE_PREFIX = "GUGU_RAG_BUILD_PROBE ";
+const BUILD_PROBE_PHASES = new Set([
+  "watermark_checked", "delta_read_start", "delta_read_complete",
+  "fallback_full_start", "full_load_start", "full_load_complete",
+  "index_install_start", "index_install_complete", "vector_load_start",
+  "vector_load_complete", "persist_start", "persist_complete", "completed",
+]);
+const BUILD_PROBE_COUNT_NAMES = new Set([
+  "watermark_usable", "fallback_full", "passes", "scanned_rows",
+  "applied_upserts", "applied_deletes", "document_count", "vector_count",
+  "posting_terms", "serialized_bytes",
+]);
 
 type Document = RagDocument;
 type WorkerProbe = RagIndexLoadProbe;
@@ -50,7 +64,7 @@ type State = {
   indexDir?: string;
 };
 
-/** 与 Python hybrid_results 逐位一致的融合核心：cosine 含 sqrt、
+/** 统一 RAG 查询使用的融合核心：cosine 含 sqrt、
  * 维度不匹配/零向量记 0.0 但保留向量名次；返回每个命中的融合分与向量候选数。 */
 function hybridFuseScores(
   hits: Array<{ chunk_id: string }>,
@@ -115,6 +129,29 @@ function makeState(indexDir?: string): State {
 
 function recordProbeStage(probe: WorkerProbe, name: string, started: number): void {
   probe.stage_ms[name] = Math.max(0, Math.round(performance.now() - started));
+}
+
+/**
+ * 失败路径构建探针：stderr 仅供 Python sidecar 读取，字段严格限制为阶段与数值聚合。
+ * 不携带 owner、请求、文档正文、异常或环境变量，避免将业务数据写入可见日志。
+ */
+function emitBuildProbe(
+  op: "sync_index_from_database" | "load_index_from_database",
+  phase: string,
+  started: number,
+  counts: Record<string, number> = {},
+): void {
+  if (!BUILD_PROBE_PHASES.has(phase)) return;
+  try {
+    const safeCounts = Object.fromEntries(Object.entries(counts)
+      .filter(([name, value]) => BUILD_PROBE_COUNT_NAMES.has(name) && Number.isFinite(value))
+      .map(([name, value]) => [name, Math.max(0, Math.trunc(value))]));
+    process.stderr.write(`${BUILD_PROBE_PREFIX}${JSON.stringify({
+      op, phase, elapsed_ms: Math.max(0, Math.round(performance.now() - started)), counts: safeCounts,
+    })}\n`);
+  } catch {
+    // 诊断通道必须永远不能影响索引构建。
+  }
 }
 
 let dataRuntime: DataRuntime | null = null;
@@ -430,6 +467,36 @@ function search(
 function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16); }
 
 async function handle(state: State, transient: State, request: RagRequest): Promise<RagResponse> {
+  if (request.op === "unified_query_with_embedding") {
+    assertWorkerOwner(request.owner_id);
+    if (request.revision !== state.revision) {
+      return { status: "error", code: "revision_mismatch", message: "TS 统一查询索引版本不一致" };
+    }
+    const hasTransient = request.searches.some((item) => item.corpus === "transient");
+    if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient.revision)) {
+      return { status: "error", code: "revision_mismatch", message: "TS 统一查询瞬态语料版本不一致" };
+    }
+
+    const embeddingStarted = performance.now();
+    const embedded = await embedQuery(request.embedding, request.query);
+    const embeddingMs = Math.max(0, Math.round(performance.now() - embeddingStarted));
+    const { op: _op, owner_id: _ownerId, embedding: _embedding, ...queryFields } = request;
+    const response = await handle(state, transient, {
+      ...queryFields,
+      op: "unified_query",
+      query_vector: embedded.vector,
+    });
+    if (response.status === "ok" && "probe" in response && response.probe) {
+      const queryProbe = response.probe as RagUnifiedQueryProbe;
+      queryProbe.stage_ms.query_embedding = embeddingMs;
+      queryProbe.counts.query_vector_dimensions = embedded.vector.length;
+      queryProbe.embedding = {
+        outcome: embedded.outcome,
+        ...(embedded.http_status ? { http_status: embedded.http_status } : {}),
+      };
+    }
+    return response;
+  }
   if (request.op === "database_revision") {
     assertWorkerOwner(request.owner_id);
     const revision = await getDataRuntime().getRagIndexRevision({ ownerId: request.owner_id });
@@ -450,8 +517,12 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const watermarkUsable = state.watermark
       && !Number.isNaN(Date.parse(state.watermark.ts))
       && Date.parse(state.watermark.ts) >= Date.now() - HORIZON_MS;
+    emitBuildProbe("sync_index_from_database", "watermark_checked", operationStarted, {
+      watermark_usable: Number(Boolean(watermarkUsable)),
+    });
     if (!watermarkUsable) {
       probe.counts.fallback_full = 1;
+      emitBuildProbe("sync_index_from_database", "fallback_full_start", operationStarted, { fallback_full: 1 });
       recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
       const response = await handle(state, transient, {
         op: "load_index_from_database",
@@ -472,6 +543,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     let passes = 0;
     let overflow = false;
     const deltaStarted = performance.now();
+    emitBuildProbe("sync_index_from_database", "delta_read_start", operationStarted, { passes, scanned_rows: 0 });
     while (true) {
       const delta = await getDataRuntime().loadRagIndexDelta(
         { ownerId: request.owner_id }, cursor,
@@ -486,10 +558,17 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       if (passes >= 50) { overflow = true; break; }
     }
     probe.stage_ms.data_runtime_delta = Math.max(0, Math.round(performance.now() - deltaStarted));
+    emitBuildProbe("sync_index_from_database", "delta_read_complete", operationStarted, {
+      passes, scanned_rows: Number(probe.counts.scanned_rows || 0),
+      applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
+    });
 
     if (overflow) {
       // 变更量超出单次同步预算：放弃半截增量，走全量保证一致性
       probe.counts.fallback_full = 1;
+      emitBuildProbe("sync_index_from_database", "fallback_full_start", operationStarted, {
+        fallback_full: 1, passes, scanned_rows: Number(probe.counts.scanned_rows || 0),
+      });
       recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
       const response = await handle(state, transient, {
         op: "load_index_from_database",
@@ -505,14 +584,32 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     }
 
     const installStarted = performance.now();
+    emitBuildProbe("sync_index_from_database", "index_install_start", operationStarted, {
+      applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
+    });
     patchInMemory(state, target, upsertsAcc, deletesAcc);
     recordProbeStage(probe, "index_install_build", installStarted);
+    emitBuildProbe("sync_index_from_database", "index_install_complete", operationStarted, {
+      document_count: state.documents.length, posting_terms: state.postings.size,
+    });
     state.watermark = cursor;
     probe.counts.applied_upserts = upsertsAcc.length;
     probe.counts.applied_deletes = deletesAcc.length;
     probe.counts.passes = passes;
-    if (upsertsAcc.length || deletesAcc.length) await persist(state, probe);
+    if (upsertsAcc.length || deletesAcc.length) {
+      emitBuildProbe("sync_index_from_database", "persist_start", operationStarted, {
+        document_count: state.documents.length,
+      });
+      await persist(state, probe);
+      emitBuildProbe("sync_index_from_database", "persist_complete", operationStarted, {
+        serialized_bytes: Number(probe.counts.serialized_bytes || 0),
+      });
+    }
     recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
+    emitBuildProbe("sync_index_from_database", "completed", operationStarted, {
+      document_count: state.documents.length, vector_count: state.vectors.size,
+      applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
+    });
     return {
       status: "ok", version: VERSION, revision: state.revision,
       document_count: state.documents.length,
@@ -530,17 +627,27 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const probe: WorkerProbe = { stage_ms: {}, counts: {} };
     assertWorkerOwner(request.owner_id);
     let stageStarted = performance.now();
+    emitBuildProbe("load_index_from_database", "full_load_start", operationStarted);
     const result = await getDataRuntime().loadRagIndex({ ownerId: request.owner_id });
     for (const [name, elapsed] of Object.entries(result.probe.stage_ms)) {
       probe.stage_ms[`data_runtime_${name}`] = elapsed;
     }
     Object.assign(probe.counts, result.probe.counts);
     state.watermark = result.watermark ?? null;
+    emitBuildProbe("load_index_from_database", "full_load_complete", operationStarted, {
+      document_count: result.snapshot.documents.length,
+    });
 
     stageStarted = performance.now();
+    emitBuildProbe("load_index_from_database", "index_install_start", operationStarted, {
+      document_count: result.snapshot.documents.length,
+    });
     replaceInMemory(state, request.revision, result.snapshot.documents);
     recordProbeStage(probe, "index_install_build", stageStarted);
     probe.counts.posting_terms = state.postings.size;
+    emitBuildProbe("load_index_from_database", "index_install_complete", operationStarted, {
+      document_count: state.documents.length, posting_terms: state.postings.size,
+    });
 
     const vectorVersion = String(request.vector_version || "");
     const vectorProbe = {
@@ -549,6 +656,9 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       cache: { owner_cache_hit: false, scoped_cache_hit: false },
     };
     stageStarted = performance.now();
+    emitBuildProbe("load_index_from_database", "vector_load_start", operationStarted, {
+      document_count: state.documents.length,
+    });
     const vectors = vectorVersion
       ? await loadDocumentVectors(
         request.owner_id, result.snapshot.documents, vectorVersion, getStorageReader(), vectorProbe,
@@ -563,8 +673,20 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     state.vectorVersion = vectorVersion;
     state.restoreError = null;
     probe.counts.vector_count = state.vectors.size;
+    emitBuildProbe("load_index_from_database", "vector_load_complete", operationStarted, {
+      vector_count: state.vectors.size,
+    });
+    emitBuildProbe("load_index_from_database", "persist_start", operationStarted, {
+      document_count: state.documents.length, vector_count: state.vectors.size,
+    });
     await persist(state, probe);
+    emitBuildProbe("load_index_from_database", "persist_complete", operationStarted, {
+      serialized_bytes: Number(probe.counts.serialized_bytes || 0),
+    });
     recordProbeStage(probe, "load_index_from_database_total", operationStarted);
+    emitBuildProbe("load_index_from_database", "completed", operationStarted, {
+      document_count: state.documents.length, vector_count: state.vectors.size,
+    });
     return {
       status: "ok", version: VERSION, revision: state.revision,
       document_count: state.documents.length,
@@ -877,8 +999,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     };
   }
   if (request.op === "hybrid_fuse") {
-    // 与 Python hybrid_results 逐位等价：余弦累加顺序、RRF 乘法顺序、
-    // 排序 tie-break 和透传语义完全一致（Phase 3 契约冻结）。
+    // 保留内部融合契约的独立回归入口；生产统一查询使用同一 RRF 核心。
     const hits = Array.isArray(request.hits) ? request.hits : [];
     const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
     const vectors = request.vectors ?? {};

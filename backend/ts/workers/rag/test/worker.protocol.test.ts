@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -476,8 +477,11 @@ test("conversation 自动标题不参与 query-match 与 IDF 重排", () => {
   assert.deepEqual(output.results.map((item) => item.id), [bodyMatch.id]);
 });
 
-function spawnWorker(t: import("node:test").TestContext) {
-  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
+function spawnWorker(t: import("node:test").TestContext, env: NodeJS.ProcessEnv = {}) {
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
+    cwd: workerDir,
+    env: { ...process.env, ...env },
+  });
   t.after(() => child.kill());
   const lines = createInterface({ input: child.stdout });
   const pending: Array<(value: string) => void> = [];
@@ -493,6 +497,126 @@ function spawnWorker(t: import("node:test").TestContext) {
   };
   return { child, request, readResponse, closed: once(child, "close") };
 }
+
+test("query embedding 仅由 owner-bound TS op 执行并接入统一融合", async (t) => {
+  const received: Array<{ authorization?: string; body: string }> = [];
+  const provider = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      received.push({
+        authorization: request.headers.authorization,
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ embedding: [1, 0] }] }));
+    });
+  });
+  provider.listen(0, "127.0.0.1");
+  await once(provider, "listening");
+  t.after(async () => {
+    provider.closeAllConnections();
+    provider.close();
+    await once(provider, "close");
+  });
+  const address = provider.address();
+  assert.ok(address && typeof address === "object");
+  const secret = "private-transient-key";
+  const { request, readResponse, child, closed } = spawnWorker(t, {
+    GUGU_RAG_OWNER_ID: "synthetic-owner",
+    HTTP_PROXY: "", HTTPS_PROXY: "", http_proxy: "", https_proxy: "",
+  });
+
+  const document = {
+    id: "file:query-embedding:0", text: "缓存 query embedding 文档", content: "缓存 query embedding 文档",
+    source_type: "file", scope_type: "owner", scope_id: "synthetic-owner", document_version: "v1",
+  };
+  request({ op: "replace", revision: "r1", documents: [document],
+    vectors: { [document.id]: [1, 0] }, vector_version: "synthetic:model:2" });
+  assert.equal((await readResponse()).revision, "r1");
+
+  request({
+    op: "unified_query_with_embedding", owner_id: "synthetic-owner",
+    revision: "r1", query: "缓存", vector_version: "synthetic:model:2",
+    embedding: {
+      provider: "synthetic", base_url: `http://127.0.0.1:${address.port}/v1`,
+      pinned_ip: "127.0.0.1",
+      model: "synthetic-model", dimensions: 2, api_key: secret,
+    },
+    source_order: ["file"], searches: [{ id: "0", source_types: ["file"] }],
+    candidate_limit: 10,
+    rank: { limit: 2, max_chars: 1000, max_per_source: 2, max_per_parent: 2 },
+  });
+  const response = await readResponse() as Record<string, any>;
+  assert.equal(response.status, "ok");
+  assert.equal(response.fusion.fusion, "hybrid-rrf");
+  assert.equal(response.probe.embedding.outcome, "success");
+  assert.equal(response.probe.counts.query_vector_dimensions, 2);
+  assert.equal(typeof response.probe.stage_ms.query_embedding, "number");
+  assert.equal(JSON.stringify(response).includes(secret), false);
+  assert.deepEqual(received, [{
+    authorization: `Bearer ${secret}`,
+    body: JSON.stringify({ model: "synthetic-model", input: "缓存", dimensions: 2 }),
+  }]);
+
+  request({
+    op: "unified_query_with_embedding", owner_id: "another-owner",
+    revision: "r1", query: "缓存", embedding: {
+      provider: "synthetic", base_url: `http://127.0.0.1:${address.port}/v1`,
+      pinned_ip: "127.0.0.1",
+      model: "synthetic-model", dimensions: 2, api_key: secret,
+    },
+    source_order: ["file"], searches: [{ id: "0", source_types: ["file"] }],
+    candidate_limit: 10,
+    rank: { limit: 2, max_chars: 1000, max_per_source: 2, max_per_parent: 2 },
+  });
+  const denied = await readResponse();
+  assert.equal(denied.status, "error");
+  assert.equal(denied.code, "worker_failure");
+  assert.equal(received.length, 1, "owner 不匹配时不得发起 provider 请求");
+  child.stdin.end();
+  await closed;
+});
+
+test("query embedding 经 Node 标准代理环境变量访问 provider", async (t) => {
+  const proxyRequests: string[] = [];
+  const proxy = createServer((request, response) => {
+    proxyRequests.push(request.url || "");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ data: [{ embedding: [0.5, 0.5] }] }));
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  t.after(async () => {
+    proxy.closeAllConnections();
+    proxy.close();
+    await once(proxy, "close");
+  });
+  const address = proxy.address();
+  assert.ok(address && typeof address === "object");
+  const { request, readResponse, child, closed } = spawnWorker(t, {
+    GUGU_RAG_OWNER_ID: "proxy-owner",
+    NODE_USE_ENV_PROXY: "1",
+    HTTP_PROXY: `http://127.0.0.1:${address.port}`,
+    HTTPS_PROXY: "", NO_PROXY: "", http_proxy: "", https_proxy: "", no_proxy: "",
+  });
+  request({
+    op: "unified_query_with_embedding", owner_id: "proxy-owner",
+    revision: "", query: "代理测试", source_order: [], searches: [], candidate_limit: 5,
+    embedding: {
+      provider: "synthetic", base_url: "http://embedding-provider.invalid/v1",
+      pinned_ip: "93.184.216.34",
+      model: "synthetic-model", dimensions: 2, api_key: "proxy-test-key",
+    },
+    rank: { limit: 1, max_chars: 200, max_per_source: 1, max_per_parent: 1 },
+  });
+  const response = await readResponse() as Record<string, any>;
+  assert.equal(response.status, "ok");
+  assert.equal(response.probe.embedding.outcome, "success");
+  assert.deepEqual(proxyRequests, ["http://embedding-provider.invalid/v1/embeddings"]);
+  child.stdin.end();
+  await closed;
+});
 
 test("RAG worker 的 replace_transient 与持久化索引共存且不落盘", async (t) => {
   const { child, request, readResponse, closed } = spawnWorker(t);
@@ -626,7 +750,7 @@ test("对话消息排序只看当前消息，最终结果带有限相邻上下�
   assert.equal(output.diagnostics.selection_mode, "top_k");
 });
 
-test("冻结契约：hybrid_fuse 与 Python hybrid_results 的 RRF 逐位一致", async (t) => {
+test("冻结契约：RRF 融合排序与分值稳定", async (t) => {
   const { request, readResponse, closed, child } = spawnWorker(t);
   // 词法名次 a1 b2 c3 d4 e5；向量：a/c 与查询同向（c 同向但模长不同），
   // b 正交（0.0）、d 维度不匹配（0.0 但保留向量名次）、e 零向量（0.0）。
@@ -667,7 +791,7 @@ test("冻结契约：hybrid_fuse 与 Python hybrid_results 的 RRF 逐位一致"
   await closed;
 });
 
-test("冻结契约：hybrid_fuse 无向量或全零命中时透传词法结果", async (t) => {
+test("冻结契约：无向量或全零命中时透传词法结果", async (t) => {
   const { request, readResponse, closed, child } = spawnWorker(t);
   const hits = [
     { chunk_id: "x", score: 3.5 }, { chunk_id: "y", score: 1.25 },
@@ -812,7 +936,7 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
   request({ op: "replace_transient", revision: "t1", documents: memoryDocs, vectors: { "memory:m1:0": [1, 0], "memory:m2:0": [0, 1] }, vector_version: "prov:model:2" });
   assert.equal((await readResponse()).revision, "t1");
 
-  // ── 三段参考管线：batch_search + hybrid_fuse + rank_candidates ──
+  // ── 三段参考管线：batch_search + TS 融合 + rank_candidates ──
   request({ op: "batch_search", revision: "r1", transient_revision: "t1", query: "缓存", searches: [
     { id: "0", source_types: ["file"], limit: 20 },
     { id: "1", source_types: ["conversation"], limit: 20 },
@@ -825,7 +949,7 @@ test("Phase 5：unified_query 与 batch_search+hybrid_fuse+rank 三段管线逐�
     bySource[specSources[index]] = part.results;
   });
   const memoryHits = bySource.memory;
-  // hybrid_fuse 协议按 chunk_id 查向量：瞬态文档的 chunk_id 即其 worker key。
+  // 融合协议按 chunk_id 查向量：瞬态文档的 chunk_id 即其 worker key。
   request({ op: "hybrid_fuse", hits: memoryHits.map((hit) => ({ chunk_id: hit.id })), query_vector: [1, 0],
     vectors: { "memory:m1:0": [1, 0], "memory:m2:0": [0, 1] }, limit: 20 });
   const fused = await readResponse();

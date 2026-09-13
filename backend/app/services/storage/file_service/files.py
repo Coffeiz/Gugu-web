@@ -34,6 +34,11 @@ def _fmt_size(size_bytes: int) -> str:
     return f"{size_bytes / 1024:.0f} KB"
 
 
+def _is_overwrite_requested(on_conflict: str, overwrite_file_id: int | None) -> bool:
+    """只有显式覆盖且提供目标 ID 时才走原位替换分支。"""
+    return on_conflict == "overwrite" and overwrite_file_id is not None
+
+
 @dataclass
 class FileResult:
     """写操作结果：ORM 行 + 供端点 shape 响应的上下文（project/folder 名色由端点取，
@@ -152,7 +157,7 @@ class FileOps:
                 await self.storage.put(key, data, mime_type)
 
         # 覆盖已有同名文件：原地替换内容，保留同一个 file id；配额按新旧差值算。
-        if on_conflict == "overwrite" and overwrite_file_id is not None:
+        if _is_overwrite_requested(on_conflict, overwrite_file_id):
             existing = await get_owned(self.db, File, overwrite_file_id, user_id)
             if not existing:
                 raise Invalid("file.overwrite_target_not_found", "要覆盖的文件不存在")

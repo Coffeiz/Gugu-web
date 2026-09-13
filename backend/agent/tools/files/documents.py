@@ -619,7 +619,7 @@ async def _delete_file(db, user_id, args: dict):
     # 软删进回收站，30 天可还原 —— 非不可逆，无需二次确认
     file_ids = args.get("file_ids")
     if file_ids is not None:
-        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 50:
+        if not _valid_file_ids(file_ids):
             return json.dumps({"error": "file_ids 必须是 1-50 个文件 id"})
         files = []
         for file_id in file_ids:
@@ -644,6 +644,11 @@ async def _delete_file(db, user_id, args: dict):
     return {"success": True, "file_id": fid, "name": fname,
             "note": "已移入回收站，30 天内可还原",
             "_file_op": {"op": "remove", "kind": "file", "id": fid}}
+
+
+def _valid_file_ids(file_ids) -> bool:
+    """批量软删除最多接收 50 个显式文件 ID，拒绝空集合和非数组输入。"""
+    return isinstance(file_ids, list) and bool(file_ids) and len(file_ids) <= 50
 
 
 async def _copy_file(db, user_id, args: dict):

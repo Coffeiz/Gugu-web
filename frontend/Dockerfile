@@ -5,7 +5,7 @@
 FROM node:latest
 
 WORKDIR /workspace
-RUN npm install --global pnpm@10.15.0
+RUN npm install --global pnpm@latest
 
 # 依赖单独一层：workspace 元数据和 manifest 没变时改代码不用重装。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./

@@ -521,14 +521,17 @@ class KnowledgeIndexCache:
                     if diagnostics is not None:
                         diagnostics["vector_count"] = int(vector_result.get("vector_count") or 0)
             except TsSidecarUnavailable as error:
-                probe_update(index_build={
+                build_probe = {
                     "outcome": "error",
                     "error_type": type(error).__name__,
                     "error_code": (
                         "revision_mismatch" if error.code == "revision_mismatch"
                         else "other" if error.code else "missing"
                     ),
-                })
+                }
+                if error.diagnostics:
+                    build_probe["worker_build_probe"] = error.diagnostics
+                probe_update(index_build=build_probe)
                 await client.close()
                 if diagnostics is not None:
                     diagnostics["fallback"] = "typescript_unavailable"

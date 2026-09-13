@@ -7,8 +7,9 @@
 """
 import logging
 
-from app.core.ownership import get_owned
+from app.core.ownership import _ownership_identity, _ownership_warning_fields, get_owned
 from app.models import File
+from app.security.events import security_fingerprint
 
 
 async def _mk_file(db, owner) -> File:
@@ -43,6 +44,29 @@ async def test_cross_user_denied_logs_warning(db, user_a, user_b, caplog):
     with caplog.at_level(logging.WARNING, logger="ownership"):
         await get_owned(db, File, f.id, user_a.id)
     assert any("ownership.denied" in r.message for r in caplog.records)
+    assert any("model=File" in r.message for r in caplog.records)
+    denied = next(r.message for r in caplog.records if "ownership.denied" in r.message)
+    assert f"resource={security_fingerprint(f.id)[:16]} owner=" in denied
+    assert f"owner={security_fingerprint(user_b.id)[:16]} requester={security_fingerprint(user_a.id)[:16]}" in denied
+    assert f"resource={f.id} owner=" not in denied
+
+
+def test_ownership_identity_handles_missing_owner_as_unowned():
+    assert _ownership_identity(object(), "owner-id") == (None, False)
+
+
+def test_ownership_warning_fields_emit_exact_truncated_fingerprints_and_none_owner():
+    resource_id = "private-resource-id"
+    owner_id = "private-owner-id"
+    requester_id = "private-requester-id"
+    fields = _ownership_warning_fields(File, resource_id, owner_id, requester_id)
+    assert fields == (
+        "File",
+        security_fingerprint(resource_id)[:16],
+        security_fingerprint(owner_id)[:16],
+        security_fingerprint(requester_id)[:16],
+    )
+    assert _ownership_warning_fields(File, resource_id, None, requester_id)[2] is None
 
 
 async def test_missing_row_is_none_without_denied_log(db, user_a, caplog):

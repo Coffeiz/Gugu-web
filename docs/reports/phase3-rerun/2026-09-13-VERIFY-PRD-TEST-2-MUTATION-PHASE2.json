@@ -1,0 +1,599 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-13",
+  "commit": "0bdc6f877",
+  "worktree_dirty": true,
+  "policy": "periodic-manual-no-automatic-ci",
+  "status": "passed",
+  "languages": {
+    "python": {
+      "run": {
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 39829
+      },
+      "targets": [
+        {
+          "pattern": "agent.context.budget.x__consecutive_tool_result_indices*",
+          "source": "backend/agent/context/budget.py",
+          "tests": [
+            "backend/tests/test_context_budget.py"
+          ],
+          "behavior": "工具调用位于消息末尾时不越界、不丢失原子消息组"
+        },
+        {
+          "pattern": "agent.interactions.confirmations.x__truthy*",
+          "source": "backend/agent/interactions/confirmations.py",
+          "tests": [
+            "backend/tests/test_confirm_gate.py"
+          ],
+          "behavior": "确认结果的布尔值和标准化字符串判定"
+        },
+        {
+          "pattern": "agent.tools.files.documents.x__valid_file_ids*",
+          "source": "backend/agent/tools/files/documents.py",
+          "tests": [
+            "backend/tests/test_agent_file_folder_parity.py"
+          ],
+          "behavior": "批量删除参数必须进入软删除流程，文件移入回收站而非漏删"
+        },
+        {
+          "pattern": "app.core.ownership.x__ownership_identity*",
+          "source": "backend/app/core/ownership.py",
+          "tests": [
+            "backend/tests/test_ownership.py"
+          ],
+          "behavior": "归属 ID 字符串归一后仅允许同一所有者访问"
+        },
+        {
+          "pattern": "app.core.ownership.x__ownership_warning_fields*",
+          "source": "backend/app/core/ownership.py",
+          "tests": [
+            "backend/tests/test_ownership.py"
+          ],
+          "behavior": "归属拒绝日志对资源标识做指纹化，不泄漏原始 ID"
+        },
+        {
+          "pattern": "app.services.conversation_pending_queue.x__claim_lease_is_active*",
+          "source": "backend/app/services/conversation_pending_queue.py",
+          "tests": [
+            "backend/tests/test_chat_pending_queue.py"
+          ],
+          "behavior": "消息领取租约在 60 秒边界后可安全接手"
+        },
+        {
+          "pattern": "app.services.storage.file_service.files.x__is_overwrite_requested*",
+          "source": "backend/app/services/storage/file_service/files.py",
+          "tests": [
+            "backend/tests/test_file_service.py"
+          ],
+          "behavior": "只有显式 overwrite 模式和目标文件 ID 才执行原位覆盖"
+        }
+      ],
+      "mutants": [
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_5",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_6",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_7",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_8",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_9",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_10",
+          "status": "killed"
+        },
+        {
+          "id": "agent.interactions.confirmations.x__truthy__mutmut_11",
+          "status": "killed"
+        },
+        {
+          "id": "agent.tools.files.documents.x__valid_file_ids__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "agent.tools.files.documents.x__valid_file_ids__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "agent.tools.files.documents.x__valid_file_ids__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "agent.tools.files.documents.x__valid_file_ids__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "agent.tools.files.documents.x__valid_file_ids__mutmut_5",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_5",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_6",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_7",
+          "status": "killed"
+        },
+        {
+          "id": "agent.context.budget.x__consecutive_tool_result_indices__mutmut_8",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_5",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_6",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_7",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_8",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_9",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_10",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_identity__mutmut_11",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_5",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_6",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_7",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_8",
+          "status": "killed"
+        },
+        {
+          "id": "app.core.ownership.x__ownership_warning_fields__mutmut_9",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_5",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_6",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_7",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_8",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_9",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_10",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.conversation_pending_queue.x__claim_lease_is_active__mutmut_11",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.storage.file_service.files.x__is_overwrite_requested__mutmut_1",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.storage.file_service.files.x__is_overwrite_requested__mutmut_2",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.storage.file_service.files.x__is_overwrite_requested__mutmut_3",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.storage.file_service.files.x__is_overwrite_requested__mutmut_4",
+          "status": "killed"
+        },
+        {
+          "id": "app.services.storage.file_service.files.x__is_overwrite_requested__mutmut_5",
+          "status": "killed"
+        }
+      ],
+      "summary": {
+        "killed": 60,
+        "survived": 0,
+        "timeout": 0,
+        "error": 0,
+        "compile_error": 0,
+        "no_coverage": 0,
+        "equivalent": 0,
+        "not_checked": 0,
+        "eligible": 60,
+        "mutation_score": 100.0
+      }
+    },
+    "typescript": {
+      "run": {
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 43067
+      },
+      "targets": [
+        {
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "tests": [
+            "frontend/test/optimisticMutation.test.ts"
+          ],
+          "behavior": "乐观更新提交、回滚及更新意图结算时序"
+        }
+      ],
+      "mutants": [
+        {
+          "id": "0",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 41,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected [] to deeply equal [ Array(4) ]"
+        },
+        {
+          "id": "1",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 46,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected [ 'afterMutate', 'work', 'onCommit' ] to deeply equal [ Array(4) ]"
+        },
+        {
+          "id": "2",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 47,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected [ 'apply', 'work', 'onCommit' ] to deeply equal [ Array(4) ]"
+        },
+        {
+          "id": "3",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 49,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected [ 'apply', 'afterMutate' ] to deeply equal [ Array(4) ]"
+        },
+        {
+          "id": "4",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 50,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected [ 'apply', 'afterMutate', …(3) ] to deeply equal [ Array(4) ]"
+        },
+        {
+          "id": "10",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 56,
+          "mutator": "CallExpression",
+          "status": "compile_error",
+          "reason": "src/utils/optimisticMutation.ts(56,17): error TS1313: The body of an 'if' statement cannot be the empty statement.\n"
+        },
+        {
+          "id": "5",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 50,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected true to be false // Object.is equality"
+        },
+        {
+          "id": "6",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 50,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "Test timed out in 5000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
+        },
+        {
+          "id": "7",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 53,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected [ 'apply', 'afterMutate', 'onCommit' ] to deeply equal [ Array(4) ]"
+        },
+        {
+          "id": "8",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 56,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected 'C' to be 'plain' // Object.is equality"
+        },
+        {
+          "id": "9",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 56,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to not be called at all, but actually been called 1 times\n\nReceived:\n\n  1st vi.fn() call:\n\n    Array []\n\n\nNumber of calls: 1\n"
+        },
+        {
+          "id": "11",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 57,
+          "mutator": "OptionalChaining",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to not be called at all, but actually been called 1 times\n\nReceived:\n\n  1st vi.fn() call:\n\n    Array []\n\n\nNumber of calls: 1\n"
+        },
+        {
+          "id": "12",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 58,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected [ 'apply', 'afterMutate', 'work' ] to deeply equal [ Array(6) ]"
+        },
+        {
+          "id": "13",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 59,
+          "mutator": "BooleanLiteral",
+          "status": "killed",
+          "reason": "Cannot read properties of null (reading 'keys')"
+        },
+        {
+          "id": "14",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 59,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to not be called at all, but actually been called 1 times\n\nReceived:\n\n  1st vi.fn() call:\n\n    Array []\n\n\nNumber of calls: 1\n"
+        },
+        {
+          "id": "15",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 59,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "Cannot read properties of null (reading 'keys')"
+        },
+        {
+          "id": "16",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 59,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected [ Array(4) ] to deeply equal [ Array(6) ]"
+        },
+        {
+          "id": "17",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 60,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected [ Array(5) ] to deeply equal [ Array(6) ]"
+        },
+        {
+          "id": "18",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 61,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected [ Array(5) ] to deeply equal [ Array(6) ]"
+        },
+        {
+          "id": "19",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 62,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to not be called at all, but actually been called 1 times\n\nReceived:\n\n  1st vi.fn() call:\n\n    Array []\n\n\nNumber of calls: 1\n"
+        },
+        {
+          "id": "20",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 62,
+          "mutator": "ConditionalExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called once, but got 0 times"
+        },
+        {
+          "id": "21",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 62,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called once, but got 0 times"
+        },
+        {
+          "id": "22",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 65,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called once, but got 0 times"
+        },
+        {
+          "id": "23",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 66,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called 2 times, but got 1 times"
+        },
+        {
+          "id": "24",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 67,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called once, but got 0 times"
+        },
+        {
+          "id": "25",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 68,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called once, but got 0 times"
+        },
+        {
+          "id": "26",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 71,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected \"vi.fn()\" to be called once, but got 0 times"
+        },
+        {
+          "id": "27",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 73,
+          "mutator": "CallExpression",
+          "status": "killed",
+          "reason": "expected [ Array(5) ] to deeply equal [ Array(6) ]"
+        },
+        {
+          "id": "29",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 76,
+          "mutator": "OptionalChaining",
+          "status": "killed",
+          "reason": "releaseIntentWork is not a function"
+        },
+        {
+          "id": "28",
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "line": 74,
+          "mutator": "BlockStatement",
+          "status": "killed",
+          "reason": "Test timed out in 5000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
+        }
+      ],
+      "summary": {
+        "killed": 29,
+        "survived": 0,
+        "timeout": 0,
+        "error": 0,
+        "compile_error": 1,
+        "no_coverage": 0,
+        "equivalent": 0,
+        "not_checked": 0,
+        "eligible": 29,
+        "mutation_score": 100.0
+      }
+    }
+  }
+}

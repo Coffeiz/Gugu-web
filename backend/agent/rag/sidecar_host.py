@@ -85,8 +85,13 @@ class SidecarHost:
             response = await client._request(payload, timeout_seconds=timeout_seconds)
             return dict(response.response), client
         except TsSidecarUnavailable as exc:
-            return ({"status": "error", "code": exc.code or "sidecar_unavailable",
-                     "message": str(exc)}, client)
+            response: dict[str, Any] = {
+                "status": "error", "code": exc.code or "sidecar_unavailable",
+                "message": str(exc),
+            }
+            if exc.diagnostics:
+                response["diagnostics"] = exc.diagnostics
+            return response, client
 
     @staticmethod
     def _transient_short_circuit(client: TsSidecarClient, payload: dict) -> dict | None:
@@ -125,6 +130,8 @@ class SidecarHost:
                         "code": payload.get("code"),
                         "message": payload.get("message"),
                     }
+                    if isinstance(payload.get("diagnostics"), dict):
+                        response["diagnostics"] = payload["diagnostics"]
                 writer.write((json.dumps(response, ensure_ascii=False) + "\n").encode())
                 await writer.drain()
         except (ConnectionError, OSError, ValueError):
