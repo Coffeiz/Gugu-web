@@ -79,12 +79,17 @@ async def _delete_client(db, user_id, args: dict):
             if client is None:
                 return json.dumps({"error": f"客户 {cid} 不存在"})
             clients.append(client)
+        clients.sort(key=lambda client: client.id)
         names = "、".join(c.name for c in clients[:10])
         if len(clients) > 10:
             names += f"等 {len(clients)} 个"
-        blocked = confirm.needs_confirmation(
-            args, f"将删除客户：{names}，共 {len(clients)} 个，此操作不可恢复", user_id,
-            identity=f"delete_client:client_ids={sorted(client_ids)}")
+        blocked = confirm.needs_target_confirmation(
+            args,
+            f"将删除客户：{names}，共 {len(clients)} 个，此操作不可恢复",
+            user_id,
+            action="delete_client",
+            targets={"client_id": client_ids},
+        )
         if blocked is not None:
             return blocked
         results = []
@@ -97,8 +102,11 @@ async def _delete_client(db, user_id, args: dict):
     if _err:
         return _err
     summary = f"将删除客户「{c.name}」，此操作不可恢复"
-    blocked = confirm.needs_confirmation(args, summary, user_id,
-                                         identity=f"delete_client:client_id={c.id}")
+    blocked = confirm.needs_target_confirmation(
+        args, summary, user_id,
+        action="delete_client",
+        targets={"client_id": [c.id]},
+    )
     if blocked is not None:
         return blocked
     cid, cname = await delete_client(db, c)
@@ -143,7 +151,7 @@ class ClientsSkill(BaseSkill):
                 "properties": {
                     "client_id": {"type": "integer"},
                     "client": {"type": "string"},
-                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
                     "name": {"type": "string"},
                     "contact": {"type": "string"},
                     "email": {"type": "string"},
@@ -164,13 +172,14 @@ class ClientsSkill(BaseSkill):
                 "properties": {
                     "client_id": {"type": "integer"},
                     "client": {"type": "string"},
-                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "uniqueItems": True},
                 },
                 "required": [],
             },
             handler=_delete_client,
             mutates=True,
             destructive=True,
+            batch_confirmation=True,
         ),
     ]
 

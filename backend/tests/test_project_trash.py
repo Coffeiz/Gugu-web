@@ -123,7 +123,7 @@ async def test_agent_delete_project_soft_deletes_like_web(db, user_a, monkeypatc
             return trash_key
 
     monkeypatch.setattr(agent_projects, "get_storage", lambda: FakeStorage())
-    monkeypatch.setattr(agent_projects.confirm, "needs_confirmation", lambda *a, **k: None)
+    monkeypatch.setattr(agent_projects.confirm, "needs_target_confirmation", lambda *a, **k: None)
     published = []
 
     async def publish(*args, **kwargs):

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 import json
 import secrets
@@ -92,6 +93,82 @@ def _identity_hash(identity: str | None) -> str:
     return sha256((identity or "").encode("utf-8")).hexdigest()
 
 
+def target_confirmation_identity(
+    action: str,
+    targets: Mapping[str, Sequence[str | int]],
+    *,
+    context: Mapping[str, str | int | None] | None = None,
+) -> str:
+    """生成绑定动作、上下文和完整目标集合的稳定确认身份。
+
+    目标顺序不影响身份；资源类别和父级上下文会参与身份，避免不同类型或不同容器
+    中的同号 ID 共用一次确认。调用方仍须在此之前完成所有权和参数校验。
+    """
+    if not isinstance(action, str) or not action.strip() or not targets:
+        raise ValueError("目标确认必须提供 action 和 targets")
+    normalized_targets: dict[str, list[dict[str, object]]] = {}
+    for kind, values in sorted(targets.items()):
+        if not isinstance(kind, str) or not kind.strip():
+            raise ValueError("目标确认的资源类别不能为空")
+        if not isinstance(values, Sequence) or isinstance(values, (str, bytes)) or not values:
+            raise ValueError("每种目标类型都必须提供非空 ID 列表")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (str, int))
+            or (isinstance(value, str) and not value.strip())
+            for value in values
+        ):
+            raise ValueError("目标 ID 仅支持非空字符串或整数")
+        encoded = {
+            json.dumps(
+                {"type": type(value).__name__, "value": value},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for value in values
+        }
+        if len(encoded) != len(values):
+            raise ValueError("目标集合不能包含重复 ID")
+        normalized_targets[kind] = [json.loads(value) for value in sorted(encoded)]
+    identity_payload = {
+        "action": action,
+        "context": dict(sorted((context or {}).items())),
+        "targets": normalized_targets,
+    }
+    return "target:" + json.dumps(
+        identity_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def needs_target_confirmation(
+    args: dict,
+    summary: str,
+    user_id,
+    *,
+    action: str,
+    targets: Mapping[str, Sequence[str | int]],
+    context: Mapping[str, str | int | None] | None = None,
+    ttl_minutes: int = _TOKEN_TTL_MINUTES,
+    instruction: str | None = None,
+    consume_grant: bool = False,
+) -> str | None:
+    """单项和批量动作的统一确认入口；一次确认只覆盖本次精确目标集合。"""
+    try:
+        identity = target_confirmation_identity(action, targets, context=context)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    return needs_confirmation(
+        args,
+        summary,
+        user_id,
+        identity=identity,
+        ttl_minutes=ttl_minutes,
+        instruction=instruction,
+        consume_grant=consume_grant,
+    )
+
+
 def _grant_key(user_id, summary: str, identity: str | None) -> str:
     return f"{_GRANT_PREFIX}:{user_id}:{_summary_hash(summary)}:{_identity_hash(identity)}"
 
@@ -101,6 +178,17 @@ def _check_grant(user_id, summary: str, identity: str | None) -> bool:
         return bool(get_redis_sync().exists(_grant_key(user_id, summary, identity)))
     except Exception:
         return False
+
+
+def consume_confirmation(user_id, summary: str, identity: str | None) -> bool | None:
+    """原子消费确认授权；返回 True=消费成功，False=无授权，None=Redis 不可用。
+
+    授权值只是存在标记，单条 Redis DEL 已原子完成检查并消费，避免并发调用都先 EXISTS 放行。
+    """
+    try:
+        return bool(get_redis_sync().delete(_grant_key(user_id, summary, identity)))
+    except Exception:
+        return None
 
 
 def grant_confirmation(user_id, summary: str, identity: str | None = None,
@@ -188,17 +276,29 @@ def needs_confirmation(
     identity: str | None = None,
     ttl_minutes: int = _TOKEN_TTL_MINUTES,
     instruction: str | None = None,
+    consume_grant: bool = False,
 ) -> str | None:
     """返回 None=已确认可执行（授权命中时自动注入 confirm）；否则返回需确认结果。
 
-    授权按（用户, 摘要, 身份范围）记录：同一能力范围内后续调用无需重复确认，
-    直到授权过期。确认码只用于网页/IM/终端把"用户已同意"传达回服务端，
+    授权按（用户, 摘要, 身份范围）记录。默认在 TTL 内复用；consume_grant=True
+    时用原子删除消费单次授权。确认码只用于网页/IM/终端把"用户已同意"传达回服务端，
     不参与模型上下文校验。
     """
-    if _check_grant(user_id, summary, identity):
-        args["confirm"] = True
-        return None
-    code = _create_pending(user_id, summary, identity, ttl_minutes)
+    if consume_grant:
+        consumed = consume_confirmation(user_id, summary, identity)
+        if consumed:
+            args["confirm"] = True
+            return None
+        code = (
+            _create_pending(user_id, summary, identity, ttl_minutes)
+            if consumed is False
+            else None
+        )
+    else:
+        if _check_grant(user_id, summary, identity):
+            args["confirm"] = True
+            return None
+        code = _create_pending(user_id, summary, identity, ttl_minutes)
     payload = {
         "status": "waiting_confirmation",
         "needs_confirm": True,
@@ -221,5 +321,6 @@ def needs_confirmation(
 __all__ = [
     "confirmation_payload", "is_block", "is_confirmed", "needs_confirmation",
     "normalize_confirmation_result",
-    "grant_confirmation", "revoke_confirmation", "redeem_confirmation",
+    "consume_confirmation", "grant_confirmation", "revoke_confirmation",
+    "redeem_confirmation",
 ]

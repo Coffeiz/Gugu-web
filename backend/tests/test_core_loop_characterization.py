@@ -12,8 +12,8 @@ PRD-LLM-1 Phase 2 前置：这两条循环各自完整实现工具调用/核实�
 不会自动撤销，混进 pytest 一个进程里跑会污染其它测试文件；这里全部改用
 `monkeypatch.setattr`，测试结束自动复原。
 
-后 5 个场景是新增的，覆盖原脚本没测到的三条防幻觉守卫（叙事/意图播报/决策拒绝）+
-空回复兜底 + 轮次上限——这几处正是合并时最容易被悄悄改坏的分支，因为两条循环里
+后续场景覆盖三条防幻觉守卫（叙事/意图播报/决策拒绝）、句末冒号续写、空回复兜底和轮次上限——
+这几处正是合并时最容易被悄悄改坏的分支，因为两条循环里
 是逐字复制的同一段判断，合并时任何一次「顺手改一下措辞/顺序」都可能让两路从此不同步。
 """
 import asyncio
@@ -886,6 +886,41 @@ async def test_intent_announce_guard_nudges_once(monkeypatch, dispatched):
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 
+async def test_colon_ended_reply_retries_without_fixed_prefix_and_shows_completion(monkeypatch, dispatched):
+    """任意开头的句末冒号都会触发一次续写；续写无需工具时仍要展示给用户。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("看一下当前在跑的定时任务，找管插画推送和每日新闻速览的：")]),
+        msg([TX("句末冒号表示下文可能尚未输出，回复应接着把说明说完整。")]),
+    ])
+    messages = [{"role": "user", "content": "检查这两个定时任务"}]
+    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+
+    ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, ai))
+
+    nudge = core.guard_locale("zh-CN").colon_nudge
+    assert any(m.get("content") == nudge for m in messages)
+    assert "看一下当前在跑的定时任务" in text
+    assert "句末冒号表示下文可能尚未输出" in text
+    assert ev["_new_round"] == 1
+    assert ev["_usage"] == 1 and errors == []
+
+
+async def test_colon_guard_does_not_expose_unverified_tool_claim_from_retry(monkeypatch, dispatched):
+    """冒号续写仍声称已查文件但没有工具回执时，不能把未核实结果显示给用户。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("看一下当前任务：")]),
+        msg([TX("我查了一下文件，发现任务写入到了个人文件夹。")]),
+    ])
+    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+
+    _ev, text, _errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "检查任务配置"}], ai,
+    ))
+
+    assert "看一下当前任务：" in text
+    assert "我查了一下文件" not in text
+
+
 async def test_intent_announce_guard_skips_questions(monkeypatch, dispatched):
     """宣告将来式但其实是在征询（带问号）→ 不该被逼，这是在等用户拍板。"""
     patch_anthropic(monkeypatch, [
@@ -898,37 +933,31 @@ async def test_intent_announce_guard_skips_questions(monkeypatch, dispatched):
     assert "要我现在去查一下项目进度吗" in text
 
 
-async def test_intent_guard_runs_after_previous_tool_round_in_chinese(monkeypatch, dispatched):
-    """前一轮调用过工具，当前轮以冒号宣告动作但零工具时，中文守卫仍必须触发。"""
+@pytest.mark.parametrize(("locale", "draft", "completion"), [
+    ("zh-CN", "看一下当前在跑的定时任务：", "目前无法确认具体任务配置，因此不会猜测写入位置。"),
+    ("en-US", "Here are the scheduled tasks:", "I can't verify their current configuration, so I won't guess their write locations."),
+])
+async def test_colon_guard_still_runs_after_a_previous_tool_round(
+    monkeypatch, dispatched, locale, draft, completion,
+):
+    """通用冒号守卫按当前轮是否调工具判断，不被同一 run 前面的工具调用挡住。"""
     patch_anthropic(monkeypatch, [
         msg([TU("get_project", "1", {})]),
-        msg([TX("接下来我会查一下项目进度：")]),
-        msg([TX("项目进度是 80%")]),
+        msg([TX(draft)]),
+        msg([TX(completion)]),
     ])
-    messages = [{"role": "user", "content": "帮我查一下项目进度"}]
-    ev, text, _errors = await drain(make_runner(locale="zh-CN")._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
-    assert len(nudges) == 1
-    assert "接下来我会查一下项目进度：" in text
-    assert "项目进度是 80%" not in text
-    assert ev["_usage"] == 1 and ev["error"] == 0
+    messages = [{"role": "user", "content": "检查当前定时任务"}]
+    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
 
+    ev, text, _errors = await drain(
+        make_runner(locale=locale)._run_anthropic("u", "sys", messages, ai)
+    )
 
-async def test_intent_guard_runs_after_previous_tool_round_in_english(monkeypatch, dispatched):
-    """前一轮调用过工具，当前轮以冒号宣告动作但零工具时，英文守卫仍必须触发。"""
-    patch_anthropic(monkeypatch, [
-        msg([TU("get_project", "1", {})]),
-        msg([TX("I will check the project progress:")]),
-        msg([TX("The project is 80% complete")]),
-    ])
-    messages = [{"role": "user", "content": "Check the project progress"}]
-    runner = make_runner(locale="en-US")
-    ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
-    english_nudge = core.guard_locale("en-US").intent_nudge
-    nudges = [m for m in messages if m.get("content") == english_nudge]
+    nudge = core.guard_locale(locale).colon_nudge
+    nudges = [m for m in messages if m.get("content") == nudge]
     assert len(nudges) == 1
-    assert "I will check the project progress:" in text
-    assert "The project is 80% complete" not in text
+    assert draft in text
+    assert completion in text
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 

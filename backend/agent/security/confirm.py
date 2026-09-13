@@ -4,6 +4,11 @@
 为了兼容现有工具和检查脚本的导入路径；安全域的调用方无需一次性迁移。
 """
 
-from agent.interactions.confirmations import is_block, is_confirmed, needs_confirmation
+from agent.interactions.confirmations import (
+    is_block,
+    is_confirmed,
+    needs_confirmation,
+    needs_target_confirmation,
+)
 
-__all__ = ["is_block", "is_confirmed", "needs_confirmation"]
+__all__ = ["is_block", "is_confirmed", "needs_confirmation", "needs_target_confirmation"]
