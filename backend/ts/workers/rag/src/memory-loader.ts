@@ -3,13 +3,17 @@ import type { RagDocument, RagSourceRecord } from "../../../packages/contracts/s
 import { assertOwnerScope, type DataAccessContext, type DataScope, type StorageReader } from "../../../packages/data-runtime/src/contracts.ts";
 import { DataRuntime } from "../../../packages/data-runtime/src/runtime.ts";
 import { buildDocuments } from "./adapters/base.ts";
+import { TtlCache } from "./ttl-cache.ts";
 
 const MEMORY_INDEX_KEY = ".agent/rag/memory-index-v1.json";
 const MEMORY_CACHE_TTL_MS = 30 * 60 * 1000;
 const MEMORY_SOURCES = new Set(["profile", "pattern", "daily", "memory"]);
-const memoryCache = new Map<string, { revision: string; documents: RagDocument[]; lastAccess: number }>();
-/* 向量文件解析缓存：key = owner:文件:向量版本，value = 内容哈希 + 解析结果 */
-const vectorFileCache = new Map<string, { hash: string; parsed: unknown }>();
+const memoryCache = new TtlCache<{ revision: string; documents: RagDocument[] }>({
+  ttlMs: MEMORY_CACHE_TTL_MS, maxEntries: 256,
+});
+/* 向量文件解析缓存：key = owner:文件:向量版本，value = 内容哈希 + 解析结果。
+ * 不过期（内容哈希校验即失效条件），仅 LRU 上限约束。 */
+const vectorFileCache = new TtlCache<{ hash: string; parsed: unknown }>({ ttlMs: Infinity, maxEntries: 8 });
 
 export type AuthorizedMemoryScope = DataScope & {
   ownerId: string;
@@ -90,16 +94,6 @@ function cacheKey(ownerId: string, scopes: AuthorizedMemoryScope[], sourceFilter
   })).digest("hex");
 }
 
-function pruneMemoryCache(now: number): void {
-  for (const [key, entry] of memoryCache) {
-    if (now - entry.lastAccess >= MEMORY_CACHE_TTL_MS) memoryCache.delete(key);
-  }
-  while (memoryCache.size > 256) {
-    const oldest = memoryCache.keys().next().value as string | undefined;
-    if (!oldest) break;
-    memoryCache.delete(oldest);
-  }
-}
 
 function memoryDocumentFromStored(ownerId: string, value: unknown): RagDocument | null {
   const row = objectValue(value);
@@ -409,10 +403,6 @@ export async function loadDocumentVectors(
     if (cached && cached.hash === hash) return cached.parsed;
     const parsed = parseJson(raw);
     vectorFileCache.set(cacheKey, { hash, parsed });
-    if (vectorFileCache.size > 8) {
-      const oldest = vectorFileCache.keys().next().value;
-      if (oldest !== undefined) vectorFileCache.delete(oldest);
-    }
     return parsed;
   };
   const memory = parseVectorMap(parseCached(memoryRaw, `${ownerId}:memory:${vectorVersion}`), vectorVersion);
@@ -461,9 +451,7 @@ export async function prepareMemory(
   const scopes = assertScopes(ownerId, input.scopes);
   const sourceFilter = String(input.sourceFilter || "all");
   const key = cacheKey(ownerId, scopes, sourceFilter);
-  const now = Date.now();
   let stageStarted = performance.now();
-  pruneMemoryCache(now);
   recordElapsed(probe, "cache_prune", stageStarted);
 
   let baseDocuments: RagDocument[] = [];
@@ -473,13 +461,10 @@ export async function prepareMemory(
     const snapshotRevision = String(input.snapshotRevision || "");
     stageStarted = performance.now();
     const cached = snapshotRevision ? memoryCache.get(key) : undefined;
-    probe.cache.owner_cache_hit = Boolean(
-      cached && cached.revision === `owner:${snapshotRevision}`
-      && now - cached.lastAccess < MEMORY_CACHE_TTL_MS,
-    );
-    if (cached && cached.revision === `owner:${snapshotRevision}` && now - cached.lastAccess < MEMORY_CACHE_TTL_MS) {
+    const ownerCacheValid = Boolean(cached && cached.revision === `owner:${snapshotRevision}`);
+    probe.cache.owner_cache_hit = ownerCacheValid;
+    if (ownerCacheValid && cached) {
       baseDocuments.push(...cached.documents);
-      cached.lastAccess = now;
       sourceNames.push("owner-cache");
     } else {
       const readStarted = performance.now();
@@ -488,7 +473,7 @@ export async function prepareMemory(
       baseDocuments.push(...loaded.documents);
       sourceNames.push(loaded.source);
       if (snapshotRevision) {
-        memoryCache.set(key, { revision: `owner:${snapshotRevision}`, documents: loaded.documents, lastAccess: now });
+        memoryCache.set(key, { revision: `owner:${snapshotRevision}`, documents: loaded.documents });
       }
     }
     recordElapsed(probe, "owner_cache_lookup", stageStarted);
@@ -513,12 +498,10 @@ export async function prepareMemory(
     const scopedCacheKey = `${key}:${createHash("sha256").update(revision).digest("hex")}`;
     stageStarted = performance.now();
     const cached = memoryCache.get(scopedCacheKey);
-    probe.cache.scoped_cache_hit = Boolean(
-      cached && cached.revision === revision && now - cached.lastAccess < MEMORY_CACHE_TTL_MS,
-    );
-    if (cached && cached.revision === revision && now - cached.lastAccess < MEMORY_CACHE_TTL_MS) {
+    const scopedCacheValid = Boolean(cached && cached.revision === revision);
+    probe.cache.scoped_cache_hit = scopedCacheValid;
+    if (scopedCacheValid && cached) {
       baseDocuments.push(...cached.documents);
-      cached.lastAccess = now;
       sourceNames.push("scope-cache");
     } else {
       const readStarted = performance.now();
@@ -529,7 +512,7 @@ export async function prepareMemory(
       const documents = loaded.flatMap((entry) => entry.documents);
       baseDocuments.push(...documents);
       sourceNames.push(...loaded.map((entry) => entry.source));
-      memoryCache.set(scopedCacheKey, { revision, documents, lastAccess: now });
+      memoryCache.set(scopedCacheKey, { revision, documents });
     }
     recordElapsed(probe, "scoped_cache_lookup", stageStarted);
     cacheRevision = [cacheRevision, revision].filter(Boolean).join("|");
@@ -565,9 +548,6 @@ export async function prepareMemory(
   stageStarted = performance.now();
   const vectors = await loadDocumentVectors(ownerId, selected, input.vectorVersion, storage, probe);
   recordElapsed(probe, "vector_load", stageStarted);
-  stageStarted = performance.now();
-  pruneMemoryCache(Date.now());
-  recordElapsed(probe, "cache_prune_final", stageStarted);
   probe.counts.vector_count = Object.keys(vectors).length;
   recordElapsed(probe, "prepare_memory_total", prepareStarted);
   return {
