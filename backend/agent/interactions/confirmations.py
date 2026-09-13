@@ -151,6 +151,7 @@ def needs_target_confirmation(
     context: Mapping[str, str | int | None] | None = None,
     ttl_minutes: int = _TOKEN_TTL_MINUTES,
     instruction: str | None = None,
+    consume_grant: bool = False,
 ) -> str | None:
     """单项和批量动作的统一确认入口；一次确认只覆盖本次精确目标集合。"""
     try:
@@ -164,6 +165,7 @@ def needs_target_confirmation(
         identity=identity,
         ttl_minutes=ttl_minutes,
         instruction=instruction,
+        consume_grant=consume_grant,
     )
 
 
@@ -176,6 +178,17 @@ def _check_grant(user_id, summary: str, identity: str | None) -> bool:
         return bool(get_redis_sync().exists(_grant_key(user_id, summary, identity)))
     except Exception:
         return False
+
+
+def consume_confirmation(user_id, summary: str, identity: str | None) -> bool | None:
+    """原子消费确认授权；返回 True=消费成功，False=无授权，None=Redis 不可用。
+
+    授权值只是存在标记，单条 Redis DEL 已原子完成检查并消费，避免并发调用都先 EXISTS 放行。
+    """
+    try:
+        return bool(get_redis_sync().delete(_grant_key(user_id, summary, identity)))
+    except Exception:
+        return None
 
 
 def grant_confirmation(user_id, summary: str, identity: str | None = None,
@@ -263,17 +276,29 @@ def needs_confirmation(
     identity: str | None = None,
     ttl_minutes: int = _TOKEN_TTL_MINUTES,
     instruction: str | None = None,
+    consume_grant: bool = False,
 ) -> str | None:
     """返回 None=已确认可执行（授权命中时自动注入 confirm）；否则返回需确认结果。
 
-    授权按（用户, 摘要, 身份范围）记录：同一能力范围内后续调用无需重复确认，
-    直到授权过期。确认码只用于网页/IM/终端把"用户已同意"传达回服务端，
+    授权按（用户, 摘要, 身份范围）记录。默认在 TTL 内复用；consume_grant=True
+    时用原子删除消费单次授权。确认码只用于网页/IM/终端把"用户已同意"传达回服务端，
     不参与模型上下文校验。
     """
-    if _check_grant(user_id, summary, identity):
-        args["confirm"] = True
-        return None
-    code = _create_pending(user_id, summary, identity, ttl_minutes)
+    if consume_grant:
+        consumed = consume_confirmation(user_id, summary, identity)
+        if consumed:
+            args["confirm"] = True
+            return None
+        code = (
+            _create_pending(user_id, summary, identity, ttl_minutes)
+            if consumed is False
+            else None
+        )
+    else:
+        if _check_grant(user_id, summary, identity):
+            args["confirm"] = True
+            return None
+        code = _create_pending(user_id, summary, identity, ttl_minutes)
     payload = {
         "status": "waiting_confirmation",
         "needs_confirm": True,
@@ -296,5 +321,6 @@ def needs_confirmation(
 __all__ = [
     "confirmation_payload", "is_block", "is_confirmed", "needs_confirmation",
     "normalize_confirmation_result",
-    "grant_confirmation", "revoke_confirmation", "redeem_confirmation",
+    "consume_confirmation", "grant_confirmation", "revoke_confirmation",
+    "redeem_confirmation",
 ]

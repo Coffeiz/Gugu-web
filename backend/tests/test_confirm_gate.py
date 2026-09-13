@@ -10,6 +10,8 @@
 """
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -154,6 +156,63 @@ def test_confirmation_uses_explicit_ttl(user_a):
     assert _confirm_code(again) == payload["confirm_code"]
     assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) == 30
     assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) is None
+
+
+def test_one_shot_confirmation_grant_is_consumed_atomically(user_a):
+    from agent.interactions import confirmations
+
+    summary = "允许任务读写用户沙箱"
+    identity = "target:one-shot-test"
+    assert confirmations.grant_confirmation(user_a.id, summary, identity)
+    barrier = Barrier(3)
+
+    def consume():
+        barrier.wait()
+        return confirmations.consume_confirmation(user_a.id, summary, identity)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        calls = [executor.submit(consume) for _ in range(2)]
+        barrier.wait()
+        outcomes = [call.result() for call in calls]
+
+    assert sorted(outcomes) == [False, True]
+
+
+def test_one_shot_confirmation_gate_consumes_before_replay(user_a):
+    from agent.interactions import confirmations
+
+    summary = "允许任务读写用户沙箱"
+    identity = "target:one-shot-gate"
+    assert confirmations.grant_confirmation(user_a.id, summary, identity)
+
+    first_args = {}
+    assert confirmations.needs_confirmation(
+        first_args, summary, user_a.id, identity=identity, consume_grant=True,
+    ) is None
+    assert first_args["confirm"] is True
+
+    second = confirmations.needs_confirmation(
+        {}, summary, user_a.id, identity=identity, consume_grant=True,
+    )
+    assert _blocked(second)
+
+
+def test_one_shot_confirmation_fails_closed_when_redis_is_unavailable(user_a, monkeypatch):
+    from agent.interactions import confirmations
+
+    class UnavailableRedis:
+        def delete(self, _key):
+            raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr(confirmations, "get_redis_sync", lambda: UnavailableRedis())
+    result = confirmations.needs_confirmation(
+        {}, "允许任务读写用户沙箱", user_a.id,
+        identity="target:redis-unavailable", consume_grant=True,
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "confirmation_unavailable"
+    assert payload["needs_confirm"] is True
 
 
 def test_revoking_confirmation_allows_reauthorization(user_a):

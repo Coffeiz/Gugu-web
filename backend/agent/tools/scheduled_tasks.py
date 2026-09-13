@@ -360,7 +360,7 @@ async def _update_scheduled_task(db, user_id, args: dict):
             confirmation_action = "authorize_scheduled_task_filesystem"
             confirmation_targets = {"task_id": task_ids}
             from agent.interactions.confirmations import (
-                revoke_confirmation,
+                consume_confirmation,
                 target_confirmation_identity,
             )
 
@@ -379,17 +379,11 @@ async def _update_scheduled_task(db, user_id, args: dict):
                 if grant is not None:
                     active.append(task.id)
             if len(active) == len(tasks):
-                for task in tasks:
-                    await grant_scheduled_task_filesystem_access(
-                        db, user_id, task.id, granted_by="askuser",
-                    )
-                await db.flush()
-                if not revoke_confirmation(
+                if consume_confirmation(
                     user_id,
                     confirmation_summary,
-                    identity=confirmation_identity,
-                ):
-                    await db.rollback()
+                    confirmation_identity,
+                ) is None:
                     return {"error": "无法安全完成沙箱授权，未保留本次授权，请重新确认后重试"}
                 return {
                     "success": True,
@@ -406,6 +400,7 @@ async def _update_scheduled_task(db, user_id, args: dict):
                 context=confirmation_context,
                 ttl_minutes=10,
                 instruction="确认后，只为列出的每个定时任务分别创建完整用户沙箱授权；不包含宿主机目录，也不会授权其他任务。",
+                consume_grant=True,
             )
             if blocked is not None:
                 return blocked
@@ -414,13 +409,6 @@ async def _update_scheduled_task(db, user_id, args: dict):
                     db, user_id, task.id, granted_by="askuser",
                 )
             await db.flush()
-            if not revoke_confirmation(
-                user_id,
-                confirmation_summary,
-                identity=confirmation_identity,
-            ):
-                await db.rollback()
-                return {"error": "无法安全完成沙箱授权，未保留本次授权，请重新确认后重试"}
             changed_ids = [task_id for task_id in task_ids if task_id not in active]
         else:
             changed_ids = []
