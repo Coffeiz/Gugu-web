@@ -35,8 +35,11 @@ export class TtlCache<V> {
       this.entries.delete(key);
       return undefined;
     }
-    /* LRU 触及即刷新（删除重插保持 Map 插入序 = 访问序） */
+    /* LRU 触及即刷新（删除重插保持 Map 插入序 = 访问序）；滑动 TTL 同步续期，活跃条目不过期 */
     this.entries.delete(key);
+    if (Number.isFinite(this.ttlMs)) {
+      entry.expiresAt = current + this.ttlMs;
+    }
     this.entries.set(key, entry);
     return entry.value;
   }

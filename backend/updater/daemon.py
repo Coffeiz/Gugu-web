@@ -733,11 +733,17 @@ class UpdateDaemon:
                 present = True
             except Exception:
                 present = False
-            ready = present and bool((await self._compose_text(["ps", "-q", "app"])).strip())
+            # 更新中断后 app 常处于停止状态，而这正是最需要回滚的时刻；
+            # ps -aq 允许 stopped 容器，只要求 Compose 项目里 app 容器仍然存在。
+            try:
+                app_present = bool((await self._compose_text(["ps", "-aq", "app"])).strip())
+            except Exception:
+                app_present = False
+            ready = present and app_present
             result: dict[str, Any] = {
                 "ready": ready, "task_id": task["id"], "target_image": target,
                 "target_version": task.get("previous_version", "unknown"),
-                "detail": "上一版本镜像仍在本机，可安全恢复" if ready else "上一版本镜像不存在或 app 服务不可用",
+                "detail": "上一版本镜像仍在本机，可安全恢复" if ready else "上一版本镜像不存在或 app 容器不可用",
             }
             if ready:
                 token = secrets.token_urlsafe(48)
@@ -764,7 +770,15 @@ class UpdateDaemon:
             )
             if self._task_status() in ACTIVE:
                 raise RuntimeError("已有 Docker 更新任务正在执行")
-            current = await self._current_release()
+            try:
+                current = await self._current_release()
+            except Exception:
+                # app 已停止（更新中断后的典型状态）时无法探针；当前版本信息直接取自失败的任务，
+                # 不让「容器未运行」堵住回滚入口。
+                current = {
+                    "version": str(task.get("version") or "unknown"),
+                    "image": str(task.get("app_image") or task.get("previous_image") or ""),
+                }
             rollback_task = {
                 "id": str(uuid.uuid4()), "operation": "rollback", "version": str(task.get("previous_version") or "unknown"),
                 "status": "pending", "stage": "pending", "progress": 0,
@@ -774,6 +788,7 @@ class UpdateDaemon:
                 "rollback_target_image": target,
                 "rollback_supported": True,
                 "sandboxd_was_running": bool(task.get("sandboxd_was_running")),
+                "sandboxd_updated": bool(task.get("sandboxd_updated")),
                 "events": [{"stage": "pending", "at": _utc_now()}],
             }
             self.state["task"] = rollback_task
@@ -792,7 +807,9 @@ class UpdateDaemon:
                 raise ValueError("回滚镜像不受支持")
             await self._command(["docker", "image", "inspect", target_image], timeout=15)
             task = self.state.get("task")
-            sandboxd = bool(task.get("sandboxd_updated")) if isinstance(task, dict) else False
+            task_state = task if isinstance(task, dict) else {}
+            sandboxd = bool(task_state.get("sandboxd_updated"))
+            restored_version = str(task_state.get("version") or "unknown")
             services = ["app"]
             if sandboxd:
                 services.append("sandboxd")
@@ -802,7 +819,7 @@ class UpdateDaemon:
             env["GUGU_WEB_IMAGE"] = target_image
             await self._compose_text(["up", "-d", "--no-deps", "--force-recreate", *services], env=env, timeout=180)
             if await self._wait_app_healthy():
-                await self._record_current_release(str(task.get("previous_version") or "unknown"), target)
+                await self._record_current_release(restored_version, target_image)
                 await self._finish_task(task_id, "succeeded", None, "已恢复上一版本，健康检查通过。")
             else:
                 await self._finish_task(task_id, "rollback_required", "rollback_health_check_failed", "回滚后的健康检查未通过；保留当前容器和备份。")

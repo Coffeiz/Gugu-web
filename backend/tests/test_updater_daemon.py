@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -172,3 +173,145 @@ def test_challenge_cannot_be_replayed_by_another_operator(tmp_path, monkeypatch)
         daemon._consume_challenge(token, "different-admin", "update", "v1.2.2", digest)
 
     assert daemon.state["challenges"] == []
+
+
+def _seed_failed_update_task(previous_image: str, new_image: str) -> dict:
+    """模拟健康检查失败后的更新任务：回滚目标=previous_image，失败态=rollback_required。"""
+    return {
+        "schema": 1, "candidate": None, "history": [], "challenges": [],
+        "task": {
+            "id": "update-1", "operation": "update", "version": "v1.2.2",
+            "manifest_sha256": "d" * 64, "app_image": new_image,
+            "status": "rollback_required", "stage": "health_checking", "progress": 90,
+            "message": "新版本未通过健康检查", "failure_code": "health_check_failed",
+            "requested_by": "admin-test",
+            "created_at": "2026-09-14T00:00:00+00:00", "updated_at": "2026-09-14T00:00:00+00:00",
+            "previous_image": previous_image, "previous_version": "v1.2.1",
+            "previous_sandboxd_image": previous_image,
+            "sandboxd_was_running": True, "sandboxd_updated": True,
+            "rollback_supported": True, "events": [],
+        },
+    }
+
+
+def _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy):
+    async def docker_json(_args, *, timeout=30):
+        return [{}]
+
+    async def command(_args, *, timeout, env=None):
+        return b""
+
+    monkeypatch.setattr(daemon, "_compose_text", compose_text)
+    monkeypatch.setattr(daemon, "_current_release", current_release)
+    monkeypatch.setattr(daemon, "_docker_json", docker_json)
+    monkeypatch.setattr(daemon, "_command", command)
+    monkeypatch.setattr(daemon, "_wait_app_healthy", healthy)
+    # 跳过回滚任务开头的 3s 防抖与轮询间隔，测试内即时完成。
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr("updater.daemon.asyncio.sleep", lambda _d: real_sleep(0))
+
+
+def _trace_rollback(monkeypatch, daemon):
+    """包一层 _run_rollback 以便在测试中等待后台任务真正结束。"""
+    done = asyncio.Event()
+    original_run = daemon._run_rollback
+
+    async def traced(task_id, target_image):
+        await original_run(task_id, target_image)
+        done.set()
+
+    monkeypatch.setattr(daemon, "_run_rollback", traced)
+    return done
+
+
+@pytest.mark.asyncio
+async def test_rollback_success_restores_app_and_sandboxd(tmp_path, monkeypatch):
+    """回滚成功路径：app+sandboxd 一起恢复，记录的是被恢复版本而非 previous_version。"""
+    old_image = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+    new_image = "docker.io/coffeiz/gugu-web@sha256:" + "b" * 64
+    daemon, _ = make_daemon(tmp_path, monkeypatch, state=_seed_failed_update_task(old_image, new_image))
+
+    rolled_back = {"done": False}
+
+    async def current_release():
+        if rolled_back["done"]:
+            return {"version": "v1.2.1", "image": old_image}
+        return {"version": "v1.2.2", "image": new_image}
+
+    async def healthy():
+        rolled_back["done"] = True
+        return True
+
+    compose_calls: list[tuple[list, dict | None]] = []
+
+    async def compose_text(args, *, env=None, timeout=30):
+        compose_calls.append((list(args), dict(env) if env else None))
+        if args[:2] == ["ps", "-q"] and args[-1] == "app":
+            return "running-container\n"
+        if args[:2] == ["ps", "-aq"] and args[-1] == "app":
+            return "running-container\n"
+        return "ok"
+
+    _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy)
+    done = _trace_rollback(monkeypatch, daemon)
+
+    preflight = await daemon._rollback_preflight({"operator": "admin-test"})
+    assert preflight["ready"] is True
+    result = await daemon._rollback({"challenge": preflight["challenge"], "operator": "admin-test"})
+    assert result["accepted"] is True
+    await asyncio.wait_for(done.wait(), timeout=5)
+
+    task = daemon.state["task"]
+    assert task["status"] == "succeeded"
+    assert task["operation"] == "rollback"
+    assert task["version"] == "v1.2.1"
+    stopped = [args[-1] for args, _env in compose_calls if args[:1] == ["stop"]]
+    assert stopped == ["app", "sandboxd"]
+    up_args, up_env = next((args, env) for args, env in compose_calls if args[:1] == ["up"])
+    assert up_args == ["up", "-d", "--no-deps", "--force-recreate", "app", "sandboxd"]
+    assert up_env["GUGU_WEB_IMAGE"] == old_image
+    # 成功后记录的是被恢复的版本（回滚任务的 version 字段），不是 previous_version。
+    assert daemon.state["current"] == {"version": "v1.2.1", "image": old_image}
+
+
+@pytest.mark.asyncio
+async def test_rollback_allows_stopped_app(tmp_path, monkeypatch):
+    """更新中断后 app 已停止（最需要回滚的场景）也必须能进入并完成回滚。"""
+    old_image = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+    new_image = "docker.io/coffeiz/gugu-web@sha256:" + "b" * 64
+    daemon, _ = make_daemon(tmp_path, monkeypatch, state=_seed_failed_update_task(old_image, new_image))
+
+    async def current_release():
+        raise RuntimeError("当前一体化 app 容器未运行")
+
+    async def healthy():
+        return True
+
+    compose_calls: list[tuple[list, dict | None]] = []
+
+    async def compose_text(args, *, env=None, timeout=30):
+        compose_calls.append((list(args), dict(env) if env else None))
+        if args[:2] == ["ps", "-q"] and args[-1] == "app":
+            return ""  # app 已停止
+        if args[:2] == ["ps", "-aq"] and args[-1] == "app":
+            return "stopped-container\n"  # 容器仍存在
+        return "ok"
+
+    _install_rollback_fakes(daemon, monkeypatch, compose_text, current_release, healthy)
+    done = _trace_rollback(monkeypatch, daemon)
+
+    preflight = await daemon._rollback_preflight({"operator": "admin-test"})
+    assert preflight["ready"] is True
+    assert preflight["target_version"] == "v1.2.1"
+    result = await daemon._rollback({"challenge": preflight["challenge"], "operator": "admin-test"})
+    assert result["accepted"] is True
+    # 回滚任务的 previous_* 记录失败任务中的当前（新）版本信息。
+    assert result["task"]["version"] == "v1.2.1"
+    assert result["task"]["previous_version"] == "v1.2.2"
+    await asyncio.wait_for(done.wait(), timeout=5)
+
+    assert daemon.state["task"]["status"] == "succeeded"
+    up_args, up_env = next((args, env) for args, env in compose_calls if args[:1] == ["up"])
+    assert up_args == ["up", "-d", "--no-deps", "--force-recreate", "app", "sandboxd"]
+    assert up_env["GUGU_WEB_IMAGE"] == old_image
+    assert daemon.state["current"] == {"version": "v1.2.1", "image": old_image}
