@@ -504,6 +504,39 @@ function applyVectorMap(state: State, request: { vectors?: Record<string, number
   state.vectorVersion = String(request.vector_version ?? "");
 }
 
+/* ── 延迟落盘：sync 响应先行，快照写入挪到空闲窗口 ──
+ * 搜索只依赖内存索引；persist 服务的崩溃恢复可以延后——若在延迟窗口内崩溃，
+ * 下次冷启动加载旧快照 + 按旧水位重放 delta，重复行被词法指纹以近零成本吸收，
+ * 墓碑视界防删除丢失。追边合并：多次请求只落最后一次；串行防重入。 */
+let pendingPersist: { state: State; probe?: WorkerProbe } | null = null;
+let persistRunning = false;
+let persistTimer: NodeJS.Timeout | null = null;
+
+function schedulePersist(state: State, probe?: WorkerProbe): void {
+  pendingPersist = { state, probe };
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void runPendingPersist();
+  }, 1500);
+  persistTimer.unref?.();
+}
+
+async function runPendingPersist(): Promise<void> {
+  if (persistRunning || !pendingPersist) return;
+  persistRunning = true;
+  const job = pendingPersist;
+  pendingPersist = null;
+  try {
+    await persist(job.state, job.probe);
+  } catch (error) {
+    console.error(`GUGU_RAG_DEFERRED_PERSIST_FAILED ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    persistRunning = false;
+    if (pendingPersist) void runPendingPersist();
+  }
+}
+
 function validateStoredVectorOwner(request: { vector_cache?: { owner_id: string } }): void {
   if (request.vector_cache) assertWorkerOwner(String(request.vector_cache.owner_id || ""));
 }
@@ -744,13 +777,11 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     probe.counts.applied_deletes = deletesAcc.length;
     probe.counts.passes = passes;
     if (upsertsAcc.length || deletesAcc.length) {
+      // 落盘延迟到空闲窗口：搜索只依赖内存索引，响应不必等 64MB 快照写完。
       emitBuildProbe("sync_index_from_database", "persist_start", operationStarted, {
-        document_count: state.documents.length,
+        document_count: state.documents.length, deferred: 1,
       });
-      await persist(state, probe);
-      emitBuildProbe("sync_index_from_database", "persist_complete", operationStarted, {
-        serialized_bytes: Number(probe.counts.serialized_bytes || 0),
-      });
+      schedulePersist(state, probe);
     }
     recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
     emitBuildProbe("sync_index_from_database", "completed", operationStarted, {
