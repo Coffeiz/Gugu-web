@@ -1,5 +1,6 @@
 from agent.security.core_guards import (
     _could_be_tool_progress,
+    _ends_with_colon,
     _is_tool_progress_only,
     _looks_like_narration,
     _announces_intent,
@@ -33,16 +34,18 @@ def test_narration_guard_ignores_normal_conversation_looked_at_phrase():
 
 def test_narration_guard_keeps_object_context_for_read_claims():
     assert _looks_like_narration("我看到了文件内容，正文已经整理好了。")
+    assert _looks_like_narration("我查了一下文件，发现配置写入到了个人目录。")
 
 
-def test_colon_ended_file_action_is_guarded_in_chinese_and_english():
-    assert _announces_intent("先把文件移动到目标文件夹：", "zh-CN")
-    assert _announces_intent("先把文件移动到目标文件夹:", "zh-CN")
-    assert _announces_intent("Let me move the file to the target folder:", "en-US")
-    assert _announces_intent("Let me move the file to the target folder：", "en-US")
+def test_any_colon_terminated_reply_is_detected_without_a_fixed_prefix():
+    assert _ends_with_colon("先把文件移动到目标文件夹：")
+    assert _ends_with_colon("Let me move the file to the target folder:")
+    assert _ends_with_colon("Here are the results：")
+    assert _ends_with_colon("说明：   ")
+    assert not _ends_with_colon("说明如下。")
 
 
-def test_colon_ended_explanation_is_not_treated_as_action_intent():
+def test_colon_continuation_is_separate_from_action_intent_detection():
     assert not _announces_intent("下面是本次测试的说明：")
     assert not _announces_intent("Here is the explanation:")
 

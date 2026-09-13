@@ -88,6 +88,21 @@ def test_update_stage_batch_todos_schema():
     assert _issues("update_stage", {"todos": [{"text": "写稿"}]}) == []  # schema 层允许，handler 层拒绝
 
 
+def test_scheduled_task_batch_update_is_limited_to_filesystem_authorization():
+    assert _issues("update_scheduled_task", {
+        "task_ids": [4, 12], "filesystem_authorized": True,
+    }) == []
+    assert _issues("update_scheduled_task", {
+        "task_ids": [4, 12], "filesystem_authorized": False,
+    }) == []
+    assert _issues("update_scheduled_task", {"task_ids": [4, 12]})
+    assert _issues("update_scheduled_task", {
+        "task_ids": [4, 12], "filesystem_authorized": True, "enabled": False,
+    })
+    assert _issues("update_scheduled_task", {"task_ids": [4, 4], "filesystem_authorized": True})
+    assert _issues("update_scheduled_task", {"task_id": 4, "task": "不应混用"})
+
+
 def test_search_conversations_keeps_recent_without_search_term():
     assert _issues("search_conversations", {}) == []
     assert _issues("search_conversations", {"query": "文件架构"}) == []

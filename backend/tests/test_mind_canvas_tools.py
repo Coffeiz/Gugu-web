@@ -426,6 +426,21 @@ async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db
     assert await db.scalar(select(MindNode).where(MindNode.ref_type == "project", MindNode.ref_id == rollback_project_id)) is None
 
 
+async def test_canvas_batch_rejects_mixed_valid_and_missing_delete_note_ids(db, user_a):
+    canvas = await _canvas(db, user_a)
+
+    result = await _canvas_batch(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "request_id": "batch-delete-note-missing-id",
+        "operations": [
+            {"kind": "delete_note", "node_id": 12},
+            {"kind": "delete_note"},
+        ],
+    })
+
+    assert result == {"error": "第 2 个删除便签操作必须提供正整数 node_id"}
+
+
 async def test_batch_idempotency_conflict_on_different_payload(db, user_a):
     """同 request_id + 不同 payload → idempotency_conflict=True。"""
     canvas = await _canvas(db, user_a)

@@ -295,7 +295,8 @@ class Tool:
                  platforms: tuple[str, ...] = (),
                  related_skills: tuple[str, ...] = (),
                  source: str = "builtin", schema_version: int = 1,
-                 repeat_safe: bool = False):
+                 repeat_safe: bool = False,
+                 batch_confirmation: bool = False):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -305,6 +306,8 @@ class Tool:
         # 需要用户确认但并非不可逆的操作（例如创建可删除的用户 Skill）。
         # 与 destructive 分开，避免把“需要确认”错误等同于“删除/永久破坏”。
         self.requires_confirmation = requires_confirmation
+        # 显式声明批量分支也使用精确目标集合确认；静态守卫检查统一 helper。
+        self.batch_confirmation = batch_confirmation
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
         # mutates=True 的调用时才允许重跑完整 execution（见 scheduled_tasks.py 的
         # mutated 判断）。以前靠猜工具名前缀（create_/update_/delete_/...），

@@ -1,7 +1,7 @@
-"""删除确认门测试：destructive 工具「缺 confirm 必被拒、资源必须还在」。
+"""确认门测试：不可逆工具与批量操作必须遵守目标范围确认。
 
 三层验证（商用就绪评审 P0-3）：
-1. 全部 5 个 destructive 工具：不带 confirm 调用 → 返回 needs_confirm 拦截、资源原封不动；
+1. 关键 destructive 工具：不带 confirm 调用 → 返回 needs_confirm 拦截、资源原封不动；
 2. 单带 confirm=true 仍须拒绝；用户确认（确认码兑换出服务端授权）后，运行侧按原参数
    重投这次调用即可执行——模型不携带、不复述凭证，也不必自己再调用一次；
 3. dispatch 层绊线：假造一个漏接确认门的 destructive 工具，无 confirm 的调用返回了
@@ -9,10 +9,14 @@
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
 """
 import json
-from app.core.tz import now_utc
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
-from app.models import CalendarEvent, Client, File, Project, ScheduledTask
+import pytest
+
+from app.core.tz import now_utc
+from app.models import CalendarEvent, Client, File, Folder, Project, ScheduledTask
 
 from agent.tools.calendar import _delete_event
 from agent.tools.clients import _delete_client
@@ -77,6 +81,29 @@ async def test_permanent_delete_requires_confirm(db, user_a):
     assert await db.get(File, f.id) is not None
 
 
+async def test_permanent_delete_all_confirms_when_trash_contains_only_files(db, user_a):
+    file = await _mk(db, File(
+        user_id=user_a.id, display_name="仅文件", ext="md",
+        storage_key="trash/only-file.md", deleted_at=now_utc(),
+    ))
+
+    result = await _permanent_delete(db, user_a.id, {"all": True})
+
+    assert _blocked(result)
+    assert await db.get(File, file.id) is not None
+
+
+async def test_permanent_delete_all_confirms_when_trash_contains_only_folders(db, user_a):
+    folder = await _mk(db, Folder(
+        user_id=user_a.id, name="仅文件夹", deleted_at=now_utc(),
+    ))
+
+    result = await _permanent_delete(db, user_a.id, {"all": True})
+
+    assert _blocked(result)
+    assert await db.get(Folder, folder.id) is not None
+
+
 # ── 2. 单带 confirm=true 必拒；服务端授权命中后才放行（凭证不经过模型）────────
 
 async def test_delete_client_rejects_confirm_without_grant(db, user_a):
@@ -131,6 +158,63 @@ def test_confirmation_uses_explicit_ttl(user_a):
     assert confirmations.redeem_confirmation(user_a.id, payload["confirm_code"]) is None
 
 
+def test_one_shot_confirmation_grant_is_consumed_atomically(user_a):
+    from agent.interactions import confirmations
+
+    summary = "允许任务读写用户沙箱"
+    identity = "target:one-shot-test"
+    assert confirmations.grant_confirmation(user_a.id, summary, identity)
+    barrier = Barrier(3)
+
+    def consume():
+        barrier.wait()
+        return confirmations.consume_confirmation(user_a.id, summary, identity)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        calls = [executor.submit(consume) for _ in range(2)]
+        barrier.wait()
+        outcomes = [call.result() for call in calls]
+
+    assert sorted(outcomes) == [False, True]
+
+
+def test_one_shot_confirmation_gate_consumes_before_replay(user_a):
+    from agent.interactions import confirmations
+
+    summary = "允许任务读写用户沙箱"
+    identity = "target:one-shot-gate"
+    assert confirmations.grant_confirmation(user_a.id, summary, identity)
+
+    first_args = {}
+    assert confirmations.needs_confirmation(
+        first_args, summary, user_a.id, identity=identity, consume_grant=True,
+    ) is None
+    assert first_args["confirm"] is True
+
+    second = confirmations.needs_confirmation(
+        {}, summary, user_a.id, identity=identity, consume_grant=True,
+    )
+    assert _blocked(second)
+
+
+def test_one_shot_confirmation_fails_closed_when_redis_is_unavailable(user_a, monkeypatch):
+    from agent.interactions import confirmations
+
+    class UnavailableRedis:
+        def delete(self, _key):
+            raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr(confirmations, "get_redis_sync", lambda: UnavailableRedis())
+    result = confirmations.needs_confirmation(
+        {}, "允许任务读写用户沙箱", user_a.id,
+        identity="target:redis-unavailable", consume_grant=True,
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "confirmation_unavailable"
+    assert payload["needs_confirm"] is True
+
+
 def test_revoking_confirmation_allows_reauthorization(user_a):
     from agent.interactions import confirmations
 
@@ -160,10 +244,52 @@ async def test_batch_delete_grant_is_summary_bound(db, user_a):
     wrong = await _delete_client(db, user_a.id, {"client_ids": [first.id]})
     assert _blocked(wrong)
 
-    result = await _delete_client(db, user_a.id, args)
+    # 目标顺序不影响同一批授权；变更目标集合则不能复用确认。
+    result = await _delete_client(db, user_a.id, {"client_ids": [second.id, first.id]})
     assert result["success"] and result["deleted_count"] == 2
     assert await db.get(Client, first.id) is None
     assert await db.get(Client, second.id) is None
+
+
+def test_target_confirmation_identity_is_exact_and_order_independent():
+    from agent.interactions.confirmations import target_confirmation_identity
+
+    original = target_confirmation_identity(
+        "delete_scheduled_task", {"task_id": [12, 4]}, context={"scope": "user_sandbox"},
+    )
+    reordered = target_confirmation_identity(
+        "delete_scheduled_task", {"task_id": [4, 12]}, context={"scope": "user_sandbox"},
+    )
+    other_target = target_confirmation_identity(
+        "delete_scheduled_task", {"task_id": [4, 13]}, context={"scope": "user_sandbox"},
+    )
+    other_scope = target_confirmation_identity(
+        "delete_scheduled_task", {"task_id": [4, 12]}, context={"scope": "workspace"},
+    )
+
+    assert original == reordered
+    assert original != other_target
+    assert original != other_scope
+
+
+def test_target_confirmation_rejects_duplicate_targets(user_a):
+    from agent.interactions.confirmations import needs_target_confirmation
+
+    result = needs_target_confirmation(
+        {}, "批量操作", user_a.id,
+        action="delete_client", targets={"client_id": [1, 1]},
+    )
+
+    assert json.loads(result)["error"] == "目标集合不能包含重复 ID"
+
+
+def test_target_confirmation_rejects_empty_or_invalid_target_groups():
+    from agent.interactions.confirmations import target_confirmation_identity
+
+    with pytest.raises(ValueError, match="非空 ID 列表"):
+        target_confirmation_identity("delete_example", {"item_id": [], "other_id": [2]})
+    with pytest.raises(ValueError, match="目标 ID 仅支持非空字符串或整数"):
+        target_confirmation_identity("delete_example", {"item_id": [True]})
 
 
 # ── 3. dispatch 绊线：漏接确认门的 destructive 工具必须触发 CRITICAL ──────────

@@ -569,7 +569,7 @@ async def _persist_push_im(
     无 Redis 路由命中（隔夜冷启 / 第一次推送）→ 按 scope 回查数据库复用所属 peer 的
     session；都查不到再新建。Redis TTL 12h，保证「推送后 12h 内回复」能路由回此会话。
 
-    files：execution 阶段 send_file 产出的 _artifact 列表（含 attach_id/name/ext）。一起写进
+    files：execution 阶段 send_file 产出的 _artifact 列表（含 file_id 或 attach_id）。一起写进
     ConversationMessage.files，这样 web 端打开该 session 时也能看到图片——只发到 IM 群、不
     落库的话，web 历史里这条推送只有文字、没有附件。"""
     from app.core import redis as R
@@ -1162,7 +1162,7 @@ async def _deliver_web_notification(uid, title: str, text: str) -> tuple[bool, s
 
 
 async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> tuple[int, int]:
-    """把 execution 阶段 send_file 暂存下来的附件（_artifact，含 attach_id）依次发到指定 IM 平台。
+    """把 execution 阶段 send_file 产生的附件（聊天附件或文件库文件）依次发到指定 IM 平台。
     返回 (成功张数, 总张数)——调用方据此判断是否要把渠道结果从"已发送"降级，不能像以前
     那样只看文字发没发，图片全挂了也照样标"已发送"（一次性任务因此被当成功删掉）。
     每张独立 best-effort：单张失败不影响其它张继续尝试，但最终统计必须如实反映失败。"""
@@ -1176,37 +1176,17 @@ async def _deliver_im_files(user_id, platform: str, target: dict | None, files: 
         "platform_user_id": reach.get("puid"),
         "chat_type": reach.get("chat_type") or ("group" if reach.get("chat_id") else "c2c"),
         "context_token": reach.get("context_token", ""),
+        "owner_user_id": user_id,
     }
-    from app.core import chat_attach
-    from agent.im.replies import send_file
+    from agent.im.files import send_files
 
-    ok_count = 0
-    total = 0
-    for f in files:
-        attach_id = (f or {}).get("attach_id")
-        total += 1
-        if not attach_id:
-            print(f"[sched] {platform} 发附件失败: _artifact 缺 attach_id", flush=True)
-            continue
-        try:
-            meta = await chat_attach.get_meta(user_id, attach_id)
-            if not meta:
-                print(f"[sched] {platform} 发附件失败: 找不到 attach_id 对应的 meta（可能已过期）", flush=True)
-                continue
-            name = f.get("name") or meta.get("name") or "图片"
-            ext = f.get("ext") or meta.get("ext") or ""
-            fname = f"{name}.{ext}" if ext else name
-            ok = await send_file(
-                payload,
-                storage_key=meta["storage_key"], ext=ext, display_name=name, fname=fname,
-            )
-            if ok:
-                ok_count += 1
-            print(f"[sched] {platform} 发附件 {redact(name)}: {'ok' if ok else '失败'}", flush=True)
-        except Exception as e:
-            diag_log("app.scheduled_tasks.deliver_im_files", e)
-            print(f"[sched] {platform} 发附件出错: {redact(type(e).__name__)}", flush=True)
-    return ok_count, total
+    try:
+        result = await send_files(payload, files)
+    except Exception as e:
+        diag_log("app.scheduled_tasks.deliver_im_files", e)
+        print(f"[sched] {platform} 发附件出错: {redact(type(e).__name__)}", flush=True)
+        return 0, len(files)
+    return result.sent, result.requested
 
 
 # ── IM 可触达地址（worker 收到消息时记一份，主动推送时用）──────────────────────

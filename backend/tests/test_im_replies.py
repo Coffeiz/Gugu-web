@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 
@@ -650,6 +652,53 @@ async def test_unknown_platform_file_reply_does_not_open_storage(capsys):
     await files.send_files({"platform": "unknown"}, [{"file_id": 42}])
 
     assert "暂不支持发文件" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_send_files_supports_both_artifacts_and_enforces_file_ownership(
+    db, user_a, user_b, monkeypatch
+):
+    from agent.im import files
+    from app.core import chat_attach
+    from app.models import File
+
+    owned = File(
+        user_id=user_a.id, display_name="库内图片", ext="png", storage_key="library/owned.png",
+    )
+    foreign = File(
+        user_id=user_b.id, display_name="他人图片", ext="png", storage_key="library/foreign.png",
+    )
+    db.add_all([owned, foreign])
+    await db.commit()
+    await db.refresh(owned)
+    await db.refresh(foreign)
+
+    monkeypatch.setattr(
+        chat_attach, "get_meta_many",
+        AsyncMock(return_value={"attach-1": {"storage_key": "staged/one.png", "name": "暂存图片", "ext": "png"}}),
+    )
+    send_file = AsyncMock(return_value=True)
+    monkeypatch.setattr(files, "send_file", send_file)
+
+    result = await files.send_files(
+        {
+            "platform": "qq", "owner_user_id": user_a.id, "chat_type": "c2c",
+            "platform_user_id": "target-1", "channel_id": "bot-1",
+        },
+        [
+            {"file_id": owned.id},
+            {"attach_id": "attach-1"},
+            {"file_id": foreign.id},
+            {"file_id": 999999},
+            {"attach_id": "expired"},
+            {"name": "缺少文件标识"},
+        ],
+    )
+
+    assert (result.requested, result.sent, result.failed) == (6, 2, 4)
+    assert [call.kwargs["storage_key"] for call in send_file.await_args_list] == [
+        "library/owned.png", "staged/one.png",
+    ]
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,53 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 `_compact_schema` 仅作为 Phase 8 迁移审计辅助，不参与 provider 输出；所有新工具必须直接声明源码规范结构。简介模式的字段签名由该结构自动生成，不得另写一份字段目录。修改后运行
 `PYTHONPATH=. .venv/bin/python scripts/audit_tool_schemas.py`，并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
 
+## 批量操作、权限校验与确认门
+
+批量参数必须先判断它表示的是“多个独立目标/操作”，还是单次操作携带的集合数据（例如邮件附件）。只有前者才属于批量操作；不能因为字段名是数组就误把普通附件当成多次操作。
+
+批量路径在写入前必须完成整批预检：校验数组形状、数量上限、重复目标、当前用户归属、父级资源关系和适用的权限策略。目标中有任意一项不存在、越权或不符合状态要求时，整批拒绝；不得先改有效项再报错。需要用户确认的路径必须等整批预检通过后再展示一张确认卡，不能逐项弹卡，也不能只确认第一项。
+
+有单项和批量分支的确认操作统一使用 `agent.interactions.confirmations.needs_target_confirmation()`（工具内通过 `confirm.needs_target_confirmation()` 调用），以同一套动作与目标集合身份处理：
+
+```python
+blocked = confirm.needs_target_confirmation(
+    args,
+    "将对以下项目执行不可逆操作（共 2 项）",
+    user_id,
+    action="delete_example",
+    targets={"item_id": item_ids},
+    context={"parent_id": parent_id},  # 有父级/容器边界时必须纳入
+)
+if blocked is not None:
+    return blocked
+```
+
+规则：
+
+- `action` 使用稳定的业务动作名；`targets` 按资源类别提供完整目标 ID 集合；有容器、父级或权限 scope 时放入 `context`。不能只把数量或名称放进确认身份。
+- helper 生成顺序无关、按资源类别和上下文隔离的身份；单项和多项都传入完整目标集合。同一目标集换顺序可复用确认，不同目标、动作、资源类别或父级不能复用。重复、空目标或非法 ID 会在写入前拒绝。
+- 确认摘要应说明影响、目标数量和可逆性；若列出名称，必须按稳定 ID 排序，避免同一目标集仅因输入顺序不同就重复弹确认。
+- 预检和确认都必须发生在任何持久化写入之前。确认后的重放必须重新读取并校验目标；批量写入应处于同一事务中，失败整体回滚。无法保证原子性时，必须返回逐项结果并明确部分成功。
+- 批量授权的一次确认只覆盖请求中明确列出的主体和同一权限范围。确认后应为每个主体写入独立授权记录；禁止把批次确认升级为用户全局授权，也禁止顺带授权列表外资源。不同权限范围应拆分确认。
+- 普通可撤销写操作按目标逐项执行现有归属/权限校验，不因“批量”而自动增加确认门；例如文件/文件夹移入回收站仍由 `filesystem_policy.py` 和文件服务检查当前主体的写权限。不可逆清空回收站则必须逐目标集合确认。
+
+有批量确认分支的工具必须在 `Tool(...)` 上声明 `batch_confirmation=True`。`scripts/check_confirm_gate.py` 会静态检查其 handler 是否沿调用链使用 `needs_target_confirmation()`；新增批量确认工具必须同步加该标记和回归测试。当前内置路径包括：
+
+| 工具 | 批量目标 | 确认/授权范围 |
+| --- | --- | --- |
+| `delete_project` | `project_ids` | 所有项目及其文件 |
+| `delete_event` | `event_ids` | 所有活动及其提醒 |
+| `delete_client` | `client_ids` | 所有客户 |
+| `permanent_delete` | `file_ids`、`folder_ids` 或 `all=true` | 确认时的完整回收站目标快照 |
+| `delete_scheduled_task` | `task_ids` | 所有指定定时任务 |
+| `update_scheduled_task` | `task_ids` + `filesystem_authorized` | 一次确认，逐任务授予/撤销；不支持同批混入其他更新字段 |
+| `canvas_delete` | `canvas_ids` | 所有画布及其内容 |
+| `canvas_delete_note` | `notes` | 所有画布便签及对应画布上下文 |
+| `canvas_disconnect` | `relation_ids` | 指定画布内的所有关系 |
+| `canvas_batch` | `operations[]` 中的 `delete_note` | 只确认本批实际删除的便签 |
+
+新增或修改批量权限门时，测试至少覆盖：未确认不产生任何写入；确认只对完整目标集合有效且不受数组顺序影响；目标变化/重复/越权时不能复用或扩大授权；混合有效与无效目标时整批拒绝；确认后结果符合事务或逐项结果契约。
+
 ## 正文编辑统一约定
 
 所有支持修改正文的 Agent 工具都使用统一的行级编辑契约，避免不同工具分别实现一套定位规则。当前 `note_update` 和 `edit_file` 均采用 `mode: "line_edit"` + `line_edits`；以后新增正文编辑工具也必须复用 `backend/agent/tools/text_edit.py`，不得重新引入独立的整篇覆盖模式。

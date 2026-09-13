@@ -84,7 +84,7 @@ def stage_voice_sync(
 
 
 async def send_files(payload: dict, files: list) -> FileSendResult:
-    """把工具产出的文件按平台发回，并返回实际发送结果。"""
+    """校验 artifact 归属后统一发送 file_id/attach_id 文件并返回结果。"""
     result = FileSendResult(requested=len(files))
     if not files:
         return result
@@ -100,34 +100,60 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
         result.reason = "这个平台暂时不能接收文件，我放到文件库里了，你从网页打开吧～"
         return result
 
-    import app.db.session as db_session
+    from uuid import UUID
+
     from sqlalchemy import select
 
+    import app.db.session as db_session
     from app.core import chat_attach
+    from app.core.ownership import get_owned
     from app.models import File
 
-    db_session.ensure_engine()
-
-    # 先批量解析元数据，避免多附件逐个建立 Session / Redis 请求。
-    file_ids = []
-    for item in files:
-        raw_file_id = item.get("file_id")
-        if raw_file_id:
-            try:
-                file_ids.append(int(raw_file_id))
-            except (TypeError, ValueError):
-                continue
-    file_records = {}
-    if file_ids:
-        async with db_session._SessionLocal() as db:
-            rows = await db.scalars(select(File).where(File.id.in_(file_ids)))
-            file_records = {record.id: record for record in rows.all()}
-
     owner = payload.get("owner_user_id")
-    attach_ids = [item.get("attach_id") for item in files if item.get("attach_id")]
+    try:
+        owner_id = owner if isinstance(owner, UUID) else UUID(str(owner))
+    except (TypeError, ValueError, AttributeError):
+        owner_id = None
+    file_ids = set()
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        raw_file_id = item.get("file_id")
+        if isinstance(raw_file_id, bool) or not isinstance(raw_file_id, (int, str)):
+            continue
+        if isinstance(raw_file_id, str) and not raw_file_id.isdecimal():
+            continue
+        try:
+            normalized_id = int(raw_file_id)
+        except (TypeError, ValueError):
+            continue
+        if normalized_id > 0:
+            file_ids.add(normalized_id)
+
+    file_records = {}
+    if file_ids and owner_id:
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as db:
+            # 属主过滤的批量预载保留常规多附件性能；get_owned 复用 identity map，
+            # 同时为缺失/越权 ID 执行统一归属检查，越权时仍能记安全事件。
+            (await db.scalars(
+                select(File).where(File.id.in_(file_ids), File.user_id == owner_id)
+            )).all()
+            for file_id in file_ids:
+                record = await get_owned(db, File, file_id, owner)
+                if record is not None and record.deleted_at is None:
+                    file_records[file_id] = record
+
+    attach_ids = [
+        item.get("attach_id") for item in files
+        if isinstance(item, dict) and item.get("attach_id")
+    ]
     attach_meta = await chat_attach.get_meta_many(owner, attach_ids) if owner else {}
 
     for file_item in files:
+        if not isinstance(file_item, dict):
+            result.failed += 1
+            continue
         file_id = file_item.get("file_id")
         attach_id = file_item.get("attach_id")
         try:
@@ -164,10 +190,7 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
         except Exception as exc:
             result.failed += 1
             result.reason = "附件发送失败，你可以去网页或文件库查看。"
-            print(
-                f"[im] 发文件出错 {file_id or attach_id}: {type(exc).__name__}",
-                flush=True,
-            )
+            print(f"[im] 发文件出错: {type(exc).__name__}", flush=True)
     if result.failed and not result.reason:
         result.reason = "附件没有成功发出，你可以去网页或文件库查看。"
     return result

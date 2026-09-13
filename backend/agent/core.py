@@ -327,6 +327,7 @@ from agent.security.core_guards import (
     _looks_like_narration, _NARRATION_NUDGE,
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
+    _ends_with_colon,
     _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
     guard_locale,
 )
@@ -867,9 +868,11 @@ class LLMRunner:
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
-        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0
+        any_tool_called = False
+        narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
         guard_retry_pending = False
+        colon_retry_pending = False
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
         # 连续相同调用熔断状态：signature = (工具名, 归一化参数 JSON)，跨任务轮与核实轮计数
@@ -1386,6 +1389,7 @@ class LLMRunner:
             if result.tool_calls:
                 if guard_retry_pending:
                     guard_retry_pending = False
+                    colon_retry_pending = False
                     guard_retry_buf.clear()
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
@@ -2042,9 +2046,21 @@ class LLMRunner:
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
             if guard_retry_pending:
-                # 守卫后的模型仍未真实调用工具：不把“我刚才只是……”之类的
-                # 守卫回应作为第二条用户可见消息输出。
+                # 冒号续写守卫允许模型补完不需要工具的回复；其余守卫后的纯文字
+                # 仍视为尚未执行的操作承诺，不把“我刚才只是……”显示成第二条回复。
+                if (
+                    colon_retry_pending
+                    and _final_text.strip()
+                    and not _ends_with_colon(_final_text)
+                    and not _looks_like_narration(_final_text, self.locale)
+                    and not _announces_intent(_final_text, self.locale)
+                    and not _is_tool_progress_only(_final_text, self.locale)
+                    and _requires_tools is not True
+                ):
+                    async for _line in genstream.typed_stream(_final_text):
+                        yield _line
                 guard_retry_pending = False
+                colon_retry_pending = False
                 guard_retry_buf.clear()
                 if reasoning_state is not None:
                     await reasoning_state.completed()
@@ -2078,6 +2094,19 @@ class LLMRunner:
                 guard_retry_pending = True
                 guard_retry_buf.clear()
                 messages.append_batch(driver.build_guard_followup(result, guard_locale(self.locale).intent_nudge))
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                continue
+            # 句末冒号是通用的未完结信号，不限定固定开头；续写时允许模型补完说明，
+            # 若用户请求需要工具，则提醒中明确要求实际调用。只自动续一次。
+            if (not round_tool_called and not verify_mode and colon_retry < 1
+                    and _ends_with_colon(_final_text)):
+                colon_retry += 1
+                colon_retry_pending = True
+                guard_retry_pending = True
+                guard_retry_buf.clear()
+                messages.append_batch(driver.build_guard_followup(
+                    result, guard_locale(self.locale).colon_nudge,
+                ))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
