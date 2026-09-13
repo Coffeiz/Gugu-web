@@ -11,9 +11,10 @@ from agent.context.serialization import knowledge_context_block
 
 
 _log = logging.getLogger("agent.rag")
-# 自动召回是可选增强；给首次唤醒/冷索引和多来源查询留出完整的 5 秒窗口，
-# 仍不允许它无限期阻塞主 Agent。
-AUTO_RECALL_TIMEOUT_SECONDS = 5.0
+# 自动召回是可选增强；给首次唤醒/冷索引和多来源查询留出完整的窗口，
+# 仍不允许它无限期阻塞主 Agent。10s 的依据：冷启动（磁盘快照恢复 ~4.1s
+# + 增量同步 + 各环节）实测最重 ~4.7s，5s 窗口会把它误判成超时。
+AUTO_RECALL_TIMEOUT_SECONDS = 10.0
 MAX_BACKGROUND_RECALL_TASKS = 32
 _background_recall_tasks: set[asyncio.Task] = set()
 
