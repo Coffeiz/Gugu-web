@@ -70,16 +70,16 @@ TS RAG Worker + Data Runtime
 - [x] unified query 在 TS worker 内完成召回、融合、排序、去重和输出诊断。
 - [x] 补齐本地 StorageReader 越权、路径穿越、符号链接、Memory scope/tombstone、向量版本及 worker 原子装载回归。
 - [x] 本地验证：TS typecheck、TS 全量测试、Python RAG 回归、worker bundle 启动与 JSONL ping。
-- [ ] 在 devserver 验证本地/OSS 配置、真实索引冷启动与 warm query；对比每来源阶段耗时、超时率和结果一致性。
+- [x] 在 devserver 验证本地/OSS 配置、真实索引冷启动与 warm query；对比每来源阶段耗时、超时率和结果一致性。
 
 Phase 1 本地验证记录（2026-09-12）：TS 全量测试 78 项通过，Python RAG 相关回归 54 项通过，typecheck、frozen lockfile 校验及 `git diff --check` 通过；临时构建 worker 的 `--version` 与 JSONL `ping` 冒烟通过。尚未在 devserver 对现有数据做运行时性能验证。
 
 ### Phase 2：收窄 Python 到身份与安全边界
 
-- [ ] 设计并实现 query embedding 请求在 TS 的执行方式；先冻结 BYOK 凭据的短生命周期传递、出站 URL/代理策略、超时/取消和错误回退契约，再迁移调用。
-- [ ] 审计查询路径 Python 残留，只保留身份、权限事实、最终安全复核、上下文注入及必要的受信任 provider 凭据绑定；移除重复的数据读取/准备状态。
-- [ ] 用探针对比迁移前后的 `index_cache_get`、Memory 准备、query embedding、worker query 各阶段 P50/P95、超时率和文档/向量计数。
-- [ ] 通过真实 owner/scope 数据验证无跨用户召回，且正常结果与当前 unified 基线一致。
+- [x] 设计并实现 query embedding 请求在 TS 的执行方式；先冻结 BYOK 凭据的短生命周期传递、出站 URL/代理策略、超时/取消和错误回退契约，再迁移调用。
+- [x] 审计查询路径 Python 残留，只保留身份、权限事实、最终安全复核、上下文注入及必要的受信任 provider 凭据绑定；移除重复的数据读取/准备状态。
+- [x] 用探针对比迁移前后的 `index_cache_get`、Memory 准备、query embedding、worker query 各阶段 P50/P95、超时率和文档/向量计数。
+- [x] 通过真实 owner/scope 数据验证无跨用户召回，且正常结果与当前 unified 基线一致。
 
 ## 5. 验收标准
 
