@@ -234,6 +234,12 @@ html[data-theme][data-family] .file-card-btn:hover {
   color: var(--control-fg-strong);
   background: var(--control-bg-hover);
 }
+/* 暗色下 --control-bg-hover 是 7% 白罩（透明叠加）：按钮悬浮在缩略图/照片上时
+   深色控制底直接消失，看起来像 hover 把底色变透明。与 .del:hover 同一口径——
+   以 surface-card-solid 为底叠亮色，保持实底。亮色 hover 是白罩提亮，不受影响。 */
+html[data-theme='dark'][data-family] .file-card-btn:hover {
+  background: color-mix(in srgb, white 7%, var(--surface-card-solid));
+}
 html[data-theme][data-family] .file-card-btn.del:hover {
   color: var(--status-danger);
   background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid));
