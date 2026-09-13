@@ -12,13 +12,13 @@ class GuardLocale:
     action_request: Pattern[str]
     refusal: Pattern[str]
     intent: Pattern[str]
-    colon_intent: Pattern[str]
     question: Pattern[str]
     tool_progress_prefixes: tuple[str, ...]
     narration_nudge: str
     intent_nudge: str
     decision_nudge: str
     tool_required_nudge: str
+    colon_nudge: str
 
 
 from .guard_locales.en_US import EN_US

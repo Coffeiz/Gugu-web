@@ -31,7 +31,12 @@ def _announces_intent(text: str, locale: str | None = None) -> bool:
     policy = get_guard_locale(locale)
     if policy.question.search(text):
         return False
-    return bool(policy.intent.search(text)) or bool(policy.colon_intent.search(text.strip()))
+    return bool(policy.intent.search(text))
+
+
+def _ends_with_colon(text: str) -> bool:
+    """句末冒号表示回复可能未完成，不依赖固定的开头措辞。"""
+    return bool(re.search(r"[:：]\s*$", text or ""))
 
 
 def _guard_text(text: str) -> str:
