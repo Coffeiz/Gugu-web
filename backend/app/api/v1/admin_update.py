@@ -46,7 +46,7 @@ async def update_status(request: Request, db: AsyncSession = Depends(get_db)):
         task_id = str(task.get("id") or "")
         terminal_status = str(task.get("status"))
         description = f"Docker 更新任务 {task_id} 结束：{terminal_status}，版本 {str(task.get('version') or 'unknown')[:32]}"
-        existing = await db.scalar(select(AuditLog.id).where(
+        existing = await db.scalar(select(AuditLog.id).where(  # orm-exempt: 幂等去重读取，审计写入已走 _audit helper，更新器域暂无 Service
             AuditLog.action == "docker_update_result",
             AuditLog.description == description,
         ).limit(1))

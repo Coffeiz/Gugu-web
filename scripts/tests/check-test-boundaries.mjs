@@ -18,6 +18,7 @@ const known = file => (
   /^backend\/tests\/test_[^/]+\.py$/.test(file)
   || /^backend\/test_[^/]+\.py$/.test(file)
   || /^backend\/scripts\/diagnostics\/test_[^/]+\.py$/.test(file)
+  || /^scripts\/quality\/test_[^/]+\.py$/.test(file)
   || /^backend\/ts\/.+\.test\.ts$/.test(file)
   || /^loopscope\/backend\/tests\/test_[^/]+\.py$/.test(file)
   || /^loopscope\/.+\.test\.ts$/.test(file)
