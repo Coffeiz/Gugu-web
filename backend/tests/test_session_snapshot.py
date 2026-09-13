@@ -12,15 +12,14 @@ from agent.context.session_snapshot import (
     ensure_snapshot,
     snapshot_is_usable,
     snapshot_context,
-    reminder_message,
     snapshot_message,
-    current_time_text,
     update_baseline_snapshot,
     initialize_snapshot,
     invalidate_snapshot,
     workspace_binding_key,
     workspace_snapshot_block,
 )
+from agent.context.dynamic_tail import current_time_text
 from agent.context.assembly import (
     NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder,
     newly_appended, stance_digest,
@@ -37,7 +36,7 @@ def test_current_time_tail_includes_date_and_current_clock_time(monkeypatch):
             value = cls(2026, 8, 26, 16, 10, tzinfo=tz)
             return value
 
-    monkeypatch.setattr("agent.context.session_snapshot.datetime", FixedDatetime)
+    monkeypatch.setattr("agent.context.dynamic_tail.datetime", FixedDatetime)
 
     assert current_time_text(timezone.utc) == "2026-08-26（星期三）16:10"
 
@@ -253,9 +252,8 @@ async def test_snapshot_serializes_zoneinfo_timezone_for_json():
     assert snapshot_context(session)["user_tz"].key == "Asia/Shanghai"
 
 
-def test_reminder_and_time_messages_have_stable_boundary():
-    message = reminder_message("固定 session snapshot")
-    assert message == {"role": "user", "content": "[system-reminder]\n固定 session snapshot\n[/system-reminder]"}
+def test_snapshot_message_has_stable_boundary():
+    # reminder_message 已随 313029bce 移出 canonical（时间提醒走 dynamic_tail），不再测试
     snapshot = snapshot_message("固定 session snapshot")
     assert snapshot["role"] == "system"
     assert snapshot["content"].startswith("[system-reminder]\n")

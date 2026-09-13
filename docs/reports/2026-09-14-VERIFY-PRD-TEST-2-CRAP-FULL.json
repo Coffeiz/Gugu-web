@@ -4,8 +4,8 @@
   "mode": "full",
   "status": "failed",
   "date": "2026-09-14",
-  "created_at": "2026-09-13T18:04:15.294883+00:00",
-  "commit": "2210eec674803f0e6b1d5f71bdf96a6f6e3774a4",
+  "created_at": "2026-09-13T18:31:40.921771+00:00",
+  "commit": "313029bce0116c745c7dfec522e2e73f36f1bed7",
   "worktree_dirty": true,
   "tools": {
     "python": "3.14.3",
@@ -124,9 +124,9 @@
   "runs": [
     {
       "language": "python",
-      "status": "passed",
-      "exit_code": 0,
-      "duration_ms": 152886,
+      "status": "failed",
+      "exit_code": 1,
+      "duration_ms": 152174,
       "command": "python -m pytest -q --disable-warnings --cov=agent --cov=app --cov-branch --cov-report=json:<TEMP>（全量测试套件）",
       "scopes": []
     },
@@ -134,7 +134,7 @@
       "language": "typescript",
       "status": "failed",
       "exit_code": 1,
-      "duration_ms": 4469,
+      "duration_ms": 4551,
       "command": "corepack pnpm exec vitest run --coverage.enabled --coverage.provider=v8 --coverage.include=src/** --coverage.reporter=json --coverage.reportsDirectory=<TEMP>（全量测试套件）",
       "scopes": []
     }
@@ -867,8 +867,8 @@
     {
       "source": "backend/agent/context/session_snapshot.py",
       "function": "snapshot_context",
-      "start_line": 199,
-      "end_line": 229,
+      "start_line": 157,
+      "end_line": 187,
       "domain": "全量扫描（backend/agent + backend/app）",
       "layer": "全量测试套件覆盖率（手动）",
       "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
@@ -5015,8 +5015,8 @@
       "tests": [],
       "test_association": "pending_manual",
       "cc": 29,
-      "coverage": 0.710526,
-      "crap": 49.3997,
+      "coverage": 0.526316,
+      "crap": 118.3846,
       "risk": "高"
     },
     {
@@ -7100,8 +7100,8 @@
       "tests": [],
       "test_association": "pending_manual",
       "cc": 50,
-      "coverage": 0.0,
-      "crap": 2550.0,
+      "coverage": 0.888889,
+      "crap": 53.4294,
       "risk": "高"
     },
     {
@@ -11277,6 +11277,12 @@
   ],
   "errors": [
     {
+      "language": "python",
+      "kind": "failed",
+      "exit_code": 1,
+      "error_type": null
+    },
+    {
       "language": "typescript",
       "kind": "failed",
       "exit_code": 1,
@@ -11284,11 +11290,11 @@
     }
   ],
   "summary": {
-    "functions_total": 3385,
+    "functions_total": 3384,
     "complexity_hotspots": 454,
     "risk_high": 454,
     "risk_medium": 288,
-    "risk_low": 2643,
+    "risk_low": 2642,
     "mutants_total": null,
     "mutants_killed": null,
     "mutants_survived": null,
@@ -11296,5 +11302,5 @@
     "mutants_error": null,
     "equivalent_marked": null
   },
-  "duration_ms": 179800
+  "duration_ms": 179662
 }
