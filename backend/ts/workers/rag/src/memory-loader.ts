@@ -351,17 +351,20 @@ async function readScopedDocuments(
   return { documents: buildMemoryDocuments(ownerId, scope, records), revision, source: `scope:${revision}` };
 }
 
-function snapshotCovers(text: string, snapshot: string): boolean {
-  const normalized = Array.from(String(text || "").trim().replace(/\s+/gu, ""));
-  const context = String(snapshot || "").replace(/\s+/gu, "");
-  if (!normalized.length || !context) return false;
-  const joined = normalized.join("");
-  if (context.includes(joined)) return true;
-  const minimum = Math.max(80, Math.floor(normalized.length * 0.7));
-  for (let size = normalized.length; size >= minimum; size -= 1) {
-    if (context.includes(normalized.slice(0, size).join(""))) return true;
-  }
-  return false;
+function normalizeWhitespace(text: string): string {
+  return String(text || "").replace(/\s+/gu, "");
+}
+
+function snapshotCovers(text: string, normalizedContext: string): boolean {
+  const joined = String(text || "").trim().replace(/\s+/gu, "");
+  if (!joined.length || !normalizedContext.length) return false;
+  // 前缀包含是单调的：若长度 k 的前缀被快照包含，则更短的前缀必然也被包含。
+  // 因此「存在长度 ≥ minimum 的被包含前缀」等价于「minimum 长度的前缀被包含」，
+  // 一次 includes 即可——原实现逐字符回退 30% 长度、每步全量扫快照，
+  // 是 warm 召回 memory 准备段的最大热点（800 文档 × 快照 ≈ GB 级扫描）。
+  const minimum = Math.max(80, Math.floor(joined.length * 0.7));
+  const prefix = joined.length > minimum ? joined.slice(0, minimum) : joined;
+  return normalizedContext.includes(prefix);
 }
 
 function parseVectorMap(value: unknown, vectorVersion: string): Record<string, { v?: unknown; t?: unknown }> {
@@ -532,8 +535,9 @@ export async function prepareMemory(
   recordElapsed(probe, "scope_filter", stageStarted);
   probe.counts.scope_authorized_documents = scopeAuthorized.length;
   stageStarted = performance.now();
+  const normalizedSnapshot = normalizeWhitespace(input.snapshotText);
   const selected = scopeAuthorized.filter((document) =>
-    !snapshotCovers(String(document.content || ""), input.snapshotText));
+    !snapshotCovers(String(document.content || ""), normalizedSnapshot));
   recordElapsed(probe, "snapshot_dedup_filter", stageStarted);
   probe.counts.snapshot_excluded_documents = scopeAuthorized.length - selected.length;
   probe.counts.selected_documents = selected.length;
