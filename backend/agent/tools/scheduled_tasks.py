@@ -372,12 +372,30 @@ async def _update_scheduled_task(db, user_id, args: dict):
             names = "、".join(task.name for task in tasks[:10])
             if len(tasks) > 10:
                 names += f"等 {len(tasks)} 个"
+            confirmation_summary = (
+                f"允许以下定时任务读写整个用户沙箱：{names}（共 {len(tasks)} 个，"
+                "包含 /workspace、/personal、/project）"
+            )
+            confirmation_context = {"grant_policy": "one_shot_v1"}
+            confirmation_action = "authorize_scheduled_task_filesystem"
+            confirmation_targets = {"task_id": task_ids}
+            from agent.interactions.confirmations import (
+                revoke_confirmation,
+                target_confirmation_identity,
+            )
+
+            confirmation_identity = target_confirmation_identity(
+                confirmation_action,
+                confirmation_targets,
+                context=confirmation_context,
+            )
             blocked = confirm.needs_target_confirmation(
                 args,
-                f"允许以下定时任务读写整个用户沙箱：{names}（共 {len(tasks)} 个，包含 /workspace、/personal、/project）",
+                confirmation_summary,
                 user_id,
-                action="authorize_scheduled_task_filesystem",
-                targets={"task_id": task_ids},
+                action=confirmation_action,
+                targets=confirmation_targets,
+                context=confirmation_context,
                 ttl_minutes=10,
                 instruction="确认后，只为列出的每个定时任务分别创建完整用户沙箱授权；不包含宿主机目录，也不会授权其他任务。",
             )
@@ -387,6 +405,14 @@ async def _update_scheduled_task(db, user_id, args: dict):
                 await grant_scheduled_task_filesystem_access(
                     db, user_id, task.id, granted_by="askuser",
                 )
+            await db.flush()
+            if not revoke_confirmation(
+                user_id,
+                confirmation_summary,
+                identity=confirmation_identity,
+            ):
+                await db.rollback()
+                return {"error": "无法安全完成沙箱授权，未保留本次授权，请重新确认后重试"}
             changed_ids = [task_id for task_id in task_ids if task_id not in active]
         else:
             changed_ids = []

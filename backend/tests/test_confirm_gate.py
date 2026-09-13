@@ -14,7 +14,7 @@ import logging
 import pytest
 
 from app.core.tz import now_utc
-from app.models import CalendarEvent, Client, File, Project, ScheduledTask
+from app.models import CalendarEvent, Client, File, Folder, Project, ScheduledTask
 
 from agent.tools.calendar import _delete_event
 from agent.tools.clients import _delete_client
@@ -77,6 +77,29 @@ async def test_permanent_delete_requires_confirm(db, user_a):
     res = await _permanent_delete(db, user_a.id, {"file_id": f.id})
     assert _blocked(res)
     assert await db.get(File, f.id) is not None
+
+
+async def test_permanent_delete_all_confirms_when_trash_contains_only_files(db, user_a):
+    file = await _mk(db, File(
+        user_id=user_a.id, display_name="仅文件", ext="md",
+        storage_key="trash/only-file.md", deleted_at=now_utc(),
+    ))
+
+    result = await _permanent_delete(db, user_a.id, {"all": True})
+
+    assert _blocked(result)
+    assert await db.get(File, file.id) is not None
+
+
+async def test_permanent_delete_all_confirms_when_trash_contains_only_folders(db, user_a):
+    folder = await _mk(db, Folder(
+        user_id=user_a.id, name="仅文件夹", deleted_at=now_utc(),
+    ))
+
+    result = await _permanent_delete(db, user_a.id, {"all": True})
+
+    assert _blocked(result)
+    assert await db.get(Folder, folder.id) is not None
 
 
 # ── 2. 单带 confirm=true 必拒；服务端授权命中后才放行（凭证不经过模型）────────

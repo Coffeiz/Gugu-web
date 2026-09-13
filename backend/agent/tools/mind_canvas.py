@@ -925,10 +925,15 @@ async def _canvas_batch(db, user_id, args: dict):
 
     if has_delete_note:
         from agent.security import confirm
-        batch_note_ids = sorted(
-            operation.get("node_id") for operation in operations
-            if isinstance(operation, dict) and operation.get("kind") == "delete_note"
-        )
+        batch_note_ids = []
+        for index, operation in enumerate(operations):
+            if not isinstance(operation, dict) or operation.get("kind") != "delete_note":
+                continue
+            node_id = operation.get("node_id")
+            if isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0:
+                return {"error": f"第 {index + 1} 个删除便签操作必须提供正整数 node_id"}
+            batch_note_ids.append(node_id)
+        batch_note_ids.sort()
         blocked = confirm.needs_target_confirmation(
             args,
             f"将删除 {len(batch_note_ids)} 条画布便签，并从画布移除其视图项",

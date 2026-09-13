@@ -95,7 +95,10 @@ async def _permanent_delete(db, user_id, args: dict):
             f"将永久删除回收站里全部 {deleted_count} 个文件和 {len(folders)} 个文件夹，删除后无法恢复",
             user_id,
             action="permanent_delete_trash",
-            targets={"file_id": trash_file_ids, "folder_id": trash_folder_ids},
+            targets={
+                **({"file_id": trash_file_ids} if trash_file_ids else {}),
+                **({"folder_id": trash_folder_ids} if trash_folder_ids else {}),
+            },
             context={"all": 1},
         )
         if blocked is not None:

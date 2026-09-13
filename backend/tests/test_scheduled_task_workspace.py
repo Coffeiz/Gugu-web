@@ -144,6 +144,54 @@ async def test_batch_task_filesystem_authorization_confirms_once_and_grants_only
     )).scalars().all()
     assert {grant.subject_id for grant in grants} == {str(task_id) for task_id in target_ids}
 
+    for task in tasks[:2]:
+        assert await revoke_scheduled_task_filesystem_access(db, user_a.id, task.id) is True
+    await db.commit()
+
+    reauthorization = await _update_scheduled_task(db, user_a.id, args)
+    reauthorization_payload = (
+        reauthorization if isinstance(reauthorization, dict) else json.loads(reauthorization)
+    )
+    assert reauthorization_payload["needs_confirm"] is True
+
+
+@pytest.mark.asyncio
+async def test_batch_task_authorization_does_not_accept_legacy_reusable_confirmation(
+    db, user_a, enable_filesystem_authorization,
+):
+    from agent.interactions.confirmations import (
+        grant_confirmation,
+        target_confirmation_identity,
+    )
+
+    tasks = [
+        ScheduledTask(user_id=user_a.id, name=f"旧授权任务 {index}", payload="", cron="0 9 * * *")
+        for index in range(2)
+    ]
+    db.add_all(tasks)
+    await db.commit()
+    for task in tasks:
+        await db.refresh(task)
+
+    task_ids = [task.id for task in tasks]
+    summary = (
+        f"允许以下定时任务读写整个用户沙箱：{'、'.join(task.name for task in tasks)}"
+        f"（共 {len(tasks)} 个，包含 /workspace、/personal、/project）"
+    )
+    old_identity = target_confirmation_identity(
+        "authorize_scheduled_task_filesystem",
+        {"task_id": task_ids},
+    )
+    assert grant_confirmation(user_a.id, summary, identity=old_identity, ttl_minutes=10)
+
+    result = await _update_scheduled_task(db, user_a.id, {
+        "task_ids": task_ids,
+        "filesystem_authorized": True,
+    })
+    payload = result if isinstance(result, dict) else json.loads(result)
+    assert payload["needs_confirm"] is True
+    assert all(task.filesystem_authorization_grant_id is None for task in tasks)
+
 
 @pytest.mark.asyncio
 async def test_batch_task_filesystem_authorization_prevalidates_all_targets(
