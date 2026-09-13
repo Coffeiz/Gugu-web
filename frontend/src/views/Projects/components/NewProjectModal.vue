@@ -82,16 +82,14 @@
                             <span class="tpl-name">{{ tpl.name }}</span>
                             <span class="tpl-stages-preview">{{ tpl.stages.map((s: any) => s.label ?? s).join(' · ') }}</span>
                           </button>
-                          <span v-else class="rename-sizer" @click.stop>
-                            <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                            <input
-                              class="rename-input-inline"
-                              v-model="renameText"
-                              v-enter="() => commitRename(tpl.id)"
-                              @keyup.esc="renamingId = null"
-                              ref="renameInputRef"
-                            />
-                          </span>
+                          <input
+                            v-else
+                            class="tpl-name-input tpl-rename-input"
+                            v-model="renameText"
+                            v-enter="() => commitRename(tpl.id)"
+                            @keyup.esc="renamingId = null"
+                            ref="renameInputRef"
+                          />
                           <!-- 编辑/确认按钮（始终显示） -->
                           <button
                             class="tpl-rename-btn"
@@ -704,8 +702,9 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 .tpl-apply:hover { background: rgba(123,127,178,0.1); }
 .tpl-name { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
 .tpl-stages-preview {
-  font-size: 10px; color: var(--text-secondary); opacity: 0.7;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;
+  display: block; min-width: 0; max-width: 160px;
+  font-size: 10px; line-height: 1.5; color: var(--text-secondary); opacity: 0.7;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tpl-rename-btn, .tpl-del-btn {
   width: 22px; height: 22px; border-radius: 5px; border: none; background: none;
@@ -715,14 +714,12 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 .tpl-rename-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
 .tpl-del-btn:hover { background: rgba(200,90,90,0.1); color: #c85a5a; }
 
-/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用）；
-   这里只覆盖本组件专属的字号——ghost/input 靠 font:inherit 跟随，scoped 选择器优先级更高，安全叠加 */
-.rename-sizer { font-size: 12px; font-family: var(--font-sans); }
 .tpl-name-input { height: 28px;
   flex: 1; height: 26px; padding: 0 8px; border-radius: 6px;
   border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.8);
   font-size: 12px; font-family: var(--font-sans); outline: none;
 }
+.tpl-rename-input { min-width: 0; }
 .tpl-name-input:focus { border-color: rgba(123,127,178,0.4); }
 
 .tpl-divider { height: 1px; background: rgba(0,0,0,0.07); margin: 4px 0; }
