@@ -2,13 +2,13 @@
 
 > 状态：Phase 0–4 已有实现记录；Phase 5 待缺口收敛与验收
 > 创建：2026-09-09
-> 更新：2026-09-13
+> 更新：2026-09-13（补记查询侧 delta sync 恢复层；Phase 5 清单对齐实现现状）
 > 所属层：RAG / Source Projection / TypeScript Worker
 > 前置 PRD：[`PRD-RAG-7-TS全链路检索分阶段迁移.md`](./PRD-RAG-7-TS全链路检索分阶段迁移.md)
 > 关联规范：[`RAG 与 Knowledge 架构`](../agent/06-RAG-AND-KNOWLEDGE.md)
 > 关联代码：`backend/agent/rag/`、`backend/agent/events/`、`backend/ts/workers/rag/`
 
-> 架构边界（2026-09-13）：TS Data Runtime 已承担查询期数据库索引及已接入来源的只读加载，Memory/受限文件读取通过 `StorageReader`；Python 负责身份认证、授权校验与索引写侧编排。本 PRD 仅定义业务变更后的 source projection 持久化、增量写入和 worker patch/recovery，不约束或否定 RAG-10 的 TS 查询期取数能力。
+> 架构边界（2026-09-13）：TS Data Runtime 已承担查询期数据库索引及已接入来源的只读加载，Memory/受限文件读取通过 `StorageReader`；Python 负责身份认证、授权校验与索引写侧编排。本 PRD 仅定义业务变更后的 source projection 持久化、增量写入和 worker patch/recovery，不约束或否定 RAG-10 的 TS 查询期取数能力。写侧 doc-patch 是常态主路径；查询侧 `sync_index_from_database`（按 chunk 表水位增量补差）是官方恢复层，职责划分见 §8.2，不因查询侧具备自愈能力而豁免写侧的合并正确性要求。
 
 ## 0. 一句话目标
 
@@ -292,20 +292,31 @@ Knowledge、Memory 和其他来源的向量缓存继续保持各自边界，不�
 
 ### 8.2 事件丢失
 
-MVP 可以继续使用进程内合并队列，但必须增加以下恢复机制之一：
+MVP 使用进程内合并队列 + durable outbox。**已知的实现现状（2026-09-13 核对）**：内存队列与 outbox 对同一 `(owner, source_type)` 都只保留最后一条事件的 `source_id`，被覆盖的中间文档 ID 不会走写侧 doc-patch。
+
+该现状由**查询侧增量自同步**兜底（官方恢复层，非隐式行为）：TS worker 的 `sync_index_from_database` 按 `knowledge_index_entries` 的 chunk 表水位（watermark）只读取变更行并 patch 内存/磁盘索引，查询路径发现 revision 落后于 DB projection 时先同步再检索；水位缺失或超出墓碑视界时回退全量装载（`fallback_full`）。因此被合并丢弃的文档 ID 的最坏后果是「写侧少推一次 patch」，最终一致性由查询前自愈保证，不产生用户可见陈旧。
+
+写侧与查询侧的分工：
+
+```text
+写侧 doc-patch（主路径）：事件驱动、低延迟，把变更推到 worker
+查询侧 delta sync（恢复层）：冷启动/重启/事件丢失后的 revision 漂移自愈
+```
+
+恢复机制仍须满足以下之一（现状为 durable outbox）：
 
 - 持久化 dirty marker，记录 owner、source_type、source_id 和目标版本；或
 - 使用可重放的索引 outbox，在业务事务提交后写入待处理事件。
 
-进程启动时扫描未完成 dirty/outbox，按来源重放；不存在 durable marker 时，必须提供来源级定期校准任务，不能宣称事件丢失可自动恢复。
+进程启动时扫描未完成 dirty/outbox，按来源重放；不存在 durable marker 时，必须提供来源级定期校准任务，不能宣称事件丢失可自动恢复。Phase 5 需对「合并丢 ID → 查询前 delta sync 收敛」补显式回归（见 §10 Phase 5）。
 
 ### 8.3 Worker 重启
 
 TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 projection revision 不一致时：
 
 1. 禁止直接 patch；
-2. 加载当前 projection；
-3. 执行 replace；
+2. 加载当前 projection——优先走查询侧 delta sync 按水位增量补差；
+3. 水位缺失或不可信时执行来源级 replace（`fallback_full`）；
 4. 成功后清除恢复错误状态。
 
 ### 8.4 Session snapshot
@@ -399,7 +410,7 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 - [x] 引入 dirty marker 或索引 outbox。
 - [x] 启动恢复和失败重放通过 durable outbox 落地。
 - [ ] 定期来源校准入口未实现；outbox 满足基础恢复路径，管理端校准作为独立运维能力延后。
-- [ ] 文档级事件合并需保留同源多个 `source_id`，由 Phase 5 修复并验证。
+- [ ] 文档级事件合并需保留同源多个 `source_id`，由 Phase 5 修复并验证（现状与兜底见 §8.2）。
 - [x] 事件重试和来源状态查询已接入；文档级合并正确性仍待 Phase 5 验收。
 
 验收：重启、重复事件、事件丢失模拟后，索引最终与主数据一致；无法恢复时有明确管理诊断。
@@ -417,8 +428,9 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 目标：把 PRD 的行为承诺、实现责任和真实回归证据重新对齐。此阶段不以增加测试数量为唯一目标；若测试揭示行为缺陷，应先修实现，再以回归测试锁定。
 
-- [ ] 修复内存事件队列与 durable outbox 的同源多文档合并：不同 `source_id` 必须全部保留（或使用等价的 dirty-ID 集合）；refresh/来源级事件须有明确的覆盖语义。
-- [ ] 新增并发与重启回归：阻塞文档 A 的 patch 时连续提交 B/C，验证每个最终主数据变更都进入索引；重启后从 outbox 重放同一批 ID，验证最终 DB projection、worker revision 和查询结果一致。
+- [ ] 修复内存事件队列与 durable outbox 的同源多文档合并：不同 `source_id` 必须全部保留（或使用等价的 dirty-ID 集合）；refresh/来源级事件须有明确的覆盖语义。**现状（2026-09-13 核对）**：bus `_rag_pending` 与 outbox 均只留最后一条 source_id，当前靠查询侧 delta sync（§8.2）兜底；定案二选一——① 修代码摘掉隐性耦合（bus pending 改集合、outbox 存 ID 集合，改动小，推荐）；② 若接受现状，须以测试锁定「合并丢 ID 后查询前自愈收敛」为设计承诺，不得维持 PRD 禁止 + 实现违反 + 无兜底记载的状态。
+- [ ] 修正 revision mismatch 回退来源级 replace 后的诊断标注：`mode` 仍为 `document_patch`、只体现 `base_revision_match=False`，改为显式 `mode=source_replace`（对齐 §4「回退不得静默伪装成增量成功」）。
+- [ ] 新增并发与重启回归：阻塞文档 A 的 patch 时连续提交 B/C，验证每个最终主数据变更都进入索引（若选择保留合并语义，则断言 B/C 在下一次查询前经 delta sync 收敛）；重启后从 outbox 重放同一批 ID，验证最终 DB projection、worker revision 和查询结果一致。
 - [ ] 补齐来源真实变更测试：文件夹移动断言旧 scope 不再召回、新 scope 可召回；项目 UI/索引一致；Calendar/Note 删除清理；Canvas 关系变更更新所有受影响端点。
 - [ ] 补齐 Knowledge 与故障边界测试：仅关键词/描述变化、删除后恢复、projection 事务失败、worker 不可用后的真实查询自愈、向量部分失败不破坏 lexical patch、owner/project/folder/group-member scope 隔离。
 - [ ] 对诊断模式与日志做 RAG 写路径专属脱敏断言；覆盖 `document_patch`、`source_replace`、`revision_mismatch`、`worker_unavailable`、`projection_failed`、`event_replayed` 和 `no_change`。
