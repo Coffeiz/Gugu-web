@@ -350,6 +350,17 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
       state.docFreq.set(term, (state.docFreq.get(term) ?? 0) + 1);
     }
   }
+  // 新增侧按词项倒排预聚合：若在重建阶段对每个脏词项都扫一遍 added 全表，
+  // 全量重灌场景仍是 O(dirtyTerms × n)（20237 条全量重灌实测仍 71s）。先按
+  // 词项收集一次 [docId, count]，重建时只取自己的条目，整体线性。
+  const addsByTerm = new Map<string, Array<[string, number]>>();
+  for (const [docId, entry] of added) {
+    for (const [term, count] of entry.frequency) {
+      const list = addsByTerm.get(term);
+      if (list) list.push([docId, count]);
+      else addsByTerm.set(term, [[docId, count]]);
+    }
+  }
   // 脏词项 posting 重建：旧条目过滤掉全部移除 id，再补上新增文档词频。
   // 注意 docFreq 已按「先减后加」定稿；词项计数归零时旧 posting 可能已在
   // 账目阶段删掉，重建按空 posting 起步，空结果则删除词项。
@@ -362,12 +373,9 @@ function patchInMemory(state: State, revision: string, upserts: Document[], dele
       ids.push(old.ids[i]);
       frequencies.push(old.frequencies[i]);
     }
-    for (const [docId, entry] of added) {
-      const count = entry.frequency.get(term);
-      if (count !== undefined) {
-        ids.push(docId);
-        frequencies.push(count);
-      }
+    for (const [docId, count] of addsByTerm.get(term) ?? []) {
+      ids.push(docId);
+      frequencies.push(count);
     }
     if (ids.length > 0) state.postings.set(term, { ids, frequencies });
     else state.postings.delete(term);
