@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, watch, type Ref } from 'vue'
+import { computed, getCurrentScope, nextTick, onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { FileMeta } from '@/stores/filesCache'
 import type { TrashFolderMeta } from '@/services/api'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
@@ -18,6 +18,25 @@ export interface FileLibrarySelectionOptions {
 
 /** 文件库页面的统一选择协调器；批量副作用仍由 action composable 负责。 */
 export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
+  // 卡片点击的手势一致性守卫：click 只在「按下也发生在同一张卡内」时才算数。
+  // 场景——重命名输入框在手势中途因 blur 提交被卸载，浏览器发现 mousedown
+  // 目标已不在 DOM，会把 click 改派到释放点元素（别的卡片），误开预览/进目录。
+  // capture 阶段记录：RenameInput 的包装层 @mousedown.stop 不影响 capture 命中。
+  let pressCard: Element | null = null
+  const onDocumentPress = (event: MouseEvent) => {
+    const target = event.target as Element | null
+    pressCard = target?.closest?.('.fc-card, .folder-card, .list-row') ?? null
+  }
+  document.addEventListener('mousedown', onDocumentPress, { capture: true })
+  if (getCurrentScope()) {
+    onScopeDispose(() => document.removeEventListener('mousedown', onDocumentPress, { capture: true }))
+  }
+  function pressStartedOutside(event: MouseEvent): boolean {
+    const card = event.currentTarget as Element | null
+    if (!card) return false
+    return !pressCard || (pressCard !== card && !card.contains(pressCard))
+  }
+
   const selectedTrashFolderIds = ref<Set<number>>(new Set())
   const selectModeForced = ref(false)
   const lastAnchorIndex = ref(-1)
@@ -113,6 +132,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
       beginExit()
     })
   function handleFolderClick(folder: { id: number | string }, event: MouseEvent) {
+    if (pressStartedOutside(event)) return
     if (event.shiftKey) {
       const hadAnchor = lastAnchorIndex.value >= 0
       if (!range('folder', folder.id)) state.selectOnlyFolder(folder.id)
@@ -123,6 +143,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
     options.enterFolder(folder as FolderCardMeta)
   }
   function handleFileClick(file: FileMeta, event: MouseEvent) {
+    if (pressStartedOutside(event)) return
     if (event.shiftKey) {
       const hadAnchor = lastAnchorIndex.value >= 0
       if (!range('file', file.id)) state.selectOnlyFile(file.id)
