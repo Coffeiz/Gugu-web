@@ -162,7 +162,7 @@ async def test_delete_then_restore_same_id(kb_env):
     async with session_factory() as db:
         await _full_seed(db, owner_id, {"k-a": "一段|二段", "k-b": "别的"})
     stats: dict = {}
-    await pipeline.update_knowledge_document(owner_id, "k-a", operation="delete", stats_out=stats)
+    await pipeline.update_document(owner_id, "knowledge", "k-a", operation="delete", stats_out=stats)
     assert stats["delete_count"] == 2
     async with session_factory() as db:
         assert await load_parent_documents(db, owner_id, "knowledge", "k-a") == []
@@ -170,7 +170,7 @@ async def test_delete_then_restore_same_id(kb_env):
     # 恢复：同 ID 重新保存（version 推进），文档级增量把 chunk 写回
     await _save_entry(owner_id, "k-a", "复活一段|复活二段")
     stats = {}
-    count = await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    count = await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     assert count == 2 and stats["upsert_count"] == 2
     async with session_factory() as db:
         rows = await load_parent_documents(db, owner_id, "knowledge", "k-a")
@@ -227,7 +227,7 @@ async def test_vector_partial_failure_keeps_lexical_and_replays_idempotent(kb_en
 
     stats: dict = {}
     try:
-        await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+        await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
         raise AssertionError("首次调用应因向量失败抛出")
     except RuntimeError:
         pass
@@ -238,7 +238,7 @@ async def test_vector_partial_failure_keeps_lexical_and_replays_idempotent(kb_en
 
     # 重放同一事件：主数据与投影一致 → no_change 幂等，不重复打 worker
     stats = {}
-    result = await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    result = await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     assert stats["status"] == "no_change" and result == 2
     assert worker.ops() == []
 
@@ -322,7 +322,7 @@ async def test_owner_scope_isolation_on_patch(kb_env):
         await _full_seed(db, owner_b, {"k-b": "乙独有一段"})
     await _save_entry(owner_a, "k-a", "甲改一段|甲改二段")
     stats: dict = {}
-    await pipeline.update_knowledge_document(owner_a, "k-a", stats_out=stats)
+    await pipeline.update_document(owner_a, "knowledge", "k-a", stats_out=stats)
     assert stats["status"] == "ready"
     async with session_factory() as db:
         rows_b = await load_index_documents(db, owner_b, source_types={"knowledge"})
@@ -342,7 +342,7 @@ async def test_partial_edit_keeps_unchanged_chunks(kb_env):
         await _full_seed(db, owner_id, {"k-a": "第一段不动|第二段不动|第三段要改"})
     await _save_entry(owner_id, "k-a", "第一段不动|第二段不动|第三段已修改")
     stats: dict = {}
-    count = await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    count = await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     assert stats["status"] == "ready"
     async with session_factory() as db:
         rows = await load_parent_documents(db, owner_id, "knowledge", "k-a")

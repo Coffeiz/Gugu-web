@@ -174,16 +174,6 @@ async def _replace_worker_index(
 DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "file", "project", "calendar", "note", "canvas"}
 
 
-async def update_knowledge_document(
-    user_id: object, source_id: str, *, operation: str = "upsert",
-    stats_out: dict[str, object] | None = None,
-) -> int:
-    """兼容别名：knowledge 文档级增量（PRD-RAG-9 Phase 1 入口）。"""
-    return await update_document(
-        user_id, "knowledge", source_id, operation=operation, stats_out=stats_out,
-    )
-
-
 async def update_document(
     user_id: object, source_type: str, source_id: str, *, operation: str = "upsert",
     stats_out: dict[str, object] | None = None,
