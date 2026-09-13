@@ -8,6 +8,8 @@ const MEMORY_INDEX_KEY = ".agent/rag/memory-index-v1.json";
 const MEMORY_CACHE_TTL_MS = 30 * 60 * 1000;
 const MEMORY_SOURCES = new Set(["profile", "pattern", "daily", "memory"]);
 const memoryCache = new Map<string, { revision: string; documents: RagDocument[]; lastAccess: number }>();
+/* 向量文件解析缓存：key = owner:文件:向量版本，value = 内容哈希 + 解析结果 */
+const vectorFileCache = new Map<string, { hash: string; parsed: unknown }>();
 
 export type AuthorizedMemoryScope = DataScope & {
   ownerId: string;
@@ -398,9 +400,24 @@ export async function loadDocumentVectors(
   ]);
   if (probe) recordElapsed(probe, "vector_storage_read", storageStarted);
   const parseStarted = performance.now();
-  const memory = parseVectorMap(parseJson(memoryRaw), vectorVersion);
-  const knowledge = parseVectorMap(parseJson(knowledgeRaw), vectorVersion);
-  const pattern = parseVectorMap(parseJson(patternRaw), vectorVersion);
+  const parseCached = (raw: string | null, cacheKey: string) => {
+    // 向量文件解析缓存：内容哈希未变时复用上次解析结果（memory_vec 约 20MB，
+    // 每次全量 parse + 遍历 150-250ms，是热态召回 memory 段的主要固定成本）。
+    if (raw === null) return null;
+    const hash = createHash("sha256").update(raw).digest("hex");
+    const cached = vectorFileCache.get(cacheKey);
+    if (cached && cached.hash === hash) return cached.parsed;
+    const parsed = parseJson(raw);
+    vectorFileCache.set(cacheKey, { hash, parsed });
+    if (vectorFileCache.size > 8) {
+      const oldest = vectorFileCache.keys().next().value;
+      if (oldest !== undefined) vectorFileCache.delete(oldest);
+    }
+    return parsed;
+  };
+  const memory = parseVectorMap(parseCached(memoryRaw, `${ownerId}:memory:${vectorVersion}`), vectorVersion);
+  const knowledge = parseVectorMap(parseCached(knowledgeRaw, `${ownerId}:knowledge:${vectorVersion}`), vectorVersion);
+  const pattern = parseVectorMap(parseCached(patternRaw, `${ownerId}:pattern:${vectorVersion}`), vectorVersion);
   const vectors: Record<string, number[]> = {};
   for (const document of documents) {
     const parent = String(document.parent_id || document.id);

@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import * as https from "node:https";
+import { createHash } from "node:crypto";
 import { isIP, type LookupFunction } from "node:net";
 
 export type QueryEmbeddingSettings = {
@@ -29,6 +30,38 @@ export type QueryEmbeddingResult = {
 
 const REQUEST_TIMEOUT_MS = 4_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+/* query 向量短 TTL 缓存：revision 自愈重试会重复嵌入同一 query；
+ * 相同 model+text 短窗口内直接复用，省一次外部 API 往返。 */
+const QUERY_VECTOR_CACHE_TTL_MS = 5 * 60_000;
+const QUERY_VECTOR_CACHE_MAX = 64;
+const queryVectorCache = new Map<string, { vector: number[]; expiresAt: number }>();
+
+function cacheKeyFor(settings: QueryEmbeddingSettings, text: string): string {
+  return createHash("sha256").update(`${settings.provider}\n${settings.model}\n${settings.dimensions}\n${text}`).digest("hex");
+}
+
+function cachedQueryVector(settings: QueryEmbeddingSettings, text: string): number[] | null {
+  const key = cacheKeyFor(settings, text);
+  const cached = queryVectorCache.get(key);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    queryVectorCache.delete(key);
+    return null;
+  }
+  queryVectorCache.delete(key);
+  queryVectorCache.set(key, cached); /* LRU 触及即刷新 */
+  return cached.vector;
+}
+
+function rememberQueryVector(settings: QueryEmbeddingSettings, text: string, vector: number[]): void {
+  if (!vector.length) return;
+  queryVectorCache.set(cacheKeyFor(settings, text), { vector, expiresAt: Date.now() + QUERY_VECTOR_CACHE_TTL_MS });
+  if (queryVectorCache.size > QUERY_VECTOR_CACHE_MAX) {
+    const oldest = queryVectorCache.keys().next().value;
+    if (oldest !== undefined) queryVectorCache.delete(oldest);
+  }
+}
 
 function isBailian(provider: string, baseUrl: string): boolean {
   const name = provider.trim().toLowerCase();
@@ -104,6 +137,8 @@ export async function embedQuery(
 ): Promise<QueryEmbeddingResult> {
   const normalizedText = text.trim();
   if (!normalizedText) return { vector: [], outcome: "invalid_config" };
+  const cached = cachedQueryVector(settings, normalizedText);
+  if (cached) return { vector: cached, outcome: "success" };
   const request = makeRequest(settings, normalizedText);
   if (!request) return { vector: [], outcome: "invalid_config" };
 
@@ -134,6 +169,7 @@ export async function embedQuery(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (result.outcome === "success") rememberQueryVector(settings, normalizedText, result.vector);
       resolve(result);
     };
     const timer = setTimeout(() => {
