@@ -8,19 +8,26 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.core.tz import LOCAL_TZ
+from app.core.tz import LOCAL_TZ, resolve_tz
+
+
+def _as_tz(user_tz):
+    """容忍 IANA 名称形式的时区参数；tzinfo 原样通过。"""
+    if isinstance(user_tz, str):
+        return resolve_tz(user_tz)
+    return user_tz or LOCAL_TZ
 
 
 def current_time_text(user_tz=None) -> str:
     """生成每轮 provider-only 时间提醒，只含日期与时分。"""
-    current = datetime.now(user_tz or LOCAL_TZ)
+    current = datetime.now(_as_tz(user_tz))
     weekday = "一二三四五六日"[current.weekday()]
     return f"{current:%Y-%m-%d}（星期{weekday}）{current:%H:%M}"
 
 
 def current_date_text(user_tz=None) -> str:
     """生成只按日期变化的当前日期文本，不包含时分秒。"""
-    current = datetime.now(user_tz or LOCAL_TZ)
+    current = datetime.now(_as_tz(user_tz))
     return f"{current:%Y-%m-%d}（星期{'一二三四五六日'[current.weekday()]}）"
 
 
@@ -35,7 +42,7 @@ def message_time_reminder(sent_at, user_tz=None) -> dict | None:
         return None
     if sent_at.tzinfo is None:
         sent_at = sent_at.replace(tzinfo=timezone.utc)
-    local_time = sent_at.astimezone(user_tz or LOCAL_TZ)
+    local_time = sent_at.astimezone(_as_tz(user_tz))
     return reminder_message(local_time.strftime("消息时间：%Y-%m-%d %H:%M"))
 
 

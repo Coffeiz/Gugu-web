@@ -5,14 +5,17 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from agent.context.assembly import reminder
 
 
 def test_scheduled_messages_keep_snapshot_context_before_tail():
+    from zoneinfo import ZoneInfo
+
+    from agent.context.dynamic_tail import time_message
     from agent.scheduled_execution import _build_scheduled_messages
 
+    tz = ZoneInfo("Asia/Shanghai")
     messages = _build_scheduled_messages(
-        "稳定系统", "## 项目\n- 小北的计划", "2026-08-21（星期五）10:00",
+        "稳定系统", "## 项目\n- 小北的计划", tz,
         "执行任务", {"stance": "温和"}, use_anthropic=False,
     )
     assert messages[0] == {"role": "system", "content": "稳定系统"}
@@ -25,7 +28,7 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     )
     assert messages[3] == {"role": "user", "content": "执行任务"}
     assert sum("小北的计划" in item["content"] for item in messages) == 1
-    assert messages.dynamic_tail == [reminder("当前时间：2026-08-21（星期五）10:00")]
+    assert messages.dynamic_tail == [time_message(tz)]
     assert "当前时间" not in str(messages.conversation)
 
 
