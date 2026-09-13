@@ -1,0 +1,602 @@
+{
+  "schema_version": 1,
+  "report_type": "crap",
+  "status": "passed",
+  "date": "2026-09-13",
+  "created_at": "2026-09-13T13:24:03.549948+00:00",
+  "commit": "0bdc6f877564ee8b6323e53a688c2e01942ba5d3",
+  "worktree_dirty": true,
+  "tools": {
+    "python": "3.14.3",
+    "lizard": "1.23.0",
+    "pytest_cov": "7.1.0",
+    "coverage": "7.16.0",
+    "vitest": "4.1.11",
+    "vitest_coverage_v8": "4.1.11",
+    "vitest_declared": "^4.1.10",
+    "vitest_coverage_v8_declared": "4.1.11"
+  },
+  "scope": [
+    {
+      "source": "backend/agent/context/budget.py",
+      "tests": [
+        "backend/tests/test_context_budget.py",
+        "backend/tests/test_session_history.py"
+      ],
+      "function_tests": {
+        "from_messages": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "from_parts": [
+          "backend/tests/test_context_budget.py",
+          "backend/tests/test_session_history.py"
+        ],
+        "non_history_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "total_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "soft_limit_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "compression_cap_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "history_capacity_tokens": [
+          "backend/tests/test_context_budget.py",
+          "backend/tests/test_session_history.py"
+        ],
+        "diagnostics": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "estimate_tool_schema_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "truncate_messages": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "enforce_message_budget": [
+          "backend/tests/test_context_budget.py"
+        ]
+      },
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "language": "python"
+    },
+    {
+      "source": "frontend/src/utils/optimisticMutation.ts",
+      "tests": [
+        "frontend/test/optimisticMutation.test.ts"
+      ],
+      "function_tests": {
+        "optimisticMutation": [
+          "frontend/test/optimisticMutation.test.ts"
+        ]
+      },
+      "domain": "文件库乐观更新时序",
+      "layer": "L0 单元测试",
+      "ci": "普通 Vitest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "language": "typescript"
+    }
+  ],
+  "exclusions": [
+    "本轮仅选两个确定性单元测试目标；不扫描同目录其他模块。",
+    "不连接真实模型、网络、IM、Docker、PTY、共享 Redis/Postgres 或用户文件。",
+    "变异测试属于 Phase 2，本报告不运行，也不推断 mutation score。"
+  ],
+  "runs": [
+    {
+      "language": "python",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 1683,
+      "command": "python -m pytest -q --disable-warnings --cov=agent.context.budget --cov-branch --cov-report=json:<TEMP> tests/test_context_budget.py, tests/test_session_history.py",
+      "scopes": [
+        {
+          "source": "backend/agent/context/budget.py",
+          "tests": [
+            "backend/tests/test_context_budget.py",
+            "backend/tests/test_session_history.py"
+          ],
+          "function_tests": {
+            "from_messages": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "from_parts": [
+              "backend/tests/test_context_budget.py",
+              "backend/tests/test_session_history.py"
+            ],
+            "non_history_tokens": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "total_tokens": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "soft_limit_tokens": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "compression_cap_tokens": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "history_capacity_tokens": [
+              "backend/tests/test_context_budget.py",
+              "backend/tests/test_session_history.py"
+            ],
+            "diagnostics": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "estimate_tool_schema_tokens": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "truncate_messages": [
+              "backend/tests/test_context_budget.py"
+            ],
+            "enforce_message_budget": [
+              "backend/tests/test_context_budget.py"
+            ]
+          },
+          "domain": "Agent 上下文预算",
+          "layer": "L0 单元测试",
+          "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+          "language": "python"
+        }
+      ]
+    },
+    {
+      "language": "typescript",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 3002,
+      "command": "corepack pnpm exec vitest run test/optimisticMutation.test.ts --coverage.enabled --coverage.provider=v8 --coverage.include=src/utils/optimisticMutation.ts --coverage.reporter=json --coverage.reportsDirectory=<TEMP>",
+      "scopes": [
+        {
+          "source": "frontend/src/utils/optimisticMutation.ts",
+          "tests": [
+            "frontend/test/optimisticMutation.test.ts"
+          ],
+          "function_tests": {
+            "optimisticMutation": [
+              "frontend/test/optimisticMutation.test.ts"
+            ]
+          },
+          "domain": "文件库乐观更新时序",
+          "layer": "L0 单元测试",
+          "ci": "普通 Vitest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+          "language": "typescript"
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "from_messages",
+      "start_line": 44,
+      "end_line": 80,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 10,
+      "coverage": 1.0,
+      "crap": 10.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "from_parts",
+      "start_line": 83,
+      "end_line": 107,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py",
+        "backend/tests/test_session_history.py"
+      ],
+      "test_association": "registered",
+      "cc": 10,
+      "coverage": 1.0,
+      "crap": 10.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "non_history_tokens",
+      "start_line": 110,
+      "end_line": 119,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "total_tokens",
+      "start_line": 122,
+      "end_line": 123,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "soft_limit_tokens",
+      "start_line": 126,
+      "end_line": 128,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "compression_cap_tokens",
+      "start_line": 131,
+      "end_line": 133,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "truncation_limit_tokens",
+      "start_line": 136,
+      "end_line": 138,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "history_capacity_tokens",
+      "start_line": 141,
+      "end_line": 143,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py",
+        "backend/tests/test_session_history.py"
+      ],
+      "test_association": "registered",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "hard_history_capacity_tokens",
+      "start_line": 146,
+      "end_line": 148,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "with_history",
+      "start_line": 150,
+      "end_line": 163,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "diagnostics",
+      "start_line": 165,
+      "end_line": 182,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "estimate_tool_schema_tokens",
+      "start_line": 194,
+      "end_line": 202,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 3,
+      "coverage": 0.571429,
+      "crap": 3.7085,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_blocks",
+      "start_line": 205,
+      "end_line": 211,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 5,
+      "coverage": 0.666667,
+      "crap": 5.9259,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_has_tool_call",
+      "start_line": 214,
+      "end_line": 217,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 3,
+      "coverage": 1.0,
+      "crap": 3.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_has_tool_result",
+      "start_line": 220,
+      "end_line": 223,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 3,
+      "coverage": 1.0,
+      "crap": 3.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_consecutive_tool_result_indices",
+      "start_line": 226,
+      "end_line": 232,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 3,
+      "coverage": 1.0,
+      "crap": 3.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_units",
+      "start_line": 235,
+      "end_line": 248,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 4,
+      "coverage": 1.0,
+      "crap": 4.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "atomic_message_units",
+      "start_line": 251,
+      "end_line": 253,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 1,
+      "coverage": 1.0,
+      "crap": 1.0,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_truncate_text",
+      "start_line": 256,
+      "end_line": 269,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 4,
+      "coverage": 0.909091,
+      "crap": 4.012,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_truncate_value",
+      "start_line": 272,
+      "end_line": 279,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 6,
+      "coverage": 0.285714,
+      "crap": 19.1195,
+      "risk": "中"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "_fit_oversized_message",
+      "start_line": 282,
+      "end_line": 290,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 4,
+      "coverage": 0.75,
+      "crap": 4.25,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "truncate_messages",
+      "start_line": 293,
+      "end_line": 396,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 30,
+      "coverage": 0.912281,
+      "crap": 30.6075,
+      "risk": "高"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "enforce_message_budget",
+      "start_line": 399,
+      "end_line": 425,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "backend/tests/test_context_budget.py"
+      ],
+      "test_association": "registered",
+      "cc": 3,
+      "coverage": 0.777778,
+      "crap": 3.0988,
+      "risk": "低"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "enforce_provider_overflow_fallback",
+      "start_line": 428,
+      "end_line": 487,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 18,
+      "coverage": 0.0,
+      "crap": 342.0,
+      "risk": "高"
+    },
+    {
+      "source": "backend/agent/context/budget.py",
+      "function": "is_context_overflow_error",
+      "start_line": 490,
+      "end_line": 493,
+      "domain": "Agent 上下文预算",
+      "layer": "L0 单元测试",
+      "ci": "普通 pytest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [],
+      "test_association": "pending_manual",
+      "cc": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "risk": "低"
+    },
+    {
+      "source": "frontend/src/utils/optimisticMutation.ts",
+      "function": "optimisticMutation",
+      "start_line": 41,
+      "end_line": 58,
+      "domain": "文件库乐观更新时序",
+      "layer": "L0 单元测试",
+      "ci": "普通 Vitest 随 runtime-integration 自动执行；CRAP 报告与变异测试仅周期性手动运行，不由 CI 自动触发",
+      "tests": [
+        "frontend/test/optimisticMutation.test.ts"
+      ],
+      "test_association": "registered",
+      "cc": 3,
+      "coverage": 1.0,
+      "crap": 3.0,
+      "risk": "低"
+    }
+  ],
+  "errors": [],
+  "summary": {
+    "functions_total": 26,
+    "complexity_hotspots": 2,
+    "mutants_total": null,
+    "mutants_killed": null,
+    "mutants_survived": null,
+    "mutants_timeout": null,
+    "mutants_error": null,
+    "equivalent_marked": null
+  },
+  "duration_ms": 4768
+}

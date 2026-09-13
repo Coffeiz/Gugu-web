@@ -223,6 +223,15 @@ def _has_tool_result(message: dict) -> bool:
     )
 
 
+def _consecutive_tool_result_indices(messages: list[dict], start: int) -> list[int]:
+    """返回紧随工具调用的连续结果消息下标，结果必须留在同一个原子组中。"""
+    indices: list[int] = []
+    while start < len(messages) and _has_tool_result(messages[start]):
+        indices.append(start)
+        start += 1
+    return indices
+
+
 def _units(messages: list[dict]) -> list[list[int]]:
     """按完整工具往返切分，避免截出孤立 tool_result。"""
     result: list[list[int]] = []
@@ -230,11 +239,9 @@ def _units(messages: list[dict]) -> list[list[int]]:
     while index < len(messages):
         unit = [index]
         if _has_tool_call(messages[index]):
-            next_index = index + 1
-            while next_index < len(messages) and _has_tool_result(messages[next_index]):
-                unit.append(next_index)
-                next_index += 1
-            index = next_index
+            result_indices = _consecutive_tool_result_indices(messages, index + 1)
+            unit.extend(result_indices)
+            index = result_indices[-1] + 1 if result_indices else index + 1
         else:
             index += 1
         result.append(unit)

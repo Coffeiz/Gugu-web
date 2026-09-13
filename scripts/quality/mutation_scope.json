@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "policy": "periodic-manual-no-automatic-ci",
+  "python": {
+    "tool": "mutmut",
+    "tool_version": "3.8.0",
+    "config": "backend/pyproject.toml",
+    "targets": [
+      {
+        "pattern": "agent.context.budget.x__consecutive_tool_result_indices*",
+        "source": "backend/agent/context/budget.py",
+        "tests": ["backend/tests/test_context_budget.py"],
+        "behavior": "工具调用位于消息末尾时不越界、不丢失原子消息组"
+      },
+      {
+        "pattern": "agent.interactions.confirmations.x__truthy*",
+        "source": "backend/agent/interactions/confirmations.py",
+        "tests": ["backend/tests/test_confirm_gate.py"],
+        "behavior": "确认结果的布尔值和标准化字符串判定"
+      },
+      {
+        "pattern": "agent.tools.files.documents.x__valid_file_ids*",
+        "source": "backend/agent/tools/files/documents.py",
+        "tests": ["backend/tests/test_agent_file_folder_parity.py"],
+        "behavior": "批量删除参数必须进入软删除流程，文件移入回收站而非漏删"
+      },
+      {
+        "pattern": "app.core.ownership.x__ownership_identity*",
+        "source": "backend/app/core/ownership.py",
+        "tests": ["backend/tests/test_ownership.py"],
+        "behavior": "归属 ID 字符串归一后仅允许同一所有者访问"
+      },
+      {
+        "pattern": "app.core.ownership.x__ownership_warning_fields*",
+        "source": "backend/app/core/ownership.py",
+        "tests": ["backend/tests/test_ownership.py"],
+        "behavior": "归属拒绝日志对资源标识做指纹化，不泄漏原始 ID"
+      },
+      {
+        "pattern": "app.services.conversation_pending_queue.x__claim_lease_is_active*",
+        "source": "backend/app/services/conversation_pending_queue.py",
+        "tests": ["backend/tests/test_chat_pending_queue.py"],
+        "behavior": "消息领取租约在 60 秒边界后可安全接手"
+      },
+      {
+        "pattern": "app.services.storage.file_service.files.x__is_overwrite_requested*",
+        "source": "backend/app/services/storage/file_service/files.py",
+        "tests": ["backend/tests/test_file_service.py"],
+        "behavior": "只有显式 overwrite 模式和目标文件 ID 才执行原位覆盖"
+      }
+    ],
+    "equivalent_mutants": []
+  },
+  "typescript": {
+    "tool": "stryker",
+    "tool_version": "10.0.0",
+    "runner": "vitest",
+    "config": "frontend/stryker.config.mjs",
+    "targets": [
+      {
+        "source": "frontend/src/utils/optimisticMutation.ts",
+        "tests": ["frontend/test/optimisticMutation.test.ts"],
+        "behavior": "乐观更新提交、回滚及更新意图结算时序"
+      }
+    ],
+    "equivalent_mutants": []
+  }
+}
