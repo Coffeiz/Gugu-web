@@ -167,7 +167,7 @@ async def build_passive_history_message(user_id, query: str) -> dict[str, str] |
         from agent.rag.service import search_knowledge
 
         result = await search_knowledge(
-            user_id, query, scope="auto", source="all", strategy="bm25",
+            user_id, query, scope="auto", source="all", strategy="auto",
             limit=5, mode="passive",
         )
         return build_history_message(query, result.get("results", []))
@@ -258,7 +258,7 @@ async def _build_automatic_rag_context(
                 result = await _search_with_timeout(
                     search_knowledge(
                         request.user_id, query, scope=scopes, source="all",
-                        strategy="bm25", limit=5, mode="automatic",
+                        strategy="auto", limit=5, mode="automatic",
                         exclude_content_hashes=seen,
                     ),
                     AUTO_RECALL_TIMEOUT_SECONDS,

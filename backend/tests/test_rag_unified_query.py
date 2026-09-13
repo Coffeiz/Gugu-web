@@ -262,25 +262,32 @@ def test_unified_retriever_rechecks_owner_before_returning_ts_rows():
 
 @pytest.mark.asyncio
 async def test_unified_retriever_fallback_labels_follow_python_facts(monkeypatch):
-    """fallback 标签按 Python 侧事实判定：关闭=embedding_disabled，其余采纳 worker 回报。"""
+    """fallback 标签按 Python 侧事实判定：auto 策略下关闭=embedding_disabled；
+    bm25 策略 embedding 根本不参与，标 lexical_only 而非误导性的 disabled；
+    其余情况采纳 worker 回报。"""
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
     file_doc = _file_doc()
     file_key = "file:file-1:0"
     cases = [
-        (False, None, "embedding_disabled"),
-        (True, "embedding_cache_unavailable", "embedding_cache_unavailable"),
-        (True, None, None),
+        ("auto", False, None, "embedding_disabled"),
+        ("auto", True, "embedding_cache_unavailable", "embedding_cache_unavailable"),
+        ("auto", True, None, None),
+        # bm25 策略：embedding 未参与，不得标成 embedding_disabled。
+        ("bm25", False, None, "lexical_only"),
+        ("bm25", True, None, "lexical_only"),
     ]
     retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "file")])
-    for enabled, worker_fallback, expected in cases:
+    for strategy, enabled, worker_fallback, expected in cases:
         canned = _canned_response(file_doc, _memory_doc(), file_key, "memory:daily-1:0",
                                   fallback=worker_fallback)
         calls, _index = _install_unified_stubs(monkeypatch, canned=canned,
                                                embedding_enabled=enabled)
-        batches = await retriever.retrieve("缓存", scope=SCOPE)
-        assert batches[0].fallback_reason == expected, (enabled, worker_fallback)
-        if not enabled:
+        batches = await retriever.retrieve("缓存", scope=SCOPE, strategy=strategy)
+        assert batches[0].fallback_reason == expected, (strategy, enabled, worker_fallback)
+        if enabled:
+            assert calls["query"]["query_embedding"] is not None or strategy == "bm25"
+        else:
             # 未配置 embedding 时不传短生命周期 provider 配置，worker 直接词法检索。
             assert calls["query"]["query_embedding"] is None
 

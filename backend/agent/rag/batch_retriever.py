@@ -208,11 +208,14 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             raise
         elapsed_ms = int((time.monotonic() - started) * 1000)
         fusion = response.get("fusion") or {}
-        # fallback 标签按 Python 侧事实判定：embedding 关闭/未配置 → embedding_disabled；
-        # 开启但无可用向量 → worker 回报 embedding_cache_unavailable；融合成功 → None。
-        fallback = None if embedding_enabled else "embedding_disabled"
+        # fallback 标签按 Python 侧事实判定：策略本身不含 embedding（bm25）→
+        # lexical_only（embedding 并未被禁用，只是没参与本轮）；auto/embedding
+        # 策略下 embedding 关闭/未配置 → embedding_disabled；开启但无可用向量
+        # → worker 回报 embedding_cache_unavailable；融合成功 → None。
         if embedding_enabled:
             fallback = fusion.get("fallback")
+        else:
+            fallback = "lexical_only" if strategy == "bm25" else "embedding_disabled"
         details = {
             **metadata,
             "document_count": sum((response.get("document_counts") or {}).values()),

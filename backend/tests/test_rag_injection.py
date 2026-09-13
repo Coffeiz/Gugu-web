@@ -101,7 +101,7 @@ async def test_passive_recall_uses_same_knowledge_service(monkeypatch):
     from agent.rag import service
 
     async def fake_search(*args, **kwargs):
-        assert kwargs["strategy"] == "bm25"
+        assert kwargs["strategy"] == "auto"
         return {"results": [{"title": "记忆", "text": "之前讨论过稳定缓存。"}]}
 
     monkeypatch.setattr(service, "search_knowledge", fake_search)
