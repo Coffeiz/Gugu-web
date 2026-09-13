@@ -1,9 +1,11 @@
 # 受限 Docker Compose 更新器。Docker Socket 只挂载到这个 sidecar，业务 app 不持有它。
-FROM ghcr.io/sigstore/cosign/cosign:v2.6.1 AS cosign-bin
+FROM ghcr.io/sigstore/cosign/cosign:v2.6.5 AS cosign-bin
 
 FROM docker:cli
 
-RUN apk add --no-cache bash python3 nodejs \
+# base 包补丁到最新，压掉 alpine 残留 HIGH（trivy 门 --ignore-unfixed 仍会拦已修复项）
+RUN apk upgrade --no-cache \
+    && apk add --no-cache bash python3 nodejs \
     && mkdir -p /opt/gugu-updater /var/lib/gugu-updater /run/gugu-updater
 
 WORKDIR /opt/gugu-updater
