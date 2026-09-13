@@ -161,7 +161,8 @@ async def test_knowledge_adapter_makes_keywords_searchable(knowledge_storage):
 
 
 @pytest.mark.asyncio
-async def test_search_memory_accepts_knowledge_source(knowledge_storage):
+async def test_search_memory_ignores_knowledge_source(knowledge_storage):
+    """边界（PRD-KNOWLEDGE-2）：knowledge 不再进入记忆检索，source=knowledge 视为未知来源返回空。"""
     from agent.rag import service
     result = await service.search_memory("user-a", "项目协议", source="knowledge")
     assert result["results"] == []

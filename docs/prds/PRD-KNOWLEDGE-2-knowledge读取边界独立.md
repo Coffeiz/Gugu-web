@@ -63,7 +63,7 @@ knowledge 的更新到 BM25 可查之间是异步链（RagIndexUpdated 事件 �
 ### 3.1 核心决策
 
 - **直读而非改索引**：读己之写不一致的根因是「写走异步索引链、读也走同一条」；knowledge 量级小，直读 `KnowledgeStore.get/list` 即天然强一致，不为精确读取去改造异步链。
-- **分层切边界**：`agent/tools/` 层收窄工具枚举与注册；`agent/rag/service.py` 的 `search_memory` 函数保留 knowledge 能力供内部调用（反思链依赖它做候选召回）。工具语义与 service 函数语义从此解耦。
+- **分层切边界**：`agent/tools/` 层收窄工具枚举与注册；service 层的 knowledge 召回入口本就是独立的 `search_knowledge` 函数（反思链与被动注入实际调用方），`search_memory` 在 service 层同步摘除 knowledge 检索器（含 `source="all"` 的隐性附带），未知 source 走记忆来源过滤自然返回空。
 - **列举即兜底**：read_knowledge 无 query 参数、只做本地包含过滤——不引入第二套检索，模糊召回职责留在被动注入。
 
 ### 3.2 文件树
@@ -80,7 +80,7 @@ backend/
 │   ├── context/
 │   │   └── builder.py                   【修改】知识块引导文案改指 read_knowledge
 │   └── rag/
-│       └── service.py                   【不改】service.search_memory 保留 knowledge 供内部调用
+│       └── service.py                   【修改】search_memory 摘除 knowledge 检索器与映射（search_knowledge 不动）
 ├── tests/
 │   ├── test_read_knowledge_tool.py      【新增】直读、过滤、上限、停用条目
 │   └── test_search_memory_boundary.py   【新增】source=knowledge 拒绝并引导、记忆源不受影响
@@ -89,7 +89,7 @@ backend/
 关键边界：
 
 - `agent/knowledge/store.py`、投影与索引链**明确不改**。
-- `agent/rag/service.py::search_memory` **不改签名**——反思链（`knowledge/reflection.py`）与 `memory_references` 继续用它做 knowledge 召回。
+- `agent/rag/service.py::search_knowledge` **不改**——反思链（`knowledge/reflection.py`）与被动注入（`rag/injection.py`）的 knowledge 召回都走它；`memory_references` 只用 `source=memory`，不受影响。
 - 前端 `toolNames.ts` 的工具展示名按新工具补充 i18n。
 
 ### 3.3 数据与隐私边界

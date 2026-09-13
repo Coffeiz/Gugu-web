@@ -125,7 +125,7 @@ def build_history_message(query: str, results: Iterable[dict[str, Any]]) -> dict
     """生成可直接放在当前 user message 前的 history 消息。
 
     该函数不负责召回、权限或去重，也不把内部 chunk/hash 元数据发送给模型。
-    显式 `search_memory` 仍由工具执行器写入 canonical tool round；本消息只供
+    显式工具轮次仍由工具执行器写入 canonical tool round；本消息只供
     未来自动召回复用，避免在 system-reminder 中复制一套注入逻辑。
     """
     result_list = list(results)
@@ -143,8 +143,8 @@ def should_passively_recall(query: str) -> bool:
 async def build_passive_history_message(user_id, query: str) -> dict[str, str] | None:
     """按当前问题做低成本 Memory 被动召回。
 
-    失败只跳过可选知识补充，不阻塞主 Agent；显式 `search_memory` 仍是完整结果和
-    canonical tool round 的精确入口。这里固定使用 lexical，避免普通对话因 embedding
+    失败只跳过可选知识补充，不阻塞主 Agent；显式读取走 `read_knowledge` 直读工具
+    （写入即可读，PRD-KNOWLEDGE-2）。这里固定使用 lexical，避免普通对话因 embedding
     请求增加额外延迟。
     """
     from app.core.config import get_settings
@@ -242,7 +242,7 @@ async def _build_automatic_rag_context(
         try:
             try:
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
-                # 显式 search_memory 工具仍保留自己的完整等待语义。
+                # 显式 read_knowledge 直读工具保留自己的完整等待语义。
                 result = await _search_with_timeout(
                     search_knowledge(
                         request.user_id, query, scope=scopes, source="all",
