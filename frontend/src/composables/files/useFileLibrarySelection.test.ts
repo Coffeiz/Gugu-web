@@ -84,7 +84,7 @@ describe('useFileLibrarySelection 点击手势一致性', () => {
     cardB.remove()
   })
 
-  it('按下目标在手势中被移除（重命名输入卸载）：释放点同卡也不开预览', () => {
+  it('按下滑在可编辑区（重命名输入框）：无论输入框是否卸载、同卡或跨卡，都不开预览', () => {
     const cardA = makeCard()
     const input = document.createElement('input')
     cardA.appendChild(input)
@@ -101,18 +101,30 @@ describe('useFileLibrarySelection 点击手势一致性', () => {
       isPreviewable: () => true,
     })
 
-    // 按下在重命名输入框上，拖选后 blur 提交 → 输入框卸载；释放落在同一张卡上。
+    // 用户时序（探针实测）：按下落在输入框内，blur 提交与 click 派发的先后
+    // 是竞态——两种顺序都必须忽略，不能开预览。
     pressWithin(input)
     input.remove()
     sel.handleFileClick(file, { currentTarget: cardA } as unknown as MouseEvent)
     expect(openPreview).not.toHaveBeenCalled()
 
-    // 输入框还在时（未提交卸载）的正常点击不受影响。
     pressWithin(input)
     cardA.appendChild(input)
+    sel.handleFileClick(file, { currentTarget: cardA } as unknown as MouseEvent)
+    expect(openPreview).not.toHaveBeenCalled()
+
+    // 跨卡变体：输入框在 A 卡，释放落在 B 卡。
+    const cardB = makeCard()
+    pressWithin(input)
+    sel.handleFileClick(file, { currentTarget: cardB } as unknown as MouseEvent)
+    expect(openPreview).not.toHaveBeenCalled()
+
+    // 正常卡面按下不受守卫影响。
+    pressWithin(cardA)
     sel.handleFileClick(file, { currentTarget: cardA } as unknown as MouseEvent)
     expect(openPreview).toHaveBeenCalledTimes(1)
 
     cardA.remove()
+    cardB.remove()
   })
 })
