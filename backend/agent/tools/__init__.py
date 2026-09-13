@@ -12,6 +12,7 @@ from agent.tools.email import EmailSkill
 from agent.tools.overview import OverviewSkill
 from agent.tools.trash import TrashSkill
 from agent.tools.memory import MemorySkill
+from agent.tools.knowledge import KnowledgeSkill
 from agent.tools.search import SearchSkill
 from agent.tools.global_search import GlobalSearchSkill
 from agent.tools.group_context import GroupContextSkill
@@ -29,7 +30,7 @@ from agent.tools.workspaces import WorkspacesSkill
 __all__ = [
     "BaseSkill", "registry",
     "ProjectsSkill", "CalendarSkill", "FilesSkill", "ClientsSkill", "EmailSkill",
-    "OverviewSkill", "TrashSkill", "MemorySkill", "SearchSkill",
+    "OverviewSkill", "TrashSkill", "MemorySkill", "KnowledgeSkill", "SearchSkill",
     "GlobalSearchSkill",
     "MindSkill",
     "MindCanvasSkill",
