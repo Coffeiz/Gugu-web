@@ -353,9 +353,41 @@ def _issue(path: str, rule: str, message: str) -> dict[str, str]:
     return {"path": path, "rule": rule, "message": message}
 
 
+def _issues_for_one_of(error: ValidationError, path: str) -> list[dict[str, str]]:
+    """oneOf 互斥失败：尽量点名冲突字段与可选项，让模型一次改对。
+
+    send_file 这类「来源四选一」schema 的典型失败是模型同时填了两个来源
+    字段（如 file+url）；只回「不符合 oneOf」没有指向，模型会原样重试。
+    """
+    instance = error.instance if isinstance(error.instance, dict) else {}
+    options: list[str] = []
+    for branch in (error.validator_value or []):
+        if isinstance(branch, dict):
+            for name in (branch.get("required") or []):
+                option = str(name)
+                if option not in options:
+                    options.append(option)
+    if options:
+        provided = [str(key) for key in instance.keys() if str(key) in options]
+        if len(provided) > 1:
+            return [_issue(
+                path, "oneOf",
+                f"同时提供了 {' 和 '.join(provided)}；这些来源互斥，只能保留一个（可选：{' / '.join(options)}）",
+            )]
+        if len(provided) == 1:
+            return [_issue(
+                path, "oneOf",
+                f"提供了 {provided[0]}，但与其它约束组合后不满足任何可选分支（可选：{' / '.join(options)}）",
+            )]
+    return [_issue(path, "oneOf", "字段不符合工具输入约束（oneOf）")]
+
+
 def _issues_for_error(error: ValidationError) -> list[dict[str, str]]:
     path = _path(error.absolute_path)
     rule = str(error.validator or "invalid")
+
+    if rule == "oneOf":
+        return _issues_for_one_of(error, path)
 
     if rule == "required":
         instance = error.instance if isinstance(error.instance, dict) else {}

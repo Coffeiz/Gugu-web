@@ -37,6 +37,17 @@ def test_send_file_mutually_exclusive_sources_still_rejected():
     assert issues
 
 
+def test_send_file_conflicting_sources_named_in_issue():
+    """回归：file+url 同时给出时，oneOf 报错要点名冲突字段与全部可选项。"""
+    issues = _issues({
+        "file": "正赛-长距离图.png",
+        "url": "file:///workspace/F1/charts/正赛-长距离图.png",
+        "title": "马德里站正赛长距离图",
+    })
+    assert any("file 和 url" in issue["message"] for issue in issues)
+    assert any("file / file_id / url / attach_id" in issue["message"] for issue in issues)
+
+
 def test_apply_title_overrides_display_name():
     artifact = {"file_id": 1, "name": "chart", "ext": "png"}
     assert _apply_title(artifact, "南京降水")["name"] == "南京降水"

@@ -1073,9 +1073,11 @@ class FilesSkill(BaseSkill):
             name="send_file", label="发送文件",
             description_short='发送文件或图片。',
             description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用。"
-                        "文件库文件优先使用 list_files 返回的 file_id，也可以直接给文件名（重名时会返回候选让你用 file_id 消歧），"
-                        "或 Shell 逻辑路径 /workspace/...、/personal/...、/project/...（路径方式单文件上限 10MB，更大的文件请用 file_id），"
-                        "不要把路径填到 file_id。title 可选：作为发给用户的展示名，所有来源通用。查位置请用文件链接。",
+                        "四个来源只能选其一：文件库文件优先用 list_files 返回的 file_id，也可以直接给文件名"
+                        "（重名时会返回候选让你用 file_id 消歧）；Shell 逻辑路径 /workspace/...、/personal/...、"
+                        "/project/... 用 file 传（路径方式单文件上限 10MB，更大的文件请用 file_id），不要把路径填到"
+                        " file_id；url 仅接受 http(s) 网络地址，本地或工作区文件不要用 url。"
+                        "title 可选：作为发给用户的展示名，所有来源通用。查位置请用文件链接。",
             input_schema={
                 "type": "object",
                 "properties": {
