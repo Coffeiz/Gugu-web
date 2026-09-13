@@ -290,6 +290,58 @@ def _fit_oversized_message(message: dict, max_tokens: int) -> dict:
     return copy
 
 
+def _recent_fallback_selection(body: list[dict], fixed_tokens: int, safe_budget: int):
+    """LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息。
+
+    只有这段仍放不进安全预算，才进入更激进的 token 截断；返回 (消息列表, 截断后
+    总量)，没有可用的回退时返回 (None, 0)。
+    """
+    recent_units: list[list[dict]] = []
+    recent_count = 0
+    for unit in reversed(_units(body)):
+        recent_units.append([body[index] for index in unit])
+        recent_count += len(unit)
+        if recent_count >= RECENT_MESSAGE_FALLBACK_COUNT:
+            break
+    recent_units.reverse()
+    recent = [message for unit in recent_units for message in unit]
+    recent_total = fixed_tokens + sum(estimate_tokens(message_text(message)) for message in recent)
+    if recent and recent_total <= safe_budget:
+        return recent, recent_total
+    return None, 0
+
+
+def _select_kept_units(body: list[dict], available: int) -> tuple[list[dict], bool]:
+    """从最新完整工具单元往回装配预算内消息。
+
+    最新单元单独超大时不能原样绕过，改做字段级确定性截断；返回 (消息列表,
+    是否发生过字段级截断)。
+    """
+    kept: list[list[dict]] = []
+    used = 0
+    units = _units(body)
+    for unit in reversed(units):
+        unit_messages = [body[index] for index in unit]
+        unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
+        if not kept and unit_tokens > available:
+            # 最新单元单独处理：不能用原样超大消息绕过字段级截断。
+            break
+        if kept and used + unit_tokens > available:
+            break
+        kept.append(unit_messages)
+        used += unit_tokens
+    kept.reverse()
+
+    # 最新单元必须存在；若它自身过大，做字段级确定性截断，而不是无限重试。
+    oversized = False
+    if not kept and units:
+        latest = [body[index] for index in units[-1]]
+        latest_budget = max(1, available)
+        oversized = sum(estimate_tokens(message_text(message)) for message in latest) > latest_budget
+        kept = [[_fit_oversized_message(message, latest_budget) for message in latest]]
+    return [message for unit in kept for message in unit], oversized
+
+
 def truncate_messages(
     messages: Iterable[dict],
     system_text: str = "",
@@ -338,19 +390,10 @@ def truncate_messages(
     )
     fixed_tokens += sum(estimate_tokens(message_text(message)) for message in protected_tail)
 
-    # LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息。
+    # LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息；
     # 只有这段仍放不进安全预算，才进入下面更激进的 token 截断。
-    recent_units: list[list[dict]] = []
-    recent_count = 0
-    for unit in reversed(_units(body)):
-        recent_units.append([body[index] for index in unit])
-        recent_count += len(unit)
-        if recent_count >= RECENT_MESSAGE_FALLBACK_COUNT:
-            break
-    recent_units.reverse()
-    recent = [message for unit in recent_units for message in unit]
-    recent_total = fixed_tokens + sum(estimate_tokens(message_text(message)) for message in recent)
-    if recent and recent_total <= safe_budget:
+    recent, recent_total = _recent_fallback_selection(body, fixed_tokens, safe_budget)
+    if recent is not None:
         return prefix + recent + protected_tail, BudgetResult(
             True,
             before,
@@ -359,31 +402,9 @@ def truncate_messages(
         )
 
     available = max(1, min(safe_budget - fixed_tokens, target - fixed_tokens))
+    kept, oversized = _select_kept_units(body, available)
 
-    kept: list[list[dict]] = []
-    used = 0
-    units = _units(body)
-    for unit in reversed(units):
-        unit_messages = [body[index] for index in unit]
-        unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
-        if not kept and unit_tokens > available:
-            # 最新单元单独处理：不能用原样超大消息绕过字段级截断。
-            break
-        if kept and used + unit_tokens > available:
-            break
-        kept.append(unit_messages)
-        used += unit_tokens
-    kept.reverse()
-
-    # 最新单元必须存在；若它自身过大，做字段级确定性截断，而不是无限重试。
-    oversized = False
-    if not kept and units:
-        latest = [body[index] for index in units[-1]]
-        latest_budget = max(1, available)
-        oversized = sum(estimate_tokens(message_text(message)) for message in latest) > latest_budget
-        kept = [[_fit_oversized_message(message, latest_budget) for message in latest]]
-
-    result = prefix + [message for unit in kept for message in unit] + protected_tail
+    result = prefix + kept + protected_tail
     after = ContextBudget.from_messages(
         budget.model_context_tokens,
         result,

@@ -14,23 +14,59 @@
         "backend/tests/test_session_history.py"
       ],
       "function_tests": {
-        "from_messages": ["backend/tests/test_context_budget.py"],
+        "from_messages": [
+          "backend/tests/test_context_budget.py"
+        ],
         "from_parts": [
           "backend/tests/test_context_budget.py",
           "backend/tests/test_session_history.py"
         ],
-        "non_history_tokens": ["backend/tests/test_context_budget.py"],
-        "total_tokens": ["backend/tests/test_context_budget.py"],
-        "soft_limit_tokens": ["backend/tests/test_context_budget.py"],
-        "compression_cap_tokens": ["backend/tests/test_context_budget.py"],
+        "non_history_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "total_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "soft_limit_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "compression_cap_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
         "history_capacity_tokens": [
           "backend/tests/test_context_budget.py",
           "backend/tests/test_session_history.py"
         ],
-        "diagnostics": ["backend/tests/test_context_budget.py"],
-        "estimate_tool_schema_tokens": ["backend/tests/test_context_budget.py"],
-        "truncate_messages": ["backend/tests/test_context_budget.py"],
-        "enforce_message_budget": ["backend/tests/test_context_budget.py"]
+        "diagnostics": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "estimate_tool_schema_tokens": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "truncate_messages": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "enforce_message_budget": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "enforce_provider_overflow_fallback": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "_truncate_value": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "_fit_oversized_message": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "_recent_fallback_selection": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "_select_kept_units": [
+          "backend/tests/test_context_budget.py"
+        ],
+        "_truncate_text": [
+          "backend/tests/test_context_budget.py"
+        ]
       },
       "domain": "Agent 上下文预算",
       "layer": "L0 单元测试",
@@ -39,9 +75,13 @@
     {
       "language": "typescript",
       "source": "frontend/src/utils/optimisticMutation.ts",
-      "tests": ["frontend/test/optimisticMutation.test.ts"],
+      "tests": [
+        "frontend/test/optimisticMutation.test.ts"
+      ],
       "function_tests": {
-        "optimisticMutation": ["frontend/test/optimisticMutation.test.ts"]
+        "optimisticMutation": [
+          "frontend/test/optimisticMutation.test.ts"
+        ]
       },
       "domain": "文件库乐观更新时序",
       "layer": "L0 单元测试",
