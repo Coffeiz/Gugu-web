@@ -71,8 +71,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   git fetch origin && git tag -a v1.0.x -m "v1.0.x：一句话摘要" origin/main && git push origin v1.0.x
   ```
 
-- tag 触发 publish job：构建并推送 GHCR + Docker Hub（tag 形如 `v1.0.x`，带 v）、cosign 签名、
-  生成 update manifest。Docker Hub 的公共 tag 是 `coffeiz/gugu-web-{backend,frontend}:v1.0.x`。
+- tag 触发 publish job：构建公开的一体化 `gugu-web` 并推送 Docker Hub（同时镜像到 GHCR），拆分 backend/frontend 业务镜像仅推送 GHCR；镜像只发布语义版本号标签，不再发布 Git SHA 标签，稳定版仍维护 `latest` 别名；镜像均做 Cosign 签名。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
 
 ### 发布失败处理
 
@@ -83,16 +82,17 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 ## 5. 生产部署（root@<host>，/opt/Gugu-web-main）
 
 ```bash
-docker pull docker.io/coffeiz/gugu-web-backend:v1.0.x
-docker pull docker.io/coffeiz/gugu-web-frontend:v1.0.x
-docker tag docker.io/coffeiz/gugu-web-backend:v1.0.x   gugu-web-backend:prod
-docker tag docker.io/coffeiz/gugu-web-frontend:v1.0.x  gugu-web-frontend:prod
+docker pull ghcr.io/coffeiz/gugu-web-backend:v1.0.x
+docker pull ghcr.io/coffeiz/gugu-web-frontend:v1.0.x
+docker tag ghcr.io/coffeiz/gugu-web-backend:v1.0.x   gugu-web-backend:prod
+docker tag ghcr.io/coffeiz/gugu-web-frontend:v1.0.x  gugu-web-frontend:prod
 cd /opt/Gugu-web-main && docker compose -p gugu-web-main -f docker-compose.prod.yml up -d
 docker compose -p gugu-web-main -f docker-compose.prod.yml up -d --force-recreate sandboxd
 docker restart gugu-web-main-nginx-1
 ```
 
 - compose 项目名必须 `-p gugu-web-main`；`backend/.env`、`config.override.json` 属用户数据，流程中只读。
+- GHCR backend/frontend 包当前公开，可匿名拉取；发布工作流继续更新这些业务镜像。
 - sandboxd 与 backend 共用镜像 tag，`up -d` 检测不到 tag 底层镜像变化，必须 `--force-recreate`。
 - **最后一步 `docker restart nginx-1` 不能省**（v1.1.4 教训）：`up -d` 重建 backend/frontend 后
   容器 IP 会变，nginx 只在启动时解析上游地址，不重启就继续连旧 IP，公网整站 502

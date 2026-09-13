@@ -16,6 +16,9 @@ backend/path/
 .pytest_cache/
 .coverage
 htmlcov/
+backend/mutants/
+frontend/.stryker-report/
+frontend/.stryker-tmp/
 .mypy_cache/
 .ruff_cache/
 

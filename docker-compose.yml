@@ -53,6 +53,7 @@ x-app-environment: &app-environment
   SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+  GUGU_UPDATER_SOCKET: /run/gugu-updater/control.sock
 
 services:
   postgres:
@@ -126,7 +127,10 @@ services:
       - gugu_config:/config
       - gugu_logs:/app/logs
       - sandbox_socket:/run/gugu
+      - gugu_updater_socket:/run/gugu-updater:ro
     depends_on:
+      updater:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -141,6 +145,36 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+    restart: unless-stopped
+
+  # 独立控制面：只有 updater 持有 Docker Socket；app 仅能访问私有 Unix Socket。
+  updater:
+    image: ${GUGU_UPDATER_IMAGE:-docker.io/coffeiz/gugu-web-updater:latest}
+    logging: *json-file-logging
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    environment:
+      GUGU_UPDATER_COMPOSE_DIR: ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}
+      GUGU_UPDATER_CODE_DIR: /opt/gugu-updater
+      GUGU_UPDATER_STATE_DIR: /var/lib/gugu-updater
+      GUGU_UPDATER_SOCKET: /run/gugu-updater/control.sock
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:ro
+      - gugu_updater_socket:/run/gugu-updater
+      - gugu_updater_state:/var/lib/gugu-updater
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(1); s.connect('/run/gugu-updater/control.sock'); s.close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     restart: unless-stopped
 
   egress-proxy:
@@ -224,6 +258,8 @@ volumes:
   gugu_config:
   gugu_logs:
   sandbox_socket:
+  gugu_updater_socket:
+  gugu_updater_state:
 
 networks:
   egress_internal:

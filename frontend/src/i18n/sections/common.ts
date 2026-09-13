@@ -286,4 +286,7 @@ Object.assign(messages['en-US'], { devEmail: { title: 'Email style lab', descrip
 Object.assign((messages['zh-CN'] as Record<string, any>).devEmail, { recipient: '测试收件人', recipientPlaceholder: '可改为其他测试邮箱', loadingPreview: '正在加载邮件预览…', refreshPreview: '刷新预览', refreshingPreview: '刷新中…' })
 Object.assign((messages['ja-JP'] as Record<string, any>).devEmail, { recipient: 'テスト受信者', recipientPlaceholder: '別のテストメールアドレスに変更できます', loadingPreview: 'メールプレビューを読み込み中…', refreshPreview: 'プレビューを更新', refreshingPreview: '更新中…' })
 Object.assign((messages['en-US'] as Record<string, any>).devEmail, { recipient: 'Test recipient', recipientPlaceholder: 'You can change this test address', loadingPreview: 'Loading email preview…', refreshPreview: 'Refresh preview', refreshingPreview: 'Refreshing…' })
+Object.assign(messages['zh-CN'].admin, { updates: 'Docker 更新' })
+Object.assign(messages['ja-JP'].admin, { updates: 'Docker 更新' })
+Object.assign(messages['en-US'].admin, { updates: 'Docker updates' })
 }

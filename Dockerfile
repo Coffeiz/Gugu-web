@@ -11,7 +11,7 @@ FROM node:22-trixie AS frontend-build
 
 WORKDIR /workspace
 
-RUN npm install --global pnpm@10.15.0
+RUN npm install --global pnpm@latest
 
 # 依赖单独一层：workspace 元数据和 manifest 未变时改代码不重装。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
@@ -66,6 +66,8 @@ ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 # 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），
 # 不需要文档预览时可传 --build-arg GUGU_INSTALL_LIBREOFFICE=false 关闭。
 ARG GUGU_INSTALL_LIBREOFFICE=true
+ARG GUGU_VERSION=unknown
+ARG GUGU_REVISION=unknown
 
 RUN sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
@@ -115,10 +117,13 @@ WORKDIR /app
 ENV PATH=/opt/venv/bin:${PATH} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
+    org.opencontainers.image.revision="${GUGU_REVISION}"
 COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
 COPY backend/app ./app
+COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY backend/onboarding ./onboarding
 COPY backend/alembic ./alembic

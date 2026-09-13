@@ -5,6 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 改进
+
+- **Docker Compose 自动更新使用 Docker Hub 一体化镜像**：清单固定 `gugu-web` 镜像 digest；拆分 backend/frontend 镜像留在 GHCR 业务发布链路中。
+- **镜像发布改为版本号标签**：停止发布 Git SHA 镜像标签，稳定版继续维护 `latest` 别名。
+
 ## [1.2.1] - 2026-09-13
 
 ### 改进
