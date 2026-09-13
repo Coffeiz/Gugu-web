@@ -312,11 +312,68 @@ function removeDocument(state: State, id: string): void {
 }
 
 function patchInMemory(state: State, revision: string, upserts: Document[], deletes: string[]): void {
-  for (const id of deletes) removeDocument(state, id);
-  for (const document of upserts) {
-    removeDocument(state, document.id);
-    addDocument(state, document);
+  // 逐条 removeDocument/addDocument 在冷启动全量补丁上是 O(n²)：每条 upsert 触发
+  // 一次 documents 数组全量 filter 拷贝、每个词项 posting 一次 indexOf+splice 线性
+  // 搬移——20237 条实测 install 68s，把 30s 构建预算顶爆（2026-09-13 devserver
+  // 全量超时事故）。这里改成标记-清扫：账目（docFreq/lengths/documentsById）先
+  // 全部处理完并收集脏词项，最后对脏词项 posting 一次性重建、documents 数组
+  // 单次 filter。复杂度从 O(n²) 降到 O(总变更词项出现数)。
+  const removedIds = new Set<string>(deletes);
+  for (const document of upserts) removedIds.add(document.id);
+
+  const dirtyTerms = new Set<string>();
+  // 同 id 多条 upsert 只保留最后一条（与原逐条 remove→add 的「后者胜」语义一致）。
+  const added = new Map<string, { document: Document; frequency: Map<string, number> }>();
+  for (const id of removedIds) {
+    const existing = state.documentsById.get(id);
+    if (!existing) continue;
+    const frequency = termFrequency(tokens(rankingText(existing)));
+    state.totalLength -= state.lengths.get(id) ?? 0;
+    state.lengths.delete(id);
+    state.documentsById.delete(id);
+    for (const term of frequency.keys()) {
+      dirtyTerms.add(term);
+      const count = (state.docFreq.get(term) ?? 0) - 1;
+      if (count > 0) state.docFreq.set(term, count);
+      else state.docFreq.delete(term);
+    }
   }
+  for (const document of upserts) {
+    const frequency = termFrequency(tokens(rankingText(document)));
+    const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
+    state.lengths.set(document.id, length);
+    state.totalLength += length;
+    state.documentsById.set(document.id, document);
+    added.set(document.id, { document, frequency });
+    for (const term of frequency.keys()) {
+      dirtyTerms.add(term);
+      state.docFreq.set(term, (state.docFreq.get(term) ?? 0) + 1);
+    }
+  }
+  // 脏词项 posting 重建：旧条目过滤掉全部移除 id，再补上新增文档词频。
+  // 注意 docFreq 已按「先减后加」定稿；词项计数归零时旧 posting 可能已在
+  // 账目阶段删掉，重建按空 posting 起步，空结果则删除词项。
+  for (const term of dirtyTerms) {
+    const old = state.postings.get(term) ?? { ids: [], frequencies: [] };
+    const ids: string[] = [];
+    const frequencies: number[] = [];
+    for (let i = 0; i < old.ids.length; i++) {
+      if (removedIds.has(old.ids[i])) continue;
+      ids.push(old.ids[i]);
+      frequencies.push(old.frequencies[i]);
+    }
+    for (const [docId, entry] of added) {
+      const count = entry.frequency.get(term);
+      if (count !== undefined) {
+        ids.push(docId);
+        frequencies.push(count);
+      }
+    }
+    if (ids.length > 0) state.postings.set(term, { ids, frequencies });
+    else state.postings.delete(term);
+  }
+  state.documents = state.documents.filter((item) => !removedIds.has(item.id));
+  for (const entry of added.values()) state.documents.push(entry.document);
   state.revision = revision;
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
