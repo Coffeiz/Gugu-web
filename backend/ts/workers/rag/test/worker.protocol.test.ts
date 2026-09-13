@@ -1135,3 +1135,49 @@ test("unified_query 持久向量随 replace 整表搭载并按版本戳融合非
   child.stdin.end();
   await closed;
 });
+
+test("RAG worker 大批量 patch 重灌后打分与整表 replace 一致（标记-清扫不重复计词）", async (t) => {
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: workerDir });
+  t.after(() => child.kill());
+  const lines = createInterface({ input: child.stdout });
+  const pending: Array<(value: string) => void> = [];
+  const received: string[] = [];
+  lines.on("line", (line) => {
+    const waiter = pending.shift();
+    if (waiter) waiter(line);
+    else received.push(line);
+  });
+  const readResponse = async (): Promise<Record<string, unknown>> => {
+    const line = received.shift() ?? await new Promise<string>((resolveLine) => pending.push(resolveLine));
+    return JSON.parse(line) as Record<string, unknown>;
+  };
+  const send = (payload: Record<string, unknown>) => {
+    child.stdin.write(JSON.stringify(payload) + "\n");
+    return readResponse();
+  };
+  child.stdin.write('{"op":"ping"}\n');
+  assert.equal((await readResponse()).status, "ok");   // ping
+
+  const docs = (version: string) => [
+    { id: "d1", text: "画布里的麦子熟了 麦子", source_type: "canvas", scope_type: "owner", scope_id: "o1", document_version: version },
+    { id: "d2", text: "天空下的麦田与风", source_type: "canvas", scope_type: "owner", scope_id: "o1", document_version: version },
+  ];
+
+  assert.equal((await send({ op: "replace", revision: "r1", documents: docs("1") })).revision, "r1");
+  const baseline = await send({ op: "search", revision: "r1", query: "麦子", limit: 5 });
+  const scoreBaseline = (baseline.results as Array<Record<string, unknown>>)[0].score;
+
+  // 同内容重灌（只有版本戳变化）+ 删除 d2：词项集合实际没变，打分必须不变。
+  assert.equal((await send({ op: "patch", revision: "r2", documents: docs("2"), deletes: [] })).revision, "r2");
+  const afterReupsert = await send({ op: "search", revision: "r2", query: "麦子", limit: 5 });
+  const results = afterReupsert.results as Array<Record<string, unknown>>;
+  assert.equal(results.length, 1);
+  assert.equal(results[0].id, "d1");
+  assert.equal(results[0].score, scoreBaseline, "重灌后 d1 打分必须与整表 replace 一致（posting 不得重复计词）");
+
+  await send({ op: "patch", revision: "r3", documents: [], deletes: ["d1", "d2"] });
+  const afterDelete = await send({ op: "search", revision: "r3", query: "麦子", limit: 5 });
+  assert.equal(((afterDelete.results as Array<unknown>) || []).length, 0, "删除后的文档不得再被搜到");
+  child.stdin.end();
+  await once(child, "close");
+});
