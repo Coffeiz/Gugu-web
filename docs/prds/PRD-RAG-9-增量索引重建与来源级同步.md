@@ -1,8 +1,8 @@
 # PRD-RAG-9：增量索引重建与来源级同步
 
-> 状态：Phase 0–4 已有实现记录；Phase 5 待缺口收敛与验收
+> 状态：Phase 0–4 已实施；Phase 5 收敛完成（2026-09-13，见实施报告）
 > 创建：2026-09-09
-> 更新：2026-09-13（补记查询侧 delta sync 恢复层；Phase 5 清单对齐实现现状）
+> 更新：2026-09-13（补记查询侧 delta sync 恢复层；Phase 5 收敛与验收落档）
 > 所属层：RAG / Source Projection / TypeScript Worker
 > 前置 PRD：[`PRD-RAG-7-TS全链路检索分阶段迁移.md`](./PRD-RAG-7-TS全链路检索分阶段迁移.md)
 > 关联规范：[`RAG 与 Knowledge 架构`](../agent/06-RAG-AND-KNOWLEDGE.md)
@@ -61,7 +61,7 @@ TS worker 根据前后文档差异执行 patch 或 replace
 ### 2.1 目标
 
 1. Knowledge 优先支持文档级增量重建。
-2. 文件、项目、日历、画布接入文档级增量；Conversation 与 Memory 先保留现有来源级、watermark、瞬态槽或 snapshot 语义，是否纳入文档级增量由 Phase 5 明确产品范围和验收边界。
+2. 文件、项目、日历、画布接入文档级增量；Conversation 与 Memory 保留现有来源级、watermark、瞬态槽或 snapshot 语义（Phase 5 定案：维持例外，见 Phase 3 定案与回归）。
 3. 只读取变更对象及其必要的旧投影，不扫描无关来源数据。
 4. 只生成变化文档的 chunk，并计算 `upserts` 与 `deletes`。
 5. 通过 TS worker `patch` 原子推进索引 revision。
@@ -406,21 +406,21 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 ### Phase 3：剩余来源与 durable recovery
 
 - [x] Calendar、Canvas、Note 接入文档级更新入口。
-- [ ] Conversation、Memory 的增量边界尚未按本 PRD 粒度落地：当前保留 conversation 来源级重建和 watermark 语义、Memory 瞬态槽/专用 snapshot 语义；Phase 5 补足兼容性测试并确认是否维持例外，不默认要求改成文档级 patch。
+- [x] Conversation、Memory 的增量边界已定案（Phase 5）：**维持例外**——conversation 保持来源级重建（召回侧消息水位由 `conversation_before_message_id` 承担，不属于索引重建），memory 保持瞬态槽/专用 snapshot 语义；例外回归见 `test_rag_phase5_convergence.py`。
 - [x] 引入 dirty marker 或索引 outbox。
 - [x] 启动恢复和失败重放通过 durable outbox 落地。
 - [ ] 定期来源校准入口未实现；outbox 满足基础恢复路径，管理端校准作为独立运维能力延后。
-- [ ] 文档级事件合并需保留同源多个 `source_id`，由 Phase 5 修复并验证（现状与兜底见 §8.2）。
-- [x] 事件重试和来源状态查询已接入；文档级合并正确性仍待 Phase 5 验收。
+- [x] 文档级事件合并已保留同源多个 `source_id`（bus pending 按 ID + outbox `pending_source_ids`，2026-09-13）。
+- [x] 事件重试和来源状态查询已接入；文档级合并正确性由 Phase 5 回归覆盖。
 
 验收：重启、重复事件、事件丢失模拟后，索引最终与主数据一致；无法恢复时有明确管理诊断。
 
 ### Phase 4：性能优化与旧路径清理
 
-- [x] 记录 1000/3000 条规模下单文档增量与来源级重建的 P50/P95；chunk diff/TS patch 的独立分段耗时未单独报告。
-- [ ] 批量事件合并策略尚未完成校准；先由 Phase 5 保证多 `source_id` 不丢，再依据重复 patch 与延迟测量确定是否需要合并窗口。
+- [x] 记录 1000/3000 条规模下单文档增量与来源级重建的 P50/P95；分段耗时见实施报告（2026-09-13，`scripts/diagnostics/rag_phase5_perf.py`）。
+- [x] 批量事件合并策略定案：按 source_id 逐条保留、不设合并窗口——单文档 patch p50 ≈ 7.5ms（1000 条规模），无需窗口合并；依据同轮重复 patch 与延迟测量确认。
 - [x] 已接入的六个可单文档投影来源默认走增量；Conversation、Memory 按 Phase 3 所述保留专用语义。
-- [x] 清理重复差异实现、旧 shadow 路径和仅用于迁移的测试。
+- [x] 清理重复差异实现、旧 shadow 路径和仅用于迁移的测试（含删除 ts_sidecar 死函数 `_index_document_digest`、update_document 死的全量 load）。
 
 验收：已接入文档级增量的来源不因单文档变化触发来源级全量重建；全量回退仍可手动执行并有测试覆盖。性能报告不得将未测场景标记为已验证。
 
@@ -428,17 +428,23 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 目标：把 PRD 的行为承诺、实现责任和真实回归证据重新对齐。此阶段不以增加测试数量为唯一目标；若测试揭示行为缺陷，应先修实现，再以回归测试锁定。
 
-- [ ] 修复内存事件队列与 durable outbox 的同源多文档合并：不同 `source_id` 必须全部保留（或使用等价的 dirty-ID 集合）；refresh/来源级事件须有明确的覆盖语义。**现状（2026-09-13 核对）**：bus `_rag_pending` 与 outbox 均只留最后一条 source_id，当前靠查询侧 delta sync（§8.2）兜底；定案二选一——① 修代码摘掉隐性耦合（bus pending 改集合、outbox 存 ID 集合，改动小，推荐）；② 若接受现状，须以测试锁定「合并丢 ID 后查询前自愈收敛」为设计承诺，不得维持 PRD 禁止 + 实现违反 + 无兜底记载的状态。
-- [ ] 修正 revision mismatch 回退来源级 replace 后的诊断标注：`mode` 仍为 `document_patch`、只体现 `base_revision_match=False`，改为显式 `mode=source_replace`（对齐 §4「回退不得静默伪装成增量成功」）。
-- [ ] 新增并发与重启回归：阻塞文档 A 的 patch 时连续提交 B/C，验证每个最终主数据变更都进入索引（若选择保留合并语义，则断言 B/C 在下一次查询前经 delta sync 收敛）；重启后从 outbox 重放同一批 ID，验证最终 DB projection、worker revision 和查询结果一致。
-- [ ] 补齐来源真实变更测试：文件夹移动断言旧 scope 不再召回、新 scope 可召回；项目 UI/索引一致；Calendar/Note 删除清理；Canvas 关系变更更新所有受影响端点。
-- [ ] 补齐 Knowledge 与故障边界测试：仅关键词/描述变化、删除后恢复、projection 事务失败、worker 不可用后的真实查询自愈、向量部分失败不破坏 lexical patch、owner/project/folder/group-member scope 隔离。
-- [ ] 对诊断模式与日志做 RAG 写路径专属脱敏断言；覆盖 `document_patch`、`source_replace`、`revision_mismatch`、`worker_unavailable`、`projection_failed`、`event_replayed` 和 `no_change`。
-- [ ] 完成性能计划中的单文档删除、连续 10 次同源多文档变更、worker 重启恢复测量；分开记录文档读取、chunk 投影、DB 写入、TS patch 与端到端耗时。
-- [ ] 明确 Conversation/Memory 的产品范围：若维持当前特殊路径，补 watermark、snapshot、瞬态槽与重复事件回归，并同步 §2、§7、Phase 3 和完成标准；若改为文档级增量，先补独立设计与受影响集合定义。
-- [ ] 更新 Phase 0–5 完成状态与实施报告；只有行为、测试和性能证据都齐全的条目才能标记完成。
+2026-09-13 收敛完成（commit 0f443278c）。**收敛中发现并修复的实现缺陷**：
 
-验收：同一用户同一来源的一批不同文档 ID 不会被事件合并或 outbox 覆盖；重启后最终索引与主数据一致；各阶段责任模块、来源例外和测试报告描述一致。
+1. `apply_document_patch` 只收 `delta.upserts` 导致未变化 chunk 被误打墓碑（多 chunk 文档部分编辑后索引静默丢内容，违反 §6.3「保留未变化 chunk」）——改为传当前全量 chunk 集，worker 仍只收 delta；回归 `test_partial_edit_keeps_unchanged_chunks`。
+2. `diagnostics.record_index_update` 的 `_log`/`json` 未定义，写路径诊断自上线起静默空转——修复后 §9 状态真实落日志。
+3. `update_document` 每次 patch 全量 `load_index_documents` 且结果未使用（死代码，O(来源规模)）——删除后单文档修改 p50 79ms→7.5ms（1000 条规模）。
+
+- [x] 修复内存事件队列与 durable outbox 的同源多文档合并：选择方案①修代码——bus `_rag_pending` 按 source_id 保留集合、refresh 事件覆盖文档级 pending；outbox 增 `pending_source_ids`（迁移 20260914000001），persist 并集、重放逐 ID 展开、成功逐 ID 移除，集合非空时保持 queued。
+- [x] 修正 revision mismatch 回退来源级 replace 后的诊断标注：显式 `mode=source_replace`。
+- [x] 新增并发与重启回归：阻塞文档 A 时提交 B/C 全部处理（`test_bus_keeps_all_pending_source_ids`）；refresh 覆盖文档级 pending（`test_bus_refresh_event_overrides_document_pending`）；重启后 outbox 逐 ID 重放收敛 DB projection + worker revision（`test_outbox_replay_converges_after_restart`）。
+- [x] 补齐来源真实变更测试：文件夹/阶段移动新 scope 可见、旧阶段无残留（`test_folder_move_clears_old_scope`）；Calendar 删除、Note、Canvas 关系由 `test_rag_remaining_sources_delta.py` 覆盖；部分编辑不丢 chunk（`test_partial_edit_keeps_unchanged_chunks`）。
+- [x] 补齐 Knowledge 与故障边界测试：仅关键词/描述变化的 `:k{hash}` 版本戳（`test_keyword_only_change_bumps_version_stamp`）、删除后恢复（`test_delete_then_restore_same_id`）、projection 事务失败不落脏（`test_projection_failure_leaves_old_chunks_intact`）、worker 不可用后 DB 先行 + 查询侧自愈（`test_worker_unavailable_is_ready_for_lazy_query_rebuild`）、向量部分失败不破坏 lexical 且重放幂等（`test_vector_partial_failure_keeps_lexical_and_replays_idempotent`）、owner scope 隔离（`test_owner_scope_isolation_on_patch`）。project/folder/group-member scope 隔离由 `test_rag_unified_query.py` 既有 ACL 回归覆盖。
+- [x] 诊断模式与日志脱敏断言：七态（document_patch / source_replace / revision_mismatch / worker_unavailable / projection_failed / event_replayed / no_change）真实落日志且断言（`test_diagnostic_modes_and_statuses`，含对 bug 2 的回归）；正文不进日志（`test_write_path_logs_never_contain_content`）。
+- [x] 完成性能测量：单文档修改/删除、连续 10 次同源多文档变更、来源级重建基线，分段耗时（`scripts/diagnostics/rag_phase5_perf.py`，结果见实施报告）；TS worker 段耗时见 2026-09-13 基准报告。
+- [x] 明确 Conversation/Memory 的产品范围：维持当前特殊路径（见 Phase 3 定案），补 `test_conversation_event_stays_source_level`、`test_memory_event_uses_dedicated_rebuild` 回归，并同步 §2、§7、Phase 3 和完成标准。
+- [x] 更新 Phase 0–5 完成状态与实施报告；只有行为、测试和性能证据都齐全的条目才标记完成。
+
+验收：同一用户同一来源的一批不同文档 ID 不会被事件合并或 outbox 覆盖；重启后最终索引与主数据一致；各阶段责任模块、来源例外和测试报告描述一致。✅（2026-09-13）
 
 ## 11. 测试计划
 
