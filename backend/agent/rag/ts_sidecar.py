@@ -62,7 +62,7 @@ _WORKER_BUILD_PHASES = {
 _WORKER_BUILD_COUNT_NAMES = {
     "watermark_usable", "fallback_full", "passes", "scanned_rows",
     "applied_upserts", "applied_deletes", "document_count", "vector_count",
-    "posting_terms", "serialized_bytes",
+    "posting_terms", "serialized_bytes", "install_skipped_documents",
 }
 
 
