@@ -4,8 +4,8 @@
   "mode": "full",
   "status": "failed",
   "date": "2026-09-14",
-  "created_at": "2026-09-13T17:23:29.998654+00:00",
-  "commit": "17f39656374e87b270cee853301a48fdb4cf4829",
+  "created_at": "2026-09-13T17:43:59.921062+00:00",
+  "commit": "c7431e10c7656f8c11c340582dcb9f6a36a021a7",
   "worktree_dirty": true,
   "tools": {
     "python": "3.14.3",
@@ -126,7 +126,7 @@
       "language": "python",
       "status": "passed",
       "exit_code": 0,
-      "duration_ms": 181899,
+      "duration_ms": 153592,
       "command": "python -m pytest -q --disable-warnings --cov=agent --cov=app --cov-branch --cov-report=json:<TEMP>（全量测试套件）",
       "scopes": []
     },
@@ -134,7 +134,7 @@
       "language": "typescript",
       "status": "failed",
       "exit_code": 1,
-      "duration_ms": 5103,
+      "duration_ms": 4506,
       "command": "corepack pnpm exec vitest run --coverage.enabled --coverage.provider=v8 --coverage.include=src/** --coverage.reporter=json --coverage.reportsDirectory=<TEMP>（全量测试套件）",
       "scopes": []
     }
@@ -2426,21 +2426,6 @@
     },
     {
       "source": "backend/agent/im/replies.py",
-      "function": "_tool_result_summary",
-      "start_line": 169,
-      "end_line": 181,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 5,
-      "coverage": 0.0,
-      "crap": 30.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/im/replies.py",
       "function": "send_reply",
       "start_line": 247,
       "end_line": 308,
@@ -2876,36 +2861,6 @@
     },
     {
       "source": "backend/agent/memory/lens.py",
-      "function": "_bigrams",
-      "start_line": 76,
-      "end_line": 80,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 4,
-      "coverage": 0.0,
-      "crap": 20.0,
-      "risk": "中"
-    },
-    {
-      "source": "backend/agent/memory/lens.py",
-      "function": "_similar",
-      "start_line": 92,
-      "end_line": 112,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 13,
-      "coverage": 0.0,
-      "crap": 182.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/memory/lens.py",
       "function": "read_block",
       "start_line": 116,
       "end_line": 140,
@@ -2962,21 +2917,6 @@
       "cc": 6,
       "coverage": 0.0,
       "crap": 42.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/memory/longterm_compaction.py",
-      "function": "_pattern_strength",
-      "start_line": 25,
-      "end_line": 31,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 5,
-      "coverage": 0.0,
-      "crap": 30.0,
       "risk": "高"
     },
     {
@@ -3052,21 +2992,6 @@
       "cc": 7,
       "coverage": 0.0,
       "crap": 56.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/memory/reflection.py",
-      "function": "_misperc_regex",
-      "start_line": 114,
-      "end_line": 121,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 5,
-      "coverage": 0.0,
-      "crap": 30.0,
       "risk": "高"
     },
     {
@@ -4145,8 +4070,8 @@
       "tests": [],
       "test_association": "pending_manual",
       "cc": 8,
-      "coverage": 0.444444,
-      "crap": 18.9739,
+      "coverage": 0.481481,
+      "crap": 16.9222,
       "risk": "中"
     },
     {
@@ -4160,9 +4085,9 @@
       "tests": [],
       "test_association": "pending_manual",
       "cc": 24,
-      "coverage": 0.731343,
-      "crap": 35.169,
-      "risk": "高"
+      "coverage": 0.940299,
+      "crap": 24.1226,
+      "risk": "中"
     },
     {
       "source": "backend/agent/rag/scope.py",
@@ -4282,21 +4207,6 @@
       "cc": 10,
       "coverage": 0.0,
       "crap": 110.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/rag/source_text.py",
-      "function": "split_sections",
-      "start_line": 10,
-      "end_line": 26,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 9,
-      "coverage": 0.0,
-      "crap": 90.0,
       "risk": "高"
     },
     {
@@ -4497,8 +4407,8 @@
     {
       "source": "backend/agent/rag/ts_sidecar.py",
       "function": "rank_candidates_with_cache",
-      "start_line": 1243,
-      "end_line": 1353,
+      "start_line": 1237,
+      "end_line": 1347,
       "domain": "全量扫描（backend/agent + backend/app）",
       "layer": "全量测试套件覆盖率（手动）",
       "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
@@ -4512,8 +4422,8 @@
     {
       "source": "backend/agent/rag/ts_sidecar.py",
       "function": "_reap_idle_sidecars",
-      "start_line": 1406,
-      "end_line": 1419,
+      "start_line": 1400,
+      "end_line": 1413,
       "domain": "全量扫描（backend/agent + backend/app）",
       "layer": "全量测试套件覆盖率（手动）",
       "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
@@ -4527,8 +4437,8 @@
     {
       "source": "backend/agent/rag/ts_sidecar.py",
       "function": "active_index_dirs",
-      "start_line": 1487,
-      "end_line": 1495,
+      "start_line": 1481,
+      "end_line": 1489,
       "domain": "全量扫描（backend/agent + backend/app）",
       "layer": "全量测试套件覆盖率（手动）",
       "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
@@ -4853,36 +4763,6 @@
       "coverage": 0.864865,
       "crap": 20.9871,
       "risk": "中"
-    },
-    {
-      "source": "backend/agent/runtime/loopscope_trace/utils.py",
-      "function": "_system_message_text",
-      "start_line": 253,
-      "end_line": 269,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 11,
-      "coverage": 0.0,
-      "crap": 132.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/runtime/loopscope_trace/utils.py",
-      "function": "_classify_followup",
-      "start_line": 313,
-      "end_line": 322,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 11,
-      "coverage": 0.0,
-      "crap": 132.0,
-      "risk": "高"
     },
     {
       "source": "backend/agent/runtime/runtime_state.py",
@@ -5842,21 +5722,6 @@
       "cc": 21,
       "coverage": 0.660377,
       "crap": 38.2754,
-      "risk": "高"
-    },
-    {
-      "source": "backend/agent/tools/files/transfer.py",
-      "function": "_fmt_age",
-      "start_line": 168,
-      "end_line": 177,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 5,
-      "coverage": 0.0,
-      "crap": 30.0,
       "risk": "高"
     },
     {
@@ -9596,21 +9461,6 @@
     },
     {
       "source": "backend/app/core/config.py",
-      "function": "normalize_dimensions",
-      "start_line": 31,
-      "end_line": 38,
-      "domain": "全量扫描（backend/agent + backend/app）",
-      "layer": "全量测试套件覆盖率（手动）",
-      "ci": "CRAP 报告仅周期性手动运行，不由自动 CI 触发",
-      "tests": [],
-      "test_association": "pending_manual",
-      "cc": 5,
-      "coverage": 0.0,
-      "crap": 30.0,
-      "risk": "高"
-    },
-    {
-      "source": "backend/app/core/config.py",
       "function": "validate_alert_email_recipients",
       "start_line": 371,
       "end_line": 376,
@@ -11569,11 +11419,11 @@
     }
   ],
   "summary": {
-    "functions_total": 3386,
-    "complexity_hotspots": 468,
-    "risk_high": 468,
+    "functions_total": 3385,
+    "complexity_hotspots": 458,
+    "risk_high": 458,
     "risk_medium": 293,
-    "risk_low": 2625,
+    "risk_low": 2634,
     "mutants_total": null,
     "mutants_killed": null,
     "mutants_survived": null,
@@ -11581,5 +11431,5 @@
     "mutants_error": null,
     "equivalent_marked": null
   },
-  "duration_ms": 218068
+  "duration_ms": 182339
 }
