@@ -6,7 +6,9 @@ packages:
   - "backend/ts/packages/*"
   - "backend/ts/workers/*"
   - "backend/ts"
+# pnpm 10+ 默认禁止依赖跑安装脚本；pnpm 12 用 allowBuilds 显式放行（布尔值）。
+# 这三个包需要编译/装平台二进制：better-sqlite3(node-gyp)、esbuild(平台二进制)、vue-demi(接口切换)。
 allowBuilds:
-  better-sqlite3: set this to true or false
-  esbuild: set this to true or false
-  vue-demi: set this to true or false
+  better-sqlite3: true
+  esbuild: true
+  vue-demi: true
