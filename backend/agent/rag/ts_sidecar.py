@@ -1059,7 +1059,10 @@ class TsLexicalIndex:
 
 def _wire_document(document: IndexDocument) -> dict[str, Any]:
     text_parts = [document.title]
-    if document.summary:
+    content = document.content.strip()
+    # summary 只是正文前缀截断（如 memory 系 record 的 text[:240]）时不再重复拼接，
+    # 与 TS adapters/base.ts 的守卫同一口径；真实摘要（knowledge description）照常保留。
+    if document.summary and not content.startswith(document.summary):
         text_parts.append(document.summary)
     text_parts.append(document.content)
     wire = {
