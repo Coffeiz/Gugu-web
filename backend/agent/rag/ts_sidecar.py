@@ -97,9 +97,12 @@ def index_dir_for_owner(owner_user_id: object) -> str:
 
 
 SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
-# 索引构建类 op（replace/patch/build_and_index/replace_transient）的等待上限：
-# 全量语料装载远超 500ms 搜索超时，且不在用户等待路径上（ping 预热同理单独放宽）。
-BUILD_TIMEOUT_SECONDS = 30.0
+# 索引构建类 op（replace/patch/build_and_index/replace_transient/sync_index_from_database）
+# 的等待上限：全量语料装载远超 500ms 搜索超时，且不在用户等待路径上（ping 预热同理单独放宽）。
+# 30s 是共享宿主冷启动全量重建的真实耗时（2 万文档 sync+install+persist 实测 ~60s）覆盖不住的：
+# 到点取消会让 persist 永远跑不到、缓存永不建立，每次查询都全量冷重建直到超时（2026-09-13
+# devserver 全量超时事故根因）。给到 120s 让首次冷构建能完成落盘，之后走热路径。
+BUILD_TIMEOUT_SECONDS = 120.0
 # 批量查询响应把多来源候选连同原文聚合在一条 JSONL 里，64KB 默认流上限会被
 # readline 以 "chunk is longer than limit" 打断，放宽到 32MB。
 SIDECAR_STREAM_LIMIT_BYTES = 32 * 1024 * 1024
