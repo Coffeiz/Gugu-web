@@ -77,7 +77,8 @@ services:
   redis:
     image: redis:latest
     logging: *json-file-logging
-    command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server; fi"]
+    # IM 入站消息先进入 Redis Stream；AOF 每秒刷盘，容器重建后可从持久卷恢复未完成队列。
+    command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --appendonly yes --appendfsync everysec --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server --appendonly yes --appendfsync everysec; fi"]
     environment:
       GUGU_REDIS_PASSWORD: ${GUGU_REDIS_PASSWORD:-}
     volumes:

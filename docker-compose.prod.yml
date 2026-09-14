@@ -38,7 +38,10 @@ services:
     image: redis:latest
     environment:
       GUGU_REDIS_PASSWORD: ${GUGU_REDIS_PASSWORD:-}
-    command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server; fi"]
+    # IM 入站消息先进入 Redis Stream；AOF 每秒刷盘，容器重建后可从持久卷恢复未完成队列。
+    command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --appendonly yes --appendfsync everysec --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server --appendonly yes --appendfsync everysec; fi"]
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD-SHELL", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then redis-cli -a \"$${GUGU_REDIS_PASSWORD}\" ping; else redis-cli ping; fi"]
       interval: 5s
@@ -360,6 +363,7 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   # 用户数据不能用普通 named volume：Shell 沙盒容器由 backend 通过 docker.sock
   # 作为兄弟容器启动，其 --mount src=/data/users/<uid>/shell 由宿主机 daemon 解析，
   # 因此宿主机上必须存在与容器内一致的 Gugu-data 路径。这里直接 bind
