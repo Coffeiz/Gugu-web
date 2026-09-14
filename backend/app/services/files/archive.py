@@ -648,6 +648,7 @@ async def _create_extracted_folder(
     occupied_by_parent: dict[int | None, set[str]],
     folder_by_archive_path: dict[str, int | None],
     created_folder_keys: list[str],
+    created_folder_ids: list[int],
 ) -> tuple[int, str]:
     if parent_id not in occupied_by_parent:
         occupied_by_parent[parent_id] = await _occupied_names(db, user_id, target, parent_id)
@@ -662,6 +663,7 @@ async def _create_extracted_folder(
     )
     db.add(folder)
     await db.flush()
+    created_folder_ids.append(folder.id)
     archive_path = f"{parent_archive_path}/{name}" if parent_archive_path else name
     target_folder_path = f"{target.folder_path}/{final_name}" if target.folder_path else final_name
     folder_key = await _physical_folder_key(storage, user_id, target, target_folder_path)
@@ -681,6 +683,7 @@ async def _ensure_archive_path_folders(
     folder_by_archive_path: dict[str, int | None],
     folder_target_paths: dict[str, str],
     created_folder_keys: list[str],
+    created_folder_ids: list[int],
 ) -> tuple[int | None, str, str]:
     parent_id = target.folder_id
     archive_parent = ""
@@ -697,6 +700,7 @@ async def _ensure_archive_path_folders(
             parent_id, chosen = await _create_extracted_folder(
                 db, storage, user_id, target, parent_id, archive_parent,
                 segment, occupied_by_parent, folder_by_archive_path, created_folder_keys,
+                created_folder_ids,
             )
             next_archive_path = f"{archive_parent}/{segment}" if archive_parent else segment
             target_parent_path = f"{target_parent_path}/{chosen}" if target_parent_path else chosen
@@ -782,6 +786,7 @@ async def extract_file(
         created_keys: list[str] = []
         created_folder_keys: list[str] = []
         created_file_ids: list[int] = []
+        created_folder_ids: list[int] = []
         actual_total = 0
         skipped = sum(1 for member in members if member.skipped)
         occupied_by_parent: dict[int | None, set[str]] = {}
@@ -796,7 +801,7 @@ async def extract_file(
                     _, archive_path, _ = await _ensure_archive_path_folders(
                         db, storage, user_id, target, segments,
                         occupied_by_parent, folder_by_archive_path,
-                        folder_target_paths, created_folder_keys,
+                        folder_target_paths, created_folder_keys, created_folder_ids,
                     )
                     # 同一路径目录项只映射一次，不产生重复空目录。
                     folder_by_archive_path.setdefault(archive_path, folder_by_archive_path.get(archive_path))
@@ -807,7 +812,7 @@ async def extract_file(
                 parent_id, archive_parent, target_parent_path = await _ensure_archive_path_folders(
                     db, storage, user_id, target, parent_segments,
                     occupied_by_parent, folder_by_archive_path,
-                    folder_target_paths, created_folder_keys,
+                    folder_target_paths, created_folder_keys, created_folder_ids,
                 )
                 leaf = segments[-1]
                 if parent_id not in occupied_by_parent:
@@ -866,6 +871,7 @@ async def extract_file(
             "skipped_count": skipped,
             "rejected_count": 0,
             "file_ids": created_file_ids,
+            "folder_ids": created_folder_ids,
         }
     finally:
         if opened_zip is not None:

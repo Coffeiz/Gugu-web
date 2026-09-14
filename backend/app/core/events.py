@@ -46,6 +46,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "move_items": "files", "copy_file": "files", "create_folder": "files",
     "delete_file": "files", "rename_folder": "files", "delete_folder": "files",
     "save_uploaded_file": "files",
+    "compress_files": "files", "extract_files": "files",
     # 客户
     "create_client": "clients", "update_client": "clients", "delete_client": "clients",
     # 定时任务（咕咕建/改/删 → 网页定时面板实时刷）

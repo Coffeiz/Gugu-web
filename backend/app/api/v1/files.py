@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File as FastAPIFile, Form
 from jose import JWTError, jwt
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +13,11 @@ from app.core.security import get_client_id, get_current_user, verify_stream_tok
 from app.core.tz import now_utc
 from app.core.upload_stream import spool_upload
 from app.db.session import get_db
-from app.models import File, User
-from app.schemas import FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry, BatchDeleteBody, FileCopyBody, BatchDownloadBody
+from app.models import File, Folder, Project, User
+from app.schemas import (
+    CamelModel, FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
+    BatchDeleteBody, FileCopyBody, BatchDownloadBody,
+)
 from app.services.files.browser import get_file_tree_rows, get_file_version_snapshot, get_storage_usage, list_existing_file_rows, list_file_rows
 from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
@@ -39,6 +43,7 @@ from app.services.files.actions import (
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.files.selection import build_batch_zip
+from app.services.files.archive import compress_files, extract_file
 from app.services.files.previews import (
     GENERIC_IMAGE_MIMES,
     IMAGE_MIMES,
@@ -53,6 +58,19 @@ from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+class ArchiveRequest(CamelModel):
+    file_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
+    folder_id: Optional[int] = None
+    name: Optional[str] = None
+
+
+class UnarchiveRequest(CamelModel):
+    file_id: int
+    folder_id: Optional[int] = None
+    format: Optional[str] = None
 
 # 单文件上传硬上限（字节）——独立于存储配额；端点分块收流，内存峰值与上限解耦。
 _MAX_UPLOAD_BYTES = 512 * 1024 * 1024
@@ -149,6 +167,50 @@ async def file_tree(
     ]
 
     return FileTreeResponse(projects=tree_projects, personal_count=personal_count)
+
+
+@router.post("/archive", response_model=FileResponse, status_code=201)
+async def create_archive(
+    body: ArchiveRequest,
+    current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """压缩同空间的文件/文件夹，写为文件库中的普通 ZIP 文件。"""
+    file = await compress_files(
+        db, current_user.id, file_ids=body.file_ids, folder_ids=body.folder_ids,
+        name=body.name, folder_id=body.folder_id,
+    )
+    await db.commit()
+    await db.refresh(file)
+    project = await get_owned(db, Project, file.project_id, current_user.id) if file.project_id else None
+    folder = await get_owned(db, Folder, file.folder_id, current_user.id) if file.folder_id else None
+    response = to_related_file_response(file, project, folder.name if folder else None)
+    await events.publish(
+        current_user.id, "files", origin=origin, operation="create", entity_id=file.id,
+        event_payload={"kind": "file", "entity": response.model_dump(mode="json", by_alias=True)},
+    )
+    return response
+
+
+@router.post("/unarchive")
+async def unarchive_file(
+    body: UnarchiveRequest,
+    current_user: User = Depends(get_current_user),
+    origin: str | None = Depends(get_client_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """解压归档到同空间目标目录；创建文件/文件夹后发布一次合并刷新事件。"""
+    result = await extract_file(
+        db, current_user.id, body.file_id,
+        folder_id=body.folder_id, format_hint=body.format,
+    )
+    await db.commit()
+    if result["created_count"]:
+        # 解压可能创建多种实体且 File/Folder 的 ID 空间彼此独立，发不带单实体的 create
+        # 事件让客户端走合并刷新，避免把两类 ID 混为一谈或逐条广播上万个事件。
+        await events.publish(current_user.id, "files", origin=origin, operation="create")
+    return result
 
 
 # ── POST /files/check-conflicts ─────────────────────────────────────────────

@@ -16,6 +16,59 @@ async def _resolve_file(db, user_id, args):
     return await resolve_file(db, user_id, args)
 
 
+async def _compress_files(db, user_id, args: dict):
+    """按明确的实体类型拆分 ID，避免 File 与 Folder 的独立主键发生歧义。"""
+    from app.core.errors import AppError
+    from app.services.files.archive import compress_files
+
+    file_ids: list[int] = []
+    folder_ids: list[int] = []
+    for entry in args.get("entries", []):
+        if entry.get("kind") == "file":
+            file_ids.append(entry["id"])
+        elif entry.get("kind") == "folder":
+            folder_ids.append(entry["id"])
+        else:
+            return {"error": "entries 中的 kind 只能是 file 或 folder"}
+    try:
+        archive = await compress_files(
+            db, user_id, file_ids=file_ids, folder_ids=folder_ids,
+            name=args.get("name"), folder_id=args.get("folder_id"),
+        )
+    except AppError as error:
+        return {"error": error.public_message}
+    return {
+        "success": True,
+        "file_id": archive.id,
+        "name": f"{archive.display_name}.{archive.ext}",
+    }
+
+
+async def _extract_files(db, user_id, args: dict):
+    """解压文件库归档；对模型仅返回有限 ID 样本，完整结果通过文件列表查看。"""
+    from app.core.errors import AppError
+    from app.services.files.archive import extract_file
+
+    try:
+        result = await extract_file(
+            db, user_id, args["file_id"], folder_id=args.get("folder_id"),
+            format_hint=args.get("format"),
+        )
+    except AppError as error:
+        return {"error": error.public_message}
+    return {
+        "success": True,
+        "created_count": result["created_count"],
+        "file_count": result["file_count"],
+        "folder_count": result["folder_count"],
+        "skipped_count": result["skipped_count"],
+        "rejected_count": result["rejected_count"],
+        "file_ids": result["file_ids"][:100],
+        "folder_ids": result["folder_ids"][:100],
+        "ids_truncated": len(result["file_ids"]) > 100 or len(result["folder_ids"]) > 100,
+    }
+
+
 # send_file 允许读取的逻辑沙盒根。这里刻意不接受宿主机绝对路径，避免模型
 # 把执行器日志里的本机路径当成可发送路径，越过用户沙箱边界。
 _SEND_PATH_ROOTS = frozenset({"personal", "project", "workspace"})

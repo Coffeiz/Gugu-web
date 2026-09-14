@@ -712,6 +712,8 @@ from .transfer import (
     _send_file,
     _present_file,
     _list_recent_attachments,
+    _compress_files,
+    _extract_files,
     inspect_image_url,
     _build_pinned_request,
     _url_is_safe,
@@ -1067,6 +1069,51 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_delete_folder,
+            mutates=True,
+        ),
+        Tool(
+            name="compress_files", label="压缩文件",
+            description_short="把文件库中的文件或文件夹打包成 ZIP。",
+            description="只操作文件库条目，不使用 Shell 路径。entries 使用 {kind:'file'|'folder', id} 明确区分文件和文件夹；可混合选择，所有条目必须属于同一空间。源内容上限 512MB；不覆盖已有文件，重名会自动追加序号。失败会返回可直接展示的原因。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "entries": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"type": "string", "enum": ["file", "folder"]},
+                                "id": {"type": "integer", "minimum": 1},
+                            },
+                            "required": ["kind", "id"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "folder_id": {"type": "integer", "minimum": 1},
+                    "name": {"type": "string", "maxLength": 300},
+                },
+                "required": ["entries"],
+                "additionalProperties": False,
+            },
+            handler=_compress_files,
+            mutates=True,
+        ),
+        Tool(
+            name="extract_files", label="解压文件",
+            description_short="把文件库中的 ZIP/TAR/TAR.GZ 解压到指定文件夹。",
+            description="只操作文件库条目，不使用 Shell 路径。支持 zip、tar、tar.gz、tgz；最多解压 10,000 个条目且受 2GB 安全上限和用户剩余配额约束。压缩包保留不动，重名会自动追加序号，不覆盖已有文件。可指定 format 作为格式校验提示；失败会返回可直接展示的原因。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "integer", "minimum": 1},
+                    "folder_id": {"type": "integer", "minimum": 1},
+                    "format": {"type": "string", "enum": ["zip", "tar", "tar.gz", "tgz"]},
+                },
+                "required": ["file_id"],
+                "additionalProperties": False,
+            },
+            handler=_extract_files,
             mutates=True,
         ),
         Tool(

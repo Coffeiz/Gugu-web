@@ -1,6 +1,6 @@
 # PRD-FS-5：文件库压缩与解压
 
-> 状态：Phase 1 已完成；Phase 2–4 待实施
+> 状态：Phase 1–2 已完成；Phase 3–4 待实施
 > 创建：2026-09-11
 > 最近更新：2026-09-14
 > 关联模块：`backend/app/services/files/`、`backend/app/api/v1/files.py`、`backend/agent/tools/files/transfer.py`、`frontend/src/views/Files/index.vue`
@@ -13,7 +13,8 @@
 | 文件库压缩（多选文件/文件夹 → zip） | ✅ | `archive.py` 服务完成；512MB 源限制、配额、重名及空目录覆盖 |
 | 文件库解压（zip / tar.gz → 指定文件夹） | ✅ | `archive.py` 服务完成；zip/tar.gz、目录结构与冲突改名覆盖 |
 | 解压安全边界（zip-slip / 解压炸弹 / 符号链接） | ✅ | 路径预检、10,000 条/2GB/余量预算、链接跳过、整体回滚有服务测试 |
-| 咕咕工具 `compress_files` / `extract_files` | 🔲 | 未实施 |
+| API `POST /files/archive` / `POST /files/unarchive` | ✅ | 薄壳复用服务；成功后发布文件创建事件，跨用户资源按归属层统一隐藏为 404 |
+| 咕咕工具 `compress_files` / `extract_files` | ✅ | typed entries 区分独立 File/Folder ID；无确认门；工具事件触发实时刷新 |
 | 前端「压缩」「解压到…」入口 | 🔲 | 未实施 |
 
 ## 1. 背景与目标
@@ -64,10 +65,10 @@
 
 ### FR-FS5-006：咕咕工具 `compress_files` / `extract_files`
 
-- `compress_files`：入参 `entry_ids`（文件/文件夹 id 数组）、`folder_id`（产物目标文件夹）、`name`；行为与 FR-FS5-001 一致，返回产物 `file_id` 与 `name`。
+- `compress_files`：入参 `entries`（`{kind: "file"|"folder", id}` 数组）、`folder_id`（产物目标文件夹）、`name`；行为与 FR-FS5-001 一致，返回产物 `file_id` 与 `name`。File 与 Folder 使用独立主键，不能用未标类型的 `entry_ids` 消歧。
 - `extract_files`：入参 `file_id`（压缩包）、`folder_id`（目标）、可选 `format` 提示（仅校验用）；行为与 FR-FS5-002 一致，返回创建/跳过/拒绝计数与新文件 id 列表（截断展示，全量以文件列表为准）。
 - 两个工具均不设确认门：默认路径不覆盖任何既有数据（冲突自动重命名）。未来若增加「覆盖」策略，覆盖分支必须接确认门。
-- 工具描述写明：只操作文件库条目、512MB 上限（与上传上限一致）、失败文案即用户可读原因。
+- 工具描述写明：只操作文件库条目；压缩工具注明 512MB 源上限，解压工具注明 10,000 条/2GB 与配额边界；失败文案即用户可读原因。
 
 ### FR-FS5-007：完成即实时可见
 
@@ -93,8 +94,8 @@ docs/
   devlog/2026-09-xx-文件库压缩解压.md  【新增】实施记录
 ```
 
-- `archive.py` 职责：条目收集（含文件夹递归）、安全预检、打包/解包、冲突重命名、配额校验、File/Folder 行创建与事件发布。API 与工具不重复实现任何一条规则。
-- 空间归属校验沿用 `get_owned`；「目标与源同空间」在服务层校验，不信任前端。
+- `archive.py` 职责：条目收集（含文件夹递归）、安全预检、打包/解包、冲突重命名、配额校验、File/Folder 行创建；不依赖 API 或 Agent 事件上下文。API 在提交后发布带完整实体的创建事件，工具由统一 dispatch 资源映射触发合并刷新。API 与工具不重复实现任何一条归档规则。
+- 空间归属校验沿用 `get_owned`；「目标与源同空间」在服务层校验，不信任前端。API 压缩请求使用独立 `file_ids`/`folder_ids` 字段；工具请求使用 typed `entries`。
 - 归档读文件通过 `StorageBackend.iter_chunks` 分块读取；ZIP/TAR 需要 seek 的归档输入、输出仅暂存系统临时文件，不将整个源文件/归档载入内存。
 - 重命名规则与上传重名处理保持同一观感（`name (2).ext` 序号后缀）。
 - 事务边界：单次解压整体一个事务，任一条目落库失败即整体回滚；压缩产物在字节写盘成功后才建 File 行。
@@ -131,8 +132,8 @@ docs/
 
 ### Phase 2：API 与咕咕工具
 
-- [ ] `FS5-004` 暴露 `POST /files/archive`、`POST /files/unarchive`（`get_owned` 鉴权、同空间校验、文件事件发布）；验收：API 测试覆盖成功/409/403/不支持格式四类路径。
-- [ ] `FS5-005` 注册 `compress_files` / `extract_files` 工具（schema、工具描述含上限与用法、无确认门说明）；验收：工具测试通过，咕咕实际调用可完成压缩与解压且列表实时可见。
+- [x] `FS5-004` 暴露 `POST /files/archive`、`POST /files/unarchive`（身份依赖、服务内 `get_owned`/同空间校验、提交后发布文件事件）；验收：API 测试覆盖成功/409/跨用户隐藏为 404/不支持格式。
+- [x] `FS5-005` 注册 `compress_files` / `extract_files` 工具（typed schema、工具描述含上限与用法、无确认门说明）；验收：handler/schema 测试通过，dispatch 通过文件资源事件实时触发列表刷新。
 
 ### Phase 3：前端入口
 

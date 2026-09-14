@@ -113,6 +113,8 @@ async def test_extract_zip_renames_existing_names_and_preserves_tree(db, user_a,
     assert summary["file_count"] == 3
     assert summary["folder_count"] == 2
     assert summary["created_count"] == 5
+    assert len(summary["file_ids"]) == summary["file_count"]
+    assert len(summary["folder_ids"]) == summary["folder_count"]
     assert {row.name for row in (await db.execute(select(Folder))).scalars()} >= {"目录 (2)", "空"}
     contents = {row.display_name: await storage.get(row.storage_key) for row in extracted}
     assert contents["重复 (2)"] == b"first"
