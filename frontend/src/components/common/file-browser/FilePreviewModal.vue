@@ -35,8 +35,7 @@
               <span>{{ error }}</span>
             </div>
             <template v-else-if="blobUrl || videoSrc">
-              <OfficeViewer v-if="isOffice"  :blobUrl="blobUrl ?? undefined" :ext="file?.ext ?? ''" />
-              <PdfViewer   v-else-if="isPdf" :blobUrl="blobUrl ?? undefined" />
+              <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
               <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" />
@@ -107,10 +106,9 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { useLiveStore } from '@/stores/live'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
-import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
-import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
@@ -175,7 +173,6 @@ watch(blobUrl, url => {
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
-const isOffice = computed(() => isOfficeExt(props.file?.ext))
 const isAudio  = computed(() => isAudioExt(props.file?.ext))
 
 const EXT_COLORS: Record<string, string> = {
@@ -221,27 +218,6 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       const { url } = await filesApi.getStreamUrl(file.id!)
       if (sequence !== loadSequence) return
       videoSrc.value = withCacheBust(url, refresh)
-    } else if (isOfficeExt(file.ext)) {
-      // Office 只读预览：前端直接渲染原始文件（LibreOffice 服务端转换已移除）
-      const bust = refresh ? `?_t=${Date.now()}` : ''
-      const key = previewBlobCache.keyOf(file)
-      currentCacheKey.value = bust ? '' : key
-      if (!bust) {
-        const cached = previewBlobCache.get(key)
-        if (cached) { blobUrl.value = cached; return }
-      }
-      const dlUrl = (file.attach_id
-        ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
-        : `${BASE_URL}/files/${file.id!}/download`) + bust
-      const res = await fetch(dlUrl, { headers, cache: 'no-cache' })
-      if (sequence !== loadSequence) return
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
-      if (sequence !== loadSequence) return
-      const url = URL.createObjectURL(blob)
-      blobUrl.value = url
-      previewBlobCache.put(key, url)
-      currentCacheKey.value = key
     } else {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
       const key = previewBlobCache.keyOf(file)

@@ -38,6 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
+      <OfficeViewer v-else-if="isOffice && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" />
       <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
@@ -151,8 +152,9 @@ import type { FileMeta } from '@/stores/filesCache'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
+import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
-import { isImageExt, isVideoExt, isTextExt, usePreviewStore } from '@/stores/preview'
+import { isImageExt, isVideoExt, isTextExt, isOfficeExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
@@ -180,6 +182,7 @@ const h = ref(props.win.h)
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext, props.win.file.mimeType))
+const isOffice = computed(() => isOfficeExt(props.win.file.ext))
 const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 const _SVG_EXTS = new Set(['SVG'])
 // 矢量图放大无损：开窗尺寸与内部适配都允许超过折算 natural 尺寸
@@ -434,7 +437,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         vid.src = url
       })
       if (sequence !== loadSequence) return
-    } else if (isTextExt(f.ext, f.mimeType)) {
+    } else if (isTextExt(f.ext, f.mimeType) || isOfficeExt(f.ext)) {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
       const key = previewBlobCache.keyOf(f)
       currentCacheKey.value = bust ? '' : key
