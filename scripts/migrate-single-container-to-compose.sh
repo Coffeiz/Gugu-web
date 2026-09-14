@@ -56,6 +56,14 @@ command -v docker >/dev/null 2>&1 || { warn "未找到 docker 命令"; exit 1; }
 # ── 1. 确认旧容器是单容器（内嵌数据库）形态 ─────────────────────────────
 docker inspect "$OLD_CONTAINER" >/dev/null 2>&1 || { warn "找不到容器：$OLD_CONTAINER"; exit 1; }
 OLD_IMAGE=$(docker inspect "$OLD_CONTAINER" --format '{{.Config.Image}}')
+# 容器可能已停止（上一轮迁移中断的常见状态）：docker exec 对停止的容器必然失败，
+# 先启动完成检查与导出，导出结束后由文件迁移步骤统一停回。
+WAS_RUNNING=$(docker inspect "$OLD_CONTAINER" --format '{{.State.Running}}')
+if [ "$WAS_RUNNING" != "true" ]; then
+  log "旧容器未在运行，先启动以完成检查与导出"
+  run docker start "$OLD_CONTAINER"
+  sleep 8
+fi
 if ! docker exec "$OLD_CONTAINER" sh -c 'test -f /data/postgres/PG_VERSION' 2>/dev/null; then
   warn "容器 $OLD_CONTAINER 内没有 /data/postgres，不是单容器（内嵌数据库）部署，无需本脚本"
   exit 1
@@ -91,11 +99,13 @@ log "旧容器：$OLD_CONTAINER（镜像 $OLD_IMAGE，/data $DATA_DESC）"
 log "数据库：$DB_NAME（用户 $DB_USER）"
 
 # ── 2. 导出数据库（趁内嵌 PG 还在运行）─────────────────────────────────
-if [ "$WAS_RUNNING" != "true" ]; then
-  log "旧容器未在运行，先临时启动以导出数据库"
-  run docker start "$OLD_CONTAINER"
-  sleep 5
-fi
+# 容器刚被拉起时内嵌 PG 需要几秒就绪。
+i=0
+until docker exec "$OLD_CONTAINER" pg_isready -U "$DB_USER" -q 2>/dev/null; do
+  i=$((i + 1))
+  [ "$i" -ge 20 ] && { warn "内嵌数据库 60 秒内未就绪"; exit 1; }
+  sleep 3
+done
 DUMP_FILE="$COMPOSE_DIR/backups/gugu-single-container-$(date +%Y%m%d-%H%M%S).sql"
 if [ "$DRY_RUN" = "1" ]; then
   BYTES=$(docker exec "$OLD_CONTAINER" pg_dump -U "$DB_USER" "$DB_NAME" | wc -c)
@@ -196,6 +206,17 @@ upsert_env_key() {
 # 数据目录必须显式写进 .env：bind 部署复用原目录，匿名卷部署固定到本次迁移的
 # 目标目录，避免 compose 回落到默认 ./Gugu-data 挂错位置。
 upsert_env_key GUGU_DATA_HOST_DIR "$DATA_HOST_DIR"
+# legacy 卷名只在用户未显式指定时写入：默认名 gugu-web-compose_gugu_data 是全局
+# 固定名，宿主机上有旧 compose 试验残留时 data-migrate 会拿它当迁移源（E2E 实测
+# 会因主密钥内容不同而拒绝启动）。匿名卷部署指向原卷做一致性校验，bind 部署
+# 指向本次专用的空卷直接跳过。
+if ! grep -q '^GUGU_LEGACY_DATA_VOLUME=' "$ROOT_ENV" 2>/dev/null; then
+  if [ "$DATA_MOUNT_TYPE" = "volume" ]; then
+    upsert_env_key GUGU_LEGACY_DATA_VOLUME "$DATA_VOLUME"
+  else
+    upsert_env_key GUGU_LEGACY_DATA_VOLUME "gugu-mig-legacy-${OLD_CONTAINER}"
+  fi
+fi
 if grep -q '^GUGU_DB_PASSWORD=.\+' "$ROOT_ENV" 2>/dev/null; then
   log "根 .env 已有 GUGU_DB_PASSWORD"
 else
@@ -215,10 +236,11 @@ run docker compose up -d postgres
 if [ "$DRY_RUN" != "1" ]; then
   log "等待 postgres 就绪…"
   i=0
-  until docker compose exec -T postgres pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; do
+  # 用真实查询判断就绪：pg_isready 会连上 initdb 的临时服务器误报可用。
+  until docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT 1" >/dev/null 2>&1; do
     i=$((i + 1))
-    [ "$i" -ge 60 ] && { warn "postgres 60 秒内未就绪，请查看 docker compose logs postgres"; exit 1; }
-    sleep 1
+    [ "$i" -ge 60 ] && { warn "postgres 180 秒内未就绪，请查看 docker compose logs postgres"; exit 1; }
+    sleep 3
   done
   TABLES=$(docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" \
     -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" || echo 0)
