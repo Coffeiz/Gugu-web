@@ -161,11 +161,11 @@ docker compose --profile sandbox up -d
 
 ### 拆分场景（备选）
 
-需要分别管理后端与前端镜像（自托管私有仓库按服务拆分、独立扩缩容、灰度发布、自定义反向代理等）时，可改用 `docker-compose.prod.yml`，分别消费 `coffeiz/gugu-web-backend:<tag>` 与 `coffeiz/gugu-web-frontend:<tag>`：
+需要分别管理后端与前端镜像（自托管私有仓库按服务拆分、独立扩缩容、灰度发布、自定义反向代理等）时，可改用 `docker-compose.prod.yml`，分别消费 Docker Hub 上的 `coffeiz/gugu-web-backend:<tag>` 与 `coffeiz/gugu-web-frontend:<tag>` 版本镜像：
 
 ```bash
-export GUGU_BACKEND_IMAGE='coffeiz/gugu-web-backend:v1.x.y'
-export GUGU_FRONTEND_IMAGE='coffeiz/gugu-web-frontend:v1.x.y'
+export GUGU_BACKEND_IMAGE='docker.io/coffeiz/gugu-web-backend:v1.x.y'
+export GUGU_FRONTEND_IMAGE='docker.io/coffeiz/gugu-web-frontend:v1.x.y'
 export GUGU_DB_PASSWORD='请设置数据库密码'
 docker compose -f docker-compose.prod.yml up -d
 ```

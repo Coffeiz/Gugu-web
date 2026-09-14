@@ -318,8 +318,8 @@ rootful Docker，必须明确设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=false`，不
 热重载；前端由独立镜像提供静态 `dist`，入口 Nginx 负责页面、API 和 SSE 反代。
 
 ```bash
-export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
-export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
+export GUGU_BACKEND_IMAGE=docker.io/coffeiz/gugu-web-backend:版本号
+export GUGU_FRONTEND_IMAGE=docker.io/coffeiz/gugu-web-frontend:版本号
 export GUGU_DB_PASSWORD='生产数据库密码'
 docker compose -f docker-compose.prod.yml up -d
 ```
@@ -335,7 +335,7 @@ Redis 采用相同规则：默认连接 Compose 内部的 `redis:6379`，可用
 如果使用内部 Redis，设置 `GUGU_REDIS_PASSWORD` 后 Compose 会同时给内部 Redis
 启用密码认证；不设置则保持开发默认的无密码内网连接。
 
-构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。拆分 backend/frontend 镜像仅供业务部署，持续发布到 GHCR，不属于普通用户更新链路：
+构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。正式版本由发布 workflow 同步推送 Docker Hub 与 GHCR，业务服务器可直接拉取 Docker Hub 版本标签；以下命令展示如何手动构建并推送到 GHCR：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
@@ -346,7 +346,7 @@ docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 ```
 
-正式版本发布工作流把公开的一体化 `gugu-web` 镜像推送到 Docker Hub（并镜像到 GHCR）；拆分 backend/frontend 继续推送到 GHCR，供业务部署使用。GHCR 包当前已公开，可匿名拉取；普通用户更新不使用这两个镜像。
+正式版本发布工作流把一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像同步推送到 Docker Hub 与 GHCR；拆分镜像只使用语义版本号标签，不发布 Git SHA 标签。GHCR 包当前已公开，可匿名拉取；普通用户更新仍使用一体化镜像，不使用拆分镜像。
 
 手工推送拆分镜像时，仍需使用具有 GHCR 写权限的账号登录 `ghcr.io`。
 

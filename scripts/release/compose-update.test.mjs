@@ -93,7 +93,7 @@ function createFixture() {
   fs.writeFileSync(path.join(root, 'manifest.bundle'), 'test-only-signature-bundle\n')
   const dockerPath = path.join(binDir, 'docker')
   fs.writeFileSync(dockerPath, dockerMock, { mode: 0o755 })
-  fs.writeFileSync(path.join(binDir, 'cosign'), '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$MOCK_COSIGN_LOG"\nif [[ "${MOCK_COSIGN_FAIL:-false}" == true ]]; then exit 3; fi\nif [[ "${MOCK_COSIGN_FAIL_UPDATER:-false}" == true && "$*" == *gugu-web-updater@* ]]; then exit 4; fi\nexit 0\n', { mode: 0o755 })
+  fs.writeFileSync(path.join(binDir, 'cosign'), '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$MOCK_COSIGN_LOG"\nif [[ "${MOCK_COSIGN_FAIL:-false}" == true ]]; then exit 3; fi\nif [[ "${MOCK_COSIGN_FAIL_UPDATER:-false}" == true && "$*" == *gugu-web-updater@* ]]; then exit 4; fi\nif [[ "${MOCK_COSIGN_FAIL_OCI11:-false}" == true && "$*" == *--experimental-oci11* && "$*" != *--new-bundle-format=false* ]]; then exit 5; fi\nexit 0\n', { mode: 0o755 })
   return {
     root,
     binDir,
@@ -157,6 +157,9 @@ test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', 
   try {
     const result = runUpdate(fixture)
     assert.equal(result.status, 0, result.stderr)
+    const cosignCalls = fs.readFileSync(fixture.cosignLog, 'utf8').trim().split('\n')
+    assert.ok(cosignCalls.some(call => call.startsWith('verify-blob --bundle ')))
+    assert.ok(cosignCalls.some(call => call.startsWith('verify --experimental-oci11 ') && call.endsWith(appImage)))
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
     assert.match(log, /pull app data-migrate sandboxd/)
     assert.match(log, /up -d --no-deps --force-recreate app sandboxd/)
@@ -197,7 +200,8 @@ test('手动升级验证 manifest、业务镜像和 updater 签名后引导 side
     assert.ok(appPullIndex > updaterPullIndex)
     assert.match(log, /image inspect --format/)
     assert.match(log, /up -d --no-deps updater/)
-    assert.ok(fs.readFileSync(fixture.cosignLog, 'utf8').includes(updaterDigest))
+    const cosignCalls = fs.readFileSync(fixture.cosignLog, 'utf8').trim().split('\n')
+    assert.ok(cosignCalls.some(call => call.startsWith('verify --experimental-oci11 ') && call.endsWith(updaterDigest)))
 
     fs.writeFileSync(fixture.dockerLog, '')
     fs.writeFileSync(fixture.cosignLog, '')
@@ -210,6 +214,19 @@ test('手动升级验证 manifest、业务镜像和 updater 签名后引导 side
     log = fs.readFileSync(fixture.dockerLog, 'utf8')
     assert.doesNotMatch(log, /up -d --no-deps updater/)
     assert.doesNotMatch(log, /pull updater/)
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('新式 referrer 验签失败时回退验证已有的旧式签名 tag', () => {
+  const fixture = createFixture()
+  try {
+    const result = runUpdate(fixture, { MOCK_COSIGN_FAIL_OCI11: 'true' })
+    assert.equal(result.status, 0, result.stderr)
+    const calls = fs.readFileSync(fixture.cosignLog, 'utf8').trim().split('\n')
+    assert.ok(calls.some(call => call.startsWith('verify --experimental-oci11 ') && call.endsWith(appImage)))
+    assert.ok(calls.some(call => call.startsWith('verify --experimental-oci11 --new-bundle-format=false ') && call.endsWith(appImage)))
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }

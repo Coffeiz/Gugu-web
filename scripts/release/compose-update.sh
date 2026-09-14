@@ -17,6 +17,21 @@ BOOTSTRAP_UPDATER=true
 COSIGN_IDENTITY_REGEXP="${COSIGN_IDENTITY_REGEXP:-https://github\\.com/Coffeiz/Gugu-web/.github/workflows/docker-release\\.yml@refs/tags/v.*}"
 COSIGN_OIDC_ISSUER="${COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
+verify_image_signature() {
+  local image_ref="$1"
+  local -a identity_args=(
+    --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP"
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER"
+  )
+
+  # 优先验证新的 OCI 1.1 referrer + Sigstore bundle；失败后再检查已有的
+  # digest-derived .sig tag（旧 bundle 格式）。身份约束在两条路径上完全一致。
+  if ! cosign verify --experimental-oci11 "${identity_args[@]}" "$image_ref" >/dev/null 2>&1; then
+    cosign verify --experimental-oci11 --new-bundle-format=false \
+      "${identity_args[@]}" "$image_ref" >/dev/null
+  fi
+}
+
 usage() {
   cat <<'EOF'
 用法：scripts/release/compose-update.sh --manifest <update-manifest.json> --bundle <manifest.bundle> --confirm
@@ -115,10 +130,7 @@ cosign verify-blob \
   --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
   "$MANIFEST" >/dev/null
-cosign verify \
-  --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-  --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-  "$GUGU_WEB_IMAGE" >/dev/null
+verify_image_signature "$GUGU_WEB_IMAGE"
 
 # 旧部署第一次通过手动更新接入 Admin 更新器时，先启动 sidecar。只有在目标
 # manifest 与业务镜像都已验证后才引导；sidecar 自身执行更新时显式跳过，避免
@@ -143,10 +155,7 @@ if [[ "$BOOTSTRAP_UPDATER" == true ]] && grep -qx updater <<<"$COMPOSE_SERVICES"
     });
   ')
   [[ -n "$UPDATER_DIGEST" ]] || { echo '无法解析已拉取的 updater 镜像 digest' >&2; exit 1; }
-  cosign verify \
-    --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-    "$UPDATER_DIGEST" >/dev/null
+  verify_image_signature "$UPDATER_DIGEST"
   GUGU_UPDATER_IMAGE="$UPDATER_DIGEST" "${COMPOSE[@]}" up -d --no-deps updater
 fi
 

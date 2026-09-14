@@ -5,6 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 改进
+
+- **拆分 backend/frontend 镜像同步发布到 Docker Hub**：业务服务器可直接按语义版本拉取；不发布 Git SHA 镜像标签。
+- **Cosign 签名改用 OCI referrers**：继续保留镜像签名与 updater 验签，但新发布不再生成 `sha256-<digest>.sig` 普通镜像标签。
+
 ## [1.2.2] - 2026-09-14
 
 ### 改进

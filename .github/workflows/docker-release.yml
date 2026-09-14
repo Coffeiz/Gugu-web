@@ -16,6 +16,8 @@ env:
   REGISTRY: ghcr.io
   IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-web
   DOCKERHUB_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web
+  DOCKERHUB_BACKEND_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web-backend
+  DOCKERHUB_FRONTEND_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web-frontend
   UPDATER_IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-web-updater
   DOCKERHUB_UPDATER_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web-updater
   SANDBOX_IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-sandbox
@@ -271,6 +273,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_REPOSITORY }}-backend:${{ steps.version.outputs.version }}
+            ${{ env.DOCKERHUB_BACKEND_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
           provenance: mode=max
@@ -288,6 +291,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_REPOSITORY }}-frontend:${{ steps.version.outputs.version }}
+            ${{ env.DOCKERHUB_FRONTEND_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
           provenance: mode=max
@@ -366,6 +370,8 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
+        with:
+          cosign-release: v3.1.3
 
       - name: Sign immutable image references
         env:
@@ -375,14 +381,16 @@ jobs:
           UPDATER_DIGEST: ${{ steps.updater-image.outputs.digest }}
           SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
         run: |
-          cosign sign --yes "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
-          cosign sign --yes "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
-          cosign sign --yes "${IMAGE_REPOSITORY}@${APP_DIGEST}"
-          cosign sign --yes "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
-          cosign sign --yes "${UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
-          cosign sign --yes "${DOCKERHUB_UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
-          cosign sign --yes "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
-          cosign sign --yes "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_BACKEND_IMAGE_REPOSITORY}@${BACKEND_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_FRONTEND_IMAGE_REPOSITORY}@${FRONTEND_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}@${APP_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
       - name: 同步 Docker Hub Overview
         if: steps.version.outputs.is_stable == 'true'
