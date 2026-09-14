@@ -30,6 +30,7 @@
 ### 运维
 
 - **一键更新并入应用容器**：取消独立 updater sidecar，更新执行器并入 app 进程，Docker socket 默认挂载（`GUGU_SELF_UPDATE=off` 可关闭）；未挂载 socket 的部署更新页显示「未启用一键更新」。移除 manifest 签名校验，保留官方镜像 digest 白名单、预检与一键回滚；发布产物不再包含独立 updater 镜像。
+- **Office 预览与内容提取去 LibreOffice 化**：docx/xlsx/pptx 预览改为浏览器端直接渲染（懒加载，主包零增加），咕咕读取文档内容改用纯 Python 解析库；镜像瘦身约 700MB，旧式 .doc/.ppt 不再支持服务端提取（预览提示转存）。
 - Redis 入站队列启用 AOF 持久化，重启不再丢排队消息。
 
 ## [1.2.2] - 2026-09-14

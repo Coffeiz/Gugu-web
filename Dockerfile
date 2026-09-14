@@ -63,9 +63,6 @@ RUN python -m venv /opt/venv \
 FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
-# 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），
-# 不需要文档预览时可传 --build-arg GUGU_INSTALL_LIBREOFFICE=false 关闭。
-ARG GUGU_INSTALL_LIBREOFFICE=true
 ARG GUGU_VERSION=unknown
 ARG GUGU_REVISION=unknown
 
@@ -77,7 +74,6 @@ RUN sed -i \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
-        $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
     && rm -rf /var/lib/apt/lists/*
 
 # CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，

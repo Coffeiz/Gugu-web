@@ -1,7 +1,5 @@
 import asyncio
 import os
-import shutil
-import tempfile
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +12,6 @@ from app.services.storage import get_storage
 
 THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
-OFFICE_EXTS = frozenset({"DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX"})
 IMAGE_MIMES = frozenset({
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "image/avif", "image/bmp", "image/svg+xml", "image/heic", "image/heif",
@@ -30,7 +27,6 @@ _DETECTED_IMAGE_MIMES = {
     "HEIF": "image/heif",
 }
 GENERIC_IMAGE_MIMES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
-_PDF_CACHE: dict[str, bytes] = {}
 
 
 class PreviewError(ValueError):
@@ -205,74 +201,3 @@ async def read_file_thumbnail(
     return await render_thumbnail(raw, file_id, size, mime)
 
 
-async def office_to_pdf(data: bytes, extension: str) -> bytes:
-    tmpdir = Path(tempfile.mkdtemp())
-    try:
-        source = tmpdir / f"input.{extension.lower()}"
-        source.write_bytes(data)
-        # 将 LibreOffice 用户配置放进本次临时目录，兼容 systemd 的只读 HOME，并隔离并发转换。
-        process = await asyncio.create_subprocess_exec(
-            "libreoffice", "--headless",
-            f"-env:UserInstallation=file://{tmpdir}/loprofile",
-            "--convert-to", "pdf",
-            "--outdir", str(tmpdir), str(source),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            process.kill()
-            raise
-        if process.returncode != 0:
-            raise RuntimeError(f"转换失败：{stderr.decode(errors='replace')[:200]}")
-        pdf = tmpdir / "input.pdf"
-        if not pdf.exists():
-            raise RuntimeError("转换结果为空")
-        return pdf.read_bytes()
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-async def render_cached_pdf(raw: bytes, *, cache_key: str, extension: str) -> bytes:
-    """转换并缓存 Office/PDF 预览；缓存键由路由按文件版本构造。"""
-    cached = _PDF_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-    if len(_PDF_CACHE) > 50:
-        _PDF_CACHE.clear()
-    rendered = await office_to_pdf(raw, extension)
-    _PDF_CACHE[cache_key] = rendered
-    return rendered
-
-
-async def read_pdf_preview(
-    db: AsyncSession,
-    storage,
-    user_id: int,
-    file_id: int,
-) -> bytes:
-    """读取当前用户 Office 文件并生成带版本缓存的 PDF 预览。"""
-    file = await get_owned(db, File, file_id, user_id)
-    if file is None or file.deleted_at is not None:
-        raise PreviewError(404, "文件不存在")
-    if file.ext.upper() not in OFFICE_EXTS:
-        raise PreviewError(400, "不支持的格式")
-
-    raw = await storage.get(file.storage_key)
-    try:
-        return await render_cached_pdf(
-            raw,
-            cache_key=f"{file_id}:{file.updated_at.isoformat()}",
-            extension=file.ext,
-        )
-    except asyncio.TimeoutError as error:
-        raise PreviewError(422, "文档转换超时") from error
-    except RuntimeError as error:
-        raise PreviewError(422, str(error)) from error
-    except FileNotFoundError as error:
-        # 容器/宿主机未安装 LibreOffice（office_to_pdf 调 create_subprocess_exec("libreoffice")），
-        # 给友好提示而非 500 刷屏；装好组件配 GUGU_INSTALL_LIBREOFFICE=true 重新构建镜像即可。
-        raise PreviewError(422, "文档转换组件未安装，预览暂不可用") from error
-    except OSError as error:
-        raise PreviewError(422, "文档转换失败") from error

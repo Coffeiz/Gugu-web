@@ -52,7 +52,6 @@ from app.services.files.previews import (
     pregenerate_thumb,
     read_image_dimensions,
     read_file_thumbnail,
-    read_pdf_preview,
 )
 from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
@@ -783,28 +782,6 @@ async def download_file(
         # 图片等预览场景会反复打开同一文件；短 TTL 让浏览器缓存，避免每次全量重新下载。
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
                  "Cache-Control": "private, max-age=300"},
-    )
-
-
-# ── GET /files/{fid}/preview-pdf ─────────────────────────────────────────────
-
-@router.get("/{fid}/preview-pdf")
-async def preview_pdf(
-    fid: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    from fastapi.responses import Response
-
-    try:
-        pdf = await read_pdf_preview(db, get_storage(), current_user.id, fid)
-    except PreviewError as error:
-        raise HTTPException(error.status_code, error.detail) from error
-
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Cache-Control": "private, max-age=300"},
     )
 
 
