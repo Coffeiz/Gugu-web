@@ -3,7 +3,8 @@
 
 该脚本只由 Compose 的 sandbox-bootstrap 一次性服务调用。它处理所有用户的
 ``shell``、``个人文件``、``项目文件``根目录，现有目录递归补 ACL，并给每一级
-目录设置 default ACL。Web/Worker 请求路径不提权、不调用 setfacl。
+目录设置 default ACL；同时将目标 daemon 的 UID/GID 映射写入共享运行时卷，供
+Web/Worker 为后续动态创建的 workspace 复用。
 """
 from __future__ import annotations
 

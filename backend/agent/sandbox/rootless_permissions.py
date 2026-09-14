@@ -1,8 +1,8 @@
 """Rootless Docker 工作区权限规划。
 
 Rootless 容器中的非 root UID/GID 会映射到宿主机的 subordinate UID/GID。
-本模块只负责解析映射并生成显式权限命令，不在 Web/Worker 请求路径中提权或
-修改文件权限。实际 apply 应由部署脚本或 sandboxd 执行。
+本模块负责解析映射、生成权限命令，并在 workspace 初始化时应用 ACL。Compose
+运行时映射由 sandbox-bootstrap 探测后共享；本机开发环境可从 subordinate ID 推导。
 """
 from __future__ import annotations
 
