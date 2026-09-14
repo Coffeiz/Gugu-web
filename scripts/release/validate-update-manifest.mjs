@@ -5,11 +5,12 @@ import process from 'node:process'
 
 const required = [
   'schema_version', 'version', 'channel', 'minimum_version',
-  'backend_image', 'frontend_image', 'architectures',
+  'app_image', 'architectures',
   'database_migration', 'release_notes_url', 'rollback_supported',
 ]
 const semver = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
-const image = /^ghcr\.io\/coffeiz\/gugu-web-[a-z0-9-]+@sha256:[0-9a-f]{64}$/
+const appImage = /^(?:docker\.io|ghcr\.io)\/coffeiz\/gugu-web@sha256:[0-9a-f]{64}$/
+const appImagePattern = '^(?:docker\\.io|ghcr\\.io)/coffeiz/gugu-web@sha256:[0-9a-f]{64}$'
 
 function fail(message) {
   console.error(`manifest 校验失败：${message}`)
@@ -31,12 +32,11 @@ function validateSchema(schema) {
   if (JSON.stringify(schema.required) !== JSON.stringify(required)) {
     fail('Schema required 字段与发布契约不一致')
   }
-  if (schema.properties?.schema_version?.const !== 1) {
-    fail('Schema schema_version 必须固定为 1')
+  if (schema.properties?.schema_version?.const !== 2) {
+    fail('Schema schema_version 必须固定为 2')
   }
-  const pattern = schema.$defs?.immutableImage?.pattern
-  if (pattern !== '^ghcr\\.io/coffeiz/gugu-web-[a-z0-9-]+@sha256:[0-9a-f]{64}$') {
-    fail('Schema 未限制为 Coffeiz Gugu-web 的不可变 GHCR digest')
+  if (schema.properties?.app_image?.pattern !== appImagePattern) {
+    fail('Schema 未限制为 Docker Hub 或 GHCR 一体化应用镜像 digest')
   }
 }
 
@@ -49,13 +49,13 @@ function validateManifest(manifest) {
   for (const field of keys) {
     if (!allowed.has(field)) fail(`不允许的字段 ${field}`)
   }
-  if (manifest.schema_version !== 1) fail('schema_version 必须为 1')
+  if (manifest.schema_version !== 2) fail('schema_version 必须为 2')
   if (!semver.test(manifest.version) || !semver.test(manifest.minimum_version)) {
     fail('version 和 minimum_version 必须是 semver')
   }
   if (!['stable', 'beta'].includes(manifest.channel)) fail('channel 不受支持')
-  if (!image.test(manifest.backend_image) || !image.test(manifest.frontend_image)) {
-    fail('业务镜像必须是允许的 GHCR digest 引用')
+  if (!appImage.test(manifest.app_image)) {
+    fail('应用镜像必须是允许的 Docker Hub 或 GHCR 一体化应用 digest 引用')
   }
   if (!Array.isArray(manifest.architectures) || manifest.architectures.length === 0) {
     fail('architectures 不能为空')
@@ -84,8 +84,7 @@ if (args[0] === '--schema') {
 } else if (args[0] === '--print-images') {
   const manifest = readJson(args[1])
   validateManifest(manifest)
-  console.log(`GUGU_BACKEND_IMAGE=${manifest.backend_image}`)
-  console.log(`GUGU_FRONTEND_IMAGE=${manifest.frontend_image}`)
+  console.log(`GUGU_WEB_IMAGE=${manifest.app_image}`)
 } else if (args[0]) {
   validateManifest(readJson(args[0]))
   console.log('update manifest 校验通过')

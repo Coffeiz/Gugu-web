@@ -47,6 +47,81 @@ describe('optimisticMutation — 时序契约', () => {
     expect(rollback).not.toHaveBeenCalled()
   })
 
+  it('最新意图成功后，之后的失败不能重放已过期的旧 rollback', async () => {
+    const first = deferred()
+    const second = deferred()
+    const secondStarted = deferred()
+    const third = deferred()
+    const thirdStarted = deferred()
+    let state = 'A'
+    const firstRollback = vi.fn(() => { state = 'A' })
+    const thirdRollback = vi.fn(() => { state = 'C' })
+    const key = 'test-commit-baseline:file:1'
+
+    const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'B' }, afterMutate: () => {}, work: () => first.promise,
+      rollback: firstRollback, onError: () => {},
+    }))
+    const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'C' }, afterMutate: () => {},
+      work: () => { secondStarted.resolve(); return second.promise },
+      rollback: () => { state = 'B' }, onError: () => {},
+    }))
+
+    first.reject(new Error('first failed'))
+    await firstWork
+    await secondStarted.promise
+    second.resolve()
+    await secondWork
+
+    const thirdWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'D' }, afterMutate: () => {},
+      work: () => { thirdStarted.resolve(); return third.promise },
+      rollback: thirdRollback, onError: () => {},
+    }))
+    await thirdStarted.promise
+    third.reject(new Error('third failed'))
+    await thirdWork
+
+    expect(thirdRollback).toHaveBeenCalledOnce()
+    expect(firstRollback).not.toHaveBeenCalled()
+    expect(state).toBe('C')
+  })
+
+  it('普通成功操作不尝试提交尚未结算的意图 rollback', async () => {
+    const first = deferred()
+    const second = deferred()
+    const secondStarted = deferred()
+    let state = 'A'
+    const plainRollback = vi.fn(() => { state = 'C' })
+    const plainError = vi.fn()
+    const key = 'test-unscoped-commit:file:1'
+
+    const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'B' }, afterMutate: () => {}, work: () => first.promise,
+      rollback: () => { state = 'A' }, onError: () => {},
+    }))
+    const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'C' }, afterMutate: () => {},
+      work: () => { secondStarted.resolve(); return second.promise },
+      rollback: () => { state = 'B' }, onError: () => {},
+    }))
+    first.reject(new Error('first failed'))
+    await firstWork
+    await secondStarted.promise
+
+    await optimisticMutation({
+      apply: () => { state = 'plain' }, afterMutate: () => {}, work: async () => {},
+      rollback: plainRollback, onError: plainError,
+    })
+    expect(state).toBe('plain')
+    expect(plainRollback).not.toHaveBeenCalled()
+    expect(plainError).not.toHaveBeenCalled()
+
+    second.resolve()
+    await secondWork
+  })
+
   it('成功时 rollback 绝不被调用；失败时 onCommit 绝不被调用', async () => {
     const okRollback = vi.fn(); const okCommit = vi.fn()
     await optimisticMutation({ apply(){}, afterMutate(){}, work: async()=>{}, rollback: okRollback, onCommit: okCommit, onError(){} })
@@ -136,16 +211,18 @@ describe('optimisticMutation — 时序契约', () => {
     const second = deferred()
     const secondStarted = deferred()
     let state = 'A'
+    const firstAfterMutate = vi.fn()
+    const secondAfterMutate = vi.fn()
     const firstRollback = vi.fn(() => { state = 'A' })
     const secondRollback = vi.fn(() => { state = 'B' })
     const key = 'test-failure:file:1'
 
     const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
-      apply: () => { state = 'B' }, afterMutate: () => {}, work: () => first.promise,
+      apply: () => { state = 'B' }, afterMutate: firstAfterMutate, work: () => first.promise,
       rollback: firstRollback, onError: () => {},
     }))
     const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
-      apply: () => { state = 'C' }, afterMutate: () => {},
+      apply: () => { state = 'C' }, afterMutate: secondAfterMutate,
       work: () => { secondStarted.resolve(); return second.promise },
       rollback: secondRollback, onError: () => {},
     }))
@@ -159,6 +236,8 @@ describe('optimisticMutation — 时序契约', () => {
     await secondWork
     expect(secondRollback).toHaveBeenCalledOnce()
     expect(firstRollback).toHaveBeenCalledOnce()
+    expect(firstAfterMutate).toHaveBeenCalledTimes(2)
+    expect(secondAfterMutate).toHaveBeenCalledTimes(2)
     expect(state).toBe('A')
   })
 })

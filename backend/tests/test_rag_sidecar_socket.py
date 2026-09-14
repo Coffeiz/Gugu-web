@@ -293,7 +293,15 @@ class FakeInnerClient:
             self.requests.append(payload)
             op = payload.get("op")
             if op == "boom":
-                raise TsSidecarUnavailable("过期", code="revision_mismatch")
+                raise TsSidecarUnavailable(
+                    "过期", code="revision_mismatch",
+                    diagnostics={
+                        "op": "sync_index_from_database",
+                        "phase": "delta_read_start",
+                        "elapsed_ms": 5001,
+                        "counts": {"passes": 1, "scanned_rows": 20},
+                    },
+                )
             if op == "replace":
                 self._revision = payload.get("revision") or None
                 self._document_count = len(payload.get("documents") or [])
@@ -354,6 +362,12 @@ async def test_host_maps_worker_error_to_envelope_error(running_host):
         with pytest.raises(TsSidecarUnavailable) as exc_info:
             await client._request({"op": "boom"})
         assert exc_info.value.code == "revision_mismatch"
+        assert exc_info.value.diagnostics == {
+            "op": "sync_index_from_database",
+            "phase": "delta_read_start",
+            "elapsed_ms": 5001,
+            "counts": {"passes": 1, "scanned_rows": 20},
+        }
     finally:
         await client.close()
 

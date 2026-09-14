@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterable
 import logging
 from typing import Any
@@ -10,9 +11,10 @@ from agent.context.serialization import knowledge_context_block
 
 
 _log = logging.getLogger("agent.rag")
-# 自动召回是可选增强；给首次唤醒/冷索引和多来源查询留出完整的 5 秒窗口，
-# 仍不允许它无限期阻塞主 Agent。
-AUTO_RECALL_TIMEOUT_SECONDS = 5.0
+# 自动召回是可选增强；给首次唤醒/冷索引和多来源查询留出完整的窗口，
+# 仍不允许它无限期阻塞主 Agent。10s 的依据：冷启动（磁盘快照恢复 ~4.1s
+# + 增量同步 + 各环节）实测最重 ~4.7s，5s 窗口会把它误判成超时。
+AUTO_RECALL_TIMEOUT_SECONDS = 10.0
 MAX_BACKGROUND_RECALL_TASKS = 32
 _background_recall_tasks: set[asyncio.Task] = set()
 
@@ -78,6 +80,16 @@ async def _search_with_timeout(search_awaitable, timeout: float):
         else:
             _log.warning("自动知识召回超时，后台任务继续收尾，pending=%d",
                          len(_background_recall_tasks))
+            # 超时取消会拆掉 observation 上下文，per-source 进度随之丢失
+            # （2026-09-14 run 慢查询无法归因的教训）；这里显式留存快照。
+            from agent.rag.observation import current_recall
+
+            observation = current_recall.get()
+            if observation is not None:
+                _log.warning("自动知识召回超时进度 source_progress=%s pending_sources=%s",
+                             json.dumps(observation.sources, ensure_ascii=False, default=str),
+                             [name for name, value in observation.sources.items()
+                              if value.get("stage") not in {"completed", "error", "cancelled"}])
         raise
 _PASSIVE_HINTS = (
     "以前", "之前", "上次", "曾经", "当时", "历史", "记得", "记忆",
@@ -125,7 +137,7 @@ def build_history_message(query: str, results: Iterable[dict[str, Any]]) -> dict
     """生成可直接放在当前 user message 前的 history 消息。
 
     该函数不负责召回、权限或去重，也不把内部 chunk/hash 元数据发送给模型。
-    显式 `search_memory` 仍由工具执行器写入 canonical tool round；本消息只供
+    显式工具轮次仍由工具执行器写入 canonical tool round；本消息只供
     未来自动召回复用，避免在 system-reminder 中复制一套注入逻辑。
     """
     result_list = list(results)
@@ -143,8 +155,8 @@ def should_passively_recall(query: str) -> bool:
 async def build_passive_history_message(user_id, query: str) -> dict[str, str] | None:
     """按当前问题做低成本 Memory 被动召回。
 
-    失败只跳过可选知识补充，不阻塞主 Agent；显式 `search_memory` 仍是完整结果和
-    canonical tool round 的精确入口。这里固定使用 lexical，避免普通对话因 embedding
+    失败只跳过可选知识补充，不阻塞主 Agent；显式读取走 `read_knowledge` 直读工具
+    （写入即可读，PRD-KNOWLEDGE-2）。这里固定使用 lexical，避免普通对话因 embedding
     请求增加额外延迟。
     """
     from app.core.config import get_settings
@@ -155,7 +167,7 @@ async def build_passive_history_message(user_id, query: str) -> dict[str, str] |
         from agent.rag.service import search_knowledge
 
         result = await search_knowledge(
-            user_id, query, scope="auto", source="all", strategy="bm25",
+            user_id, query, scope="auto", source="all", strategy="auto",
             limit=5, mode="passive",
         )
         return build_history_message(query, result.get("results", []))
@@ -242,11 +254,11 @@ async def _build_automatic_rag_context(
         try:
             try:
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
-                # 显式 search_memory 工具仍保留自己的完整等待语义。
+                # 显式 read_knowledge 直读工具保留自己的完整等待语义。
                 result = await _search_with_timeout(
                     search_knowledge(
                         request.user_id, query, scope=scopes, source="all",
-                        strategy="bm25", limit=5, mode="automatic",
+                        strategy="auto", limit=5, mode="automatic",
                         exclude_content_hashes=seen,
                     ),
                     AUTO_RECALL_TIMEOUT_SECONDS,

@@ -11,6 +11,7 @@ import type {
   RagSearchDiagnostics,
   RagSearchScope,
   RagSearchResult,
+  RagUnifiedQueryProbe,
 } from "../../../packages/contracts/src/rag.ts";
 import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
 import { createPostgresClient } from "../../../packages/data-runtime/src/postgres.ts";
@@ -24,8 +25,21 @@ import { corpusStatistics, mergeCorpusStatistics, scoreTerms, termFrequency, tok
 import { rankingText } from "./ranking/document-text.ts";
 import type { Posting } from "./ranking/types.ts";
 import { loadDocumentVectors, prepareMemory, type AuthorizedMemoryScope } from "./memory-loader.ts";
+import { embedQuery } from "./query-embedding.ts";
 
 const VERSION = RAG_WORKER_VERSION;
+const BUILD_PROBE_PREFIX = "GUGU_RAG_BUILD_PROBE ";
+const BUILD_PROBE_PHASES = new Set([
+  "watermark_checked", "delta_read_start", "delta_read_complete",
+  "fallback_full_start", "full_load_start", "full_load_complete",
+  "index_install_start", "index_install_complete", "vector_load_start",
+  "vector_load_complete", "persist_start", "persist_complete", "completed",
+]);
+const BUILD_PROBE_COUNT_NAMES = new Set([
+  "watermark_usable", "fallback_full", "passes", "scanned_rows",
+  "applied_upserts", "applied_deletes", "document_count", "vector_count",
+  "posting_terms", "serialized_bytes",
+]);
 
 type Document = RagDocument;
 type WorkerProbe = RagIndexLoadProbe;
@@ -47,10 +61,12 @@ type State = {
   /** 增量同步水位：已应用到索引的最后一行 (indexed_at, id)。
    * null = 未知（旧索引文件/无水位）→ 下次同步回退全量装载。 */
   watermark: RagCursor | null;
+  /** 词法指纹缓存（lexicalFingerprint）：install 跳过内容未变文档用。 */
+  fingerprints: Map<string, string>;
   indexDir?: string;
 };
 
-/** 与 Python hybrid_results 逐位一致的融合核心：cosine 含 sqrt、
+/** 统一 RAG 查询使用的融合核心：cosine 含 sqrt、
  * 维度不匹配/零向量记 0.0 但保留向量名次；返回每个命中的融合分与向量候选数。 */
 function hybridFuseScores(
   hits: Array<{ chunk_id: string }>,
@@ -109,12 +125,35 @@ function makeState(indexDir?: string): State {
     vectors: new Map(), vectorVersion: "",
     documents: [], documentsById: new Map(), postings: new Map(),
     lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0,
-    watermark: null, indexDir,
+    watermark: null, fingerprints: new Map(), indexDir,
   };
 }
 
 function recordProbeStage(probe: WorkerProbe, name: string, started: number): void {
   probe.stage_ms[name] = Math.max(0, Math.round(performance.now() - started));
+}
+
+/**
+ * 失败路径构建探针：stderr 仅供 Python sidecar 读取，字段严格限制为阶段与数值聚合。
+ * 不携带 owner、请求、文档正文、异常或环境变量，避免将业务数据写入可见日志。
+ */
+function emitBuildProbe(
+  op: "sync_index_from_database" | "load_index_from_database",
+  phase: string,
+  started: number,
+  counts: Record<string, number> = {},
+): void {
+  if (!BUILD_PROBE_PHASES.has(phase)) return;
+  try {
+    const safeCounts = Object.fromEntries(Object.entries(counts)
+      .filter(([name, value]) => BUILD_PROBE_COUNT_NAMES.has(name) && Number.isFinite(value))
+      .map(([name, value]) => [name, Math.max(0, Math.trunc(value))]));
+    process.stderr.write(`${BUILD_PROBE_PREFIX}${JSON.stringify({
+      op, phase, elapsed_ms: Math.max(0, Math.round(performance.now() - started)), counts: safeCounts,
+    })}\n`);
+  } catch {
+    // 诊断通道必须永远不能影响索引构建。
+  }
 }
 
 let dataRuntime: DataRuntime | null = null;
@@ -227,6 +266,7 @@ function replaceInMemory(state: State, revision: string, documents: Document[]):
   state.revision = revision;
   state.documents = [];
   state.documentsById = new Map();
+  state.fingerprints = new Map();
   state.postings = new Map();
   state.lengths = new Map();
   state.docFreq = new Map();
@@ -274,12 +314,150 @@ function removeDocument(state: State, id: string): void {
   state.lengths.delete(id);
 }
 
-function patchInMemory(state: State, revision: string, upserts: Document[], deletes: string[]): void {
-  for (const id of deletes) removeDocument(state, id);
+interface InstallTiming {
+  tokenizeMs: number;
+  structureMs: number;
+  documents: number;
+  skippedDocuments: number;
+}
+
+/**
+ * 词法指纹：参与 BM25/过滤/展示的字段规范化哈希。
+ *
+ * 对齐 Python agent/rag/delta.py 的契约——document_version / updated_at
+ * 不参与（版本推进单独不构成重新索引的理由）。来源级重建会整表重写行
+ * （indexed_at/updated_at 全部推新），install 阶段凭此指纹跳过内容未变的
+ * 文档，避免对未变更正文反复分词（2026-09-14 冷加载尖峰的根因）。
+ */
+function lexicalFingerprint(document: Document): string {
+  return createHash("sha256").update([
+    document.source_type,
+    document.parent_id ?? "",
+    String(document.chunk_index ?? 0),
+    String(document.chunk_count ?? 1),
+    document.ranking_text ?? document.text ?? "",
+    document.text ?? "",
+    document.context_text ?? "",
+    document.title ?? "",
+    document.summary ?? "",
+    document.scope_type,
+    document.scope_id,
+    document.platform ?? "",
+    document.bot_id ?? "",
+    document.group_id ?? "",
+    JSON.stringify(document.metadata ?? null),
+  ].join("\x1f")).digest("hex");
+}
+
+function patchInMemory(
+  state: State,
+  revision: string,
+  upserts: Document[],
+  deletes: string[],
+  timing?: InstallTiming,
+): void {
+  // 逐条 removeDocument/addDocument 在冷启动全量补丁上是 O(n²)：每条 upsert 触发
+  // 一次 documents 数组全量 filter 拷贝、每个词项 posting 一次 indexOf+splice 线性
+  // 搬移——20237 条实测 install 68s，把 30s 构建预算顶爆（2026-09-13 devserver
+  // 全量超时事故）。这里改成标记-清扫：账目（docFreq/lengths/documentsById）先
+  // 全部处理完并收集脏词项，最后对脏词项 posting 一次性重建、documents 数组
+  // 单次 filter。复杂度从 O(n²) 降到 O(总变更词项出现数)。
+  const removedIds = new Set<string>(deletes);
+
+  // 先识别内容未变的 upsert：词法指纹一致 → 保留现条目，不分词、不动账目。
+  // 来源级重建整表重写行（updated_at/indexed_at 推新）时，这里把 install 的
+  // 分词成本从「全表」压到「真实变更」。
+  const fingerprintStart = timing ? performance.now() : 0;
+  const changedUpserts: Document[] = [];
   for (const document of upserts) {
-    removeDocument(state, document.id);
-    addDocument(state, document);
+    const newFp = lexicalFingerprint(document);
+    const existingFp = state.fingerprints.get(document.id);
+    const existing = state.documentsById.get(document.id);
+    const oldFp = existingFp ?? (existing ? lexicalFingerprint(existing) : null);
+    if (existing !== undefined && oldFp === newFp && !removedIds.has(document.id)) {
+      if (timing) timing.skippedDocuments += 1;
+      continue;
+    }
+    state.fingerprints.set(document.id, newFp);
+    changedUpserts.push(document);
+    removedIds.add(document.id);
   }
+  if (timing) timing.structureMs += performance.now() - fingerprintStart;
+
+  const dirtyTerms = new Set<string>();
+  // 同 id 多条 upsert 只保留最后一条（与原逐条 remove→add 的「后者胜」语义一致）。
+  const added = new Map<string, { document: Document; frequency: Map<string, number> }>();
+  for (const id of removedIds) {
+    const existing = state.documentsById.get(id);
+    if (!existing) continue;
+    state.fingerprints.delete(id);
+    const tokenizeStarted = performance.now();
+    const frequency = termFrequency(tokens(rankingText(existing)));
+    if (timing) {
+      timing.tokenizeMs += performance.now() - tokenizeStarted;
+      timing.documents += 1;
+    }
+    state.totalLength -= state.lengths.get(id) ?? 0;
+    state.lengths.delete(id);
+    state.documentsById.delete(id);
+    for (const term of frequency.keys()) {
+      dirtyTerms.add(term);
+      const count = (state.docFreq.get(term) ?? 0) - 1;
+      if (count > 0) state.docFreq.set(term, count);
+      else state.docFreq.delete(term);
+    }
+  }
+  for (const document of changedUpserts) {
+    const tokenizeStarted = performance.now();
+    const frequency = termFrequency(tokens(rankingText(document)));
+    if (timing) {
+      timing.tokenizeMs += performance.now() - tokenizeStarted;
+      timing.documents += 1;
+    }
+    const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
+    state.lengths.set(document.id, length);
+    state.totalLength += length;
+    state.documentsById.set(document.id, document);
+    added.set(document.id, { document, frequency });
+    for (const term of frequency.keys()) {
+      dirtyTerms.add(term);
+      state.docFreq.set(term, (state.docFreq.get(term) ?? 0) + 1);
+    }
+  }
+  // 新增侧按词项倒排预聚合：若在重建阶段对每个脏词项都扫一遍 added 全表，
+  // 全量重灌场景仍是 O(dirtyTerms × n)（20237 条全量重灌实测仍 71s）。先按
+  // 词项收集一次 [docId, count]，重建时只取自己的条目，整体线性。
+  const structureStarted = timing ? performance.now() : 0;
+  const addsByTerm = new Map<string, Array<[string, number]>>();
+  for (const [docId, entry] of added) {
+    for (const [term, count] of entry.frequency) {
+      const list = addsByTerm.get(term);
+      if (list) list.push([docId, count]);
+      else addsByTerm.set(term, [[docId, count]]);
+    }
+  }
+  // 脏词项 posting 重建：旧条目过滤掉全部移除 id，再补上新增文档词频。
+  // 注意 docFreq 已按「先减后加」定稿；词项计数归零时旧 posting 可能已在
+  // 账目阶段删掉，重建按空 posting 起步，空结果则删除词项。
+  for (const term of dirtyTerms) {
+    const old = state.postings.get(term) ?? { ids: [], frequencies: [] };
+    const ids: string[] = [];
+    const frequencies: number[] = [];
+    for (let i = 0; i < old.ids.length; i++) {
+      if (removedIds.has(old.ids[i])) continue;
+      ids.push(old.ids[i]);
+      frequencies.push(old.frequencies[i]);
+    }
+    for (const [docId, count] of addsByTerm.get(term) ?? []) {
+      ids.push(docId);
+      frequencies.push(count);
+    }
+    if (ids.length > 0) state.postings.set(term, { ids, frequencies });
+    else state.postings.delete(term);
+  }
+  state.documents = state.documents.filter((item) => !removedIds.has(item.id));
+  for (const entry of added.values()) state.documents.push(entry.document);
+  if (timing) timing.structureMs += performance.now() - structureStarted;
   state.revision = revision;
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
@@ -324,6 +502,39 @@ function applyVectorMap(state: State, request: { vectors?: Record<string, number
   if (request.vectors === undefined) return;
   state.vectors = new Map(Object.entries(request.vectors ?? {}));
   state.vectorVersion = String(request.vector_version ?? "");
+}
+
+/* ── 延迟落盘：sync 响应先行，快照写入挪到空闲窗口 ──
+ * 搜索只依赖内存索引；persist 服务的崩溃恢复可以延后——若在延迟窗口内崩溃，
+ * 下次冷启动加载旧快照 + 按旧水位重放 delta，重复行被词法指纹以近零成本吸收，
+ * 墓碑视界防删除丢失。追边合并：多次请求只落最后一次；串行防重入。 */
+let pendingPersist: { state: State; probe?: WorkerProbe } | null = null;
+let persistRunning = false;
+let persistTimer: NodeJS.Timeout | null = null;
+
+function schedulePersist(state: State, probe?: WorkerProbe): void {
+  pendingPersist = { state, probe };
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void runPendingPersist();
+  }, 1500);
+  persistTimer.unref?.();
+}
+
+async function runPendingPersist(): Promise<void> {
+  if (persistRunning || !pendingPersist) return;
+  persistRunning = true;
+  const job = pendingPersist;
+  pendingPersist = null;
+  try {
+    await persist(job.state, job.probe);
+  } catch (error) {
+    console.error(`GUGU_RAG_DEFERRED_PERSIST_FAILED ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    persistRunning = false;
+    if (pendingPersist) void runPendingPersist();
+  }
 }
 
 function validateStoredVectorOwner(request: { vector_cache?: { owner_id: string } }): void {
@@ -430,6 +641,36 @@ function search(
 function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16); }
 
 async function handle(state: State, transient: State, request: RagRequest): Promise<RagResponse> {
+  if (request.op === "unified_query_with_embedding") {
+    assertWorkerOwner(request.owner_id);
+    if (request.revision !== state.revision) {
+      return { status: "error", code: "revision_mismatch", message: "TS 统一查询索引版本不一致" };
+    }
+    const hasTransient = request.searches.some((item) => item.corpus === "transient");
+    if (hasTransient && (!(request.transient_revision ?? "") || request.transient_revision !== transient.revision)) {
+      return { status: "error", code: "revision_mismatch", message: "TS 统一查询瞬态语料版本不一致" };
+    }
+
+    const embeddingStarted = performance.now();
+    const embedded = await embedQuery(request.embedding, request.query);
+    const embeddingMs = Math.max(0, Math.round(performance.now() - embeddingStarted));
+    const { op: _op, owner_id: _ownerId, embedding: _embedding, ...queryFields } = request;
+    const response = await handle(state, transient, {
+      ...queryFields,
+      op: "unified_query",
+      query_vector: embedded.vector,
+    });
+    if (response.status === "ok" && "probe" in response && response.probe) {
+      const queryProbe = response.probe as RagUnifiedQueryProbe;
+      queryProbe.stage_ms.query_embedding = embeddingMs;
+      queryProbe.counts.query_vector_dimensions = embedded.vector.length;
+      queryProbe.embedding = {
+        outcome: embedded.outcome,
+        ...(embedded.http_status ? { http_status: embedded.http_status } : {}),
+      };
+    }
+    return response;
+  }
   if (request.op === "database_revision") {
     assertWorkerOwner(request.owner_id);
     const revision = await getDataRuntime().getRagIndexRevision({ ownerId: request.owner_id });
@@ -450,8 +691,12 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const watermarkUsable = state.watermark
       && !Number.isNaN(Date.parse(state.watermark.ts))
       && Date.parse(state.watermark.ts) >= Date.now() - HORIZON_MS;
+    emitBuildProbe("sync_index_from_database", "watermark_checked", operationStarted, {
+      watermark_usable: Number(Boolean(watermarkUsable)),
+    });
     if (!watermarkUsable) {
       probe.counts.fallback_full = 1;
+      emitBuildProbe("sync_index_from_database", "fallback_full_start", operationStarted, { fallback_full: 1 });
       recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
       const response = await handle(state, transient, {
         op: "load_index_from_database",
@@ -472,6 +717,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     let passes = 0;
     let overflow = false;
     const deltaStarted = performance.now();
+    emitBuildProbe("sync_index_from_database", "delta_read_start", operationStarted, { passes, scanned_rows: 0 });
     while (true) {
       const delta = await getDataRuntime().loadRagIndexDelta(
         { ownerId: request.owner_id }, cursor,
@@ -486,10 +732,17 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       if (passes >= 50) { overflow = true; break; }
     }
     probe.stage_ms.data_runtime_delta = Math.max(0, Math.round(performance.now() - deltaStarted));
+    emitBuildProbe("sync_index_from_database", "delta_read_complete", operationStarted, {
+      passes, scanned_rows: Number(probe.counts.scanned_rows || 0),
+      applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
+    });
 
     if (overflow) {
       // 变更量超出单次同步预算：放弃半截增量，走全量保证一致性
       probe.counts.fallback_full = 1;
+      emitBuildProbe("sync_index_from_database", "fallback_full_start", operationStarted, {
+        fallback_full: 1, passes, scanned_rows: Number(probe.counts.scanned_rows || 0),
+      });
       recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
       const response = await handle(state, transient, {
         op: "load_index_from_database",
@@ -505,14 +758,36 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     }
 
     const installStarted = performance.now();
-    patchInMemory(state, target, upsertsAcc, deletesAcc);
+    emitBuildProbe("sync_index_from_database", "index_install_start", operationStarted, {
+      applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
+    });
+    // install 内部分段：分词/词频 vs 倒排与账目结构构建（诊断冷加载瓶颈用）
+    const installTiming: InstallTiming = { tokenizeMs: 0, structureMs: 0, documents: 0, skippedDocuments: 0 };
+    patchInMemory(state, target, upsertsAcc, deletesAcc, installTiming);
+    probe.stage_ms.install_tokenize_ms = Math.max(0, Math.round(installTiming.tokenizeMs));
+    probe.stage_ms.install_structure_ms = Math.max(0, Math.round(installTiming.structureMs));
+    probe.stage_ms.install_documents = installTiming.documents;
+    probe.counts.install_skipped_documents = installTiming.skippedDocuments;
     recordProbeStage(probe, "index_install_build", installStarted);
+    emitBuildProbe("sync_index_from_database", "index_install_complete", operationStarted, {
+      document_count: state.documents.length, posting_terms: state.postings.size,
+    });
     state.watermark = cursor;
     probe.counts.applied_upserts = upsertsAcc.length;
     probe.counts.applied_deletes = deletesAcc.length;
     probe.counts.passes = passes;
-    if (upsertsAcc.length || deletesAcc.length) await persist(state, probe);
+    if (upsertsAcc.length || deletesAcc.length) {
+      // 落盘延迟到空闲窗口：搜索只依赖内存索引，响应不必等 64MB 快照写完。
+      emitBuildProbe("sync_index_from_database", "persist_start", operationStarted, {
+        document_count: state.documents.length, deferred: 1,
+      });
+      schedulePersist(state, probe);
+    }
     recordProbeStage(probe, "sync_index_from_database_total", operationStarted);
+    emitBuildProbe("sync_index_from_database", "completed", operationStarted, {
+      document_count: state.documents.length, vector_count: state.vectors.size,
+      applied_upserts: upsertsAcc.length, applied_deletes: deletesAcc.length,
+    });
     return {
       status: "ok", version: VERSION, revision: state.revision,
       document_count: state.documents.length,
@@ -530,17 +805,27 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     const probe: WorkerProbe = { stage_ms: {}, counts: {} };
     assertWorkerOwner(request.owner_id);
     let stageStarted = performance.now();
+    emitBuildProbe("load_index_from_database", "full_load_start", operationStarted);
     const result = await getDataRuntime().loadRagIndex({ ownerId: request.owner_id });
     for (const [name, elapsed] of Object.entries(result.probe.stage_ms)) {
       probe.stage_ms[`data_runtime_${name}`] = elapsed;
     }
     Object.assign(probe.counts, result.probe.counts);
     state.watermark = result.watermark ?? null;
+    emitBuildProbe("load_index_from_database", "full_load_complete", operationStarted, {
+      document_count: result.snapshot.documents.length,
+    });
 
     stageStarted = performance.now();
+    emitBuildProbe("load_index_from_database", "index_install_start", operationStarted, {
+      document_count: result.snapshot.documents.length,
+    });
     replaceInMemory(state, request.revision, result.snapshot.documents);
     recordProbeStage(probe, "index_install_build", stageStarted);
     probe.counts.posting_terms = state.postings.size;
+    emitBuildProbe("load_index_from_database", "index_install_complete", operationStarted, {
+      document_count: state.documents.length, posting_terms: state.postings.size,
+    });
 
     const vectorVersion = String(request.vector_version || "");
     const vectorProbe = {
@@ -549,6 +834,9 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
       cache: { owner_cache_hit: false, scoped_cache_hit: false },
     };
     stageStarted = performance.now();
+    emitBuildProbe("load_index_from_database", "vector_load_start", operationStarted, {
+      document_count: state.documents.length,
+    });
     const vectors = vectorVersion
       ? await loadDocumentVectors(
         request.owner_id, result.snapshot.documents, vectorVersion, getStorageReader(), vectorProbe,
@@ -563,8 +851,20 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     state.vectorVersion = vectorVersion;
     state.restoreError = null;
     probe.counts.vector_count = state.vectors.size;
+    emitBuildProbe("load_index_from_database", "vector_load_complete", operationStarted, {
+      vector_count: state.vectors.size,
+    });
+    emitBuildProbe("load_index_from_database", "persist_start", operationStarted, {
+      document_count: state.documents.length, vector_count: state.vectors.size,
+    });
     await persist(state, probe);
+    emitBuildProbe("load_index_from_database", "persist_complete", operationStarted, {
+      serialized_bytes: Number(probe.counts.serialized_bytes || 0),
+    });
     recordProbeStage(probe, "load_index_from_database_total", operationStarted);
+    emitBuildProbe("load_index_from_database", "completed", operationStarted, {
+      document_count: state.documents.length, vector_count: state.vectors.size,
+    });
     return {
       status: "ok", version: VERSION, revision: state.revision,
       document_count: state.documents.length,
@@ -877,8 +1177,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
     };
   }
   if (request.op === "hybrid_fuse") {
-    // 与 Python hybrid_results 逐位等价：余弦累加顺序、RRF 乘法顺序、
-    // 排序 tie-break 和透传语义完全一致（Phase 3 契约冻结）。
+    // 保留内部融合契约的独立回归入口；生产统一查询使用同一 RRF 核心。
     const hits = Array.isArray(request.hits) ? request.hits : [];
     const queryVector = Array.isArray(request.query_vector) ? request.query_vector : [];
     const vectors = request.vectors ?? {};

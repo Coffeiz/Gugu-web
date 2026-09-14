@@ -640,7 +640,7 @@ async def _apply_hybrid_scoring(
 
     排序消费的 confidence_v4 在有语义分时即混合结果
     （0.45*lexical_norm + 0.55*semantic_norm 再乘来源质量与 query 覆盖）；
-    rrf 列来自生产 ``hybrid_results`` 的 RRF 融合分，只作对照，不进入 conf-v4。
+    rrf 列来自离线 ``hybrid_results`` 参考计算，只作对照，不进入线上 conf-v4。
     """
     hybrid_ctx, fallback = await _hybrid_semantic_context(owner_id, query, candidates)
     hybrid_rrf: dict[str, float] = {}
@@ -1249,7 +1249,7 @@ def _run_markdown(payload: dict[str, Any]) -> str:
         f"- BM25 参数探针：`K1={PROBE_BM25_K1}`、`B={PROBE_BM25_B}`；线上当前为 `K1={ONLINE_BM25_K1}`、`B={ONLINE_BM25_B}`。",
         f"- conf-v4（实验比较）：`({V4_LEXICAL_WEIGHT:.2f}*fused + {V4_QUERY_MATCH_WEIGHT:.2f}*query_match) * source_quality_v4`；`fused` 无 embedding 时就是 `lexical_norm`，有 embedding 时先按 `0.45*lexical_norm + 0.55*semantic_norm` 融合；`len_penalty` 只作诊断，不进入本次公式。",
         "- embedding 混合：有缓存向量（memory/knowledge/pattern）的候选按池内 `cosine / 最大 cosine` 归一成 semantic_norm 后融合；无向量候选保持纯词法，与生产 hybrid 同口径（诊断路径不生成向量、不写缓存）。",
-        "- rrf 列：生产 `hybrid_results` 的 RRF 融合参考分（词法 0.45 / 向量 0.55），只作对照，不进入 conf-v4。",
+        "- rrf 列：离线 `hybrid_results` 参考实现的 RRF 分（词法 0.45 / 向量 0.55），只作对照，不进入线上 conf-v4。",
         f"- v4 过滤线：首选 `confidence >= {V4_PREFERRED_THRESHOLD:.2f}`；fallback 为 `{LOW_SCORE_THRESHOLD:.2f} <= confidence < {V4_PREFERRED_THRESHOLD:.2f}`。",
         "- run 回放优先恢复对应 query 的 `before_message_id` 历史水位，并额外排除当前 run 所属 session 的全部 conversation；无法对齐时才退回正文 hash 排除。",
         "- 观察排名按 conf-v4 降序（有 embedding 时即混合结果排序）；同分时按 `rank_score_probe`、原召回排名稳定排序。",

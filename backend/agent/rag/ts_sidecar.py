@@ -9,12 +9,12 @@ import re
 import shlex
 import uuid
 import weakref
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.rag.hybrid import hybrid_results
 from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 from agent.rag.scope import matches_scope
 
@@ -51,6 +51,53 @@ def _record_worker_restore_probe(response: dict[str, Any]) -> None:
     })
 
 
+_WORKER_BUILD_PROBE_PREFIX = "GUGU_RAG_BUILD_PROBE "
+_WORKER_BUILD_OPS = {"sync_index_from_database", "load_index_from_database"}
+_WORKER_BUILD_PHASES = {
+    "watermark_checked", "delta_read_start", "delta_read_complete",
+    "fallback_full_start", "full_load_start", "full_load_complete",
+    "index_install_start", "index_install_complete", "vector_load_start",
+    "vector_load_complete", "persist_start", "persist_complete", "completed",
+}
+_WORKER_BUILD_COUNT_NAMES = {
+    "watermark_usable", "fallback_full", "passes", "scanned_rows",
+    "applied_upserts", "applied_deletes", "document_count", "vector_count",
+    "posting_terms", "serialized_bytes", "install_skipped_documents",
+}
+
+
+def _parse_worker_build_probe(line: bytes | str) -> dict[str, Any] | None:
+    """只接纳 worker stderr 中的受控构建阶段，不把请求或异常文本带入诊断。"""
+    text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+    if not text.startswith(_WORKER_BUILD_PROBE_PREFIX):
+        return None
+    try:
+        raw = json.loads(text[len(_WORKER_BUILD_PROBE_PREFIX):])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    op = raw.get("op")
+    phase = raw.get("phase")
+    elapsed_ms = raw.get("elapsed_ms")
+    if op not in _WORKER_BUILD_OPS or phase not in _WORKER_BUILD_PHASES:
+        return None
+    if not isinstance(elapsed_ms, (int, float)) or isinstance(elapsed_ms, bool):
+        return None
+    counts = raw.get("counts")
+    return {
+        "op": op,
+        "phase": phase,
+        "elapsed_ms": max(0, int(elapsed_ms)),
+        "counts": {
+            name: max(0, int(value))
+            for name, value in counts.items()
+            if name in _WORKER_BUILD_COUNT_NAMES
+            and isinstance(value, (int, float)) and not isinstance(value, bool)
+        } if isinstance(counts, dict) else {},
+    }
+
+
 class TsSidecarUnavailable(RuntimeError):
     """TS worker 未配置、启动失败或协议请求失败。
 
@@ -59,9 +106,11 @@ class TsSidecarUnavailable(RuntimeError):
     不可用，而不是去匹配中文文案。
     """
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(self, message: str, *, code: str | None = None,
+                 diagnostics: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.diagnostics = diagnostics or {}
 
 
 @dataclass(frozen=True)
@@ -97,9 +146,12 @@ def index_dir_for_owner(owner_user_id: object) -> str:
 
 
 SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
-# 索引构建类 op（replace/patch/build_and_index/replace_transient）的等待上限：
-# 全量语料装载远超 500ms 搜索超时，且不在用户等待路径上（ping 预热同理单独放宽）。
-BUILD_TIMEOUT_SECONDS = 30.0
+# 索引构建类 op（replace/patch/build_and_index/replace_transient/sync_index_from_database）
+# 的等待上限：全量语料装载远超 500ms 搜索超时，且不在用户等待路径上（ping 预热同理单独放宽）。
+# 30s 是共享宿主冷启动全量重建的真实耗时（2 万文档 sync+install+persist 实测 ~60s）覆盖不住的：
+# 到点取消会让 persist 永远跑不到、缓存永不建立，每次查询都全量冷重建直到超时（2026-09-13
+# devserver 全量超时事故根因）。给到 120s 让首次冷构建能完成落盘，之后走热路径。
+BUILD_TIMEOUT_SECONDS = 120.0
 # 批量查询响应把多来源候选连同原文聚合在一条 JSONL 里，64KB 默认流上限会被
 # readline 以 "chunk is longer than limit" 打断，放宽到 32MB。
 SIDECAR_STREAM_LIMIT_BYTES = 32 * 1024 * 1024
@@ -116,6 +168,8 @@ class TsSidecarClient:
         self.command = command
         self.index_dir = index_dir
         self._process: asyncio.subprocess.Process | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._build_probe_events: deque[dict[str, Any]] = deque(maxlen=24)
         self._lock = asyncio.Lock()
         self._revision: str | None = None
         self._document_count = 0
@@ -380,60 +434,6 @@ class TsSidecarClient:
         self._transient_revision = str(result.response.get("revision") or revision)
         self._transient_generation = generation
 
-    async def hybrid_fuse(
-        self,
-        hits: list[RecallResult],
-        *,
-        query_vector: list[float] | None,
-        vector_map: dict[str, list[float]],
-        limit: int,
-        lexical_weight: float,
-        vector_weight: float,
-        rrf_k: int,
-        vector_version: str,
-    ) -> tuple[list[RecallResult], str | None, dict]:
-        """Phase 3：把 BM25 与 embedding 的 RRF 融合交给 TS worker 执行。
-
-        hits 即词法候选（顺序即词法名次）；只回传候选命中的向量。返回
-        (结果, fallback_reason, 诊断)；语义与 Python ``hybrid_results`` 逐位一致。
-        """
-        if not query_vector or not vector_map or not any(
-                vector_map.get(item.document.chunk_id) for item in hits):
-            # 退化输入：无查询向量/空缓存 → 透传；缓存存在但命中均无可用向量 →
-            # 纯词法 RRF 重打分。与 Python hybrid_results 逐位一致，也避免
-            # 把整份向量表搬进 IPC（此时 vector_scores 必为空，documents 无关）。
-            final, fallback = hybrid_results(hits, [], query_vector, vector_map, limit=limit)
-            return final, fallback, {
-                "fusion": "bm25", "vector_doc_count": 0, "vector_version": vector_version,
-            }
-        payload_vectors = {
-            item.document.chunk_id: vector_map[item.document.chunk_id]
-            for item in hits
-            if vector_map.get(item.document.chunk_id)
-        }
-        response = (await self._request({
-            "op": "hybrid_fuse",
-            "hits": [{"chunk_id": item.document.chunk_id, "score": item.score} for item in hits],
-            "query_vector": list(query_vector or []),
-            "vectors": payload_vectors,
-            "limit": max(1, int(limit)),
-            "lexical_weight": lexical_weight,
-            "vector_weight": vector_weight,
-            "rrf_k": rrf_k,
-            "vector_version": vector_version,
-        }, timeout_seconds=_timeout_seconds())).response
-        results_by_key = {item.document.chunk_id: item for item in hits}
-        ordered = []
-        for row in response.get("results") or []:
-            item = results_by_key.get(str(row.get("chunk_id") or ""))
-            if item is not None:
-                ordered.append(RecallResult(item.document, float(row.get("score") or 0.0)))
-        return ordered, response.get("fallback"), {
-            "fusion": str(response.get("fusion") or ""),
-            "vector_doc_count": str(int(response.get("vector_doc_count") or 0)),
-            "vector_version": str(response.get("vector_version") or ""),
-        }
-
     async def reuse_if_current(self, revision: str | None) -> bool:
         self.touch()
         self._active_requests += 1
@@ -531,15 +531,40 @@ class TsSidecarClient:
     async def close(self) -> None:
         process = self._process
         self._process = None
-        if process is None:
-            return
-        if process.returncode is None:
+        stderr_task = self._stderr_task
+        self._stderr_task = None
+        if process is not None and process.returncode is None:
             process.terminate()
             try:
                 await asyncio.wait_for(process.wait(), timeout=1)
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
+        if stderr_task is not None:
+            stderr_task.cancel()
+            try:
+                await stderr_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _drain_worker_stderr(self, process: asyncio.subprocess.Process) -> None:
+        """把受控阶段信号保存在本进程；绝不转写 worker stderr 或业务数据。"""
+        if process.stderr is None:
+            return
+        try:
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    return
+                event = _parse_worker_build_probe(line)
+                if event is not None:
+                    self._build_probe_events.append(event)
+        except (ValueError, RuntimeError):
+            # stderr 诊断流异常不影响 JSONL 正常请求；请求层会处理 worker 生命周期。
+            return
+
+    def _latest_build_probe(self) -> dict[str, Any]:
+        return dict(self._build_probe_events[-1]) if self._build_probe_events else {}
 
     async def _request(self, payload: dict, *, timeout_seconds: float | None = None) -> SidecarRequestResult:
         """传输入口（模板方法）：锁/计时/probe 外壳共享，实际连接由三个可覆写点决定。
@@ -552,7 +577,8 @@ class TsSidecarClient:
         构造与基类共用一份，杜绝双份实现漂移。
         """
         queued_at = asyncio.get_running_loop().time()
-        probe_enabled = payload.get("op") == "unified_query"
+        query_ops = {"unified_query", "unified_query_with_embedding"}
+        probe_enabled = payload.get("op") in query_ops
         from agent.rag.observation import probe_finish, probe_start, probe_update
 
         if probe_enabled:
@@ -578,7 +604,7 @@ class TsSidecarClient:
                 response_wait_ms = int((asyncio.get_running_loop().time() - response_started) * 1000)
                 query_ms = int(
                     (asyncio.get_running_loop().time() - request_started) * 1000
-                ) if payload.get("op") in {"search", "batch_search", "unified_query"} else 0
+                ) if payload.get("op") in {"search", "batch_search"} | query_ops else 0
                 if probe_enabled:
                     probe_finish("sidecar_worker_response", response_started,
                                  response_wait_ms=response_wait_ms)
@@ -647,15 +673,23 @@ class TsSidecarClient:
                 # 旧查询/排序 op 不依赖数据库环境；TS-owned index op 会显式失败，
                 # 不把配置加载错误伪装成空索引。
                 pass
+            if any(worker_env.get(name) for name in (
+                "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+            )):
+                # Node 22.21+ 在 built-in http(s) agent 中复用标准代理环境变量，
+                # 与 Python provider 客户端的 trust_env 行为一致；未配置代理时不改变直连。
+                worker_env["NODE_USE_ENV_PROXY"] = "1"
             self._process = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 env=worker_env,
                 # 批量查询的 JSONL 响应聚合多来源候选原文，单行远超默认 64KB。
                 limit=SIDECAR_STREAM_LIMIT_BYTES,
             )
+            self._build_probe_events.clear()
+            self._stderr_task = asyncio.create_task(self._drain_worker_stderr(self._process))
             # 新进程里瞬态语料为空：递增代数让下次 replace_transient 必然重传。
             self._process_generation += 1
             self._transient_revision = None
@@ -689,11 +723,15 @@ class TsSidecarClient:
             # RuntimeError 是 wait_for 取消 readline 后流读取者残留的竞态
             # （readuntil already waiting）。两者都意味着这条连接的响应流已不可信，
             # 必须整条连接关闭重来，不能当作单次失败吞掉。
+            diagnostics = self._latest_build_probe()
             await self.close()
-            raise TsSidecarUnavailable("TypeScript RAG worker 请求失败") from error
+            raise TsSidecarUnavailable(
+                "TypeScript RAG worker 请求失败", diagnostics=diagnostics,
+            ) from error
         if not line:
+            diagnostics = self._latest_build_probe()
             await self.close()
-            raise TsSidecarUnavailable("TypeScript RAG worker 已退出")
+            raise TsSidecarUnavailable("TypeScript RAG worker 已退出", diagnostics=diagnostics)
         try:
             response = json.loads(line)
         except json.JSONDecodeError as error:
@@ -702,6 +740,7 @@ class TsSidecarClient:
             raise TsSidecarUnavailable(
                 str(response.get("message") or response.get("code") or "worker error"),
                 code=str(response.get("code") or "") or None,
+                diagnostics=self._latest_build_probe(),
             )
         return response
 
@@ -791,9 +830,11 @@ class SocketSidecarClient(TsSidecarClient):
         except json.JSONDecodeError as error:
             raise TsSidecarUnavailable("sidecar 宿主返回无效 JSON") from error
         if response.get("status") == "error":
+            diagnostics = response.get("diagnostics")
             raise TsSidecarUnavailable(
                 str(response.get("message") or response.get("code") or "sidecar error"),
                 code=str(response.get("code") or "") or None,
+                diagnostics=diagnostics if isinstance(diagnostics, dict) else None,
             )
         self._mirror = dict(response.get("state") or {})
         return dict(response.get("payload") or {})
@@ -933,7 +974,7 @@ class TsLexicalIndex:
         query: str,
         *,
         searches: list[dict],
-        query_vector: list[float] | None,
+        query_embedding: dict[str, Any] | None = None,
         source_order: list[str],
         candidate_limit: int,
         rank_options: dict,
@@ -943,9 +984,9 @@ class TsLexicalIndex:
         """Phase 5 统一查询：一次 IPC 完成召回、聚合、水位、Memory 融合与排序。
 
         返回 worker 响应（selected/stats/fusion/document_counts/source_groups）；
-        权限复核与注入组装仍由 Python 收口。vector_version 是 Python 当前生效的
-        embedding 模型版本戳，worker 用它校验持久向量表是否同版，不匹配则非
-        memory 组降级纯词法。
+        权限复核与注入组装仍由 Python 收口。启用 query embedding 时使用专用 IPC op，
+        把一次性配置交给 worker 生成向量；凭据仅存在于本机请求内存，禁止记录、持久化
+        或回显。vector_version 是当前有效 embedding 模型版本戳。
         """
         requests = []
         for position, item in enumerate(searches):
@@ -959,8 +1000,8 @@ class TsLexicalIndex:
                    if scope is not None else {}),
             })
         payload: dict[str, Any] = {
-            "op": "unified_query", "revision": self.revision or "", "query": query,
-            "query_vector": list(query_vector or []),
+            "op": "unified_query_with_embedding" if query_embedding else "unified_query",
+            "revision": self.revision or "", "query": query,
             "before_message_id": before_message_id,
             "source_order": list(source_order),
             "searches": requests,
@@ -974,6 +1015,18 @@ class TsLexicalIndex:
                 "exclude_content_hashes": sorted(rank_options.get("exclude_content_hashes") or ()),
             },
         }
+        if query_embedding:
+            payload["owner_id"] = self.client.owner_user_id
+            # 白名单构造，避免 bridge 内无关字段或对象被传入 worker。
+            payload["embedding"] = {
+                "provider": str(query_embedding.get("provider") or ""),
+                "base_url": str(query_embedding.get("base_url") or ""),
+                "pinned_ip": str(query_embedding.get("pinned_ip") or ""),
+                "model": str(query_embedding.get("model") or ""),
+                "dimensions": int(query_embedding.get("dimensions") or 0),
+                "api_key": str(query_embedding.get("api_key") or ""),
+                "multimodal": bool(query_embedding.get("multimodal")),
+            }
         if any(item.get("corpus") == "transient" for item in searches):
             payload["transient_revision"] = self.client._transient_revision or ""
         if vector_version:
@@ -1006,7 +1059,10 @@ class TsLexicalIndex:
 
 def _wire_document(document: IndexDocument) -> dict[str, Any]:
     text_parts = [document.title]
-    if document.summary:
+    content = document.content.strip()
+    # summary 只是正文前缀截断（如 memory 系 record 的 text[:240]）时不再重复拼接，
+    # 与 TS adapters/base.ts 的守卫同一口径；真实摘要（knowledge description）照常保留。
+    if document.summary and not content.startswith(document.summary):
         text_parts.append(document.summary)
     text_parts.append(document.content)
     wire = {
@@ -1128,12 +1184,6 @@ def wire_document_to_persistent(raw: dict[str, Any], owner_user_id: object) -> I
 
 
 _lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, TsSidecarClient]] = weakref.WeakKeyDictionary()
-
-
-def _index_document_digest(document: IndexDocument) -> str:
-    """词法索引字段摘要；契约统一收口在 agent.rag.delta。"""
-    from agent.rag.delta import document_digest
-    return document_digest(document)
 
 
 async def _probe_sidecar_socket(socket_path: str) -> bool:

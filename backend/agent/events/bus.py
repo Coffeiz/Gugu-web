@@ -17,11 +17,12 @@ _log = logging.getLogger("agent.events")
 _listeners: dict[type, list[Callable[[Event], Awaitable]]] = defaultdict(list)
 _tasks: set = set()   # 持后台任务引用防 GC
 
-# 同一用户、同一来源只允许一个索引重建 worker。重建函数读取的是当前主数据，
-# 因此连续的 upsert/delete 只需保留最后一个事件；若事件在重建期间到达，worker
-# 会在本次完成后再跑一遍，避免“合并事件”变成丢更新。
+# 同一用户、同一来源只允许一个索引重建 worker。文档级事件（带 source_id）
+# 按 ID 各保留最新一条——合并只能去掉重复，不能丢掉任何一个待处理文档
+# （PRD-RAG-9 §5.2）；无 source_id 的 refresh/来源级事件升级为来源级重建，
+# 覆盖同源未处理的文档级 pending（来源级重建读取全量主数据，语义包含它们）。
 _rag_workers: dict[tuple[str, str], asyncio.Task] = {}
-_rag_pending: dict[tuple[str, str], RagIndexUpdated] = {}
+_rag_pending: dict[tuple[str, str], dict[str, RagIndexUpdated]] = {}
 _rag_status: dict[tuple[str, str], dict[str, object]] = {}
 _rag_persist_locks: dict[tuple[str, str], asyncio.Lock] = {}
 _rag_recovery_task: asyncio.Task | None = None
@@ -80,9 +81,15 @@ async def _persist_rag_event_and_start(event: RagIndexUpdated) -> None:
 
 
 def _enqueue_rag_index_event(event: RagIndexUpdated, *, persist: bool = True) -> None:
-    """合并同源事件，先持久化最新状态，再启动唯一的来源级 worker。"""
+    """合并同源事件：按 source_id 保留各自最新一条，先持久化再启动唯一 worker。"""
     key = _rag_event_key(event)
-    _rag_pending[key] = event
+    source_key = str(event.source_id or "").strip()
+    if source_key:
+        _rag_pending.setdefault(key, {})[source_key] = event
+    else:
+        # 来源级事件覆盖全部文档级 pending：全量重建读取当前主数据，
+        # 语义已包含任何未处理文档（PRD-RAG-9 §5.2 规则 3）。
+        _rag_pending[key] = {"": event}
     status = _rag_status.setdefault(key, {
         "state": "idle", "generation": 0, "completed_generation": 0,
         "pending": False,
@@ -122,7 +129,13 @@ async def _drain_rag_index_events(key: tuple[str, str]) -> None:
     current = asyncio.current_task()
     try:
         while True:
-            event = _rag_pending.pop(key, None)
+            pending = _rag_pending.get(key)
+            event = None
+            if pending:
+                source_key, event = next(iter(pending.items()))
+                pending.pop(source_key, None)
+                if not pending:
+                    _rag_pending.pop(key, None)
             if event is None:
                 status = _rag_status.get(key)
                 if status is not None:

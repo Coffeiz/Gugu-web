@@ -10,8 +10,10 @@ from agent.rag.injection import (
 )
 
 
-def test_automatic_recall_default_timeout_is_five_seconds():
-    assert injection.AUTO_RECALL_TIMEOUT_SECONDS == 5.0
+def test_automatic_recall_default_timeout_is_ten_seconds():
+    # 2026-09-14：冷启动（磁盘快照恢复 ~4.1s + 增量同步）实测最重 ~4.7s，
+    # 5s 窗口会把首轮召回误判成超时，放宽到 10s（见 devlog 同日记录）。
+    assert injection.AUTO_RECALL_TIMEOUT_SECONDS == 10.0
 
 
 @pytest.mark.asyncio
@@ -99,7 +101,7 @@ async def test_passive_recall_uses_same_knowledge_service(monkeypatch):
     from agent.rag import service
 
     async def fake_search(*args, **kwargs):
-        assert kwargs["strategy"] == "bm25"
+        assert kwargs["strategy"] == "auto"
         return {"results": [{"title": "记忆", "text": "之前讨论过稳定缓存。"}]}
 
     monkeypatch.setattr(service, "search_knowledge", fake_search)

@@ -161,7 +161,8 @@ async def test_knowledge_adapter_makes_keywords_searchable(knowledge_storage):
 
 
 @pytest.mark.asyncio
-async def test_search_memory_accepts_knowledge_source(knowledge_storage):
+async def test_search_memory_ignores_knowledge_source(knowledge_storage):
+    """边界（PRD-KNOWLEDGE-2）：knowledge 不再进入记忆检索，source=knowledge 视为未知来源返回空。"""
     from agent.rag import service
     result = await service.search_memory("user-a", "项目协议", source="knowledge")
     assert result["results"] == []
@@ -358,7 +359,7 @@ async def test_knowledge_reflection_conflict_keeps_parent_and_new_id(monkeypatch
 async def test_save_knowledge_tool_persists_and_normalizes_keywords(knowledge_storage, monkeypatch):
     """save_knowledge 工具路径必须把 keywords 落库（此前 schema 没有该字段，恒为空）。"""
     from agent import events
-    from agent.tools.memory import _save_knowledge
+    from agent.tools.knowledge import _save_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     result = await _save_knowledge(None, "user-a", {
@@ -375,7 +376,7 @@ async def test_save_knowledge_tool_persists_and_normalizes_keywords(knowledge_st
 @pytest.mark.asyncio
 async def test_save_knowledge_tool_drops_non_list_keywords(knowledge_storage, monkeypatch):
     from agent import events
-    from agent.tools.memory import _save_knowledge
+    from agent.tools.knowledge import _save_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     result = await _save_knowledge(None, "user-a", {
@@ -397,7 +398,7 @@ def test_save_knowledge_schema_declares_keywords():
     }
     assert "keywords" in tool.description
     # 先查再合：同主题已有条目时必须引导改用 update_knowledge，防止整段覆盖
-    assert "search_memory" in tool.description
+    assert "read_knowledge" in tool.description
     assert "update_knowledge" in tool.description
     assert "整段替换" in tool.description
     # description：触发式一句话描述，进 RAG 索引文本
@@ -451,7 +452,7 @@ async def test_store_save_rejects_update_on_deleted_entry(knowledge_storage):
 @pytest.mark.asyncio
 async def test_update_knowledge_tool_updates_version_and_inherits_omitted_fields(knowledge_storage, monkeypatch):
     from agent import events
-    from agent.tools.memory import _update_knowledge
+    from agent.tools.knowledge import _update_knowledge
 
     published = []
     monkeypatch.setattr(events.bus, "publish", published.append)
@@ -487,7 +488,7 @@ async def test_update_knowledge_tool_updates_version_and_inherits_omitted_fields
 @pytest.mark.asyncio
 async def test_update_knowledge_tool_reports_unchanged_without_new_version(knowledge_storage, monkeypatch):
     from agent import events
-    from agent.tools.memory import _update_knowledge
+    from agent.tools.knowledge import _update_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     store = KnowledgeStore("user-a")
@@ -510,7 +511,7 @@ async def test_update_knowledge_tool_reports_unchanged_without_new_version(knowl
 @pytest.mark.asyncio
 async def test_update_knowledge_tool_rejects_unknown_or_deleted_id(knowledge_storage, monkeypatch):
     from agent import events
-    from agent.tools.memory import _update_knowledge
+    from agent.tools.knowledge import _update_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     store = KnowledgeStore("user-a")
@@ -545,7 +546,7 @@ def test_update_knowledge_schema_requires_id_and_content():
 async def test_update_knowledge_tool_supports_keywords_only_partial_update(knowledge_storage, monkeypatch):
     """部分更新：省略 content 只调关键词，正文保持不变（真实案例：模型只提交 keywords）。"""
     from agent import events
-    from agent.tools.memory import _update_knowledge
+    from agent.tools.knowledge import _update_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     store = KnowledgeStore("user-a")
@@ -636,7 +637,7 @@ def test_knowledge_adapter_description_enters_summary_metadata_and_version():
 @pytest.mark.asyncio
 async def test_save_knowledge_tool_persists_description(knowledge_storage, monkeypatch):
     from agent import events
-    from agent.tools.memory import _save_knowledge
+    from agent.tools.knowledge import _save_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     result = await _save_knowledge(None, "user-a", {
@@ -653,7 +654,7 @@ async def test_save_knowledge_tool_persists_description(knowledge_storage, monke
 @pytest.mark.asyncio
 async def test_update_knowledge_tool_supports_description_only_partial_update(knowledge_storage, monkeypatch):
     from agent import events
-    from agent.tools.memory import _update_knowledge
+    from agent.tools.knowledge import _update_knowledge
 
     monkeypatch.setattr(events.bus, "publish", lambda event: None)
     store = KnowledgeStore("user-a")

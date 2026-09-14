@@ -50,7 +50,7 @@ def _use_fake_sidecar(monkeypatch):
 
         async def load_index_from_database(self, owner_user_id, revision, vector_version=""):
             from app.db import session as db_session
-            from agent.rag.index_cache import load_index_documents
+            from agent.rag.persistent_store import load_index_documents
 
             if db_session._SessionLocal is None:
                 documents = await load_index_documents(None, owner_user_id)
@@ -215,7 +215,7 @@ async def test_shared_snapshot_index_keeps_persistent_documents_in_worker(monkey
     async def load_documents(_db, _owner_user_id):
         return [persistent_document]
 
-    monkeypatch.setattr("agent.rag.index_cache.load_index_documents", load_documents)
+    monkeypatch.setattr("agent.rag.persistent_store.load_index_documents", load_documents)
     cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
     token = set_shared_index_key("snapshot:revision-1")
     try:
@@ -245,7 +245,7 @@ async def test_shared_snapshot_reuses_complete_persistent_index_without_loading_
         calls["load"] += 1
         return [document]
 
-    monkeypatch.setattr("agent.rag.index_cache.load_index_documents", load_documents)
+    monkeypatch.setattr("agent.rag.persistent_store.load_index_documents", load_documents)
     cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
     token = set_shared_index_key("snapshot:revision-stable")
     try:

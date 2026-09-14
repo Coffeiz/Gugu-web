@@ -3,7 +3,7 @@
 system prompt 的组装位于 ``session_system.py``；本模块只组装项目、日历、笔记、文件
 和消息格式等动态上下文。
 """
-from agent.context.session_snapshot import current_date_text, current_time_text
+from agent.context.dynamic_tail import current_date_text, current_time_text
 from agent.context.session_system import NON_STREAMING_BLOCK, build_static_prompt
 
 
@@ -149,7 +149,7 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
         kx_block = "（本次任务不需要知识上下文，未加载）"
     dynamic_parts.append(
         "## 知识\n以下是已保存的知识条目，仅供判断是否与当前任务相关；"
-        "需要全文时用 search_memory 检索，不要凭标题编造内容。\n" + kx_block
+        "需要全文时用 read_knowledge 按 knowledge_id 直读，不要凭标题编造内容。\n" + kx_block
     )
 
     src_block = _source_block(source, im_channels)

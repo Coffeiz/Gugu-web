@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import math
+import ipaddress
+import socket
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from app.core.config import get_settings
 from app.core.credentials import normalize_ascii_api_key
@@ -126,6 +129,54 @@ def is_enabled() -> bool:
     自托管 Ollama 等无需鉴权，强求 key 反而逼用户填假值。否则全链路退回词法。"""
     e = _effective()
     return bool(e.enabled and e.model and resolve_base_url(e.provider, e.base_url))
+
+
+def query_settings() -> dict | None:
+    """返回本轮 query embedding 的短生命周期配置，供 owner-bound TS worker 使用。
+
+    Python 仍是凭据解密、BYOK 绑定和配置授权边界；实际 HTTP 请求由 TS worker 执行。
+    调用方不得记录或持久化返回值，api_key 只经本机 sidecar IPC 传输一次。
+    文档/Memory 向量写入继续复用本模块的 ``embed`` 原语。
+    """
+    e = _effective()
+    base_url = resolve_base_url(e.provider, e.base_url)
+    if not (e.enabled and e.model and base_url):
+        return None
+    try:
+        api_key = normalize_ascii_api_key(e.api_key, label="Embedding API Key")
+    except ValueError:
+        return None
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    from app.core.url_security import resolve_pinned_ip
+
+    pinned_ip, _ = resolve_pinned_ip(base_url)
+    if not pinned_ip and str(e.provider or "").strip().lower() in {"local", "ollama"}:
+        # Local inference explicitly permits loopback/LAN endpoints; still resolve once and
+        # pin the actual socket destination so the HTTP client does not resolve a second time.
+        try:
+            addresses = socket.getaddrinfo(
+                parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+            resolved = [ipaddress.ip_address(item[4][0]) for item in addresses]
+            resolved.sort(key=lambda address: 0 if address.version == 4 else 1)
+            pinned_ip = str(resolved[0]) if resolved else None
+        except (OSError, ValueError):
+            pinned_ip = None
+    if not pinned_ip:
+        # 无法证明目的地安全时不把 API key 交给 worker，退化为词法检索。
+        return None
+    return {
+        "provider": str(e.provider or ""),
+        "base_url": base_url,
+        "pinned_ip": pinned_ip,
+        "model": str(e.model),
+        "dimensions": int(e.dimensions or 0),
+        "api_key": api_key,
+        "multimodal": bool(e.multimodal),
+    }
 
 
 def model_tag() -> str:

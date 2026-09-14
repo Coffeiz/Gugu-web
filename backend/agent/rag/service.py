@@ -515,9 +515,10 @@ async def search_memory(
         session_factory = db_session._SessionLocal
         if session_factory is None:
             raise RuntimeError("RAG 数据库会话工厂未初始化")
-    retrievers = [MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all")]
-    if source in {"all", "knowledge"} and db is not None:
-        retrievers.append(IndexedSourceRetriever(user_id, db=db, source_type="knowledge"))
+    # 记忆专用检索（PRD-KNOWLEDGE-2）：knowledge 已独立（直读走 read_knowledge
+    # 工具、召回走 search_knowledge），这里不再挂 knowledge 检索器；未知 source
+    # 走 MemoryRetriever 的来源过滤自然返回空结果。
+    retrievers = [MemoryRetriever(user_id, source_filter=source)]
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
     service = UnifiedRecallService(UnifiedQueryRetriever(

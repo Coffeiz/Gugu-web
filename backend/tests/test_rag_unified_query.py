@@ -72,7 +72,7 @@ def _canned_response(file_doc, memory_doc, file_key, memory_key, *, fallback=Non
 
 def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="prov:model:2",
                            memory_documents=None, embedding_enabled=True):
-    """打桩索引准备、瞬态语料上传、embedding 与统一查询 IPC，捕获调用事实。"""
+    """打桩索引准备、瞬态语料上传、TS query embedding 与统一查询 IPC。"""
     import agent.memory.embedding as embedding_mod
     from agent.rag import batch_retriever as br
     from agent.rag.batch_retriever import UnifiedQueryRetriever
@@ -95,10 +95,10 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
                       "cache": {"owner_cache_hit": False}},
         }
 
-    async def unified_query(query, *, searches, query_vector, source_order,
+    async def unified_query(query, *, searches, query_embedding, source_order,
                             candidate_limit, rank_options, before_message_id=None,
                             vector_version=None):
-        calls["query"] = {"query": query, "searches": searches, "query_vector": query_vector,
+        calls["query"] = {"query": query, "searches": searches, "query_embedding": query_embedding,
                           "source_order": source_order, "candidate_limit": candidate_limit,
                           "rank_options": rank_options, "before_message_id": before_message_id,
                           "vector_version": vector_version}
@@ -121,13 +121,14 @@ def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="p
         return index
 
     monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
-    monkeypatch.setattr(embedding_mod, "is_enabled", lambda: embedding_enabled)
     monkeypatch.setattr(embedding_mod, "model_tag", lambda: model_tag)
-
-    async def embed(text):
-        return [0.1, 0.2]
-
-    monkeypatch.setattr(embedding_mod, "embed", embed)
+    query_settings = ({
+        "provider": "synthetic", "base_url": "http://127.0.0.1:8999/v1",
+        "pinned_ip": "127.0.0.1",
+        "model": "synthetic-embedding", "dimensions": 2,
+        "api_key": "synthetic-secret", "multimodal": False,
+    } if embedding_enabled else None)
+    monkeypatch.setattr(embedding_mod, "query_settings", lambda: query_settings)
 
     return calls, index
 
@@ -169,7 +170,7 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert calls["memory"]["vector_version"] == "prov:model:2"
 
     assert calls["query"]["before_message_id"] == 7
-    assert calls["query"]["query_vector"] == [0.1, 0.2]
+    assert calls["query"]["query_embedding"]["api_key"] == "synthetic-secret"
     assert calls["query"]["source_order"] == ["memory", "file"]
     assert calls["query"]["candidate_limit"] == 20
     assert calls["query"]["rank_options"]["limit"] == 3
@@ -261,27 +262,34 @@ def test_unified_retriever_rechecks_owner_before_returning_ts_rows():
 
 @pytest.mark.asyncio
 async def test_unified_retriever_fallback_labels_follow_python_facts(monkeypatch):
-    """fallback 标签按 Python 侧事实判定：关闭=embedding_disabled，其余采纳 worker 回报。"""
+    """fallback 标签按 Python 侧事实判定：auto 策略下关闭=embedding_disabled；
+    bm25 策略 embedding 根本不参与，标 lexical_only 而非误导性的 disabled；
+    其余情况采纳 worker 回报。"""
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
     file_doc = _file_doc()
     file_key = "file:file-1:0"
     cases = [
-        (False, None, "embedding_disabled"),
-        (True, "embedding_cache_unavailable", "embedding_cache_unavailable"),
-        (True, None, None),
+        ("auto", False, None, "embedding_disabled"),
+        ("auto", True, "embedding_cache_unavailable", "embedding_cache_unavailable"),
+        ("auto", True, None, None),
+        # bm25 策略：embedding 未参与，不得标成 embedding_disabled。
+        ("bm25", False, None, "lexical_only"),
+        ("bm25", True, None, "lexical_only"),
     ]
     retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "file")])
-    for enabled, worker_fallback, expected in cases:
+    for strategy, enabled, worker_fallback, expected in cases:
         canned = _canned_response(file_doc, _memory_doc(), file_key, "memory:daily-1:0",
                                   fallback=worker_fallback)
         calls, _index = _install_unified_stubs(monkeypatch, canned=canned,
                                                embedding_enabled=enabled)
-        batches = await retriever.retrieve("缓存", scope=SCOPE)
-        assert batches[0].fallback_reason == expected, (enabled, worker_fallback)
-        if not enabled:
-            # 无 memory 来源：核心契约是查询向量不下发，也不触发融合。
-            assert calls["query"]["query_vector"] == []
+        batches = await retriever.retrieve("缓存", scope=SCOPE, strategy=strategy)
+        assert batches[0].fallback_reason == expected, (strategy, enabled, worker_fallback)
+        if enabled:
+            assert calls["query"]["query_embedding"] is not None or strategy == "bm25"
+        else:
+            # 未配置 embedding 时不传短生命周期 provider 配置，worker 直接词法检索。
+            assert calls["query"]["query_embedding"] is None
 
 
 def _pre_ranked_batch(triples, *, metadata=None):

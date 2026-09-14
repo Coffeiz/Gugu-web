@@ -5,7 +5,7 @@ import hashlib
 from typing import Iterable
 
 from .batch import NewMessageBatch
-from .system import reminder
+from ..dynamic_tail import reminder_message as reminder
 
 
 def stance_digest(content: str | None) -> str:

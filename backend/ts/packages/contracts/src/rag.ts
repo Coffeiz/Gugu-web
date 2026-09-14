@@ -186,6 +186,37 @@ export type RagRankResult = {
   citations: RagCitation[];
 };
 
+export type RagQueryEmbeddingSettings = {
+  provider: string;
+  base_url: string;
+  /** Python 安全校验后固定的目标 IP，阻止直连时 DNS rebinding。 */
+  pinned_ip: string;
+  model: string;
+  dimensions: number;
+  /** 仅出现在 owner 绑定的 query_embedding IPC；worker 不持久化、不回显或记录该字段。 */
+  api_key: string;
+  multimodal?: boolean;
+};
+
+type RagUnifiedQueryFields = {
+  revision: string;
+  transient_revision?: string;
+  query: string;
+  query_vector?: number[];
+  vector_version?: string;
+  lexical_weight?: number;
+  vector_weight?: number;
+  rrf_k?: number;
+  before_message_id?: number | null;
+  source_order: string[];
+  searches: Array<{ id: string; source_types: string[]; corpus?: "transient"; scope?: RagSearchScope; limit?: number }>;
+  candidate_limit: number;
+  rank: {
+    limit: number; max_chars: number; max_per_source: number; max_per_parent: number;
+    selection_mode?: "confidence" | "top_k"; exclude_content_hashes?: string[];
+  };
+};
+
 export type RagRequest =
   | { op: "database_revision"; owner_id: string }
   | { op: "load_index_from_database"; owner_id: string; revision: string; vector_version?: string }
@@ -216,29 +247,13 @@ export type RagRequest =
     }
   | { op: "replace_transient"; revision: string; documents: RagDocument[] }
   | { op: "ping" }
-  | {
-      op: "unified_query";
-      revision: string;
-      transient_revision?: string;
-      query: string;
-      /** Memory 融合用查询向量；空数组表示本轮 embedding 不可用（纯词法）。 */
-      query_vector?: number[];
-      /** Python 侧当前生效的 embedding 模型版本戳；与持久向量表的 vector_version 不一致时，非 memory 组降级纯词法。 */
-      vector_version?: string;
-      lexical_weight?: number;
-      vector_weight?: number;
-      rrf_k?: number;
-      /** conversation 消息水位；仅对 metadata.kind === "message" 的文档生效。 */
-      before_message_id?: number | null;
-      /** 候选打包的来源顺序（镜像 Python 检索器注册序），worker 按此序拼平候选。 */
-      source_order: string[];
-      searches: Array<{ id: string; source_types: string[]; corpus?: "transient"; scope?: RagSearchScope; limit?: number }>;
-      candidate_limit: number;
-      rank: {
-        limit: number; max_chars: number; max_per_source: number; max_per_parent: number;
-        selection_mode?: "confidence" | "top_k"; exclude_content_hashes?: string[];
-      };
-    }
+  | ({ op: "unified_query" } & RagUnifiedQueryFields)
+  | ({
+      /** 凭据仅经 owner 绑定的本机 sidecar IPC 临时传入，不可写日志/磁盘/argv。 */
+      op: "unified_query_with_embedding";
+      owner_id: string;
+      embedding: RagQueryEmbeddingSettings;
+    } & Omit<RagUnifiedQueryFields, "query_vector">)
   | { op: "tokenize"; text: string }
   | { op: "adapt"; source_type: RagSourceType | string; records: Record<string, unknown>[] }
   | { op: "build_documents"; batch: RagSourceBatch }
@@ -310,7 +325,10 @@ export type RagUnifiedQueryProbe = {
     candidate_pool: number;
     selected: number;
     source_groups: number;
+    query_vector_dimensions?: number;
   };
+  /** 只记录聚合 outcome/status，不含端点、模型名、请求正文或凭据。 */
+  embedding?: { outcome: string; http_status?: number };
 };
 
 /** 索引冷加载诊断；仅包含阶段耗时与聚合计数，不含正文、owner 或 revision。 */

@@ -410,6 +410,26 @@ cmd_install() {
     chown -R "$run_user":"$run_user" "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
     chown "$run_user":"$run_user" "${APP_DIR}/.env"
 
+    # egress 引导脚本由 systemd 通过 /bin/sh 调用，安装时仍规范化为公共只读可执行，
+    # 避免 Git/归档/同步工具丢失 mode 后再次出现 203/EXEC，也允许服务用户与部署者不同。
+    local egress_script="${APP_DIR}/scripts/sandbox_egress_init.sh"
+    local squid_conf="${APP_DIR}/../squid/egress.conf"
+    chmod 755 "$egress_script"
+    if ! command -v runuser >/dev/null 2>&1; then
+        err "缺少 runuser，无法验证服务用户 '$run_user' 对 egress 启动文件的读取权限。"
+        exit 1
+    fi
+    if ! runuser -u "$run_user" -- /bin/sh -c 'test -r "$1"' _ "$egress_script"; then
+        err "服务用户 '$run_user' 无法读取 egress 引导脚本或遍历其父目录：$egress_script"
+        err "请将项目放在该用户可访问的目录，或使用项目目录所属用户作为 RUN_USER。"
+        exit 1
+    fi
+    if ! runuser -u "$run_user" -- /bin/sh -c 'test -r "$1"' _ "$squid_conf"; then
+        err "服务用户 '$run_user' 无法读取 Squid 配置或遍历其父目录：$squid_conf"
+        err "请将项目放在该用户可访问的目录，或使用项目目录所属用户作为 RUN_USER。"
+        exit 1
+    fi
+
     # 按实际安装目录 / 用户填占位符，生成 egress + 四个核心单元
     for s in $services; do
         log "生成 systemd 单元 → /etc/systemd/system/${s}.service"

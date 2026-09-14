@@ -3,11 +3,17 @@ import type { RagDocument, RagSourceRecord } from "../../../packages/contracts/s
 import { assertOwnerScope, type DataAccessContext, type DataScope, type StorageReader } from "../../../packages/data-runtime/src/contracts.ts";
 import { DataRuntime } from "../../../packages/data-runtime/src/runtime.ts";
 import { buildDocuments } from "./adapters/base.ts";
+import { TtlCache } from "./ttl-cache.ts";
 
 const MEMORY_INDEX_KEY = ".agent/rag/memory-index-v1.json";
 const MEMORY_CACHE_TTL_MS = 30 * 60 * 1000;
 const MEMORY_SOURCES = new Set(["profile", "pattern", "daily", "memory"]);
-const memoryCache = new Map<string, { revision: string; documents: RagDocument[]; lastAccess: number }>();
+const memoryCache = new TtlCache<{ revision: string; documents: RagDocument[] }>({
+  ttlMs: MEMORY_CACHE_TTL_MS, maxEntries: 256,
+});
+/* 向量文件解析缓存：key = owner:文件:向量版本，value = 内容哈希 + 解析结果。
+ * 不过期（内容哈希校验即失效条件），仅 LRU 上限约束。 */
+const vectorFileCache = new TtlCache<{ hash: string; parsed: unknown }>({ ttlMs: Infinity, maxEntries: 8 });
 
 export type AuthorizedMemoryScope = DataScope & {
   ownerId: string;
@@ -88,16 +94,6 @@ function cacheKey(ownerId: string, scopes: AuthorizedMemoryScope[], sourceFilter
   })).digest("hex");
 }
 
-function pruneMemoryCache(now: number): void {
-  for (const [key, entry] of memoryCache) {
-    if (now - entry.lastAccess >= MEMORY_CACHE_TTL_MS) memoryCache.delete(key);
-  }
-  while (memoryCache.size > 256) {
-    const oldest = memoryCache.keys().next().value as string | undefined;
-    if (!oldest) break;
-    memoryCache.delete(oldest);
-  }
-}
 
 function memoryDocumentFromStored(ownerId: string, value: unknown): RagDocument | null {
   const row = objectValue(value);
@@ -113,9 +109,12 @@ function memoryDocumentFromStored(ownerId: string, value: unknown): RagDocument 
   const summary = String(row.summary || "");
   const content = String(row.content || "");
   if (!documentId || !parentId || !title || !content.trim()) return null;
+  // summary 是正文前缀截断时不再重复拼接（与 adapters/base.ts 同一守卫；
+  // 存量 memory-index-v1.json 里固化的 summary 无需迁移，body 以 content 为准）。
+  const summaryText = summary && !content.trim().startsWith(summary) ? summary : "";
   return {
     id: `memory:${parentId}:${chunkIndex}`,
-    text: [title, ...(summary ? [summary] : []), content].join("\n"),
+    text: [title, ...(summaryText ? [summaryText] : []), content].join("\n"),
     content,
     source_type: "memory",
     source_id: sourceId,
@@ -351,17 +350,20 @@ async function readScopedDocuments(
   return { documents: buildMemoryDocuments(ownerId, scope, records), revision, source: `scope:${revision}` };
 }
 
-function snapshotCovers(text: string, snapshot: string): boolean {
-  const normalized = Array.from(String(text || "").trim().replace(/\s+/gu, ""));
-  const context = String(snapshot || "").replace(/\s+/gu, "");
-  if (!normalized.length || !context) return false;
-  const joined = normalized.join("");
-  if (context.includes(joined)) return true;
-  const minimum = Math.max(80, Math.floor(normalized.length * 0.7));
-  for (let size = normalized.length; size >= minimum; size -= 1) {
-    if (context.includes(normalized.slice(0, size).join(""))) return true;
-  }
-  return false;
+function normalizeWhitespace(text: string): string {
+  return String(text || "").replace(/\s+/gu, "");
+}
+
+function snapshotCovers(text: string, normalizedContext: string): boolean {
+  const joined = String(text || "").trim().replace(/\s+/gu, "");
+  if (!joined.length || !normalizedContext.length) return false;
+  // 前缀包含是单调的：若长度 k 的前缀被快照包含，则更短的前缀必然也被包含。
+  // 因此「存在长度 ≥ minimum 的被包含前缀」等价于「minimum 长度的前缀被包含」，
+  // 一次 includes 即可——原实现逐字符回退 30% 长度、每步全量扫快照，
+  // 是 warm 召回 memory 准备段的最大热点（800 文档 × 快照 ≈ GB 级扫描）。
+  const minimum = Math.max(80, Math.floor(joined.length * 0.7));
+  const prefix = joined.length > minimum ? joined.slice(0, minimum) : joined;
+  return normalizedContext.includes(prefix);
 }
 
 function parseVectorMap(value: unknown, vectorVersion: string): Record<string, { v?: unknown; t?: unknown }> {
@@ -392,9 +394,20 @@ export async function loadDocumentVectors(
   ]);
   if (probe) recordElapsed(probe, "vector_storage_read", storageStarted);
   const parseStarted = performance.now();
-  const memory = parseVectorMap(parseJson(memoryRaw), vectorVersion);
-  const knowledge = parseVectorMap(parseJson(knowledgeRaw), vectorVersion);
-  const pattern = parseVectorMap(parseJson(patternRaw), vectorVersion);
+  const parseCached = (raw: string | null, cacheKey: string) => {
+    // 向量文件解析缓存：内容哈希未变时复用上次解析结果（memory_vec 约 20MB，
+    // 每次全量 parse + 遍历 150-250ms，是热态召回 memory 段的主要固定成本）。
+    if (raw === null) return null;
+    const hash = createHash("sha256").update(raw).digest("hex");
+    const cached = vectorFileCache.get(cacheKey);
+    if (cached && cached.hash === hash) return cached.parsed;
+    const parsed = parseJson(raw);
+    vectorFileCache.set(cacheKey, { hash, parsed });
+    return parsed;
+  };
+  const memory = parseVectorMap(parseCached(memoryRaw, `${ownerId}:memory:${vectorVersion}`), vectorVersion);
+  const knowledge = parseVectorMap(parseCached(knowledgeRaw, `${ownerId}:knowledge:${vectorVersion}`), vectorVersion);
+  const pattern = parseVectorMap(parseCached(patternRaw, `${ownerId}:pattern:${vectorVersion}`), vectorVersion);
   const vectors: Record<string, number[]> = {};
   for (const document of documents) {
     const parent = String(document.parent_id || document.id);
@@ -438,9 +451,7 @@ export async function prepareMemory(
   const scopes = assertScopes(ownerId, input.scopes);
   const sourceFilter = String(input.sourceFilter || "all");
   const key = cacheKey(ownerId, scopes, sourceFilter);
-  const now = Date.now();
   let stageStarted = performance.now();
-  pruneMemoryCache(now);
   recordElapsed(probe, "cache_prune", stageStarted);
 
   let baseDocuments: RagDocument[] = [];
@@ -450,13 +461,10 @@ export async function prepareMemory(
     const snapshotRevision = String(input.snapshotRevision || "");
     stageStarted = performance.now();
     const cached = snapshotRevision ? memoryCache.get(key) : undefined;
-    probe.cache.owner_cache_hit = Boolean(
-      cached && cached.revision === `owner:${snapshotRevision}`
-      && now - cached.lastAccess < MEMORY_CACHE_TTL_MS,
-    );
-    if (cached && cached.revision === `owner:${snapshotRevision}` && now - cached.lastAccess < MEMORY_CACHE_TTL_MS) {
+    const ownerCacheValid = Boolean(cached && cached.revision === `owner:${snapshotRevision}`);
+    probe.cache.owner_cache_hit = ownerCacheValid;
+    if (ownerCacheValid && cached) {
       baseDocuments.push(...cached.documents);
-      cached.lastAccess = now;
       sourceNames.push("owner-cache");
     } else {
       const readStarted = performance.now();
@@ -465,7 +473,7 @@ export async function prepareMemory(
       baseDocuments.push(...loaded.documents);
       sourceNames.push(loaded.source);
       if (snapshotRevision) {
-        memoryCache.set(key, { revision: `owner:${snapshotRevision}`, documents: loaded.documents, lastAccess: now });
+        memoryCache.set(key, { revision: `owner:${snapshotRevision}`, documents: loaded.documents });
       }
     }
     recordElapsed(probe, "owner_cache_lookup", stageStarted);
@@ -490,12 +498,10 @@ export async function prepareMemory(
     const scopedCacheKey = `${key}:${createHash("sha256").update(revision).digest("hex")}`;
     stageStarted = performance.now();
     const cached = memoryCache.get(scopedCacheKey);
-    probe.cache.scoped_cache_hit = Boolean(
-      cached && cached.revision === revision && now - cached.lastAccess < MEMORY_CACHE_TTL_MS,
-    );
-    if (cached && cached.revision === revision && now - cached.lastAccess < MEMORY_CACHE_TTL_MS) {
+    const scopedCacheValid = Boolean(cached && cached.revision === revision);
+    probe.cache.scoped_cache_hit = scopedCacheValid;
+    if (scopedCacheValid && cached) {
       baseDocuments.push(...cached.documents);
-      cached.lastAccess = now;
       sourceNames.push("scope-cache");
     } else {
       const readStarted = performance.now();
@@ -506,7 +512,7 @@ export async function prepareMemory(
       const documents = loaded.flatMap((entry) => entry.documents);
       baseDocuments.push(...documents);
       sourceNames.push(...loaded.map((entry) => entry.source));
-      memoryCache.set(scopedCacheKey, { revision, documents, lastAccess: now });
+      memoryCache.set(scopedCacheKey, { revision, documents });
     }
     recordElapsed(probe, "scoped_cache_lookup", stageStarted);
     cacheRevision = [cacheRevision, revision].filter(Boolean).join("|");
@@ -532,8 +538,9 @@ export async function prepareMemory(
   recordElapsed(probe, "scope_filter", stageStarted);
   probe.counts.scope_authorized_documents = scopeAuthorized.length;
   stageStarted = performance.now();
+  const normalizedSnapshot = normalizeWhitespace(input.snapshotText);
   const selected = scopeAuthorized.filter((document) =>
-    !snapshotCovers(String(document.content || ""), input.snapshotText));
+    !snapshotCovers(String(document.content || ""), normalizedSnapshot));
   recordElapsed(probe, "snapshot_dedup_filter", stageStarted);
   probe.counts.snapshot_excluded_documents = scopeAuthorized.length - selected.length;
   probe.counts.selected_documents = selected.length;
@@ -541,9 +548,6 @@ export async function prepareMemory(
   stageStarted = performance.now();
   const vectors = await loadDocumentVectors(ownerId, selected, input.vectorVersion, storage, probe);
   recordElapsed(probe, "vector_load", stageStarted);
-  stageStarted = performance.now();
-  pruneMemoryCache(Date.now());
-  recordElapsed(probe, "cache_prune_final", stageStarted);
   probe.counts.vector_count = Object.keys(vectors).length;
   recordElapsed(probe, "prepare_memory_total", prepareStarted);
   return {

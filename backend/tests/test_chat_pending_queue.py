@@ -277,6 +277,32 @@ async def test_claim_is_exclusive_and_acknowledgment_is_atomic(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_default_claim_lease_expires_after_sixty_seconds(db, user_a, monkeypatch):
+    session = ConversationSession(user_id=user_a.id, title="队列租约", source="web")
+    db.add(session)
+    await db.flush()
+    queue_id = f"session-{session.id}"
+    await patch_pending_queue(
+        db, user_id=user_a.id, queue_id=queue_id, session_id=session.id,
+        upsert_items=[queue_item(71, "租约到期后可接手")], remove_keys=[],
+    )
+    now = [1_000.0]
+    monkeypatch.setattr(pending_queue_service.time, "time", lambda: now[0])
+
+    assert await claim_pending_queue_item(
+        db, user_id=user_a.id, queue_id=queue_id, session_id=session.id, item_key=71,
+    )
+    now[0] = 1_059.0
+    assert await claim_pending_queue_item(
+        db, user_id=user_a.id, queue_id=queue_id, session_id=session.id, item_key=71,
+    ) is None
+    now[0] = 1_060.0
+    assert await claim_pending_queue_item(
+        db, user_id=user_a.id, queue_id=queue_id, session_id=session.id, item_key=71,
+    )
+
+
+@pytest.mark.asyncio
 async def test_last_acknowledged_item_removes_empty_queue(db, user_a):
     session = ConversationSession(user_id=user_a.id, title="队列清理", source="web")
     db.add(session)

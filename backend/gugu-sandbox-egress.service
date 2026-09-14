@@ -19,7 +19,7 @@ Environment="SANDBOX__EGRESS_NETWORK_NAME=gugu-sandbox-egress"
 Environment="GUGU_EGRESS_CONFIG_FILE=__APP_DIR__/config.override.json"
 Environment="GUGU_EGRESS_PROXY_IMAGE=ubuntu/squid:latest"
 Environment="SQUID_CONF_PATH=__APP_DIR__/../squid/egress.conf"
-ExecStart=__APP_DIR__/scripts/sandbox_egress_init.sh
+ExecStart=/bin/sh "__APP_DIR__/scripts/sandbox_egress_init.sh"
 RemainAfterExit=yes
 # 冷拉 ubuntu/squid 全量实测 ~3.5 分钟（273MB），网络慢时更久；90s 默认会掐断首启。
 TimeoutStartSec=300s

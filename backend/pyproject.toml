@@ -1,0 +1,41 @@
+[tool.mutmut]
+source_paths = [
+    "agent",
+    "app",
+]
+only_mutate = [
+    "agent/context/budget.py",
+    "agent/interactions/confirmations.py",
+    "agent/tools/files/documents.py",
+    "app/core/ownership.py",
+    "app/services/conversation_pending_queue.py",
+    "app/services/storage/file_service/files.py",
+]
+pytest_add_cli_args = ["-c", "pytest.ini", "-q"]
+pytest_add_cli_args_test_selection = [
+    "tests/test_context_budget.py",
+    "tests/test_context_history.py",
+    "tests/test_session_history.py",
+    "tests/test_confirm_gate.py",
+    "tests/test_agent_file_folder_parity.py",
+    "tests/test_ownership.py",
+    "tests/test_chat_pending_queue.py",
+    "tests/test_file_service.py",
+]
+also_copy = [
+    "pytest.ini",
+    "tests/conftest.py",
+    "tests/test_context_budget.py",
+    "tests/test_context_history.py",
+    "tests/test_session_history.py",
+    "tests/test_confirm_gate.py",
+    "tests/test_agent_file_folder_parity.py",
+    "tests/test_ownership.py",
+    "tests/test_chat_pending_queue.py",
+    "tests/test_file_service.py",
+    "scripts",
+]
+on_dependency_change = "rerun"
+timeout_constant = 4.0
+timeout_multiplier = 5.0
+use_setproctitle = false
