@@ -67,6 +67,9 @@ function fitDocxWidth(container: HTMLElement) {
   wrapper.style.zoom = scale < 1 ? String(scale) : "1"
 }
 
+const XLSX_MAX_ROWS = 500
+const XLSX_MAX_COLS = 60
+
 async function renderXlsx(buffer: ArrayBuffer, container: HTMLElement) {
   const XLSX = await import('xlsx')
   const workbook = XLSX.read(buffer, { type: 'array' })
@@ -75,12 +78,36 @@ async function renderXlsx(buffer: ArrayBuffer, container: HTMLElement) {
   for (const name of workbook.SheetNames) {
     const sheet = workbook.Sheets[name]
     if (!sheet) continue
-    sheetHtml[name] = XLSX.utils.sheet_to_html(sheet, { header: '', footer: '' })
+    sheetHtml[name] = buildSheetHtml(XLSX, sheet)
     tabs.push(name)
   }
   if (!tabs.length) throw new Error('empty-workbook')
   sheetTabs.value = tabs
   if (!activeSheet.value || !tabs.includes(activeSheet.value)) activeSheet.value = tabs[0]!
+}
+
+// sheet_to_html 生成的是无列宽/无样式的裸表格：空列被压缩、全挤在左上角。
+// 这里自建统一网格：固定列宽行高、空单元格补齐、隔行着色，超出上限截断。
+function buildSheetHtml(XLSX: typeof import('xlsx'), sheet: import('xlsx').WorkSheet): string {
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1, defval: '', raw: false,
+    blankrows: true,
+  }) as unknown[][]
+  if (!matrix.length) return '<div class="xlsx-empty">（空工作表）</div>'
+  let cols = 0
+  for (const row of matrix.slice(0, XLSX_MAX_ROWS)) cols = Math.min(XLSX_MAX_COLS, Math.max(cols, row.length))
+  if (!cols) return '<div class="xlsx-empty">（空工作表）</div>'
+  const esc = (value: unknown) => String(value ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const rows: string[] = []
+  for (const row of matrix.slice(0, XLSX_MAX_ROWS)) {
+    const cells: string[] = []
+    for (let c = 0; c < cols; c++) cells.push(`<td>${esc(row[c])}</td>`)
+    rows.push(`<tr>${cells.join('')}</tr>`)
+  }
+  const colgroup = `<colgroup>${'<col />'.repeat(cols)}</colgroup>`
+  return `<table class="xlsx-grid"><colgroup>${colgroup}</colgroup><tbody>${rows.join('')}</tbody></table>` +
+    (matrix.length > XLSX_MAX_ROWS ? `<div class="xlsx-truncated">已截断：仅显示前 ${XLSX_MAX_ROWS} 行</div>` : '')
 }
 
 function renderSheet(name: string, container: HTMLElement) {
@@ -173,6 +200,31 @@ onBeforeUnmount(() => {
   background: var(--surface-card-solid, var(--bg-primary));
 }
 .office-container :deep(.docx-wrapper) { background: transparent; padding: 8px 0; }
+/* xlsx：统一网格——固定列宽行高、斑马纹、撑满容器宽度 */
+.office-container :deep(.xlsx-grid) {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+.office-container :deep(.xlsx-grid td) {
+  border: 1px solid var(--panel-glass-border);
+  height: 24px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--content-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.office-container :deep(.xlsx-grid tbody tr:nth-child(2n) td) {
+  background: color-mix(in srgb, var(--content-primary) 5%, transparent);
+}
+.office-container :deep(.xlsx-empty),
+.office-container :deep(.xlsx-truncated) {
+  padding: 10px 4px;
+  color: var(--content-secondary);
+  font-size: 12px;
+}
 /* pptx 只读：禁选中文本、禁原生拖拽（图片/文本会被拖走），黑底改透明消除多余空底 */
 .office-container :deep(.pptx-preview-wrapper) {
   background: transparent !important;
