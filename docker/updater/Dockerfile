@@ -8,7 +8,10 @@ FROM docker:cli
 # base 包补丁到最新，压掉 alpine 残留 HIGH（trivy 门 --ignore-unfixed 仍会拦已修复项）
 RUN apk upgrade --no-cache \
     && apk add --no-cache bash python3 nodejs \
-    && mkdir -p /opt/gugu-updater /var/lib/gugu-updater /run/gugu-updater
+    && mkdir -p /opt/gugu-updater /var/lib/gugu-updater /run/gugu-updater \
+    # updater 只做拉取/重启/验签，不构建镜像；buildx 插件是基础镜像被动带入的，
+    # 删除以缩小扫描面与攻击面（compose 插件保留，更新流程依赖 docker compose）。
+    && rm -f /usr/local/libexec/docker/cli-plugins/docker-buildx
 
 WORKDIR /opt/gugu-updater
 COPY --from=cosign-bin /ko-app/cosign /usr/local/bin/cosign
