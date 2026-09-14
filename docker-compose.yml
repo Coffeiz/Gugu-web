@@ -51,7 +51,6 @@ x-app-environment: &app-environment
   SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-  GUGU_UPDATER_SOCKET: /run/gugu-updater/control.sock
 
 services:
   postgres:

@@ -176,19 +176,34 @@ $CONTAINER_ENV
 EOF
 log "旧 /data/.env 与容器环境变量：$MERGED 个应用级键迁移到 backend/.env（凭据不回显）"
 
-# ── 5. 确保根 .env 有 Compose 数据库密码 ───────────────────────────────
+# ── 5. 确保根 .env 有 Compose 数据库密码与数据目录 ─────────────────────
 ROOT_ENV="$COMPOSE_DIR/.env"
+upsert_env_key() {
+  # upsert_env_key <键> <值>：键存在则原位替换，否则追加；文件不存在则创建。
+  key=$1
+  value=$2
+  if [ "$DRY_RUN" = "1" ]; then
+    log "[dry-run] 将写入 $key=$value 到 $ROOT_ENV"
+    return
+  fi
+  touch "$ROOT_ENV"
+  if grep -q "^${key}=" "$ROOT_ENV"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ROOT_ENV"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ROOT_ENV"
+  fi
+}
+# 数据目录必须显式写进 .env：bind 部署复用原目录，匿名卷部署固定到本次迁移的
+# 目标目录，避免 compose 回落到默认 ./Gugu-data 挂错位置。
+upsert_env_key GUGU_DATA_HOST_DIR "$DATA_HOST_DIR"
 if grep -q '^GUGU_DB_PASSWORD=.\+' "$ROOT_ENV" 2>/dev/null; then
   log "根 .env 已有 GUGU_DB_PASSWORD"
 else
   GEN=$(head -c 16 /dev/urandom | md5sum | cut -c1-32)
   if [ "$DRY_RUN" = "1" ]; then
     log "[dry-run] 将生成 GUGU_DB_PASSWORD 写入 $ROOT_ENV"
-  elif grep -q '^GUGU_DB_PASSWORD=' "$ROOT_ENV" 2>/dev/null; then
-    sed -i "s/^GUGU_DB_PASSWORD=.*/GUGU_DB_PASSWORD=${GEN}/" "$ROOT_ENV"
-    log "根 .env 的空 GUGU_DB_PASSWORD 已替换为随机密码"
   else
-    printf 'GUGU_DB_PASSWORD=%s\n' "$GEN" >> "$ROOT_ENV"
+    upsert_env_key GUGU_DB_PASSWORD "$GEN"
     log "已生成 GUGU_DB_PASSWORD 写入 $ROOT_ENV"
   fi
 fi
