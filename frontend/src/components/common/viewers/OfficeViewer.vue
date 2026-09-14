@@ -16,7 +16,7 @@
 // Office 只读预览（PRD 决策：前端渲染替代服务端 LibreOffice 转换）。
 // 三个渲染库都按需动态加载，不进主包；docx-preview/pptx-preview 会往容器里
 // 写带作用域的样式，容器必须由本组件持有并在切换时清空。
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ blobUrl: string; ext: string }>()
@@ -107,7 +107,9 @@ async function render() {
   }
 }
 
-watch(() => [props.blobUrl, props.ext] as const, () => { void render() }, { immediate: true })
+// immediate watch 在挂载前触发时 containerRef 还是 null；挂载后再渲染一次。
+watch(() => [props.blobUrl, props.ext] as const, () => { void render() })
+onMounted(() => { void render() })
 watch(activeSheet, (name) => {
   const container = containerRef.value
   if (name && container) renderSheet(name, container)
