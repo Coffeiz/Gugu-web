@@ -202,8 +202,8 @@ services:
       SQUID_CONF_PATH: /opt/gugu/egress.conf
       SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
     volumes:
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
       - sandbox_socket:/run/gugu
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
       - *gugu-data-mount
       - /etc/passwd:/host/etc/passwd:ro
       - /etc/subuid:/host/etc/subuid:ro

@@ -401,8 +401,8 @@ services:
     # rootless 无法拉镜像的机器可自行在 override 里把 rootful socket 只读挂进
     # /var/run/docker.sock，脚本会自动改走 save|load 搬运。
     volumes:
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
       - sandbox_socket:/run/gugu
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
       - ./squid/egress.conf:/config/squid/egress.conf:ro
       - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
       - *gugu-data-mount
