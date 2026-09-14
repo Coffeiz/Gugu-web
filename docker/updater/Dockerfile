@@ -1,5 +1,7 @@
 # 受限 Docker Compose 更新器。Docker Socket 只挂载到这个 sidecar，业务 app 不持有它。
-FROM ghcr.io/sigstore/cosign/cosign:v2.6.5 AS cosign-bin
+# v3 与发布管线 cosign-installer(最新 v3) 同代：sign-blob --bundle 已是 protobuf
+# 新格式，v2 验证端读不了；同时 v2 停更导致 gobinary 漏洞积压过不了 trivy 门。
+FROM ghcr.io/sigstore/cosign/cosign:v3.1.3 AS cosign-bin
 
 FROM docker:cli
 
