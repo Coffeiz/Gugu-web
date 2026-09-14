@@ -12,19 +12,9 @@
       </header>
 
       <div class="archive-dialog-body">
-        <label v-if="mode === 'compress'" class="archive-field">
-          <span>{{ t('filesUi.archiveName') }}</span>
-          <input v-model="name" :disabled="busy || Boolean(success)" maxlength="300" autocomplete="off" />
-        </label>
         <label class="archive-field">
-          <span>{{ t('filesUi.archiveTarget') }}</span>
-          <SelectPopup
-            v-model="folderValue"
-            :options="targetOptions"
-            :placeholder="t('filesUi.archiveChooseTarget')"
-            :disabled="busy || Boolean(success)"
-            popup-class="archive-target-options"
-          />
+          <span>{{ t(mode === 'compress' ? 'filesUi.archiveName' : 'filesUi.archiveFolderName') }}</span>
+          <input v-model="name" :disabled="busy || Boolean(success)" :maxlength="mode === 'compress' ? 300 : 200" autocomplete="off" />
         </label>
         <p v-if="error" class="archive-message is-error" role="alert">{{ error }}</p>
         <p v-if="success" class="archive-message is-success" role="status">{{ success }}</p>
@@ -34,7 +24,7 @@
         <ActionButton variant="secondary" :disabled="busy" @click="emit('close')">
           {{ success ? t('common.actions.close') : t('common.actions.cancel') }}
         </ActionButton>
-        <ActionButton v-if="!success" type="submit" :disabled="busy || (mode === 'compress' && !name.trim())">
+        <ActionButton v-if="!success" type="submit" :disabled="busy || !name.trim()">
           <span v-if="busy" class="archive-spinner" />
           {{ busy ? t('common.status.processing') : t(mode === 'compress' ? 'filesUi.compress' : 'filesUi.extract') }}
         </ActionButton>
@@ -47,16 +37,12 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
-import SelectPopup from '@/components/common/controls/SelectPopup.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
-import type { ArchiveFolderOption } from '@/composables/files/archive'
 
 const props = defineProps<{
   show: boolean
   mode: 'compress' | 'extract'
-  targetOptions: ArchiveFolderOption[]
-  initialFolderValue: string
   initialName: string
   busy: boolean
   error: string
@@ -64,21 +50,19 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   close: []
-  submit: [form: { folderValue: string; name: string }]
+  submit: [form: { name: string }]
 }>()
 const { t } = useI18n()
-const folderValue = ref(props.initialFolderValue)
 const name = ref(props.initialName)
 
-watch(() => [props.show, props.initialFolderValue, props.initialName] as const, ([show]) => {
+watch(() => [props.show, props.initialName] as const, ([show]) => {
   if (!show) return
-  folderValue.value = props.initialFolderValue
   name.value = props.initialName
 })
 
 function submit() {
   if (props.busy || props.success) return
-  emit('submit', { folderValue: folderValue.value, name: name.value })
+  emit('submit', { name: name.value })
 }
 </script>
 
@@ -105,8 +89,6 @@ function submit() {
   background: var(--input-bg); color: var(--input-fg); font: 13px var(--font-sans);
 }
 .archive-field input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
-.archive-field :deep(.select-popup) { width: 100%; }
-.archive-field :deep(.select-popup-trigger) { height: 36px; }
 .archive-message { margin: 0; padding: 9px 11px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.5; }
 .archive-message.is-error { color: var(--danger-fg); background: var(--danger-bg); }
 .archive-message.is-success { color: var(--status-success); background: var(--status-success-bg); }

@@ -123,6 +123,60 @@ async def test_extract_zip_renames_existing_names_and_preserves_tree(db, user_a,
 
 
 @pytest.mark.asyncio
+async def test_extract_creates_named_folder_next_to_archive_and_renames_collision(db, user_a, tmp_path):
+    storage = LocalStorageBackend(tmp_path / "storage")
+    parent = Folder(user_id=user_a.id, name="素材")
+    db.add(parent)
+    await db.flush()
+    existing = Folder(user_id=user_a.id, name="资料", parent_id=parent.id)
+    db.add(existing)
+    await db.flush()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("说明.txt", b"inside")
+    zip_file = await _file(
+        db, storage, user_a.id, "资料.zip", buffer.getvalue(),
+        folder_id=parent.id, folder_path="素材/",
+    )
+
+    summary = await extract_file(
+        db, user_a.id, zip_file.id, folder_name="资料", storage=storage,
+    )
+    await db.commit()
+
+    created_root = await db.get(Folder, summary["folder_ids"][0])
+    extracted = await db.get(File, summary["file_ids"][0])
+    assert created_root is not None
+    assert created_root.name == "资料 (2)"
+    assert created_root.parent_id == parent.id
+    assert extracted is not None
+    assert extracted.folder_id == created_root.id
+    assert extracted.storage_key.endswith("素材/资料 (2)/说明.txt")
+    assert summary["folder_count"] == 1
+    assert summary["created_count"] == 2
+
+
+@pytest.mark.parametrize("folder_name", ["", "..", "../escape", "C:folder", "x" * 201])
+@pytest.mark.asyncio
+async def test_extract_rejects_invalid_output_folder_name_without_creating_rows(
+    db, user_a, tmp_path, folder_name,
+):
+    storage = LocalStorageBackend(tmp_path / "storage")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("ok.txt", b"ok")
+    zip_file = await _file(db, storage, user_a.id, "资料.zip", buffer.getvalue())
+    before_folders = len((await db.execute(select(Folder))).scalars().all())
+    before_files = len((await db.execute(select(File))).scalars().all())
+
+    with pytest.raises(Invalid, match="解压文件夹名称无效"):
+        await extract_file(db, user_a.id, zip_file.id, folder_name=folder_name, storage=storage)
+
+    assert len((await db.execute(select(Folder))).scalars().all()) == before_folders
+    assert len((await db.execute(select(File))).scalars().all()) == before_files
+
+
+@pytest.mark.asyncio
 async def test_extract_tar_gz_and_skip_links(db, user_a, tmp_path):
     storage = LocalStorageBackend(tmp_path / "storage")
     buffer = io.BytesIO()

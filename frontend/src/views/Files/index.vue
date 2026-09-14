@@ -128,8 +128,10 @@
       :folder-count="selectedFolderKeys.size + selectedTrashFolderIds.size"
       :downloading="downloadingZip"
       :archiving="archiveBusy"
+      :can-extract-archive="canExtractSelectedArchive"
       :trash="currentType === 'trash'"
       @archive="openCompressSelected"
+      @extract="extractSelectedArchive"
       @download="downloadSelected"
       @cut="selCut"
       @copy="selCopy"
@@ -147,6 +149,8 @@
       :mod-key="modKey"
       :folder-target-valid="ctx.target?.type === 'folder'"
       :can-paste="cbStore.hasContent()"
+      :can-extract-archive="canExtractContextArchive"
+      :can-compress-selection="canCompressContextSelection"
       @action="handleCtxMenuAction"
     />
   </FileBrowserContextMenu>
@@ -166,8 +170,6 @@
   <ArchiveOperationDialog
     :show="archiveDialogOpen"
     :mode="archiveMode"
-    :target-options="archiveTargetOptions"
-    :initial-folder-value="archiveInitialFolderValue"
     :initial-name="archiveInitialName"
     :busy="archiveBusy"
     :error="archiveError"
@@ -564,8 +566,6 @@ const {
   busy: archiveBusy,
   error: archiveError,
   success: archiveSuccess,
-  targetOptions: archiveTargetOptions,
-  initialFolderValue: archiveInitialFolderValue,
   initialName: archiveInitialName,
   extractable: isExtractableArchive,
   openCompressSelected,
@@ -573,6 +573,19 @@ const {
   submit: submitArchive,
   closeDialog: closeArchiveDialog,
 } = archiveActions
+const selectedExtractableArchive = computed(() => {
+  if (currentType.value === 'trash' || selectedIds.value.size !== 1 || selectedFolderKeys.value.size > 0) return null
+  const [selectedId] = selectedIds.value
+  if (selectedId == null) return null
+  const selectedArchive = cacheStore.getFile(selectedId)
+  return selectedArchive && isExtractableArchive(selectedArchive) ? selectedArchive : null
+})
+const canExtractSelectedArchive = computed(() => Boolean(selectedExtractableArchive.value))
+
+function extractSelectedArchive() {
+  const archive = selectedExtractableArchive.value
+  if (archive) extractFile(archive)
+}
 const downloadingZip = batchActions.downloading
 const trashActions = useFileLibraryTrashActions({
   selectedFileIds: selectedIds,
@@ -758,6 +771,8 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
   actions: {
     info: ctxInfo,
     download: ctxDownload,
+    'extract-archive': ctxExtractArchive,
+    'compress-selection': ctxCompressSelection,
     rename: ctxRename,
     cut: ctxCut,
     copy: ctxCopy,
@@ -772,6 +787,26 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
   },
 })
 const { state: ctx, openContext: openCtx, handleAction: handleCtxMenuAction } = contextActions
+const canExtractContextArchive = computed(() => {
+  const target = ctx.value.target
+  return currentType.value !== 'trash'
+    && (ctx.value.type === 'file' || ctx.value.type === 'multi-file')
+    && target != null
+    && 'ext' in target
+    && isExtractableArchive(target as FileMeta)
+})
+const canCompressContextSelection = computed(() => {
+  if (currentType.value === 'trash') return false
+  const target = ctx.value.target
+  if (ctx.value.type === 'multi-file') return selectedIds.value.size + selectedFolderKeys.value.size > 0
+  if (ctx.value.type === 'file') {
+    return target != null && 'ext' in target && selectedIds.value.has(Number(target.id))
+  }
+  if (ctx.value.type === 'folder') {
+    return target != null && selectedFolderKeys.value.has(target.id)
+  }
+  return false
+})
 const gridViewContext = {
   contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode,
   openCtx, folderListIcon, folderAccentColor, handleFolderClick,
@@ -823,6 +858,15 @@ async function ctxDownload() {
     const dirName = currentSeg.value?.name ?? t('files.file')
     await fileActions.batchDownload(ids, [], `${dirName}.zip`)
   }
+}
+function ctxExtractArchive() {
+  const target = ctx.value.target as FileMeta | null
+  ctx.value.visible = false
+  if (target && isExtractableArchive(target)) extractFile(target)
+}
+function ctxCompressSelection() {
+  ctx.value.visible = false
+  openCompressSelected()
 }
 function ctxRename() {
   const f = ctx.value.target; ctx.value.visible = false

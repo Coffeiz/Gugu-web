@@ -1,16 +1,9 @@
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 
-export const ARCHIVE_ROOT_VALUE = '__root__'
-
 export interface ArchiveScope {
   space: 'personal' | 'project' | 'workspace'
   projectId: number | null
   workspaceDirectoryId: number | null
-}
-
-export interface ArchiveFolderOption {
-  value: string
-  label: string
 }
 
 export function archiveScopeOfFile(file: Pick<FileMeta, 'space' | 'projectId' | 'workspaceDirectoryId'>): ArchiveScope | null {
@@ -36,40 +29,6 @@ export function archiveScopeOfFolder(folder: Pick<FolderMeta, 'projectId' | 'wor
   return { space: 'personal', projectId: null, workspaceDirectoryId: null }
 }
 
-function belongsToScope(folder: FolderMeta, scope: ArchiveScope): boolean {
-  if (scope.space === 'workspace') return folder.workspaceDirectoryId === scope.workspaceDirectoryId
-  if (scope.space === 'project') return folder.projectId === scope.projectId && folder.workspaceDirectoryId == null
-  return folder.projectId == null && folder.workspaceDirectoryId == null
-}
-
-export function archiveFolderOptions(
-  folders: FolderMeta[],
-  scope: ArchiveScope,
-  rootLabel: string,
-): ArchiveFolderOption[] {
-  const scopedFolders = folders.filter(folder => belongsToScope(folder, scope))
-  const byId = new Map(scopedFolders.map(folder => [folder.id, folder]))
-  const labelFor = (folder: FolderMeta): string => {
-    const path = [folder.name]
-    let parentId = folder.parentId ?? null
-    const seen = new Set([folder.id])
-    while (parentId != null && byId.has(parentId) && !seen.has(parentId)) {
-      const parent = byId.get(parentId)!
-      seen.add(parent.id)
-      path.push(parent.name)
-      parentId = parent.parentId ?? null
-    }
-    return path.reverse().join(' / ')
-  }
-
-  return [
-    { value: ARCHIVE_ROOT_VALUE, label: rootLabel },
-    ...scopedFolders
-      .map(folder => ({ value: String(folder.id), label: labelFor(folder) }))
-      .sort((a, b) => a.label.localeCompare(b.label)),
-  ]
-}
-
 export function isExtractableArchive(file: Pick<FileMeta, 'displayName' | 'ext'>): boolean {
   return archiveFormatForFile(file) != null
 }
@@ -86,4 +45,10 @@ export function archiveFormatForFile(file: Pick<FileMeta, 'displayName' | 'ext'>
 export function archiveNameForFile(file: Pick<FileMeta, 'displayName' | 'ext'>): string {
   const fullName = file.ext ? `${file.displayName}.${file.ext}` : file.displayName
   return fullName.replace(/\.[^.]+$/, '') || file.displayName
+}
+
+export function extractFolderNameForArchive(file: Pick<FileMeta, 'displayName' | 'ext'>): string {
+  const fullName = file.ext ? `${file.displayName}.${file.ext}` : file.displayName
+  const suffix = ['.tar.gz', '.tgz', '.tar', '.zip'].find(value => fullName.toLowerCase().endsWith(value))
+  return suffix ? fullName.slice(0, -suffix.length) : archiveNameForFile(file)
 }

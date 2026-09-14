@@ -103,6 +103,35 @@ async def test_unarchive_api_returns_created_ids_and_publishes_create(db, user_a
     assert published[0][1]["origin"] == "browser-tab"
 
 
+async def test_unarchive_api_accepts_output_folder_name(db, user_a, storage, monkeypatch):
+    source = await _file(db, storage, user_a, "包.zip", b"placeholder")
+    import io
+    import zipfile
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("内容.txt", "你好")
+    await storage.put(source.storage_key, payload.getvalue(), "application/zip")
+    published = []
+
+    async def capture(*args, **kwargs):
+        published.append((args, kwargs))
+
+    monkeypatch.setattr(files_api.events, "publish", capture)
+    result = await files_api.unarchive_file(
+        files_api.UnarchiveRequest(file_id=source.id, folder_name="展开后的内容"),
+        current_user=user_a, origin="browser-tab", db=db,
+    )
+
+    root = await db.get(Folder, result["folder_ids"][0])
+    extracted = await db.get(File, result["file_ids"][0])
+    assert root is not None and root.name == "展开后的内容"
+    assert root.parent_id is None
+    assert extracted is not None and extracted.folder_id == root.id
+    assert result["created_count"] == 2
+    assert len(published) == 1
+
+
 async def test_unarchive_api_allows_explicit_personal_root_destination(db, user_a, storage, monkeypatch):
     folder = Folder(user_id=user_a.id, project_id=None, name="来源目录")
     db.add(folder)

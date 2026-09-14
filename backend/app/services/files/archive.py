@@ -14,7 +14,7 @@ import stat
 import tarfile
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import BinaryIO, Iterable
 from uuid import uuid4
 
@@ -737,6 +737,7 @@ async def extract_file(
     *,
     folder_id: int | None = None,
     use_source_folder: bool = True,
+    folder_name: str | None = None,
     format_hint: str | None = None,
     storage: StorageBackend | None = None,
 ) -> dict:
@@ -794,14 +795,30 @@ async def extract_file(
         occupied_by_parent: dict[int | None, set[str]] = {}
         folder_by_archive_path: dict[str, int | None] = {}
         folder_target_paths: dict[str, str] = {}
+        extraction_target = target
         try:
+            if folder_name is not None:
+                safe_folder_name = folder_name.strip()
+                if (
+                    not safe_folder_name or safe_folder_name in {".", ".."}
+                    or "\x00" in safe_folder_name or "/" in safe_folder_name
+                    or "\\" in safe_folder_name or _DRIVE_PREFIX.match(safe_folder_name)
+                    or len(safe_folder_name) > 200
+                ):
+                    raise Invalid("archive.invalid_name", "解压文件夹名称无效")
+                root_id, chosen_name = await _create_extracted_folder(
+                    db, storage, user_id, target, target.folder_id, "", safe_folder_name,
+                    occupied_by_parent, {}, created_folder_keys, created_folder_ids,
+                )
+                root_path = f"{target.folder_path}/{chosen_name}" if target.folder_path else chosen_name
+                extraction_target = replace(target, folder_id=root_id, folder_path=root_path)
             for member in members:
                 if not member.path:
                     continue
                 segments = member.path.split("/")
                 if member.is_dir:
                     _, archive_path, _ = await _ensure_archive_path_folders(
-                        db, storage, user_id, target, segments,
+                        db, storage, user_id, extraction_target, segments,
                         occupied_by_parent, folder_by_archive_path,
                         folder_target_paths, created_folder_keys, created_folder_ids,
                     )
@@ -812,7 +829,7 @@ async def extract_file(
                     continue
                 parent_segments = segments[:-1]
                 parent_id, archive_parent, target_parent_path = await _ensure_archive_path_folders(
-                    db, storage, user_id, target, parent_segments,
+                    db, storage, user_id, extraction_target, parent_segments,
                     occupied_by_parent, folder_by_archive_path,
                     folder_target_paths, created_folder_keys, created_folder_ids,
                 )
@@ -847,7 +864,7 @@ async def extract_file(
                         raise Conflict("archive.expansion_too_large", "解压内容超过可用存储空间或安全上限")
                     before_count = len(created_keys)
                     created = await _store_file(
-                        db, storage, user_id, target,
+                        db, storage, user_id, extraction_target,
                         folder_id=parent_id, folder_path=target_parent_path,
                         display_name=display_name, ext=file_ext,
                         mime_type=mimetypes.guess_type(unique_leaf)[0] or "application/octet-stream",

@@ -6,37 +6,34 @@ export const filesUi = {
 
 Object.assign(filesUi['zh-CN'], {
   compress: '压缩', extract: '解压', archiveCompressTitle: '压缩所选内容', archiveExtractTitle: '解压文件',
-  archiveCompressHint: '所选文件与文件夹将打包为 ZIP；源内容上限为 512 MB。',
-  archiveExtractHint: '解压包会保留原文件，并将内容写入所选文件夹。',
-  archiveName: '压缩包名称', archiveTarget: '目标文件夹', archiveChooseTarget: '选择目标文件夹',
-  archivePersonalRoot: '个人文件根目录', archiveProjectRoot: '项目根目录', archiveWorkspaceRoot: '工作区根目录',
+  archiveCompressHint: '所选文件与文件夹将在当前目录打包为 ZIP；源内容上限为 512 MB。',
+  archiveExtractHint: '压缩包保留在当前目录，并在旁边新建文件夹解压；可修改文件夹名称。',
+  archiveName: '压缩包名称', archiveFolderName: '解压文件夹名称',
   archiveSelectionChanged: '选中的项目已变化，请重新选择后再压缩。',
   archiveUnsupportedSpace: '该文件空间暂不支持压缩与解压。', archiveCrossSpace: '不能跨空间压缩。',
-  archiveSameParent: '请选择同一目录中的文件和文件夹。', archiveInvalidTarget: '请选择有效的目标文件夹。',
+  archiveSameParent: '请选择同一目录中的文件和文件夹。', archiveInvalidName: '请输入压缩包名称。', archiveInvalidFolderName: '请输入解压文件夹名称。',
   archiveCreated: '已创建 {name}', archiveExtracted: '已解压 {files} 个文件、{folders} 个文件夹，跳过 {skipped} 项。',
   archiveFailed: '操作失败，请稍后重试。',
 })
 Object.assign(filesUi['ja-JP'], {
   compress: '圧縮', extract: '解凍', archiveCompressTitle: '選択項目を圧縮', archiveExtractTitle: 'ファイルを解凍',
-  archiveCompressHint: '選択したファイルとフォルダーを ZIP にまとめます。元データの上限は 512 MB です。',
-  archiveExtractHint: '元のアーカイブは保持し、内容を選択したフォルダーに展開します。',
-  archiveName: 'アーカイブ名', archiveTarget: '保存先フォルダー', archiveChooseTarget: '保存先を選択',
-  archivePersonalRoot: '個人ファイルのルート', archiveProjectRoot: 'プロジェクトのルート', archiveWorkspaceRoot: 'Workspace のルート',
+  archiveCompressHint: '選択したファイルとフォルダーを現在のフォルダーで ZIP にまとめます。元データの上限は 512 MB です。',
+  archiveExtractHint: 'アーカイブを現在のフォルダーに残し、隣に新しいフォルダーを作成して展開します。フォルダー名は変更できます。',
+  archiveName: 'アーカイブ名', archiveFolderName: '展開先フォルダー名',
   archiveSelectionChanged: '選択内容が変更されました。選び直してから圧縮してください。',
   archiveUnsupportedSpace: 'このファイル領域では圧縮・解凍できません。', archiveCrossSpace: '異なる領域をまたいで圧縮することはできません。',
-  archiveSameParent: '同じフォルダー内のファイルとフォルダーを選択してください。', archiveInvalidTarget: '有効な保存先フォルダーを選択してください。',
+  archiveSameParent: '同じフォルダー内のファイルとフォルダーを選択してください。', archiveInvalidName: 'アーカイブ名を入力してください。', archiveInvalidFolderName: '展開先フォルダー名を入力してください。',
   archiveCreated: '{name} を作成しました', archiveExtracted: 'ファイル {files} 件、フォルダー {folders} 件を解凍し、{skipped} 件をスキップしました。',
   archiveFailed: '処理に失敗しました。しばらくしてから再試行してください。',
 })
 Object.assign(filesUi['en-US'], {
   compress: 'Compress', extract: 'Extract', archiveCompressTitle: 'Compress selected items', archiveExtractTitle: 'Extract archive',
-  archiveCompressHint: 'Selected files and folders will be packed into a ZIP. Source content is limited to 512 MB.',
-  archiveExtractHint: 'The archive will be kept, and its contents will be written to the selected folder.',
-  archiveName: 'Archive name', archiveTarget: 'Destination folder', archiveChooseTarget: 'Choose a destination folder',
-  archivePersonalRoot: 'Personal files root', archiveProjectRoot: 'Project root', archiveWorkspaceRoot: 'Workspace root',
+  archiveCompressHint: 'Selected files and folders will be packed into a ZIP in the current folder. Source content is limited to 512 MB.',
+  archiveExtractHint: 'The archive stays here; its contents are extracted into a new folder beside it. You can edit the folder name.',
+  archiveName: 'Archive name', archiveFolderName: 'Extraction folder name',
   archiveSelectionChanged: 'The selection changed. Select the items again before compressing.',
   archiveUnsupportedSpace: 'Compression and extraction are not supported in this file space.', archiveCrossSpace: 'Items from different spaces cannot be compressed together.',
-  archiveSameParent: 'Select files and folders from the same directory.', archiveInvalidTarget: 'Choose a valid destination folder.',
+  archiveSameParent: 'Select files and folders from the same directory.', archiveInvalidName: 'Enter an archive name.', archiveInvalidFolderName: 'Enter an extraction folder name.',
   archiveCreated: 'Created {name}', archiveExtracted: 'Extracted {files} files and {folders} folders; skipped {skipped} items.',
   archiveFailed: 'The operation failed. Please try again later.',
 })
@@ -46,9 +43,9 @@ export const filesViewUi = {
   'en-US': { name: 'Name', type: 'Type', deletedAt: 'Deleted', remaining: 'Remaining', size: 'Size', sort: 'Sort', collapse: 'Collapse contents', view: 'View contents', folder: 'Folder', days: '{count} days', fileCount: '{count} files', restoreFolder: 'Restore folder and contents', permanentDeleteFolder: 'Permanently delete folder and contents', emptyFolder: 'Empty folder', restore: 'Restore', permanentDelete: 'Delete permanently', emptyTrash: 'Trash is empty', emptyTrashTitle: 'Empty trash', emptyTrashMessage: 'All files will be permanently deleted and cannot be recovered.', deleteFileTitle: 'Move to trash', deleteFileMessage: 'Move “{name}” to the trash?', deleteFolderTitle: 'Move to trash', deleteFolderMessage: 'Move folder “{name}” and its contents to the trash?', deleteSelectedTitle: 'Move to trash', deleteSelectedMessage: 'Move the selected {count} items to the trash?', permanentDeleteFileTitle: 'Delete file permanently', permanentDeleteFileMessage: 'Permanently delete “{name}”? This cannot be undone.', permanentDeleteFolderTitle: 'Delete folder permanently', permanentDeleteFolderMessage: 'Permanently delete folder “{name}” and its contents? This cannot be undone.', permanentDeleteSelectedTitle: 'Delete selected items permanently', permanentDeleteSelectedMessage: 'Permanently delete the selected {count} items? This cannot be undone.', confirm: 'Confirm', rename: 'Rename', downloadZip: 'Download as ZIP', moveToTrash: 'Move to trash', download: 'Download', items: '{count} items', storageUsed: '{used} used', storageUsedWithLimit: '{used} used / {limit}' },
 } as const
 
-Object.assign(filesViewUi['zh-CN'], { extractTo: '解压到…' })
-Object.assign(filesViewUi['ja-JP'], { extractTo: '解凍先…' })
-Object.assign(filesViewUi['en-US'], { extractTo: 'Extract to…' })
+Object.assign(filesViewUi['zh-CN'], { extractTo: '解压' })
+Object.assign(filesViewUi['ja-JP'], { extractTo: '解凍' })
+Object.assign(filesViewUi['en-US'], { extractTo: 'Extract' })
 
 export const workspaceUi = {
   'zh-CN': { workspaceDirectories: '工作区', workspaceDirectoriesHint: '位于文件库根目录的独立工作空间，默认工作区不可删除。', createWorkspace: '新建工作区', createWorkspaceHint: '工作区会直接创建在文件库根目录，并作为沙盒的独立目录。', workspaceNamePlaceholder: '工作区名称', defaultWorkspace: '默认', workspaceFileUnit: '文件', workspaceFolderUnit: '文件夹', loadingWorkspaces: '正在加载工作区…', noWorkspaces: '暂无工作区', workspaceLoadFailed: '工作区加载失败', workspaceCreateFailed: '工作区创建失败', renameWorkspace: '重命名工作区', workspaceRenameFailed: '工作区重命名失败', workspaceDeleteFailed: '工作区删除失败', deleteWorkspaceTitle: '删除工作区', deleteWorkspaceMessage: '确认删除「{name}」？\n将删除其中 {files} 个文件、{folders} 个文件夹，并解除 {sessions} 个会话和 {tasks} 个定时任务的绑定。', deleteWorkspace: '删除工作区' },

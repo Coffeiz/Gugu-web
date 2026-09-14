@@ -4,27 +4,22 @@ import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { filesApi } from '@/services/api'
 import type { FolderCard } from '@/utils/filesNav'
 import {
-  ARCHIVE_ROOT_VALUE,
   archiveFormatForFile,
-  archiveFolderOptions,
   archiveNameForFile,
+  extractFolderNameForArchive,
   archiveScopeOfFile,
   archiveScopeOfFolder,
   isExtractableArchive,
-  type ArchiveFolderOption,
 } from './archive'
 
 type ArchiveDialogMode = 'compress' | 'extract'
 
 interface ArchiveDialogForm {
-  folderValue: string
   name: string
 }
 
 export interface FileLibraryArchiveActionsOptions {
   cacheStore: {
-    allFiles: FileMeta[]
-    allFolders: FolderMeta[]
     getFile(id: number): FileMeta | null
     getFolder(id: number): FolderMeta | null
     addFile(file: FileMeta): void
@@ -42,25 +37,15 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
   const busy = ref(false)
   const error = ref('')
   const success = ref('')
-  const targetOptions = ref<ArchiveFolderOption[]>([])
-  const initialFolderValue = ref(ARCHIVE_ROOT_VALUE)
   const initialName = ref('')
   const selectedArchive = ref<FileMeta | null>(null)
   const { t } = useI18n()
   const extractable = isExtractableArchive
 
-  function setDialog(nextMode: ArchiveDialogMode, folders: FolderMeta[], scope: Parameters<typeof archiveFolderOptions>[1], folderId: number | null, name = '') {
+  function setDialog(nextMode: ArchiveDialogMode, name = '') {
     mode.value = nextMode
     error.value = ''
     success.value = ''
-    targetOptions.value = archiveFolderOptions(
-      folders,
-      scope,
-      t(scope.space === 'project'
-        ? 'filesUi.archiveProjectRoot'
-        : scope.space === 'workspace' ? 'filesUi.archiveWorkspaceRoot' : 'filesUi.archivePersonalRoot'),
-    )
-    initialFolderValue.value = folderId == null ? ARCHIVE_ROOT_VALUE : String(folderId)
     initialName.value = name
     dialogOpen.value = true
   }
@@ -116,7 +101,7 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
     const name = firstFile
       ? archiveNameForFile(firstFile)
       : folderMetas[0]?.name ?? ''
-    setDialog('compress', options.cacheStore.allFolders, scope, parentIds[0] ?? null, name)
+    setDialog('compress', name)
   }
 
   function extractFile(file: FileMeta) {
@@ -129,7 +114,7 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
       return
     }
     selectedArchive.value = file
-    setDialog('extract', options.cacheStore.allFolders, scope, file.folderId ?? null)
+    setDialog('extract', extractFolderNameForArchive(file))
   }
 
   async function submit(form: ArchiveDialogForm) {
@@ -137,8 +122,8 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
     busy.value = true
     error.value = ''
     try {
-      const folderId = form.folderValue === ARCHIVE_ROOT_VALUE ? null : Number(form.folderValue)
-      if (folderId !== null && !Number.isSafeInteger(folderId)) throw new Error(t('filesUi.archiveInvalidTarget'))
+      const name = form.name.trim()
+      if (!name) throw new Error(t(mode.value === 'compress' ? 'filesUi.archiveInvalidName' : 'filesUi.archiveInvalidFolderName'))
 
       if (mode.value === 'compress') {
         const fileIds = [...options.selectedFileIds.value]
@@ -148,8 +133,7 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
         const created = await filesApi.archive({
           fileIds,
           folderIds,
-          folderId,
-          name: form.name.trim(),
+          name,
         })
         options.cacheStore.addFile(created as FileMeta)
         options.clearSelection()
@@ -159,7 +143,7 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
         if (!archive) throw new Error('压缩包已不可用，请重新打开解压操作。')
         const result = await filesApi.unarchive({
           fileId: archive.id,
-          folderId,
+          folderName: name,
           format: archiveFormatForFile(archive) ?? undefined,
         })
         await options.cacheStore.refresh()
@@ -190,8 +174,6 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
     busy,
     error,
     success,
-    targetOptions,
-    initialFolderValue,
     initialName,
     extractable,
     openCompressSelected,

@@ -286,7 +286,7 @@ export const filesApi = {
   storage: ()         => get('/files/storage'),
   archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>
     post<Schemas['FileResponse']>('/files/archive', data),
-  unarchive: (data: { fileId: number; folderId?: number | null; format?: string }) =>
+  unarchive: (data: { fileId: number; folderId?: number | null; folderName?: string; format?: string }) =>
     post<{
       created_count: number
       file_count: number

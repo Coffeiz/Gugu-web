@@ -70,6 +70,7 @@ class ArchiveRequest(CamelModel):
 class UnarchiveRequest(CamelModel):
     file_id: int
     folder_id: Optional[int] = None
+    folder_name: Optional[str] = None
     format: Optional[str] = None
 
 # 单文件上传硬上限（字节）——独立于存储配额；端点分块收流，内存峰值与上限解耦。
@@ -206,6 +207,7 @@ async def unarchive_file(
         db, current_user.id, body.file_id,
         folder_id=body.folder_id,
         use_source_folder="folder_id" not in body.model_fields_set,
+        folder_name=body.folder_name,
         format_hint=body.format,
     )
     await db.commit()
