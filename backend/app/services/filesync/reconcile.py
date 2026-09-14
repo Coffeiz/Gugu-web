@@ -11,7 +11,7 @@ import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -34,6 +34,7 @@ from app.services.filesync.snapshots import save_snapshot
 from app.services.filesync.statcache import StatCache
 from app.services.storage.folders import folder_dir_key
 from app.services.files.previews import delete_thumb_cache
+from app.services.storage.quota_limits import resolve_file_library_limit
 
 
 @dataclass(frozen=True)
@@ -339,19 +340,10 @@ async def reconcile_local_directory(
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     quota_settings = getattr(settings, "quota", None)
-    quota_limit = int(
-        (user.storage_limit_bytes if user else None)
-        or getattr(quota_settings, "default_storage_limit_bytes", 2**63 - 1)
+    quota_limit = resolve_file_library_limit(
+        user.storage_limit_bytes if user else None,
+        getattr(quota_settings, "default_storage_limit_bytes", None),
     )
-    # 配额属于用户存储总量，不属于某一个 workspace；否则用户可以通过
-    # 创建多个 workspace 分摊检查，最终突破统一存储上限。
-    physical_bytes = sum(
-        item.stat().st_size
-        for item in user_root.rglob("*")
-        if item.is_file() and not item.is_symlink()
-    )
-    if physical_bytes > quota_limit:
-        return SyncSummary(rejected=1)
 
     if binding is None:
         binding = await _binding_for(
@@ -391,6 +383,10 @@ async def reconcile_local_directory(
         File.user_id == user_id, File.deleted_at.is_(None),
         File.storage_key.like(f"{scope_prefix}%"),
     ))).all()
+    # 文件库限额只统计登记的 File Library 用量；Shell/其他沙箱内容不属于此额度。
+    live_file_bytes = int(await db.scalar(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
+        File.user_id == user_id, File.deleted_at.is_(None),
+    )) or 0)
     known = {row.storage_key: row for row in rows}
     journal_history = (await db.scalars(select(FileSyncJournal).where(
         FileSyncJournal.binding_id == binding.id,
@@ -496,6 +492,48 @@ async def reconcile_local_directory(
                 (row, old_journal.observed_fingerprint)
             )
 
+    # 先识别本轮确定的 move 与歧义项，再预留可安全删除的容量。否则删除在投影末尾
+    # 才发生，会让本轮明明有释放空间却错误拒绝新文件；被 move 复用或歧义保护的行
+    # 不得提前计入释放量。
+    planned_fingerprints: dict[str, str] = {}
+    planned_move_ids: set = set()
+    planned_ambiguous_keys: set[str] = set()
+    if allow_delete:
+        for key, path in orphans.items():
+            relative = path.relative_to(root).as_posix()
+            if relative in blocked_paths:
+                continue
+            try:
+                validate_sync_path(root, relative)
+                observed = stat_cache.lookup(relative, path) if stat_cache else None
+                if observed is None:
+                    observed = _stable_fingerprint(path)
+                    if stat_cache:
+                        stat_cache.store(relative, path, observed)
+                planned_fingerprints[key] = observed
+            except (OSError, ValueError):
+                continue
+            candidates = [
+                (row, digest)
+                for row, digest in missing_fingerprints.get(str(path.stat().st_size), [])
+                if row.id not in planned_move_ids and digest == observed
+            ]
+            if len(candidates) == 1:
+                planned_move_ids.add(candidates[0][0].id)
+            elif len(candidates) > 1:
+                planned_ambiguous_keys.update(row.storage_key for row, _ in candidates)
+    deletable_bytes = sum(
+        int(row.size_bytes or 0)
+        for key, row in missing.items()
+        if allow_delete
+        and row.id not in planned_move_ids
+        and key not in planned_ambiguous_keys
+        and key.removeprefix(scope_prefix)
+        and not key.removeprefix(scope_prefix).startswith("/")
+        and key.removeprefix(scope_prefix) not in blocked_paths
+    )
+    quota_headroom = quota_limit - live_file_bytes + deletable_bytes
+
     consumed: set[str] = set()
     ambiguous_missing_keys: set[str] = set()
     for key, path in orphans.items():
@@ -509,7 +547,9 @@ async def reconcile_local_directory(
                 workspace_directory_id=workspace_directory_id,
                 base=root,
             )
-            observed = stat_cache.lookup(relative, path) if stat_cache else None
+            observed = planned_fingerprints.get(key)
+            if observed is None:
+                observed = stat_cache.lookup(relative, path) if stat_cache else None
             if observed is None:
                 observed = _stable_fingerprint(path)
                 if stat_cache:
@@ -533,6 +573,10 @@ async def reconcile_local_directory(
         if candidate is not None:
             consumed.add(candidate.id)
         if candidate is not None:
+            size_delta = path.stat().st_size - int(candidate.size_bytes or 0)
+            if size_delta > quota_headroom:
+                rejected += 1
+                continue
             old_key = candidate.storage_key
             candidate.storage_key = key
             candidate.display_name = display_name
@@ -545,6 +589,7 @@ async def reconcile_local_directory(
             candidate.size = str(path.stat().st_size)
             candidate.version = int(candidate.version or 1) + 1
             candidate.updated_at = now_utc()
+            quota_headroom -= size_delta
             operation = FileSyncOperation.MOVE
             moved += 1
             entity_ids.append(candidate.id)
@@ -552,6 +597,9 @@ async def reconcile_local_directory(
             baseline = old_journal.observed_fingerprint if old_journal else None
         else:
             stat = path.stat()
+            if stat.st_size > quota_headroom:
+                rejected += 1
+                continue
             candidate = File(
                 user_id=user_id, display_name=display_name, ext=ext, space=space,
                 project_id=project_id, folder_id=folder_id,
@@ -561,6 +609,7 @@ async def reconcile_local_directory(
             )
             db.add(candidate)
             await db.flush()
+            quota_headroom -= stat.st_size
             operation = FileSyncOperation.CREATE
             created += 1
             entity_ids.append(candidate.id)
@@ -620,10 +669,15 @@ async def reconcile_local_directory(
         if row.size_bytes != path.stat().st_size or (
             previous is not None and previous.observed_fingerprint != observed
         ):
+            size_delta = path.stat().st_size - int(row.size_bytes or 0)
+            if size_delta > quota_headroom:
+                rejected += 1
+                continue
             row.size_bytes = path.stat().st_size
             row.size = str(path.stat().st_size)
             row.version = int(row.version or 1) + 1
             row.updated_at = now_utc()
+            quota_headroom -= size_delta
             # 文件正文变了，旧缩略图即使仍在磁盘也不能继续返回。
             if not dry_run:
                 delete_thumb_cache(row.id, storage_root)

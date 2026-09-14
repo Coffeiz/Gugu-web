@@ -5,6 +5,20 @@ from sqlalchemy import select
 
 from app.models import StorageQuotaEvent, StorageQuotaLedger
 from app.services.storage import quota_ledger
+from app.services.storage.quota_limits import UNLIMITED_BYTES, resolve_file_library_limit
+
+
+@pytest.mark.parametrize(
+    ("user_limit", "global_limit", "expected"),
+    [
+        (None, None, UNLIMITED_BYTES),
+        (None, 4096, 4096),
+        (0, 4096, 0),
+        (1024, 4096, 1024),
+    ],
+)
+def test_file_library_limit_uses_none_not_truthiness(user_limit, global_limit, expected):
+    assert resolve_file_library_limit(user_limit, global_limit) == expected
 
 
 def _settings(tmp_path):

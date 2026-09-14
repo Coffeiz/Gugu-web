@@ -17,7 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OVERRIDE_FILE = Path(
@@ -83,8 +83,8 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(8000, description="最大输出 token 数")
-    context_tokens: int = Field(128000, description="历史上下文 token 预算")
+    max_tokens: int = Field(8000, gt=0, description="最大输出 token 数")
+    context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     reasoning_persistence: Literal["off", "summary", "continuation"] = Field("off", description="跨请求推理状态: off | summary | continuation")
@@ -104,6 +104,12 @@ class AISettings(BaseModel):
     # 内部运行时标记：resolve_run_config_for_user 在每轮 run 开始时注入到模型副本上，
     # 随 run 落到 agent_usage.is_byok。exclude=True 保证不会序列化进配置文件或 API 响应。
     is_byok: bool = Field(False, exclude=True, description="内部标记：本轮是否使用用户 BYOK 凭据")
+
+    @model_validator(mode="after")
+    def validate_token_budget(self):
+        if self.max_tokens >= self.context_tokens:
+            raise ValueError("最大输出 token 数必须小于模型总上下文窗口")
+        return self
 
 
 class VoiceSettings(BaseModel):
@@ -207,8 +213,8 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 8000
-    context_tokens: int = 128000
+    max_tokens: int = Field(8000, gt=0)
+    context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
@@ -225,9 +231,16 @@ class AIPresetItem(BaseModel):
     capability_overrides: dict[str, bool] = Field(default_factory=dict)
     capability_checked_at: str = ""
     capability_fingerprint: str = ""
+
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
     # 内部运行时标记（同 AISettings.is_byok）：resolve_run_config_for_user 每轮注入，exclude 不落盘。
     is_byok: bool = Field(False, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_token_budget(self):
+        if self.max_tokens >= self.context_tokens:
+            raise ValueError("最大输出 token 数必须小于模型总上下文窗口")
+        return self
 
 
 class AIPresets(BaseModel):

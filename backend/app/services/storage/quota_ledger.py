@@ -16,22 +16,20 @@ from agent.sandbox.quota import ensure_sandbox_root, measure_directory
 from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import File, StorageQuotaEvent, StorageQuotaLedger, User
+from app.services.storage.quota_limits import resolve_file_library_limit
 
 FILE_LIBRARY = "file_library"
 SHELL_PERSISTENT = "shell_persistent"
 SHELL_EPHEMERAL = "shell_ephemeral"
 DEFAULT_WORKSPACE_FOLDER_NAME = "workspace"
 _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
-_UNLIMITED_BYTES = 2**63 - 1
 
 
 def _limits(user: User) -> dict[str, int]:
     settings = get_settings()
     return {
-        FILE_LIBRARY: int(
-            user.storage_limit_bytes
-            or settings.quota.default_storage_limit_bytes
-            or _UNLIMITED_BYTES
+        FILE_LIBRARY: resolve_file_library_limit(
+            user.storage_limit_bytes, settings.quota.default_storage_limit_bytes,
         ),
         SHELL_PERSISTENT: int(settings.sandbox.persistent_quota_bytes),
         SHELL_EPHEMERAL: int(settings.sandbox.ephemeral_quota_bytes),
