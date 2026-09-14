@@ -4,7 +4,7 @@ import { i18n } from '@/i18n'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
 
 describe('文件库选择工具栏归档操作', () => {
-  it('单选可解压压缩包时同时保留压缩并提供解压入口', () => {
+  it('单选可解压压缩包时同时保留压缩入口且两者之间无分隔线', () => {
     const actions: string[] = []
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -23,6 +23,7 @@ describe('文件库选择工具栏归档操作', () => {
     const compress = host.querySelector('[data-testid="selection-compress"]') as HTMLButtonElement
     expect(extract).not.toBeNull()
     expect(compress).not.toBeNull()
+    expect(extract.nextElementSibling).toBe(compress)
     extract.click()
     compress.click()
     expect(actions).toEqual(['extract', 'compress'])

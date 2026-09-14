@@ -52,7 +52,6 @@ const { t } = useI18n()
         <Icon name="action.archive" :size="compact ? 11 : 12" />
         {{ t('filesUi.extract') }}
       </button>
-      <span v-if="canExtractArchive" class="file-selection-divider" />
       <button class="file-selection-btn" :disabled="archiveDisabled || archiving" data-testid="selection-compress" @click="emit('archive')">
         <Icon v-if="!archiving" name="action.archive" :size="compact ? 11 : 12" />
         <span v-else class="file-selection-spinner" />
